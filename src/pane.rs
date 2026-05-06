@@ -96,6 +96,14 @@ struct AgentDetectionPresence {
     consecutive_misses: u8,
 }
 
+fn should_clear_agent_for_foreground_shell(
+    previous_agent: Option<Agent>,
+    new_agent: Option<Agent>,
+    foreground_is_pane_shell: bool,
+) -> bool {
+    previous_agent.is_some() && new_agent.is_none() && foreground_is_pane_shell
+}
+
 impl AgentDetectionPresence {
     fn from_agent(current_agent: Option<Agent>) -> Self {
         Self {
@@ -106,6 +114,16 @@ impl AgentDetectionPresence {
 
     fn current_agent(&self) -> Option<Agent> {
         self.current_agent
+    }
+
+    fn clear_current_agent(&mut self) -> bool {
+        if self.current_agent.is_none() {
+            self.consecutive_misses = 0;
+            return false;
+        }
+        self.current_agent = None;
+        self.consecutive_misses = 0;
+        true
     }
 
     fn observe_process_probe(&mut self, identified_agent: Option<Agent>) -> bool {
@@ -458,6 +476,8 @@ impl PaneRuntime {
                 let mut agent_presence = AgentDetectionPresence::from_agent(None);
                 let mut state = AgentState::Unknown;
                 let mut last_process_check = Instant::now();
+                let mut last_foreground_pgid = None;
+                let mut pending_foreground_shell_clear = false;
                 let mut last_claude_working_at = None;
 
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -478,33 +498,50 @@ impl PaneRuntime {
                         _ = detect_reset.notified() => {
                             agent_presence = AgentDetectionPresence::from_agent(None);
                             state = AgentState::Unknown;
+                            last_foreground_pgid = None;
+                            pending_foreground_shell_clear = false;
                             last_claude_working_at = None;
                         }
                     }
 
                     let now = Instant::now();
                     let suppressed_agent = active_pending_release(&pending_release_for_task, now);
+                    let pid = child_pid.load(Ordering::Acquire);
+                    let foreground_pgid = (pid > 0 && agent_presence.current_agent().is_some())
+                        .then(|| detect::foreground_process_group_id(pid))
+                        .flatten();
+                    let foreground_group_changed = foreground_pgid.is_some()
+                        && last_foreground_pgid.is_some()
+                        && foreground_pgid != last_foreground_pgid;
                     let should_check_process = suppressed_agent.is_some()
                         || agent_presence.current_agent().is_none()
+                        || foreground_group_changed
+                        || pending_foreground_shell_clear
                         || now.duration_since(last_process_check) >= PROCESS_RECHECK;
 
                     let mut agent_changed = false;
                     let mut agent = agent_presence.current_agent();
                     if should_check_process {
                         last_process_check = now;
-                        let pid = child_pid.load(Ordering::Acquire);
                         if pid > 0 {
                             let mut process_name = None;
                             let mut process_group_id = None;
+                            let mut foreground_is_pane_shell = false;
                             let mut new_agent = None;
 
                             if let Some(job) = detect::foreground_job(pid) {
                                 process_group_id = Some(job.process_group_id);
+                                last_foreground_pgid = Some(job.process_group_id);
+                                foreground_is_pane_shell =
+                                    job.processes.iter().any(|p| p.pid == pid);
                                 let identified = detect::identify_agent_in_job(&job);
                                 process_name = identified
                                     .as_ref()
                                     .map(|(_, process_name)| process_name.clone());
                                 new_agent = identified.as_ref().map(|(agent, _)| *agent);
+                            } else if foreground_pgid.is_some() {
+                                process_group_id = foreground_pgid;
+                                last_foreground_pgid = foreground_pgid;
                             }
 
                             if let Some(suppressed_agent) = suppressed_agent {
@@ -518,7 +555,28 @@ impl PaneRuntime {
                             }
 
                             let previous_agent = agent_presence.current_agent();
-                            if agent_presence.observe_process_probe(new_agent) {
+                            let changed = if should_clear_agent_for_foreground_shell(
+                                previous_agent,
+                                new_agent,
+                                foreground_is_pane_shell,
+                            ) {
+                                if state == AgentState::Idle {
+                                    pending_foreground_shell_clear = false;
+                                    agent_presence.clear_current_agent()
+                                } else {
+                                    pending_foreground_shell_clear = true;
+                                    false
+                                }
+                            } else {
+                                pending_foreground_shell_clear = false;
+                                agent_presence.observe_process_probe(new_agent)
+                            };
+                            if new_agent.is_some() {
+                                last_foreground_pgid = process_group_id;
+                            } else if agent_presence.current_agent().is_none() {
+                                last_foreground_pgid = None;
+                            }
+                            if changed {
                                 agent = agent_presence.current_agent();
                                 if let Some(process_name) = process_name {
                                     info!(
@@ -992,6 +1050,33 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[test]
+    fn foreground_shell_without_agent_is_immediate_clear_signal() {
+        assert!(should_clear_agent_for_foreground_shell(
+            Some(Agent::Claude),
+            None,
+            true
+        ));
+    }
+
+    #[test]
+    fn unknown_non_shell_foreground_job_is_not_immediate_clear_signal() {
+        assert!(!should_clear_agent_for_foreground_shell(
+            Some(Agent::Claude),
+            None,
+            false
+        ));
+    }
+
+    #[test]
+    fn foreground_agent_job_is_not_clear_signal() {
+        assert!(!should_clear_agent_for_foreground_shell(
+            Some(Agent::Claude),
+            Some(Agent::OpenCode),
+            true
+        ));
     }
 
     #[test]

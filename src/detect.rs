@@ -589,6 +589,12 @@ pub fn foreground_job(child_pid: u32) -> Option<crate::platform::ForegroundJob> 
     crate::platform::foreground_job(child_pid)
 }
 
+/// Get the foreground process group for a pane shell PID.
+/// This is cheaper than collecting every process in the foreground job.
+pub fn foreground_process_group_id(child_pid: u32) -> Option<u32> {
+    crate::platform::foreground_process_group_id(child_pid)
+}
+
 fn normalized_process_name(process: &crate::platform::ForegroundProcess) -> String {
     let effective = process.argv0.as_deref().unwrap_or(&process.name);
     let lower_effective = effective.to_lowercase();

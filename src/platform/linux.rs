@@ -8,7 +8,7 @@ use super::{ClipboardCommand, ForegroundJob, ForegroundProcess, Signal};
 
 /// Collect the foreground terminal job for a given child PID.
 pub fn foreground_job(child_pid: u32) -> Option<ForegroundJob> {
-    let tpgid = foreground_pgid(child_pid)? as u32;
+    let tpgid = foreground_process_group_id(child_pid)?;
     let mut processes = Vec::new();
 
     for entry in std::fs::read_dir("/proc").ok()? {
@@ -49,7 +49,7 @@ pub fn foreground_job(child_pid: u32) -> Option<ForegroundJob> {
     })
 }
 
-fn foreground_pgid(child_pid: u32) -> Option<i32> {
+pub fn foreground_process_group_id(child_pid: u32) -> Option<u32> {
     // /proc/<pid>/stat format: "pid (comm) state ppid pgrp session tty_nr tpgid ..."
     // The (comm) field can contain spaces and parens, so we find the last ')' first.
     let stat = std::fs::read_to_string(format!("/proc/{child_pid}/stat")).ok()?;
@@ -57,7 +57,7 @@ fn foreground_pgid(child_pid: u32) -> Option<i32> {
     let fields: Vec<&str> = rest.split_whitespace().collect();
     // After (comm): state(0) ppid(1) pgrp(2) session(3) tty_nr(4) tpgid(5)
     let tpgid: i32 = fields.get(5)?.parse().ok()?;
-    (tpgid > 0).then_some(tpgid)
+    (tpgid > 0).then_some(tpgid as u32)
 }
 
 fn process_pgrp_and_comm(pid: u32) -> Option<(i32, String)> {

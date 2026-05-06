@@ -12,7 +12,7 @@ pub fn foreground_job(child_pid: u32) -> Option<ForegroundJob> {
         return None;
     }
 
-    let fg_pgid = foreground_pgid(child_pid)?;
+    let fg_pgid = foreground_process_group_id(child_pid)?;
     let mut pids = vec![0i32; 4096];
     let bytes = unsafe {
         libc::proc_listallpids(
@@ -62,7 +62,7 @@ pub fn foreground_job(child_pid: u32) -> Option<ForegroundJob> {
 
 /// Read `e_tpgid` (foreground process group of the controlling terminal)
 /// for the given PID.
-fn foreground_pgid(pid: u32) -> Option<u32> {
+pub fn foreground_process_group_id(pid: u32) -> Option<u32> {
     let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
     let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
 
