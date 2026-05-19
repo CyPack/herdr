@@ -28,6 +28,7 @@ pub enum Agent {
     OpenCode,
     GithubCopilot,
     Kimi,
+    Kiro,
     Droid,
     Amp,
     Grok,
@@ -45,6 +46,7 @@ pub fn agent_label(agent: Agent) -> &'static str {
         Agent::OpenCode => "opencode",
         Agent::GithubCopilot => "copilot",
         Agent::Kimi => "kimi",
+        Agent::Kiro => "kiro",
         Agent::Droid => "droid",
         Agent::Amp => "amp",
         Agent::Grok => "grok",
@@ -64,6 +66,7 @@ pub fn parse_agent_label(agent: &str) -> Option<Agent> {
         "opencode" | "open-code" => Some(Agent::OpenCode),
         "copilot" | "github-copilot" | "ghcs" => Some(Agent::GithubCopilot),
         "kimi" => Some(Agent::Kimi),
+        "kiro" | "kiro-cli" => Some(Agent::Kiro),
         "droid" => Some(Agent::Droid),
         "amp" | "amp-local" => Some(Agent::Amp),
         "grok" | "grok-build" => Some(Agent::Grok),
@@ -87,6 +90,7 @@ pub fn identify_agent(process_name: &str) -> Option<Agent> {
         "opencode" | "open-code" => Some(Agent::OpenCode),
         "copilot" | "github-copilot" | "ghcs" => Some(Agent::GithubCopilot),
         "kimi" => Some(Agent::Kimi),
+        "kiro" | "kiro-cli" => Some(Agent::Kiro),
         "droid" => Some(Agent::Droid),
         "amp" | "amp-local" => Some(Agent::Amp),
         "grok" | "grok-build" => Some(Agent::Grok),
@@ -141,6 +145,7 @@ pub fn detect_state(agent: Option<Agent>, screen_content: &str) -> AgentState {
         Agent::OpenCode => detect_opencode(screen_content),
         Agent::GithubCopilot => detect_github_copilot(screen_content),
         Agent::Kimi => detect_kimi(screen_content),
+        Agent::Kiro => detect_kiro(screen_content),
         Agent::Droid => detect_droid(screen_content),
         Agent::Amp => detect_amp(screen_content),
         Agent::Grok => detect_grok(screen_content),
@@ -364,6 +369,23 @@ fn detect_kimi(content: &str) -> AgentState {
     AgentState::Idle
 }
 
+/// Kiro CLI detection.
+///
+/// Kiro exposes reliable working and idle terminal markers. Confirmation
+/// prompts currently render as normal inline conversation followed by the input
+/// prompt, so they are intentionally treated as idle instead of guessing.
+fn detect_kiro(content: &str) -> AgentState {
+    let lower = content.to_lowercase();
+
+    if lower.contains("kiro is working")
+        || (lower.contains("esc to cancel") && has_kiro_tool_spinner(content))
+    {
+        return AgentState::Working;
+    }
+
+    AgentState::Idle
+}
+
 /// Droid detection.
 ///
 /// Working: braille spinner line (⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏) + "Thinking..." + "(Press ESC to stop)"
@@ -514,6 +536,21 @@ fn has_braille_spinner(content: &str) -> bool {
         }
     }
     false
+}
+
+fn has_kiro_tool_spinner(content: &str) -> bool {
+    content.lines().any(|line| {
+        let trimmed = line.trim_start();
+        let mut chars = trimmed.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        if !matches!(first, '◔' | '◑' | '◕' | '●') {
+            return false;
+        }
+        let rest = chars.as_str().trim_start();
+        rest.chars().next().is_some_and(char::is_alphabetic)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -768,6 +805,8 @@ mod tests {
         assert_eq!(identify_agent("cline"), Some(Agent::Cline));
         assert_eq!(identify_agent("opencode"), Some(Agent::OpenCode));
         assert_eq!(identify_agent("kimi"), Some(Agent::Kimi));
+        assert_eq!(identify_agent("kiro"), Some(Agent::Kiro));
+        assert_eq!(identify_agent("kiro-cli"), Some(Agent::Kiro));
         assert_eq!(identify_agent("copilot"), Some(Agent::GithubCopilot));
         assert_eq!(identify_agent("ghcs"), Some(Agent::GithubCopilot));
         assert_eq!(identify_agent("grok"), Some(Agent::Grok));
@@ -786,6 +825,7 @@ mod tests {
             Some(Agent::GithubCopilot)
         );
         assert_eq!(parse_agent_label("amp-local"), Some(Agent::Amp));
+        assert_eq!(parse_agent_label("kiro-cli"), Some(Agent::Kiro));
         assert_eq!(parse_agent_label("grok-build"), Some(Agent::Grok));
         assert_eq!(parse_agent_label("hermes-agent"), Some(Agent::Hermes));
     }
@@ -795,6 +835,7 @@ mod tests {
         assert_eq!(agent_label(Agent::Pi), "pi");
         assert_eq!(agent_label(Agent::GithubCopilot), "copilot");
         assert_eq!(agent_label(Agent::OpenCode), "opencode");
+        assert_eq!(agent_label(Agent::Kiro), "kiro");
         assert_eq!(agent_label(Agent::Grok), "grok");
         assert_eq!(agent_label(Agent::Hermes), "hermes");
     }
@@ -1342,6 +1383,38 @@ mod tests {
     #[test]
     fn kimi_idle() {
         assert_eq!(detect_kimi("> "), AgentState::Idle);
+    }
+
+    // ---- Kiro ----
+
+    #[test]
+    fn kiro_working_on_status_bar() {
+        let screen = "◕ Shell\n  esc to cancel\n● 1 MCP failure — see /mcp\n─────────────────────────────────────────────────────\nKiro · auto · ◔ 6%                                  ~\n\n Kiro is working · type to queue a message";
+        assert_eq!(detect_state(Some(Agent::Kiro), screen), AgentState::Working);
+    }
+
+    #[test]
+    fn kiro_working_on_tool_spinner_and_cancel_hint() {
+        let screen = "◕ Shell\n  esc to cancel\n─────────────────────────────────────────────────────\nKiro · auto · ◔ 6%";
+        assert_eq!(detect_state(Some(Agent::Kiro), screen), AgentState::Working);
+    }
+
+    #[test]
+    fn kiro_idle_at_prompt() {
+        let screen = "● 1 MCP failure — see /mcp\n──────────────────────────────────────────────────────────────────────────────────────\nKiro · auto · ◔ 6%                                                                   ~\n\n ask a question or describe a task ↵\n                                                                   /copy to clipboard";
+        assert_eq!(detect_state(Some(Agent::Kiro), screen), AgentState::Idle);
+    }
+
+    #[test]
+    fn kiro_does_not_treat_stale_failure_spinner_as_working() {
+        let screen = "● 1 MCP failure — see /mcp\n─────────────────────────────────────────────────────\nKiro · auto · ◔ 6%\n\n ask a question or describe a task ↵";
+        assert_eq!(detect_state(Some(Agent::Kiro), screen), AgentState::Idle);
+    }
+
+    #[test]
+    fn kiro_identified_by_process_name() {
+        assert_eq!(identify_agent("kiro"), Some(Agent::Kiro));
+        assert_eq!(identify_agent("kiro-cli"), Some(Agent::Kiro));
     }
 
     // ---- Droid ----
