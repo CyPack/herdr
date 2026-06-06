@@ -13,6 +13,7 @@
 - Added directional pane swap with `prefix+shift+h/j/k/l`, a pane context-menu swap action, pane layout/neighbor/edge/focus/resize socket APIs, matching CLI commands, and optional `pane split --ratio` support.
 - Added `herdr pane zoom` and the `pane.zoom` socket API to toggle, set, or clear tab-local pane zoom from scripts and integrations.
 - Added toast ergonomics controls for delayed agent notifications, in-app toast placement, copied-to-clipboard feedback, and the `notification.show` socket API with `herdr notification show` and optional `none`, `done`, or `request` sounds. (#486)
+- Added native Windows beta documentation and platform capability tracking for ConPTY panes, semantic client input, Windows agent discovery, known partial cwd behavior, and unsupported Unix-only features such as live handoff, direct terminal attach, and `herdr --remote` from the Windows binary.
 
 ## [0.6.8] - 2026-06-04
 
