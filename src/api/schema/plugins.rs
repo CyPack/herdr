@@ -216,6 +216,8 @@ pub struct PluginActionInfo {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub contexts: Vec<PluginActionContext>,
     pub command: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platforms: Option<Vec<PluginPlatform>>,
 }
 
 impl PluginActionInfo {

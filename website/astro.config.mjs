@@ -104,7 +104,6 @@ export default defineConfig({
           items: [
             { label: 'Overview', slug: 'docs' },
             { label: 'Install', slug: 'docs/install' },
-            { label: 'Windows beta', slug: 'docs/windows-beta' },
             { label: 'Quick start', slug: 'docs/quick-start' },
             { label: 'Concepts', slug: 'docs/concepts' },
             { label: 'Keyboard', slug: 'docs/keyboard' },

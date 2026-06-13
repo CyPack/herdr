@@ -46,14 +46,9 @@ impl App {
     }
 
     pub(super) fn handle_plugin_list(&mut self, id: String, params: PluginListParams) -> String {
-        let plugin_id = match params.plugin_id {
-            Some(plugin_id) => {
-                let Some(plugin_id) = normalize_plugin_id(&plugin_id) else {
-                    return invalid_plugin_id(id);
-                };
-                Some(plugin_id)
-            }
-            None => None,
+        let plugin_id = match normalize_optional_plugin_id(&id, params.plugin_id) {
+            Ok(plugin_id) => plugin_id,
+            Err(response) => return response,
         };
         let mut plugins = self
             .state
@@ -126,14 +121,9 @@ impl App {
         id: String,
         params: PluginActionListParams,
     ) -> String {
-        let plugin_id = match params.plugin_id {
-            Some(plugin_id) => {
-                let Some(plugin_id) = normalize_plugin_id(&plugin_id) else {
-                    return invalid_plugin_id(id);
-                };
-                Some(plugin_id)
-            }
-            None => None,
+        let plugin_id = match normalize_optional_plugin_id(&id, params.plugin_id) {
+            Ok(plugin_id) => plugin_id,
+            Err(response) => return response,
         };
         let mut actions = manifest_actions(&self.state.installed_plugins)
             .filter(|action| {
@@ -163,23 +153,11 @@ impl App {
                 format!("plugin {} is disabled", plugin.plugin_id),
             );
         }
-        let action_manifest = plugin.actions.iter().find(|a| a.id == action.action_id);
-        let action_platforms = action_manifest.and_then(|a| a.platforms.clone());
-        let eff_platforms = effective_platforms(&action_platforms, &plugin.platforms);
-        if let Some(platforms) = eff_platforms {
-            let host = current_platform();
-            if !platforms.contains(&host) {
-                let platform_str = platform_name(host);
-                return encode_error(
-                    id,
-                    "platform_unsupported",
-                    format!(
-                        "action '{}' does not support the current platform ({})",
-                        action.qualified_id(),
-                        platform_str
-                    ),
-                );
-            }
+        if let Err((code, message)) = ensure_platform_supported(
+            effective_platforms(&action.platforms, &plugin.platforms),
+            &format!("action '{}'", action.qualified_id()),
+        ) {
+            return encode_error(id, code, message);
         }
         let context = self.merge_plugin_context(params.context, &id);
         let log = match self.start_plugin_command(
@@ -213,11 +191,11 @@ impl App {
         if !plugin.enabled {
             return Err(format!("plugin {} is disabled", plugin.plugin_id));
         }
-        let action_manifest = plugin.actions.iter().find(|a| a.id == action.action_id);
-        let action_platforms = action_manifest.and_then(|a| a.platforms.clone());
-        let eff_platforms = effective_platforms(&action_platforms, &plugin.platforms);
-        ensure_platform_supported(eff_platforms, &action.qualified_id())
-            .map_err(|(_, message)| message)?;
+        ensure_platform_supported(
+            effective_platforms(&action.platforms, &plugin.platforms),
+            &action.qualified_id(),
+        )
+        .map_err(|(_, message)| message)?;
         let mut context = self.current_plugin_context("keybinding");
         context.invocation_source = Some("keybinding".to_string());
         self.start_plugin_command(
@@ -288,14 +266,9 @@ impl App {
         id: String,
         params: PluginLogListParams,
     ) -> String {
-        let plugin_id = match params.plugin_id {
-            Some(plugin_id) => {
-                let Some(plugin_id) = normalize_plugin_id(&plugin_id) else {
-                    return invalid_plugin_id(id);
-                };
-                Some(plugin_id)
-            }
-            None => None,
+        let plugin_id = match normalize_optional_plugin_id(&id, params.plugin_id) {
+            Ok(plugin_id) => plugin_id,
+            Err(response) => return response,
         };
         let limit = params.limit.unwrap_or(50).clamp(1, 200);
         let mut logs = self
@@ -449,14 +422,13 @@ impl App {
             return encode_error(id, "plugin_pane_not_found", "plugin pane not found");
         }
         let pane_id = params.pane_id;
-        let close = self.handle_pane_close(
+        if let Err(response) = self.close_pane(
             id.clone(),
-            crate::api::schema::PaneTarget {
+            &crate::api::schema::PaneTarget {
                 pane_id: pane_id.clone(),
             },
-        );
-        if serde_json::from_str::<crate::api::schema::ErrorResponse>(&close).is_ok() {
-            return close;
+        ) {
+            return response;
         }
         encode_success(id, ResponseResult::PluginPaneClosed { pane_id })
     }
@@ -1932,6 +1904,21 @@ fn invalid_plugin_id(id: String) -> String {
     )
 }
 
+/// Normalize an optional plugin id filter; `Err` carries the encoded
+/// `invalid_plugin_id` error response.
+fn normalize_optional_plugin_id(
+    id: &str,
+    plugin_id: Option<String>,
+) -> Result<Option<String>, String> {
+    match plugin_id {
+        Some(plugin_id) => match normalize_plugin_id(&plugin_id) {
+            Some(plugin_id) => Ok(Some(plugin_id)),
+            None => Err(invalid_plugin_id(id.to_string())),
+        },
+        None => Ok(None),
+    }
+}
+
 fn plugin_manifest_available(plugin: &InstalledPluginInfo) -> bool {
     !plugin.warnings.iter().any(|warning| {
         warning.starts_with(crate::persist::plugin_registry::MANIFEST_UNAVAILABLE_WARNING_PREFIX)
@@ -1946,6 +1933,7 @@ fn manifest_action_info(plugin_id: &str, action: &PluginManifestAction) -> Plugi
         description: action.description.clone(),
         contexts: action.contexts.clone(),
         command: action.command.clone(),
+        platforms: action.platforms.clone(),
     }
 }
 

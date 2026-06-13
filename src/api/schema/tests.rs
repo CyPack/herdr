@@ -933,6 +933,7 @@ fn plugin_action_list_and_invoke_round_trips() {
         description: Some("Open the issue assignment UI".into()),
         contexts: vec![PluginActionContext::Workspace, PluginActionContext::Pane],
         command: vec!["assign".into(), "--issue".into()],
+        platforms: Some(vec![PluginPlatform::Linux, PluginPlatform::Macos]),
     };
     assert_eq!(
         action_info.qualified_id(),

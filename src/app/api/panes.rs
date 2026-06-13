@@ -1425,27 +1425,35 @@ impl App {
     }
 
     pub(super) fn handle_pane_close(&mut self, id: String, target: PaneTarget) -> String {
+        match self.close_pane(id.clone(), &target) {
+            Ok(()) => encode_success(id, ResponseResult::Ok {}),
+            Err(response) => response,
+        }
+    }
+
+    /// Close a pane; `Err` carries the encoded error response.
+    pub(super) fn close_pane(&mut self, id: String, target: &PaneTarget) -> Result<(), String> {
         let Some((ws_idx, pane_id)) = self.parse_pane_id(&target.pane_id) else {
-            return pane_not_found(id, &target.pane_id);
+            return Err(pane_not_found(id, &target.pane_id));
         };
         let Some(public_pane_id) = self.public_pane_id(ws_idx, pane_id) else {
-            return pane_not_found(id, &target.pane_id);
+            return Err(pane_not_found(id, &target.pane_id));
         };
         let workspace_id = self.public_workspace_id(ws_idx);
         if self.state.close_pane_would_close_workspace(ws_idx, pane_id)
             && self.state.confirm_implicit_worktree_group_close(ws_idx)
         {
-            return encode_error(
+            return Err(encode_error(
                 id,
                 "confirmation_required",
                 "closing this pane would close a worktree group",
-            );
+            ));
         }
         let workspace_snapshot = self.workspace_info(ws_idx);
         let terminal_id = self.state.terminal_id_for_pane(ws_idx, pane_id);
         let should_close_workspace = {
             let Some(ws) = self.state.workspaces.get_mut(ws_idx) else {
-                return pane_not_found(id, &target.pane_id);
+                return Err(pane_not_found(id, &target.pane_id));
             };
             ws.close_pane(pane_id)
         };
@@ -1481,7 +1489,7 @@ impl App {
             });
         }
 
-        encode_success(id, ResponseResult::Ok {})
+        Ok(())
     }
 
     pub(super) fn handle_pane_send_keys(
