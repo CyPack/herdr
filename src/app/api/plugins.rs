@@ -615,12 +615,19 @@ impl App {
         let mut env = super::env::normalize_launch_env(env)?;
         let context_json = serde_json::to_string(&context)
             .map_err(|err| ("invalid_plugin_context".to_string(), err.to_string()))?;
+        env.retain(|(key, _)| !plugin_pane_protected_env_key(key));
         env.push(("HERDR_PLUGIN_ID".to_string(), plugin.plugin_id.clone()));
         env.push((
             "HERDR_PLUGIN_ENTRYPOINT_ID".to_string(),
             entrypoint.to_string(),
         ));
         env.push(("HERDR_PLUGIN_CONTEXT_JSON".to_string(), context_json));
+        if let Ok(current_exe) = std::env::current_exe() {
+            env.push((
+                "HERDR_BIN_PATH".to_string(),
+                current_exe.display().to_string(),
+            ));
+        }
         Ok(env)
     }
 
@@ -1095,6 +1102,10 @@ impl App {
             .as_ref()
             .and_then(|pane| pane.cwd.clone())
             .or_else(|| Some(self.default_cwd_for_workspace(ws_idx).display().to_string()));
+        let selected_text = focused_pane
+            .as_ref()
+            .and_then(|pane| self.parse_pane_id(&pane.pane_id))
+            .and_then(|(_, pane_id)| self.selected_text_for_pane(pane_id));
         PluginInvocationContext {
             workspace_id: Some(workspace.workspace_id),
             workspace_label: Some(workspace.label),
@@ -1106,12 +1117,28 @@ impl App {
             focused_pane_cwd: focused_pane.as_ref().and_then(|pane| pane.cwd.clone()),
             focused_pane_agent: focused_pane.as_ref().and_then(|pane| pane.agent.clone()),
             focused_pane_status: focused_pane.as_ref().map(|pane| pane.agent_status),
-            selected_text: None,
+            selected_text,
             invocation_source: Some("api".to_string()),
             correlation_id: Some(correlation_id.to_string()),
             clicked_url: None,
             link_handler_id: None,
         }
+    }
+
+    fn selected_text_for_pane(&self, pane_id: crate::layout::PaneId) -> Option<String> {
+        let selection = self.state.selection.as_ref()?;
+        if selection.pane_id != pane_id || !selection.is_visible() {
+            return None;
+        }
+        let terminal_id = self
+            .state
+            .workspaces
+            .iter()
+            .find_map(|workspace| workspace.terminal_id(pane_id))?;
+        self.terminal_runtimes
+            .get(terminal_id)
+            .and_then(|runtime| runtime.extract_selection(selection))
+            .filter(|text| !text.is_empty())
     }
 
     fn current_public_pane_id(&self) -> Option<String> {
@@ -1332,15 +1359,25 @@ impl App {
 
     pub(crate) fn run_plugin_event_hooks(&mut self, event: &crate::api::schema::EventEnvelope) {
         let event_name = event.event.dot_name();
-        let event_json = serde_json::to_string(event).ok();
-        let context = self.plugin_context_for_event(event, event_name);
+        if !crate::api::schema::PLUGIN_HOOK_EVENT_KINDS.contains(&event.event) {
+            return;
+        }
         let plugins = self
             .state
             .installed_plugins
             .values()
-            .filter(|plugin| plugin.enabled && plugin_manifest_available(plugin))
+            .filter(|plugin| {
+                plugin.enabled
+                    && plugin_manifest_available(plugin)
+                    && plugin.events.iter().any(|hook| hook.on == event_name)
+            })
             .cloned()
             .collect::<Vec<_>>();
+        if plugins.is_empty() {
+            return;
+        }
+        let event_json = serde_json::to_string(event).ok();
+        let context = self.plugin_context_for_event(event, event_name);
         for plugin in plugins {
             for hook in plugin.events.clone() {
                 if hook.on != event_name {
@@ -2004,6 +2041,16 @@ fn plugin_manifest_available(plugin: &InstalledPluginInfo) -> bool {
     })
 }
 
+fn plugin_pane_protected_env_key(key: &str) -> bool {
+    matches!(
+        key,
+        "HERDR_PLUGIN_ID"
+            | "HERDR_PLUGIN_ENTRYPOINT_ID"
+            | "HERDR_PLUGIN_CONTEXT_JSON"
+            | "HERDR_BIN_PATH"
+    )
+}
+
 fn manifest_action_info(plugin_id: &str, action: &PluginManifestAction) -> PluginActionInfo {
     PluginActionInfo {
         plugin_id: plugin_id.to_string(),
@@ -2405,7 +2452,7 @@ platforms = ["linux", "macos"]
 [[panes]]
 id = "board"
 title = "Plugin Board"
-command = ["sh", "-c", "printf '%s\n%s\n%s\n%s\n%s\n' \"$PWD\" \"$HERDR_PLUGIN_ENTRYPOINT_ID\" \"$HERDR_WORKSPACE_ID\" \"$HERDR_PANE_ID\" \"$HERDR_PLUGIN_CONTEXT_JSON\" > {}"]
+command = ["sh", "-c", "printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \"$PWD\" \"$HERDR_PLUGIN_ID\" \"$HERDR_PLUGIN_ENTRYPOINT_ID\" \"$HERDR_WORKSPACE_ID\" \"$HERDR_PANE_ID\" \"$HERDR_BIN_PATH\" \"$HERDR_PLUGIN_CONTEXT_JSON\" > {}"]
 "#,
                 capture.display()
             ),
@@ -2423,7 +2470,21 @@ command = ["sh", "-c", "printf '%s\n%s\n%s\n%s\n%s\n' \"$PWD\" \"$HERDR_PLUGIN_E
                 direction: None,
                 cwd: None,
                 focus: true,
-                env: std::collections::HashMap::new(),
+                env: std::collections::HashMap::from([
+                    ("HERDR_PLUGIN_ID".to_string(), "spoofed-plugin".to_string()),
+                    (
+                        "HERDR_PLUGIN_ENTRYPOINT_ID".to_string(),
+                        "spoofed-entrypoint".to_string(),
+                    ),
+                    (
+                        "HERDR_PLUGIN_CONTEXT_JSON".to_string(),
+                        "{\"spoofed\":true}".to_string(),
+                    ),
+                    (
+                        "HERDR_BIN_PATH".to_string(),
+                        "/tmp/spoofed-herdr".to_string(),
+                    ),
+                ]),
             }),
         });
         let ResponseResult::PluginPaneOpened { plugin_pane } = response_result(&open) else {
@@ -2444,9 +2505,19 @@ command = ["sh", "-c", "printf '%s\n%s\n%s\n%s\n%s\n' \"$PWD\" \"$HERDR_PLUGIN_E
         let text = std::fs::read_to_string(&capture).expect("plugin pane command should write env");
         let mut lines = text.lines();
         assert_eq!(lines.next(), Some(root.display().to_string().as_str()));
+        assert_eq!(lines.next(), Some("example.pane"));
         assert_eq!(lines.next(), Some("board"));
         assert_eq!(lines.next(), Some(plugin_pane.pane.workspace_id.as_str()));
         assert_eq!(lines.next(), Some(plugin_pane.pane.pane_id.as_str()));
+        let bin_path = lines.next().expect("bin path");
+        assert_ne!(bin_path, "/tmp/spoofed-herdr");
+        assert_eq!(
+            bin_path,
+            std::env::current_exe()
+                .expect("current exe should resolve")
+                .display()
+                .to_string()
+        );
         let context: PluginInvocationContext =
             serde_json::from_str(lines.next().expect("context json")).unwrap();
         assert_eq!(
@@ -2738,6 +2809,28 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
         assert_eq!(finished.exit_code, Some(0));
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn current_plugin_context_includes_selected_text_for_focused_pane() {
+        let mut app = test_app();
+        let workspace = crate::workspace::Workspace::test_new("plugin-selection");
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace.terminal_id(pane_id).cloned().unwrap();
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = crate::app::Mode::Terminal;
+        app.terminal_runtimes.insert(
+            terminal_id,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"hello plugin\n"),
+        );
+        app.state.selection = Some(crate::selection::Selection::range(pane_id, 0, 0, 4, None));
+
+        let context = app.current_plugin_context("selection-test");
+
+        assert_eq!(context.selected_text.as_deref(), Some("hello"));
     }
 
     #[cfg(unix)]
@@ -3297,6 +3390,30 @@ command = ["sh", "-c", "echo ok"]
                 .any(|w| w.contains("pane.output_changed")),
             "expected warning for unemitted output-change hook, got: {:?}",
             plugin.warnings
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn output_changed_event_hooks_do_not_run_even_if_event_is_emitted() {
+        let mut app = test_app();
+        let root = unique_temp_path("plugin-output-hook");
+        write_manifest_with_bad_event(&root);
+        link_manifest(&mut app, &root);
+
+        app.run_plugin_event_hooks(&crate::api::schema::EventEnvelope {
+            event: crate::api::schema::EventKind::PaneOutputChanged,
+            data: crate::api::schema::EventData::PaneOutputChanged {
+                pane_id: "w1-1".into(),
+                workspace_id: "w1".into(),
+                revision: 1,
+            },
+        });
+
+        assert!(
+            app.state.plugin_command_logs.is_empty(),
+            "pane.output_changed hooks should be warning-only until hook semantics exist"
         );
 
         let _ = std::fs::remove_dir_all(root);
