@@ -1368,31 +1368,46 @@ impl HeadlessServer {
         true
     }
 
-    fn observe_terminal_client(&mut self, client_id: u64, target: String) -> bool {
+    fn resolve_terminal_session_target(
+        &mut self,
+        client_id: u64,
+        target: &str,
+        action: &str,
+    ) -> Option<String> {
         if !self.client_is_pending_terminal_mode(client_id) {
             self.send_to_client(
                 client_id,
                 ServerMessage::ServerShutdown {
                     reason: Some(
-                        "terminal session observe failed: connection is not pending terminal session"
-                            .to_owned(),
+                        format!(
+                            "terminal session {action} failed: connection is not pending terminal session"
+                        ),
                     ),
                 },
             );
             self.remove_client_and_resize_if_needed(client_id);
-            return false;
+            return None;
         }
 
-        let Some(terminal_id) = self.resolve_terminal_target_id_string(&target) else {
+        let Some(terminal_id) = self.resolve_terminal_target_id_string(target) else {
             self.send_to_client(
                 client_id,
                 ServerMessage::ServerShutdown {
                     reason: Some(format!(
-                        "terminal session observe failed: terminal target {target} not found"
+                        "terminal session {action} failed: terminal target {target} not found"
                     )),
                 },
             );
             self.remove_client_and_resize_if_needed(client_id);
+            return None;
+        };
+
+        Some(terminal_id)
+    }
+
+    fn observe_terminal_client(&mut self, client_id: u64, target: String) -> bool {
+        let Some(terminal_id) = self.resolve_terminal_session_target(client_id, &target, "observe")
+        else {
             return false;
         };
 
@@ -1414,6 +1429,15 @@ impl HeadlessServer {
 
         info!(client_id, cols, rows, terminal_id = %terminal_id, "terminal observe client connected");
         true
+    }
+
+    fn control_terminal_client(&mut self, client_id: u64, target: String, takeover: bool) -> bool {
+        let Some(terminal_id) = self.resolve_terminal_session_target(client_id, &target, "control")
+        else {
+            return false;
+        };
+
+        self.attach_terminal_client(client_id, terminal_id, takeover)
     }
 
     fn handle_terminal_attach_scroll(
@@ -2146,6 +2170,23 @@ impl HeadlessServer {
         }
     }
 
+    fn send_terminal_stream_detach_shutdown(&mut self, client_id: u64) {
+        if matches!(
+            self.clients.get(&client_id).map(|client| &client.mode),
+            Some(
+                ClientConnectionMode::TerminalAttach { .. }
+                    | ClientConnectionMode::TerminalObserve { .. }
+            )
+        ) {
+            self.send_to_client(
+                client_id,
+                ServerMessage::ServerShutdown {
+                    reason: Some("detached".to_owned()),
+                },
+            );
+        }
+    }
+
     #[cfg(unix)]
     fn disconnect_all_clients_for_handoff(&mut self) {
         let client_ids = self.clients.keys().copied().collect::<Vec<_>>();
@@ -2405,6 +2446,11 @@ impl HeadlessServer {
             ServerEvent::ClientObserveTerminal { client_id, target } => {
                 self.observe_terminal_client(client_id, target)
             }
+            ServerEvent::ClientControlTerminal {
+                client_id,
+                target,
+                takeover,
+            } => self.control_terminal_client(client_id, target, takeover),
             ServerEvent::ClientAttachScroll {
                 client_id,
                 source,
@@ -2571,6 +2617,7 @@ impl HeadlessServer {
             }
             ServerEvent::ClientDetach { client_id } => {
                 info!(client_id, "client detached");
+                self.send_terminal_stream_detach_shutdown(client_id);
                 self.remove_client_and_resize_if_needed(client_id);
                 true
             }
@@ -4536,7 +4583,14 @@ next_tab = ""
     }
 
     fn connect_pending_terminal_client(server: &mut HeadlessServer, client_id: u64) {
-        let (writer, _control_rx, _render_rx) = test_client_writer();
+        let _control_rx = connect_pending_terminal_client_with_control_rx(server, client_id);
+    }
+
+    fn connect_pending_terminal_client_with_control_rx(
+        server: &mut HeadlessServer,
+        client_id: u64,
+    ) -> std::sync::mpsc::Receiver<Vec<u8>> {
+        let (writer, control_rx, _render_rx) = test_client_writer();
         assert!(server.handle_server_event(ServerEvent::ClientConnected {
             client_id,
             cols: 100,
@@ -4548,6 +4602,7 @@ next_tab = ""
             direct_attach_requested: true,
             writer,
         }));
+        control_rx
     }
 
     #[test]
@@ -4608,6 +4663,156 @@ next_tab = ""
                 Some(ClientConnectionMode::TerminalObserve { terminal_id: observed })
                     if observed == &terminal_id.to_string()
             ));
+        });
+    }
+
+    #[test]
+    fn terminal_control_resolves_public_pane_id_and_takes_ownership() {
+        with_terminal_session_test_server(
+            |server, terminal_id, terminal_id_string, public_pane_id| {
+                connect_pending_terminal_client(server, 7);
+                assert!(
+                    server.handle_server_event(ServerEvent::ClientControlTerminal {
+                        client_id: 7,
+                        target: public_pane_id,
+                        takeover: false,
+                    })
+                );
+
+                assert!(matches!(
+                    server.clients.get(&7).map(|client| &client.mode),
+                    Some(ClientConnectionMode::TerminalAttach { terminal_id: attached })
+                        if attached == &terminal_id_string
+                ));
+                assert_eq!(
+                    server.terminal_attach_owners.get(&terminal_id_string),
+                    Some(&7)
+                );
+                assert!(server
+                    .app
+                    .state
+                    .direct_attach_resize_locks
+                    .contains(&terminal_id));
+            },
+        );
+    }
+
+    #[test]
+    fn terminal_control_rejects_second_controller_without_takeover() {
+        with_terminal_session_test_server(|server, _terminal_id, terminal_id_string, _| {
+            connect_pending_terminal_client(server, 7);
+            assert!(
+                server.handle_server_event(ServerEvent::ClientControlTerminal {
+                    client_id: 7,
+                    target: terminal_id_string.clone(),
+                    takeover: false,
+                })
+            );
+
+            connect_pending_terminal_client(server, 8);
+            assert!(
+                !server.handle_server_event(ServerEvent::ClientControlTerminal {
+                    client_id: 8,
+                    target: terminal_id_string.clone(),
+                    takeover: false,
+                })
+            );
+
+            assert!(server.clients.contains_key(&7));
+            assert!(!server.clients.contains_key(&8));
+            assert_eq!(
+                server.terminal_attach_owners.get(&terminal_id_string),
+                Some(&7)
+            );
+        });
+    }
+
+    #[test]
+    fn terminal_control_takeover_replaces_existing_controller() {
+        with_terminal_session_test_server(|server, _terminal_id, terminal_id_string, _| {
+            connect_pending_terminal_client(server, 7);
+            assert!(
+                server.handle_server_event(ServerEvent::ClientControlTerminal {
+                    client_id: 7,
+                    target: terminal_id_string.clone(),
+                    takeover: false,
+                })
+            );
+
+            connect_pending_terminal_client(server, 8);
+            assert!(
+                server.handle_server_event(ServerEvent::ClientControlTerminal {
+                    client_id: 8,
+                    target: terminal_id_string.clone(),
+                    takeover: true,
+                })
+            );
+
+            assert!(!server.clients.contains_key(&7));
+            assert!(server.clients.contains_key(&8));
+            assert_eq!(
+                server.terminal_attach_owners.get(&terminal_id_string),
+                Some(&8)
+            );
+        });
+    }
+
+    #[test]
+    fn terminal_observe_can_coexist_with_terminal_control() {
+        with_terminal_session_test_server(|server, _terminal_id, terminal_id_string, _| {
+            connect_pending_terminal_client(server, 7);
+            assert!(
+                server.handle_server_event(ServerEvent::ClientControlTerminal {
+                    client_id: 7,
+                    target: terminal_id_string.clone(),
+                    takeover: false,
+                })
+            );
+
+            connect_pending_terminal_client(server, 8);
+            assert!(
+                server.handle_server_event(ServerEvent::ClientObserveTerminal {
+                    client_id: 8,
+                    target: terminal_id_string.clone(),
+                })
+            );
+
+            assert_eq!(
+                server.terminal_attach_owners.get(&terminal_id_string),
+                Some(&7)
+            );
+            assert!(matches!(
+                server.clients.get(&8).map(|client| &client.mode),
+                Some(ClientConnectionMode::TerminalObserve { terminal_id })
+                    if terminal_id == &terminal_id_string
+            ));
+            assert_eq!(
+                terminal_stream_client_ids(&server.clients, &terminal_id_string).len(),
+                2
+            );
+        });
+    }
+
+    #[test]
+    fn terminal_control_detach_sends_shutdown_before_removal() {
+        with_terminal_session_test_server(|server, _terminal_id, terminal_id_string, _| {
+            let control_rx = connect_pending_terminal_client_with_control_rx(server, 7);
+            assert!(
+                server.handle_server_event(ServerEvent::ClientControlTerminal {
+                    client_id: 7,
+                    target: terminal_id_string.clone(),
+                    takeover: false,
+                })
+            );
+
+            assert!(server.handle_server_event(ServerEvent::ClientDetach { client_id: 7 }));
+
+            assert!(!server.clients.contains_key(&7));
+            assert!(!server
+                .terminal_attach_owners
+                .contains_key(&terminal_id_string));
+            let reason = read_server_shutdown_reason(control_rx.recv().expect("shutdown message"));
+            assert_eq!(reason, Some("detached".to_owned()));
         });
     }
 

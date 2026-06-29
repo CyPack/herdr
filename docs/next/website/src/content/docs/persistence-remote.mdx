@@ -133,6 +133,18 @@ bytes, then a `terminal.closed` record when the server closes the stream.
 Multiple observers can watch the same terminal without taking input, resize,
 scroll, or takeover ownership.
 
+For an interactive bridge, use a writable terminal session controller:
+
+```bash
+herdr terminal session control w1:p1 --takeover --cols 120 --rows 40
+```
+
+Control mode prints the same newline-delimited frame records and reads
+newline-delimited JSON commands on stdin. `terminal.input` sends text or
+base64 bytes, `terminal.resize` changes the controller viewport,
+`terminal.scroll` scrolls the attached viewport, and `terminal.release` closes
+the controller. Only one controller owns input and resize at a time.
+
 ## Single-process escape hatch
 
 Use `--no-session` to run Herdr without the background server/client split:

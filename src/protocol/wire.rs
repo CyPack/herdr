@@ -387,6 +387,14 @@ pub enum ClientMessage {
         /// Pane, terminal, or agent target to observe.
         target: String,
     },
+
+    /// Switch this connection into writable terminal control mode.
+    ControlTerminal {
+        /// Pane, terminal, or agent target to control.
+        target: String,
+        /// Replace an existing writable controller for this terminal.
+        takeover: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1005,6 +1013,13 @@ mod tests {
             }),
             8
         );
+        assert_eq!(
+            tag(&ClientMessage::ControlTerminal {
+                target: "w1:p1".to_owned(),
+                takeover: false,
+            }),
+            9
+        );
     }
 
     #[test]
@@ -1136,6 +1151,18 @@ mod tests {
     fn client_observe_terminal_roundtrip() {
         let msg = ClientMessage::ObserveTerminal {
             target: "w1:p1".to_owned(),
+        };
+        let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+        let (decoded, _): (ClientMessage, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn client_control_terminal_roundtrip() {
+        let msg = ClientMessage::ControlTerminal {
+            target: "w1:p1".to_owned(),
+            takeover: true,
         };
         let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
         let (decoded, _): (ClientMessage, _) =

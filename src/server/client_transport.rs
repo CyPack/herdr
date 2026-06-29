@@ -314,6 +314,12 @@ pub(crate) enum ServerEvent {
     },
     /// A client requested read-only observation of one terminal.
     ClientObserveTerminal { client_id: u64, target: String },
+    /// A client requested writable control of one terminal.
+    ClientControlTerminal {
+        client_id: u64,
+        target: String,
+        takeover: bool,
+    },
     /// A direct terminal attach client requested scrollback movement.
     ClientAttachScroll {
         client_id: u64,
@@ -672,6 +678,13 @@ fn client_read_loop(
             }
             ClientMessage::ObserveTerminal { target } => {
                 ServerEvent::ClientObserveTerminal { client_id, target }
+            }
+            ClientMessage::ControlTerminal { target, takeover } => {
+                ServerEvent::ClientControlTerminal {
+                    client_id,
+                    target,
+                    takeover,
+                }
             }
             ClientMessage::ClipboardImage { extension, data } => {
                 if data.len() > MAX_CLIPBOARD_IMAGE_PAYLOAD {
