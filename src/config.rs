@@ -68,6 +68,7 @@ impl Config {
             .chain(self.remote_image_paste_key().err())
             .chain(self.ui.sound.diagnostics())
             .chain(self.invalid_sidebar_bounds_diagnostic())
+            .chain(self.projects.diagnostics())
             .collect()
     }
 
@@ -315,5 +316,26 @@ command = "echo one"
 
         let drawn: Config = toml::from_str("[ui]\nhost_cursor = 'drawn'\n").unwrap();
         assert_eq!(drawn.ui.host_cursor, HostCursorModeConfig::Drawn);
+    }
+
+    #[test]
+    fn collect_diagnostics_includes_projects_warnings() {
+        let config: Config = toml::from_str(
+            r#"
+[projects]
+pinned = ["/abs/ok", "relative/bad", ""]
+"#,
+        )
+        .unwrap();
+
+        let diagnostics = config.collect_diagnostics();
+        assert!(
+            diagnostics.iter().any(|d| d.contains("relative/bad")),
+            "relative entry should surface in collect_diagnostics: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics.iter().any(|d| d.contains("blank")),
+            "blank entry should surface in collect_diagnostics: {diagnostics:?}"
+        );
     }
 }

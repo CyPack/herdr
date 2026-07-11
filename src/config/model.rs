@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, num::NonZeroUsize};
+use std::{collections::BTreeSet, num::NonZeroUsize, path::Path};
 
 use crossterm::event::KeyModifiers;
 use serde::{de, Deserialize, Deserializer, Serialize};
@@ -284,6 +284,49 @@ pub fn validated_sidebar_bounds(min: u16, max: u16) -> Option<(u16, u16)> {
     }
 }
 
+/// Projects sidebar tab configuration.
+///
+/// Holds the directories pinned to the Projects tab. Entries are user-authored,
+/// so blank and non-absolute values are tolerated instead of failing the whole
+/// config load: they are dropped from the usable set and reported by
+/// [`ProjectsConfig::diagnostics`]. The usable-path accessor is added with the
+/// Projects render that consumes it.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ProjectsConfig {
+    /// Absolute (or `~`-rooted) project directories pinned to the Projects tab.
+    pub pinned: Vec<String>,
+}
+
+impl ProjectsConfig {
+    /// Human-readable diagnostics for pinned entries that are unusable (blank,
+    /// or a non-absolute path). Usable entries produce no diagnostic.
+    pub fn diagnostics(&self) -> Vec<String> {
+        self.pinned
+            .iter()
+            .filter_map(|raw| {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    Some(format!("projects.pinned entry {raw:?} is blank; ignoring"))
+                } else if !pinned_entry_is_usable(trimmed) {
+                    Some(format!(
+                        "projects.pinned entry {trimmed:?} is not an absolute path; ignoring"
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+}
+
+/// A pinned entry is usable when it is non-blank and points at an absolute or
+/// `~`-rooted location. `~` is accepted because Herdr config paths conventionally
+/// use it (e.g. `worktrees.directory` defaults to `~/.herdr/worktrees`).
+fn pinned_entry_is_usable(trimmed: &str) -> bool {
+    !trimmed.is_empty() && (Path::new(trimmed).is_absolute() || trimmed.starts_with('~'))
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -298,6 +341,7 @@ pub struct Config {
     pub advanced: AdvancedConfig,
     pub experimental: ExperimentalConfig,
     pub remote: RemoteConfig,
+    pub projects: ProjectsConfig,
 }
 
 #[derive(Debug)]
@@ -1702,5 +1746,84 @@ scrollback_lines = 12345
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.advanced.scrollback_limit_bytes, 12345);
+    }
+
+    #[test]
+    fn projects_pinned_defaults_empty() {
+        let config = Config::default();
+        assert!(config.projects.pinned.is_empty());
+        assert!(config.projects.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn projects_pinned_parses_absolute_paths() {
+        let toml = r#"
+[projects]
+pinned = ["/home/a/projects/x", "/home/a/work/y"]
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.projects.pinned,
+            vec![
+                "/home/a/projects/x".to_string(),
+                "/home/a/work/y".to_string(),
+            ]
+        );
+        assert!(config.projects.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn projects_pinned_accepts_tilde_rooted_entries() {
+        let toml = r#"
+[projects]
+pinned = ["~/projects/herdr"]
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        // `~`-rooted entries are treated as usable (no diagnostic).
+        assert!(config.projects.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn projects_pinned_blank_entries_are_reported() {
+        let toml = r#"
+[projects]
+pinned = ["/home/a/x", "", "   ", "/home/a/y"]
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        let diagnostics = config.projects.diagnostics();
+        assert_eq!(diagnostics.len(), 2, "two blank entries should warn");
+        assert!(
+            diagnostics.iter().all(|d| d.contains("blank")),
+            "blank entries should be reported as blank: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn projects_pinned_relative_entries_are_reported() {
+        let toml = r#"
+[projects]
+pinned = ["/home/a/abs", "relative/dir", "./also/relative"]
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        let diagnostics = config.projects.diagnostics();
+        assert_eq!(diagnostics.len(), 2);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| d.contains("not an absolute path")),
+            "relative entries should be reported: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn projects_pinned_trims_before_validation() {
+        let toml = r#"
+[projects]
+pinned = ["  /home/a/x  "]
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        // Surrounding whitespace is trimmed before the absolute-path check,
+        // so this entry is usable and produces no diagnostic.
+        assert!(config.projects.diagnostics().is_empty());
     }
 }

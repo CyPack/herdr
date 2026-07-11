@@ -9,6 +9,7 @@ const KNOWN_TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
     "experimental",
     "keys",
     "onboarding",
+    "projects",
     "remote",
     "session",
     "terminal",
@@ -304,6 +305,14 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
         &mut diagnostics,
         &mut invalid_sections,
         |section| config.remote = section,
+    );
+    load_live_section(
+        table,
+        "projects",
+        "projects config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.projects = section,
     );
 
     Ok(LoadedConfig {
@@ -764,5 +773,48 @@ mouse_capture = false
         let (updated, removed) = remove_keybinding_config_sections(content);
         assert!(!removed);
         assert_eq!(updated, content);
+    }
+
+    #[test]
+    fn load_live_config_recognizes_projects_section() {
+        let loaded = load_live_config_from_str(
+            r#"
+[projects]
+pinned = ["/home/a/x"]
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(loaded.config.projects.pinned, vec!["/home/a/x".to_string()]);
+        assert!(
+            loaded.diagnostics.is_empty(),
+            "known [projects] section must not warn: {:?}",
+            loaded.diagnostics
+        );
+        assert!(loaded.invalid_sections.is_empty());
+    }
+
+    #[test]
+    fn load_live_config_isolates_invalid_projects_section() {
+        let loaded = load_live_config_from_str(
+            r#"
+[projects]
+pinned = 5
+
+[ui]
+mouse_capture = false
+"#,
+        )
+        .unwrap();
+
+        // A malformed [projects] is isolated: other sections still apply,
+        // the bad section is recorded, and nothing panics.
+        assert!(loaded.invalid_sections.contains(&"projects".to_string()));
+        assert!(!loaded.config.ui.mouse_capture);
+        assert!(
+            loaded.diagnostics.iter().any(|d| d.contains("projects")),
+            "invalid projects section should produce a diagnostic: {:?}",
+            loaded.diagnostics
+        );
     }
 }
