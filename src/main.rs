@@ -60,6 +60,7 @@ mod app;
 mod build_info;
 #[cfg(not(windows))]
 mod checksum;
+mod claude_sessions;
 mod cli;
 mod client;
 mod config;
