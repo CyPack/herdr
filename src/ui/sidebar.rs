@@ -9,6 +9,7 @@ use ratatui::{
 use super::scrollbar::{render_scrollbar, should_show_scrollbar};
 use super::status::{agent_icon, state_dot, state_label, state_label_color};
 use super::text::{display_width, display_width_u16, truncate_end};
+use super::widgets::panel_contrast_fg;
 use crate::app::state::{AgentPanelSort, Palette};
 use crate::app::{AppState, Mode};
 use crate::detect::AgentState;
@@ -418,6 +419,37 @@ pub(crate) fn workspace_list_rect(area: Rect, split_ratio: f32) -> Rect {
     ws_area
 }
 
+/// Lay out the Spaces/Projects/Files header tabs across the top row of the
+/// sidebar's workspace section. Returns one rect per `SidebarTab::ALL` entry,
+/// in order: the tabs share the row width left-to-right, and any remainder goes
+/// to the last tab. A row too narrow for every tab yields zero-width trailing
+/// rects (rendering skips those) instead of panicking; a zero-size area yields
+/// all-default rects.
+pub(crate) fn compute_sidebar_tab_areas(ws_area: Rect) -> Vec<Rect> {
+    let tab_count = crate::app::state::SidebarTab::ALL.len();
+    let mut rects = vec![Rect::default(); tab_count];
+    if ws_area.width == 0 || ws_area.height == 0 {
+        return rects;
+    }
+
+    let row_y = ws_area.y;
+    let right = ws_area.x + ws_area.width;
+    let mut x = ws_area.x;
+    for (i, rect) in rects.iter_mut().enumerate() {
+        if x >= right {
+            break;
+        }
+        let remaining_tabs = (tab_count - i) as u16;
+        let remaining_width = right - x;
+        let width = (remaining_width / remaining_tabs)
+            .max(1)
+            .min(remaining_width);
+        *rect = Rect::new(x, row_y, width, 1);
+        x = x.saturating_add(width);
+    }
+    rects
+}
+
 pub(crate) fn workspace_list_body_rect(area: Rect, has_scrollbar: bool) -> Rect {
     if area.width == 0 || area.height <= WORKSPACE_SECTION_HEADER_ROWS {
         return Rect::default();
@@ -802,6 +834,48 @@ pub(super) fn render_sidebar(
     render_sidebar_toggle(app, frame, area, false, p);
 }
 
+/// Render the Spaces/Projects/Files header tabs on the top row of the sidebar
+/// workspace section. Reads `app.view.sidebar_tab_hit_areas` (computed in
+/// `compute_view`) and highlights the active tab. Zero-width tabs (too-narrow
+/// sidebar) are skipped.
+fn render_sidebar_tabs(app: &AppState, frame: &mut Frame, ws_area: Rect) {
+    if ws_area.width == 0 || ws_area.height == 0 {
+        return;
+    }
+    let p = &app.palette;
+    // Paint the header row background first so gaps between tabs stay clean.
+    frame.render_widget(
+        Paragraph::new(" ".repeat(ws_area.width as usize)).style(Style::default().bg(p.panel_bg)),
+        Rect::new(ws_area.x, ws_area.y, ws_area.width, 1),
+    );
+
+    for (i, tab) in crate::app::state::SidebarTab::ALL.iter().enumerate() {
+        let Some(rect) = app.view.sidebar_tab_hit_areas.get(i).copied() else {
+            break;
+        };
+        if rect.width == 0 {
+            continue;
+        }
+        let active = *tab == app.sidebar_tab;
+        let style = if active {
+            Style::default()
+                .fg(panel_contrast_fg(p))
+                .bg(p.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(p.overlay1).bg(p.surface0)
+        };
+        let width = rect.width as usize;
+        let label = tab.label();
+        let text = if display_width(label) > width {
+            truncate_end(label, width)
+        } else {
+            format!("{label:^width$}")
+        };
+        frame.render_widget(Paragraph::new(text).style(style), rect);
+    }
+}
+
 fn render_workspace_list(
     app: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
@@ -825,14 +899,25 @@ fn render_workspace_list(
     };
 
     let list_bottom = area.y + area.height.saturating_sub(1);
-    if area.height > 0 {
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![Span::styled(
-                " spaces",
-                Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
-            )])),
-            Rect::new(area.x, area.y, area.width, 1),
-        );
+    render_sidebar_tabs(app, frame, area);
+
+    // Projects/Files own their content; the workspace list is the Spaces tab.
+    // Until those views land (Task #4/#7) show a placeholder and stop here so no
+    // workspace-specific chrome (cards, scrollbar, new/menu) is drawn.
+    if app.sidebar_tab != crate::app::state::SidebarTab::Spaces {
+        let body = workspace_list_body_rect(area, false);
+        if body.width > 0 && body.height > 0 {
+            let label = match app.sidebar_tab {
+                crate::app::state::SidebarTab::Projects => "  (projects — soon)",
+                crate::app::state::SidebarTab::Files => "  (files — soon)",
+                crate::app::state::SidebarTab::Spaces => "",
+            };
+            frame.render_widget(
+                Paragraph::new(Span::styled(label, Style::default().fg(p.overlay0))),
+                Rect::new(body.x, body.y, body.width, 1),
+            );
+        }
+        return;
     }
 
     let metrics = workspace_list_scroll_metrics(app, area);
@@ -1325,6 +1410,161 @@ mod tests {
         assert_eq!(
             buffer[(detail_area.x + 2, first_detail_y)].style().fg,
             Some(app.palette.red)
+        );
+    }
+
+    // ---- Sidebar header tabs (Spaces | Projects | Files) — Task #3 ----
+
+    #[test]
+    fn sidebar_tab_defaults_to_spaces() {
+        use crate::app::state::{AppState, SidebarTab};
+        assert_eq!(SidebarTab::default(), SidebarTab::Spaces);
+        assert_eq!(AppState::test_new().sidebar_tab, SidebarTab::Spaces);
+    }
+
+    #[test]
+    fn compute_sidebar_tab_areas_lays_out_three_tabs_side_by_side() {
+        let ws_area = Rect::new(0, 0, 24, 10);
+        let rects = compute_sidebar_tab_areas(ws_area);
+        assert_eq!(rects.len(), 3, "one rect per Spaces/Projects/Files");
+        for r in &rects {
+            assert!(
+                r.width > 0,
+                "each tab gets width on a 24-wide sidebar: {rects:?}"
+            );
+            assert_eq!(r.height, 1, "tabs live on a single header row");
+            assert_eq!(r.y, ws_area.y, "tabs sit on the top row of the section");
+        }
+        // Contiguous, left-to-right, spanning the full width.
+        assert_eq!(rects[0].x, ws_area.x);
+        assert_eq!(rects[1].x, rects[0].x + rects[0].width);
+        assert_eq!(rects[2].x, rects[1].x + rects[1].width);
+        assert_eq!(rects[2].x + rects[2].width, ws_area.x + ws_area.width);
+    }
+
+    #[test]
+    fn compute_sidebar_tab_areas_does_not_panic_on_tiny_or_empty_area() {
+        for area in [
+            Rect::new(0, 0, 0, 10),
+            Rect::new(0, 0, 24, 0),
+            Rect::new(0, 0, 2, 10), // too narrow for three tabs
+            Rect::new(0, 0, 1, 1),
+        ] {
+            let rects = compute_sidebar_tab_areas(area);
+            assert_eq!(rects.len(), 3, "always one slot per tab, area={area:?}");
+            for r in &rects {
+                assert!(
+                    r.x + r.width <= area.x + area.width,
+                    "rect {r:?} overflows area {area:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn render_sidebar_tabs_shows_all_three_labels() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.sidebar_tab = crate::app::state::SidebarTab::Projects;
+        let ws_area = Rect::new(0, 0, 24, 10);
+        app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(ws_area);
+
+        let mut terminal = Terminal::new(TestBackend::new(24, 10)).unwrap();
+        terminal
+            .draw(|frame| render_sidebar_tabs(&app, frame, ws_area))
+            .unwrap();
+
+        let row: String = (0..24)
+            .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+            .collect();
+        assert!(row.contains("Spaces"), "row: {row:?}");
+        assert!(row.contains("Projects"), "row: {row:?}");
+        assert!(row.contains("Files"), "row: {row:?}");
+    }
+
+    #[test]
+    fn render_sidebar_tabs_highlights_active_tab_only() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.sidebar_tab = crate::app::state::SidebarTab::Projects;
+        let ws_area = Rect::new(0, 0, 24, 10);
+        app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(ws_area);
+
+        let mut terminal = Terminal::new(TestBackend::new(24, 10)).unwrap();
+        terminal
+            .draw(|frame| render_sidebar_tabs(&app, frame, ws_area))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        let accent = app.palette.accent;
+        let rect_has_accent_bg = |rect: Rect| {
+            (rect.x..rect.x + rect.width).any(|x| buffer[(x, rect.y)].style().bg == Some(accent))
+        };
+        let rects = &app.view.sidebar_tab_hit_areas;
+        assert!(
+            rect_has_accent_bg(rects[1]),
+            "active Projects tab should have accent bg"
+        );
+        assert!(
+            !rect_has_accent_bg(rects[0]),
+            "inactive Spaces tab should not have accent bg"
+        );
+        assert!(
+            !rect_has_accent_bg(rects[2]),
+            "inactive Files tab should not have accent bg"
+        );
+    }
+
+    #[test]
+    fn render_workspace_list_shows_placeholder_for_projects_tab() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.sidebar_tab = crate::app::state::SidebarTab::Projects;
+        app.mouse_capture = false; // skip new/menu chrome for a focused test
+        let area = Rect::new(0, 0, 24, 12);
+        app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
+        // Projects tab means no workspace cards were computed.
+        app.view.workspace_card_areas = Vec::new();
+
+        let runtimes = TerminalRuntimeRegistry::new();
+        let mut terminal = Terminal::new(TestBackend::new(24, 12)).unwrap();
+        terminal
+            .draw(|frame| render_workspace_list(&app, &runtimes, frame, area, false))
+            .unwrap();
+
+        let text: String = (0..12)
+            .flat_map(|y| (0..24).map(move |x| (x, y)))
+            .map(|(x, y)| terminal.backend().buffer()[(x, y)].symbol())
+            .collect();
+        assert!(
+            text.contains("soon"),
+            "projects placeholder expected: {text:?}"
+        );
+    }
+
+    #[test]
+    fn render_workspace_list_renders_workspace_cards_for_spaces_tab() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.sidebar_tab = crate::app::state::SidebarTab::Spaces;
+        app.mouse_capture = false;
+        app.workspaces = vec![Workspace::test_new("myproj")];
+        app.ensure_test_terminals();
+        app.active = Some(0);
+        app.selected = 0;
+        let area = Rect::new(0, 0, 24, 12);
+        app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
+        app.view.workspace_card_areas = compute_workspace_card_areas(&app, area);
+
+        let runtimes = TerminalRuntimeRegistry::new();
+        let mut terminal = Terminal::new(TestBackend::new(24, 12)).unwrap();
+        terminal
+            .draw(|frame| render_workspace_list(&app, &runtimes, frame, area, true))
+            .unwrap();
+
+        let text: String = (0..12)
+            .flat_map(|y| (0..24).map(move |x| (x, y)))
+            .map(|(x, y)| terminal.backend().buffer()[(x, y)].symbol())
+            .collect();
+        assert!(
+            text.contains("myproj"),
+            "spaces tab should render workspace cards: {text:?}"
         );
     }
 

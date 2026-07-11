@@ -727,10 +727,39 @@ pub enum ViewLayout {
     Mobile,
 }
 
+/// Which content the sidebar's top section shows: the workspace list
+/// (`Spaces`, the default and Herdr's core navigation), pinned project chats
+/// (`Projects`), or the file tree (`Files`). Sidebar presentation state that
+/// lives in the TUI/client layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SidebarTab {
+    #[default]
+    Spaces,
+    Projects,
+    Files,
+}
+
+impl SidebarTab {
+    /// All tabs in left-to-right display order.
+    pub const ALL: [SidebarTab; 3] = [SidebarTab::Spaces, SidebarTab::Projects, SidebarTab::Files];
+
+    /// Short header label shown in the tab bar.
+    pub fn label(self) -> &'static str {
+        match self {
+            SidebarTab::Spaces => "Spaces",
+            SidebarTab::Projects => "Projects",
+            SidebarTab::Files => "Files",
+        }
+    }
+}
+
 pub struct ViewState {
     pub layout: ViewLayout,
     pub sidebar_rect: Rect,
     pub workspace_card_areas: Vec<WorkspaceCardArea>,
+    /// Hit areas for the Spaces/Projects/Files header tabs (one per
+    /// `SidebarTab::ALL`, in order). Empty when the sidebar is collapsed.
+    pub sidebar_tab_hit_areas: Vec<Rect>,
     pub tab_bar_rect: Rect,
     pub tab_hit_areas: Vec<Rect>,
     pub tab_scroll_left_hit_area: Rect,
@@ -1363,6 +1392,8 @@ pub struct AppState {
     pub keybind_help: KeybindHelpState,
     pub navigator: NavigatorState,
     pub copy_mode: Option<CopyModeState>,
+    /// Which content the sidebar's top section shows (Spaces/Projects/Files).
+    pub sidebar_tab: SidebarTab,
     pub workspace_scroll: usize,
     pub agent_panel_scroll: usize,
     pub tab_scroll: usize,
@@ -1715,6 +1746,7 @@ impl AppState {
             keybind_help: KeybindHelpState { scroll: 0 },
             navigator: NavigatorState::default(),
             copy_mode: None,
+            sidebar_tab: SidebarTab::Spaces,
             workspace_scroll: 0,
             agent_panel_scroll: 0,
             tab_scroll: 0,
@@ -1724,6 +1756,7 @@ impl AppState {
                 layout: ViewLayout::Desktop,
                 sidebar_rect: Rect::default(),
                 workspace_card_areas: Vec::new(),
+                sidebar_tab_hit_areas: Vec::new(),
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),
                 tab_scroll_left_hit_area: Rect::default(),
