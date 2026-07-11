@@ -196,6 +196,30 @@ impl AppState {
         Rect::new(x, footer.y, width, footer.height)
     }
 
+    /// Handle a left click on a Projects-tab row. Clicking a project header row
+    /// toggles its collapse state; chat and "(no chats)" rows are inert for now
+    /// (Task #5 wires chat rows to `claude --resume`). Hit-tests the same
+    /// `project_row_areas` the render drew.
+    pub(super) fn toggle_projects_row_at(&mut self, col: u16, row: u16) {
+        let hit = self
+            .view
+            .project_row_areas
+            .iter()
+            .find(|area| {
+                row == area.rect.y && col >= area.rect.x && col < area.rect.x + area.rect.width
+            })
+            .map(|area| area.kind);
+
+        if let Some(crate::app::state::ProjectRowKind::Project { proj_idx }) = hit {
+            if let Some(project) = self.projects_sessions.get(proj_idx) {
+                let path = project.path.clone();
+                if !self.collapsed_project_paths.remove(&path) {
+                    self.collapsed_project_paths.insert(path);
+                }
+            }
+        }
+    }
+
     pub(crate) fn global_menu_labels(&self) -> Vec<&'static str> {
         let mut labels = vec!["settings", "keybinds", "reload config"];
         if self.update_available.is_some() {

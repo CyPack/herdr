@@ -576,6 +576,40 @@ pub struct WorkspaceCardArea {
     pub indented: bool,
 }
 
+/// Cached Claude Code chat sessions for one pinned project directory. This is
+/// TUI/client-layer presentation state: the reader ([`crate::claude_sessions`])
+/// fills it on demand, never during render (CLAUDE.md render-purity boundary).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectSessions {
+    /// Expanded, absolute project directory (matches `projects_pinned`).
+    pub path: std::path::PathBuf,
+    /// Chat sessions for this project, newest first (empty is a normal state).
+    pub sessions: Vec<crate::claude_sessions::ClaudeSession>,
+}
+
+/// What a single laid-out row in the Projects tab points at. Rows reference the
+/// `projects_sessions` cache by index (mirroring [`WorkspaceCardArea`], which
+/// stores `ws_idx`) so the pure render and the mouse handler resolve content
+/// and targets from the same source of truth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectRowKind {
+    /// A pinned project header row (collapse/expand chevron + name).
+    Project { proj_idx: usize },
+    /// A chat session row under an expanded project. Task #5 resumes it.
+    Chat { proj_idx: usize, chat_idx: usize },
+    /// The "(no chats)" placeholder under an expanded project with no sessions.
+    Empty { proj_idx: usize },
+}
+
+/// A laid-out Projects-tab row: its screen rect plus what it points at. Computed
+/// by `compute_view` (geometry) and consumed by the pure render and the mouse
+/// hit-testing path, exactly like [`WorkspaceCardArea`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProjectRowArea {
+    pub rect: Rect,
+    pub kind: ProjectRowKind,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeCreateState {
     pub source_workspace_id: String,
@@ -760,6 +794,9 @@ pub struct ViewState {
     /// Hit areas for the Spaces/Projects/Files header tabs (one per
     /// `SidebarTab::ALL`, in order). Empty when the sidebar is collapsed.
     pub sidebar_tab_hit_areas: Vec<Rect>,
+    /// Laid-out rows for the Projects tab (project headers + chat sessions).
+    /// Empty on every non-Projects tab and when the sidebar is collapsed.
+    pub project_row_areas: Vec<ProjectRowArea>,
     pub tab_bar_rect: Rect,
     pub tab_hit_areas: Vec<Rect>,
     pub tab_scroll_left_hit_area: Rect,
@@ -1384,6 +1421,14 @@ pub struct AppState {
     pub worktree_remove: Option<WorktreeRemoveState>,
     pub worktree_directory: std::path::PathBuf,
     pub collapsed_space_keys: std::collections::HashSet<String>,
+    /// Expanded, absolute project directories pinned to the Projects tab, in
+    /// config order (`[projects] pinned` with `~` resolved). TUI/client state.
+    pub projects_pinned: Vec<std::path::PathBuf>,
+    /// Cached chat sessions per pinned project, aligned with `projects_pinned`.
+    /// Filled by `refresh_project_sessions*`; read-only during render.
+    pub projects_sessions: Vec<ProjectSessions>,
+    /// Pinned project paths whose chat list is collapsed in the Projects tab.
+    pub collapsed_project_paths: std::collections::HashSet<std::path::PathBuf>,
     pub request_complete_onboarding: bool,
     pub name_input: String,
     pub name_input_replace_on_type: bool,
@@ -1563,6 +1608,38 @@ impl AppState {
         self.agent_manifest_summaries = crate::detect::manifest::manifest_summaries();
     }
 
+    /// Rebuild the Projects-tab chat cache from `projects_dir` (the
+    /// `.../.claude/projects` root, injected for testability). This is the only
+    /// place the reader touches the filesystem — render/compute must never scan
+    /// the disk. Best-effort: a project with no chats keeps an empty list.
+    pub(crate) fn refresh_project_sessions_in(&mut self, projects_dir: &std::path::Path) {
+        self.projects_sessions = self
+            .projects_pinned
+            .iter()
+            .map(|path| {
+                let path_str = path.to_string_lossy();
+                let sessions =
+                    crate::claude_sessions::read_sessions_for_project(projects_dir, &path_str);
+                ProjectSessions {
+                    path: path.clone(),
+                    sessions,
+                }
+            })
+            .collect();
+    }
+
+    /// Rebuild the Projects-tab chat cache from the real `~/.claude/projects`.
+    /// A no-op (leaves the cache empty) when the home directory is unknown.
+    pub(crate) fn refresh_project_sessions(&mut self) {
+        match crate::claude_sessions::default_claude_projects_dir() {
+            Some(dir) => self.refresh_project_sessions_in(&dir),
+            None => {
+                tracing::debug!("refresh_project_sessions: no claude projects dir; skipping");
+                self.projects_sessions.clear();
+            }
+        }
+    }
+
     pub(crate) fn global_menu_attention_badge_visible(&self) -> bool {
         self.update_available.is_some() || self.integration_updates_available()
     }
@@ -1738,6 +1815,9 @@ impl AppState {
             worktree_remove: None,
             worktree_directory: std::path::PathBuf::from("/tmp/herdr-worktrees"),
             collapsed_space_keys: std::collections::HashSet::new(),
+            projects_pinned: Vec::new(),
+            projects_sessions: Vec::new(),
+            collapsed_project_paths: std::collections::HashSet::new(),
             request_complete_onboarding: false,
             name_input: String::new(),
             name_input_replace_on_type: false,
@@ -1757,6 +1837,7 @@ impl AppState {
                 sidebar_rect: Rect::default(),
                 workspace_card_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),
+                project_row_areas: Vec::new(),
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),
                 tab_scroll_left_hit_area: Rect::default(),
@@ -2257,6 +2338,108 @@ mod tests {
                 "theme should resolve: {name}"
             );
         }
+    }
+
+    // ---- Projects tab cache (refresh_project_sessions*) ----------------------
+
+    /// Isolated fake `.claude/projects` root; never touches the real `~/.claude`.
+    struct FakeProjectsRoot {
+        root: std::path::PathBuf,
+    }
+
+    impl FakeProjectsRoot {
+        fn new(tag: &str) -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "herdr-state-cs-{}-{}-{}",
+                std::process::id(),
+                tag,
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&root).expect("create temp projects root");
+            Self { root }
+        }
+
+        fn write_session(&self, project: &str, session_id: &str, lines: &[&str]) {
+            use std::io::Write as _;
+            let dir = self
+                .root
+                .join(crate::claude_sessions::encode_project_path(project));
+            std::fs::create_dir_all(&dir).expect("create project dir");
+            let path = dir.join(format!("{session_id}.jsonl"));
+            let mut file = std::fs::File::create(&path).expect("create session file");
+            for line in lines {
+                writeln!(file, "{line}").expect("write session line");
+            }
+        }
+    }
+
+    impl Drop for FakeProjectsRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    // P2: a fresh AppState has empty Projects-tab state.
+    #[test]
+    fn test_new_projects_state_is_empty() {
+        let state = AppState::test_new();
+        assert!(state.projects_pinned.is_empty());
+        assert!(state.projects_sessions.is_empty());
+        assert!(state.collapsed_project_paths.is_empty());
+    }
+
+    // P3: refresh reads the reader for each pinned path, aligned and newest-first.
+    #[test]
+    fn refresh_project_sessions_in_populates_cache() {
+        let fake = FakeProjectsRoot::new("populate");
+        fake.write_session(
+            "/home/x/proj",
+            "sess-1",
+            &[r#"{"type":"custom-title","customTitle":"hello"}"#],
+        );
+
+        let mut state = AppState::test_new();
+        state.projects_pinned = vec![std::path::PathBuf::from("/home/x/proj")];
+        state.refresh_project_sessions_in(&fake.root);
+
+        assert_eq!(state.projects_sessions.len(), 1);
+        let project = &state.projects_sessions[0];
+        assert_eq!(project.path, std::path::PathBuf::from("/home/x/proj"));
+        assert_eq!(project.sessions.len(), 1);
+        assert_eq!(project.sessions[0].title, "hello");
+    }
+
+    // P4: refresh with no pinned projects yields an empty cache and never panics.
+    #[test]
+    fn refresh_project_sessions_in_empty_pinned() {
+        let fake = FakeProjectsRoot::new("empty-pinned");
+        let mut state = AppState::test_new();
+        state.refresh_project_sessions_in(&fake.root);
+        assert!(state.projects_sessions.is_empty());
+    }
+
+    // P5: a pinned project with no chats keeps an entry with an empty session list.
+    #[test]
+    fn refresh_project_sessions_in_pinned_without_chats() {
+        let fake = FakeProjectsRoot::new("no-chats");
+        let mut state = AppState::test_new();
+        state.projects_pinned = vec![
+            std::path::PathBuf::from("/home/x/never-opened"),
+            std::path::PathBuf::from("/home/x/also-empty"),
+        ];
+        state.refresh_project_sessions_in(&fake.root);
+
+        assert_eq!(state.projects_sessions.len(), 2);
+        assert_eq!(
+            state.projects_sessions[0].path,
+            std::path::PathBuf::from("/home/x/never-opened")
+        );
+        assert!(state
+            .projects_sessions
+            .iter()
+            .all(|p| p.sessions.is_empty()));
     }
 
     #[test]

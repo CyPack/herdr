@@ -470,6 +470,16 @@ impl App {
         let worktree_directory =
             crate::worktree::expand_tilde_absolute_path(&config.worktrees.directory);
 
+        // Expand each usable `[projects] pinned` entry to an absolute path once,
+        // up front (the reader keys on the absolute path). Blank/relative entries
+        // were already dropped by `pinned_paths`.
+        let projects_pinned: Vec<std::path::PathBuf> = config
+            .projects
+            .pinned_paths()
+            .iter()
+            .map(|entry| crate::worktree::expand_tilde_absolute_path(entry))
+            .collect();
+
         info!(
             pane_scrollback_limit_bytes = config.advanced.scrollback_limit_bytes,
             "using pane scrollback configuration"
@@ -532,6 +542,9 @@ impl App {
             worktree_remove: None,
             worktree_directory,
             collapsed_space_keys,
+            projects_pinned,
+            projects_sessions: Vec::new(),
+            collapsed_project_paths: std::collections::HashSet::new(),
             request_complete_onboarding: false,
             name_input: String::new(),
             name_input_replace_on_type: false,
@@ -560,6 +573,7 @@ impl App {
                 sidebar_rect: Rect::default(),
                 workspace_card_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),
+                project_row_areas: Vec::new(),
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),
                 tab_scroll_left_hit_area: Rect::default(),
@@ -666,6 +680,11 @@ impl App {
             state.workspaces[ws_idx].cached_git_branch =
                 cwd.as_deref().and_then(crate::workspace::git_branch);
         }
+
+        // Prime the Projects-tab chat cache once at startup so the tab has
+        // content on first paint; it is refreshed again whenever the tab is
+        // selected (see the sidebar-tab mouse handler).
+        state.refresh_project_sessions();
 
         // Background auto-update is disabled in monolithic no-session mode
         // and in debug/test builds so local development never mutates the

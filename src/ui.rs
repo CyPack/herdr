@@ -260,6 +260,17 @@ fn compute_view_internal(
             app.sidebar_section_split,
         ))
     };
+    // The Projects tab owns its own row layout. Lay it out here (geometry only)
+    // so render stays pure and the mouse handler hit-tests the same rects.
+    let project_row_areas =
+        if app.sidebar_collapsed || app.sidebar_tab != crate::app::state::SidebarTab::Projects {
+            Vec::new()
+        } else {
+            sidebar::compute_project_row_areas(
+                app,
+                sidebar::workspace_list_rect(sidebar_area, app.sidebar_section_split),
+            )
+        };
 
     let tab_bar_view = app
         .active
@@ -317,6 +328,7 @@ fn compute_view_internal(
         sidebar_rect: sidebar_area,
         workspace_card_areas,
         sidebar_tab_hit_areas,
+        project_row_areas,
         tab_bar_rect,
         tab_hit_areas: tab_bar_view.tab_hit_areas,
         tab_scroll_left_hit_area: tab_bar_view.scroll_left_hit_area,
@@ -389,6 +401,7 @@ fn compute_mobile_view(
         sidebar_rect: Rect::default(),
         workspace_card_areas: Vec::new(),
         sidebar_tab_hit_areas: Vec::new(),
+        project_row_areas: Vec::new(),
         tab_bar_rect: Rect::default(),
         tab_hit_areas: Vec::new(),
         tab_scroll_left_hit_area: Rect::default(),

@@ -14,11 +14,6 @@
 //! This module is TUI/client-layer pure data (CLAUDE.md boundary): no PTYs, no
 //! runtime state, no network. It never panics on malformed input.
 
-// The Projects sidebar tab wires this reader in during MVP-4/MVP-5. Until that
-// lands, its public API is unreferenced from the binary crate, so `dead_code`
-// is silenced here; this attribute is removed once the tab consumes the reader.
-#![allow(dead_code)]
-
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};

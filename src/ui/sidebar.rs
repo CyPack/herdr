@@ -10,7 +10,7 @@ use super::scrollbar::{render_scrollbar, should_show_scrollbar};
 use super::status::{agent_icon, state_dot, state_label, state_label_color};
 use super::text::{display_width, display_width_u16, truncate_end};
 use super::widgets::panel_contrast_fg;
-use crate::app::state::{AgentPanelSort, Palette};
+use crate::app::state::{AgentPanelSort, Palette, ProjectRowArea, ProjectRowKind};
 use crate::app::{AppState, Mode};
 use crate::detect::AgentState;
 use crate::terminal::TerminalRuntimeRegistry;
@@ -902,22 +902,26 @@ fn render_workspace_list(
     render_sidebar_tabs(app, frame, area);
 
     // Projects/Files own their content; the workspace list is the Spaces tab.
-    // Until those views land (Task #4/#7) show a placeholder and stop here so no
-    // workspace-specific chrome (cards, scrollbar, new/menu) is drawn.
-    if app.sidebar_tab != crate::app::state::SidebarTab::Spaces {
-        let body = workspace_list_body_rect(area, false);
-        if body.width > 0 && body.height > 0 {
-            let label = match app.sidebar_tab {
-                crate::app::state::SidebarTab::Projects => "  (projects — soon)",
-                crate::app::state::SidebarTab::Files => "  (files — soon)",
-                crate::app::state::SidebarTab::Spaces => "",
-            };
-            frame.render_widget(
-                Paragraph::new(Span::styled(label, Style::default().fg(p.overlay0))),
-                Rect::new(body.x, body.y, body.width, 1),
-            );
+    match app.sidebar_tab {
+        crate::app::state::SidebarTab::Spaces => {}
+        crate::app::state::SidebarTab::Projects => {
+            render_projects_list(app, frame, area);
+            return;
         }
-        return;
+        crate::app::state::SidebarTab::Files => {
+            // The Files tab lands in Task #7; show a placeholder until then.
+            let body = workspace_list_body_rect(area, false);
+            if body.width > 0 && body.height > 0 {
+                frame.render_widget(
+                    Paragraph::new(Span::styled(
+                        "  (files — soon)",
+                        Style::default().fg(p.overlay0),
+                    )),
+                    Rect::new(body.x, body.y, body.width, 1),
+                );
+            }
+            return;
+        }
     }
 
     let metrics = workspace_list_scroll_metrics(app, area);
@@ -1066,29 +1070,217 @@ fn render_workspace_list(
         render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
     }
 
-    if app.mouse_capture && list_bottom > area.y {
-        let new_rect = app.sidebar_new_button_rect();
-        frame.render_widget(
-            Paragraph::new(Span::styled(" new", Style::default().fg(p.overlay0))),
-            new_rect,
-        );
+    render_sidebar_footer_buttons(app, frame, area, " new");
+}
 
-        let menu_rect = app.global_launcher_rect();
-        let menu_line = if app.global_menu_attention_badge_visible() {
-            Line::from(vec![
-                Span::styled(
-                    "● ",
-                    Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("menu", Style::default().fg(p.overlay0)),
-            ])
+/// Draw the shared sidebar footer: a left-aligned action button and the
+/// right-aligned global "menu" launcher. Reused by both the Spaces and Projects
+/// tabs so the footer chrome stays identical. `new_label` names the left button
+/// (" new" workspace on Spaces, "new chat" on Projects). No-op when the mouse UI
+/// is disabled or the area has no footer row.
+fn render_sidebar_footer_buttons(app: &AppState, frame: &mut Frame, area: Rect, new_label: &str) {
+    let p = &app.palette;
+    let list_bottom = area.y + area.height.saturating_sub(1);
+    if !(app.mouse_capture && list_bottom > area.y) {
+        return;
+    }
+
+    let new_rect = app.sidebar_new_button_rect();
+    frame.render_widget(
+        Paragraph::new(Span::styled(new_label, Style::default().fg(p.overlay0))),
+        new_rect,
+    );
+
+    let menu_rect = app.global_launcher_rect();
+    let menu_line = if app.global_menu_attention_badge_visible() {
+        Line::from(vec![
+            Span::styled(
+                "● ",
+                Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("menu", Style::default().fg(p.overlay0)),
+        ])
+    } else {
+        Line::from(vec![Span::styled("menu", Style::default().fg(p.overlay0))])
+    };
+    frame.render_widget(
+        Paragraph::new(menu_line).alignment(Alignment::Right),
+        menu_rect,
+    );
+}
+
+/// Lay out the Projects-tab rows (geometry only) within `area` — the workspace
+/// list section rect. Pinned projects render as collapse/expand headers; every
+/// expanded project contributes one row per chat session, or a single "(no
+/// chats)" row when it has none. Reads the `projects_sessions` cache only; never
+/// touches the filesystem (that is `refresh_project_sessions*`'s job). Rows are
+/// clipped to the body height (between the tab header and the footer button row).
+pub(crate) fn compute_project_row_areas(app: &AppState, area: Rect) -> Vec<ProjectRowArea> {
+    let body = workspace_list_body_rect(area, false);
+    if body.width == 0 || body.height == 0 {
+        return Vec::new();
+    }
+    let body_bottom = body.y + body.height;
+    let mut areas: Vec<ProjectRowArea> = Vec::new();
+    let mut y = body.y;
+
+    for (proj_idx, project) in app.projects_sessions.iter().enumerate() {
+        if y >= body_bottom {
+            break;
+        }
+        areas.push(ProjectRowArea {
+            rect: Rect::new(body.x, y, body.width, 1),
+            kind: ProjectRowKind::Project { proj_idx },
+        });
+        y += 1;
+
+        if app.collapsed_project_paths.contains(&project.path) {
+            continue;
+        }
+
+        if project.sessions.is_empty() {
+            if y >= body_bottom {
+                break;
+            }
+            areas.push(ProjectRowArea {
+                rect: Rect::new(body.x, y, body.width, 1),
+                kind: ProjectRowKind::Empty { proj_idx },
+            });
+            y += 1;
         } else {
-            Line::from(vec![Span::styled("menu", Style::default().fg(p.overlay0))])
-        };
-        frame.render_widget(
-            Paragraph::new(menu_line).alignment(Alignment::Right),
-            menu_rect,
-        );
+            for chat_idx in 0..project.sessions.len() {
+                if y >= body_bottom {
+                    break;
+                }
+                areas.push(ProjectRowArea {
+                    rect: Rect::new(body.x, y, body.width, 1),
+                    kind: ProjectRowKind::Chat { proj_idx, chat_idx },
+                });
+                y += 1;
+            }
+        }
+    }
+    areas
+}
+
+/// Pure render for the Projects tab. Draws the rows laid out by
+/// [`compute_project_row_areas`] (stored in `app.view.project_row_areas`) and
+/// the shared footer. Resolves every row's content from the `projects_sessions`
+/// cache; never mutates state or reads the disk (CLAUDE.md render purity).
+fn render_projects_list(app: &AppState, frame: &mut Frame, area: Rect) {
+    let p = &app.palette;
+    let now = std::time::SystemTime::now();
+
+    for row in &app.view.project_row_areas {
+        let rect = row.rect;
+        if rect.width == 0 || rect.height == 0 {
+            continue;
+        }
+        match row.kind {
+            ProjectRowKind::Project { proj_idx } => {
+                let Some(project) = app.projects_sessions.get(proj_idx) else {
+                    continue;
+                };
+                let collapsed = app.collapsed_project_paths.contains(&project.path);
+                let chevron = if collapsed { "▸" } else { "▾" };
+                let name = project_display_name(&project.path);
+                let name = truncate_end(&name, (rect.width as usize).saturating_sub(2));
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled(chevron, Style::default().fg(p.accent)),
+                        Span::styled(" ", Style::default()),
+                        Span::styled(
+                            name,
+                            Style::default().fg(p.subtext0).add_modifier(Modifier::BOLD),
+                        ),
+                    ])),
+                    rect,
+                );
+            }
+            ProjectRowKind::Chat { proj_idx, chat_idx } => {
+                let Some(session) = app
+                    .projects_sessions
+                    .get(proj_idx)
+                    .and_then(|project| project.sessions.get(chat_idx))
+                else {
+                    continue;
+                };
+                let width = rect.width as usize;
+                let rel = format_relative_time(session.last_modified, now);
+                let rel_width = display_width(&rel);
+                // 3-space indent, then the title, leaving a 1-column gap before
+                // the right-aligned relative time.
+                let indent = "   ";
+                let title_budget = width
+                    .saturating_sub(indent.len())
+                    .saturating_sub(rel_width + 1);
+                let title = truncate_end(&session.title, title_budget);
+                // Dim chats with no recorded turns (empty/aborted sessions) so
+                // real conversations read as the primary content.
+                let title_color = if session.msg_count == 0 {
+                    p.overlay0
+                } else {
+                    p.text
+                };
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled(indent, Style::default()),
+                        Span::styled(title, Style::default().fg(title_color)),
+                    ])),
+                    rect,
+                );
+                if rel_width > 0 && rel_width < width {
+                    frame.render_widget(
+                        Paragraph::new(Span::styled(rel, Style::default().fg(p.overlay0)))
+                            .alignment(Alignment::Right),
+                        rect,
+                    );
+                }
+            }
+            ProjectRowKind::Empty { .. } => {
+                frame.render_widget(
+                    Paragraph::new(Span::styled(
+                        "   (no chats)",
+                        Style::default().fg(p.overlay0),
+                    )),
+                    rect,
+                );
+            }
+        }
+    }
+
+    render_sidebar_footer_buttons(app, frame, area, " chat");
+}
+
+/// Short, human-friendly label for a pinned project: its final path component
+/// (e.g. `herdr`), falling back to the full path when there is none.
+fn project_display_name(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
+
+/// Compact relative age of a chat session ("now", "5m", "3h", "2d", "4w").
+/// Clock skew or a future mtime collapses to "now" (never panics).
+fn format_relative_time(
+    last_modified: std::time::SystemTime,
+    now: std::time::SystemTime,
+) -> String {
+    let secs = now
+        .duration_since(last_modified)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if secs < 60 {
+        "now".to_string()
+    } else if secs < 3_600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}h", secs / 3_600)
+    } else if secs < 604_800 {
+        format!("{}d", secs / 86_400)
+    } else {
+        format!("{}w", secs / 604_800)
     }
 }
 
@@ -1514,13 +1706,12 @@ mod tests {
     }
 
     #[test]
-    fn render_workspace_list_shows_placeholder_for_projects_tab() {
+    fn render_workspace_list_shows_placeholder_for_files_tab() {
         let mut app = crate::app::state::AppState::test_new();
-        app.sidebar_tab = crate::app::state::SidebarTab::Projects;
+        app.sidebar_tab = crate::app::state::SidebarTab::Files;
         app.mouse_capture = false; // skip new/menu chrome for a focused test
         let area = Rect::new(0, 0, 24, 12);
         app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
-        // Projects tab means no workspace cards were computed.
         app.view.workspace_card_areas = Vec::new();
 
         let runtimes = TerminalRuntimeRegistry::new();
@@ -1535,7 +1726,220 @@ mod tests {
             .collect();
         assert!(
             text.contains("soon"),
-            "projects placeholder expected: {text:?}"
+            "files placeholder expected: {text:?}"
+        );
+    }
+
+    // ---- Projects tab render + layout helpers --------------------------------
+
+    fn test_chat(id: &str, title: &str, msg_count: usize) -> crate::claude_sessions::ClaudeSession {
+        crate::claude_sessions::ClaudeSession {
+            id: id.to_string(),
+            title: title.to_string(),
+            last_modified: std::time::SystemTime::UNIX_EPOCH,
+            msg_count,
+        }
+    }
+
+    fn project_sessions(
+        path: &str,
+        sessions: Vec<crate::claude_sessions::ClaudeSession>,
+    ) -> crate::app::state::ProjectSessions {
+        crate::app::state::ProjectSessions {
+            path: std::path::PathBuf::from(path),
+            sessions,
+        }
+    }
+
+    fn render_projects_to_text(app: &AppState, area: Rect) -> String {
+        let runtimes = TerminalRuntimeRegistry::new();
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal
+            .draw(|frame| render_workspace_list(app, &runtimes, frame, area, false))
+            .unwrap();
+        (0..area.height)
+            .flat_map(|y| (0..area.width).map(move |x| (x, y)))
+            .map(|(x, y)| terminal.backend().buffer()[(x, y)].symbol())
+            .collect()
+    }
+
+    // T1.4a: an expanded project shows the ▾ chevron, its name, and every chat.
+    #[test]
+    fn render_projects_list_shows_project_and_chats() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.sidebar_tab = crate::app::state::SidebarTab::Projects;
+        app.mouse_capture = false;
+        app.projects_sessions = vec![project_sessions(
+            "/home/ayaz/projects/herdr",
+            vec![
+                test_chat("a", "first chat", 4),
+                test_chat("b", "second chat", 2),
+            ],
+        )];
+        let area = Rect::new(0, 0, 24, 12);
+        app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
+        app.view.project_row_areas = compute_project_row_areas(&app, area);
+
+        let text = render_projects_to_text(&app, area);
+        assert!(text.contains('▾'), "expanded chevron expected: {text:?}");
+        assert!(text.contains("herdr"), "project name expected: {text:?}");
+        assert!(text.contains("first chat"), "chat 1 expected: {text:?}");
+        assert!(text.contains("second chat"), "chat 2 expected: {text:?}");
+    }
+
+    // T1.4b: a collapsed project shows the ▸ chevron and hides its chats.
+    #[test]
+    fn render_projects_list_collapsed_hides_chats() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.sidebar_tab = crate::app::state::SidebarTab::Projects;
+        app.mouse_capture = false;
+        app.projects_sessions = vec![project_sessions(
+            "/home/ayaz/projects/herdr",
+            vec![test_chat("a", "hidden chat", 4)],
+        )];
+        app.collapsed_project_paths
+            .insert(std::path::PathBuf::from("/home/ayaz/projects/herdr"));
+        let area = Rect::new(0, 0, 24, 12);
+        app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
+        app.view.project_row_areas = compute_project_row_areas(&app, area);
+
+        let text = render_projects_to_text(&app, area);
+        assert!(text.contains('▸'), "collapsed chevron expected: {text:?}");
+        assert!(text.contains("herdr"), "project name expected: {text:?}");
+        assert!(
+            !text.contains("hidden chat"),
+            "collapsed project must hide chats: {text:?}"
+        );
+    }
+
+    // T1.4c: an expanded project with no chats shows the "(no chats)" row.
+    #[test]
+    fn render_projects_list_empty_project_shows_no_chats() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.sidebar_tab = crate::app::state::SidebarTab::Projects;
+        app.mouse_capture = false;
+        app.projects_sessions = vec![project_sessions("/home/ayaz/projects/empty", Vec::new())];
+        let area = Rect::new(0, 0, 24, 12);
+        app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
+        app.view.project_row_areas = compute_project_row_areas(&app, area);
+
+        let text = render_projects_to_text(&app, area);
+        assert!(text.contains("empty"), "project name expected: {text:?}");
+        assert!(
+            text.contains("(no chats)"),
+            "empty project placeholder expected: {text:?}"
+        );
+    }
+
+    #[test]
+    fn compute_project_row_areas_expanded_lists_one_row_per_chat() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.projects_sessions = vec![
+            project_sessions(
+                "/a",
+                vec![test_chat("x", "one", 1), test_chat("y", "two", 1)],
+            ),
+            project_sessions("/b", Vec::new()),
+        ];
+        let area = Rect::new(0, 0, 24, 20);
+        let rows = compute_project_row_areas(&app, area);
+        // project /a (header + 2 chats) + project /b (header + "(no chats)") = 5.
+        assert_eq!(rows.len(), 5);
+        assert!(matches!(
+            rows[0].kind,
+            ProjectRowKind::Project { proj_idx: 0 }
+        ));
+        assert!(matches!(
+            rows[1].kind,
+            ProjectRowKind::Chat {
+                proj_idx: 0,
+                chat_idx: 0
+            }
+        ));
+        assert!(matches!(
+            rows[2].kind,
+            ProjectRowKind::Chat {
+                proj_idx: 0,
+                chat_idx: 1
+            }
+        ));
+        assert!(matches!(
+            rows[3].kind,
+            ProjectRowKind::Project { proj_idx: 1 }
+        ));
+        assert!(matches!(
+            rows[4].kind,
+            ProjectRowKind::Empty { proj_idx: 1 }
+        ));
+        // Rows stack one per line inside the body (below the 2-row header).
+        assert_eq!(rows[0].rect.y, area.y + WORKSPACE_SECTION_HEADER_ROWS);
+        assert_eq!(rows[1].rect.y, rows[0].rect.y + 1);
+    }
+
+    #[test]
+    fn compute_project_row_areas_collapsed_emits_only_the_header() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.projects_sessions = vec![project_sessions("/a", vec![test_chat("x", "one", 1)])];
+        app.collapsed_project_paths
+            .insert(std::path::PathBuf::from("/a"));
+        let rows = compute_project_row_areas(&app, Rect::new(0, 0, 24, 20));
+        assert_eq!(rows.len(), 1);
+        assert!(matches!(
+            rows[0].kind,
+            ProjectRowKind::Project { proj_idx: 0 }
+        ));
+    }
+
+    #[test]
+    fn compute_project_row_areas_clips_to_body_height() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.projects_sessions = vec![project_sessions(
+            "/a",
+            vec![
+                test_chat("x", "one", 1),
+                test_chat("y", "two", 1),
+                test_chat("z", "three", 1),
+            ],
+        )];
+        // Height 4: 2 header rows + 1 footer row leaves exactly 1 body row, so
+        // only the project header fits.
+        let rows = compute_project_row_areas(&app, Rect::new(0, 0, 24, 4));
+        assert_eq!(rows.len(), 1);
+        assert!(matches!(
+            rows[0].kind,
+            ProjectRowKind::Project { proj_idx: 0 }
+        ));
+    }
+
+    #[test]
+    fn compute_project_row_areas_empty_without_projects() {
+        let app = crate::app::state::AppState::test_new();
+        assert!(compute_project_row_areas(&app, Rect::new(0, 0, 24, 20)).is_empty());
+    }
+
+    #[test]
+    fn project_display_name_uses_final_component() {
+        assert_eq!(
+            project_display_name(std::path::Path::new("/home/ayaz/projects/herdr")),
+            "herdr"
+        );
+        assert_eq!(project_display_name(std::path::Path::new("/")), "/");
+    }
+
+    #[test]
+    fn format_relative_time_buckets_by_magnitude() {
+        use std::time::{Duration, SystemTime};
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(10_000_000);
+        let ago = |secs: u64| now - Duration::from_secs(secs);
+        assert_eq!(format_relative_time(ago(5), now), "now");
+        assert_eq!(format_relative_time(ago(300), now), "5m");
+        assert_eq!(format_relative_time(ago(7_200), now), "2h");
+        assert_eq!(format_relative_time(ago(172_800), now), "2d");
+        assert_eq!(format_relative_time(ago(1_209_600), now), "2w");
+        // A future mtime (clock skew) collapses to "now" instead of panicking.
+        assert_eq!(
+            format_relative_time(now + Duration::from_secs(60), now),
+            "now"
         );
     }
 

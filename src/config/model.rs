@@ -299,6 +299,21 @@ pub struct ProjectsConfig {
 }
 
 impl ProjectsConfig {
+    /// Usable pinned directories, in config order: non-blank entries that are
+    /// absolute or `~`-rooted, each trimmed of surrounding whitespace. Blank and
+    /// non-absolute entries are dropped (they are surfaced by
+    /// [`Self::diagnostics`] instead of failing the whole config load). Returned
+    /// values may still start with `~` — callers expand it before use.
+    pub fn pinned_paths(&self) -> Vec<String> {
+        self.pinned
+            .iter()
+            .filter_map(|raw| {
+                let trimmed = raw.trim();
+                pinned_entry_is_usable(trimmed).then(|| trimmed.to_string())
+            })
+            .collect()
+    }
+
     /// Human-readable diagnostics for pinned entries that are unusable (blank,
     /// or a non-absolute path). Usable entries produce no diagnostic.
     pub fn diagnostics(&self) -> Vec<String> {
@@ -1825,5 +1840,25 @@ pinned = ["  /home/a/x  "]
         // Surrounding whitespace is trimmed before the absolute-path check,
         // so this entry is usable and produces no diagnostic.
         assert!(config.projects.diagnostics().is_empty());
+    }
+
+    // P1: pinned_paths() keeps usable entries in order (absolute + tilde),
+    // trims surrounding whitespace, and drops blank/relative entries.
+    #[test]
+    fn projects_pinned_paths_keeps_usable_and_drops_unusable() {
+        let toml = r#"
+[projects]
+pinned = ["/a", "", "  ~/z  ", "relative/dir", "./nope", "  /w  "]
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.projects.pinned_paths(),
+            vec!["/a".to_string(), "~/z".to_string(), "/w".to_string(),]
+        );
+    }
+
+    #[test]
+    fn projects_pinned_paths_default_empty() {
+        assert!(Config::default().projects.pinned_paths().is_empty());
     }
 }

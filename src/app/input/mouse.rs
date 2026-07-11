@@ -530,7 +530,21 @@ impl AppState {
                     }
 
                     if let Some(tab) = self.sidebar_tab_at(mouse.column, mouse.row) {
+                        let switching = self.sidebar_tab != tab;
                         self.sidebar_tab = tab;
+                        // Reload the chat cache when the Projects tab is opened so
+                        // its list reflects sessions created since the last read.
+                        if switching && tab == crate::app::state::SidebarTab::Projects {
+                            self.refresh_project_sessions();
+                        }
+                        return None;
+                    }
+
+                    // The Projects tab owns its own rows. Consume sidebar clicks
+                    // here so Spaces-only chrome (new-workspace, workspace cards)
+                    // never fires while it is active.
+                    if self.sidebar_tab == crate::app::state::SidebarTab::Projects {
+                        self.toggle_projects_row_at(mouse.column, mouse.row);
                         return None;
                     }
 
@@ -3560,6 +3574,52 @@ mod tests {
         ));
         assert_eq!(app.state.mode, Mode::RenameTab);
         assert!(app.state.creating_new_tab);
+    }
+
+    // 4c: clicking a project header row on the Projects tab toggles its collapse
+    // state, and does not leak into Spaces-only actions (new workspace).
+    #[test]
+    fn projects_tab_click_toggles_project_collapse() {
+        let mut app = app_for_mouse_test();
+        app.state.mode = Mode::Navigate;
+        app.state.sidebar_tab = crate::app::state::SidebarTab::Projects;
+        app.state.projects_sessions = vec![crate::app::state::ProjectSessions {
+            path: std::path::PathBuf::from("/home/x/proj"),
+            sessions: vec![crate::claude_sessions::ClaudeSession {
+                id: "s1".to_string(),
+                title: "a chat".to_string(),
+                last_modified: std::time::SystemTime::UNIX_EPOCH,
+                msg_count: 3,
+            }],
+        }];
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+
+        let header = app.state.view.project_row_areas[0];
+        assert!(matches!(
+            header.kind,
+            crate::app::state::ProjectRowKind::Project { proj_idx: 0 }
+        ));
+        let path = std::path::PathBuf::from("/home/x/proj");
+
+        // First click collapses the project.
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            header.rect.x,
+            header.rect.y,
+        ));
+        assert!(app.state.collapsed_project_paths.contains(&path));
+        // A Spaces-only action must not fire on the Projects tab.
+        assert!(!app.state.request_new_workspace);
+
+        // Recompute (chats now hidden) and click again to expand.
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let header = app.state.view.project_row_areas[0];
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            header.rect.x,
+            header.rect.y,
+        ));
+        assert!(!app.state.collapsed_project_paths.contains(&path));
     }
 
     #[test]
