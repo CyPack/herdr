@@ -529,6 +529,11 @@ impl AppState {
                         return None;
                     }
 
+                    if let Some(tab) = self.sidebar_tab_at(mouse.column, mouse.row) {
+                        self.sidebar_tab = tab;
+                        return None;
+                    }
+
                     let new_button = self.sidebar_new_button_rect();
                     let on_new_button = mouse.row >= new_button.y
                         && mouse.row < new_button.y + new_button.height

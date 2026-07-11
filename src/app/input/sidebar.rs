@@ -1,6 +1,6 @@
 use ratatui::layout::Rect;
 
-use crate::app::state::{AppState, ViewLayout};
+use crate::app::state::{AppState, SidebarTab, ViewLayout};
 
 use super::ScrollbarClickTarget;
 
@@ -464,6 +464,24 @@ impl AppState {
             }
         }
         None
+    }
+
+    /// The header tab (Spaces/Projects/Files) whose hit area contains
+    /// `(col, row)`, if any. Returns `None` when the sidebar is collapsed or the
+    /// point falls off every tab.
+    pub(super) fn sidebar_tab_at(&self, col: u16, row: u16) -> Option<SidebarTab> {
+        if self.sidebar_collapsed {
+            return None;
+        }
+        SidebarTab::ALL.iter().enumerate().find_map(|(i, tab)| {
+            let rect = self.view.sidebar_tab_hit_areas.get(i)?;
+            (rect.width > 0
+                && col >= rect.x
+                && col < rect.x + rect.width
+                && row >= rect.y
+                && row < rect.y + rect.height)
+                .then_some(*tab)
+        })
     }
 }
 
@@ -1597,5 +1615,64 @@ mod tests {
         assert!(app.state.drag.is_none());
         let snapshot = capture_snapshot(&app.state);
         assert_eq!(snapshot.sidebar_width, Some(26));
+    }
+
+    #[test]
+    fn clicking_sidebar_tab_switches_sidebar_tab() {
+        use crate::app::state::SidebarTab;
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("a")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        assert_eq!(app.state.sidebar_tab, SidebarTab::Spaces);
+
+        let projects_rect = app.state.view.sidebar_tab_hit_areas[1];
+        assert!(projects_rect.width > 0, "projects tab should have width");
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            projects_rect.x,
+            projects_rect.y,
+        ));
+        assert_eq!(app.state.sidebar_tab, SidebarTab::Projects);
+
+        let files_rect = app.state.view.sidebar_tab_hit_areas[2];
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            files_rect.x,
+            files_rect.y,
+        ));
+        assert_eq!(app.state.sidebar_tab, SidebarTab::Files);
+
+        let spaces_rect = app.state.view.sidebar_tab_hit_areas[0];
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            spaces_rect.x,
+            spaces_rect.y,
+        ));
+        assert_eq!(app.state.sidebar_tab, SidebarTab::Spaces);
+    }
+
+    #[test]
+    fn clicking_sidebar_tab_does_not_start_a_workspace_press() {
+        use crate::app::state::SidebarTab;
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("a"), Workspace::test_new("b")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+
+        let projects_rect = app.state.view.sidebar_tab_hit_areas[1];
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            projects_rect.x,
+            projects_rect.y,
+        ));
+
+        // Switching tabs must not begin a workspace drag/select gesture, and
+        // must not change which workspace is active.
+        assert_eq!(app.state.sidebar_tab, SidebarTab::Projects);
+        assert!(app.state.workspace_press.is_none());
+        assert_eq!(app.state.active, Some(0));
     }
 }
