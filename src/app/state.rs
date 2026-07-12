@@ -610,6 +610,19 @@ pub struct ProjectRowArea {
     pub kind: ProjectRowKind,
 }
 
+/// Deferred request to open a Claude Code chat as a new tab in a project
+/// directory (Projects tab, Task #5). `session_id` `Some` resumes that
+/// session, `None` starts a fresh chat. Set by the mouse handler and consumed
+/// by the event loop like the other `request_*` fields, because spawning a
+/// tab needs the runtime (`App`), not just `AppState`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectChatTabRequest {
+    /// Expanded, absolute project directory; becomes the new tab's cwd.
+    pub project_path: std::path::PathBuf,
+    /// Claude Code session id to resume, or `None` for a new chat.
+    pub session_id: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeCreateState {
     pub source_workspace_id: String,
@@ -1413,6 +1426,9 @@ pub struct AppState {
     /// Set when UI interaction requested a clipboard write that must be
     /// handled by the outer App/event loop instead of directly from AppState.
     pub request_clipboard_write: Option<Vec<u8>>,
+    /// Set when a Projects-tab chat row (resume) or "(no chats)" row (new
+    /// chat) was clicked; consumed by the event loop to spawn the tab.
+    pub request_project_chat_tab: Option<ProjectChatTabRequest>,
     pub creating_new_tab: bool,
     pub requested_new_tab_name: Option<String>,
     pub rename_pane_target: Option<PaneId>,
@@ -1807,6 +1823,7 @@ impl AppState {
             request_reload_config: false,
             request_client_config_reload: false,
             request_clipboard_write: None,
+            request_project_chat_tab: None,
             creating_new_tab: false,
             requested_new_tab_name: None,
             rename_pane_target: None,

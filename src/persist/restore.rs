@@ -699,6 +699,9 @@ fn restore_tab(
             crate::workspace::Tab {
                 custom_name: snap.custom_name.clone(),
                 number,
+                // Not persisted yet; restored chats respawn as plain shells,
+                // so a stale wiring here would point at a tab without claude.
+                resumed_session_id: None,
                 root_pane,
                 layout,
                 panes,

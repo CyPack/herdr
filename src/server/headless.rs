@@ -675,6 +675,11 @@ impl HeadlessServer {
             crate::render_prof::event("full_render_cause.deferred_workspace_cwd");
         }
 
+        if self.app.handle_project_chat_tab_request() {
+            needs_render = true;
+            crate::render_prof::event("full_render_cause.deferred_project_chat_tab");
+        }
+
         if let Some(ws_idx) = self.app.state.request_remove_linked_worktree.take() {
             self.app.open_remove_linked_worktree_confirmation(ws_idx);
             needs_render = true;

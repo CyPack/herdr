@@ -13,6 +13,7 @@ mod config_io;
 mod creation;
 mod ids;
 mod input;
+mod projects;
 mod runtime;
 mod runtime_mutations;
 mod session;
@@ -534,6 +535,7 @@ impl App {
             request_reload_config: false,
             request_client_config_reload: false,
             request_clipboard_write: None,
+            request_project_chat_tab: None,
             creating_new_tab: false,
             requested_new_tab_name: None,
             rename_pane_target: None,
@@ -974,6 +976,10 @@ impl App {
                         env: Default::default(),
                     },
                 );
+                needs_render = true;
+            }
+
+            if self.handle_project_chat_tab_request() {
                 needs_render = true;
             }
 

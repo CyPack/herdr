@@ -313,7 +313,7 @@ impl App {
         }
     }
 
-    fn spawn_agent_workspace(
+    pub(super) fn spawn_agent_workspace(
         &mut self,
         cwd: PathBuf,
         rows: u16,
@@ -452,6 +452,7 @@ impl App {
     }
 }
 
+#[derive(Debug)]
 pub(super) enum AgentStartError {
     InvalidName,
     EmptyArgv,

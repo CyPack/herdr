@@ -196,10 +196,11 @@ impl AppState {
         Rect::new(x, footer.y, width, footer.height)
     }
 
-    /// Handle a left click on a Projects-tab row. Clicking a project header row
-    /// toggles its collapse state; chat and "(no chats)" rows are inert for now
-    /// (Task #5 wires chat rows to `claude --resume`). Hit-tests the same
-    /// `project_row_areas` the render drew.
+    /// Handle a left click on a Projects-tab row. A project header row toggles
+    /// its collapse state; a chat row queues a `claude --resume` tab request
+    /// and the "(no chats)" row queues a new-chat tab request for that project
+    /// (both consumed by the event loop, which owns the runtime). Hit-tests
+    /// the same `project_row_areas` the render drew.
     pub(super) fn toggle_projects_row_at(&mut self, col: u16, row: u16) {
         let hit = self
             .view
@@ -210,13 +211,38 @@ impl AppState {
             })
             .map(|area| area.kind);
 
-        if let Some(crate::app::state::ProjectRowKind::Project { proj_idx }) = hit {
-            if let Some(project) = self.projects_sessions.get(proj_idx) {
-                let path = project.path.clone();
-                if !self.collapsed_project_paths.remove(&path) {
-                    self.collapsed_project_paths.insert(path);
+        match hit {
+            Some(crate::app::state::ProjectRowKind::Project { proj_idx }) => {
+                if let Some(project) = self.projects_sessions.get(proj_idx) {
+                    let path = project.path.clone();
+                    if !self.collapsed_project_paths.remove(&path) {
+                        self.collapsed_project_paths.insert(path);
+                    }
                 }
             }
+            Some(crate::app::state::ProjectRowKind::Chat { proj_idx, chat_idx }) => {
+                if let Some((project, session)) = self
+                    .projects_sessions
+                    .get(proj_idx)
+                    .and_then(|project| Some((project, project.sessions.get(chat_idx)?)))
+                {
+                    self.request_project_chat_tab =
+                        Some(crate::app::state::ProjectChatTabRequest {
+                            project_path: project.path.clone(),
+                            session_id: Some(session.id.clone()),
+                        });
+                }
+            }
+            Some(crate::app::state::ProjectRowKind::Empty { proj_idx }) => {
+                if let Some(project) = self.projects_sessions.get(proj_idx) {
+                    self.request_project_chat_tab =
+                        Some(crate::app::state::ProjectChatTabRequest {
+                            project_path: project.path.clone(),
+                            session_id: None,
+                        });
+                }
+            }
+            None => {}
         }
     }
 
@@ -1698,5 +1724,154 @@ mod tests {
         assert_eq!(app.state.sidebar_tab, SidebarTab::Projects);
         assert!(app.state.workspace_press.is_none());
         assert_eq!(app.state.active, Some(0));
+    }
+
+    // ---- Projects tab row clicks (Task #5) --------------------------------
+
+    fn test_chat(id: &str) -> crate::claude_sessions::ClaudeSession {
+        crate::claude_sessions::ClaudeSession {
+            id: id.to_string(),
+            title: format!("chat {id}"),
+            last_modified: std::time::SystemTime::UNIX_EPOCH,
+            msg_count: 3,
+        }
+    }
+
+    /// An App on the Projects tab with one pinned project at `/home/x/proj`
+    /// holding `sessions`, with `compute_view` already run so
+    /// `view.project_row_areas` matches what the user sees.
+    fn projects_tab_app(sessions: Vec<crate::claude_sessions::ClaudeSession>) -> crate::app::App {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("a")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.sidebar_tab = crate::app::state::SidebarTab::Projects;
+        app.state.projects_sessions = vec![crate::app::state::ProjectSessions {
+            path: std::path::PathBuf::from("/home/x/proj"),
+            sessions,
+        }];
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        app
+    }
+
+    fn project_row_rect(
+        app: &crate::app::App,
+        want: impl Fn(&crate::app::state::ProjectRowKind) -> bool,
+    ) -> Rect {
+        app.state
+            .view
+            .project_row_areas
+            .iter()
+            .find(|area| want(&area.kind))
+            .expect("expected project row missing from computed view")
+            .rect
+    }
+
+    // T5a-3: clicking a chat row must queue a resume request carrying that
+    // chat's project path (cwd) and session id — the core Task #5 trigger.
+    #[test]
+    fn clicking_project_chat_row_requests_resume_chat_tab() {
+        let mut app = projects_tab_app(vec![test_chat("sess-1"), test_chat("sess-2")]);
+        let rect = project_row_rect(&app, |kind| {
+            matches!(
+                kind,
+                crate::app::state::ProjectRowKind::Chat {
+                    proj_idx: 0,
+                    chat_idx: 1
+                }
+            )
+        });
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            rect.x + 2,
+            rect.y,
+        ));
+
+        assert_eq!(
+            app.state.request_project_chat_tab,
+            Some(crate::app::state::ProjectChatTabRequest {
+                project_path: std::path::PathBuf::from("/home/x/proj"),
+                session_id: Some("sess-2".to_string()),
+            })
+        );
+        // A chat click must not disturb the project's collapse state.
+        assert!(app.state.collapsed_project_paths.is_empty());
+    }
+
+    // T5a-4: clicking the "(no chats)" row starts a NEW chat in that project
+    // (session_id None) — the per-project new-chat affordance.
+    #[test]
+    fn clicking_no_chats_row_requests_new_chat_tab() {
+        let mut app = projects_tab_app(Vec::new());
+        let rect = project_row_rect(&app, |kind| {
+            matches!(
+                kind,
+                crate::app::state::ProjectRowKind::Empty { proj_idx: 0 }
+            )
+        });
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            rect.x + 2,
+            rect.y,
+        ));
+
+        assert_eq!(
+            app.state.request_project_chat_tab,
+            Some(crate::app::state::ProjectChatTabRequest {
+                project_path: std::path::PathBuf::from("/home/x/proj"),
+                session_id: None,
+            })
+        );
+    }
+
+    // T5a-5: clicking empty space below the rows is inert — no request, no
+    // collapse change. Guards against over-eager hit-testing.
+    #[test]
+    fn clicking_projects_body_outside_rows_is_inert() {
+        let mut app = projects_tab_app(vec![test_chat("sess-1")]);
+        let last_row_y = app
+            .state
+            .view
+            .project_row_areas
+            .iter()
+            .map(|area| area.rect.y)
+            .max()
+            .expect("rows expected");
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            2,
+            last_row_y + 2,
+        ));
+
+        assert_eq!(app.state.request_project_chat_tab, None);
+        assert!(app.state.collapsed_project_paths.is_empty());
+    }
+
+    // T5a-6 (regression): the Task #4 behavior — clicking the project header
+    // row still toggles collapse and must NOT queue a chat request.
+    #[test]
+    fn clicking_project_header_still_toggles_collapse_only() {
+        let mut app = projects_tab_app(vec![test_chat("sess-1")]);
+        let rect = project_row_rect(&app, |kind| {
+            matches!(
+                kind,
+                crate::app::state::ProjectRowKind::Project { proj_idx: 0 }
+            )
+        });
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            rect.x + 2,
+            rect.y,
+        ));
+
+        assert!(app
+            .state
+            .collapsed_project_paths
+            .contains(std::path::Path::new("/home/x/proj")));
+        assert_eq!(app.state.request_project_chat_tab, None);
     }
 }
