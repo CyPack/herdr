@@ -164,7 +164,9 @@ impl super::App {
     /// always the project directory, and the tab is wired to the resumed
     /// session id so later clicks can find it. Spawn failures are logged, not
     /// fatal: the app must survive e.g. a deleted project directory.
-    fn open_project_chat_tab_with_argv(
+    /// pub(super): the preview module's tests spawn harmless sh tabs through
+    /// this seam to exercise the binding↔tab pid lookup against real panes.
+    pub(super) fn open_project_chat_tab_with_argv(
         &mut self,
         req: crate::app::state::ProjectChatTabRequest,
         argv: &[String],
