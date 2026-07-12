@@ -21,6 +21,140 @@ fn bindings_file_fingerprint(path: &std::path::Path) -> Option<(std::time::Syste
     Some((meta.modified().ok()?, meta.len()))
 }
 
+/// Repeated focus events for the same wired token inside this window trigger
+/// no second action: spam-clicking a tab yields exactly one window action.
+const PREVIEW_SHOW_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The dev-browser's DevTools endpoint (click-bridge convention).
+const PREVIEW_CDP_HOST: &str = "127.0.0.1:9222";
+
+/// One DevTools target (the subset of `/json/list` output the plan needs).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+struct CdpTarget {
+    #[serde(default)]
+    id: String,
+    #[serde(default, rename = "type")]
+    kind: String,
+    #[serde(default)]
+    url: String,
+}
+
+/// What the show action should do — decided PURELY from the target list, so
+/// the idempotency core is unit-testable without any browser.
+#[derive(Debug, PartialEq, Eq)]
+enum PreviewShowPlan {
+    /// A tab on the preview's origin already exists: activate it, never spawn.
+    Activate(String),
+    /// No such tab: launch via dev-browser (which itself reuses the window).
+    Launch,
+}
+
+/// `scheme://host:port` of a URL. Paths, queries and fragments change as the
+/// user navigates, so a preview tab is identified by its origin alone. Dev
+/// URLs always carry an explicit port, so no default-port normalization.
+fn url_origin(url: &str) -> Option<&str> {
+    let scheme_end = url.find("://")? + 3;
+    let rest = url.get(scheme_end..)?;
+    let authority_len = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    if authority_len == 0 {
+        return None; // "http:///x" — an empty authority is malformed
+    }
+    url.get(..scheme_end + authority_len)
+}
+
+/// Decide the show action from the DevTools target list: a real page tab on
+/// the preview's origin is activated (never spawned again); anything else
+/// launches dev-browser, which itself opens a tab in the existing window
+/// when CDP is alive — the second idempotency line.
+fn preview_show_plan(targets: &[CdpTarget], preview_url: &str) -> PreviewShowPlan {
+    let Some(origin) = url_origin(preview_url) else {
+        return PreviewShowPlan::Launch;
+    };
+    targets
+        .iter()
+        .find(|t| t.kind == "page" && url_origin(&t.url) == Some(origin))
+        .map(|t| PreviewShowPlan::Activate(t.id.clone()))
+        .unwrap_or(PreviewShowPlan::Launch)
+}
+
+/// Blocking `curl` GET (the repo's HTTP idiom — see `update.rs`): background
+/// threads only, never the event loop. `None` on any failure.
+fn curl_get(url: &str) -> Option<String> {
+    let output = std::process::Command::new("curl")
+        .args(["-fsS", "--max-time", "2", url])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// All DevTools page targets, empty when CDP is down (→ Launch path).
+fn cdp_page_targets(host: &str) -> Vec<CdpTarget> {
+    let Some(body) = curl_get(&format!("http://{host}/json/list")) else {
+        return Vec::new();
+    };
+    serde_json::from_str(&body).unwrap_or_default()
+}
+
+/// Bring one DevTools target's tab to the front of its window.
+fn cdp_activate(host: &str, target_id: &str) -> bool {
+    curl_get(&format!("http://{host}/json/activate/{target_id}")).is_some()
+}
+
+/// Launch the preview via click-bridge's dev-browser launcher, which records
+/// a fresh session binding and reuses the existing window when CDP is alive.
+fn launch_preview(url: &str) {
+    let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
+        tracing::warn!("preview launch skipped: HOME is unset");
+        return;
+    };
+    let script = home.join("projects/click-bridge/tools/dev-browser.sh");
+    if !script.exists() {
+        tracing::warn!(script = %script.display(), "preview launch skipped: dev-browser.sh not found");
+        return;
+    }
+    match std::process::Command::new("bash")
+        .arg(&script)
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(_) => tracing::debug!(url, "preview launch dispatched via dev-browser"),
+        Err(err) => tracing::warn!(?err, url, "preview launch failed to spawn"),
+    }
+}
+
+/// The background show action: probe CDP, then activate-or-launch. Every
+/// step is best-effort — a dead browser must never disturb the app.
+fn preview_show_worker(token: &str, url: &str) {
+    let targets = cdp_page_targets(PREVIEW_CDP_HOST);
+    match preview_show_plan(&targets, url) {
+        PreviewShowPlan::Activate(target_id) => {
+            if cdp_activate(PREVIEW_CDP_HOST, &target_id) {
+                tracing::debug!(
+                    token,
+                    url,
+                    target = target_id.as_str(),
+                    "preview tab activated"
+                );
+            } else {
+                tracing::warn!(
+                    token,
+                    url,
+                    target = target_id.as_str(),
+                    "preview tab activation failed"
+                );
+            }
+            // Window raise + half-screen placement lands in P1d.
+        }
+        PreviewShowPlan::Launch => launch_preview(url),
+    }
+}
+
 impl super::App {
     /// Keep `AppState::preview_bindings` in sync with the click-bridge binding
     /// log. Unlike the Projects poll this is NOT gated on sidebar visibility:
@@ -157,19 +291,39 @@ impl super::App {
         let Some(binding) = self.preview_binding_for_tab(ws_idx, tab_idx) else {
             return false;
         };
+        if binding.url.is_none() {
+            // Pre-url-era record: nothing to open, no origin to match.
+            tracing::debug!(
+                token = binding.token.as_str(),
+                "wired preview has no url (old record) — nothing to open"
+            );
+            return false;
+        }
+        let now = Instant::now();
+        if let Some((last_token, at)) = &self.preview_last_show {
+            if *last_token == binding.token && now.duration_since(*at) < PREVIEW_SHOW_DEBOUNCE {
+                return false; // spam re-focus: one window action per token/window
+            }
+        }
+        self.preview_last_show = Some((binding.token.clone(), now));
         dispatch(self, binding);
         true
     }
 
-    /// The real show action lands in P1c-4 (idempotent CDP probe/activate +
-    /// dev-browser fallback on a background thread). Until then the dispatch
-    /// only logs, so wiring is observable but inert.
+    /// The real show action: an idempotent activate-or-launch on a detached
+    /// background thread — CDP probing and process spawning must never touch
+    /// the event loop.
     fn dispatch_preview_show(&mut self, binding: crate::preview_bindings::PreviewBinding) {
-        tracing::debug!(
-            token = binding.token.as_str(),
-            url = binding.url.as_deref().unwrap_or(""),
-            "focused tab has a wired preview (show action lands in P1c-4)"
-        );
+        let Some(url) = binding.url.clone() else {
+            return; // guarded upstream; stay defensive
+        };
+        let token = binding.token.clone();
+        if let Err(err) = std::thread::Builder::new()
+            .name("preview-show".into())
+            .spawn(move || preview_show_worker(&token, &url))
+        {
+            tracing::warn!(?err, "preview-show worker thread failed to start");
+        }
     }
 }
 
@@ -557,6 +711,129 @@ mod tests {
         let mut dispatched = false;
         assert!(!app.handle_preview_show_request_with(|_, _| dispatched = true));
         assert!(!dispatched);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // ── P1c-4: idempotent show action (origin + plan + debounce) ────────
+
+    // O1: origin extraction — the identity of a preview tab.
+    #[test]
+    fn url_origin_extracts_scheme_host_port() {
+        assert_eq!(
+            url_origin("http://127.0.0.1:8770/"),
+            Some("http://127.0.0.1:8770")
+        );
+        assert_eq!(
+            url_origin("http://127.0.0.1:8770/deep/path?q=1#frag"),
+            Some("http://127.0.0.1:8770")
+        );
+        assert_eq!(
+            url_origin("http://100.75.115.68:8770"),
+            Some("http://100.75.115.68:8770")
+        );
+        assert_eq!(url_origin("not-a-url"), None);
+        assert_eq!(
+            url_origin("http:///path-only"),
+            None,
+            "an empty authority is malformed"
+        );
+    }
+
+    fn target(id: &str, kind: &str, url: &str) -> CdpTarget {
+        CdpTarget {
+            id: id.into(),
+            kind: kind.into(),
+            url: url.into(),
+        }
+    }
+
+    // P1: an existing page tab on the preview's origin must be activated —
+    // never spawned again — even after the user navigated deeper; non-page
+    // targets and other origins must not steal the match.
+    #[test]
+    fn plan_activates_the_existing_page_on_the_preview_origin() {
+        let targets = vec![
+            target("t-other", "page", "http://127.0.0.1:3000/"),
+            target("t-bg", "background_page", "http://127.0.0.1:8770/"),
+            target("t-hit", "page", "http://127.0.0.1:8770/deep/path?q=1"),
+        ];
+        assert_eq!(
+            preview_show_plan(&targets, "http://127.0.0.1:8770/"),
+            PreviewShowPlan::Activate("t-hit".into())
+        );
+    }
+
+    // P2: no tab on that origin → launch (dev-browser reuses the window).
+    #[test]
+    fn plan_launches_when_no_tab_matches() {
+        let targets = vec![target("t-other", "page", "http://127.0.0.1:3000/")];
+        assert_eq!(
+            preview_show_plan(&targets, "http://127.0.0.1:8770/"),
+            PreviewShowPlan::Launch
+        );
+        assert_eq!(
+            preview_show_plan(&[], "http://127.0.0.1:8770/"),
+            PreviewShowPlan::Launch
+        );
+    }
+
+    // D1: rapid re-focus of the same wired token dispatches ONCE (the user's
+    // "10 clicks must not spawn 10 windows" requirement, at the real consume
+    // path); a rewound debounce window and a different token pass again.
+    #[tokio::test]
+    async fn consume_debounces_rapid_refocus_of_the_same_token() {
+        let dir = unique_dir("d1");
+        let mut app = app_with_plain_workspace(&dir);
+        app.state.workspaces[0].tabs[0].resumed_session_id =
+            Some("db792de9-036c-4e96-9316-bef3b9b7817e".into());
+        app.state.preview_bindings = vec![binding("tok-a", None, Some("db792de9-036"), 100)];
+
+        let mut hits = 0;
+        app.state.request_preview_show = true;
+        assert!(app.handle_preview_show_request_with(|_, _| hits += 1));
+        app.state.request_preview_show = true; // immediate re-focus (spam)
+        assert!(
+            !app.handle_preview_show_request_with(|_, _| hits += 1),
+            "second dispatch inside the debounce window must be swallowed"
+        );
+        assert_eq!(hits, 1);
+
+        // an elapsed window passes again (rewind the anchor instead of sleeping)
+        app.preview_last_show =
+            Some(("tok-a".into(), Instant::now() - (PREVIEW_SHOW_DEBOUNCE * 2)));
+        app.state.request_preview_show = true;
+        assert!(app.handle_preview_show_request_with(|_, _| hits += 1));
+        assert_eq!(hits, 2);
+
+        // a NEWER preview (different token) must not be blocked by tok-a
+        app.state.preview_bindings = vec![binding("tok-b", None, Some("db792de9-036"), 200)];
+        app.state.request_preview_show = true;
+        assert!(app.handle_preview_show_request_with(|_, _| hits += 1));
+        assert_eq!(hits, 3);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // U1: a wired binding WITHOUT a url (pre-url-era record) can neither be
+    // origin-matched nor launched — the consume pass must skip it quietly.
+    #[tokio::test]
+    async fn consume_skips_a_wired_binding_without_url() {
+        let dir = unique_dir("u1");
+        let mut app = app_with_plain_workspace(&dir);
+        app.state.workspaces[0].tabs[0].resumed_session_id =
+            Some("db792de9-036c-4e96-9316-bef3b9b7817e".into());
+        app.state.preview_bindings = vec![crate::preview_bindings::PreviewBinding {
+            token: "tok-nourl".into(),
+            claude_pid: None,
+            session_prefix: Some("db792de9-036".into()),
+            url: None,
+            ts: 100,
+        }];
+        app.state.request_preview_show = true;
+
+        let mut dispatched = false;
+        assert!(!app.handle_preview_show_request_with(|_, _| dispatched = true));
+        assert!(!dispatched, "nothing to open without a url");
+        assert!(!app.state.request_preview_show, "flag still consumed");
         let _ = std::fs::remove_dir_all(dir);
     }
 }

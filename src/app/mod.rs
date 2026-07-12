@@ -135,6 +135,9 @@ pub struct App {
     pub(crate) next_preview_bindings_poll: Option<Instant>,
     /// (mtime, len) of the bindings file at the last poll; None = file absent.
     pub(crate) preview_bindings_fingerprint: Option<(std::time::SystemTime, u64)>,
+    /// (token, at) of the last preview-show dispatch — the debounce anchor
+    /// that turns rapid re-focus spam into a single window action.
+    pub(crate) preview_last_show: Option<(String, Instant)>,
     pub(crate) update_version_check_enabled: bool,
     pub(crate) update_manifest_check_enabled: bool,
     pub(crate) loaded_host_cursor: crate::config::HostCursorModeConfig,
@@ -766,6 +769,7 @@ impl App {
             projects_dir_fingerprints: Vec::new(),
             next_preview_bindings_poll: None,
             preview_bindings_fingerprint: None,
+            preview_last_show: None,
             update_version_check_enabled: config.update.version_check,
             update_manifest_check_enabled: config.update.manifest_check,
             loaded_host_cursor: config.ui.host_cursor,
