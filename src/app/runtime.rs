@@ -200,6 +200,7 @@ impl App {
         let mut resized = false;
 
         self.sync_animation_timer(now);
+        changed |= self.refresh_projects_if_due(now);
 
         if now >= self.next_resize_poll {
             resized = self.handle_resize_poll();

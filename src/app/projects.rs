@@ -47,7 +47,73 @@ pub(crate) fn project_chat_launch(
     }
 }
 
+/// How often the visible Projects tab re-checks the Claude session store for
+/// changes. Each check costs one `read_dir` per pinned project (metadata
+/// only), so this can be tight without measurable load.
+const PROJECTS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Cheap change fingerprint for one project's session directory: entry count
+/// plus the newest modification time. Reads directory metadata only — never
+/// file contents — so polling with it is effectively free. A new chat adds an
+/// entry; new messages/titles bump the session file's mtime.
+pub(crate) fn project_dir_fingerprint(
+    projects_dir: &std::path::Path,
+    project_path: &std::path::Path,
+) -> Option<(usize, std::time::SystemTime)> {
+    let encoded = crate::claude_sessions::encode_project_path(&project_path.to_string_lossy());
+    let entries = std::fs::read_dir(projects_dir.join(encoded)).ok()?;
+    let mut count = 0usize;
+    let mut newest = std::time::SystemTime::UNIX_EPOCH;
+    for entry in entries.flatten() {
+        count += 1;
+        if let Ok(modified) = entry.metadata().and_then(|meta| meta.modified()) {
+            if modified > newest {
+                newest = modified;
+            }
+        }
+    }
+    Some((count, newest))
+}
+
 impl super::App {
+    /// Keep the visible Projects tab in sync with the Claude session store so
+    /// chats opened meanwhile appear without a tab switch. Does NOTHING unless
+    /// the tab is visible and the poll interval elapsed; a due poll is one
+    /// metadata read per pinned project, and the expensive session re-read
+    /// runs only when a fingerprint actually changed. Returns whether the
+    /// cache changed (callers re-render).
+    pub(crate) fn refresh_projects_if_due(&mut self, now: std::time::Instant) -> bool {
+        if self.state.sidebar_collapsed
+            || self.state.sidebar_tab != crate::app::state::SidebarTab::Projects
+        {
+            return false;
+        }
+        if self.next_projects_poll.is_some_and(|due| now < due) {
+            return false;
+        }
+        self.next_projects_poll = Some(now + PROJECTS_POLL_INTERVAL);
+        let Some(projects_dir) = crate::claude_sessions::default_claude_projects_dir() else {
+            return false;
+        };
+        self.refresh_projects_with_dir(&projects_dir)
+    }
+
+    /// Fingerprint-gated refresh against `projects_dir` (injected for tests).
+    fn refresh_projects_with_dir(&mut self, projects_dir: &std::path::Path) -> bool {
+        let fingerprints: Vec<_> = self
+            .state
+            .projects_pinned
+            .iter()
+            .map(|path| project_dir_fingerprint(projects_dir, path))
+            .collect();
+        if fingerprints == self.projects_dir_fingerprints {
+            return false;
+        }
+        self.projects_dir_fingerprints = fingerprints;
+        self.state.refresh_project_sessions_in(projects_dir);
+        true
+    }
+
     /// Consume a queued Projects-tab chat request, if any. Returns whether a
     /// request was handled so callers can trigger a re-render. Shared by the
     /// headless server and the monolithic event loop deferred-request passes.
@@ -478,6 +544,70 @@ mod tests {
             !app.handle_project_chat_tab_request(),
             "second pass has nothing to consume"
         );
+    }
+
+    // T11a-F1: the fingerprint reflects directory contents cheaply — new
+    // session files and message writes change it; a missing dir is None.
+    #[test]
+    fn project_dir_fingerprint_tracks_new_and_modified_sessions() {
+        let root = unique_project_dir("fp-root");
+        let project = PathBuf::from("/home/x/proj");
+        assert_eq!(
+            project_dir_fingerprint(&root, &project),
+            None,
+            "no session dir yet"
+        );
+
+        let dir = root.join(crate::claude_sessions::encode_project_path("/home/x/proj"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fp_empty = project_dir_fingerprint(&root, &project).expect("dir exists");
+        std::fs::write(dir.join("a.jsonl"), b"{}\n").unwrap();
+        let fp_one = project_dir_fingerprint(&root, &project).expect("dir exists");
+        assert_ne!(fp_empty, fp_one, "a new session changes the fingerprint");
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(dir.join("a.jsonl"), b"{}\n{}\n").unwrap();
+        let fp_touched = project_dir_fingerprint(&root, &project).expect("dir exists");
+        assert_ne!(fp_one, fp_touched, "message writes bump the fingerprint");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    // T11a-F2..F5: the poll does nothing while the tab is hidden or between
+    // intervals, and the expensive re-read runs only on a real change.
+    #[tokio::test]
+    async fn refresh_projects_poll_is_gated_and_fingerprint_driven() {
+        let root = unique_project_dir("fp-poll");
+        let dir = root.join(crate::claude_sessions::encode_project_path("/home/x/proj"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("s1.jsonl"), b"not json\n").unwrap();
+
+        let mut app = test_app();
+        app.state.projects_pinned = vec![PathBuf::from("/home/x/proj")];
+        let now = std::time::Instant::now();
+
+        // F2: hidden tab → no work at all, even when due.
+        app.state.sidebar_tab = crate::app::state::SidebarTab::Spaces;
+        assert!(!app.refresh_projects_if_due(now));
+        assert!(app.projects_dir_fingerprints.is_empty());
+
+        // F3: visible poll arms the interval; an immediate re-poll is skipped.
+        app.state.sidebar_tab = crate::app::state::SidebarTab::Projects;
+        let _ = app.refresh_projects_if_due(now);
+        assert!(!app.refresh_projects_if_due(now + std::time::Duration::from_millis(100)));
+
+        // F4/F5 against the injected store: first look loads the session,
+        // an unchanged store is a no-op, a new session file reloads the cache.
+        assert!(app.refresh_projects_with_dir(&root), "first look loads");
+        assert_eq!(app.state.projects_sessions.len(), 1);
+        assert_eq!(app.state.projects_sessions[0].sessions.len(), 1);
+        assert!(
+            !app.refresh_projects_with_dir(&root),
+            "unchanged store must not re-read"
+        );
+        std::fs::write(dir.join("s2.jsonl"), b"x\n").unwrap();
+        assert!(app.refresh_projects_with_dir(&root), "new chat reloads");
+        assert_eq!(app.state.projects_sessions[0].sessions.len(), 2);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     // C1: a new chat launches with the selected agent's plain command and no

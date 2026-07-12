@@ -121,6 +121,11 @@ pub struct App {
     pub(crate) next_animation_tick: Option<Instant>,
     pub(crate) next_auto_update_check: Option<Instant>,
     pub(crate) next_agent_manifest_update_check: Option<Instant>,
+    /// Next Projects-tab session-store poll; None until the first visible poll.
+    pub(crate) next_projects_poll: Option<Instant>,
+    /// Per-pinned-project change fingerprints from the last poll, aligned with
+    /// `state.projects_pinned` (None = project has no session directory yet).
+    pub(crate) projects_dir_fingerprints: Vec<Option<(usize, std::time::SystemTime)>>,
     pub(crate) update_version_check_enabled: bool,
     pub(crate) update_manifest_check_enabled: bool,
     pub(crate) loaded_host_cursor: crate::config::HostCursorModeConfig,
@@ -744,6 +749,8 @@ impl App {
                 .then_some(Instant::now() + AUTO_UPDATE_CHECK_INTERVAL),
             next_agent_manifest_update_check: manifest_check_enabled
                 .then_some(Instant::now() + AUTO_UPDATE_CHECK_INTERVAL),
+            next_projects_poll: None,
+            projects_dir_fingerprints: Vec::new(),
             update_version_check_enabled: config.update.version_check,
             update_manifest_check_enabled: config.update.manifest_check,
             loaded_host_cursor: config.ui.host_cursor,

@@ -1219,24 +1219,49 @@ fn render_projects_list(app: &AppState, frame: &mut Frame, area: Rect) {
                 let width = rect.width as usize;
                 let rel = format_relative_time(session.last_modified, now);
                 let rel_width = display_width(&rel);
-                // 3-space indent, then the title, leaving a 1-column gap before
-                // the right-aligned relative time.
-                let indent = "   ";
+                // Wired-state marker in the 3-column indent, synced with the
+                // tab bar: "▸" = this chat IS the focused tab, "●" = open in
+                // another tab, spaces = not open. Plain-text markers keep the
+                // state readable without color support (and testable).
+                let wired = app.find_resumed_chat_tab(&session.id);
+                let focused = wired.is_some_and(|(ws_idx, tab_idx)| {
+                    app.active == Some(ws_idx)
+                        && app
+                            .workspaces
+                            .get(ws_idx)
+                            .is_some_and(|ws| ws.active_tab == tab_idx)
+                });
+                let indent = if focused {
+                    " ▸ "
+                } else if wired.is_some() {
+                    " ● "
+                } else {
+                    "   "
+                };
+                // The marker glyphs are multi-byte but all render 3 cells wide.
+                let indent_width = 3usize;
                 let title_budget = width
-                    .saturating_sub(indent.len())
+                    .saturating_sub(indent_width)
                     .saturating_sub(rel_width + 1);
                 let title = truncate_end(&session.title, title_budget);
-                // Dim chats with no recorded turns (empty/aborted sessions) so
-                // real conversations read as the primary content.
-                let title_color = if session.msg_count == 0 {
-                    p.overlay0
+                // The focused chat reads as the primary row; open chats keep
+                // normal text; chats with no recorded turns stay dimmed.
+                let (title_style, indent_style) = if focused {
+                    (
+                        Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
+                        Style::default().fg(p.accent),
+                    )
+                } else if wired.is_some() {
+                    (Style::default().fg(p.text), Style::default().fg(p.accent))
+                } else if session.msg_count == 0 {
+                    (Style::default().fg(p.overlay0), Style::default())
                 } else {
-                    p.text
+                    (Style::default().fg(p.text), Style::default())
                 };
                 frame.render_widget(
                     Paragraph::new(Line::from(vec![
-                        Span::styled(indent, Style::default()),
-                        Span::styled(title, Style::default().fg(title_color)),
+                        Span::styled(indent, indent_style),
+                        Span::styled(title, title_style),
                     ])),
                     rect,
                 );
@@ -1805,6 +1830,45 @@ mod tests {
         assert!(text.contains("herdr"), "project name expected: {text:?}");
         assert!(text.contains("first chat"), "chat 1 expected: {text:?}");
         assert!(text.contains("second chat"), "chat 2 expected: {text:?}");
+    }
+
+    // T11b: wired-state markers stay in sync with the tab bar — the focused
+    // tab's chat shows "▸", chats open in other tabs "●", closed chats none.
+    #[test]
+    fn render_projects_marks_focused_and_open_chats() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.sidebar_tab = crate::app::state::SidebarTab::Projects;
+        app.mouse_capture = false;
+        app.projects_sessions = vec![project_sessions(
+            "/p",
+            vec![
+                test_chat("sess-a", "alpha", 3),
+                test_chat("sess-b", "beta", 3),
+                test_chat("sess-c", "gamma", 3),
+            ],
+        )];
+        let mut ws = crate::workspace::Workspace::test_new("p");
+        let tab_b = ws.test_add_tab(Some("beta"));
+        ws.tabs[0].resumed_session_id = Some("sess-a".to_string());
+        ws.tabs[tab_b].resumed_session_id = Some("sess-b".to_string());
+        ws.active_tab = 0;
+        app.workspaces = vec![ws];
+        app.active = Some(0);
+
+        let area = Rect::new(0, 0, 24, 12);
+        app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
+        app.view.project_row_areas = compute_project_row_areas(&app, area);
+
+        let text = render_projects_to_text(&app, area);
+        assert!(
+            text.contains("▸ alpha"),
+            "focused marker expected: {text:?}"
+        );
+        assert!(text.contains("● beta"), "open marker expected: {text:?}");
+        assert!(
+            !text.contains("▸ gamma") && !text.contains("● gamma"),
+            "closed chat must stay unmarked: {text:?}"
+        );
     }
 
     // T1.4b: a collapsed project shows the ▸ chevron and hides its chats.
