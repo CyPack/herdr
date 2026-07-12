@@ -226,11 +226,18 @@ impl AppState {
                     .get(proj_idx)
                     .and_then(|project| Some((project, project.sessions.get(chat_idx)?)))
                 {
-                    self.request_project_chat_tab =
-                        Some(crate::app::state::ProjectChatTabRequest {
-                            project_path: project.path.clone(),
-                            session_id: Some(session.id.clone()),
-                        });
+                    // Spam-click guard: a chat already wired to a live tab is
+                    // focused, never resumed a second time.
+                    if let Some((ws_idx, tab_idx)) = self.find_resumed_chat_tab(&session.id) {
+                        self.switch_workspace_tab(ws_idx, tab_idx);
+                        self.mode = crate::app::Mode::Terminal;
+                    } else {
+                        self.request_project_chat_tab =
+                            Some(crate::app::state::ProjectChatTabRequest {
+                                project_path: project.path.clone(),
+                                session_id: Some(session.id.clone()),
+                            });
+                    }
                 }
             }
             Some(crate::app::state::ProjectRowKind::Empty { proj_idx }) => {
@@ -1848,6 +1855,45 @@ mod tests {
 
         assert_eq!(app.state.request_project_chat_tab, None);
         assert!(app.state.collapsed_project_paths.is_empty());
+    }
+
+    // T5b (spam-click): clicking a chat that is already wired to a live tab
+    // focuses that tab instead of queueing another request — repeated clicks
+    // must never spawn duplicates.
+    #[test]
+    fn clicking_wired_chat_row_focuses_existing_tab_without_request() {
+        let mut app = projects_tab_app(vec![test_chat("sess-1")]);
+        let mut ws = Workspace::test_new("proj");
+        let tab_idx = ws.test_add_tab(Some("chat"));
+        ws.tabs[tab_idx].resumed_session_id = Some("sess-1".to_string());
+        app.state.workspaces.push(ws);
+        let rect = project_row_rect(&app, |kind| {
+            matches!(
+                kind,
+                crate::app::state::ProjectRowKind::Chat {
+                    proj_idx: 0,
+                    chat_idx: 0
+                }
+            )
+        });
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            rect.x + 2,
+            rect.y,
+        ));
+
+        assert_eq!(
+            app.state.request_project_chat_tab, None,
+            "wired chat must not queue a duplicate request"
+        );
+        assert_eq!(
+            app.state.active,
+            Some(1),
+            "focus jumps to the wired tab's workspace"
+        );
+        assert_eq!(app.state.workspaces[1].active_tab, tab_idx);
+        assert_eq!(app.state.mode, Mode::Terminal);
     }
 
     // T5a-6 (regression): the Task #4 behavior — clicking the project header

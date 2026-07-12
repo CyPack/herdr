@@ -1656,6 +1656,18 @@ impl AppState {
         }
     }
 
+    /// The (workspace, tab) already wired to Claude Code session
+    /// `session_id`, if any. The Projects tab focuses that tab instead of
+    /// resuming a duplicate; a closed tab takes its wiring with it.
+    pub(crate) fn find_resumed_chat_tab(&self, session_id: &str) -> Option<(usize, usize)> {
+        self.workspaces.iter().enumerate().find_map(|(ws_idx, ws)| {
+            ws.tabs
+                .iter()
+                .position(|tab| tab.resumed_session_id.as_deref() == Some(session_id))
+                .map(|tab_idx| (ws_idx, tab_idx))
+        })
+    }
+
     pub(crate) fn global_menu_attention_badge_visible(&self) -> bool {
         self.update_available.is_some() || self.integration_updates_available()
     }
@@ -2457,6 +2469,28 @@ mod tests {
             .projects_sessions
             .iter()
             .all(|p| p.sessions.is_empty()));
+    }
+
+    // T5b: the wired-tab lookup finds the tab across workspaces and releases
+    // the wiring when the tab closes (so the chat can be resumed again).
+    #[test]
+    fn find_resumed_chat_tab_locates_and_releases_wiring() {
+        let mut state = AppState::test_new();
+        let ws_a = crate::workspace::Workspace::test_new("a");
+        let mut ws_b = crate::workspace::Workspace::test_new("b");
+        let tab_idx = ws_b.test_add_tab(Some("chat"));
+        ws_b.tabs[tab_idx].resumed_session_id = Some("sess-1".to_string());
+        state.workspaces = vec![ws_a, ws_b];
+
+        assert_eq!(state.find_resumed_chat_tab("sess-1"), Some((1, tab_idx)));
+        assert_eq!(state.find_resumed_chat_tab("sess-404"), None);
+
+        state.workspaces[1].close_tab(tab_idx);
+        assert_eq!(
+            state.find_resumed_chat_tab("sess-1"),
+            None,
+            "closing the tab must release the wiring"
+        );
     }
 
     #[test]

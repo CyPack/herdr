@@ -54,6 +54,17 @@ impl super::App {
         argv: &[String],
         extra_env: Vec<(String, String)>,
     ) {
+        // Consume-side spam guard: if a second click queued this session while
+        // the first spawn was still in flight (or the tab already exists for
+        // any other reason), focus the wired tab instead of duplicating it.
+        if let Some(session_id) = req.session_id.as_deref() {
+            if let Some((ws_idx, tab_idx)) = self.state.find_resumed_chat_tab(session_id) {
+                self.state.switch_workspace_tab(ws_idx, tab_idx);
+                self.state.mode = crate::app::Mode::Terminal;
+                return;
+            }
+        }
+
         let (rows, cols) = self.state.estimate_pane_size();
         let target_ws = self
             .state
@@ -172,6 +183,39 @@ mod tests {
             project_path,
             session_id: session_id.map(str::to_string),
         }
+    }
+
+    // T5b (race guard): consuming a request whose session is already wired
+    // (e.g. a second click landed before the first spawn finished) focuses
+    // the wired tab instead of spawning a duplicate.
+    #[tokio::test]
+    async fn open_chat_tab_focuses_existing_wired_tab_instead_of_duplicating() {
+        let dir = unique_project_dir("dedup");
+        let mut app = test_app();
+        let mut ws = Workspace::test_new("proj");
+        ws.identity_cwd = dir.clone();
+        let tab_idx = ws.test_add_tab(Some("chat"));
+        ws.tabs[tab_idx].resumed_session_id = Some("sess-9".to_string());
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+
+        app.open_project_chat_tab_with_argv(
+            req(dir.clone(), Some("sess-9")),
+            &sh_argv(),
+            Vec::new(),
+        );
+
+        assert_eq!(
+            app.state.workspaces[0].tabs.len(),
+            2,
+            "no duplicate tab spawned"
+        );
+        assert_eq!(
+            app.state.workspaces[0].active_tab, tab_idx,
+            "wired tab focused"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     // T5a-7: the tab must land in the workspace whose identity matches the
