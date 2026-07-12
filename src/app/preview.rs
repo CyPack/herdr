@@ -128,8 +128,9 @@ fn launch_preview(url: &str) {
     }
 }
 
-/// The background show action: probe CDP, then activate-or-launch. Every
-/// step is best-effort — a dead browser must never disturb the app.
+/// The background show action: probe CDP, then activate-or-launch, then
+/// bring the dev-browser window forward. Every step is best-effort — a dead
+/// browser or missing desktop tooling must never disturb the app.
 fn preview_show_worker(token: &str, url: &str) {
     let targets = cdp_page_targets(PREVIEW_CDP_HOST);
     match preview_show_plan(&targets, url) {
@@ -149,9 +150,159 @@ fn preview_show_worker(token: &str, url: &str) {
                     "preview tab activation failed"
                 );
             }
-            // Window raise + half-screen placement lands in P1d.
         }
         PreviewShowPlan::Launch => launch_preview(url),
+    }
+    raise_preview_window();
+}
+
+// ── window raise + placement (GNOME Wayland, best-effort) ──────────────────
+//
+// Chromium cannot position itself under Wayland, so the raise goes through
+// the window-calls-extended shell extension (List/FocusID over D-Bus) and the
+// one-time half-screen placement through GNOME's native tiling shortcut.
+
+/// dev-browser's dedicated profile directory: its main chromium process is
+/// found by this marker, and shell windows carry that process's pid.
+const DEVBROWSER_PROFILE_MARKER: &str = "cc-dev-browser-profile";
+const WINDOWS_EXT_DEST: &str = "org.gnome.Shell";
+const WINDOWS_EXT_PATH: &str = "/org/gnome/Shell/Extensions/WindowsExt";
+const WINDOWS_EXT_IFACE: &str = "org.gnome.Shell.Extensions.WindowsExt";
+
+/// One shell window from `WindowsExt.List` (only the fields we match on).
+#[derive(Debug, serde::Deserialize)]
+struct ShellWindow {
+    #[serde(default)]
+    class: String,
+    #[serde(default)]
+    pid: i64,
+    #[serde(default)]
+    id: u64,
+}
+
+/// `gdbus call` prints a GVariant tuple — `("<json with \" escapes>",)` —
+/// not raw JSON. Cut the array out of the tuple and unescape it.
+fn extract_gdbus_json_array(raw: &str) -> Option<String> {
+    let start = raw.find('[')?;
+    let end = raw.rfind(']')?;
+    if end <= start {
+        return None;
+    }
+    // GVariant string escaping inside the printed tuple: `\"` and `\\`.
+    Some(raw[start..=end].replace("\\\"", "\"").replace("\\\\", "\\"))
+}
+
+/// The dev-browser's shell window id: matched by the browser MAIN pid (shell
+/// windows carry the main chromium process pid) with a defensive class check
+/// — this desktop runs several unrelated chromium windows whose classes even
+/// differ in case ("Chromium-browser" vs "chromium-browser").
+fn devbrowser_window_id(list_json: &str, browser_pid: u32) -> Option<u64> {
+    let windows: Vec<ShellWindow> = serde_json::from_str(list_json).ok()?;
+    windows
+        .iter()
+        .find(|window| {
+            window.pid == i64::from(browser_pid)
+                && window.class.to_ascii_lowercase().contains("chromium")
+        })
+        .map(|window| window.id)
+}
+
+/// The dev-browser's main chromium pid (`pgrep -o` = oldest matching process,
+/// i.e. the parent that owns the windows), or None when it is not running.
+fn devbrowser_main_pid() -> Option<u32> {
+    let output = std::process::Command::new("pgrep")
+        .args(["-of", DEVBROWSER_PROFILE_MARKER])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+}
+
+/// One `WindowsExt` D-Bus call via `gdbus` (repo idiom: subprocess over new
+/// dependencies); background threads only. None on any failure.
+fn windows_ext_call(method: &str, args: &[String]) -> Option<String> {
+    let mut command = std::process::Command::new("gdbus");
+    command.args([
+        "call",
+        "--session",
+        "--dest",
+        WINDOWS_EXT_DEST,
+        "--object-path",
+        WINDOWS_EXT_PATH,
+        "--method",
+        &format!("{WINDOWS_EXT_IFACE}.{method}"),
+    ]);
+    for arg in args {
+        command.arg(arg);
+    }
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Bring the dev-browser window to the front and (once per window) tile it
+/// to the right half. The launch path needs the retry loop: a fresh window
+/// takes a moment to appear in the shell's list.
+fn raise_preview_window() {
+    let Some(browser_pid) = devbrowser_main_pid() else {
+        tracing::debug!("no dev-browser process; nothing to raise");
+        return;
+    };
+    for _ in 0..10 {
+        if let Some(window_id) = windows_ext_call("List", &[])
+            .and_then(|raw| extract_gdbus_json_array(&raw))
+            .and_then(|json| devbrowser_window_id(&json, browser_pid))
+        {
+            if windows_ext_call("FocusID", &[window_id.to_string()]).is_some() {
+                tracing::debug!(window = window_id, "dev-browser window raised");
+                place_half_screen_right_once(window_id);
+            } else {
+                tracing::warn!(window = window_id, "dev-browser window raise failed");
+            }
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+    tracing::debug!(
+        browser_pid,
+        "dev-browser window did not appear in the shell list"
+    );
+}
+
+/// Tile the freshly raised window to the right half via GNOME's native
+/// shortcut (Super+Right through ydotool) — ONCE per window id per run:
+/// repeating Super+Right on an already-tiled window pushes it across
+/// monitors on multi-monitor setups.
+fn place_half_screen_right_once(window_id: u64) {
+    static PLACED: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<u64>>> =
+        std::sync::OnceLock::new();
+    let placed = PLACED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+    match placed.lock() {
+        Ok(mut set) => {
+            if !set.insert(window_id) {
+                return; // already placed this run
+            }
+        }
+        Err(_) => return, // poisoned lock: skip placement, never panic
+    }
+    // KEY_LEFTMETA=125, KEY_RIGHT=106 (press/release pairs).
+    match std::process::Command::new("ydotool")
+        .args(["key", "125:1", "106:1", "106:0", "125:0"])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            tracing::debug!(window = window_id, "preview window tiled right");
+        }
+        Ok(output) => tracing::debug!(
+            window = window_id,
+            status = ?output.status,
+            "ydotool tiling skipped/failed (daemon down?)"
+        ),
+        Err(err) => tracing::debug!(?err, "ydotool unavailable; placement skipped"),
     }
 }
 
@@ -811,6 +962,43 @@ mod tests {
         assert!(app.handle_preview_show_request_with(|_, _| hits += 1));
         assert_eq!(hits, 3);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // G1: gdbus prints a GVariant tuple with escaped quotes, not raw JSON —
+    // the extractor must recover the parseable array (real captured sample),
+    // and must not invent output from garbage.
+    #[test]
+    fn gdbus_tuple_output_yields_parseable_json() {
+        let raw = r#"("[{\"class\":\"chromium-browser\",\"pid\":2291913,\"id\":2091965964,\"focus\":false,\"title\":\"CC Kumanda - Chromium\"}]",)"#;
+        let json = extract_gdbus_json_array(raw).expect("array extracted");
+        let parsed: Vec<ShellWindow> = serde_json::from_str(&json).expect("parses");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].pid, 2_291_913);
+        assert_eq!(parsed[0].id, 2_091_965_964);
+
+        assert_eq!(extract_gdbus_json_array("no array here"), None);
+        assert_eq!(extract_gdbus_json_array(""), None);
+    }
+
+    // G2: window matching is PID-anchored with a defensive class check —
+    // this desktop really runs several unrelated chromium windows whose
+    // classes even differ in case; title matching would be ambiguous.
+    #[test]
+    fn devbrowser_window_is_matched_by_main_pid() {
+        let list = r#"[
+            {"class":"kitty","pid":385592,"id":11,"focus":false,"title":"~"},
+            {"class":"Chromium-browser","pid":21082,"id":22,"focus":false,"title":"WhatsApp"},
+            {"class":"chromium-browser","pid":2291913,"id":33,"focus":false,"title":"CC Kumanda - Chromium"},
+            {"class":"code","pid":2291913,"id":44,"focus":false,"title":"impostor same-pid non-chromium"}
+        ]"#;
+        assert_eq!(devbrowser_window_id(list, 2_291_913), Some(33));
+        assert_eq!(
+            devbrowser_window_id(list, 21_082),
+            Some(22),
+            "capital-C class variant must still match case-insensitively"
+        );
+        assert_eq!(devbrowser_window_id(list, 999), None, "unknown pid");
+        assert_eq!(devbrowser_window_id("{malformed", 2_291_913), None);
     }
 
     // U1: a wired binding WITHOUT a url (pre-url-era record) can neither be
