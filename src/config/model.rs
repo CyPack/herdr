@@ -300,6 +300,9 @@ pub struct ProjectsConfig {
     /// built-in chat agents; unknown values fall back to claude at launch, so
     /// a stale entry can never break the "+" button).
     pub default_chat_agent: Option<String>,
+    /// Whether the Projects tab lists only chats that are open as tabs
+    /// (the footer "actives" toggle). Defaults to on when absent.
+    pub actives_only: Option<bool>,
 }
 
 impl ProjectsConfig {

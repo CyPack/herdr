@@ -505,6 +505,7 @@ impl App {
             .default_chat_agent
             .clone()
             .unwrap_or_else(|| "claude".to_string());
+        let projects_actives_only = config.projects.actives_only.unwrap_or(true);
 
         info!(
             pane_scrollback_limit_bytes = config.advanced.scrollback_limit_bytes,
@@ -578,6 +579,7 @@ impl App {
             tab_branch_cache: std::collections::HashMap::new(),
             sessions_parse_cache: Default::default(),
             default_chat_agent,
+            projects_actives_only,
             request_complete_onboarding: false,
             name_input: String::new(),
             name_input_replace_on_type: false,

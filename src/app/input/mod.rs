@@ -344,6 +344,11 @@ impl App {
                     MouseAction::ContextMenu { menu, idx } => {
                         self.apply_context_menu_action_via_api(menu, idx)
                     }
+                    MouseAction::ToggleProjectsActives => {
+                        self.state.projects_actives_only = !self.state.projects_actives_only;
+                        let enabled = self.state.projects_actives_only;
+                        self.save_projects_actives_only(enabled);
+                    }
                 }
             }
         }

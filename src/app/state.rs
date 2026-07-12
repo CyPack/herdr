@@ -1534,6 +1534,9 @@ pub struct AppState {
     /// (`[projects] default_chat_agent`, one of `projects::CHAT_AGENTS`).
     /// Resuming existing chats always uses claude regardless of this value.
     pub default_chat_agent: String,
+    /// Footer "actives" toggle (`[projects] actives_only`, default ON): the
+    /// Projects tab lists only chats currently open as tabs.
+    pub projects_actives_only: bool,
     pub request_complete_onboarding: bool,
     pub name_input: String,
     pub name_input_replace_on_type: bool,
@@ -1944,6 +1947,10 @@ impl AppState {
             tab_branch_cache: std::collections::HashMap::new(),
             sessions_parse_cache: Default::default(),
             default_chat_agent: "claude".to_string(),
+            // Test fixtures exercise the full (unfiltered) Projects list;
+            // the production default (ON) comes from the config path in
+            // `App::new` (`[projects] actives_only`, absent → true).
+            projects_actives_only: false,
             request_complete_onboarding: false,
             name_input: String::new(),
             name_input_replace_on_type: false,

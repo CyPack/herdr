@@ -1160,6 +1160,22 @@ pub(crate) fn project_row_lines(app: &AppState) -> Vec<ProjectRowLine> {
         }
         if project.sessions.is_empty() {
             lines.push(ProjectRowLine::Empty { proj_idx });
+        } else if app.projects_actives_only {
+            // Actives mode: only chats currently open as tabs, with their
+            // ORIGINAL session indices (clicks resume by index). No cap and
+            // no "older" row — hidden chats are filtered, not folded.
+            let before = lines.len();
+            for chat_idx in 0..project.sessions.len() {
+                if app
+                    .find_resumed_chat_tab(&project.sessions[chat_idx].id)
+                    .is_some()
+                {
+                    lines.push(ProjectRowLine::Chat { proj_idx, chat_idx });
+                }
+            }
+            if lines.len() == before {
+                lines.push(ProjectRowLine::Empty { proj_idx });
+            }
         } else {
             let visible = project.sessions.len().min(PROJECT_CHAT_ROW_LIMIT);
             for chat_idx in 0..visible {
@@ -1366,12 +1382,21 @@ fn render_projects_list(app: &AppState, frame: &mut Frame, area: Rect) {
                     );
                 }
             }
-            ProjectRowKind::Empty { .. } => {
+            ProjectRowKind::Empty { proj_idx } => {
+                // In actives mode a project can have chats that are just not
+                // open; "(no chats)" would be misleading there.
+                let has_hidden_chats = app.projects_actives_only
+                    && app
+                        .projects_sessions
+                        .get(proj_idx)
+                        .is_some_and(|project| !project.sessions.is_empty());
+                let label = if has_hidden_chats {
+                    "   (no active chats)"
+                } else {
+                    "   (no chats)"
+                };
                 frame.render_widget(
-                    Paragraph::new(Span::styled(
-                        "   (no chats)",
-                        Style::default().fg(p.overlay0),
-                    )),
+                    Paragraph::new(Span::styled(label, Style::default().fg(p.overlay0))),
                     rect,
                 );
             }
@@ -1412,6 +1437,20 @@ fn render_projects_list(app: &AppState, frame: &mut Frame, area: Rect) {
     }
 
     render_sidebar_footer_buttons(app, frame, area, " chat");
+
+    // Projects-only footer toggle between the shared chat/menu buttons:
+    // highlighted while the actives filter is on, dimmed when off.
+    if app.mouse_capture {
+        let toggle = app.sidebar_actives_toggle_rect();
+        if toggle.width > 0 {
+            let style = if app.projects_actives_only {
+                Style::default().fg(p.accent).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(p.overlay0)
+            };
+            frame.render_widget(Paragraph::new(Span::styled("actives", style)), toggle);
+        }
+    }
 }
 
 /// Short, human-friendly label for a pinned project: its final path component
@@ -2199,6 +2238,77 @@ mod tests {
             project_sessions("/b", Vec::new()),
         ];
         app
+    }
+
+    // ---- FEAT-B: footer "actives" filter ----
+
+    /// 3 chats, only sessions[1] open as a tab.
+    fn actives_fixture_app() -> crate::app::state::AppState {
+        let mut app = crate::app::state::AppState::test_new();
+        app.projects_sessions = vec![project_sessions(
+            "/a",
+            vec![
+                test_chat("s0", "t", 1),
+                test_chat("s1", "t", 1),
+                test_chat("s2", "t", 1),
+            ],
+        )];
+        let mut ws = Workspace::test_new("space");
+        let tab = ws.test_add_tab(Some("chat"));
+        ws.tabs[tab].resumed_session_id = Some("s1".to_string());
+        app.workspaces = vec![ws];
+        app.projects_actives_only = true;
+        app
+    }
+
+    #[test]
+    fn actives_mode_lists_only_open_chats_with_original_indices() {
+        let app = actives_fixture_app();
+        let lines = project_row_lines(&app);
+        assert_eq!(
+            lines,
+            vec![
+                ProjectRowLine::Header { proj_idx: 0 },
+                ProjectRowLine::Chat {
+                    proj_idx: 0,
+                    chat_idx: 1
+                },
+            ],
+            "only the open chat is listed, keeping its original session index"
+        );
+    }
+
+    #[test]
+    fn actives_mode_shows_empty_row_when_no_chat_is_open() {
+        let mut app = actives_fixture_app();
+        app.workspaces[0]
+            .tabs
+            .iter_mut()
+            .for_each(|tab| tab.resumed_session_id = None);
+        let lines = project_row_lines(&app);
+        assert_eq!(
+            lines,
+            vec![
+                ProjectRowLine::Header { proj_idx: 0 },
+                ProjectRowLine::Empty { proj_idx: 0 },
+            ]
+        );
+    }
+
+    #[test]
+    fn actives_toggle_rect_stays_clear_of_the_other_footer_buttons() {
+        let mut app = crate::app::state::AppState::test_new();
+        crate::ui::compute_view(&mut app, Rect::new(0, 0, 106, 20));
+        let actives = app.sidebar_actives_toggle_rect();
+        if actives.width > 0 {
+            let chat = app.sidebar_new_button_rect();
+            let menu = app.global_launcher_rect();
+            assert!(chat.x + chat.width <= actives.x, "overlaps the chat button");
+            assert!(
+                actives.x + actives.width <= menu.x,
+                "overlaps the menu button"
+            );
+        }
     }
 
     #[test]

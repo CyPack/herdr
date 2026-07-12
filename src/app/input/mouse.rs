@@ -38,6 +38,7 @@ pub(super) enum MouseAction {
         pane_id: crate::layout::PaneId,
     },
     FocusToastTarget,
+    ToggleProjectsActives,
     MoveWorkspace {
         source_ws_idx: usize,
         insert_idx: usize,
@@ -567,6 +568,15 @@ impl AppState {
                         if mouse.row < footer_y {
                             self.toggle_projects_row_at(mouse.column, mouse.row, mouse.modifiers);
                             return None;
+                        }
+                        let actives = self.sidebar_actives_toggle_rect();
+                        if actives.width > 0
+                            && mouse.row >= actives.y
+                            && mouse.row < actives.y + actives.height
+                            && mouse.column >= actives.x
+                            && mouse.column < actives.x + actives.width
+                        {
+                            return Some(MouseAction::ToggleProjectsActives);
                         }
                         let new_button = self.sidebar_new_button_rect();
                         let on_new_button = mouse.row >= new_button.y

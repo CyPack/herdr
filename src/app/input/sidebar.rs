@@ -243,6 +243,26 @@ impl AppState {
         Rect::new(footer.x, footer.y, width, footer.height)
     }
 
+    /// The footer "actives" toggle, centered between the chat and menu
+    /// buttons; collapses to an empty rect when the footer is too narrow to
+    /// keep all three hit areas disjoint.
+    pub(crate) fn sidebar_actives_toggle_rect(&self) -> Rect {
+        let footer = self.sidebar_footer_rect();
+        if footer.width == 0 || footer.height == 0 {
+            return Rect::default();
+        }
+        let chat = self.sidebar_new_button_rect();
+        let menu = self.global_launcher_rect();
+        let label_w: u16 = 7; // "actives"
+        let left = chat.x + chat.width + 1;
+        let right = menu.x.saturating_sub(1);
+        if right <= left || right - left < label_w {
+            return Rect::default();
+        }
+        let x = left + (right - left - label_w) / 2;
+        Rect::new(x, footer.y, label_w, footer.height)
+    }
+
     pub(crate) fn global_launcher_rect(&self) -> Rect {
         if self.view.layout == ViewLayout::Mobile {
             return self.view.mobile_menu_hit_area;
@@ -1020,6 +1040,7 @@ mod tests {
     fn scrolling_projects_tab_with_wheel_updates_projects_scroll() {
         let mut app = app_for_mouse_test();
         app.state.sidebar_tab = crate::app::state::SidebarTab::Projects;
+        app.state.projects_actives_only = false;
         // 7-chat project + empty project = 9 logical lines
         // (Header, Chat×5, More, Header, Empty) — overflows the list body.
         let chats: Vec<_> = (0..7)
@@ -1923,6 +1944,9 @@ mod tests {
         app.state.active = Some(0);
         app.state.selected = 0;
         app.state.sidebar_tab = crate::app::state::SidebarTab::Projects;
+        // Row-interaction tests exercise the full list; actives-toggle tests
+        // opt back in explicitly.
+        app.state.projects_actives_only = false;
         let total_count = sessions.len();
         app.state.projects_sessions = vec![crate::app::state::ProjectSessions {
             path: std::path::PathBuf::from("/home/x/proj"),
@@ -2201,6 +2225,23 @@ mod tests {
             Some(crate::app::state::ContextMenuKind::ProjectNewChat { proj_idx: 0, .. })
         ));
         assert_eq!(app.state.mode, Mode::ContextMenu);
+    }
+
+    // FEAT-B: clicking the footer "actives" label flips the filter.
+    #[test]
+    fn clicking_footer_actives_toggle_flips_the_filter() {
+        let mut app = projects_tab_app(vec![test_chat("sess-1")]);
+        let toggle = app.state.sidebar_actives_toggle_rect();
+        assert!(toggle.width > 0, "toggle must fit in the test footer");
+        assert!(!app.state.projects_actives_only);
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            toggle.x + 1,
+            toggle.y,
+        ));
+
+        assert!(app.state.projects_actives_only, "click turns the filter on");
     }
 
     // FEAT-A: with the project also open as a workspace, the same menu grows

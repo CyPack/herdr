@@ -78,6 +78,16 @@ impl App {
         }
     }
 
+    /// Persist the footer "actives" filter of the Projects tab so restarts
+    /// keep the chosen visibility.
+    pub(super) fn save_projects_actives_only(&mut self, enabled: bool) {
+        if self.update_config_file("projects actives filter", |content| {
+            crate::config::upsert_section_bool(content, "projects", "actives_only", enabled)
+        }) {
+            self.apply_config_from_disk(false);
+        }
+    }
+
     /// Persist the preview placement mode picked in settings. Only available
     /// modes reach this point (the "soon" rows are inert in the UI).
     pub(super) fn save_preview_placement(&mut self, placement: crate::config::PreviewPlacement) {
