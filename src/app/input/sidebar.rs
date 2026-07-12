@@ -274,15 +274,30 @@ impl AppState {
             .map(|area| area.kind)
     }
 
+    /// The workspace whose identity cwd matches the project's directory —
+    /// worktree actions launched from the Projects tab act on that workspace,
+    /// mirroring the Spaces context menu.
+    pub(crate) fn project_workspace_index(&self, proj_idx: usize) -> Option<usize> {
+        let project = self.projects_sessions.get(proj_idx)?;
+        self.workspaces
+            .iter()
+            .position(|ws| ws.identity_cwd == project.path)
+    }
+
     /// Open the new-chat agent selector for `proj_idx` at `(x, y)`, with the
-    /// current default agent highlighted.
+    /// current default agent highlighted. When the project is also open as a
+    /// workspace the menu grows that workspace's worktree actions.
     pub(super) fn open_project_new_chat_menu(&mut self, proj_idx: usize, x: u16, y: u16) {
         let highlighted = crate::app::projects::CHAT_AGENTS
             .iter()
             .position(|agent| *agent == self.default_chat_agent)
             .unwrap_or(0);
+        let has_workspace = self.project_workspace_index(proj_idx).is_some();
         self.context_menu = Some(crate::app::state::ContextMenuState {
-            kind: crate::app::state::ContextMenuKind::ProjectNewChat { proj_idx },
+            kind: crate::app::state::ContextMenuKind::ProjectNewChat {
+                proj_idx,
+                has_workspace,
+            },
             x,
             y,
             list: crate::app::state::MenuListState::new(highlighted),
@@ -2153,7 +2168,7 @@ mod tests {
         let menu = app.state.context_menu.as_ref().expect("selector open");
         assert!(matches!(
             menu.kind,
-            crate::app::state::ContextMenuKind::ProjectNewChat { proj_idx: 0 }
+            crate::app::state::ContextMenuKind::ProjectNewChat { proj_idx: 0, .. }
         ));
         assert_eq!(menu.items(), crate::app::projects::CHAT_AGENTS);
         assert_eq!(
@@ -2183,9 +2198,42 @@ mod tests {
 
         assert!(matches!(
             app.state.context_menu.as_ref().map(|menu| &menu.kind),
-            Some(crate::app::state::ContextMenuKind::ProjectNewChat { proj_idx: 0 })
+            Some(crate::app::state::ContextMenuKind::ProjectNewChat { proj_idx: 0, .. })
         ));
         assert_eq!(app.state.mode, Mode::ContextMenu);
+    }
+
+    // FEAT-A: with the project also open as a workspace, the same menu grows
+    // that workspace's worktree actions (mirroring the Spaces context menu).
+    #[test]
+    fn right_clicking_project_with_open_workspace_offers_worktree_actions() {
+        let mut app = projects_tab_app(vec![test_chat("sess-1")]);
+        app.state.workspaces[0].identity_cwd = app.state.projects_sessions[0].path.clone();
+        let header = project_row_rect(&app, |kind| {
+            matches!(
+                kind,
+                crate::app::state::ProjectRowKind::Project { proj_idx: 0 }
+            )
+        });
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            header.x + 2,
+            header.y,
+        ));
+
+        let menu = app.state.context_menu.as_ref().expect("menu open");
+        assert!(matches!(
+            menu.kind,
+            crate::app::state::ContextMenuKind::ProjectNewChat {
+                proj_idx: 0,
+                has_workspace: true
+            }
+        ));
+        assert_eq!(
+            menu.items(),
+            crate::app::projects::PROJECT_CHAT_MENU_WITH_WORKTREES
+        );
     }
 
     // C6b (no-happy-path): a right click on a chat row is inert AND must not

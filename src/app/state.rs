@@ -1256,9 +1256,12 @@ pub enum ContextMenuKind {
         has_manual_label: bool,
     },
     /// Agent selector for a new chat in a pinned project (Projects tab).
-    /// Selecting an entry makes it the persisted default and opens the chat.
+    /// Selecting an agent makes it the persisted default and opens the chat.
+    /// When the project is also open as a workspace, the menu additionally
+    /// offers that workspace's worktree actions (mirroring the Spaces menu).
     ProjectNewChat {
         proj_idx: usize,
+        has_workspace: bool,
     },
 }
 
@@ -1308,7 +1311,14 @@ impl ContextMenuState {
                 "Collapse",
             ],
             ContextMenuKind::Tab { .. } => &["New tab", "Rename", "Close"],
-            ContextMenuKind::ProjectNewChat { .. } => crate::app::projects::CHAT_AGENTS,
+            ContextMenuKind::ProjectNewChat {
+                has_workspace: false,
+                ..
+            } => crate::app::projects::CHAT_AGENTS,
+            ContextMenuKind::ProjectNewChat {
+                has_workspace: true,
+                ..
+            } => crate::app::projects::PROJECT_CHAT_MENU_WITH_WORKTREES,
             ContextMenuKind::Pane {
                 has_manual_label: true,
                 source_pane_id: Some(_),
@@ -2355,7 +2365,7 @@ impl AppState {
                 ContextMenuKind::Tab { ws_idx, tab_idx } => {
                     assert_tab_index(ws_idx, tab_idx, "context menu tab")
                 }
-                ContextMenuKind::ProjectNewChat { proj_idx } => {
+                ContextMenuKind::ProjectNewChat { proj_idx, .. } => {
                     assert!(
                         proj_idx < self.projects_sessions.len(),
                         "project new-chat menu references project {} outside the cache (len {})",

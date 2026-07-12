@@ -8,6 +8,19 @@
 /// config values.
 pub(crate) const CHAT_AGENTS: &[&str] = &["claude", "codex", "gemini", "opencode"];
 
+/// The project-header context menu when the project is also open as a
+/// workspace: every chat agent plus that workspace's worktree actions. Must
+/// stay `CHAT_AGENTS` followed by the two worktree rows — the menu handler
+/// matches the labels and a test pins the sync.
+pub(crate) const PROJECT_CHAT_MENU_WITH_WORKTREES: &[&str] = &[
+    "claude",
+    "codex",
+    "gemini",
+    "opencode",
+    "New worktree",
+    "Open worktree...",
+];
+
 /// Builds the argv + extra launch env for opening a project chat.
 ///
 /// `session_id` `Some` resumes that session with `claude --resume <id>` —
@@ -803,6 +816,19 @@ mod tests {
         assert_eq!(
             env,
             vec![("ENABLE_BACKGROUND_TASKS".to_string(), "1".to_string())]
+        );
+    }
+
+    #[test]
+    fn worktree_menu_extends_chat_agents_in_order() {
+        assert_eq!(
+            &PROJECT_CHAT_MENU_WITH_WORKTREES[..CHAT_AGENTS.len()],
+            CHAT_AGENTS,
+            "agent rows must stay in sync with CHAT_AGENTS"
+        );
+        assert_eq!(
+            &PROJECT_CHAT_MENU_WITH_WORKTREES[CHAT_AGENTS.len()..],
+            &["New worktree", "Open worktree..."]
         );
     }
 

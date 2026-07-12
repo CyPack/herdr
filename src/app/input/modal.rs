@@ -672,7 +672,21 @@ pub(super) fn apply_context_menu_action(
 ) {
     let item = menu.items().get(idx).copied();
     match (menu.kind, item) {
-        (ContextMenuKind::ProjectNewChat { proj_idx }, Some(agent)) => {
+        // Worktree rows must match BEFORE the agent catch-all below, which
+        // would otherwise persist "New worktree" as the default chat agent.
+        (ContextMenuKind::ProjectNewChat { proj_idx, .. }, Some("New worktree")) => {
+            if let Some(ws_idx) = state.project_workspace_index(proj_idx) {
+                state.request_new_linked_worktree = Some(ws_idx);
+            }
+            leave_modal(state);
+        }
+        (ContextMenuKind::ProjectNewChat { proj_idx, .. }, Some("Open worktree...")) => {
+            if let Some(ws_idx) = state.project_workspace_index(proj_idx) {
+                state.request_open_existing_worktree = Some(ws_idx);
+            }
+            leave_modal(state);
+        }
+        (ContextMenuKind::ProjectNewChat { proj_idx, .. }, Some(agent)) => {
             state.default_chat_agent = agent.to_string();
             if let Some(project) = state.projects_sessions.get(proj_idx) {
                 state.request_project_chat_tab = Some(crate::app::state::ProjectChatTabRequest {
@@ -1097,9 +1111,23 @@ impl App {
     pub(crate) fn apply_context_menu_action_via_api(&mut self, menu: ContextMenuState, idx: usize) {
         let item = menu.items().get(idx).copied();
         match (menu.kind, item) {
+            // Worktree rows must match BEFORE the agent catch-all below, which
+            // would otherwise persist "New worktree" as the default chat agent.
+            (ContextMenuKind::ProjectNewChat { proj_idx, .. }, Some("New worktree")) => {
+                if let Some(ws_idx) = self.state.project_workspace_index(proj_idx) {
+                    self.state.request_new_linked_worktree = Some(ws_idx);
+                }
+                leave_modal(&mut self.state);
+            }
+            (ContextMenuKind::ProjectNewChat { proj_idx, .. }, Some("Open worktree...")) => {
+                if let Some(ws_idx) = self.state.project_workspace_index(proj_idx) {
+                    self.state.request_open_existing_worktree = Some(ws_idx);
+                }
+                leave_modal(&mut self.state);
+            }
             // Picking an agent makes it the persisted default AND opens the
             // new chat in that project with it.
-            (ContextMenuKind::ProjectNewChat { proj_idx }, Some(agent)) => {
+            (ContextMenuKind::ProjectNewChat { proj_idx, .. }, Some(agent)) => {
                 self.state.default_chat_agent = agent.to_string();
                 if let Some(project) = self.state.projects_sessions.get(proj_idx) {
                     self.state.request_project_chat_tab =
@@ -2025,6 +2053,103 @@ mod tests {
         assert_eq!(app.state.selected, 0);
         assert_eq!(app.state.mode, Mode::ConfirmClose);
         assert_eq!(app.state.workspaces.len(), 2);
+    }
+
+    // ---- Projects-tab worktree menu entries (FEAT-A) ----
+
+    fn app_with_pinned_project(project_path: &str) -> crate::app::App {
+        let mut app = app_with_test_workspaces(&["main"]);
+        app.state.workspaces[0].identity_cwd = std::path::PathBuf::from(project_path);
+        app.state.projects_sessions = vec![crate::app::state::ProjectSessions {
+            path: std::path::PathBuf::from(project_path),
+            sessions: Vec::new(),
+            total_count: 0,
+        }];
+        app
+    }
+
+    fn project_menu(has_workspace: bool) -> ContextMenuState {
+        ContextMenuState {
+            kind: ContextMenuKind::ProjectNewChat {
+                proj_idx: 0,
+                has_workspace,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        }
+    }
+
+    fn item_index(menu: &ContextMenuState, label: &str) -> usize {
+        menu.items()
+            .iter()
+            .position(|item| *item == label)
+            .unwrap_or_else(|| panic!("menu should offer {label:?}"))
+    }
+
+    #[test]
+    fn project_menu_new_worktree_targets_the_matching_workspace() {
+        let mut app = app_with_pinned_project("/proj/herdr");
+        let menu = project_menu(true);
+        let idx = item_index(&menu, "New worktree");
+        let default_agent = app.state.default_chat_agent.clone();
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        assert_eq!(app.state.request_new_linked_worktree, Some(0));
+        assert!(
+            app.state.request_project_chat_tab.is_none(),
+            "worktree rows must not fall through to the agent arm"
+        );
+        assert_eq!(app.state.default_chat_agent, default_agent);
+        assert_ne!(app.state.mode, Mode::ContextMenu);
+    }
+
+    #[test]
+    fn project_menu_open_worktree_targets_the_matching_workspace() {
+        let mut app = app_with_pinned_project("/proj/herdr");
+        let menu = project_menu(true);
+        let idx = item_index(&menu, "Open worktree...");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        assert_eq!(app.state.request_open_existing_worktree, Some(0));
+        assert!(app.state.request_project_chat_tab.is_none());
+    }
+
+    #[test]
+    fn project_menu_worktree_actions_are_inert_without_a_matching_workspace() {
+        let mut app = app_with_pinned_project("/proj/herdr");
+        // The workspace moved away between menu open and selection.
+        app.state.workspaces[0].identity_cwd = std::path::PathBuf::from("/elsewhere");
+        let menu = project_menu(true);
+        let idx = item_index(&menu, "New worktree");
+        let default_agent = app.state.default_chat_agent.clone();
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        assert_eq!(app.state.request_new_linked_worktree, None);
+        assert_eq!(app.state.default_chat_agent, default_agent);
+        assert_ne!(app.state.mode, Mode::ContextMenu);
+    }
+
+    #[test]
+    fn project_menu_agent_selection_still_opens_the_chat() {
+        let mut app = app_with_pinned_project("/proj/herdr");
+        let menu = project_menu(true);
+        let idx = item_index(&menu, "claude");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        assert_eq!(app.state.default_chat_agent, "claude");
+        assert_eq!(
+            app.state
+                .request_project_chat_tab
+                .as_ref()
+                .map(|req| req.project_path.clone()),
+            Some(std::path::PathBuf::from("/proj/herdr"))
+        );
+        assert_eq!(app.state.request_new_linked_worktree, None);
     }
 
     #[test]
