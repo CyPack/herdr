@@ -63,6 +63,21 @@ impl App {
         }
     }
 
+    /// Persist the Projects-tab default agent picked in the new-chat selector
+    /// so later plain "+" clicks (and restarts) keep using it.
+    pub(super) fn save_default_chat_agent(&mut self, agent: &str) {
+        if self.update_config_file("default chat agent", |content| {
+            crate::config::upsert_section_value(
+                content,
+                "projects",
+                "default_chat_agent",
+                &format!("\"{agent}\""),
+            )
+        }) {
+            self.apply_config_from_disk(false);
+        }
+    }
+
     pub(super) fn save_toast_delivery(&mut self, delivery: crate::config::ToastDelivery) {
         let value = match delivery {
             crate::config::ToastDelivery::Off => "\"off\"",

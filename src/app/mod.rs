@@ -480,6 +480,11 @@ impl App {
             .iter()
             .map(|entry| crate::worktree::expand_tilde_absolute_path(entry))
             .collect();
+        let default_chat_agent = config
+            .projects
+            .default_chat_agent
+            .clone()
+            .unwrap_or_else(|| "claude".to_string());
 
         info!(
             pane_scrollback_limit_bytes = config.advanced.scrollback_limit_bytes,
@@ -547,6 +552,7 @@ impl App {
             projects_pinned,
             projects_sessions: Vec::new(),
             collapsed_project_paths: std::collections::HashSet::new(),
+            default_chat_agent,
             request_complete_onboarding: false,
             name_input: String::new(),
             name_input_replace_on_type: false,

@@ -3,24 +3,48 @@
 //! is testable without PTYs; the tab spawn itself reuses the proven
 //! `Workspace::create_tab_argv_command` path (same as plugin panes).
 
-/// Builds the argv + extra launch env for opening a Claude Code chat.
+/// Agent CLIs a NEW project chat can launch with, in menu order. The entries
+/// double as the selector menu items and the `[projects] default_chat_agent`
+/// config values.
+pub(crate) const CHAT_AGENTS: &[&str] = &["claude", "codex", "gemini", "opencode"];
+
+/// Builds the argv + extra launch env for opening a project chat.
 ///
-/// `session_id` `Some` resumes that session (`claude --resume <id>`), `None`
-/// starts a fresh chat. Mirrors the user's fish `cc` launcher: permissions
-/// prompts are skipped and background tasks are enabled.
+/// `session_id` `Some` resumes that session with `claude --resume <id>` —
+/// ALWAYS claude, whatever `agent` says, because the sidebar's sessions are
+/// Claude Code sessions no other CLI can resume. `None` starts a fresh chat
+/// with `agent` (falling back to claude for unknown ids so a stale config
+/// value can never break the "+" button). The claude launch mirrors the
+/// user's fish `cc` alias: permission prompts skipped, background tasks on.
 pub(crate) fn project_chat_launch(
+    agent: &str,
     session_id: Option<&str>,
 ) -> (Vec<String>, Vec<(String, String)>) {
-    let mut argv = vec![
-        "claude".to_string(),
-        "--dangerously-skip-permissions".to_string(),
-    ];
+    let claude_launch = || {
+        (
+            vec![
+                "claude".to_string(),
+                "--dangerously-skip-permissions".to_string(),
+            ],
+            vec![("ENABLE_BACKGROUND_TASKS".to_string(), "1".to_string())],
+        )
+    };
+
     if let Some(session_id) = session_id {
+        let (mut argv, env) = claude_launch();
         argv.push("--resume".to_string());
         argv.push(session_id.to_string());
+        return (argv, env);
     }
-    let env = vec![("ENABLE_BACKGROUND_TASKS".to_string(), "1".to_string())];
-    (argv, env)
+
+    match agent {
+        "claude" => claude_launch(),
+        "codex" | "gemini" | "opencode" => (vec![agent.to_string()], Vec::new()),
+        unknown => {
+            tracing::warn!(agent = unknown, "unknown default_chat_agent; using claude");
+            claude_launch()
+        }
+    }
 }
 
 impl super::App {
@@ -35,10 +59,12 @@ impl super::App {
         true
     }
 
-    /// Open a Claude Code chat (resume or new) as a tab in the right
-    /// workspace, launching it with the standard chat argv/env.
+    /// Open a project chat (resume or new) as a tab in the right workspace.
+    /// New chats launch with the configured default agent; resumes are always
+    /// claude (see `project_chat_launch`).
     fn open_project_chat_tab(&mut self, req: crate::app::state::ProjectChatTabRequest) {
-        let (argv, extra_env) = project_chat_launch(req.session_id.as_deref());
+        let (argv, extra_env) =
+            project_chat_launch(&self.state.default_chat_agent, req.session_id.as_deref());
         self.open_project_chat_tab_with_argv(req, &argv, extra_env);
     }
 
@@ -454,11 +480,48 @@ mod tests {
         );
     }
 
+    // C1: a new chat launches with the selected agent's plain command and no
+    // claude-specific env; each catalog entry must map to a real CLI name.
+    #[test]
+    fn project_chat_launch_new_chat_uses_selected_agent() {
+        for agent in ["codex", "gemini", "opencode"] {
+            let (argv, env) = project_chat_launch(agent, None);
+            assert_eq!(argv, vec![agent.to_string()], "argv for {agent}");
+            assert!(env.is_empty(), "no claude env for {agent}");
+        }
+    }
+
+    // C1 (no-happy-path): a stale/unknown config value must never break the
+    // "+" button — it falls back to the claude launch.
+    #[test]
+    fn project_chat_launch_unknown_agent_falls_back_to_claude() {
+        let (argv, _env) = project_chat_launch("not-a-real-agent", None);
+        assert_eq!(argv[0], "claude");
+        assert_eq!(argv[1], "--dangerously-skip-permissions");
+    }
+
+    // C1 (guard): resuming ALWAYS uses claude even when another agent is the
+    // default — sidebar sessions are Claude Code sessions.
+    #[test]
+    fn project_chat_launch_resume_ignores_selected_agent() {
+        let (argv, _env) = project_chat_launch("codex", Some("sess-1"));
+        assert_eq!(
+            argv,
+            vec![
+                "claude".to_string(),
+                "--dangerously-skip-permissions".to_string(),
+                "--resume".to_string(),
+                "sess-1".to_string(),
+            ]
+        );
+    }
+
     // T5a-1: resuming a chat must produce the exact fish-`cc` argv shape;
     // a wrong flag order or missing id opens the wrong (or no) session.
     #[test]
     fn project_chat_launch_builds_resume_argv() {
-        let (argv, env) = project_chat_launch(Some("0d55b02e-aaaa-bbbb-cccc-111111111111"));
+        let (argv, env) =
+            project_chat_launch("claude", Some("0d55b02e-aaaa-bbbb-cccc-111111111111"));
         assert_eq!(
             argv,
             vec![
@@ -478,7 +541,7 @@ mod tests {
     // empty `--resume` would make claude error out instead of starting fresh.
     #[test]
     fn project_chat_launch_builds_new_chat_argv() {
-        let (argv, env) = project_chat_launch(None);
+        let (argv, env) = project_chat_launch("claude", None);
         assert_eq!(
             argv,
             vec![

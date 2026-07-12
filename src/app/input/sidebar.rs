@@ -196,20 +196,50 @@ impl AppState {
         Rect::new(x, footer.y, width, footer.height)
     }
 
-    /// Handle a left click on a Projects-tab row. A project header row toggles
-    /// its collapse state; a chat row queues a `claude --resume` tab request
-    /// and the "(no chats)" row queues a new-chat tab request for that project
-    /// (both consumed by the event loop, which owns the runtime). Hit-tests
-    /// the same `project_row_areas` the render drew.
-    pub(super) fn toggle_projects_row_at(&mut self, col: u16, row: u16) {
-        let hit = self
-            .view
+    /// The Projects-tab row (if any) whose laid-out rect contains `(col, row)`.
+    pub(super) fn project_row_kind_at(
+        &self,
+        col: u16,
+        row: u16,
+    ) -> Option<crate::app::state::ProjectRowKind> {
+        self.view
             .project_row_areas
             .iter()
             .find(|area| {
                 row == area.rect.y && col >= area.rect.x && col < area.rect.x + area.rect.width
             })
-            .map(|area| area.kind);
+            .map(|area| area.kind)
+    }
+
+    /// Open the new-chat agent selector for `proj_idx` at `(x, y)`, with the
+    /// current default agent highlighted.
+    pub(super) fn open_project_new_chat_menu(&mut self, proj_idx: usize, x: u16, y: u16) {
+        let highlighted = crate::app::projects::CHAT_AGENTS
+            .iter()
+            .position(|agent| *agent == self.default_chat_agent)
+            .unwrap_or(0);
+        self.context_menu = Some(crate::app::state::ContextMenuState {
+            kind: crate::app::state::ContextMenuKind::ProjectNewChat { proj_idx },
+            x,
+            y,
+            list: crate::app::state::MenuListState::new(highlighted),
+        });
+        self.mode = crate::app::Mode::ContextMenu;
+    }
+
+    /// Handle a left click on a Projects-tab row. A project header row toggles
+    /// its collapse state; a chat row queues a `claude --resume` tab request;
+    /// the "(no chats)" row queues a new-chat tab request; the header's " +"
+    /// button opens a new chat with the default agent, or the agent selector
+    /// when shift is held (both consumed by the event loop, which owns the
+    /// runtime). Hit-tests the same `project_row_areas` the render drew.
+    pub(super) fn toggle_projects_row_at(
+        &mut self,
+        col: u16,
+        row: u16,
+        modifiers: crossterm::event::KeyModifiers,
+    ) {
+        let hit = self.project_row_kind_at(col, row);
 
         match hit {
             Some(crate::app::state::ProjectRowKind::Project { proj_idx }) => {
@@ -242,6 +272,17 @@ impl AppState {
             }
             Some(crate::app::state::ProjectRowKind::Empty { proj_idx }) => {
                 if let Some(project) = self.projects_sessions.get(proj_idx) {
+                    self.request_project_chat_tab =
+                        Some(crate::app::state::ProjectChatTabRequest {
+                            project_path: project.path.clone(),
+                            session_id: None,
+                        });
+                }
+            }
+            Some(crate::app::state::ProjectRowKind::NewChat { proj_idx }) => {
+                if modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
+                    self.open_project_new_chat_menu(proj_idx, col, row);
+                } else if let Some(project) = self.projects_sessions.get(proj_idx) {
                     self.request_project_chat_tab =
                         Some(crate::app::state::ProjectChatTabRequest {
                             project_path: project.path.clone(),
@@ -1894,6 +1935,153 @@ mod tests {
         );
         assert_eq!(app.state.workspaces[1].active_tab, tab_idx);
         assert_eq!(app.state.mode, Mode::Terminal);
+    }
+
+    // ---- Project "+" button + agent selector (Task #10) -------------------
+
+    // C4: a plain left click on "+" queues a new chat in that project (the
+    // event loop opens it with the default agent) — and must neither toggle
+    // collapse nor open a menu.
+    #[test]
+    fn clicking_project_plus_button_requests_default_new_chat() {
+        let mut app = projects_tab_app(vec![test_chat("sess-1")]);
+        let rect = project_row_rect(&app, |kind| {
+            matches!(
+                kind,
+                crate::app::state::ProjectRowKind::NewChat { proj_idx: 0 }
+            )
+        });
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            rect.x + 1,
+            rect.y,
+        ));
+
+        assert_eq!(
+            app.state.request_project_chat_tab,
+            Some(crate::app::state::ProjectChatTabRequest {
+                project_path: std::path::PathBuf::from("/home/x/proj"),
+                session_id: None,
+            })
+        );
+        assert!(app.state.collapsed_project_paths.is_empty());
+        assert!(app.state.context_menu.is_none());
+    }
+
+    // C5: shift+left click on "+" opens the agent selector instead — no
+    // request yet, and the CURRENT default is highlighted for orientation.
+    #[test]
+    fn shift_clicking_project_plus_button_opens_agent_selector() {
+        let mut app = projects_tab_app(vec![test_chat("sess-1")]);
+        app.state.default_chat_agent = "gemini".to_string();
+        let rect = project_row_rect(&app, |kind| {
+            matches!(
+                kind,
+                crate::app::state::ProjectRowKind::NewChat { proj_idx: 0 }
+            )
+        });
+
+        app.handle_mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x + 1,
+            row: rect.y,
+            modifiers: crossterm::event::KeyModifiers::SHIFT,
+        });
+
+        assert_eq!(app.state.request_project_chat_tab, None);
+        let menu = app.state.context_menu.as_ref().expect("selector open");
+        assert!(matches!(
+            menu.kind,
+            crate::app::state::ContextMenuKind::ProjectNewChat { proj_idx: 0 }
+        ));
+        assert_eq!(menu.items(), crate::app::projects::CHAT_AGENTS);
+        assert_eq!(
+            menu.list.highlighted, 2,
+            "current default (gemini) highlighted"
+        );
+        assert_eq!(app.state.mode, Mode::ContextMenu);
+    }
+
+    // C6a: right click on the project header opens the same selector — the
+    // guaranteed trigger for terminals that swallow shift+click.
+    #[test]
+    fn right_clicking_project_header_opens_agent_selector() {
+        let mut app = projects_tab_app(vec![test_chat("sess-1")]);
+        let header = project_row_rect(&app, |kind| {
+            matches!(
+                kind,
+                crate::app::state::ProjectRowKind::Project { proj_idx: 0 }
+            )
+        });
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            header.x + 2,
+            header.y,
+        ));
+
+        assert!(matches!(
+            app.state.context_menu.as_ref().map(|menu| &menu.kind),
+            Some(crate::app::state::ContextMenuKind::ProjectNewChat { proj_idx: 0 })
+        ));
+        assert_eq!(app.state.mode, Mode::ContextMenu);
+    }
+
+    // C6b (no-happy-path): a right click on a chat row is inert AND must not
+    // fall through to the invisible workspace-card menu underneath.
+    #[test]
+    fn right_clicking_chat_row_on_projects_tab_is_inert() {
+        let mut app = projects_tab_app(vec![test_chat("sess-1")]);
+        let chat = project_row_rect(&app, |kind| {
+            matches!(
+                kind,
+                crate::app::state::ProjectRowKind::Chat {
+                    proj_idx: 0,
+                    chat_idx: 0
+                }
+            )
+        });
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            chat.x + 2,
+            chat.y,
+        ));
+
+        assert!(
+            app.state.context_menu.is_none(),
+            "no chat menu yet — and never the workspace menu"
+        );
+        assert_ne!(app.state.mode, Mode::ContextMenu);
+    }
+
+    // C7: picking an agent from the selector (API path, same as a mouse
+    // click) makes it the default and queues the new chat in that project.
+    #[test]
+    fn selecting_agent_from_menu_sets_default_and_queues_chat() {
+        let mut app = projects_tab_app(vec![test_chat("sess-1")]);
+        app.state.open_project_new_chat_menu(0, 5, 5);
+        let menu = app.state.context_menu.take().expect("selector open");
+        let codex_idx = menu
+            .items()
+            .iter()
+            .position(|item| *item == "codex")
+            .expect("codex listed");
+
+        app.apply_context_menu_action_via_api(menu, codex_idx);
+
+        assert_eq!(app.state.default_chat_agent, "codex");
+        assert_eq!(
+            app.state.request_project_chat_tab,
+            Some(crate::app::state::ProjectChatTabRequest {
+                project_path: std::path::PathBuf::from("/home/x/proj"),
+                session_id: None,
+            })
+        );
+        assert_ne!(app.state.mode, Mode::ContextMenu, "selector closed");
+        // Persisting goes through save_default_chat_agent → update_config_file,
+        // which is a guarded no-op in tests without CONFIG_PATH_ENV_VAR.
     }
 
     // T5a-6 (regression): the Task #4 behavior — clicking the project header

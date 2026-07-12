@@ -296,6 +296,10 @@ pub fn validated_sidebar_bounds(min: u16, max: u16) -> Option<(u16, u16)> {
 pub struct ProjectsConfig {
     /// Absolute (or `~`-rooted) project directories pinned to the Projects tab.
     pub pinned: Vec<String>,
+    /// Agent CLI id for NEW chats opened from the Projects tab (one of the
+    /// built-in chat agents; unknown values fall back to claude at launch, so
+    /// a stale entry can never break the "+" button).
+    pub default_chat_agent: Option<String>,
 }
 
 impl ProjectsConfig {

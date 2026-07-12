@@ -1128,10 +1128,21 @@ pub(crate) fn compute_project_row_areas(app: &AppState, area: Rect) -> Vec<Proje
         if y >= body_bottom {
             break;
         }
+        // The header row splits into the collapse/name area and a fixed-width
+        // " +" new-chat button at the right edge. Disjoint rects keep the
+        // hit-test unambiguous; the button is dropped on very narrow sidebars
+        // so the header itself stays clickable.
+        let button_w: u16 = if body.width >= 8 { 3 } else { 0 };
         areas.push(ProjectRowArea {
-            rect: Rect::new(body.x, y, body.width, 1),
+            rect: Rect::new(body.x, y, body.width - button_w, 1),
             kind: ProjectRowKind::Project { proj_idx },
         });
+        if button_w > 0 {
+            areas.push(ProjectRowArea {
+                rect: Rect::new(body.x + body.width - button_w, y, button_w, 1),
+                kind: ProjectRowKind::NewChat { proj_idx },
+            });
+        }
         y += 1;
 
         if app.collapsed_project_paths.contains(&project.path) {
@@ -1242,6 +1253,15 @@ fn render_projects_list(app: &AppState, frame: &mut Frame, area: Rect) {
                     Paragraph::new(Span::styled(
                         "   (no chats)",
                         Style::default().fg(p.overlay0),
+                    )),
+                    rect,
+                );
+            }
+            ProjectRowKind::NewChat { .. } => {
+                frame.render_widget(
+                    Paragraph::new(Span::styled(
+                        " +",
+                        Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
                     )),
                     rect,
                 );
@@ -1843,37 +1863,55 @@ mod tests {
         ];
         let area = Rect::new(0, 0, 24, 20);
         let rows = compute_project_row_areas(&app, area);
-        // project /a (header + 2 chats) + project /b (header + "(no chats)") = 5.
-        assert_eq!(rows.len(), 5);
+        // project /a (header + "+" + 2 chats) + project /b (header + "+" +
+        // "(no chats)") = 7 areas; each header row contributes two disjoint
+        // hit areas on the same line.
+        assert_eq!(rows.len(), 7);
         assert!(matches!(
             rows[0].kind,
             ProjectRowKind::Project { proj_idx: 0 }
         ));
         assert!(matches!(
             rows[1].kind,
+            ProjectRowKind::NewChat { proj_idx: 0 }
+        ));
+        assert!(matches!(
+            rows[2].kind,
             ProjectRowKind::Chat {
                 proj_idx: 0,
                 chat_idx: 0
             }
         ));
         assert!(matches!(
-            rows[2].kind,
+            rows[3].kind,
             ProjectRowKind::Chat {
                 proj_idx: 0,
                 chat_idx: 1
             }
         ));
         assert!(matches!(
-            rows[3].kind,
+            rows[4].kind,
             ProjectRowKind::Project { proj_idx: 1 }
         ));
         assert!(matches!(
-            rows[4].kind,
+            rows[5].kind,
+            ProjectRowKind::NewChat { proj_idx: 1 }
+        ));
+        assert!(matches!(
+            rows[6].kind,
             ProjectRowKind::Empty { proj_idx: 1 }
         ));
+        // The "+" button shares the header line but never overlaps the name
+        // area — an ambiguous hit would fire the wrong action.
+        assert_eq!(rows[1].rect.y, rows[0].rect.y);
+        assert_eq!(rows[1].rect.x, rows[0].rect.x + rows[0].rect.width);
+        assert_eq!(
+            rows[1].rect.x + rows[1].rect.width,
+            rows[0].rect.x + area.width
+        );
         // Rows stack one per line inside the body (below the 2-row header).
         assert_eq!(rows[0].rect.y, area.y + WORKSPACE_SECTION_HEADER_ROWS);
-        assert_eq!(rows[1].rect.y, rows[0].rect.y + 1);
+        assert_eq!(rows[2].rect.y, rows[0].rect.y + 1);
     }
 
     #[test]
@@ -1883,10 +1921,18 @@ mod tests {
         app.collapsed_project_paths
             .insert(std::path::PathBuf::from("/a"));
         let rows = compute_project_row_areas(&app, Rect::new(0, 0, 24, 20));
-        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows.len(),
+            2,
+            "header keeps its \"+\" button when collapsed"
+        );
         assert!(matches!(
             rows[0].kind,
             ProjectRowKind::Project { proj_idx: 0 }
+        ));
+        assert!(matches!(
+            rows[1].kind,
+            ProjectRowKind::NewChat { proj_idx: 0 }
         ));
     }
 
@@ -1902,12 +1948,16 @@ mod tests {
             ],
         )];
         // Height 4: 2 header rows + 1 footer row leaves exactly 1 body row, so
-        // only the project header fits.
+        // only the project header line (name area + "+" button) fits.
         let rows = compute_project_row_areas(&app, Rect::new(0, 0, 24, 4));
-        assert_eq!(rows.len(), 1);
+        assert_eq!(rows.len(), 2);
         assert!(matches!(
             rows[0].kind,
             ProjectRowKind::Project { proj_idx: 0 }
+        ));
+        assert!(matches!(
+            rows[1].kind,
+            ProjectRowKind::NewChat { proj_idx: 0 }
         ));
     }
 

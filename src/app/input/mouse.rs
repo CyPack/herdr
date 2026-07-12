@@ -544,7 +544,7 @@ impl AppState {
                     // here so Spaces-only chrome (new-workspace, workspace cards)
                     // never fires while it is active.
                     if self.sidebar_tab == crate::app::state::SidebarTab::Projects {
-                        self.toggle_projects_row_at(mouse.column, mouse.row);
+                        self.toggle_projects_row_at(mouse.column, mouse.row, mouse.modifiers);
                         return None;
                     }
 
@@ -1019,6 +1019,20 @@ impl AppState {
                     .workspace_list_scrollbar_target_at(mouse.column, mouse.row)
                     .is_some()
                 {
+                    return None;
+                }
+                // The Projects tab owns its rows: right-click on a project
+                // header or its "+" button opens the agent selector; other
+                // rows are inert. Never fall through to the workspace-card
+                // menu — those cards are not visible on this tab.
+                if self.sidebar_tab == crate::app::state::SidebarTab::Projects {
+                    if let Some(
+                        crate::app::state::ProjectRowKind::Project { proj_idx }
+                        | crate::app::state::ProjectRowKind::NewChat { proj_idx },
+                    ) = self.project_row_kind_at(mouse.column, mouse.row)
+                    {
+                        self.open_project_new_chat_menu(proj_idx, mouse.column, mouse.row);
+                    }
                     return None;
                 }
                 if let Some(idx) = self.workspace_at_row(mouse.row) {

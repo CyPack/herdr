@@ -599,6 +599,10 @@ pub enum ProjectRowKind {
     Chat { proj_idx: usize, chat_idx: usize },
     /// The "(no chats)" placeholder under an expanded project with no sessions.
     Empty { proj_idx: usize },
+    /// The " +" button at the right edge of a project header row: opens a new
+    /// chat in that project with the default agent (left click) or the agent
+    /// selector menu (shift+left click / right click).
+    NewChat { proj_idx: usize },
 }
 
 /// A laid-out Projects-tab row: its screen rect plus what it points at. Computed
@@ -1207,6 +1211,11 @@ pub enum ContextMenuKind {
         source_pane_id: Option<PaneId>,
         has_manual_label: bool,
     },
+    /// Agent selector for a new chat in a pinned project (Projects tab).
+    /// Selecting an entry makes it the persisted default and opens the chat.
+    ProjectNewChat {
+        proj_idx: usize,
+    },
 }
 
 /// Right-click context menu state.
@@ -1255,6 +1264,7 @@ impl ContextMenuState {
                 "Collapse",
             ],
             ContextMenuKind::Tab { .. } => &["New tab", "Rename", "Close"],
+            ContextMenuKind::ProjectNewChat { .. } => crate::app::projects::CHAT_AGENTS,
             ContextMenuKind::Pane {
                 has_manual_label: true,
                 source_pane_id: Some(_),
@@ -1445,6 +1455,10 @@ pub struct AppState {
     pub projects_sessions: Vec<ProjectSessions>,
     /// Pinned project paths whose chat list is collapsed in the Projects tab.
     pub collapsed_project_paths: std::collections::HashSet<std::path::PathBuf>,
+    /// Agent CLI id used when opening a NEW chat from the Projects tab
+    /// (`[projects] default_chat_agent`, one of `projects::CHAT_AGENTS`).
+    /// Resuming existing chats always uses claude regardless of this value.
+    pub default_chat_agent: String,
     pub request_complete_onboarding: bool,
     pub name_input: String,
     pub name_input_replace_on_type: bool,
@@ -1847,6 +1861,7 @@ impl AppState {
             projects_pinned: Vec::new(),
             projects_sessions: Vec::new(),
             collapsed_project_paths: std::collections::HashSet::new(),
+            default_chat_agent: "claude".to_string(),
             request_complete_onboarding: false,
             name_input: String::new(),
             name_input_replace_on_type: false,
@@ -2266,6 +2281,14 @@ impl AppState {
                 }
                 ContextMenuKind::Tab { ws_idx, tab_idx } => {
                     assert_tab_index(ws_idx, tab_idx, "context menu tab")
+                }
+                ContextMenuKind::ProjectNewChat { proj_idx } => {
+                    assert!(
+                        proj_idx < self.projects_sessions.len(),
+                        "project new-chat menu references project {} outside the cache (len {})",
+                        proj_idx,
+                        self.projects_sessions.len()
+                    );
                 }
                 ContextMenuKind::Pane {
                     ws_idx,

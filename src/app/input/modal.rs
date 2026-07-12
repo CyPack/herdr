@@ -672,6 +672,16 @@ pub(super) fn apply_context_menu_action(
 ) {
     let item = menu.items().get(idx).copied();
     match (menu.kind, item) {
+        (ContextMenuKind::ProjectNewChat { proj_idx }, Some(agent)) => {
+            state.default_chat_agent = agent.to_string();
+            if let Some(project) = state.projects_sessions.get(proj_idx) {
+                state.request_project_chat_tab = Some(crate::app::state::ProjectChatTabRequest {
+                    project_path: project.path.clone(),
+                    session_id: None,
+                });
+            }
+            leave_modal(state);
+        }
         (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("New worktree")) => {
             state.request_new_linked_worktree = Some(ws_idx);
             leave_modal(state);
@@ -1087,6 +1097,20 @@ impl App {
     pub(crate) fn apply_context_menu_action_via_api(&mut self, menu: ContextMenuState, idx: usize) {
         let item = menu.items().get(idx).copied();
         match (menu.kind, item) {
+            // Picking an agent makes it the persisted default AND opens the
+            // new chat in that project with it.
+            (ContextMenuKind::ProjectNewChat { proj_idx }, Some(agent)) => {
+                self.state.default_chat_agent = agent.to_string();
+                if let Some(project) = self.state.projects_sessions.get(proj_idx) {
+                    self.state.request_project_chat_tab =
+                        Some(crate::app::state::ProjectChatTabRequest {
+                            project_path: project.path.clone(),
+                            session_id: None,
+                        });
+                }
+                self.save_default_chat_agent(agent);
+                leave_modal(&mut self.state);
+            }
             (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("New worktree")) => {
                 self.state.request_new_linked_worktree = Some(ws_idx);
                 leave_modal(&mut self.state);
