@@ -319,6 +319,7 @@ pub struct Keybinds {
     pub next_agent: ActionKeybinds,
     pub focus_agent: Vec<IndexedKeybind>,
     pub new_tab: ActionKeybinds,
+    pub new_chat_tab: ActionKeybinds,
     pub rename_tab: ActionKeybinds,
     pub previous_tab: ActionKeybinds,
     pub next_tab: ActionKeybinds,
@@ -481,6 +482,7 @@ impl Config {
             next_agent: empty_action!(),
             focus_agent: Vec::new(),
             new_tab: empty_action!(),
+            new_chat_tab: empty_action!(),
             rename_tab: empty_action!(),
             previous_tab: empty_action!(),
             next_tab: empty_action!(),
@@ -612,6 +614,7 @@ impl Config {
                 source
             );
             apply_action!(keybinds.new_tab, new_tab, source);
+            apply_action!(keybinds.new_chat_tab, new_chat_tab, source);
             apply_action!(keybinds.rename_tab, rename_tab, source);
             apply_action!(keybinds.previous_tab, previous_tab, source);
             apply_action!(keybinds.next_tab, next_tab, source);
@@ -1622,6 +1625,28 @@ close_tab = "X"
         assert!(diagnostics.iter().any(
             |diag| diag.contains("unsafe direct keybinding") && diag.contains("keys.close_tab")
         ));
+    }
+
+    #[test]
+    fn new_chat_tab_binding_parses_direct_modifier_combo() {
+        let config: Config = toml::from_str(
+            r#"
+[keys]
+new_chat_tab = "alt+t"
+"#,
+        )
+        .unwrap();
+        let keybinds = config.keybinds();
+        assert_eq!(keybinds.new_chat_tab.bindings.len(), 1);
+        assert!(keybinds.new_chat_tab.bindings[0].trigger.is_direct());
+        assert_eq!(keybinds.new_chat_tab.bindings[0].label, "alt+t");
+    }
+
+    #[test]
+    fn new_chat_tab_defaults_unset() {
+        let config = Config::default();
+        let keybinds = config.keybinds();
+        assert!(keybinds.new_chat_tab.bindings.is_empty());
     }
 
     #[test]

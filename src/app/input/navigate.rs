@@ -310,6 +310,9 @@ impl App {
                     }
                 }
             }
+            NavigateAction::NewChatTab => {
+                queue_home_chat_tab(&mut self.state, crate::integration::home_dir().ok());
+            }
             NavigateAction::RenameTab => {
                 super::modal::open_rename_active_tab(&mut self.state, false)
             }
@@ -1292,6 +1295,7 @@ pub(crate) enum NavigateAction {
     PreviousAgent,
     NextAgent,
     NewTab,
+    NewChatTab,
     RenameTab,
     PreviousTab,
     NextTab,
@@ -1425,6 +1429,7 @@ fn non_indexed_action_for_key(
         (&kb.previous_agent, NavigateAction::PreviousAgent),
         (&kb.next_agent, NavigateAction::NextAgent),
         (&kb.new_tab, NavigateAction::NewTab),
+        (&kb.new_chat_tab, NavigateAction::NewChatTab),
         (&kb.rename_tab, NavigateAction::RenameTab),
         (&kb.previous_tab, NavigateAction::PreviousTab),
         (&kb.next_tab, NavigateAction::NextTab),
@@ -1501,6 +1506,23 @@ fn navigate_mode_indexed_action_for_key(
     key: TerminalKey,
 ) -> Option<NavigateAction> {
     indexed_navigation_action(state, key, BindingDispatch::Prefix)
+}
+
+/// Queue a chat tab rooted in the user's home directory with the default
+/// chat agent. `home` is injected so the pure state layer stays testable
+/// without reading the environment; callers pass
+/// `crate::integration::home_dir().ok()`. Without a home directory the
+/// action is a safe no-op.
+pub(super) fn queue_home_chat_tab(state: &mut AppState, home: Option<std::path::PathBuf>) {
+    let Some(home) = home else {
+        tracing::warn!("new chat tab: home directory unavailable; ignoring");
+        return;
+    };
+    state.request_project_chat_tab = Some(crate::app::state::ProjectChatTabRequest {
+        project_path: home,
+        session_id: None,
+    });
+    leave_navigate_mode(state);
 }
 
 #[cfg(test)]
@@ -1615,6 +1637,9 @@ pub(super) fn execute_navigate_action_in_context(
                     leave_navigate_mode(state);
                 }
             }
+        }
+        NavigateAction::NewChatTab => {
+            queue_home_chat_tab(state, crate::integration::home_dir().ok());
         }
         NavigateAction::RenameTab => super::modal::open_rename_active_tab(state, false),
         NavigateAction::PreviousTab => {
@@ -2372,6 +2397,19 @@ navigate_pane_right = "ctrl+l"
         );
 
         assert_eq!(action, Some(NavigateAction::NextAgent));
+    }
+
+    #[test]
+    fn terminal_direct_new_chat_tab_shortcut_maps_to_navigation_action() {
+        let mut state = state_with_workspaces(&["test"]);
+        state.keybinds.new_chat_tab = crate::config::ActionKeybinds::direct("alt+t");
+
+        let action = terminal_direct_navigation_action(
+            &state,
+            TerminalKey::new(KeyCode::Char('t'), KeyModifiers::ALT),
+        );
+
+        assert_eq!(action, Some(NavigateAction::NewChatTab));
     }
 
     #[test]
@@ -3181,6 +3219,39 @@ navigate_pane_down = "ctrl+j"
         assert!(state.name_input_replace_on_type);
         assert!(!state.request_new_tab);
         assert_eq!(state.workspaces[0].tabs.len(), 1);
+    }
+
+    #[test]
+    fn new_chat_tab_action_queues_home_chat_request() {
+        let mut state = state_with_workspaces(&["test"]);
+
+        queue_home_chat_tab(&mut state, Some(std::path::PathBuf::from("/home/probe")));
+
+        let req = state
+            .request_project_chat_tab
+            .as_ref()
+            .expect("home chat request should be queued");
+        assert_eq!(req.project_path, std::path::PathBuf::from("/home/probe"));
+        assert!(req.session_id.is_none());
+        assert_eq!(state.mode, Mode::Terminal);
+    }
+
+    #[test]
+    fn new_chat_tab_action_without_home_is_a_safe_noop() {
+        let mut state = state_with_workspaces(&["test"]);
+
+        queue_home_chat_tab(&mut state, None);
+
+        assert!(state.request_project_chat_tab.is_none());
+    }
+
+    #[test]
+    fn new_chat_tab_action_works_without_any_workspace() {
+        let mut state = crate::app::state::AppState::test_new();
+
+        execute_navigate_action(&mut state, NavigateAction::NewChatTab);
+
+        assert!(state.request_project_chat_tab.is_some());
     }
 
     #[test]

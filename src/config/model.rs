@@ -484,6 +484,8 @@ pub struct KeysConfig {
     pub remote_image_paste: String,
     /// Create a new tab in the active workspace. Default: "prefix+c"
     pub new_tab: BindingConfig,
+    /// Open a new chat tab in the home directory with the default chat agent. Unset by default.
+    pub new_chat_tab: BindingConfig,
     /// Rename the active tab. Default: "prefix+shift+t".
     pub rename_tab: BindingConfig,
     /// Select the previous tab. Default: "prefix+p".
@@ -604,6 +606,8 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     new_tab: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    new_chat_tab: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     rename_tab: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     previous_tab: Option<BindingConfig>,
@@ -705,6 +709,7 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(focus_agent);
         apply_field!(remote_image_paste);
         apply_field!(new_tab);
+        apply_field!(new_chat_tab);
         apply_field!(rename_tab);
         apply_field!(previous_tab);
         apply_field!(next_tab);
@@ -803,6 +808,7 @@ impl KeysConfig {
         copy_effective_indexed_field!(focus_agent, keybinds.focus_agent);
         copy_user_field!(remote_image_paste);
         copy_effective_action_field!(new_tab, keybinds.new_tab);
+        copy_effective_action_field!(new_chat_tab, keybinds.new_chat_tab);
         copy_effective_action_field!(rename_tab, keybinds.rename_tab);
         copy_effective_action_field!(previous_tab, keybinds.previous_tab);
         copy_effective_action_field!(next_tab, keybinds.next_tab);
@@ -1062,6 +1068,7 @@ impl Default for KeysConfig {
             focus_agent: BindingConfig::empty(),
             remote_image_paste: "ctrl+v".into(),
             new_tab: BindingConfig::one("prefix+c"),
+            new_chat_tab: BindingConfig::empty(),
             rename_tab: BindingConfig::one("prefix+shift+t"),
             previous_tab: BindingConfig::one("prefix+p"),
             next_tab: BindingConfig::one("prefix+n"),

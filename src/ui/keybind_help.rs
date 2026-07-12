@@ -128,6 +128,7 @@ pub(super) fn keybind_help_groups(app: &AppState) -> Vec<HelpGroup> {
         help_entry(keybind_label(&kb.next_agent), "next agent"),
         help_entry(indexed_label(&kb.focus_agent), "focus agent 1-9"),
         help_entry(keybind_label(&kb.new_tab), "new tab"),
+        help_entry(keybind_label(&kb.new_chat_tab), "new chat tab"),
         help_entry(keybind_label(&kb.rename_tab), "rename tab"),
         help_entry(keybind_label(&kb.previous_tab), "previous tab"),
         help_entry(keybind_label(&kb.next_tab), "next tab"),
@@ -305,4 +306,25 @@ pub(super) fn render_keybind_help_overlay(app: &AppState, frame: &mut Frame) {
         ])),
         stack.footer.unwrap_or_default(),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn help_lists_the_new_chat_tab_action() {
+        let app = AppState::test_new();
+
+        let lines = keybind_help_lines(&app);
+
+        assert!(
+            lines.iter().any(|(_, line)| {
+                line.spans
+                    .iter()
+                    .any(|span| span.content.contains("new chat tab"))
+            }),
+            "keybind help should list the new chat tab action"
+        );
+    }
 }
