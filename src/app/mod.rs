@@ -569,6 +569,7 @@ impl App {
             collapsed_space_keys,
             projects_pinned,
             projects_sessions: Vec::new(),
+            preview_placement: config.preview.placement,
             preview_bindings: Vec::new(),
             collapsed_project_paths: std::collections::HashSet::new(),
             sessions_parse_cache: Default::default(),

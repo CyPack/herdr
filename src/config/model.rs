@@ -361,6 +361,61 @@ pub struct Config {
     pub experimental: ExperimentalConfig,
     pub remote: RemoteConfig,
     pub projects: ProjectsConfig,
+    pub preview: PreviewConfig,
+}
+
+/// `[preview]` — how the wired browser preview places itself when a chat tab
+/// gains focus. Only the default mode is implemented today; the other modes
+/// are announced ("soon") so the setting surface is stable before the
+/// backends land, and any of them behaves like the default at runtime.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct PreviewConfig {
+    pub placement: PreviewPlacement,
+}
+
+/// Preview window placement mode. Runtime consumers must check
+/// [`PreviewPlacement::is_available`] and fall back to the default for the
+/// announced-but-unimplemented modes (a hand-edited config must never change
+/// behavior silently or break the app).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PreviewPlacement {
+    /// Half screen on the display the window is already on (single- and
+    /// multi-monitor). The only implemented mode — the default.
+    #[default]
+    SameScreenHalf,
+    /// Other display, shared browser window with one tab per preview (soon).
+    OtherMonitorSharedTabs,
+    /// Other display, a dedicated window per chat (soon).
+    OtherMonitorPerChat,
+    /// User-defined placement matrix (soon).
+    CustomMatrix,
+}
+
+impl PreviewPlacement {
+    pub const ALL: &[Self] = &[
+        Self::SameScreenHalf,
+        Self::OtherMonitorSharedTabs,
+        Self::OtherMonitorPerChat,
+        Self::CustomMatrix,
+    ];
+
+    /// Whether the mode's backend exists. Everything except the default is
+    /// announced-only for now.
+    pub fn is_available(self) -> bool {
+        matches!(self, Self::SameScreenHalf)
+    }
+
+    /// The kebab-case config value (used when persisting the selection).
+    pub fn config_value(self) -> &'static str {
+        match self {
+            Self::SameScreenHalf => "same-screen-half",
+            Self::OtherMonitorSharedTabs => "other-monitor-shared-tabs",
+            Self::OtherMonitorPerChat => "other-monitor-per-chat",
+            Self::CustomMatrix => "custom-matrix",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1257,6 +1312,45 @@ resume_agents_on_restore = false
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.session.resume_agents_on_restore);
+    }
+
+    // Preview placement: absent section → implemented default; every declared
+    // mode round-trips through its persisted kebab-case value; only the
+    // default is available (the rest are announced "soon" and must be treated
+    // as fallback by runtime consumers).
+    #[test]
+    fn preview_placement_defaults_parses_and_roundtrips() {
+        let default_config = Config::default();
+        assert_eq!(
+            default_config.preview.placement,
+            PreviewPlacement::SameScreenHalf
+        );
+        assert!(default_config.preview.placement.is_available());
+
+        let toml_src = r#"
+[preview]
+placement = "other-monitor-per-chat"
+"#;
+        let config: Config = toml::from_str(toml_src).unwrap();
+        assert_eq!(
+            config.preview.placement,
+            PreviewPlacement::OtherMonitorPerChat
+        );
+        assert!(!config.preview.placement.is_available());
+
+        for mode in PreviewPlacement::ALL {
+            let parsed: PreviewConfig =
+                toml::from_str(&format!("placement = \"{}\"", mode.config_value())).unwrap();
+            assert_eq!(parsed.placement, *mode, "config_value must round-trip");
+        }
+        assert_eq!(
+            PreviewPlacement::ALL
+                .iter()
+                .filter(|mode| mode.is_available())
+                .count(),
+            1,
+            "exactly one implemented mode until a soon backend lands"
+        );
     }
 
     #[test]

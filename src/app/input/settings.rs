@@ -16,6 +16,7 @@ pub(super) enum SettingsAction {
     SaveTheme(String),
     SaveSound(bool),
     SaveToastDelivery(ToastDelivery),
+    SavePreviewPlacement(crate::config::PreviewPlacement),
     SaveAgentBorderLabels(bool),
     SavePaneHistory(bool),
     SaveSwitchAsciiInputSourceInPrefix(bool),
@@ -33,6 +34,8 @@ fn experiment_toggle_action(state: &AppState, idx: usize) -> Option<SettingsActi
                 !ExperimentSetting::SwitchAsciiInputSourceInPrefix.enabled(state),
             ))
         }
+        // Announced-only ("soon") experiments render but stay inert.
+        ExperimentSetting::TilingFix => None,
     }
 }
 
@@ -44,6 +47,9 @@ impl App {
                 SettingsAction::SaveTheme(name) => self.save_theme(&name),
                 SettingsAction::SaveSound(enabled) => self.save_sound(enabled),
                 SettingsAction::SaveToastDelivery(delivery) => self.save_toast_delivery(delivery),
+                SettingsAction::SavePreviewPlacement(placement) => {
+                    self.save_preview_placement(placement)
+                }
                 SettingsAction::SaveAgentBorderLabels(enabled) => {
                     self.save_agent_border_labels(enabled)
                 }
@@ -85,6 +91,13 @@ fn toast_delivery_index(delivery: ToastDelivery) -> usize {
         ToastDelivery::Terminal => 2,
         ToastDelivery::System => 3,
     }
+}
+
+fn preview_placement_index(placement: crate::config::PreviewPlacement) -> usize {
+    crate::config::PreviewPlacement::ALL
+        .iter()
+        .position(|mode| *mode == placement)
+        .unwrap_or(0)
 }
 
 fn toast_delivery_for_index(idx: usize) -> ToastDelivery {
@@ -240,6 +253,39 @@ pub(super) fn update_settings_state(state: &mut AppState, key: KeyEvent) -> Opti
                 state.settings.list.selected = toast_delivery_index(state.toast_delivery());
             }
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
+                state.settings.section = SettingsSection::Preview;
+                state.settings.list.selected = preview_placement_index(state.preview_placement);
+            }
+            _ => {
+                if let Some(super::modal::ModalAction::Close) =
+                    super::modal::modal_action_from_key(&key, super::modal::SETTINGS_ACTIONS)
+                {
+                    cancel_settings(state);
+                }
+            }
+        },
+        SettingsSection::Preview => match key.code {
+            KeyCode::Up | KeyCode::Char('k') => state.settings.list.move_prev(),
+            KeyCode::Down | KeyCode::Char('j') => state
+                .settings
+                .list
+                .move_next(crate::config::PreviewPlacement::ALL.len()),
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                // "Soon" rows are announced but inert: only an available mode
+                // may be activated and persisted.
+                if let Some(placement) = crate::config::PreviewPlacement::ALL
+                    .get(state.settings.list.selected)
+                    .copied()
+                    .filter(|mode| mode.is_available())
+                {
+                    return Some(SettingsAction::SavePreviewPlacement(placement));
+                }
+            }
+            KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
+                state.settings.section = SettingsSection::PaneLabels;
+                state.settings.list.selected = usize::from(!state.agent_border_labels_enabled());
+            }
+            KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
                 state.settings.section = SettingsSection::Integrations;
                 state.settings.list.selected = 0;
             }
@@ -280,8 +326,8 @@ pub(super) fn update_settings_state(state: &mut AppState, key: KeyEvent) -> Opti
                 return Some(SettingsAction::InstallRecommendedIntegrations);
             }
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
-                state.settings.section = SettingsSection::PaneLabels;
-                state.settings.list.selected = usize::from(!state.agent_border_labels_enabled());
+                state.settings.section = SettingsSection::Preview;
+                state.settings.list.selected = preview_placement_index(state.preview_placement);
             }
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
                 state.settings.section = SettingsSection::Experiments;
@@ -312,6 +358,7 @@ pub(crate) fn open_settings_at(state: &mut AppState, section: SettingsSection) {
         SettingsSection::Sound => usize::from(!state.sound_enabled()),
         SettingsSection::Toast => toast_delivery_index(state.toast_delivery()),
         SettingsSection::PaneLabels => usize::from(!state.agent_border_labels_enabled()),
+        SettingsSection::Preview => preview_placement_index(state.preview_placement),
         SettingsSection::Experiments => 0,
         SettingsSection::Integrations => 0,
     };
@@ -407,6 +454,15 @@ impl AppState {
                     None
                 }
             }
+            SettingsSection::Preview => {
+                let list_y = area.y + 3;
+                let rows = crate::config::PreviewPlacement::ALL.len() as u16 * 2;
+                if row >= list_y && row < list_y + rows {
+                    Some(((row - list_y) / 2) as usize)
+                } else {
+                    None
+                }
+            }
             SettingsSection::Experiments => {
                 let list_y = area.y + 3;
                 if row >= list_y && row < list_y + ExperimentSetting::ALL.len() as u16 {
@@ -431,6 +487,7 @@ impl AppState {
                         SettingsSection::PaneLabels => {
                             usize::from(!self.agent_border_labels_enabled())
                         }
+                        SettingsSection::Preview => preview_placement_index(self.preview_placement),
                         SettingsSection::Experiments => 0,
                         SettingsSection::Integrations => 0,
                     });
@@ -455,6 +512,11 @@ impl AppState {
                             let enabled = idx == 0;
                             Some(SettingsAction::SaveAgentBorderLabels(enabled))
                         }
+                        SettingsSection::Preview => crate::config::PreviewPlacement::ALL
+                            .get(idx)
+                            .copied()
+                            .filter(|mode| mode.is_available())
+                            .map(SettingsAction::SavePreviewPlacement),
                         SettingsSection::Experiments => experiment_toggle_action(self, idx),
                         SettingsSection::Integrations => None,
                     };
@@ -586,41 +648,79 @@ mod tests {
         let mut state = state_with_workspaces(&["test"]);
         open_settings_at(&mut state, SettingsSection::PaneLabels);
 
-        update_settings_state(
-            &mut state,
-            KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()),
-        );
-        assert_eq!(state.settings.section, SettingsSection::Integrations);
+        for expected in [
+            SettingsSection::Preview,
+            SettingsSection::Integrations,
+            SettingsSection::Experiments,
+            SettingsSection::Theme,
+        ] {
+            update_settings_state(
+                &mut state,
+                KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()),
+            );
+            assert_eq!(state.settings.section, expected);
+        }
 
-        update_settings_state(
-            &mut state,
-            KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()),
-        );
-        assert_eq!(state.settings.section, SettingsSection::Experiments);
+        for expected in [
+            SettingsSection::Experiments,
+            SettingsSection::Integrations,
+            SettingsSection::Preview,
+            SettingsSection::PaneLabels,
+        ] {
+            update_settings_state(
+                &mut state,
+                KeyEvent::new(KeyCode::BackTab, KeyModifiers::empty()),
+            );
+            assert_eq!(state.settings.section, expected);
+        }
+    }
 
-        update_settings_state(
-            &mut state,
-            KeyEvent::new(KeyCode::Tab, KeyModifiers::empty()),
-        );
-        assert_eq!(state.settings.section, SettingsSection::Theme);
+    // Preview placement rows: the default (implemented) row activates and
+    // persists; every announced-but-unimplemented "soon" row must be inert.
+    #[test]
+    fn preview_soon_rows_are_inert_and_default_saves() {
+        use crate::config::PreviewPlacement;
 
-        update_settings_state(
-            &mut state,
-            KeyEvent::new(KeyCode::BackTab, KeyModifiers::empty()),
-        );
-        assert_eq!(state.settings.section, SettingsSection::Experiments);
+        let mut state = state_with_workspaces(&["test"]);
+        open_settings_at(&mut state, SettingsSection::Preview);
+        assert_eq!(state.settings.list.selected, 0, "default mode preselected");
 
-        update_settings_state(
+        let action = update_settings_state(
             &mut state,
-            KeyEvent::new(KeyCode::BackTab, KeyModifiers::empty()),
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
         );
-        assert_eq!(state.settings.section, SettingsSection::Integrations);
+        assert_eq!(
+            action,
+            Some(SettingsAction::SavePreviewPlacement(
+                PreviewPlacement::SameScreenHalf
+            ))
+        );
 
-        update_settings_state(
-            &mut state,
-            KeyEvent::new(KeyCode::BackTab, KeyModifiers::empty()),
-        );
-        assert_eq!(state.settings.section, SettingsSection::PaneLabels);
+        for idx in 1..PreviewPlacement::ALL.len() {
+            state.settings.list.selected = idx;
+            assert_eq!(
+                update_settings_state(
+                    &mut state,
+                    KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
+                ),
+                None,
+                "soon row {idx} must be inert"
+            );
+        }
+    }
+
+    // Announced-only experiments ("tiling fix (soon)") render but must never
+    // produce a toggle action — from keyboard or mouse index paths alike.
+    #[test]
+    fn announced_experiment_rows_are_inert() {
+        let state = state_with_workspaces(&["test"]);
+        let tiling_idx = ExperimentSetting::ALL
+            .iter()
+            .position(|s| *s == ExperimentSetting::TilingFix)
+            .expect("tiling fix is declared");
+        assert_eq!(experiment_toggle_action(&state, tiling_idx), None);
+        assert!(!ExperimentSetting::TilingFix.is_available());
+        assert!(!ExperimentSetting::TilingFix.description().is_empty());
     }
 
     #[test]

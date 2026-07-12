@@ -149,6 +149,37 @@ pub(super) fn render_settings_overlay(app: &AppState, frame: &mut Frame, area: R
                 app.settings.list.selected,
             );
         }
+        SettingsSection::Preview => {
+            use crate::config::PreviewPlacement;
+            render_modal_choice_list(
+                frame,
+                content_area,
+                "preview placement",
+                "how the wired browser preview places itself on chat focus",
+                &[
+                    (
+                        "half screen — same display (default)",
+                        PreviewPlacement::SameScreenHalf,
+                    ),
+                    (
+                        "other display — shared window tabs (soon)",
+                        PreviewPlacement::OtherMonitorSharedTabs,
+                    ),
+                    (
+                        "other display — window per chat (soon)",
+                        PreviewPlacement::OtherMonitorPerChat,
+                    ),
+                    (
+                        "custom layout matrix (soon)",
+                        PreviewPlacement::CustomMatrix,
+                    ),
+                ],
+                app.preview_placement,
+                app.settings.list.selected,
+                p,
+                2,
+            );
+        }
         SettingsSection::Experiments => {
             render_settings_experiments(app, frame, content_area);
         }
@@ -436,14 +467,37 @@ fn render_settings_experiments(app: &AppState, frame: &mut Frame, area: Rect) {
                 .bg(p.surface0)
                 .fg(p.text)
                 .add_modifier(Modifier::BOLD)
-        } else {
+        } else if setting.is_available() {
             Style::default().fg(p.subtext0)
+        } else {
+            // Announced-only entries render dimmed: visible, not toggleable.
+            Style::default().fg(p.overlay0)
         };
         let row = Rect::new(list_area.x, list_area.y + idx as u16, list_area.width, 1);
         frame.render_widget(
             Paragraph::new(format!(" {} {marker}", setting.label())).style(style),
             row,
         );
+    }
+
+    // Purpose line for the highlighted experiment (announced features carry
+    // their intent here before any backend exists).
+    if let Some(setting) = ExperimentSetting::ALL.get(app.settings.list.selected) {
+        let desc_y = list_area.y + ExperimentSetting::ALL.len() as u16 + 1;
+        if desc_y < list_area.y + list_area.height {
+            let desc_rect = Rect::new(
+                list_area.x,
+                desc_y,
+                list_area.width,
+                (list_area.y + list_area.height).saturating_sub(desc_y),
+            );
+            frame.render_widget(
+                Paragraph::new(format!(" {}", setting.description()))
+                    .style(Style::default().fg(p.overlay1))
+                    .wrap(ratatui::widgets::Wrap { trim: true }),
+                desc_rect,
+            );
+        }
     }
 }
 

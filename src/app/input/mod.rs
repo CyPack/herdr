@@ -301,6 +301,9 @@ impl App {
                         SettingsAction::SaveToastDelivery(delivery) => {
                             self.save_toast_delivery(delivery)
                         }
+                        SettingsAction::SavePreviewPlacement(placement) => {
+                            self.save_preview_placement(placement)
+                        }
                         SettingsAction::SaveAgentBorderLabels(enabled) => {
                             self.save_agent_border_labels(enabled)
                         }

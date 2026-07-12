@@ -131,7 +131,15 @@ fn launch_preview(url: &str) {
 /// The background show action: probe CDP, then activate-or-launch, then
 /// bring the dev-browser window forward. Every step is best-effort — a dead
 /// browser or missing desktop tooling must never disturb the app.
-fn preview_show_worker(token: &str, url: &str) {
+fn preview_show_worker(token: &str, url: &str, placement: crate::config::PreviewPlacement) {
+    if !placement.is_available() {
+        // Announced-but-unimplemented mode (settings shows it as "soon", but a
+        // hand-edited config can select it too): fall back loudly, never break.
+        tracing::info!(
+            mode = placement.config_value(),
+            "preview placement mode not implemented yet (soon); using same-screen-half"
+        );
+    }
     let targets = cdp_page_targets(PREVIEW_CDP_HOST);
     match preview_show_plan(&targets, url) {
         PreviewShowPlan::Activate(target_id) => {
@@ -282,25 +290,34 @@ fn place_half_screen_right_once(window_id: u64) {
         std::sync::OnceLock::new();
     let placed = PLACED.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()));
     match placed.lock() {
-        Ok(mut set) => {
-            if !set.insert(window_id) {
-                return; // already placed this run
+        Ok(set) => {
+            if set.contains(&window_id) {
+                return; // already snapped this run
             }
         }
         Err(_) => return, // poisoned lock: skip placement, never panic
     }
-    // KEY_LEFTMETA=125, KEY_RIGHT=106 (press/release pairs).
+    // GNOME needs a beat before the freshly raised window actually holds
+    // keyboard focus; firing the tiling chord too early sends it to the
+    // PREVIOUS window (observed live: the snap "didn't stick").
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    // KEY_LEFTMETA=125, KEY_RIGHT=106 (press/release pairs) = tile right half.
     match std::process::Command::new("ydotool")
         .args(["key", "125:1", "106:1", "106:0", "125:0"])
         .output()
     {
         Ok(output) if output.status.success() => {
+            // Mark ONLY on success so a missed attempt retries on the next
+            // show instead of being consumed forever.
+            if let Ok(mut set) = placed.lock() {
+                set.insert(window_id);
+            }
             tracing::debug!(window = window_id, "preview window tiled right");
         }
         Ok(output) => tracing::debug!(
             window = window_id,
             status = ?output.status,
-            "ydotool tiling skipped/failed (daemon down?)"
+            "ydotool tiling skipped/failed (daemon down?); will retry next show"
         ),
         Err(err) => tracing::debug!(?err, "ydotool unavailable; placement skipped"),
     }
@@ -469,9 +486,10 @@ impl super::App {
             return; // guarded upstream; stay defensive
         };
         let token = binding.token.clone();
+        let placement = self.state.preview_placement;
         if let Err(err) = std::thread::Builder::new()
             .name("preview-show".into())
-            .spawn(move || preview_show_worker(&token, &url))
+            .spawn(move || preview_show_worker(&token, &url, placement))
         {
             tracing::warn!(?err, "preview-show worker thread failed to start");
         }

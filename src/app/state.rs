@@ -990,6 +990,7 @@ pub enum SettingsSection {
     Sound,
     Toast,
     PaneLabels,
+    Preview,
     Experiments,
     Integrations,
 }
@@ -1000,6 +1001,7 @@ impl SettingsSection {
         Self::Sound,
         Self::Toast,
         Self::PaneLabels,
+        Self::Preview,
         Self::Integrations,
         Self::Experiments,
     ];
@@ -1010,6 +1012,7 @@ impl SettingsSection {
             Self::Sound => "sound",
             Self::Toast => "toasts",
             Self::PaneLabels => "pane labels",
+            Self::Preview => "preview",
             Self::Experiments => "experiments",
             Self::Integrations => "integrations",
         }
@@ -1020,10 +1023,16 @@ impl SettingsSection {
 pub(crate) enum ExperimentSetting {
     PaneHistory,
     SwitchAsciiInputSourceInPrefix,
+    /// Announced-only ("soon"): no backend yet, the toggle is inert.
+    TilingFix,
 }
 
 impl ExperimentSetting {
-    pub(crate) const ALL: [Self; 2] = [Self::PaneHistory, Self::SwitchAsciiInputSourceInPrefix];
+    pub(crate) const ALL: [Self; 3] = [
+        Self::PaneHistory,
+        Self::SwitchAsciiInputSourceInPrefix,
+        Self::TilingFix,
+    ];
 
     pub(crate) fn label(self) -> &'static str {
         match self {
@@ -1031,7 +1040,31 @@ impl ExperimentSetting {
             Self::SwitchAsciiInputSourceInPrefix => {
                 "switch to ascii input source in prefix (macOS)"
             }
+            Self::TilingFix => "tiling fix (soon)",
         }
+    }
+
+    /// Purpose line shown for the selected experiment — announced features
+    /// carry their intent here before the backend exists.
+    pub(crate) fn description(self) -> &'static str {
+        match self {
+            Self::PaneHistory => "persist and restore pane screen contents across restarts",
+            Self::SwitchAsciiInputSourceInPrefix => {
+                "avoid non-ascii input sources swallowing prefix-mode keys"
+            }
+            Self::TilingFix => {
+                "hand preview placement to your desktop tiling manager so the \
+                 focused terminal and the chromium preview snap into one \
+                 optimized side-by-side tiled layout. not implemented yet — \
+                 announced surface only, the toggle is inert"
+            }
+        }
+    }
+
+    /// Whether the experiment has a working backend; announced-only entries
+    /// render but cannot be toggled.
+    pub(crate) fn is_available(self) -> bool {
+        !matches!(self, Self::TilingFix)
     }
 
     pub(crate) fn enabled(self, state: &AppState) -> bool {
@@ -1040,6 +1073,7 @@ impl ExperimentSetting {
             Self::SwitchAsciiInputSourceInPrefix => {
                 state.switch_ascii_input_source_in_prefix_enabled()
             }
+            Self::TilingFix => false,
         }
     }
 }
@@ -1469,6 +1503,9 @@ pub struct AppState {
     /// first. Refreshed by the runtime's fingerprint poll; shared runtime
     /// fact, read-only for any presentation layer.
     pub preview_bindings: Vec<crate::preview_bindings::PreviewBinding>,
+    /// Configured preview window placement mode (`[preview] placement`).
+    /// Unimplemented ("soon") modes behave like the default at runtime.
+    pub preview_placement: crate::config::PreviewPlacement,
     /// Pinned project paths whose chat list is collapsed in the Projects tab.
     pub collapsed_project_paths: std::collections::HashSet<std::path::PathBuf>,
     /// Incremental per-file parse cache for the Projects tab: unchanged
@@ -1880,6 +1917,7 @@ impl AppState {
             projects_pinned: Vec::new(),
             projects_sessions: Vec::new(),
             preview_bindings: Vec::new(),
+            preview_placement: crate::config::PreviewPlacement::default(),
             collapsed_project_paths: std::collections::HashSet::new(),
             sessions_parse_cache: Default::default(),
             default_chat_agent: "claude".to_string(),

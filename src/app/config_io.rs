@@ -78,6 +78,21 @@ impl App {
         }
     }
 
+    /// Persist the preview placement mode picked in settings. Only available
+    /// modes reach this point (the "soon" rows are inert in the UI).
+    pub(super) fn save_preview_placement(&mut self, placement: crate::config::PreviewPlacement) {
+        if self.update_config_file("preview placement", |content| {
+            crate::config::upsert_section_value(
+                content,
+                "preview",
+                "placement",
+                &format!("\"{}\"", placement.config_value()),
+            )
+        }) {
+            self.apply_config_from_disk(false);
+        }
+    }
+
     pub(super) fn save_toast_delivery(&mut self, delivery: crate::config::ToastDelivery) {
         let value = match delivery {
             crate::config::ToastDelivery::Off => "\"off\"",
