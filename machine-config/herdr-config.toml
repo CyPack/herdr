@@ -47,3 +47,6 @@ description = "Worktree Lens — neon worktree paneli"
 
 [ui]
 agent_panel_sort = "priority"
+
+[projects]
+actives_only = true
