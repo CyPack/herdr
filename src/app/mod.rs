@@ -123,6 +123,10 @@ pub struct App {
     pub(crate) next_agent_manifest_update_check: Option<Instant>,
     /// Next Projects-tab session-store poll; None until the first visible poll.
     pub(crate) next_projects_poll: Option<Instant>,
+    /// While set and in the future, the Projects poll runs at the fast (hot)
+    /// interval — armed right after spawning a chat so its session file shows
+    /// up (and gets its focus marker) as soon as claude creates it.
+    pub(crate) projects_poll_hot_until: Option<Instant>,
     /// Per-pinned-project change fingerprints from the last poll, aligned with
     /// `state.projects_pinned` (None = project has no session directory yet).
     pub(crate) projects_dir_fingerprints: Vec<Option<(usize, std::time::SystemTime)>>,
@@ -750,6 +754,7 @@ impl App {
             next_agent_manifest_update_check: manifest_check_enabled
                 .then_some(Instant::now() + AUTO_UPDATE_CHECK_INTERVAL),
             next_projects_poll: None,
+            projects_poll_hot_until: None,
             projects_dir_fingerprints: Vec::new(),
             update_version_check_enabled: config.update.version_check,
             update_manifest_check_enabled: config.update.manifest_check,

@@ -279,6 +279,7 @@ impl AppState {
                         });
                 }
             }
+            Some(crate::app::state::ProjectRowKind::More { .. }) => {}
             Some(crate::app::state::ProjectRowKind::NewChat { proj_idx }) => {
                 if modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
                     self.open_project_new_chat_menu(proj_idx, col, row);
@@ -1935,6 +1936,50 @@ mod tests {
         );
         assert_eq!(app.state.workspaces[1].active_tab, tab_idx);
         assert_eq!(app.state.mode, Mode::Terminal);
+    }
+
+    // T12d (regression): with the Projects tab active, clicking an agent row
+    // in the lower panel must still focus that agent's tab — the Projects
+    // branch used to swallow every sidebar click, breaking "click an agent to
+    // jump back to its chat".
+    #[test]
+    fn clicking_agent_row_focuses_chat_while_projects_tab_active() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        ws.tabs[0].set_custom_name("main".into());
+        let first_pane = ws.tabs[0].root_pane;
+        let second_tab = ws.test_add_tab(Some("logs"));
+        let second_pane = ws.tabs[second_tab].root_pane;
+        app.state.workspaces = vec![ws];
+        app.state.ensure_test_terminals();
+        let first_terminal_id = app.state.workspaces[0].tabs[0].panes[&first_pane]
+            .attached_terminal_id
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&first_terminal_id)
+            .unwrap()
+            .detected_agent = Some(Agent::Pi);
+        let second_terminal_id = app.state.workspaces[0].tabs[second_tab].panes[&second_pane]
+            .attached_terminal_id
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&second_terminal_id)
+            .unwrap()
+            .detected_agent = Some(Agent::Claude);
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.sidebar_tab = crate::app::state::SidebarTab::Projects;
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 16));
+
+        assert_eq!(app.state.workspaces[0].active_tab, 1);
+        assert_eq!(
+            app.state.workspaces[0].tabs[1].layout.focused(),
+            second_pane
+        );
     }
 
     // ---- Project "+" button + agent selector (Task #10) -------------------

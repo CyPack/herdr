@@ -603,6 +603,9 @@ pub enum ProjectRowKind {
     /// chat in that project with the default agent (left click) or the agent
     /// selector menu (shift+left click / right click).
     NewChat { proj_idx: usize },
+    /// The inert "… N older" row shown when a project has more chats than the
+    /// per-project display limit.
+    More { proj_idx: usize },
 }
 
 /// A laid-out Projects-tab row: its screen rect plus what it points at. Computed

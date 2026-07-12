@@ -52,6 +52,14 @@ pub(crate) fn project_chat_launch(
 /// only), so this can be tight without measurable load.
 const PROJECTS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// Fast poll interval right after this app spawned a chat: the session file
+/// appears within a second or two and should show up (with its focus marker)
+/// as soon as it does.
+const PROJECTS_POLL_HOT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// How long the fast interval stays armed after a spawn.
+const PROJECTS_POLL_HOT_WINDOW: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Cheap change fingerprint for one project's session directory: entry count
 /// plus the newest modification time. Reads directory metadata only — never
 /// file contents — so polling with it is effectively free. A new chat adds an
@@ -91,11 +99,27 @@ impl super::App {
         if self.next_projects_poll.is_some_and(|due| now < due) {
             return false;
         }
-        self.next_projects_poll = Some(now + PROJECTS_POLL_INTERVAL);
+        let interval = if self
+            .projects_poll_hot_until
+            .is_some_and(|until| now < until)
+        {
+            PROJECTS_POLL_HOT_INTERVAL
+        } else {
+            PROJECTS_POLL_INTERVAL
+        };
+        self.next_projects_poll = Some(now + interval);
         let Some(projects_dir) = crate::claude_sessions::default_claude_projects_dir() else {
             return false;
         };
         self.refresh_projects_with_dir(&projects_dir)
+    }
+
+    /// Make the next Projects poll immediate and keep polling fast for a
+    /// short window — called right after spawning a chat, whose session file
+    /// only exists once claude writes it.
+    fn arm_projects_hot_poll(&mut self) {
+        self.next_projects_poll = None;
+        self.projects_poll_hot_until = Some(std::time::Instant::now() + PROJECTS_POLL_HOT_WINDOW);
     }
 
     /// Fingerprint-gated refresh against `projects_dir` (injected for tests).
@@ -179,6 +203,7 @@ impl super::App {
             ) {
                 Ok((ws_idx, tab_idx, _pane_id)) => {
                     self.state.workspaces[ws_idx].tabs[tab_idx].resumed_session_id = req.session_id;
+                    self.arm_projects_hot_poll();
                 }
                 Err(err) => {
                     tracing::warn!(
@@ -219,6 +244,7 @@ impl super::App {
         self.state.remove_alias_shadowed_by_new_pane(root_pane);
         self.state.terminals.insert(terminal.id.clone(), terminal);
         self.state.workspaces[ws_idx].tabs[tab_idx].resumed_session_id = req.session_id;
+        self.arm_projects_hot_poll();
         self.state.switch_workspace_tab(ws_idx, tab_idx);
         self.state.mode = crate::app::Mode::Terminal;
         self.schedule_session_save();
@@ -594,6 +620,21 @@ mod tests {
         app.state.sidebar_tab = crate::app::state::SidebarTab::Projects;
         let _ = app.refresh_projects_if_due(now);
         assert!(!app.refresh_projects_if_due(now + std::time::Duration::from_millis(100)));
+        assert_eq!(app.next_projects_poll, Some(now + PROJECTS_POLL_INTERVAL));
+
+        // F6 (hot window): after a spawn the poll runs at the fast interval.
+        app.arm_projects_hot_poll();
+        assert_eq!(
+            app.next_projects_poll, None,
+            "spawn makes the next poll immediate"
+        );
+        let hot_now = std::time::Instant::now();
+        let _ = app.refresh_projects_if_due(hot_now);
+        assert_eq!(
+            app.next_projects_poll,
+            Some(hot_now + PROJECTS_POLL_HOT_INTERVAL),
+            "hot window polls fast"
+        );
 
         // F4/F5 against the injected store: first look loads the session,
         // an unchanged store is a no-op, a new session file reloads the cache.

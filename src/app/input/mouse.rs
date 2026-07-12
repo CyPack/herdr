@@ -540,12 +540,28 @@ impl AppState {
                         return None;
                     }
 
-                    // The Projects tab owns its own rows. Consume sidebar clicks
-                    // here so Spaces-only chrome (new-workspace, workspace cards)
-                    // never fires while it is active.
+                    // The Projects tab owns only the workspace-list BODY rows.
+                    // Footer and agent-panel clicks must keep flowing to the
+                    // shared handlers below (menu launcher, agent focus) —
+                    // swallowing the whole sidebar here broke "click an agent
+                    // to jump back to its chat".
                     if self.sidebar_tab == crate::app::state::SidebarTab::Projects {
-                        self.toggle_projects_row_at(mouse.column, mouse.row, mouse.modifiers);
-                        return None;
+                        let footer_y = self.sidebar_footer_rect().y;
+                        if mouse.row < footer_y {
+                            self.toggle_projects_row_at(mouse.column, mouse.row, mouse.modifiers);
+                            return None;
+                        }
+                        let new_button = self.sidebar_new_button_rect();
+                        let on_new_button = mouse.row >= new_button.y
+                            && mouse.row < new_button.y + new_button.height
+                            && mouse.column >= new_button.x
+                            && mouse.column < new_button.x + new_button.width;
+                        if on_new_button {
+                            // The footer " chat" button is wired in Task #10e;
+                            // it must never create a workspace like Spaces'
+                            // " new" underneath it would.
+                            return None;
+                        }
                     }
 
                     let new_button = self.sidebar_new_button_rect();

@@ -1115,6 +1115,9 @@ fn render_sidebar_footer_buttons(app: &AppState, frame: &mut Frame, area: Rect, 
 /// chats)" row when it has none. Reads the `projects_sessions` cache only; never
 /// touches the filesystem (that is `refresh_project_sessions*`'s job). Rows are
 /// clipped to the body height (between the tab header and the footer button row).
+/// Chats listed per expanded project; older ones fold into a "… N older" row.
+pub(crate) const PROJECT_CHAT_ROW_LIMIT: usize = 5;
+
 pub(crate) fn compute_project_row_areas(app: &AppState, area: Rect) -> Vec<ProjectRowArea> {
     let body = workspace_list_body_rect(area, false);
     if body.width == 0 || body.height == 0 {
@@ -1159,13 +1162,24 @@ pub(crate) fn compute_project_row_areas(app: &AppState, area: Rect) -> Vec<Proje
             });
             y += 1;
         } else {
-            for chat_idx in 0..project.sessions.len() {
+            // Only the newest chats are listed (the reader sorts by mtime,
+            // newest first); the rest collapse into one inert "… N older" row
+            // so a busy project cannot flood the sidebar.
+            let visible = project.sessions.len().min(PROJECT_CHAT_ROW_LIMIT);
+            for chat_idx in 0..visible {
                 if y >= body_bottom {
                     break;
                 }
                 areas.push(ProjectRowArea {
                     rect: Rect::new(body.x, y, body.width, 1),
                     kind: ProjectRowKind::Chat { proj_idx, chat_idx },
+                });
+                y += 1;
+            }
+            if project.sessions.len() > PROJECT_CHAT_ROW_LIMIT && y < body_bottom {
+                areas.push(ProjectRowArea {
+                    rect: Rect::new(body.x, y, body.width, 1),
+                    kind: ProjectRowKind::More { proj_idx },
                 });
                 y += 1;
             }
@@ -1287,6 +1301,25 @@ fn render_projects_list(app: &AppState, frame: &mut Frame, area: Rect) {
                     Paragraph::new(Span::styled(
                         " +",
                         Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
+                    )),
+                    rect,
+                );
+            }
+            ProjectRowKind::More { proj_idx } => {
+                let hidden = app
+                    .projects_sessions
+                    .get(proj_idx)
+                    .map(|project| {
+                        project
+                            .sessions
+                            .len()
+                            .saturating_sub(PROJECT_CHAT_ROW_LIMIT)
+                    })
+                    .unwrap_or(0);
+                frame.render_widget(
+                    Paragraph::new(Span::styled(
+                        format!("   … {hidden} older"),
+                        Style::default().fg(p.overlay0),
                     )),
                     rect,
                 );
@@ -1998,6 +2031,28 @@ mod tests {
             rows[1].kind,
             ProjectRowKind::NewChat { proj_idx: 0 }
         ));
+    }
+
+    // T12c: a busy project lists only the newest 5 chats plus an inert
+    // "… N older" row (the reader already sorts newest-first).
+    #[test]
+    fn compute_project_row_areas_caps_chats_and_adds_more_row() {
+        let mut app = crate::app::state::AppState::test_new();
+        let chats = (0..7)
+            .map(|i| test_chat(&format!("s{i}"), &format!("c{i}"), 1))
+            .collect();
+        app.projects_sessions = vec![project_sessions("/a", chats)];
+        let rows = compute_project_row_areas(&app, Rect::new(0, 0, 24, 20));
+        // header + "+" + 5 chats + "… older" = 8 areas.
+        assert_eq!(rows.len(), 8);
+        assert!(matches!(
+            rows[6].kind,
+            ProjectRowKind::Chat {
+                proj_idx: 0,
+                chat_idx: 4
+            }
+        ));
+        assert!(matches!(rows[7].kind, ProjectRowKind::More { proj_idx: 0 }));
     }
 
     #[test]
