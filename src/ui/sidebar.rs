@@ -126,18 +126,34 @@ fn agent_panel_entries_with_runtimes(
             let workspace_label = ws.display_name_from(&app.terminals, terminal_runtimes);
             ws.pane_details(&app.terminals)
                 .into_iter()
-                .map(move |detail| AgentPanelEntry {
-                    ws_idx,
-                    tab_idx: detail.tab_idx,
-                    pane_id: detail.pane_id,
-                    primary_label: workspace_label.clone(),
-                    primary_tab_label: multi_tab.then_some(detail.tab_label),
-                    agent_label: Some(detail.agent_label),
-                    state: detail.state,
-                    seen: detail.seen,
-                    last_agent_state_change_seq: detail.last_agent_state_change_seq,
-                    custom_status: detail.custom_status,
-                    state_labels: detail.state_labels,
+                .map(move |detail| {
+                    // A custom-named tab (project chats name themselves after
+                    // their project) leads with its own label; the workspace
+                    // demotes to context and is dropped when it would repeat.
+                    let (primary_label, primary_tab_label) =
+                        if let Some(custom) = detail.tab_custom_label.clone() {
+                            let ws_context =
+                                (workspace_label != custom).then(|| workspace_label.clone());
+                            (custom, ws_context)
+                        } else {
+                            (
+                                workspace_label.clone(),
+                                multi_tab.then_some(detail.tab_label),
+                            )
+                        };
+                    AgentPanelEntry {
+                        ws_idx,
+                        tab_idx: detail.tab_idx,
+                        pane_id: detail.pane_id,
+                        primary_label,
+                        primary_tab_label,
+                        agent_label: Some(detail.agent_label),
+                        state: detail.state,
+                        seen: detail.seen,
+                        last_agent_state_change_seq: detail.last_agent_state_change_seq,
+                        custom_status: detail.custom_status,
+                        state_labels: detail.state_labels,
+                    }
                 })
         })
         .collect();
@@ -1596,9 +1612,80 @@ mod tests {
         assert_eq!(entries[0].primary_label, "one");
         assert!(entries[0].primary_tab_label.is_none());
         assert_eq!(entries[0].agent_label.as_deref(), Some("pi"));
-        assert_eq!(entries[1].primary_label, "two");
-        assert_eq!(entries[1].primary_tab_label.as_deref(), Some("logs"));
+        // The custom-named "logs" tab leads with its own label; its workspace
+        // demotes to the secondary slot (BUG-2b behavior).
+        assert_eq!(entries[1].primary_label, "logs");
+        assert_eq!(entries[1].primary_tab_label.as_deref(), Some("two"));
         assert_eq!(entries[1].agent_label.as_deref(), Some("claude"));
+    }
+
+    // ---- BUG-2b: custom-named tabs lead with their own label (project chats) ----
+
+    fn single_agent_workspace_app(
+        ws_name: &str,
+        tab_name: Option<&str>,
+    ) -> (crate::app::state::AppState, usize) {
+        let mut app = crate::app::state::AppState::test_new();
+        let mut ws = Workspace::test_new(ws_name);
+        let tab_idx = match tab_name {
+            Some(name) => ws.test_add_tab(Some(name)),
+            None => ws.test_add_tab(None),
+        };
+        let pane = ws.tabs[tab_idx].root_pane;
+        app.workspaces = vec![ws];
+        app.ensure_test_terminals();
+        let terminal_id = app.workspaces[0].tabs[tab_idx].panes[&pane]
+            .attached_terminal_id
+            .clone();
+        app.terminals
+            .get_mut(&terminal_id)
+            .expect("test terminal should exist")
+            .detected_agent = Some(Agent::Claude);
+        app.active = Some(0);
+        app.selected = 0;
+        (app, tab_idx)
+    }
+
+    #[test]
+    fn agent_panel_prefers_custom_tab_label_over_workspace_label() {
+        let (app, tab_idx) = single_agent_workspace_app("space", Some("herdr"));
+
+        let entries = agent_panel_entries(&app);
+        let chat_entry = entries
+            .iter()
+            .find(|entry| entry.tab_idx == tab_idx)
+            .expect("chat tab should be listed");
+
+        assert_eq!(chat_entry.primary_label, "herdr");
+        assert_eq!(chat_entry.primary_tab_label.as_deref(), Some("space"));
+    }
+
+    #[test]
+    fn agent_panel_drops_workspace_label_matching_custom_tab_label() {
+        let (app, tab_idx) = single_agent_workspace_app("herdr", Some("herdr"));
+
+        let entries = agent_panel_entries(&app);
+        let chat_entry = entries
+            .iter()
+            .find(|entry| entry.tab_idx == tab_idx)
+            .expect("chat tab should be listed");
+
+        assert_eq!(chat_entry.primary_label, "herdr");
+        assert!(chat_entry.primary_tab_label.is_none());
+    }
+
+    #[test]
+    fn agent_panel_keeps_workspace_label_for_auto_named_tabs() {
+        let (app, tab_idx) = single_agent_workspace_app("space", None);
+
+        let entries = agent_panel_entries(&app);
+        let entry = entries
+            .iter()
+            .find(|entry| entry.tab_idx == tab_idx)
+            .expect("auto-named tab should be listed");
+
+        assert_eq!(entry.primary_label, "space");
+        assert_eq!(entry.primary_tab_label.as_deref(), Some("2"));
     }
 
     #[test]

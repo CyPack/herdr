@@ -11,6 +11,7 @@ pub struct PaneDetail {
     pub pane_id: PaneId,
     pub tab_idx: usize,
     pub tab_label: String,
+    pub tab_custom_label: Option<String>,
     pub label: String,
     pub agent_label: String,
     #[allow(dead_code)]
@@ -36,6 +37,7 @@ impl Tab {
         terminals: &HashMap<TerminalId, TerminalState>,
         tab_idx: usize,
         tab_label: &str,
+        tab_custom_label: Option<&str>,
     ) -> Vec<PaneDetail> {
         self.layout
             .pane_ids()
@@ -56,6 +58,7 @@ impl Tab {
                     pane_id: *id,
                     tab_idx,
                     tab_label: tab_label.to_string(),
+                    tab_custom_label: tab_custom_label.map(str::to_string),
                     label: agent_label.clone(),
                     agent_label,
                     agent: terminal.effective_known_agent(),
@@ -110,7 +113,8 @@ impl Workspace {
                 let tab_label = self
                     .tab_display_name(tab_idx)
                     .unwrap_or_else(|| (tab_idx + 1).to_string());
-                tab.pane_details(terminals, tab_idx, &tab_label).into_iter()
+                tab.pane_details(terminals, tab_idx, &tab_label, tab.custom_name.as_deref())
+                    .into_iter()
             })
             .map(|mut detail| {
                 if multi_tab {
@@ -280,5 +284,34 @@ mod tests {
 
         assert_eq!(ws.tabs[1].number, 3);
         assert_eq!(survivor.tab_idx, 1);
+    }
+
+    #[test]
+    fn pane_details_carry_tab_custom_label() {
+        let mut ws = Workspace::test_new("test");
+        ws.tabs[0].custom_name = Some("named".into());
+        let named_pane = ws.tabs[0].root_pane;
+        let auto_tab = ws.test_add_tab(None);
+        let auto_pane = ws.tabs[auto_tab].root_pane;
+
+        let mut terminals = HashMap::new();
+        for pane in [named_pane, auto_pane] {
+            let mut terminal = terminal_for_pane(&ws, pane);
+            terminal.set_detected_state(Some(Agent::Claude), AgentState::Idle);
+            terminals.insert(terminal.id.clone(), terminal);
+        }
+
+        let details = ws.pane_details(&terminals);
+        let named = details
+            .iter()
+            .find(|detail| detail.pane_id == named_pane)
+            .expect("named tab pane should be listed");
+        let auto = details
+            .iter()
+            .find(|detail| detail.pane_id == auto_pane)
+            .expect("auto tab pane should be listed");
+
+        assert_eq!(named.tab_custom_label.as_deref(), Some("named"));
+        assert!(auto.tab_custom_label.is_none());
     }
 }

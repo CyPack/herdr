@@ -204,6 +204,11 @@ impl super::App {
                 true,
             ) {
                 Ok((ws_idx, tab_idx, _pane_id)) => {
+                    apply_project_chat_tab_name(
+                        &mut self.state.workspaces[ws_idx],
+                        tab_idx,
+                        &req.project_path,
+                    );
                     self.state.workspaces[ws_idx].tabs[tab_idx].resumed_session_id = req.session_id;
                     self.arm_projects_hot_poll();
                 }
@@ -245,6 +250,11 @@ impl super::App {
         self.terminal_runtimes.insert(terminal.id.clone(), runtime);
         self.state.remove_alias_shadowed_by_new_pane(root_pane);
         self.state.terminals.insert(terminal.id.clone(), terminal);
+        apply_project_chat_tab_name(
+            &mut self.state.workspaces[ws_idx],
+            tab_idx,
+            &req.project_path,
+        );
         self.state.workspaces[ws_idx].tabs[tab_idx].resumed_session_id = req.session_id;
         self.arm_projects_hot_poll();
         self.state.switch_workspace_tab(ws_idx, tab_idx);
@@ -265,11 +275,28 @@ impl super::App {
     }
 }
 
+/// Names a freshly spawned project-chat tab after its project so every surface
+/// rendering tab identity (tab bar, agent panel, persisted snapshots) carries
+/// the project context. Never touches a tab the user (or anything else)
+/// already named, and tolerates a stale tab index without panicking.
+pub(crate) fn apply_project_chat_tab_name(
+    ws: &mut crate::workspace::Workspace,
+    tab_idx: usize,
+    project_path: &std::path::Path,
+) {
+    let Some(tab) = ws.tabs.get_mut(tab_idx) else {
+        return;
+    };
+    if tab.is_auto_named() {
+        tab.set_custom_name(crate::workspace::derive_label_from_cwd(project_path));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use crate::app::state::ProjectChatTabRequest;
     use crate::workspace::Workspace;
@@ -777,5 +804,29 @@ mod tests {
             env,
             vec![("ENABLE_BACKGROUND_TASKS".to_string(), "1".to_string())]
         );
+    }
+
+    // ---- apply_project_chat_tab_name (BUG-2b: agent panel project label) ----
+
+    #[test]
+    fn project_chat_tab_name_applied_to_auto_named_tab() {
+        let mut ws = Workspace::test_new("space");
+        apply_project_chat_tab_name(&mut ws, 0, Path::new("/herdr-test-nonexistent/my-project"));
+        assert_eq!(ws.tabs[0].custom_name.as_deref(), Some("my-project"));
+    }
+
+    #[test]
+    fn project_chat_tab_name_respects_existing_custom_name() {
+        let mut ws = Workspace::test_new("space");
+        ws.tabs[0].custom_name = Some("kept".into());
+        apply_project_chat_tab_name(&mut ws, 0, Path::new("/herdr-test-nonexistent/my-project"));
+        assert_eq!(ws.tabs[0].custom_name.as_deref(), Some("kept"));
+    }
+
+    #[test]
+    fn project_chat_tab_name_ignores_out_of_bounds_tab_index() {
+        let mut ws = Workspace::test_new("space");
+        apply_project_chat_tab_name(&mut ws, 99, Path::new("/herdr-test-nonexistent/my-project"));
+        assert!(ws.tabs[0].custom_name.is_none());
     }
 }
