@@ -19,6 +19,7 @@ mod runtime;
 mod runtime_mutations;
 mod session;
 pub mod state;
+pub(crate) mod tab_branches;
 mod terminal_targets;
 mod theme_sync;
 mod worktrees;
@@ -119,6 +120,8 @@ pub struct App {
     pub(crate) last_sidebar_divider_click: Option<Instant>,
     pub(crate) last_pane_click: Option<PaneClickState>,
     pub(crate) next_resize_poll: Instant,
+    /// Next per-cwd git-branch poll for the agent panel; None runs immediately.
+    pub(crate) next_tab_branch_poll: Option<Instant>,
     pub(crate) next_animation_tick: Option<Instant>,
     pub(crate) next_auto_update_check: Option<Instant>,
     pub(crate) next_agent_manifest_update_check: Option<Instant>,
@@ -572,6 +575,7 @@ impl App {
             preview_placement: config.preview.placement,
             preview_bindings: Vec::new(),
             collapsed_project_paths: std::collections::HashSet::new(),
+            tab_branch_cache: std::collections::HashMap::new(),
             sessions_parse_cache: Default::default(),
             default_chat_agent,
             request_complete_onboarding: false,
@@ -761,6 +765,7 @@ impl App {
             last_sidebar_divider_click: None,
             last_pane_click: None,
             next_resize_poll: Instant::now() + RESIZE_POLL_INTERVAL,
+            next_tab_branch_poll: None,
             next_animation_tick: None,
             next_auto_update_check: version_check_enabled
                 .then_some(Instant::now() + AUTO_UPDATE_CHECK_INTERVAL),

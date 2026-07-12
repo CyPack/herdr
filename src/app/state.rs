@@ -1511,6 +1511,11 @@ pub struct AppState {
     pub preview_placement: crate::config::PreviewPlacement,
     /// Pinned project paths whose chat list is collapsed in the Projects tab.
     pub collapsed_project_paths: std::collections::HashSet<std::path::PathBuf>,
+    /// Git branch per live terminal cwd, for the agent panel's secondary
+    /// label. Kept fresh by the runtime's HEAD-mtime fingerprint poll;
+    /// read-only during render.
+    pub(crate) tab_branch_cache:
+        std::collections::HashMap<std::path::PathBuf, super::tab_branches::TabBranchEntry>,
     /// Incremental per-file parse cache for the Projects tab: unchanged
     /// session files ((mtime, size) key) are never re-read, so refreshes cost
     /// only the diff.
@@ -1926,6 +1931,7 @@ impl AppState {
             preview_bindings: Vec::new(),
             preview_placement: crate::config::PreviewPlacement::default(),
             collapsed_project_paths: std::collections::HashSet::new(),
+            tab_branch_cache: std::collections::HashMap::new(),
             sessions_parse_cache: Default::default(),
             default_chat_agent: "claude".to_string(),
             request_complete_onboarding: false,

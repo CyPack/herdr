@@ -118,6 +118,25 @@ pub fn git_branch(cwd: &Path) -> Option<String> {
     parse_git_head_branch(&head)
 }
 
+/// Cheap change fingerprint for what [`git_branch`] would return: the mtime of
+/// the HEAD file it reads. `None` when `cwd` is not in a git repository — and
+/// also on reftable repos, where HEAD is a stub and `git_branch` shells out;
+/// callers treating equal fingerprints as "unchanged" therefore refresh a
+/// reftable branch only once (accepted: HEAD-file repos are the overwhelming
+/// default and stay fully fresh without ever spawning a subprocess).
+pub fn git_branch_fingerprint(cwd: &Path) -> Option<std::time::SystemTime> {
+    let repo_root = git_repo_root(cwd)?;
+    let git_dir = git_dir_for_repo_root(&repo_root)?;
+    let git_common_dir = git_common_dir_for_git_dir(&git_dir);
+    if git_ref_storage_is_reftable(&git_common_dir) {
+        return None;
+    }
+
+    std::fs::metadata(git_dir.join("HEAD"))
+        .and_then(|meta| meta.modified())
+        .ok()
+}
+
 pub(super) fn git_dir_for_repo_root(repo_root: &Path) -> Option<PathBuf> {
     let git_path = repo_root.join(".git");
     if git_path.is_dir() {

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use crate::detect::{Agent, AgentState};
 use crate::layout::PaneId;
@@ -12,6 +13,9 @@ pub struct PaneDetail {
     pub tab_idx: usize,
     pub tab_label: String,
     pub tab_custom_label: Option<String>,
+    /// The cwd the pane's terminal was spawned with — the key into the
+    /// app-level per-cwd git branch cache.
+    pub terminal_cwd: PathBuf,
     pub label: String,
     pub agent_label: String,
     #[allow(dead_code)]
@@ -59,6 +63,7 @@ impl Tab {
                     tab_idx,
                     tab_label: tab_label.to_string(),
                     tab_custom_label: tab_custom_label.map(str::to_string),
+                    terminal_cwd: terminal.cwd.clone(),
                     label: agent_label.clone(),
                     agent_label,
                     agent: terminal.effective_known_agent(),

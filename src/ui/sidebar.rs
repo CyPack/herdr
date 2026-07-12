@@ -128,13 +128,16 @@ fn agent_panel_entries_with_runtimes(
                 .into_iter()
                 .map(move |detail| {
                     // A custom-named tab (project chats name themselves after
-                    // their project) leads with its own label; the workspace
-                    // demotes to context and is dropped when it would repeat.
+                    // their project) leads with its own label, paired with the
+                    // git branch its terminal cwd is on (from the runtime's
+                    // branch cache) — never the workspace name.
                     let (primary_label, primary_tab_label) =
                         if let Some(custom) = detail.tab_custom_label.clone() {
-                            let ws_context =
-                                (workspace_label != custom).then(|| workspace_label.clone());
-                            (custom, ws_context)
+                            let branch = app
+                                .tab_branch_cache
+                                .get(&detail.terminal_cwd)
+                                .and_then(|entry| entry.branch.clone());
+                            (custom, branch)
                         } else {
                             (
                                 workspace_label.clone(),
@@ -1677,10 +1680,11 @@ mod tests {
         assert_eq!(entries[0].primary_label, "one");
         assert!(entries[0].primary_tab_label.is_none());
         assert_eq!(entries[0].agent_label.as_deref(), Some("pi"));
-        // The custom-named "logs" tab leads with its own label; its workspace
-        // demotes to the secondary slot (BUG-2b behavior).
+        // The custom-named "logs" tab leads with its own label; the secondary
+        // slot carries its git branch (none cached here), never the workspace
+        // name (BUG-2c behavior).
         assert_eq!(entries[1].primary_label, "logs");
-        assert_eq!(entries[1].primary_tab_label.as_deref(), Some("two"));
+        assert!(entries[1].primary_tab_label.is_none());
         assert_eq!(entries[1].agent_label.as_deref(), Some("claude"));
     }
 
@@ -1689,7 +1693,11 @@ mod tests {
     fn single_agent_workspace_app(
         ws_name: &str,
         tab_name: Option<&str>,
-    ) -> (crate::app::state::AppState, usize) {
+    ) -> (
+        crate::app::state::AppState,
+        usize,
+        crate::terminal::TerminalId,
+    ) {
         let mut app = crate::app::state::AppState::test_new();
         let mut ws = Workspace::test_new(ws_name);
         let tab_idx = match tab_name {
@@ -1708,12 +1716,21 @@ mod tests {
             .detected_agent = Some(Agent::Claude);
         app.active = Some(0);
         app.selected = 0;
-        (app, tab_idx)
+        (app, tab_idx, terminal_id)
     }
 
     #[test]
-    fn agent_panel_prefers_custom_tab_label_over_workspace_label() {
-        let (app, tab_idx) = single_agent_workspace_app("space", Some("herdr"));
+    fn agent_panel_pairs_custom_tab_label_with_its_git_branch() {
+        let (mut app, tab_idx, terminal_id) = single_agent_workspace_app("space", Some("herdr"));
+        let cwd = std::path::PathBuf::from("/proj/herdr");
+        app.terminals
+            .get_mut(&terminal_id)
+            .expect("test terminal should exist")
+            .cwd = cwd.clone();
+        app.tab_branch_cache.insert(
+            cwd,
+            crate::app::tab_branches::TabBranchEntry::test_with_branch(Some("master")),
+        );
 
         let entries = agent_panel_entries(&app);
         let chat_entry = entries
@@ -1722,12 +1739,12 @@ mod tests {
             .expect("chat tab should be listed");
 
         assert_eq!(chat_entry.primary_label, "herdr");
-        assert_eq!(chat_entry.primary_tab_label.as_deref(), Some("space"));
+        assert_eq!(chat_entry.primary_tab_label.as_deref(), Some("master"));
     }
 
     #[test]
-    fn agent_panel_drops_workspace_label_matching_custom_tab_label() {
-        let (app, tab_idx) = single_agent_workspace_app("herdr", Some("herdr"));
+    fn agent_panel_omits_secondary_label_when_no_branch_is_known() {
+        let (app, tab_idx, _) = single_agent_workspace_app("space", Some("herdr"));
 
         let entries = agent_panel_entries(&app);
         let chat_entry = entries
@@ -1736,12 +1753,15 @@ mod tests {
             .expect("chat tab should be listed");
 
         assert_eq!(chat_entry.primary_label, "herdr");
-        assert!(chat_entry.primary_tab_label.is_none());
+        assert!(
+            chat_entry.primary_tab_label.is_none(),
+            "the workspace name must never leak into a custom-named row"
+        );
     }
 
     #[test]
     fn agent_panel_keeps_workspace_label_for_auto_named_tabs() {
-        let (app, tab_idx) = single_agent_workspace_app("space", None);
+        let (app, tab_idx, _) = single_agent_workspace_app("space", None);
 
         let entries = agent_panel_entries(&app);
         let entry = entries

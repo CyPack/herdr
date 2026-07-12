@@ -201,6 +201,7 @@ impl App {
 
         self.sync_animation_timer(now);
         changed |= self.refresh_projects_if_due(now);
+        changed |= self.refresh_tab_branches_if_due(now);
         // No presentation surface reads preview_bindings yet, so a refresh
         // must not dirty the frame (flip to `changed |=` once a marker renders).
         let _ = self.refresh_preview_bindings_if_due(now);
