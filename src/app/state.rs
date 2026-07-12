@@ -1460,6 +1460,10 @@ pub struct AppState {
     /// Cached chat sessions per pinned project, aligned with `projects_pinned`.
     /// Filled by `refresh_project_sessions*`; read-only during render.
     pub projects_sessions: Vec<ProjectSessions>,
+    /// Live click-bridge tab↔session bindings (preview↔tab sync), newest
+    /// first. Refreshed by the runtime's fingerprint poll; shared runtime
+    /// fact, read-only for any presentation layer.
+    pub preview_bindings: Vec<crate::preview_bindings::PreviewBinding>,
     /// Pinned project paths whose chat list is collapsed in the Projects tab.
     pub collapsed_project_paths: std::collections::HashSet<std::path::PathBuf>,
     /// Incremental per-file parse cache for the Projects tab: unchanged
@@ -1869,6 +1873,7 @@ impl AppState {
             collapsed_space_keys: std::collections::HashSet::new(),
             projects_pinned: Vec::new(),
             projects_sessions: Vec::new(),
+            preview_bindings: Vec::new(),
             collapsed_project_paths: std::collections::HashSet::new(),
             sessions_parse_cache: Default::default(),
             default_chat_agent: "claude".to_string(),

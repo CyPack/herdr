@@ -79,6 +79,7 @@ mod persist;
 mod platform;
 mod plugin_command;
 mod plugin_paths;
+mod preview_bindings;
 mod product_announcements;
 mod protocol;
 mod pty;

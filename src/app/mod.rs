@@ -13,6 +13,7 @@ mod config_io;
 mod creation;
 mod ids;
 mod input;
+mod preview;
 mod projects;
 mod runtime;
 mod runtime_mutations;
@@ -130,6 +131,10 @@ pub struct App {
     /// Per-pinned-project change fingerprints from the last poll, aligned with
     /// `state.projects_pinned` (None = project has no session directory yet).
     pub(crate) projects_dir_fingerprints: Vec<Option<(usize, std::time::SystemTime)>>,
+    /// Next click-bridge bindings poll (preview↔tab sync); None until first poll.
+    pub(crate) next_preview_bindings_poll: Option<Instant>,
+    /// (mtime, len) of the bindings file at the last poll; None = file absent.
+    pub(crate) preview_bindings_fingerprint: Option<(std::time::SystemTime, u64)>,
     pub(crate) update_version_check_enabled: bool,
     pub(crate) update_manifest_check_enabled: bool,
     pub(crate) loaded_host_cursor: crate::config::HostCursorModeConfig,
@@ -560,6 +565,7 @@ impl App {
             collapsed_space_keys,
             projects_pinned,
             projects_sessions: Vec::new(),
+            preview_bindings: Vec::new(),
             collapsed_project_paths: std::collections::HashSet::new(),
             sessions_parse_cache: Default::default(),
             default_chat_agent,
@@ -757,6 +763,8 @@ impl App {
             next_projects_poll: None,
             projects_poll_hot_until: None,
             projects_dir_fingerprints: Vec::new(),
+            next_preview_bindings_poll: None,
+            preview_bindings_fingerprint: None,
             update_version_check_enabled: config.update.version_check,
             update_manifest_check_enabled: config.update.manifest_check,
             loaded_host_cursor: config.ui.host_cursor,
