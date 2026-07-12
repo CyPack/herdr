@@ -185,6 +185,129 @@ mod tests {
         }
     }
 
+    // T5c: closing a resumed-chat tab must release its terminal runtime via
+    // the standard detached-runtime shutdown queue — the path that kills the
+    // pane's PTY session (claude + its MCP children) and frees the wiring.
+    // Phase 1 proves the close only QUEUES the shutdown; phase 2 proves the
+    // event-loop drain actually unregisters and shuts the runtime down.
+    #[tokio::test]
+    async fn closing_resumed_chat_tab_shuts_down_its_terminal_runtime() {
+        let dir = unique_project_dir("close");
+        let mut app = test_app();
+        let mut ws = Workspace::test_new("proj");
+        ws.identity_cwd = dir.clone();
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+
+        app.open_project_chat_tab_with_argv(
+            req(dir.clone(), Some("sess-7")),
+            &sh_argv(),
+            Vec::new(),
+        );
+        let ws = &app.state.workspaces[0];
+        assert_eq!(ws.tabs.len(), 2, "resume tab opened");
+        let tab = &ws.tabs[1];
+        let terminal_id = tab.panes[&tab.root_pane].attached_terminal_id.clone();
+        assert!(app.terminal_runtimes.get(&terminal_id).is_some());
+
+        // TUI-path close of the focused (resume) tab: queues the shutdown.
+        app.state.close_tab();
+        assert!(
+            app.state.terminal_runtime_shutdowns.contains(&terminal_id),
+            "close queues the detached terminal for shutdown"
+        );
+        assert!(
+            app.terminal_runtimes.get(&terminal_id).is_some(),
+            "runtime lives until the event loop drains the queue"
+        );
+
+        // The pass runtime.rs runs after every input event / API request.
+        app.shutdown_detached_terminal_runtimes();
+
+        assert!(
+            app.terminal_runtimes.get(&terminal_id).is_none(),
+            "runtime shut down and unregistered"
+        );
+        assert!(
+            !app.state.terminals.contains_key(&terminal_id),
+            "terminal state removed with the tab"
+        );
+        assert_eq!(
+            app.state.find_resumed_chat_tab("sess-7"),
+            None,
+            "chat wiring released by the close"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // T5c (live kill proof, linux): closing the tab must terminate the WHOLE
+    // pane session — the shell and its background child (a stand-in for MCP
+    // servers a chat spawns). The unique sleep durations act as markers that
+    // survive shell `exec`, so the tree is observable from outside via pgrep.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn closing_resumed_chat_tab_kills_the_pane_process_tree() {
+        fn pgrep(pattern: &str) -> Vec<u32> {
+            let out = std::process::Command::new("pgrep")
+                .args(["-f", pattern])
+                .output()
+                .expect("pgrep runs");
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter_map(|line| line.trim().parse().ok())
+                .collect()
+        }
+
+        let dir = unique_project_dir("kill");
+        let tag = format!("9{:05}", std::process::id() % 100_000);
+        let script = format!("sleep {tag}1 & sleep {tag}2");
+        let pattern = format!("sleep {tag}");
+        let argv = vec!["/bin/sh".to_string(), "-c".to_string(), script];
+
+        let mut app = test_app();
+        let mut ws = Workspace::test_new("proj");
+        ws.identity_cwd = dir.clone();
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.open_project_chat_tab_with_argv(req(dir.clone(), Some("sess-k")), &argv, Vec::new());
+
+        // Both the background and foreground sleeps must come up before we
+        // can prove they die (the PTY spawn is asynchronous).
+        let mut alive = Vec::new();
+        for _ in 0..100 {
+            alive = pgrep(&pattern);
+            if alive.len() >= 2 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(
+            alive.len() >= 2,
+            "pane process tree (shell child + background child) started: {alive:?}"
+        );
+
+        app.state.close_tab();
+        app.shutdown_detached_terminal_runtimes();
+
+        // shutdown_pane_processes escalates HUP→TERM→KILL with short graces;
+        // give the kernel a beat to reap before asserting extinction.
+        let mut remaining = pgrep(&pattern);
+        for _ in 0..100 {
+            if remaining.is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            remaining = pgrep(&pattern);
+        }
+        assert!(
+            remaining.is_empty(),
+            "all pane session processes must be dead after tab close: {remaining:?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     // T5b (race guard): consuming a request whose session is already wired
     // (e.g. a second click landed before the first spawn finished) focuses
     // the wired tab instead of spawning a duplicate.
