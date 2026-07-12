@@ -1446,6 +1446,11 @@ pub struct AppState {
     /// Set when a Projects-tab chat row (resume) or "(no chats)" row (new
     /// chat) was clicked; consumed by the event loop to spawn the tab.
     pub request_project_chat_tab: Option<ProjectChatTabRequest>,
+    /// Set whenever tab focus changes; consumed by the event loop to check
+    /// whether the now-focused tab has a wired browser preview to surface.
+    /// A bare flag (no indices): the consumer resolves the ACTIVE tab at
+    /// consume time, so the request can never go stale.
+    pub request_preview_show: bool,
     pub creating_new_tab: bool,
     pub requested_new_tab_name: Option<String>,
     pub rename_pane_target: Option<PaneId>,
@@ -1863,6 +1868,7 @@ impl AppState {
             request_client_config_reload: false,
             request_clipboard_write: None,
             request_project_chat_tab: None,
+            request_preview_show: false,
             creating_new_tab: false,
             requested_new_tab_name: None,
             rename_pane_target: None,

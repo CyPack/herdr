@@ -680,6 +680,9 @@ impl HeadlessServer {
             crate::render_prof::event("full_render_cause.deferred_project_chat_tab");
         }
 
+        // Preview show acts on an external browser window: no re-render.
+        let _ = self.app.handle_preview_show_request();
+
         if let Some(ws_idx) = self.app.state.request_remove_linked_worktree.take() {
             self.app.open_remove_linked_worktree_confirmation(ws_idx);
             needs_render = true;

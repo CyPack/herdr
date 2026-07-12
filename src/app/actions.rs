@@ -1013,6 +1013,9 @@ impl AppState {
         self.refresh_tab_bar_view();
         self.record_pane_focus_after_navigation(previous_focus);
         self.sync_selection_after_focus_navigation();
+        // Every focus funnel (tab-bar click, sidebar chat row, spam-guard
+        // focus) lands here: arm the preview-show check for the event loop.
+        self.request_preview_show = true;
         true
     }
 

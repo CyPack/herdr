@@ -555,6 +555,7 @@ impl App {
             request_client_config_reload: false,
             request_clipboard_write: None,
             request_project_chat_tab: None,
+            request_preview_show: false,
             creating_new_tab: false,
             requested_new_tab_name: None,
             rename_pane_target: None,
@@ -1009,6 +1010,9 @@ impl App {
             if self.handle_project_chat_tab_request() {
                 needs_render = true;
             }
+
+            // Preview show acts on an external browser window: no re-render.
+            let _ = self.handle_preview_show_request();
 
             if let Some(ws_idx) = self.state.request_remove_linked_worktree.take() {
                 self.open_remove_linked_worktree_confirmation(ws_idx);

@@ -1,0 +1,74 @@
+{
+  "goal": "herdr rust-engineering bilgi havuzunun evidence graph'ı: prensipler (kaynak: AGENTS.md), enforce zinciri (justfile/CI/hooks), test altyapısı, referans registry ve global rust-dev skill bağlantısı — reference-registry Adım-2 artefaktı (2026-07-12)",
+  "ontology": {
+    "domain": "herdr-rust-engineering",
+    "concepts": [
+      "principles (AGENTS.md kaynaklı mimari/kod/test kuralları → HP1-HP10)",
+      "enforcement (justfile + CI + pre-commit + clippy.toml + rust-toolchain.toml)",
+      "test-infrastructure (nextest, characterization, adversarial fixtures)",
+      "reference-registry (docs/references etiket tablosu, tier+confidence)",
+      "global-layer (~/.claude/skills/rust-dev — proje-bağımsız P1-P25)",
+      "routing (rust-dev-routing.sh hook — sinyal → havuz yönlendirmesi)"
+    ]
+  },
+  "nodes": {
+    "components": [
+      {"id": "agents-md", "desc": "AGENTS.md (CLAUDE.md symlink) — prensiplerin birincil kaynağı; UPSTREAM dosyası, lokal düzenleme YASAK"},
+      {"id": "enforcement-chain", "desc": "justfile (lint/ci/check/windows-lint) + .github/workflows/ci.yml (conventional-commits, 3-OS matrix) + .githooks/pre-commit + clippy.toml + rust-toolchain.toml (1.96.1 pin)"},
+      {"id": "test-infra", "desc": "cargo-nextest v0.9.140 runner; 9 integration test dosyası + support harness + fixtures (~14.6k satır); nextest 2578 test"},
+      {"id": "patterns-catalog", "desc": "docs/patterns/rust-engineering.md — HP1-HP10 + anti-pattern'ler + karar matrisi (lokal, gitignored)"},
+      {"id": "references-registry", "desc": "docs/references/README.md — etiket|tier|confidence tablosu, 12 doğrulanmış dış URL + yerel kaynaklar (lokal, gitignored)"},
+      {"id": "rust-dev-skill", "desc": "~/.claude/skills/rust-dev — global katman: SKILL.md (amaç-bazlı routing) + P1-P25 + toolchain workflows + lessons"},
+      {"id": "routing-hook", "desc": "~/.claude/hooks/rust-dev-routing.sh — UserPromptSubmit: rust sinyali/Cargo.toml cwd → havuz yönlendirme bloğu"},
+      {"id": "local-handoff", "desc": ".local/CURRENT-HANDOFF.md pointer + SESSION-4-HANDOFF.md kanonik durum (drift onarımı 2026-07-12)"}
+    ],
+    "dependencies": [
+      {"from": "patterns-catalog", "to": "agents-md", "desc": "HP1-HP10 AGENTS.md satır-etiketli damıtma", "claim_ref": "hc1"},
+      {"from": "patterns-catalog", "to": "references-registry", "desc": "her pattern etiketle kaynağa bağlanır", "claim_ref": "hc4"},
+      {"from": "rust-dev-skill", "to": "agents-md", "desc": "global P1-P15'in bir kısmı herdr'dan damıtıldı", "claim_ref": "hc1"},
+      {"from": "routing-hook", "to": "rust-dev-skill", "desc": "hook sinyalde skill'e + proje kataloğuna yönlendirir", "claim_ref": "hc5"},
+      {"from": "test-infra", "to": "enforcement-chain", "desc": "just test/check nextest'i çağırır", "claim_ref": "hc2"}
+    ],
+    "claims": [
+      {"id": "hc1", "text": "herdr mühendislik prensipleri AGENTS.md'de yaşar (state≠runtime :28, pure render :29, platform-gate :31+:182, boundary :36-51, no-unwrap :181, characterization :96, vendored-patch :141-149, versiyon kuralı :184-185) ve HP1-HP10 olarak damıtıldı", "status": "verified", "sources": [
+        {"type": "source_code", "ref": "AGENTS.md tam okuma (238 satır, 2026-07-12)", "confidence": 0.9},
+        {"type": "executable", "ref": "herdr-infra-scout agent taraması (bağımsız ikinci okuma, satır referanslı)", "confidence": 0.85}
+      ]},
+      {"id": "hc2", "text": "Enforce zinciri canlı: just lint = fmt-check + clippy --locked -D warnings; just check = ci + windows-lint + python testleri; CI conventional-commits gate; pre-commit fmt hook; nextest 2578 test", "status": "verified", "sources": [
+        {"type": "source_code", "ref": "justfile + .github/workflows/ci.yml + clippy.toml okumaları", "confidence": 0.9},
+        {"type": "executable", "ref": "git log son 10 commit konvansiyon kanıtı (lowercase conventional, emoji yok)", "confidence": 0.85}
+      ]},
+      {"id": "hc3", "text": "cargo test (paralel thread) bu repoda FLAKY (global CONFIG_PATH_ENV_VAR race, ~14 sahte FAIL); nextest process-izolasyonu çözüm — kanıt: seri 2531/2531 vs nextest 2533/2533 yeşil", "status": "verified", "sources": [
+        {"type": "project-memory", "ref": "feedback-herdr-fork-production-discipline.md (2026-07-11 canlı kanıt)", "confidence": 0.85},
+        {"type": "official_docs", "ref": "https://nexte.st/ execution model (per-process izolasyon)", "confidence": 0.9}
+      ]},
+      {"id": "hc4", "text": "Referans registry'deki 12 dış URL canlı (HTTP 200) ve tier+confidence etiketli; docs/* gitignored olduğundan havuz lokal yaşar, upstream'e sızmaz", "status": "verified", "sources": [
+        {"type": "executable", "ref": "curl status taraması 12/12=200 (2026-07-12) + .gitignore okuması (/docs/* + !/docs/next/)", "confidence": 0.95}
+      ]},
+      {"id": "hc5", "text": "Routing katmanı kuruldu: rust-dev-routing.sh (UserPromptSubmit) rust sinyalinde/Cargo.toml cwd'de amaç-bazlı yönlendirme bloğu enjekte eder; rust-dev skill hot-load doğrulandı", "status": "open", "sources": [
+        {"type": "executable", "ref": "skill hot-load system-reminder kanıtı ALINDI; hook birim testleri HENÜZ KOŞMADI (Task E'de: rust-prompt→blok, non-rust→boş, kill-switch→boş, bozuk-JSON→fail-open) — testler geçince verified'e yükselt", "confidence": 0.6}
+      ]},
+      {"id": "hc6", "text": "codebase-memory-mcp herdr index'i (home-ayaz-projects-herdr) son commit dalgasını (ed1522a) kapsıyor", "status": "open", "sources": [
+        {"type": "filesystem", "ref": ".local/AGENTIC-DEV.md '13.819 node' kaydı (Jul 11) — son commit'ler sonrası reindex doğrulanmadı", "confidence": 0.7}
+      ]}
+    ],
+    "verifications": [
+      {"id": "hv1", "component": "agents-md + patterns-catalog", "oracle": "cross-check", "test": "koordinatör tam-okuma + herdr-infra-scout bağımsız tarama satır-referans eşleşmesi", "status": "pass"},
+      {"id": "hv2", "component": "enforcement-chain + test-infra", "oracle": "executable", "test": "justfile/CI/clippy.toml okundu; git log konvansiyon kanıtı; nextest kanıtı memory'de", "status": "pass"},
+      {"id": "hv3", "component": "references-registry", "oracle": "executable", "test": "curl 12/12 HTTP 200 + .gitignore doğrulaması", "status": "pass"},
+      {"id": "hv4", "component": "rust-dev-skill", "oracle": "executable", "test": "skill hot-load system-reminder kanıtı (2026-07-12) — routing-hook doğrulaması hc5/Task E'de ayrıca", "status": "pass"},
+      {"id": "hv5", "component": "local-handoff", "oracle": "cross-check", "test": "mtime + içerik + git log üçlü tutarlılık (SESSION-4 kanonik)", "status": "pass"}
+    ]
+  },
+  "variant": {
+    "V": 2,
+    "components_without_verification": 0,
+    "claims_below_theta": 2,
+    "unresolved_deps": 0,
+    "note": "V=2: hc5 (hook birim testleri Task E'de koşacak) + hc6 (codebase index tazeliği). hc5 testler geçince verified→V=1."
+  },
+  "open_questions": [
+    "hc5: rust-dev-routing.sh 4-case birim testi (Task E) — geçince verified'e yükselt.",
+    "hc6: codebase-memory-mcp herdr index'i ed1522a dalgasını kapsıyor mu? İlk herdr oturumunda detect_changes çalıştır, gerekirse reindex."
+  ]
+}

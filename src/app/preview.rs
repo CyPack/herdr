@@ -74,9 +74,6 @@ impl super::App {
     /// Pass 3 scans the process table (`platform::session_processes`), so it
     /// is computed lazily at most once per call — and callers must stay off
     /// the render/input path (consume-side or background only).
-    // Temporary: the production caller is the P1c-3 tab-focus trigger; until
-    // that lands only this module's tests exercise the lookup.
-    #[allow(dead_code)]
     pub(crate) fn preview_binding_for_tab(
         &self,
         ws_idx: usize,
@@ -125,6 +122,54 @@ impl super::App {
             }
         }
         None
+    }
+
+    /// Consume a queued preview-show request (armed by every tab-focus
+    /// change). The ACTIVE tab is resolved at consume time — no indices are
+    /// stored, so the request can never go stale. Returns whether a preview
+    /// dispatch happened; the action is an external window, so callers never
+    /// need a re-render for it.
+    pub(crate) fn handle_preview_show_request(&mut self) -> bool {
+        self.handle_preview_show_request_with(Self::dispatch_preview_show)
+    }
+
+    /// Dispatch-injected core (tests record the dispatch instead of touching
+    /// a real browser).
+    fn handle_preview_show_request_with(
+        &mut self,
+        dispatch: impl FnOnce(&mut Self, crate::preview_bindings::PreviewBinding),
+    ) -> bool {
+        if !self.state.request_preview_show {
+            return false;
+        }
+        self.state.request_preview_show = false;
+        let Some(ws_idx) = self.state.active else {
+            return false;
+        };
+        let Some(tab_idx) = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .map(|ws| ws.active_tab_index())
+        else {
+            return false;
+        };
+        let Some(binding) = self.preview_binding_for_tab(ws_idx, tab_idx) else {
+            return false;
+        };
+        dispatch(self, binding);
+        true
+    }
+
+    /// The real show action lands in P1c-4 (idempotent CDP probe/activate +
+    /// dev-browser fallback on a background thread). Until then the dispatch
+    /// only logs, so wiring is observable but inert.
+    fn dispatch_preview_show(&mut self, binding: crate::preview_bindings::PreviewBinding) {
+        tracing::debug!(
+            token = binding.token.as_str(),
+            url = binding.url.as_deref().unwrap_or(""),
+            "focused tab has a wired preview (show action lands in P1c-4)"
+        );
     }
 }
 
@@ -442,6 +487,76 @@ mod tests {
 
         app.state.close_tab();
         app.shutdown_detached_terminal_runtimes();
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // ── P1c-3: tab-focus trigger + deferred consume ─────────────────────
+
+    // F1: every switch_workspace_tab (the focus funnel: tab-bar click,
+    // sidebar chat row, spam-guard focus) must arm the preview-show check.
+    #[tokio::test]
+    async fn switching_tab_arms_the_preview_show_request() {
+        let dir = unique_dir("f1");
+        let mut app = app_with_plain_workspace(&dir);
+        assert!(!app.state.request_preview_show, "starts unarmed");
+        assert!(app.state.switch_workspace_tab(0, 0));
+        assert!(
+            app.state.request_preview_show,
+            "focus change arms the check"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // F2: a wired active tab dispatches EXACTLY once per armed request, with
+    // the right binding; the flag is consumed (no re-dispatch without a new
+    // focus change).
+    #[tokio::test]
+    async fn consume_dispatches_once_for_a_wired_active_tab() {
+        let dir = unique_dir("f2");
+        let mut app = app_with_plain_workspace(&dir);
+        app.state.workspaces[0].tabs[0].resumed_session_id =
+            Some("db792de9-036c-4e96-9316-bef3b9b7817e".into());
+        app.state.preview_bindings = vec![binding("tok-wired", None, Some("db792de9-036"), 100)];
+        app.state.request_preview_show = true;
+
+        let mut got: Vec<String> = Vec::new();
+        assert!(app.handle_preview_show_request_with(|_, b| got.push(b.token)));
+        assert_eq!(got, vec!["tok-wired".to_string()]);
+        assert!(!app.state.request_preview_show, "request consumed");
+
+        assert!(
+            !app.handle_preview_show_request_with(|_, b| got.push(b.token)),
+            "no re-dispatch without a new focus change"
+        );
+        assert_eq!(got.len(), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // F3: an armed request on an UNWIRED tab consumes the flag quietly —
+    // no dispatch, no error, ready for the next focus change.
+    #[tokio::test]
+    async fn consume_is_quiet_for_an_unwired_tab() {
+        let dir = unique_dir("f3");
+        let mut app = app_with_plain_workspace(&dir);
+        app.state.preview_bindings =
+            vec![binding("tok-elsewhere", None, Some("930e93d6-20c0"), 100)];
+        app.state.request_preview_show = true;
+
+        let mut dispatched = false;
+        assert!(!app.handle_preview_show_request_with(|_, _| dispatched = true));
+        assert!(!dispatched, "unwired tab must not dispatch");
+        assert!(!app.state.request_preview_show, "flag still consumed");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // F4: without an armed request the consume pass is a strict no-op.
+    #[tokio::test]
+    async fn consume_without_request_is_a_no_op() {
+        let dir = unique_dir("f4");
+        let mut app = app_with_plain_workspace(&dir);
+        let mut dispatched = false;
+        assert!(!app.handle_preview_show_request_with(|_, _| dispatched = true));
+        assert!(!dispatched);
         let _ = std::fs::remove_dir_all(dir);
     }
 }
