@@ -459,6 +459,9 @@ fn restore_tab(
     let mut terminals = Vec::new();
     let mut terminal_runtimes = HashMap::new();
     let mut failed_imports = 0;
+    // Projects-tab chat wiring, re-derived from the panes' persisted agent
+    // sessions (first hosting claude pane wins — a tab holds one chat).
+    let mut restored_resumed_session_id: Option<String> = None;
     for id in &pane_ids {
         let old_id = reverse_id_map.get(id);
         let saved_pane = old_id.and_then(|old_id| snap.panes.get(old_id));
@@ -547,6 +550,10 @@ fn restore_tab(
                 startup.duplicate_agent_session,
             ) {
                 terminal.set_persisted_agent_session(session);
+            }
+            // A scheduled native resume WILL host this claude session again.
+            if restored_resumed_session_id.is_none() {
+                restored_resumed_session_id = restored_claude_session_id(saved_agent_session, true);
             }
             panes.insert(*id, PaneState::new(terminal_id));
             terminals.push(terminal);
@@ -641,6 +648,12 @@ fn restore_tab(
                 ) {
                     terminal.set_persisted_agent_session(session);
                 }
+                // An imported (live-handoff) claude process is still running
+                // this session; a plain-shell restore is not and stays unwired.
+                if restored_resumed_session_id.is_none() {
+                    restored_resumed_session_id =
+                        restored_claude_session_id(saved_agent_session, was_imported);
+                }
                 panes.insert(*id, PaneState::new(terminal_id.clone()));
                 terminal_runtimes.insert(terminal_id, runtime);
                 terminals.push(terminal);
@@ -699,9 +712,12 @@ fn restore_tab(
             crate::workspace::Tab {
                 custom_name: snap.custom_name.clone(),
                 number,
-                // Not persisted yet; restored chats respawn as plain shells,
-                // so a stale wiring here would point at a tab without claude.
-                resumed_session_id: None,
+                // Re-derived from the panes' persisted agent sessions, and
+                // ONLY when a pane will actually host that claude again (a
+                // live imported process or a scheduled native resume). A
+                // plain-shell restore stays unwired: stale wiring would focus
+                // a tab without claude and block re-resuming the chat.
+                resumed_session_id: restored_resumed_session_id,
                 root_pane,
                 layout,
                 panes,
@@ -763,6 +779,26 @@ fn pane_restore_startup<'a>(
         duplicate_agent_session,
         reserved_agent_session,
     }
+}
+
+/// The Claude Code session id a restored pane will host, or `None` when the
+/// pane will not actually run that claude again (`will_host_claude` gates the
+/// caller's context: live imported process or scheduled native resume). Keeps
+/// `Tab::resumed_session_id` — the Projects sidebar's ▸/● wiring and its
+/// duplicate-resume spam-guard — in sync across restarts without persisting a
+/// second copy of the session id.
+fn restored_claude_session_id(
+    session: Option<&PaneAgentSessionSnapshot>,
+    will_host_claude: bool,
+) -> Option<String> {
+    if !will_host_claude {
+        return None;
+    }
+    let session = session?;
+    (session.source == "herdr:claude"
+        && session.agent == "claude"
+        && session.kind == crate::agent_resume::AgentSessionRefKind::Id)
+        .then(|| session.value.clone())
 }
 
 fn restore_plan_for_snapshot(
@@ -1226,6 +1262,164 @@ mod tests {
         assert_eq!(session.source, "herdr:opencode");
         assert_eq!(session.agent, "opencode");
         assert_eq!(session.session_ref.value, "opencode-session");
+    }
+
+    // ── Projects-tab chat wiring across restarts ────────────────────────
+
+    fn agent_tab_snapshot(
+        cwd: &std::path::Path,
+        source: &str,
+        agent: &str,
+        value: &str,
+    ) -> TabSnapshot {
+        TabSnapshot {
+            custom_name: None,
+            layout: LayoutSnapshot::Pane(0),
+            panes: HashMap::from([(
+                0,
+                super::super::snapshot::PaneSnapshot {
+                    cwd: cwd.to_path_buf(),
+                    label: None,
+                    agent_name: None,
+                    agent_session: Some(super::super::snapshot::PaneAgentSessionSnapshot {
+                        source: source.into(),
+                        agent: agent.into(),
+                        kind: crate::agent_resume::AgentSessionRefKind::Id,
+                        value: value.into(),
+                    }),
+                    launch_argv: None,
+                },
+            )]),
+            zoomed: false,
+            focused: Some(0),
+            root_pane: Some(0),
+        }
+    }
+
+    fn snapshot_with_tabs(cwd: std::path::PathBuf, tabs: Vec<TabSnapshot>) -> SessionSnapshot {
+        SessionSnapshot {
+            version: super::super::snapshot::SNAPSHOT_VERSION,
+            workspaces: vec![WorkspaceSnapshot {
+                id: Some("workspace".into()),
+                custom_name: None,
+                identity_cwd: cwd,
+                worktree_space: None,
+                public_pane_numbers: HashMap::new(),
+                next_public_pane_number: 0,
+                public_tab_numbers: Vec::new(),
+                next_public_tab_number: 0,
+                tabs,
+                active_tab: 0,
+            }],
+            active: Some(0),
+            selected: 0,
+            sidebar_width: None,
+            sidebar_section_split: None,
+            collapsed_space_keys: Default::default(),
+        }
+    }
+
+    fn restore_workspaces(
+        snapshot: &SessionSnapshot,
+        resume_enabled: bool,
+    ) -> Vec<crate::workspace::Workspace> {
+        let (events, _event_rx) = mpsc::channel(4);
+        let (workspaces, _terminals, _runtimes) = restore(
+            snapshot,
+            None,
+            24,
+            80,
+            0,
+            test_restore_shell(),
+            crate::config::ShellModeConfig::NonLogin,
+            resume_enabled,
+            events,
+            Arc::new(Notify::new()),
+            Arc::new(AtomicBool::new(false)),
+        );
+        workspaces
+    }
+
+    // RW1: a pane that will actually host its claude session again (scheduled
+    // native resume) must re-wire the tab, so the Projects sidebar's ▸/●
+    // highlights and the duplicate-resume spam-guard survive a restart.
+    #[tokio::test]
+    async fn restore_rewires_projects_chat_tab_for_native_claude_resume() {
+        let cwd = std::env::current_dir().unwrap();
+        let snapshot = snapshot_with_tabs(
+            cwd.clone(),
+            vec![agent_tab_snapshot(
+                &cwd,
+                "herdr:claude",
+                "claude",
+                "db792de9-036c-4e96-9316-bef3b9b7817e",
+            )],
+        );
+        let workspaces = restore_workspaces(&snapshot, true);
+        assert_eq!(
+            workspaces[0].tabs[0].resumed_session_id.as_deref(),
+            Some("db792de9-036c-4e96-9316-bef3b9b7817e")
+        );
+    }
+
+    // RW2: with native resume disabled the pane comes back as a plain shell —
+    // wiring it would point the sidebar at a tab without claude and block
+    // re-resuming that chat from the Projects tab.
+    #[tokio::test]
+    async fn restore_leaves_wiring_empty_when_resume_is_disabled() {
+        let cwd = std::env::current_dir().unwrap();
+        let snapshot = snapshot_with_tabs(
+            cwd.clone(),
+            vec![agent_tab_snapshot(
+                &cwd,
+                "herdr:claude",
+                "claude",
+                "db792de9-036c-4e96-9316-bef3b9b7817e",
+            )],
+        );
+        let workspaces = restore_workspaces(&snapshot, false);
+        assert_eq!(workspaces[0].tabs[0].resumed_session_id, None);
+    }
+
+    // RW3: session de-duplication — only the pane that wins the reservation
+    // hosts the session; the duplicate tab must stay unwired.
+    #[tokio::test]
+    async fn restore_wires_only_the_first_tab_for_a_duplicate_claude_session() {
+        let cwd = std::env::current_dir().unwrap();
+        let snapshot = snapshot_with_tabs(
+            cwd.clone(),
+            vec![
+                agent_tab_snapshot(&cwd, "herdr:claude", "claude", "same-session-uuid"),
+                agent_tab_snapshot(&cwd, "herdr:claude", "claude", "same-session-uuid"),
+            ],
+        );
+        let workspaces = restore_workspaces(&snapshot, true);
+        assert_eq!(
+            workspaces[0].tabs[0].resumed_session_id.as_deref(),
+            Some("same-session-uuid")
+        );
+        assert_eq!(
+            workspaces[0].tabs[1].resumed_session_id, None,
+            "the suppressed duplicate must not claim the chat"
+        );
+    }
+
+    // RW4: only claude sessions drive the Projects sidebar; other agents must
+    // not be wired even when they natively resume.
+    #[tokio::test]
+    async fn restore_does_not_wire_non_claude_agents() {
+        let cwd = std::env::current_dir().unwrap();
+        let snapshot = snapshot_with_tabs(
+            cwd.clone(),
+            vec![agent_tab_snapshot(
+                &cwd,
+                "herdr:codex",
+                "codex",
+                "codex-session",
+            )],
+        );
+        let workspaces = restore_workspaces(&snapshot, true);
+        assert_eq!(workspaces[0].tabs[0].resumed_session_id, None);
     }
 
     #[tokio::test]
