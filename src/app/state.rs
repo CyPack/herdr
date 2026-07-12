@@ -1189,6 +1189,9 @@ pub(crate) enum DragTarget {
     AgentPanelScrollbar {
         grab_row_offset: u16,
     },
+    ProjectsScrollbar {
+        grab_row_offset: u16,
+    },
     PaneSplit {
         path: Vec<bool>,
         direction: Direction,
@@ -1528,6 +1531,10 @@ pub struct AppState {
     pub sidebar_tab: SidebarTab,
     pub workspace_scroll: usize,
     pub agent_panel_scroll: usize,
+    /// Top-anchored row offset for the Projects sidebar tab (and the pattern
+    /// the future Files tab reuses). Clamped in `compute_view` because the
+    /// projects list length changes underneath it via the session polls.
+    pub projects_scroll: usize,
     pub tab_scroll: usize,
     pub tab_scroll_follow_active: bool,
     pub mobile_switcher_scroll: usize,
@@ -1932,6 +1939,7 @@ impl AppState {
             sidebar_tab: SidebarTab::Spaces,
             workspace_scroll: 0,
             agent_panel_scroll: 0,
+            projects_scroll: 0,
             tab_scroll: 0,
             tab_scroll_follow_active: true,
             mobile_switcher_scroll: 0,

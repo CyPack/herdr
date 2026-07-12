@@ -72,10 +72,11 @@ pub(crate) use self::{
         agent_panel_body_rect, agent_panel_entries, agent_panel_scroll_metrics,
         agent_panel_scrollbar_rect, agent_panel_toggle_rect, collapsed_sidebar_sections,
         collapsed_sidebar_toggle_rect, compute_workspace_card_areas, expanded_sidebar_sections,
-        expanded_sidebar_toggle_rect, normalized_workspace_scroll, sidebar_section_divider_rect,
-        workspace_drop_indicator_row, workspace_list_entries, workspace_list_entries_expanded,
-        workspace_list_rect, workspace_list_scroll_metrics, workspace_list_scrollbar_rect,
-        workspace_parent_group_state, WorkspaceListEntry,
+        expanded_sidebar_toggle_rect, normalized_workspace_scroll, projects_scroll_metrics,
+        projects_scrollbar_rect, sidebar_section_divider_rect, workspace_drop_indicator_row,
+        workspace_list_entries, workspace_list_entries_expanded, workspace_list_rect,
+        workspace_list_scroll_metrics, workspace_list_scrollbar_rect, workspace_parent_group_state,
+        WorkspaceListEntry,
     },
 };
 pub(crate) use self::{
@@ -266,10 +267,13 @@ fn compute_view_internal(
         if app.sidebar_collapsed || app.sidebar_tab != crate::app::state::SidebarTab::Projects {
             Vec::new()
         } else {
-            sidebar::compute_project_row_areas(
-                app,
-                sidebar::workspace_list_rect(sidebar_area, app.sidebar_section_split),
-            )
+            let list_rect = sidebar::workspace_list_rect(sidebar_area, app.sidebar_section_split);
+            // The projects list length changes underneath the scroll offset
+            // via the session polls; re-normalize before laying out so the
+            // viewport can never point past the end of the list.
+            app.projects_scroll =
+                sidebar::normalized_projects_scroll(app, list_rect, app.projects_scroll);
+            sidebar::compute_project_row_areas(app, list_rect)
         };
 
     let tab_bar_view = app

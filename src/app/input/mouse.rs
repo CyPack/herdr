@@ -545,6 +545,24 @@ impl AppState {
                     // swallowing the whole sidebar here broke "click an agent
                     // to jump back to its chat".
                     if self.sidebar_tab == crate::app::state::SidebarTab::Projects {
+                        // Scrollbar clicks win over row hit-tests: the track
+                        // column is excluded from the row rects, but a press
+                        // there must grab/jump the thumb, not toggle a row.
+                        if let Some(target) =
+                            self.projects_scrollbar_target_at(mouse.column, mouse.row)
+                        {
+                            match target {
+                                ScrollbarClickTarget::Thumb { grab_row_offset } => {
+                                    self.drag = Some(DragState {
+                                        target: DragTarget::ProjectsScrollbar { grab_row_offset },
+                                    });
+                                }
+                                ScrollbarClickTarget::Track { offset_from_bottom } => {
+                                    self.set_projects_offset_from_bottom(offset_from_bottom);
+                                }
+                            }
+                            return None;
+                        }
                         let footer_y = self.sidebar_footer_rect().y;
                         if mouse.row < footer_y {
                             self.toggle_projects_row_at(mouse.column, mouse.row, mouse.modifiers);
@@ -788,6 +806,13 @@ impl AppState {
                                 self.set_agent_panel_offset_from_bottom(offset_from_bottom);
                             }
                         }
+                        DragTarget::ProjectsScrollbar { grab_row_offset } => {
+                            if let Some(offset_from_bottom) =
+                                self.projects_offset_for_drag_row(mouse.row, *grab_row_offset)
+                            {
+                                self.set_projects_offset_from_bottom(offset_from_bottom);
+                            }
+                        }
                         DragTarget::PaneSplit {
                             path,
                             direction,
@@ -986,6 +1011,15 @@ impl AppState {
                     )) {
                         self.scroll_agent_panel(-1);
                     }
+                } else if self.sidebar_tab == crate::app::state::SidebarTab::Projects {
+                    // The Projects tab owns the top section: the wheel scrolls
+                    // its rows and must never move the hidden Spaces selection.
+                    if crate::ui::should_show_scrollbar(crate::ui::projects_scroll_metrics(
+                        self,
+                        self.workspace_list_rect(),
+                    )) {
+                        self.scroll_projects_list(-1);
+                    }
                 } else if crate::ui::should_show_scrollbar(
                     crate::ui::workspace_list_scroll_metrics(self, self.workspace_list_rect()),
                 ) {
@@ -1004,6 +1038,13 @@ impl AppState {
                         self, agent_area,
                     )) {
                         self.scroll_agent_panel(1);
+                    }
+                } else if self.sidebar_tab == crate::app::state::SidebarTab::Projects {
+                    if crate::ui::should_show_scrollbar(crate::ui::projects_scroll_metrics(
+                        self,
+                        self.workspace_list_rect(),
+                    )) {
+                        self.scroll_projects_list(1);
                     }
                 } else if crate::ui::should_show_scrollbar(
                     crate::ui::workspace_list_scroll_metrics(self, self.workspace_list_rect()),

@@ -1134,70 +1134,130 @@ fn render_sidebar_footer_buttons(app: &AppState, frame: &mut Frame, area: Rect, 
 /// Chats listed per expanded project; older ones fold into a "… N older" row.
 pub(crate) const PROJECT_CHAT_ROW_LIMIT: usize = 5;
 
+/// One logical Projects-tab row, before scroll and viewport clipping. A
+/// project header counts as a single line even though it lays out as two
+/// disjoint hit rects (name + " +" button), so scrolling can never split the
+/// pair. The future Files tab reuses this lines→skip→layout scroll pattern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProjectRowLine {
+    Header { proj_idx: usize },
+    Empty { proj_idx: usize },
+    Chat { proj_idx: usize, chat_idx: usize },
+    More { proj_idx: usize },
+}
+
+/// The full logical row list for the Projects tab, unscrolled and unclipped —
+/// the single source the scroll metrics and the layout both derive from.
+pub(crate) fn project_row_lines(app: &AppState) -> Vec<ProjectRowLine> {
+    let mut lines = Vec::new();
+    for (proj_idx, project) in app.projects_sessions.iter().enumerate() {
+        lines.push(ProjectRowLine::Header { proj_idx });
+        if app.collapsed_project_paths.contains(&project.path) {
+            continue;
+        }
+        if project.sessions.is_empty() {
+            lines.push(ProjectRowLine::Empty { proj_idx });
+        } else {
+            let visible = project.sessions.len().min(PROJECT_CHAT_ROW_LIMIT);
+            for chat_idx in 0..visible {
+                lines.push(ProjectRowLine::Chat { proj_idx, chat_idx });
+            }
+            if project.total_count > PROJECT_CHAT_ROW_LIMIT {
+                lines.push(ProjectRowLine::More { proj_idx });
+            }
+        }
+    }
+    lines
+}
+
+pub(crate) fn projects_scroll_metrics(app: &AppState, area: Rect) -> crate::pane::ScrollMetrics {
+    let viewport_rows = workspace_list_body_rect(area, false).height as usize;
+    let total_rows = project_row_lines(app).len();
+    let max_offset_from_bottom = total_rows.saturating_sub(viewport_rows);
+    let offset_from_bottom = total_rows
+        .saturating_sub(app.projects_scroll)
+        .saturating_sub(viewport_rows);
+
+    crate::pane::ScrollMetrics {
+        offset_from_bottom,
+        max_offset_from_bottom,
+        viewport_rows,
+    }
+}
+
+pub(crate) fn projects_scrollbar_rect(app: &AppState, area: Rect) -> Option<Rect> {
+    let metrics = projects_scroll_metrics(app, area);
+    let body = workspace_list_body_rect(area, true);
+    (should_show_scrollbar(metrics) && body.width > 0 && body.height > 0).then_some(Rect::new(
+        area.x + area.width.saturating_sub(1),
+        body.y,
+        1,
+        body.height,
+    ))
+}
+
+/// Clamp a Projects scroll offset to the current list; the list length moves
+/// underneath the offset via the session polls, so `compute_view` re-normalizes
+/// every frame (same contract as `normalized_workspace_scroll`).
+pub(crate) fn normalized_projects_scroll(app: &AppState, area: Rect, scroll: usize) -> usize {
+    scroll.min(projects_scroll_metrics(app, area).max_offset_from_bottom)
+}
+
 pub(crate) fn compute_project_row_areas(app: &AppState, area: Rect) -> Vec<ProjectRowArea> {
-    let body = workspace_list_body_rect(area, false);
+    let has_scrollbar = should_show_scrollbar(projects_scroll_metrics(app, area));
+    let body = workspace_list_body_rect(area, has_scrollbar);
     if body.width == 0 || body.height == 0 {
         return Vec::new();
     }
     let body_bottom = body.y + body.height;
     let mut areas: Vec<ProjectRowArea> = Vec::new();
-    let mut y = body.y;
 
-    for (proj_idx, project) in app.projects_sessions.iter().enumerate() {
+    for (row_idx, line) in project_row_lines(app)
+        .into_iter()
+        .skip(app.projects_scroll)
+        .enumerate()
+    {
+        let y = body
+            .y
+            .saturating_add(u16::try_from(row_idx).unwrap_or(u16::MAX));
         if y >= body_bottom {
             break;
         }
-        // The header row splits into the collapse/name area and a fixed-width
-        // " +" new-chat button at the right edge. Disjoint rects keep the
-        // hit-test unambiguous; the button is dropped on very narrow sidebars
-        // so the header itself stays clickable.
-        let button_w: u16 = if body.width >= 8 { 3 } else { 0 };
-        areas.push(ProjectRowArea {
-            rect: Rect::new(body.x, y, body.width - button_w, 1),
-            kind: ProjectRowKind::Project { proj_idx },
-        });
-        if button_w > 0 {
-            areas.push(ProjectRowArea {
-                rect: Rect::new(body.x + body.width - button_w, y, button_w, 1),
-                kind: ProjectRowKind::NewChat { proj_idx },
-            });
-        }
-        y += 1;
-
-        if app.collapsed_project_paths.contains(&project.path) {
-            continue;
-        }
-
-        if project.sessions.is_empty() {
-            if y >= body_bottom {
-                break;
-            }
-            areas.push(ProjectRowArea {
-                rect: Rect::new(body.x, y, body.width, 1),
-                kind: ProjectRowKind::Empty { proj_idx },
-            });
-            y += 1;
-        } else {
-            // Only the newest chats are listed (the reader sorts by mtime,
-            // newest first); the rest collapse into one inert "… N older" row
-            // so a busy project cannot flood the sidebar.
-            let visible = project.sessions.len().min(PROJECT_CHAT_ROW_LIMIT);
-            for chat_idx in 0..visible {
-                if y >= body_bottom {
-                    break;
+        match line {
+            ProjectRowLine::Header { proj_idx } => {
+                // The header row splits into the collapse/name area and a
+                // fixed-width " +" new-chat button at the right edge. Disjoint
+                // rects keep the hit-test unambiguous; the button is dropped on
+                // very narrow sidebars so the header itself stays clickable.
+                let button_w: u16 = if body.width >= 8 { 3 } else { 0 };
+                areas.push(ProjectRowArea {
+                    rect: Rect::new(body.x, y, body.width - button_w, 1),
+                    kind: ProjectRowKind::Project { proj_idx },
+                });
+                if button_w > 0 {
+                    areas.push(ProjectRowArea {
+                        rect: Rect::new(body.x + body.width - button_w, y, button_w, 1),
+                        kind: ProjectRowKind::NewChat { proj_idx },
+                    });
                 }
+            }
+            ProjectRowLine::Empty { proj_idx } => {
+                areas.push(ProjectRowArea {
+                    rect: Rect::new(body.x, y, body.width, 1),
+                    kind: ProjectRowKind::Empty { proj_idx },
+                });
+            }
+            ProjectRowLine::Chat { proj_idx, chat_idx } => {
                 areas.push(ProjectRowArea {
                     rect: Rect::new(body.x, y, body.width, 1),
                     kind: ProjectRowKind::Chat { proj_idx, chat_idx },
                 });
-                y += 1;
             }
-            if project.total_count > PROJECT_CHAT_ROW_LIMIT && y < body_bottom {
+            ProjectRowLine::More { proj_idx } => {
                 areas.push(ProjectRowArea {
                     rect: Rect::new(body.x, y, body.width, 1),
                     kind: ProjectRowKind::More { proj_idx },
                 });
-                y += 1;
             }
         }
     }
@@ -1341,6 +1401,11 @@ fn render_projects_list(app: &AppState, frame: &mut Frame, area: Rect) {
                 );
             }
         }
+    }
+
+    if let Some(track) = projects_scrollbar_rect(app, area) {
+        let metrics = projects_scroll_metrics(app, area);
+        render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
     }
 
     render_sidebar_footer_buttons(app, frame, area, " chat");
@@ -2098,6 +2163,125 @@ mod tests {
         // Rows stack one per line inside the body (below the 2-row header).
         assert_eq!(rows[0].rect.y, area.y + WORKSPACE_SECTION_HEADER_ROWS);
         assert_eq!(rows[2].rect.y, rows[0].rect.y + 1);
+    }
+
+    // ---- Projects scroll (agent panel pattern; Files tab reuses it) ----
+
+    /// 7-chat project + empty project → Header, Chat×5, More, Header, Empty
+    /// (9 logical lines).
+    fn scroll_fixture_app() -> crate::app::state::AppState {
+        let mut app = crate::app::state::AppState::test_new();
+        let many: Vec<_> = (0..7)
+            .map(|i| test_chat(&format!("s{i}"), "t", 1))
+            .collect();
+        app.projects_sessions = vec![
+            project_sessions("/a", many),
+            project_sessions("/b", Vec::new()),
+        ];
+        app
+    }
+
+    #[test]
+    fn project_row_lines_list_headers_chats_more_and_empty_in_order() {
+        let app = scroll_fixture_app();
+        let lines = project_row_lines(&app);
+        assert_eq!(
+            lines,
+            vec![
+                ProjectRowLine::Header { proj_idx: 0 },
+                ProjectRowLine::Chat {
+                    proj_idx: 0,
+                    chat_idx: 0
+                },
+                ProjectRowLine::Chat {
+                    proj_idx: 0,
+                    chat_idx: 1
+                },
+                ProjectRowLine::Chat {
+                    proj_idx: 0,
+                    chat_idx: 2
+                },
+                ProjectRowLine::Chat {
+                    proj_idx: 0,
+                    chat_idx: 3
+                },
+                ProjectRowLine::Chat {
+                    proj_idx: 0,
+                    chat_idx: 4
+                },
+                ProjectRowLine::More { proj_idx: 0 },
+                ProjectRowLine::Header { proj_idx: 1 },
+                ProjectRowLine::Empty { proj_idx: 1 },
+            ]
+        );
+    }
+
+    #[test]
+    fn projects_scroll_skips_leading_lines_and_relayouts_from_body_top() {
+        let mut app = scroll_fixture_app();
+        app.projects_scroll = 2;
+        let area = Rect::new(0, 0, 24, 20);
+        let rows = compute_project_row_areas(&app, area);
+        // Lines 0 (header) and 1 (chat 0) scrolled away: the viewport now
+        // starts at chat 1, laid out at the body's first row.
+        assert!(matches!(
+            rows[0].kind,
+            ProjectRowKind::Chat {
+                proj_idx: 0,
+                chat_idx: 1
+            }
+        ));
+        assert_eq!(rows[0].rect.y, area.y + WORKSPACE_SECTION_HEADER_ROWS);
+    }
+
+    #[test]
+    fn projects_scroll_never_splits_a_header_from_its_new_chat_button() {
+        let mut app = scroll_fixture_app();
+        app.projects_scroll = 7; // first visible line = Header { proj_idx: 1 }
+        let rows = compute_project_row_areas(&app, Rect::new(0, 0, 24, 20));
+        assert!(matches!(
+            rows[0].kind,
+            ProjectRowKind::Project { proj_idx: 1 }
+        ));
+        assert!(matches!(
+            rows[1].kind,
+            ProjectRowKind::NewChat { proj_idx: 1 }
+        ));
+        assert_eq!(rows[0].rect.y, rows[1].rect.y);
+    }
+
+    #[test]
+    fn projects_scrollbar_appears_only_when_the_list_overflows() {
+        let app = scroll_fixture_app();
+        // 9 logical lines; a 6-row area leaves a 3-row body → overflow.
+        assert!(projects_scrollbar_rect(&app, Rect::new(0, 0, 24, 6)).is_some());
+        // A 20-row area (17-row body) fits all 9 lines → no scrollbar.
+        assert!(projects_scrollbar_rect(&app, Rect::new(0, 0, 24, 20)).is_none());
+    }
+
+    #[test]
+    fn projects_rows_shrink_for_the_scrollbar_column() {
+        let app = scroll_fixture_app();
+        let area = Rect::new(0, 0, 24, 6);
+        let rows = compute_project_row_areas(&app, area);
+        let track =
+            projects_scrollbar_rect(&app, area).expect("overflowing list shows a scrollbar");
+        assert!(!rows.is_empty());
+        for row in &rows {
+            assert!(
+                row.rect.x + row.rect.width <= track.x,
+                "row overlaps the scrollbar column"
+            );
+        }
+    }
+
+    #[test]
+    fn normalized_projects_scroll_clamps_to_the_list_end() {
+        let app = scroll_fixture_app();
+        let area = Rect::new(0, 0, 24, 6);
+        // 9 lines, 3-row body → max scroll 6.
+        assert_eq!(normalized_projects_scroll(&app, area, 99), 6);
+        assert_eq!(normalized_projects_scroll(&app, area, 3), 3);
     }
 
     #[test]

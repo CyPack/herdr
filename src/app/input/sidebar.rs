@@ -165,6 +165,69 @@ impl AppState {
         }
     }
 
+    pub(super) fn scroll_projects_list(&mut self, delta: i16) {
+        let area = self.workspace_list_rect();
+        let max_scroll = crate::ui::projects_scroll_metrics(self, area).max_offset_from_bottom;
+        if delta.is_negative() {
+            self.projects_scroll = self
+                .projects_scroll
+                .saturating_sub(delta.unsigned_abs() as usize);
+        } else {
+            self.projects_scroll = self
+                .projects_scroll
+                .saturating_add(delta as usize)
+                .min(max_scroll);
+        }
+    }
+
+    pub(super) fn projects_scrollbar_target_at(
+        &self,
+        col: u16,
+        row: u16,
+    ) -> Option<ScrollbarClickTarget> {
+        let area = self.workspace_list_rect();
+        let metrics = crate::ui::projects_scroll_metrics(self, area);
+        let track = crate::ui::projects_scrollbar_rect(self, area)?;
+        if col < track.x
+            || col >= track.x + track.width
+            || row < track.y
+            || row >= track.y + track.height
+        {
+            return None;
+        }
+        if let Some(grab_row_offset) = crate::ui::scrollbar_thumb_grab_offset(metrics, track, row) {
+            Some(ScrollbarClickTarget::Thumb { grab_row_offset })
+        } else {
+            Some(ScrollbarClickTarget::Track {
+                offset_from_bottom: crate::ui::scrollbar_offset_from_row(metrics, track, row),
+            })
+        }
+    }
+
+    pub(super) fn projects_offset_for_drag_row(
+        &self,
+        row: u16,
+        grab_row_offset: u16,
+    ) -> Option<usize> {
+        let area = self.workspace_list_rect();
+        let metrics = crate::ui::projects_scroll_metrics(self, area);
+        let track = crate::ui::projects_scrollbar_rect(self, area)?;
+        Some(crate::ui::scrollbar_offset_from_drag_row(
+            metrics,
+            track,
+            row,
+            grab_row_offset,
+        ))
+    }
+
+    pub(super) fn set_projects_offset_from_bottom(&mut self, offset_from_bottom: usize) {
+        let area = self.workspace_list_rect();
+        let metrics = crate::ui::projects_scroll_metrics(self, area);
+        self.projects_scroll = metrics
+            .max_offset_from_bottom
+            .saturating_sub(offset_from_bottom);
+    }
+
     pub(crate) fn sidebar_footer_rect(&self) -> Rect {
         let ws_area = self.workspace_list_rect();
         if ws_area == Rect::default() {
@@ -935,6 +998,56 @@ mod tests {
         ));
 
         assert_eq!(app.state.agent_panel_scroll, 1);
+        assert_eq!(app.state.selected, 0);
+    }
+
+    #[test]
+    fn scrolling_projects_tab_with_wheel_updates_projects_scroll() {
+        let mut app = app_for_mouse_test();
+        app.state.sidebar_tab = crate::app::state::SidebarTab::Projects;
+        // 7-chat project + empty project = 9 logical lines
+        // (Header, Chat×5, More, Header, Empty) — overflows the list body.
+        let chats: Vec<_> = (0..7)
+            .map(|i| crate::claude_sessions::ClaudeSession {
+                id: format!("s{i}"),
+                title: "t".to_string(),
+                last_modified: std::time::SystemTime::UNIX_EPOCH,
+                msg_count: 1,
+            })
+            .collect();
+        app.state.projects_sessions = vec![
+            crate::app::state::ProjectSessions {
+                path: std::path::PathBuf::from("/a"),
+                total_count: chats.len(),
+                sessions: chats,
+            },
+            crate::app::state::ProjectSessions {
+                path: std::path::PathBuf::from("/b"),
+                total_count: 0,
+                sessions: Vec::new(),
+            },
+        ];
+        app.state.mode = Mode::Terminal;
+
+        let list_area = app.state.workspace_list_rect();
+        assert!(crate::ui::should_show_scrollbar(
+            crate::ui::projects_scroll_metrics(&app.state, list_area)
+        ));
+
+        app.handle_mouse(mouse(
+            MouseEventKind::ScrollDown,
+            list_area.x + 1,
+            list_area.y + 3,
+        ));
+        assert_eq!(app.state.projects_scroll, 1);
+
+        app.handle_mouse(mouse(
+            MouseEventKind::ScrollUp,
+            list_area.x + 1,
+            list_area.y + 3,
+        ));
+        assert_eq!(app.state.projects_scroll, 0);
+        // The hidden Spaces selection must not move while Projects is shown.
         assert_eq!(app.state.selected, 0);
     }
 
