@@ -1795,9 +1795,11 @@ mod tests {
         app.state.active = Some(0);
         app.state.selected = 0;
         app.state.sidebar_tab = crate::app::state::SidebarTab::Projects;
+        let total_count = sessions.len();
         app.state.projects_sessions = vec![crate::app::state::ProjectSessions {
             path: std::path::PathBuf::from("/home/x/proj"),
             sessions,
+            total_count,
         }];
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
         app

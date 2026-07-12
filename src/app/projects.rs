@@ -598,6 +598,57 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    // T13 (incremental cache): an unchanged file ((mtime,size) key) is served
+    // from the cache — proven by poisoning the cached title and seeing it come
+    // back — while a real change (append) forces a re-parse.
+    #[test]
+    fn session_parse_cache_skips_unchanged_files() {
+        let root = unique_project_dir("parse-cache");
+        let dir = root.join(crate::claude_sessions::encode_project_path("/home/x/proj"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("s1.jsonl");
+        std::fs::write(
+            &file,
+            b"{\"type\":\"custom-title\",\"customTitle\":\"real\"}\n",
+        )
+        .unwrap();
+
+        let mut cache = crate::claude_sessions::SessionParseCache::default();
+        let (first, _) = crate::claude_sessions::read_recent_sessions_for_project_cached(
+            &root,
+            "/home/x/proj",
+            8,
+            &mut cache,
+        );
+        assert_eq!(first[0].title, "real");
+
+        for (_, session) in cache.values_mut() {
+            session.title = "from-cache".to_string();
+        }
+        let (second, _) = crate::claude_sessions::read_recent_sessions_for_project_cached(
+            &root,
+            "/home/x/proj",
+            8,
+            &mut cache,
+        );
+        assert_eq!(second[0].title, "from-cache", "unchanged file not re-read");
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(
+            &file,
+            b"{\"type\":\"custom-title\",\"customTitle\":\"real\"}\n{}\n",
+        )
+        .unwrap();
+        let (third, _) = crate::claude_sessions::read_recent_sessions_for_project_cached(
+            &root,
+            "/home/x/proj",
+            8,
+            &mut cache,
+        );
+        assert_eq!(third[0].title, "real", "changed file re-parsed");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     // T11a-F2..F5: the poll does nothing while the tab is hidden or between
     // intervals, and the expensive re-read runs only on a real change.
     #[tokio::test]

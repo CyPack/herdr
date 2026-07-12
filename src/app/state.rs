@@ -583,8 +583,12 @@ pub struct WorkspaceCardArea {
 pub struct ProjectSessions {
     /// Expanded, absolute project directory (matches `projects_pinned`).
     pub path: std::path::PathBuf,
-    /// Chat sessions for this project, newest first (empty is a normal state).
+    /// The newest chat sessions for this project (up to the fetch limit),
+    /// newest first (empty is a normal state).
     pub sessions: Vec<crate::claude_sessions::ClaudeSession>,
+    /// TOTAL session count in the store — busy projects hold far more chats
+    /// than are parsed/listed; the surplus renders as "… N older".
+    pub total_count: usize,
 }
 
 /// What a single laid-out row in the Projects tab points at. Rows reference the
@@ -1458,6 +1462,10 @@ pub struct AppState {
     pub projects_sessions: Vec<ProjectSessions>,
     /// Pinned project paths whose chat list is collapsed in the Projects tab.
     pub collapsed_project_paths: std::collections::HashSet<std::path::PathBuf>,
+    /// Incremental per-file parse cache for the Projects tab: unchanged
+    /// session files ((mtime, size) key) are never re-read, so refreshes cost
+    /// only the diff.
+    pub sessions_parse_cache: crate::claude_sessions::SessionParseCache,
     /// Agent CLI id used when opening a NEW chat from the Projects tab
     /// (`[projects] default_chat_agent`, one of `projects::CHAT_AGENTS`).
     /// Resuming existing chats always uses claude regardless of this value.
@@ -1646,31 +1654,29 @@ impl AppState {
     /// place the reader touches the filesystem — render/compute must never scan
     /// the disk. Best-effort: a project with no chats keeps an empty list.
     pub(crate) fn refresh_project_sessions_in(&mut self, projects_dir: &std::path::Path) {
-        self.projects_sessions = self
-            .projects_pinned
+        // Parse only slightly more than the sidebar can show: opening a
+        // session file reads it whole, and busy projects hold hundreds of
+        // files / tens of MB — parsing them all froze the Projects tab.
+        const PROJECT_SESSIONS_FETCH_LIMIT: usize = 8;
+        let pinned = self.projects_pinned.clone();
+        self.projects_sessions = pinned
             .iter()
             .map(|path| {
                 let path_str = path.to_string_lossy();
-                let sessions =
-                    crate::claude_sessions::read_sessions_for_project(projects_dir, &path_str);
+                let (sessions, total_count) =
+                    crate::claude_sessions::read_recent_sessions_for_project_cached(
+                        projects_dir,
+                        &path_str,
+                        PROJECT_SESSIONS_FETCH_LIMIT,
+                        &mut self.sessions_parse_cache,
+                    );
                 ProjectSessions {
                     path: path.clone(),
                     sessions,
+                    total_count,
                 }
             })
             .collect();
-    }
-
-    /// Rebuild the Projects-tab chat cache from the real `~/.claude/projects`.
-    /// A no-op (leaves the cache empty) when the home directory is unknown.
-    pub(crate) fn refresh_project_sessions(&mut self) {
-        match crate::claude_sessions::default_claude_projects_dir() {
-            Some(dir) => self.refresh_project_sessions_in(&dir),
-            None => {
-                tracing::debug!("refresh_project_sessions: no claude projects dir; skipping");
-                self.projects_sessions.clear();
-            }
-        }
     }
 
     /// The (workspace, tab) already wired to Claude Code session
@@ -1864,6 +1870,7 @@ impl AppState {
             projects_pinned: Vec::new(),
             projects_sessions: Vec::new(),
             collapsed_project_paths: std::collections::HashSet::new(),
+            sessions_parse_cache: Default::default(),
             default_chat_agent: "claude".to_string(),
             request_complete_onboarding: false,
             name_input: String::new(),

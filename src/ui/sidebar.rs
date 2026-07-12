@@ -1176,7 +1176,7 @@ pub(crate) fn compute_project_row_areas(app: &AppState, area: Rect) -> Vec<Proje
                 });
                 y += 1;
             }
-            if project.sessions.len() > PROJECT_CHAT_ROW_LIMIT && y < body_bottom {
+            if project.total_count > PROJECT_CHAT_ROW_LIMIT && y < body_bottom {
                 areas.push(ProjectRowArea {
                     rect: Rect::new(body.x, y, body.width, 1),
                     kind: ProjectRowKind::More { proj_idx },
@@ -1823,9 +1823,11 @@ mod tests {
         path: &str,
         sessions: Vec<crate::claude_sessions::ClaudeSession>,
     ) -> crate::app::state::ProjectSessions {
+        let total_count = sessions.len();
         crate::app::state::ProjectSessions {
             path: std::path::PathBuf::from(path),
             sessions,
+            total_count,
         }
     }
 

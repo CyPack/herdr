@@ -561,6 +561,7 @@ impl App {
             projects_pinned,
             projects_sessions: Vec::new(),
             collapsed_project_paths: std::collections::HashSet::new(),
+            sessions_parse_cache: Default::default(),
             default_chat_agent,
             request_complete_onboarding: false,
             name_input: String::new(),
@@ -698,10 +699,10 @@ impl App {
                 cwd.as_deref().and_then(crate::workspace::git_branch);
         }
 
-        // Prime the Projects-tab chat cache once at startup so the tab has
-        // content on first paint; it is refreshed again whenever the tab is
-        // selected (see the sidebar-tab mouse handler).
-        state.refresh_project_sessions();
+        // The Projects-tab chat cache is NOT primed here: reading the session
+        // store is real I/O and would slow startup. The visible-tab poll
+        // (refresh_projects_if_due) fills it within one tick of the tab
+        // becoming visible.
 
         // Background auto-update is disabled in monolithic no-session mode
         // and in debug/test builds so local development never mutates the

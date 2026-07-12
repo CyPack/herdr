@@ -530,13 +530,12 @@ impl AppState {
                     }
 
                     if let Some(tab) = self.sidebar_tab_at(mouse.column, mouse.row) {
-                        let switching = self.sidebar_tab != tab;
+                        // Switching must stay I/O-free: the tab renders from
+                        // the cache instantly and the scheduled poll (fast
+                        // fingerprint check) refreshes it moments later.
+                        // Synchronously re-reading sessions here blocked the
+                        // click for the whole store read (~70MB observed).
                         self.sidebar_tab = tab;
-                        // Reload the chat cache when the Projects tab is opened so
-                        // its list reflects sessions created since the last read.
-                        if switching && tab == crate::app::state::SidebarTab::Projects {
-                            self.refresh_project_sessions();
-                        }
                         return None;
                     }
 
@@ -3621,6 +3620,7 @@ mod tests {
                 last_modified: std::time::SystemTime::UNIX_EPOCH,
                 msg_count: 3,
             }],
+            total_count: 1,
         }];
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
 

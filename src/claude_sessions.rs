@@ -69,7 +69,49 @@ pub fn default_claude_projects_dir() -> Option<PathBuf> {
 /// `projects_dir` is the `.../.claude/projects` root (injected for testability).
 /// Never panics: a missing/unreadable project directory yields an empty list,
 /// and malformed session files are skipped individually.
+// Production callers go through the cached/limited variant; this full read
+// remains the reference behavior exercised by this module's tests.
+#[cfg(test)]
 pub fn read_sessions_for_project(projects_dir: &Path, project_path: &str) -> Vec<ClaudeSession> {
+    read_recent_sessions_for_project(projects_dir, project_path, usize::MAX).0
+}
+
+#[cfg(test)]
+pub fn read_recent_sessions_for_project(
+    projects_dir: &Path,
+    project_path: &str,
+    limit: usize,
+) -> (Vec<ClaudeSession>, usize) {
+    read_recent_inner(projects_dir, project_path, limit, None)
+}
+
+/// Per-file parse cache keyed by (mtime, size): an unchanged session file is
+/// never re-read, so a refresh costs only the DIFF — usually zero or one
+/// files — instead of re-parsing the store (the incremental "cc l" pattern).
+pub type SessionParseCache =
+    std::collections::HashMap<std::path::PathBuf, ((std::time::SystemTime, u64), ClaudeSession)>;
+
+/// Like [`read_recent_sessions_for_project`] with an incremental parse cache.
+pub fn read_recent_sessions_for_project_cached(
+    projects_dir: &Path,
+    project_path: &str,
+    limit: usize,
+    cache: &mut SessionParseCache,
+) -> (Vec<ClaudeSession>, usize) {
+    read_recent_inner(projects_dir, project_path, limit, Some(cache))
+}
+
+/// Like [`read_sessions_for_project`] but parses only the `limit` newest
+/// session files (ranked by mtime from directory metadata alone), returning
+/// the parsed sessions plus the TOTAL session-file count. Parsing reads whole
+/// files, so a busy project (hundreds of files, tens of MB) must never be
+/// fully parsed just to list its newest few chats.
+fn read_recent_inner(
+    projects_dir: &Path,
+    project_path: &str,
+    limit: usize,
+    mut cache: Option<&mut SessionParseCache>,
+) -> (Vec<ClaudeSession>, usize) {
     let encoded = encode_project_path(project_path);
     let dir = projects_dir.join(&encoded);
 
@@ -81,18 +123,52 @@ pub fn read_sessions_for_project(projects_dir: &Path, project_path: &str) -> Vec
             if err.kind() != std::io::ErrorKind::NotFound {
                 tracing::debug!(?dir, %err, "claude_sessions: read_dir failed");
             }
-            return Vec::new();
+            return (Vec::new(), 0);
         }
     };
 
+    // Rank candidates by mtime using directory metadata only; files are
+    // opened just for the newest `limit` of them that missed the cache.
+    let mut candidates: Vec<(std::time::SystemTime, u64, std::path::PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                return None;
+            }
+            let (modified, size) = entry
+                .metadata()
+                .map(|meta| {
+                    (
+                        meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+                        meta.len(),
+                    )
+                })
+                .unwrap_or((std::time::SystemTime::UNIX_EPOCH, 0));
+            Some((modified, size, path))
+        })
+        .collect();
+    let total = candidates.len();
+    candidates.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.2.cmp(&b.2)));
+
     let mut sessions: Vec<ClaudeSession> = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-            continue;
+    for (modified, size, path) in candidates.into_iter().take(limit) {
+        let key = (modified, size);
+        if let Some(cache) = cache.as_deref_mut() {
+            if let Some((cached_key, session)) = cache.get(&path) {
+                if *cached_key == key {
+                    sessions.push(session.clone());
+                    continue;
+                }
+            }
         }
         match parse_session_file(&path) {
-            Some(session) => sessions.push(session),
+            Some(session) => {
+                if let Some(cache) = cache.as_deref_mut() {
+                    cache.insert(path, (key, session.clone()));
+                }
+                sessions.push(session);
+            }
             None => tracing::debug!(?path, "claude_sessions: skipped unreadable session file"),
         }
     }
@@ -104,7 +180,7 @@ pub fn read_sessions_for_project(projects_dir: &Path, project_path: &str) -> Vec
             .cmp(&a.last_modified)
             .then_with(|| a.id.cmp(&b.id))
     });
-    sessions
+    (sessions, total)
 }
 
 /// Parse a single `<uuid>.jsonl` session file into a [`ClaudeSession`].
