@@ -1,0 +1,6 @@
+# herdr autostart (2026-07-12, LOCAL-C4): kitty açılışında herdr'a bağlan.
+# Çıplak shell istersen: kitty --session none
+# Kalıcı geri alma: kitty.conf'taki "startup_session .../herdr.session" satırını "startup_session none" yap.
+new_tab herdr
+cd ~
+launch herdr

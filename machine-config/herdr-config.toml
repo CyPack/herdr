@@ -1,0 +1,49 @@
+onboarding = false
+# herdr config — Ayaz
+# Yönetim notu: keybind enflasyonundan kaçınıyoruz. Command palette güçlü bir giriş
+# noktası (tüm plugin aksiyonlarına fuzzy erişim); ek olarak günlük 2 aksiyona direkt tuş.
+
+# Super-devri (2026-07-12, LOCAL-C4): tab yönetimi super'de.
+# super+t = yeni home-chat tab (default agent, cwd=$HOME) · super+w = tab kapat ·
+# super+1..9 = herdr tab geçişi. Bunun için kitty super+1..9 goto_tab map'leri
+# kaldırıldı ve GNOME switch-to-application-5..9 boşaltıldı.
+# Geri alma yedeği: ~/.config/keybind-backups-2026-07-12/pre-super-devri/
+[keys]
+new_chat_tab = "super+t"
+close_tab = ["prefix+shift+x", "super+w"]
+switch_tab = ["prefix+1..9", "super+1..9"]
+
+# Command palette (jt.command-palette) — tüm plugin aksiyonları.
+# prefix+p herdr'da ZATEN previous_tab → çakışmayı önlemek için prefix+shift+p
+# (VS Code Ctrl+Shift+P muscle-memory, herdr'da boşta).
+[[keys.command]]
+key = "prefix+shift+p"
+type = "plugin_action"
+command = "jt.command-palette.open"
+description = "Command palette — tüm plugin aksiyonları"
+
+# Worktree switch/create (worktrunk). prefix+g/prefix+shift+g herdr'ın kendi
+# goto/new-worktree default'ları → çakışmayı önlemek için boşta olan prefix+o (open).
+[[keys.command]]
+key = "prefix+o"
+type = "plugin_action"
+command = "worktrunk.open"
+description = "Worktree: switch / create (worktrunk)"
+
+# Reviewr sidebar toggle. resize_mode = prefix+r (dolu) → prefix+shift+r (boşta).
+[[keys.command]]
+key = "prefix+shift+r"
+type = "plugin_action"
+command = "persiyanov.reviewr.toggle"
+description = "Reviewr — code-review sidebar'ı aç/kapat"
+
+# Worktree Lens (kendi plugin'imiz) — feature-etiketli neon worktree paneli, sağ split.
+# prefix+shift+l boşta (l = lens).
+[[keys.command]]
+key = "prefix+shift+l"
+type = "plugin_action"
+command = "worktree-lens.open"
+description = "Worktree Lens — neon worktree paneli"
+
+[ui]
+agent_panel_sort = "priority"
