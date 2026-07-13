@@ -66,6 +66,12 @@ mod client;
 mod config;
 mod detect;
 mod events;
+// The native file manager domain model is built bottom-up (natsort -> directory
+// reader -> state). Its public surface is consumed once the Navigator-mode view
+// (A2) and navigation input (A3) land; until then it is reachable only from its
+// own tests, so silence dead_code module-wide. Remove this allow at A2.
+#[allow(dead_code)]
+mod fm;
 mod ghostty;
 mod handoff_runtime;
 mod input;
