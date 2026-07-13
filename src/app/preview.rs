@@ -720,7 +720,7 @@ mod tests {
             binding("tok-old", None, Some("db792de9-036"), 100),
         ];
         assert_eq!(
-            app.preview_binding_for_tab(0, 1.min(0)).map(|b| b.token),
+            app.preview_binding_for_tab(0, 0).map(|b| b.token),
             Some("tok-new".into())
         );
         let _ = std::fs::remove_dir_all(dir);
