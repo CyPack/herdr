@@ -5,6 +5,7 @@ use ratatui::{
     Frame,
 };
 
+mod compose;
 mod dialogs;
 mod keybind_help;
 mod menus;
@@ -433,55 +434,94 @@ pub fn render_with_runtime_registry(
     terminal_runtimes: &TerminalRuntimeRegistry,
     frame: &mut Frame,
 ) {
-    let sidebar_area = app.view.sidebar_rect;
-    let tab_bar_area = app.view.tab_bar_rect;
-    let terminal_area = app.view.terminal_area;
+    // The whole UI is composed as a back-to-front layer stack (helix's
+    // Compositor): the base chrome first, then the single active overlay on
+    // top. This is the additive seam for future composition (regions/pages/
+    // popups); today it is behavior-identical to painting the two phases inline.
+    let ctx = compose::RenderCtx {
+        app,
+        terminals: terminal_runtimes,
+    };
+    let compositor = compose::Compositor::new(vec![
+        Box::new(BaseLayer) as Box<dyn compose::Component>,
+        Box::new(OverlayLayer),
+    ]);
+    compositor.render(frame, frame.area(), &ctx);
+}
 
-    if app.view.layout == ViewLayout::Mobile {
-        render_mobile_header(app, terminal_runtimes, frame, app.view.mobile_header_rect);
-    } else if sidebar_area.width > 0 {
-        if app.sidebar_collapsed {
-            render_sidebar_collapsed(app, frame, sidebar_area);
-        } else {
-            render_sidebar(app, terminal_runtimes, frame, sidebar_area);
+/// Layer 0: the persistent base UI — sidebar (or mobile header), tab bar,
+/// panes, and ambient notifications. Reads the geometry that `compute_view`
+/// stored in `app.view.*`.
+struct BaseLayer;
+
+impl compose::Component for BaseLayer {
+    fn render(&self, frame: &mut Frame, _area: Rect, ctx: &compose::RenderCtx) {
+        let app = ctx.app;
+        let terminal_runtimes = ctx.terminals;
+        let sidebar_area = app.view.sidebar_rect;
+        let tab_bar_area = app.view.tab_bar_rect;
+        let terminal_area = app.view.terminal_area;
+
+        if app.view.layout == ViewLayout::Mobile {
+            render_mobile_header(app, terminal_runtimes, frame, app.view.mobile_header_rect);
+        } else if sidebar_area.width > 0 {
+            if app.sidebar_collapsed {
+                render_sidebar_collapsed(app, frame, sidebar_area);
+            } else {
+                render_sidebar(app, terminal_runtimes, frame, sidebar_area);
+            }
         }
+        if app.view.layout != ViewLayout::Mobile {
+            render_tab_bar(app, frame, tab_bar_area);
+        }
+        render_panes(app, terminal_runtimes, frame, terminal_area);
+
+        // Ambient notifications sit above panes, but below interactive overlays.
+        render_notifications(app, frame, terminal_area);
     }
-    if app.view.layout != ViewLayout::Mobile {
-        render_tab_bar(app, frame, tab_bar_area);
-    }
-    render_panes(app, terminal_runtimes, frame, terminal_area);
+}
 
-    // Ambient notifications sit above panes, but below interactive overlays.
-    render_notifications(app, frame, terminal_area);
+/// Layer 1: the single active interactive overlay selected by `app.mode`,
+/// painted on top of the base. `Mode::Terminal` renders no overlay.
+struct OverlayLayer;
 
-    match app.mode {
-        Mode::Onboarding => render_onboarding_overlay(app, frame, frame.area()),
-        Mode::ReleaseNotes => render_release_notes_overlay(app, frame, frame.area()),
-        Mode::ProductAnnouncement => render_product_announcement_overlay(app, frame, frame.area()),
-        Mode::Navigate if app.view.layout == ViewLayout::Mobile => {
-            render_mobile_panel(app, terminal_runtimes, frame, frame.area())
+impl compose::Component for OverlayLayer {
+    fn render(&self, frame: &mut Frame, _area: Rect, ctx: &compose::RenderCtx) {
+        let app = ctx.app;
+        let terminal_runtimes = ctx.terminals;
+        let terminal_area = app.view.terminal_area;
+
+        match app.mode {
+            Mode::Onboarding => render_onboarding_overlay(app, frame, frame.area()),
+            Mode::ReleaseNotes => render_release_notes_overlay(app, frame, frame.area()),
+            Mode::ProductAnnouncement => {
+                render_product_announcement_overlay(app, frame, frame.area())
+            }
+            Mode::Navigate if app.view.layout == ViewLayout::Mobile => {
+                render_mobile_panel(app, terminal_runtimes, frame, frame.area())
+            }
+            Mode::Navigate => render_navigate_overlay(app, frame, terminal_area),
+            Mode::Prefix => render_prefix_overlay(app, frame, terminal_area),
+            Mode::Copy => render_copy_mode_overlay(app, frame, terminal_area),
+            Mode::Resize => render_resize_overlay(app, frame, terminal_area),
+            Mode::ConfirmClose => render_confirm_close_overlay(app, frame, terminal_area),
+            Mode::ContextMenu => {
+                render_context_menu(app, frame);
+            }
+            Mode::Settings => render_settings_overlay(app, frame, frame.area()),
+            Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane => {
+                render_rename_overlay(app, frame, frame.area())
+            }
+            Mode::NewLinkedWorktree => render_new_linked_worktree_overlay(app, frame, frame.area()),
+            Mode::OpenExistingWorktree => {
+                render_open_existing_worktree_overlay(app, frame, frame.area())
+            }
+            Mode::ConfirmRemoveWorktree => render_remove_worktree_overlay(app, frame, frame.area()),
+            Mode::GlobalMenu => render_global_launcher_menu(app, frame),
+            Mode::KeybindHelp => render_keybind_help_overlay(app, frame),
+            Mode::Navigator => render_navigator_overlay(app, terminal_runtimes, frame),
+            Mode::Terminal => {}
         }
-        Mode::Navigate => render_navigate_overlay(app, frame, terminal_area),
-        Mode::Prefix => render_prefix_overlay(app, frame, terminal_area),
-        Mode::Copy => render_copy_mode_overlay(app, frame, terminal_area),
-        Mode::Resize => render_resize_overlay(app, frame, terminal_area),
-        Mode::ConfirmClose => render_confirm_close_overlay(app, frame, terminal_area),
-        Mode::ContextMenu => {
-            render_context_menu(app, frame);
-        }
-        Mode::Settings => render_settings_overlay(app, frame, frame.area()),
-        Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane => {
-            render_rename_overlay(app, frame, frame.area())
-        }
-        Mode::NewLinkedWorktree => render_new_linked_worktree_overlay(app, frame, frame.area()),
-        Mode::OpenExistingWorktree => {
-            render_open_existing_worktree_overlay(app, frame, frame.area())
-        }
-        Mode::ConfirmRemoveWorktree => render_remove_worktree_overlay(app, frame, frame.area()),
-        Mode::GlobalMenu => render_global_launcher_menu(app, frame),
-        Mode::KeybindHelp => render_keybind_help_overlay(app, frame),
-        Mode::Navigator => render_navigator_overlay(app, terminal_runtimes, frame),
-        Mode::Terminal => {}
     }
 }
 
