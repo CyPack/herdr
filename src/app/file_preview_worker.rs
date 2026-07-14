@@ -141,10 +141,7 @@ impl FilePreviewHighlightWorker {
                 shared: worker_shared.clone(),
                 wake: wake.clone(),
             };
-            loop {
-                let Some(request) = take_next_request(&worker_shared) else {
-                    break;
-                };
+            while let Some(request) = take_next_request(&worker_shared) {
                 let highlighted = processor(&request.path, &request.preview);
                 let result = FilePreviewHighlightResult {
                     generation: request.generation,
