@@ -292,7 +292,7 @@ fn render_file_preview(app: &AppState, frame: &mut Frame, area: Rect, preview: &
         }
         FmFilePreview::Image(preview) => {
             let label = if !app.kitty_graphics_enabled {
-                Some("(image preview requires Kitty graphics)")
+                Some("(Kitty graphics req.)")
             } else {
                 match &preview.state {
                     FmImagePreviewState::Pending => Some("(image preview pending)"),
@@ -522,8 +522,8 @@ fn render_entry_row(
 mod tests {
     use super::*;
     use crate::fm::{
-        FmFilePreview, FmState, HighlightedTextPreview, PreviewTextLine, PreviewTextSpan,
-        PreviewTextStyle, TextPreviewError,
+        FmFilePreview, FmImagePreviewState, FmState, HighlightedTextPreview, ImagePreviewTarget,
+        PreparedImagePreview, PreviewTextLine, PreviewTextSpan, PreviewTextStyle, TextPreviewError,
     };
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
@@ -742,6 +742,39 @@ mod tests {
                 "{error:?} renders {expected:?}: {rows:?}"
             );
         }
+    }
+
+    #[test]
+    fn image_preview_has_explicit_non_kitty_fallback_and_ready_content_is_clear() {
+        let td = TempDir::new("image-fallback");
+        fs::write(td.root.join("selected.png"), b"image candidate").expect("write image candidate");
+        let mut fm = FmState::new(&td.root);
+
+        let fallback = render_rows(&app_with_fm(fm.clone()), 80, 6).join("\n");
+        assert!(fallback.contains("(Kitty graphics req.)"));
+
+        match &mut fm.preview {
+            FmPreview::File(FmFilePreview::Image(preview)) => {
+                preview.state = FmImagePreviewState::Ready {
+                    target: ImagePreviewTarget {
+                        width_px: 96,
+                        height_px: 64,
+                    },
+                    prepared: PreparedImagePreview {
+                        width: 2,
+                        height: 2,
+                        data_fingerprint: 42,
+                        rgba: vec![0xff; 16],
+                    },
+                };
+            }
+            other => panic!("expected image preview state, got {other:?}"),
+        }
+        let mut app = app_with_fm(fm);
+        app.kitty_graphics_enabled = true;
+        let ready = render_rows(&app, 80, 6).join("\n");
+        assert!(!ready.contains("image preview"));
+        assert!(!ready.contains("loading image"));
     }
 
     // TP-B1.5-TRUNCATION: both reader-byte and highlighter-line limits produce
