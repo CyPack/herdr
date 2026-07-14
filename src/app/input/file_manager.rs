@@ -7,8 +7,15 @@
 
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 
-use crate::app::state::AppState;
+use crate::app::state::{AppState, FileManagerHeaderAction};
 use crate::app::{App, FileManagerClickState};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FileManagerMouseDispatch {
+    NotHandled,
+    Consumed,
+    HeaderAction(FileManagerHeaderAction),
+}
 
 /// Handle one key while the file manager is open. `Esc`/`q` close it; the arrow
 /// keys and `hjkl` move the cursor or navigate directories; `.` toggles hidden
@@ -49,11 +56,15 @@ pub(super) fn handle_file_manager_key(state: &mut AppState, key: KeyEvent) {
 
 impl App {
     /// Route native-FM center-content mouse input before the hidden terminal
-    /// pane path. Returns true whenever the FM owns the event's screen area.
-    pub(super) fn handle_file_manager_mouse(&mut self, mouse: MouseEvent) -> bool {
+    /// pane path. Header actions are tagged but remain side-effect free until
+    /// explicit action authority is implemented by N3.
+    pub(super) fn handle_file_manager_mouse(
+        &mut self,
+        mouse: MouseEvent,
+    ) -> FileManagerMouseDispatch {
         if self.state.file_manager.is_none() {
             self.last_file_manager_click = None;
-            return false;
+            return FileManagerMouseDispatch::NotHandled;
         }
 
         let center = self.state.view.terminal_area;
@@ -62,8 +73,20 @@ impl App {
             if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
                 self.last_file_manager_click = None;
             }
-            return false;
+            return FileManagerMouseDispatch::NotHandled;
         }
+
+        let header_action = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+            .then_some(())
+            .filter(|_| mouse.modifiers.is_empty())
+            .and_then(|()| {
+                self.state
+                    .view
+                    .file_manager_header_action_areas
+                    .iter()
+                    .find(|area| rect_contains(area.rect, mouse.column, mouse.row))
+                    .map(|area| area.action)
+            });
 
         let entry_idx = self
             .state
@@ -73,11 +96,20 @@ impl App {
             .find(|row| rect_contains(row.rect, mouse.column, mouse.row))
             .map(|row| row.entry_idx);
 
+        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+            && mouse.modifiers.is_empty()
+        {
+            if let Some(header_action) = header_action {
+                self.last_file_manager_click = None;
+                return FileManagerMouseDispatch::HeaderAction(header_action);
+            }
+        }
+
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) if mouse.modifiers.is_empty() => {
                 let Some(entry_idx) = entry_idx else {
                     self.last_file_manager_click = None;
-                    return true;
+                    return FileManagerMouseDispatch::Consumed;
                 };
                 let entry_path = self
                     .state
@@ -87,7 +119,7 @@ impl App {
                     .map(|entry| entry.path.clone());
                 let Some(entry_path) = entry_path else {
                     self.last_file_manager_click = None;
-                    return true;
+                    return FileManagerMouseDispatch::Consumed;
                 };
 
                 let click = FileManagerClickState {
@@ -124,7 +156,7 @@ impl App {
             _ => {}
         }
 
-        true
+        FileManagerMouseDispatch::Consumed
     }
 }
 
