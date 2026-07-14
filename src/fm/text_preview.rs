@@ -1,9 +1,17 @@
 use std::fmt;
 use std::io::{self, Read};
 use std::path::Path;
+use std::sync::OnceLock;
+
+use syntect::easy::HighlightLines;
+use syntect::highlighting::{FontStyle, ThemeSet};
+use syntect::parsing::{SyntaxReference, SyntaxSet};
+use syntect::util::LinesWithEndings;
 
 const MAX_TEXT_PREVIEW_BYTES: usize = 64 * 1024;
 const UTF8_SENTINEL_BYTES: usize = 4;
+const MAX_HIGHLIGHTED_LINES: usize = 128;
+const PREVIEW_THEME: &str = "base16-ocean.dark";
 
 /// Byte budget for one prepared text preview.
 ///
@@ -33,6 +41,42 @@ impl Default for TextPreviewLimits {
 pub struct TextPreview {
     pub content: String,
     pub truncated: bool,
+}
+
+/// Terminal-independent style prepared from a syntax scope.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PreviewTextStyle {
+    pub foreground: Option<[u8; 3]>,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+}
+
+impl PreviewTextStyle {
+    pub fn is_plain(self) -> bool {
+        self == Self::default()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewTextSpan {
+    pub content: String,
+    pub style: PreviewTextStyle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewTextLine {
+    pub spans: Vec<PreviewTextSpan>,
+}
+
+/// Bounded, render-ready syntax output. The original [`TextPreview`] remains
+/// the source of truth so a classifier/highlighter fallback cannot lose text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HighlightedTextPreview {
+    pub lines: Vec<PreviewTextLine>,
+    pub syntax_name: Option<String>,
+    pub truncated_bytes: bool,
+    pub truncated_lines: bool,
 }
 
 /// Stable domain failures from bounded text preparation.
@@ -120,4 +164,137 @@ fn crossing_scalar_is_valid(bytes: &[u8], valid_up_to: usize, max_bytes: usize) 
     }
 
     (first_end..=last_end).any(|end| std::str::from_utf8(&bytes[valid_up_to..end]).is_ok())
+}
+
+struct HighlightAssets {
+    syntaxes: SyntaxSet,
+    themes: ThemeSet,
+}
+
+static HIGHLIGHT_ASSETS: OnceLock<HighlightAssets> = OnceLock::new();
+
+/// Prepare a bounded syntax-highlighted view without filesystem or render I/O.
+///
+/// This function is intentionally synchronous and pure over prepared text; B1
+/// runtime wiring executes it outside the input/render path and rejects stale
+/// generations. Any classifier, theme, or parser failure falls back to plain
+/// text so highlighting never becomes preview availability authority.
+pub fn highlight_text_preview(path: &Path, preview: &TextPreview) -> HighlightedTextPreview {
+    let assets = HIGHLIGHT_ASSETS.get_or_init(|| HighlightAssets {
+        syntaxes: SyntaxSet::load_defaults_newlines(),
+        themes: ThemeSet::load_defaults(),
+    });
+    let Some(syntax) = select_syntax(path, &preview.content, &assets.syntaxes) else {
+        return plain_text_preview(preview);
+    };
+    let Some(theme) = assets
+        .themes
+        .themes
+        .get(PREVIEW_THEME)
+        .or_else(|| assets.themes.themes.values().next())
+    else {
+        return plain_text_preview(preview);
+    };
+
+    let mut highlighter = HighlightLines::new(syntax, theme);
+    let mut source_lines = LinesWithEndings::from(&preview.content);
+    let mut lines = Vec::new();
+    for _ in 0..MAX_HIGHLIGHTED_LINES {
+        let Some(source_line) = source_lines.next() else {
+            break;
+        };
+        let Ok(styled) = highlighter.highlight_line(source_line, &assets.syntaxes) else {
+            return plain_text_preview(preview);
+        };
+        lines.push(PreviewTextLine {
+            spans: styled_line_spans(source_line, &styled),
+        });
+    }
+
+    HighlightedTextPreview {
+        lines,
+        syntax_name: Some(syntax.name.clone()),
+        truncated_bytes: preview.truncated,
+        truncated_lines: source_lines.next().is_some(),
+    }
+}
+
+fn select_syntax<'a>(
+    path: &Path,
+    content: &str,
+    syntaxes: &'a SyntaxSet,
+) -> Option<&'a SyntaxReference> {
+    let extension = path.extension().and_then(|extension| extension.to_str());
+    extension
+        .and_then(|extension| {
+            syntaxes.find_syntax_by_extension(extension).or_else(|| {
+                let lowercase = extension.to_ascii_lowercase();
+                syntaxes.find_syntax_by_extension(&lowercase)
+            })
+        })
+        .or_else(|| {
+            content
+                .lines()
+                .next()
+                .and_then(|line| syntaxes.find_syntax_by_first_line(line))
+        })
+}
+
+fn plain_text_preview(preview: &TextPreview) -> HighlightedTextPreview {
+    let mut source_lines = LinesWithEndings::from(&preview.content);
+    let mut lines = Vec::new();
+    for _ in 0..MAX_HIGHLIGHTED_LINES {
+        let Some(source_line) = source_lines.next() else {
+            break;
+        };
+        lines.push(PreviewTextLine {
+            spans: vec![PreviewTextSpan {
+                content: without_line_ending(source_line).to_owned(),
+                style: PreviewTextStyle::default(),
+            }],
+        });
+    }
+    HighlightedTextPreview {
+        lines,
+        syntax_name: None,
+        truncated_bytes: preview.truncated,
+        truncated_lines: source_lines.next().is_some(),
+    }
+}
+
+fn styled_line_spans(
+    source_line: &str,
+    styled: &[(syntect::highlighting::Style, &str)],
+) -> Vec<PreviewTextSpan> {
+    let mut remaining = without_line_ending(source_line).len();
+    let mut spans = Vec::new();
+    for (style, content) in styled {
+        if remaining == 0 {
+            break;
+        }
+        let take = remaining.min(content.len());
+        let Some(content) = content.get(..take) else {
+            return vec![PreviewTextSpan {
+                content: without_line_ending(source_line).to_owned(),
+                style: PreviewTextStyle::default(),
+            }];
+        };
+        spans.push(PreviewTextSpan {
+            content: content.to_owned(),
+            style: PreviewTextStyle {
+                foreground: Some([style.foreground.r, style.foreground.g, style.foreground.b]),
+                bold: style.font_style.contains(FontStyle::BOLD),
+                italic: style.font_style.contains(FontStyle::ITALIC),
+                underline: style.font_style.contains(FontStyle::UNDERLINE),
+            },
+        });
+        remaining -= take;
+    }
+    spans
+}
+
+fn without_line_ending(line: &str) -> &str {
+    line.strip_suffix("\r\n")
+        .or_else(|| line.strip_suffix('\n'))
+        .unwrap_or(line)
 }
