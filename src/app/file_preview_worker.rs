@@ -260,6 +260,40 @@ mod tests {
     use std::time::{Duration, Instant};
     use tokio::sync::Notify;
 
+    struct TempDir {
+        root: PathBuf,
+    }
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "herdr-fm-highlight-{}-{tag}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&root).expect("create highlight temp directory");
+            Self { root }
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn test_app() -> crate::app::App {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        crate::app::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        )
+    }
+
     fn preview(content: &str) -> TextPreview {
         TextPreview {
             content: content.to_owned(),
@@ -405,5 +439,43 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    // TP-B1.4-LIFECYCLE: App owns the worker and applies one current result to
+    // pure FmState. Repeated scheduled syncs do not create a dirty loop.
+    #[test]
+    fn app_applies_current_text_highlight_once() {
+        let td = TempDir::new("app-current");
+        std::fs::write(td.root.join("sample.rs"), "pub fn main() {}\n")
+            .expect("write Rust preview fixture");
+        let mut app = test_app();
+        app.state.file_manager = Some(crate::fm::FmState::new(&td.root));
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let changed = app.sync_file_preview_worker();
+            let highlighted =
+                app.state
+                    .file_manager
+                    .as_ref()
+                    .and_then(|state| match &state.preview {
+                        crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(preview)) => {
+                            preview.highlighted.as_ref()
+                        }
+                        _ => None,
+                    });
+            if let Some(highlighted) = highlighted {
+                assert!(changed, "first applied result must dirty the frame");
+                assert_eq!(highlighted.syntax_name.as_deref(), Some("Rust"));
+                break;
+            }
+            assert!(Instant::now() < deadline, "timed out waiting for App apply");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        assert!(
+            !app.sync_file_preview_worker(),
+            "unchanged highlighted state must not dirty the frame"
+        );
     }
 }
