@@ -3308,4 +3308,133 @@ mod tests {
             ]
         );
     }
+
+    fn plugin_file_action(
+        plugin_id: &str,
+        action_id: &str,
+        title: &str,
+        contexts: Vec<crate::api::schema::PluginActionContext>,
+    ) -> crate::api::schema::PluginActionInfo {
+        crate::api::schema::PluginActionInfo {
+            plugin_id: plugin_id.into(),
+            action_id: action_id.into(),
+            title: title.into(),
+            description: None,
+            contexts,
+            command: vec!["inspect".into()],
+            platforms: None,
+        }
+    }
+
+    // TP-C3.3-PLUGIN-SURFACE: plugin actions append after built-ins in stable
+    // qualified-id order, preserve one/many prepared paths, and produce only
+    // a neutral public plugin invocation payload (no command side effect).
+    #[test]
+    fn file_context_menu_appends_plugins_and_serializes_exact_path_intent() {
+        use crate::api::schema::PluginActionContext;
+
+        let paths = vec![
+            PathBuf::from("/prepared/file2.txt"),
+            PathBuf::from("/prepared/file 10.txt"),
+        ];
+        let action_bar = file_action_bar_model(
+            FileManagerActionBarSelectionKind::Multiple,
+            paths.clone(),
+            None,
+            None,
+        );
+        let candidates = vec![
+            plugin_file_action(
+                "zeta.files",
+                "inspect",
+                "Inspect with Zeta",
+                vec![PluginActionContext::File],
+            ),
+            plugin_file_action(
+                "ignored.workspace",
+                "inspect",
+                "Wrong context",
+                vec![PluginActionContext::Workspace],
+            ),
+            plugin_file_action(
+                "alpha.files",
+                "inspect",
+                "Inspect with Alpha",
+                vec![PluginActionContext::File],
+            ),
+        ];
+        let model =
+            FileManagerContextMenuModel::from_action_bar_with_plugins(&action_bar, &candidates)
+                .expect("file context model");
+
+        assert_eq!(model.paths, paths);
+        assert_eq!(model.items.len(), 8);
+        assert_eq!(
+            model.items[6..]
+                .iter()
+                .map(|item| item.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Inspect with Alpha", "Inspect with Zeta"]
+        );
+        let plugin_action = FileManagerContextMenuAction::Plugin {
+            plugin_id: "alpha.files".into(),
+            action_id: "inspect".into(),
+        };
+        assert_eq!(model.items[6].action, plugin_action);
+        assert!(model.items[6].enabled);
+
+        let intent = FileManagerContextActionIntent {
+            action: model.items[6].action.clone(),
+            paths: model.paths.clone(),
+        };
+        let params = intent
+            .plugin_invocation_params()
+            .expect("plugin invocation params");
+        assert_eq!(params.plugin_id.as_deref(), Some("alpha.files"));
+        assert_eq!(params.action_id, "inspect");
+        let context = params.context.expect("file invocation context");
+        assert_eq!(
+            context.file_paths,
+            vec!["/prepared/file2.txt", "/prepared/file 10.txt"]
+        );
+        assert_eq!(context.invocation_source.as_deref(), Some("file_manager"));
+    }
+
+    // TP-C3.3-PLUGIN-SURFACE: lossy path conversion is forbidden. A Unix path
+    // that JSON cannot represent exactly keeps built-ins but exposes no plugin
+    // action that could receive the wrong target.
+    #[cfg(unix)]
+    #[test]
+    fn file_context_menu_hides_plugins_for_non_utf8_paths() {
+        use crate::api::schema::PluginActionContext;
+        use std::os::unix::ffi::OsStringExt;
+
+        let path = PathBuf::from(std::ffi::OsString::from_vec(vec![b'/', b'x', 0xff]));
+        let action_bar = file_action_bar_model(
+            FileManagerActionBarSelectionKind::File,
+            vec![path],
+            None,
+            None,
+        );
+        let candidates = vec![plugin_file_action(
+            "example.files",
+            "inspect",
+            "Inspect",
+            vec![PluginActionContext::File],
+        )];
+        let model =
+            FileManagerContextMenuModel::from_action_bar_with_plugins(&action_bar, &candidates)
+                .expect("built-in file context model");
+
+        assert_eq!(model.items.len(), FileManagerContextMenuAction::ALL.len());
+        assert!(FileManagerContextActionIntent {
+            action: FileManagerContextMenuAction::Plugin {
+                plugin_id: "example.files".into(),
+                action_id: "inspect".into(),
+            },
+            paths: model.paths,
+        }
+        .plugin_invocation_params()
+        .is_none());
+    }
 }

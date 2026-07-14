@@ -1139,6 +1139,41 @@ fn plugin_action_list_and_invoke_round_trips() {
     assert_eq!(restored, action_info);
 }
 
+// TP-C3.3-PLUGIN-SURFACE: file actions use the existing neutral plugin API
+// context and preserve the prepared path snapshot exactly across JSON.
+#[test]
+fn plugin_file_action_context_round_trips_exact_paths() {
+    let context = PluginInvocationContext {
+        file_paths: vec!["/prepared/one.txt".into(), "/prepared/two words.txt".into()],
+        invocation_source: Some("file_manager".into()),
+        ..Default::default()
+    };
+    let request = Request {
+        id: "req_plugin_file_action".into(),
+        method: Method::PluginActionInvoke(PluginActionInvokeParams {
+            plugin_id: Some("example.files".into()),
+            action_id: "inspect".into(),
+            context: Some(context.clone()),
+        }),
+    };
+
+    let json = serde_json::to_value(&request).unwrap();
+    assert_eq!(json["method"], "plugin.action.invoke");
+    assert_eq!(
+        json["params"]["context"],
+        serde_json::json!({
+            "file_paths": ["/prepared/one.txt", "/prepared/two words.txt"],
+            "invocation_source": "file_manager"
+        })
+    );
+    let restored: Request = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, request);
+    assert_eq!(context.file_paths.len(), 2);
+
+    let action_json = serde_json::to_value(PluginActionContext::File).unwrap();
+    assert_eq!(action_json, "file");
+}
+
 #[test]
 fn plugin_pane_open_request_round_trips() {
     let request = Request {

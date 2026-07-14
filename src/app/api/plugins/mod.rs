@@ -2473,6 +2473,129 @@ command = ["show-ctx"]
         let _ = std::fs::remove_dir_all(root);
     }
 
+    // TP-C3.3-PLUGIN-SURFACE: only enabled, available file-context actions
+    // reach the native FM surface, in qualified-id order independent of link
+    // order. Workspace-only actions and disabled plugins fail closed.
+    #[test]
+    fn file_manifest_actions_are_enabled_filtered_and_deterministic() {
+        let mut app = test_app();
+        let roots = [
+            unique_temp_path("plugin-file-zeta"),
+            unique_temp_path("plugin-file-disabled"),
+            unique_temp_path("plugin-file-alpha"),
+        ];
+        let manifests = [
+            (
+                &roots[0],
+                r#"
+id = "zeta.files"
+name = "Zeta Files"
+version = "0.1.0"
+
+[[actions]]
+id = "inspect"
+title = "Inspect with Zeta"
+contexts = ["file"]
+command = ["inspect-zeta"]
+
+[[actions]]
+id = "workspace-only"
+title = "Workspace only"
+contexts = ["workspace"]
+command = ["workspace-only"]
+"#,
+                true,
+            ),
+            (
+                &roots[1],
+                r#"
+id = "disabled.files"
+name = "Disabled Files"
+version = "0.1.0"
+
+[[actions]]
+id = "inspect"
+title = "Inspect disabled"
+contexts = ["file"]
+command = ["inspect-disabled"]
+"#,
+                false,
+            ),
+            (
+                &roots[2],
+                r#"
+id = "alpha.files"
+name = "Alpha Files"
+version = "0.1.0"
+
+[[actions]]
+id = "inspect"
+title = "Inspect with Alpha"
+contexts = ["file"]
+command = ["inspect-alpha"]
+"#,
+                true,
+            ),
+        ];
+
+        for (root, content, enabled) in manifests {
+            write_manifest_content(root, content);
+            let response = app.handle_api_request(Request {
+                id: format!("link-{}", root.display()),
+                method: Method::PluginLink(PluginLinkParams {
+                    path: root.display().to_string(),
+                    enabled,
+                    source: None,
+                }),
+            });
+            assert!(response.contains("plugin_linked"), "{response}");
+        }
+
+        let actions = file_manifest_actions(&app.state.installed_plugins);
+        assert_eq!(
+            actions
+                .iter()
+                .map(PluginActionInfo::qualified_id)
+                .collect::<Vec<_>>(),
+            vec!["alpha.files.inspect", "zeta.files.inspect"]
+        );
+        assert!(actions.iter().all(|action| {
+            action
+                .contexts
+                .contains(&crate::api::schema::PluginActionContext::File)
+        }));
+
+        for root in roots {
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
+
+    // TP-C3.3-PLUGIN-SURFACE: an unknown action context is a manifest error,
+    // never a silently accepted action hidden behind a UI-only interpretation.
+    #[test]
+    fn manifest_rejects_unknown_file_action_context() {
+        let root = unique_temp_path("plugin-file-unknown-context");
+        let manifest = write_manifest_content(
+            &root,
+            r#"
+id = "example.unknown-context"
+name = "Unknown Context"
+version = "0.1.0"
+
+[[actions]]
+id = "inspect"
+title = "Inspect"
+contexts = ["filesystem-row"]
+command = ["inspect"]
+"#,
+        );
+
+        let error = load_plugin_manifest(&manifest.display().to_string(), true)
+            .expect_err("unknown context must fail");
+        assert_eq!(error.0, "plugin_manifest_parse_failed");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     fn write_manifest_with_bad_event(root: &std::path::Path) -> std::path::PathBuf {
         std::fs::create_dir_all(root).unwrap();
         let manifest = root.join("herdr-plugin.toml");
