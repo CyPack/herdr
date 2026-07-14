@@ -964,6 +964,7 @@ fn encode_kitty_data(out: &mut Vec<u8>, control: &str, data: &[u8]) {
 mod tests {
     use super::*;
     use crate::fm::image_preview::{ImagePreviewTarget, PreparedImagePreview};
+    use crate::fm::{FmFilePreview, FmImagePreview, FmImagePreviewState, FmPreview, FmState};
     use crate::ghostty::KittyPlacementRenderInfo;
 
     const PATH_BETA_RGBA: [u8; 16] = [
@@ -1150,8 +1151,10 @@ mod tests {
             &mut sources,
         );
         let removal = String::from_utf8_lossy(&bytes);
-        assert!(removal.contains("a=d,d=i"));
+        assert!(removal.contains("a=d,d=I"));
+        assert!(images.is_empty());
         assert!(placements.is_empty());
+        assert!(sources.is_empty());
     }
 
     #[test]
@@ -1214,6 +1217,7 @@ mod tests {
         let prepared = PreparedImagePreview {
             width: 80,
             height: 64,
+            data_fingerprint: 0x8064,
             rgba: vec![0x7f; 80 * 64 * 4],
         };
         let placement = file_manager_image_placement(Rect::new(10, 5, 38, 10), cells, &prepared)
@@ -1257,6 +1261,7 @@ mod tests {
         let malformed = PreparedImagePreview {
             width: 80,
             height: 64,
+            data_fingerprint: 3,
             rgba: vec![0; 3],
         };
         assert!(
@@ -1266,11 +1271,107 @@ mod tests {
         let oversized = PreparedImagePreview {
             width: 97,
             height: 64,
+            data_fingerprint: 0x9764,
             rgba: vec![0; 97 * 64 * 4],
         };
         assert!(
             file_manager_image_placement(Rect::new(10, 5, 38, 10), cells, &oversized,).is_none()
         );
+    }
+
+    #[test]
+    fn file_manager_ready_image_reuses_upload_cache_and_cleans_up_on_close() {
+        let cells = HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        let first = PreparedImagePreview {
+            width: 80,
+            height: 64,
+            data_fingerprint: 0x1111,
+            rgba: vec![0x11; 80 * 64 * 4],
+        };
+        let mut app = AppState::test_new();
+        app.mode = Mode::Terminal;
+        app.view.terminal_area = Rect::new(10, 5, 38, 10);
+        app.file_manager = Some(FmState {
+            cwd: "/tmp".into(),
+            entries: Vec::new(),
+            cursor: 0,
+            viewport_start: 0,
+            show_hidden: false,
+            parent: None,
+            preview: FmPreview::File(FmFilePreview::Image(FmImagePreview {
+                source_path: "/tmp/preview.png".into(),
+                generation: 1,
+                state: FmImagePreviewState::Ready {
+                    target: ImagePreviewTarget {
+                        width_px: 96,
+                        height_px: 128,
+                    },
+                    prepared: first,
+                },
+            })),
+            preview_generation: 1,
+        });
+        let runtimes = TerminalRuntimeRegistry::new();
+        let mut cache = HostGraphicsCache::default();
+
+        let uncached = collect_file_manager_image_placement(&app, cells, &cache.images)
+            .expect("ready image placement");
+        assert!(!uncached.placement.data.is_empty());
+
+        let first_bytes = encode_local_pane_graphics(&app, &runtimes, cells, &mut cache);
+        let first_text = String::from_utf8_lossy(&first_bytes);
+        assert!(first_text.contains("a=t,t=d,f=32,s=80,v=64"));
+        assert!(first_text.contains("a=p"));
+        assert!(first_text.contains("c=10,r=4"));
+        assert!(first_text.contains("\x1b[10;38H"));
+
+        let cached = collect_file_manager_image_placement(&app, cells, &cache.images)
+            .expect("cached image placement metadata");
+        assert!(
+            cached.placement.data.is_empty(),
+            "cached frame must not clone the prepared RGBA allocation"
+        );
+        assert!(
+            encode_local_pane_graphics(&app, &runtimes, cells, &mut cache).is_empty(),
+            "unchanged FM frame is fully deduplicated"
+        );
+
+        let preview = app
+            .file_manager
+            .as_mut()
+            .and_then(|fm| match &mut fm.preview {
+                FmPreview::File(FmFilePreview::Image(preview)) => Some(preview),
+                _ => None,
+            })
+            .expect("mutable image preview");
+        preview.generation = 2;
+        preview.state = FmImagePreviewState::Ready {
+            target: ImagePreviewTarget {
+                width_px: 96,
+                height_px: 128,
+            },
+            prepared: PreparedImagePreview {
+                width: 80,
+                height: 64,
+                data_fingerprint: 0x2222,
+                rgba: vec![0x22; 80 * 64 * 4],
+            },
+        };
+        let replacement = encode_local_pane_graphics(&app, &runtimes, cells, &mut cache);
+        let replacement = String::from_utf8_lossy(&replacement);
+        assert!(replacement.contains("a=d,d=I"));
+        assert!(replacement.contains("a=t"));
+        assert!(replacement.contains("a=p"));
+
+        app.file_manager = None;
+        let cleanup = encode_local_pane_graphics(&app, &runtimes, cells, &mut cache);
+        let cleanup = String::from_utf8_lossy(&cleanup);
+        assert!(cleanup.contains("a=d,d=I"));
+        assert!(cache.is_empty());
+        assert!(cache.sources.is_empty());
     }
 
     #[test]
