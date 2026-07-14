@@ -970,6 +970,82 @@ mod tests {
         assert!(compute_file_manager_row_areas(Rect::new(0, 0, 20, 6), 0, usize::MAX).is_empty());
     }
 
+    // TP-C1.1-GEOMETRY: header actions are named, ordered, disjoint, and
+    // derived from one responsive geometry seam shared by render and input.
+    #[test]
+    fn header_action_areas_are_tagged_disjoint_and_right_aligned() {
+        use crate::app::state::FileManagerHeaderAction;
+
+        let area = Rect::new(10, 4, 60, 1);
+        let actions = compute_file_manager_header_action_areas(area);
+        assert_eq!(
+            actions.iter().map(|area| area.action).collect::<Vec<_>>(),
+            vec![
+                FileManagerHeaderAction::Copy,
+                FileManagerHeaderAction::Paste,
+                FileManagerHeaderAction::NewFolder,
+                FileManagerHeaderAction::Delete,
+            ]
+        );
+        assert_eq!(
+            actions.last().expect("delete action").rect.right(),
+            area.right()
+        );
+        assert!(actions.iter().all(|action| {
+            action.rect.y == area.y
+                && action.rect.height == 1
+                && action.rect.width > 0
+                && action.rect.x >= area.x
+                && action.rect.right() <= area.right()
+        }));
+        for (index, left) in actions.iter().enumerate() {
+            for right in actions.iter().skip(index + 1) {
+                assert!(left.rect.intersection(right.rect).is_empty());
+            }
+        }
+    }
+
+    // TP-C1.1-RESPONSIVE: narrow and degenerate areas expose only complete,
+    // highest-priority buttons and never leave clipped phantom hit targets.
+    #[test]
+    fn header_action_areas_progressively_hide_and_fail_closed() {
+        use crate::app::state::FileManagerHeaderAction;
+
+        let cases = [
+            (
+                60,
+                vec![
+                    FileManagerHeaderAction::Copy,
+                    FileManagerHeaderAction::Paste,
+                    FileManagerHeaderAction::NewFolder,
+                    FileManagerHeaderAction::Delete,
+                ],
+            ),
+            (
+                30,
+                vec![
+                    FileManagerHeaderAction::Copy,
+                    FileManagerHeaderAction::Paste,
+                ],
+            ),
+            (18, vec![FileManagerHeaderAction::Copy]),
+            (17, vec![]),
+        ];
+        for (width, expected) in cases {
+            let actions = compute_file_manager_header_action_areas(Rect::new(3, 2, width, 1));
+            assert_eq!(
+                actions.iter().map(|area| area.action).collect::<Vec<_>>(),
+                expected,
+                "width {width}"
+            );
+        }
+
+        assert!(compute_file_manager_header_action_areas(Rect::new(0, 0, 60, 0)).is_empty());
+        assert!(
+            compute_file_manager_header_action_areas(Rect::new(u16::MAX - 3, 2, 3, 1)).is_empty()
+        );
+    }
+
     // TP-A2.2.5: the filesystem root has no parent but still renders a stable,
     // explicit parent-column state without panicking.
     #[test]

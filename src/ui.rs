@@ -849,10 +849,24 @@ mod tests {
             .file_manager_row_areas
             .iter()
             .all(|row| row.rect.width > 0 && row.rect.height == 1));
+        assert_eq!(
+            app.view
+                .file_manager_header_action_areas
+                .iter()
+                .map(|area| area.action)
+                .collect::<Vec<_>>(),
+            vec![
+                crate::app::state::FileManagerHeaderAction::Copy,
+                crate::app::state::FileManagerHeaderAction::Paste,
+                crate::app::state::FileManagerHeaderAction::NewFolder,
+                crate::app::state::FileManagerHeaderAction::Delete,
+            ]
+        );
 
         app.file_manager = None;
         compute_view(&mut app, Rect::new(0, 0, 100, 6));
         assert!(app.view.file_manager_row_areas.is_empty());
+        assert!(app.view.file_manager_header_action_areas.is_empty());
 
         std::fs::remove_dir_all(root).expect("remove temp root");
     }
