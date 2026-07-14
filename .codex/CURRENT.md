@@ -4,16 +4,31 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Published B1 continuity checkpoint: `a0f82a3`
-  (`docs: close text preview and plan navigation remainder`).
+- Published A3 product/test checkpoint: `9d69c82`
+  (`test: lock cursor-only file manager selection`).
 - CyPack `feat/native-fm` and fork `master` were both fast-forwarded from
-  `68abf61` to `a0f82a3` and verified at the exact remote SHA.
+  `9ce9eae` to `9d69c82`.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
 
 ## Completed Checkpoint
 
 - A2.2 responsive Miller columns were committed as `6c7c58f`, full graph-indexed,
   and fast-forward pushed to the CyPack feature branch and fork master only.
+
+## Published Checkpoint — A3 Navigation Remainder
+
+- A3 is an auditable seven-commit RED/GREEN sequence from `d713b71` through
+  `9d69c82`; intermediate compile-failing RED commits were never pushed alone.
+- `FmState.viewport_start` has explicit cursor-visible and clamp invariants for
+  long lists, resize, reload shrink, zero-height, enter, and leave.
+- `compute_file_manager_row_areas` is the shared responsive one/two/three-column
+  CURRENT-row geometry consumed by render and snapshotted in `ViewState` for
+  input. Degenerate geometry and stale indices fail closed.
+- Real runtime mouse dispatch selects on single click, enters only a directory
+  on same-path double-click, leaves files selected, bounds wheel navigation,
+  refreshes preview state, and consumes center input before hidden panes.
+- v1 intentionally has one cursor-owned visual selection. Multi-select and bulk
+  authority remain deferred to N4/C2 and require their own RED tests.
 
 ## Published Checkpoint — A4 Watcher
 
@@ -94,13 +109,13 @@
   process. A 26-server cold start measured 54 seconds; the bounded readiness
   budget is now 120 seconds inside a 150-second systemd start budget.
 - Readiness passed with `expected=26 observed=26 critical_tools=14`.
-- Full post-B1 graph reindex completed at 17,774 nodes / 84,033 edges.
-- `miller_layout`, `highlight_text_preview`, `sync_file_preview_worker`, and
-  `render_file_preview` were found as current graph symbols with B1 call/test
-  connections; freshness was not inferred from `ready` alone.
-- `bcba84d` was fast-forward pushed sequentially to both CyPack
-  `feat/native-fm` and fork `master`; both remote SHA checks matched local
-  `bcba84d`. `upstream` was not pushed.
+- Full post-A3 graph reindex completed at 17,818 nodes / 83,121 edges.
+- `sync_viewport`, `compute_file_manager_row_areas`, and
+  `handle_file_manager_mouse` were found as current production graph symbols
+  with their call/test connections; freshness was not inferred from `ready`
+  alone.
+- `9d69c82` was fast-forward pushed sequentially to both CyPack
+  `feat/native-fm` and fork `master`. `upstream` was not pushed.
 
 ## Standing Git Authorization
 
@@ -112,10 +127,10 @@
 
 ## Exact Next Action
 
-1. Begin A3 remainder with TP-A3.2-VIEWPORT RED. Follow the complete A3 test
-   contract in `.codex/TASKS.md`: viewport/clamp, shared mouse hit geometry,
-   click/double-click/wheel dispatch, and explicit v1 single-selection scope.
-2. B2 follows A3 and remains bound by B0's conditional-GO constraints.
+1. Start B2 with TP-B2.0-DEPENDENCY evidence; do not change the manifest until
+   the exact dependency/cost/security decision is recorded.
+2. Make TP-B2.1-DECODE RED before production decode/downscale code, then follow
+   the complete B2 test-point table in `.codex/TASKS.md` sequentially.
 
 ## Verified Checkpoint — B1 Text Preview
 
@@ -154,3 +169,21 @@
 - Metadata has only bin/custom-build/test targets, so doctests are N/A.
 - `git diff --check`: passed for product paths; `just` is absent, so every
   applicable `just check` command was executed directly.
+
+## Fresh A3 Verification Evidence
+
+- Targeted viewport/geometry/input/render regressions: 164/164 passed at the
+  broadest A3-targeted run; dedicated scope tests: 4/4 passed.
+- Final full nextest: 2966/2966 passed; one named ignored B0 real-host probe
+  skipped; no retry.
+- Linux all-target clippy and canonical Windows MSVC bin clippy passed with
+  `-D warnings`.
+- Bun integration assets 5/5 plus plugin marketplace 12/12; Python maintenance
+  64/64; fmt and diff-check clean.
+- Isolated real PTY used cleared Herdr socket/identity variables, throwaway XDG,
+  and `--no-session`: three Miller columns rendered; single click changed the
+  cursor; same-row directory double-click entered `/home/ayaz/2027 weeks`; 25
+  wheel-down events moved the viewport to `WEEK_7…WEEK_27`; 40 wheel-up events
+  returned to the top clamp. `q` then `prefix+q` exited with code 0; the unique
+  temp tree and process were absent afterward.
+- `just` is absent; every applicable `just check` command was run directly.

@@ -2,9 +2,9 @@
 
 ## 1. SONRAKI ADIM
 
-Make TP-A3.2-VIEWPORT RED before production code. Execute the full A3 remainder
-contract in `.codex/TASKS.md` sequentially: viewport/clamp, shared mouse hit
-geometry, click/double-click/wheel dispatch, and v1 single-selection scope.
+Start B2 with TP-B2.0-DEPENDENCY evidence, then make TP-B2.1-DECODE RED before
+production code. Execute the complete dependency/decode/placement/lifecycle/
+paint/real-host contract in `.codex/TASKS.md` sequentially.
 
 ## 2. AKTİF PROJE
 
@@ -72,6 +72,13 @@ geometry, click/double-click/wheel dispatch, and v1 single-selection scope.
 - Re-ran the actual five-package dependency/OSV delta and the entire direct
   `just check` equivalent. B1 product/test head is `2b2dcd3`; continuity and
   graph/publication follow separately.
+- Completed A3 remainder as seven atomic RED/GREEN/scope commits from
+  `d713b71` through `9d69c82`: persistent cursor viewport, shared responsive
+  CURRENT-row geometry, single/double-click and bounded wheel runtime routing,
+  stale-target rejection, preview refresh, and explicit cursor-only v1 scope.
+- Ran the full A3 gate and isolated real PTY SGR-mouse cross-check without
+  stable Herdr/socket access; exited semantically and removed all throwaway
+  state. Full-reindexed and published `9d69c82` to CyPack feature/master only.
 
 ## 6. KOD DURUMU
 
@@ -97,6 +104,16 @@ fully green. Continuity/task commit `a0f82a3` and the complete B1 range were
 fast-forward published to both CyPack `feat/native-fm` and fork `master`; exact
 remote SHAs matched. Upstream was not pushed.
 
+A3 is an auditable seven-commit sequence:
+
+- `d713b71` / `027c364`: viewport RED/GREEN.
+- `1fea0e7` / `6727342`: shared hit-geometry RED/GREEN.
+- `3aa267b` / `33b585a`: runtime mouse dispatch RED/GREEN.
+- `9d69c82`: cursor-only v1 selection-scope characterization.
+
+All seven commits are published to both CyPack `feat/native-fm` and fork
+`master`; upstream was not pushed.
+
 ## 7. TEST KANITI
 
 - B1/FM targeted: 64/64.
@@ -109,6 +126,12 @@ remote SHAs matched. Upstream was not pushed.
 - Actual B1 lock delta is five packages with no existing-version upgrade.
   Exact OSV batch returned only severity-less `RUSTSEC-2025-0141` for
   unmaintained `bincode 1.3.3`; no security-severity advisory.
+- A3 targeted broad regression: 164/164; scope: 4/4.
+- Final A3 full nextest: 2966/2966, one named B0 host probe skipped, no retry.
+- Linux/Windows clippy, Bun 17/17, Python 64/64, fmt/diff clean.
+- Isolated `--no-session` PTY proved three columns, cursor click, directory
+  double-click enter, long-list wheel down/up viewport clamp, semantic exit 0,
+  and zero temp/process residue.
 
 ## 8. KRİTİK KARARLAR
 
@@ -120,8 +143,9 @@ remote SHAs matched. Upstream was not pushed.
 - Native watching is primary; startup/runtime errors enter explicit polling
   fallback, and all active watchers reconcile every 2 seconds to cover silent
   FUSE/NFS/exFAT-class delivery failures.
-- A4, B0, and B1 are implementation-complete, fully verified, graph-indexed,
-  and published to the CyPack fork through `a0f82a3`.
+- A4, B0, B1, and A3 are implementation-complete, fully verified,
+  graph-indexed, and published to the CyPack fork through A3 product/test head
+  `9d69c82`.
 - B1 uses minimal pure-Rust syntect outside input/render in a dedicated bounded
   worker. Plain prepared content remains availability authority; highlighting
   is optional enhancement and stale generations never mutate current state.
@@ -142,19 +166,19 @@ remote SHAs matched. Upstream was not pushed.
 
 ## 10. AÇIK GÖREVLER
 
-See `.codex/TASKS.md` for the now-populated A3 remainder contract plus B2,
-C1–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, and B1 are closed at the code/
-verification level. Immediate code task is TP-A3.2-VIEWPORT RED; do not skip
-ahead to B2.
+See `.codex/TASKS.md` for the completed A3 contract plus the now-expanded B2
+test-point table, C1–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, and A3 are
+closed. Immediate task is TP-B2.0-DEPENDENCY, followed by TP-B2.1-DECODE RED;
+do not skip directly to image painting.
 
 ## 11. ORTAM
 
 - `codex-cli 0.144.1` is installed.
 - `just` is absent; direct recipe execution is required unless installed later.
-- Full post-B1 graph reindex completed at 17,774 nodes / 84,033 edges and
-  returned `miller_layout`, `highlight_text_preview`,
-  `sync_file_preview_worker`, and `render_file_preview` with current
-  connections; freshness was not inferred from `ready` alone.
+- Full post-A3 graph reindex completed at 17,818 nodes / 83,121 edges and
+  returned `sync_viewport`, `compute_file_manager_row_areas`, and
+  `handle_file_manager_mouse` with current connections; freshness was not
+  inferred from `ready` alone.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.

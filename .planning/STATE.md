@@ -2,7 +2,7 @@
 
 - Updated: 2026-07-14
 - Branch: `feat/native-fm`
-- Published continuity checkpoint: `a0f82a3`
+- Published product/test checkpoint: `9d69c82`
 - Completed local commits:
   - `6c7c58f` A2.2 responsive Miller columns (already pushed)
   - `01ba91d` A4 live filesystem watching (pushed to CyPack feature/master)
@@ -12,9 +12,13 @@
   - `439ff2c..2b2dcd3` B1 bounded, generation-safe text/syntax preview
     (fully verified, graph-indexed, and published through continuity commit
     `a0f82a3` to CyPack feature/master)
+  - `d713b71..9d69c82` A3 cursor viewport, shared row hit geometry, runtime
+    mouse dispatch, and cursor-only v1 selection scope (fully verified,
+    graph-indexed, and published to CyPack feature/master)
 - Continuity/tooling is versioned by the separate commit containing this state
   file.
-- Active increment: execute A3 remainder test-point-first.
+- Active increment: execute B2 image preview test-point-first under B0's
+  conditional GO.
 - Canonical current state: `/home/ayaz/projects/herdr/.codex/CURRENT.md`
 - Durable tasks: `/home/ayaz/projects/herdr/.codex/TASKS.md`
 - Full handoff: `/home/ayaz/projects/herdr/.codex/HANDOFF.md`
@@ -23,8 +27,11 @@
   path/content generation safety, 128-line and rendered-column limits, and
   pure responsive render. Final gates: targeted 64/64, full 2948/2948,
   Linux/Windows clippy, Bun 17/17, Python 64/64.
-- First code action after publication: make TP-A3.2-VIEWPORT RED; expected
-  cursor-visible/clamped behavior and reasons are in `.codex/TASKS.md`.
-- Next code order: A3 navigation remainder; B2 image preview under B0's
-  conditional GO; then C1 through C6. Deferred
+- A3 final gates: targeted 164/164, full nextest 2966/2966 plus one named B0
+  host-probe skip, Linux/Windows clippy, Bun 17/17, Python 64/64, and isolated
+  real-PTY mouse/viewport/double-click closure with no temp/process residue.
+- First action after publication: complete TP-B2.0-DEPENDENCY evidence, then
+  make TP-B2.1-DECODE RED before production image code.
+- Next code order: B2 image preview under B0's conditional GO; then C1 through
+  C6. Deferred
   architecture and north-star missions remain recorded in `.codex/TASKS.md`.

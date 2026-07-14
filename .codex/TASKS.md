@@ -134,17 +134,32 @@ buffer content.
 | TP-A3.4-SCOPE | Cursor highlight versus multi-selection state across keyboard/mouse navigation and close/reopen | v1 has one cursor-owned visual selection only; no speculative multi-select collection is added. N4/C2 owns later multi-select semantics and must start with its own RED tests | Mixing cursor focus and future bulk selection now would create ambiguous destructive-operation authority |
 | TP-A3.5-GATES | Targeted state/geometry/input/render tests, full nextest, Linux/Windows clippy, Bun/Python maintenance, isolated manual mouse cross-check, and diff cleanliness | Every applicable gate passes without retry-only green; manual testing uses throwaway XDG and cleared Herdr socket variables | Mouse geometry is terminal-sensitive and cannot be closed by a narrow unit test alone |
 
-- [ ] A3.2 add explicit cursor-follow viewport/scroll state and clamp
+- [x] A3.2 add explicit cursor-follow viewport/scroll state and clamp
   invariants, beginning with TP-A3.2-VIEWPORT RED.
-- [ ] A3.3 compute named current-row hit rectangles from the responsive Miller
+- [x] A3.3 compute named current-row hit rectangles from the responsive Miller
   layout, then wire click/double-click/wheel dispatch test-first.
-- [ ] A3.4 record v1 single visual-selection scope in code/tests; defer actual
+- [x] A3.4 record v1 single visual-selection scope in code/tests; defer actual
   multi-select state and bulk semantics to N4/C2.
-- [ ] Run the complete A3.5 gate and isolated manual mouse cross-check before
+- [x] Run the complete A3.5 gate and isolated manual mouse cross-check before
   publishing the increment.
 
 ## P2 — B2 Image Preview (B0 GO; Ordered After B1/A3)
 
+Production code begins only after the matching test point is RED. B0 proves
+Path Beta feasibility, not unbounded image decoding or lifecycle safety.
+
+### B2 Test-Point Contract
+
+| Test point | What is tested | Expected result | Why it is required |
+|------------|----------------|-----------------|--------------------|
+| TP-B2.0-DEPENDENCY | Existing PNG path versus minimal decode/downscale options; exact lock delta, features, license, OSV, compile cost, and Windows support | Select the smallest supportable pure-Rust path or document why the existing dependency is sufficient before changing the manifest | Image crates can add large transitive/security/platform cost; dependency choice must be evidence-driven |
+| TP-B2.1-DECODE | Supported image, alpha, exact byte/pixel boundaries, corrupt/truncated input, absurd dimensions, allocation overflow, and decode failure | Decode/downscale work is hard-bounded before allocation; valid pixels are deterministic; every failure is explicit and panic-free | Untrusted or huge images can exhaust memory or stall the UI even when render itself is pure |
+| TP-B2.2-PLACEMENT | Prepared image state to synthetic PaneId/local preview slot across one/two/three-column and zero/narrow geometry | Placement stays client-local, uses current FM preview geometry, and emits no server/private-TUI protocol coupling | B0's synthetic placement must become a real FM seam without making presentation state runtime authority |
+| TP-B2.3-LIFECYCLE | Cursor movement, watcher reload, replace/delete, enter/leave, close/reopen, resize, stale generation, and worker failure | Only the current selected path/generation can publish pixels; every transition removes superseded placements/cache state; failure degrades explicitly | Async decode and filesystem refresh can otherwise paint the wrong file or leak graphics resources |
+| TP-B2.4-PAINT | Existing `kitty_graphics` encoder/cache upload, display, dedup, redisplay, replacement, and removal from the FM preview slot | Reuse Path Beta framing/cache; unchanged frames do not re-upload; render performs no filesystem/decode work | A second graphics pipeline would duplicate lifecycle bugs and violate the established pure-render boundary |
+| TP-B2.5-HOST-GATES | Deterministic image comparison, isolated Kitty real-host capture, non-Kitty fallback, full nextest, Linux/Windows clippy, Bun/Python maintenance, and diff cleanliness | Pixels/placement/fallback match expected evidence; all applicable gates pass with no retry-only green; throwaway XDG leaves no process/temp artifact | Unit framing cannot prove terminal-host rendering, cleanup, or graceful unsupported-host behavior |
+
+- [ ] B2.0 complete dependency/cost/security decision before manifest changes.
 - [ ] B2.1 bounded decode/downscale path with corrupt/huge image failures.
 - [ ] B2.2 construct preview placement with synthetic PaneId and no server/TUI
   protocol coupling.
@@ -218,8 +233,8 @@ buffer content.
 
 ## Ordering Resolution
 
-A4, B0, and B1 are published through `a0f82a3`. The next execution order is:
-complete the A3 remainder
-test-point-first; implement B2 under B0's conditional-GO constraints; then execute
-C1 → C2 → C3 → C4 → C5 → C6. S5–S7 and N2 remain evidence-gated deferred
-architecture, while M1–M3 remain inactive north-star work.
+A4, B0, B1, and the A3 remainder are published through A3 product/test head
+`9d69c82`. The next execution order is B2 under B0's conditional-GO
+constraints, then C1 → C2 → C3 → C4 → C5 → C6. S5–S7 and N2 remain
+evidence-gated deferred architecture, while M1–M3 remain inactive north-star
+work.
