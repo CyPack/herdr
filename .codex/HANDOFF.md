@@ -2,9 +2,10 @@
 
 ## 1. SONRAKI ADIM
 
-Make TP-B2.1-DECODE RED before manifest or production code changes. Then add
-the B2.0-selected common-format dependency and execute decode/placement/
-lifecycle/paint/real-host test points in `.codex/TASKS.md` sequentially.
+Publish the completed B2 unit through the continuity commit containing this
+handoff: full-reindex, verify current B2 graph symbols, fast-forward only the
+CyPack feature branch and fork master, and require exact remote SHA equality.
+Then make C1.1 header-button geometry RED before production action code.
 
 ## 2. AKTİF PROJE
 
@@ -79,6 +80,16 @@ lifecycle/paint/real-host test points in `.codex/TASKS.md` sequentially.
 - Ran the full A3 gate and isolated real PTY SGR-mouse cross-check without
   stable Herdr/socket access; exited semantically and removed all throwaway
   state. Full-reindexed and published `9d69c82` to CyPack feature/master only.
+- Completed B2 as an auditable range from dependency decision `de1eff5`
+  through fallback fix `2989434`: bounded common-format decode/downscale,
+  responsive client-local placement, generation-safe worker lifecycle,
+  cached Kitty paint/dedup/transition cleanup, and explicit non-Kitty fallback.
+- Ran B2/FM/Kitty 96/96, full nextest 2983/2983 plus one named B0 host-probe
+  skip, Linux/Windows clippy, Bun 17/17, Python 64/64, fmt, and diff-check.
+- Proved the production FM path in isolated Kitty: `assets/logo.png` rendered
+  in PREVIEW with 0/271425 image-compare pixel differences, FM close cleared
+  the same region to one background color, semantic exit returned code 0, and
+  no test process/socket/temp root remained. Stable Herdr was untouched.
 
 ## 6. KOD DURUMU
 
@@ -114,6 +125,19 @@ A3 is an auditable seven-commit sequence:
 All seven commits are published to both CyPack `feat/native-fm` and fork
 `master`; upstream was not pushed.
 
+B2 product/test history is an auditable sequence:
+
+- `de1eff5`: dependency decision/evidence.
+- `be200b9` / `e24cda8`: bounded decoder RED/GREEN.
+- `054708f` / `983b6b3`: client-local placement RED/GREEN.
+- `cf40a06` / `11f26eb`: generation-safe worker lifecycle RED/GREEN.
+- `5c51f1a` / `c6b4762`: cached paint/cleanup RED/GREEN.
+- `2989434`: width-safe fallback characterization and fix.
+
+The range is fully green. The continuity commit containing this handoff is
+part of the publication unit; both CyPack heads must equal its tip. Upstream is
+not pushed.
+
 ## 7. TEST KANITI
 
 - B1/FM targeted: 64/64.
@@ -132,6 +156,13 @@ All seven commits are published to both CyPack `feat/native-fm` and fork
 - Isolated `--no-session` PTY proved three columns, cursor click, directory
   double-click enter, long-list wheel down/up viewport clamp, semantic exit 0,
   and zero temp/process residue.
+- B2/FM/Kitty targeted: 96/96; full nextest: 2983/2983 plus one named B0
+  interactive probe skip; no retry.
+- B2 Linux all-target and canonical Windows MSVC bin clippy passed with
+  `-D warnings`; Bun 17/17; Python 64/64; fmt/diff clean.
+- B2 isolated Kitty source-to-host comparison: 0/271425 pixel difference.
+  Closing FM removed the image from the host, and semantic exit left zero
+  test process/socket/temp residue.
 
 ## 8. KRİTİK KARARLAR
 
@@ -143,15 +174,14 @@ All seven commits are published to both CyPack `feat/native-fm` and fork
 - Native watching is primary; startup/runtime errors enter explicit polling
   fallback, and all active watchers reconcile every 2 seconds to cover silent
   FUSE/NFS/exFAT-class delivery failures.
-- A4, B0, B1, and A3 are implementation-complete, fully verified,
-  graph-indexed, and published to the CyPack fork through A3 product/test head
-  `9d69c82`.
+- A4, B0, B1, A3, and B2 are implementation-complete and fully verified.
+  A4/B0/B1/A3 are already graph-indexed and published; B2 publication closes
+  only after the continuity tip is full-reindexed and both CyPack heads match.
 - B1 uses minimal pure-Rust syntect outside input/render in a dedicated bounded
   worker. Plain prepared content remains availability authority; highlighting
   is optional enhancement and stale generations never mutate current state.
-- B0's B2 decision is conditional GO; B2 remains ordered after the A3
-  remainder and must retain bounded decode, generation, cleanup, and real-host
-  evidence constraints.
+- B0's conditional B2 GO is satisfied: B2 retains bounded decode, generation,
+  cleanup, and real-host evidence constraints.
 - The user granted standing authorization for autonomous atomic commits and
   CyPack fork-only fast-forward pushes. Do not repeatedly ask for alignment;
   never relax targeted staging, verification, ancestry, or remote-SHA checks.
@@ -166,10 +196,10 @@ All seven commits are published to both CyPack `feat/native-fm` and fork
 
 ## 10. AÇIK GÖREVLER
 
-See `.codex/TASKS.md` for the completed A3 contract plus the now-expanded B2
-test-point table, C1–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, and A3 are
-closed. B2.0 dependency evidence is complete; immediate task is
-TP-B2.1-DECODE RED. Do not skip directly to image placement or painting.
+See `.codex/TASKS.md` for the completed A3/B2 contracts and the complete C1–C6,
+S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, and B2 are closed. After B2
+publication, the immediate product task is C1.1 named header-button geometry
+RED; follow C1 → C2 → C3 → C4 → C5 → C6 without skipping modules.
 
 ## 11. ORTAM
 
@@ -177,7 +207,8 @@ TP-B2.1-DECODE RED. Do not skip directly to image placement or painting.
 - `just` is absent; direct recipe execution is required unless installed later.
 - Full post-A3 graph reindex completed at 17,818 nodes / 83,121 edges and
   returned `sync_viewport`, `compute_file_manager_row_areas`, and
-  `handle_file_manager_mouse` with current connections; freshness was not
+  `handle_file_manager_mouse` with current connections; B2 requires a fresh
+  full reindex and current-symbol proof before publication. Freshness is never
   inferred from `ready` alone.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was

@@ -4,16 +4,40 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Published A3 product/test checkpoint: `9d69c82`
-  (`test: lock cursor-only file manager selection`).
-- CyPack `feat/native-fm` and fork `master` were both fast-forwarded from
-  `9ce9eae` to `9d69c82`.
+- B2 product/test checkpoint: `2989434`
+  (`fix: keep image preview fallback visible`).
+- The B2 publication unit is the RED/GREEN product/test range plus the
+  continuity commit containing this file. CyPack `feat/native-fm` and fork
+  `master` must resolve to that same fast-forward tip after publication.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
 
 ## Completed Checkpoint
 
 - A2.2 responsive Miller columns were committed as `6c7c58f`, full graph-indexed,
   and fast-forward pushed to the CyPack feature branch and fork master only.
+
+## Completed Checkpoint — B2 Native Image Preview
+
+- B2 is an auditable dependency decision plus four RED/GREEN increments and a
+  fallback fix from `de1eff5` through `2989434`.
+- `image 0.25.10` is restricted to `png/jpeg/gif/webp`. Encoded bytes,
+  dimensions, checked pixels, decoder allocation, RGBA output, and target
+  placement are independently bounded before untrusted allocation can grow.
+- Decode/downscale supports PNG, JPEG, GIF, and WebP; preserves alpha; applies
+  orientation-aware aspect fit without upscaling; and maps corrupt,
+  unsupported, oversized, non-regular, missing, and decoder-panic paths to
+  explicit states.
+- A dedicated generation-safe worker owns filesystem/decode work outside
+  render. Path, model generation, and pixel target must all match before a
+  result can publish; navigation, watcher reload, resize, close/reopen, and
+  worker panic cannot paint stale pixels.
+- The client-local FM preview uses the existing responsive preview geometry,
+  synthetic local placement identity, and existing Kitty encoder/cache. It
+  uploads once, repositions without re-upload, replaces and deletes
+  superseded content, clears on terminal/FM surface transitions, and leaves
+  generic terminal-image reuse semantics intact.
+- Non-Kitty hosts get the width-safe `(Kitty graphics req.)` fallback. Ready
+  Kitty frames have no text underlay.
 
 ## Published Checkpoint — A3 Navigation Remainder
 
@@ -114,8 +138,9 @@
   `handle_file_manager_mouse` were found as current production graph symbols
   with their call/test connections; freshness was not inferred from `ready`
   alone.
-- `9d69c82` was fast-forward pushed sequentially to both CyPack
-  `feat/native-fm` and fork `master`. `upstream` was not pushed.
+- The B2 publication gate requires a fresh full reindex, current-symbol query,
+  sequential fast-forward pushes to both CyPack heads, and exact remote-SHA
+  equality. `upstream` is never pushed.
 
 ## Standing Git Authorization
 
@@ -127,11 +152,12 @@
 
 ## Exact Next Action
 
-1. Make TP-B2.1-DECODE RED before changing the manifest or adding production
-   decode/downscale code.
-2. Add the selected dependency only when that RED test requires it, implement
-   the bounded common-format decoder, then follow the remaining B2 test points
-   in `.codex/TASKS.md` sequentially.
+1. Close the B2 publication gate: targeted-stage continuity/tooling only,
+   commit, full-reindex, verify current B2 symbols, then fast-forward push only
+   the CyPack feature branch and fork master with exact SHA verification.
+2. Begin C1.1 with named header-button geometry test points RED before adding
+   production header/action code. Continue C1 → C2 → C3 → C4 → C5 → C6 in
+   `.codex/TASKS.md` order.
 
 ## Verified B2.0 Dependency Decision
 
@@ -145,10 +171,28 @@
 - Rust 1.96.1 Windows MSVC check passed. Three clean compile samples showed no
   material RSS/wall penalty versus `image` PNG-only; common formats add seven
   packages and about 2.43 MB of check artifacts.
-- `image::Limits::max_alloc` is best-effort, so TP-B2.1 must additionally hard
-  bound input bytes, dimensions, checked pixels, decoder total bytes, RGBA
+- `image::Limits::max_alloc` is best-effort, so TP-B2.1 additionally hard-
+  bounds input bytes, dimensions, checked pixels, decoder total bytes, RGBA
   output, and target placement allocation. Full evidence is in
   `.codex/evidence/b2-image-dependency.md`.
+
+## Fresh B2 Verification Evidence
+
+- B2/FM/Kitty targeted expression: 96/96 passed.
+- Full nextest: 2983/2983 passed; one named B0 interactive real-host probe was
+  skipped; no fail or retry.
+- `cargo fmt --check`, Linux all-target clippy, and canonical Windows MSVC
+  binary-target clippy passed with `-D warnings`.
+- Bun integration assets 5/5 plus plugin marketplace 12/12; Python maintenance
+  64/64; diff-check clean. `just` is absent, so every applicable `just check`
+  command was executed directly.
+- Isolated Kitty X11 used a unique throwaway XDG root, cleared socket and
+  session identity variables, `experimental.kitty_graphics=true`, and a
+  workspace rooted at `assets/`. Selecting `logo.png` produced a 517×525 host
+  preview whose resized source comparison was exactly 0/271425 pixels
+  different. Closing FM returned the same region to one background color.
+  `prefix+q` exited semantically; the test process, sockets, and temp root were
+  absent afterward. Stable Herdr and its socket were untouched.
 
 ## Verified Checkpoint — B1 Text Preview
 

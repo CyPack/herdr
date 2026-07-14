@@ -163,13 +163,19 @@ Path Beta feasibility, not unbounded image decoding or lifecycle safety.
   `png/jpeg/gif/webp` after exact lock, license, advisory, compile-cost, and
   Windows checks. Keep direct `png 0.17.16` unchanged; full evidence is in
   `.codex/evidence/b2-image-dependency.md`.
-- [ ] B2.1 bounded decode/downscale path with corrupt/huge image failures.
-- [ ] B2.2 construct preview placement with synthetic PaneId and no server/TUI
+- [x] B2.1 bounded decode/downscale path with corrupt/huge image failures.
+- [x] B2.2 construct preview placement with synthetic PaneId and no server/TUI
   protocol coupling.
-- [ ] B2.3 add local preview painting beside existing pane graphics encoding.
-- [ ] B2.4 per-slot cache/dedup, cleanup, resize, navigation, and stale-image
+- [x] B2.3 add a generation-safe image worker and local preview painting beside
+  existing pane graphics encoding.
+- [x] B2.4 per-slot cache/dedup, cleanup, resize, navigation, and stale-image
   generation tests.
-- [ ] Require image-compare plus real throwaway host evidence before closure.
+- [x] B2.5 require image-compare plus real throwaway host evidence before
+  closure. Final evidence: B2/FM/Kitty 96/96; full nextest 2983/2983 with the
+  named B0 interactive probe skipped; Linux/Windows clippy clean; Bun 17/17;
+  Python 64/64; source-to-host comparison 0/271425 pixels different; FM close
+  returned the captured preview area to one background color; semantic exit
+  left no test process, socket, or throwaway XDG root.
 
 ## P3 — C1 Header Actions + N3 Action Bar
 
@@ -236,8 +242,7 @@ Path Beta feasibility, not unbounded image decoding or lifecycle safety.
 
 ## Ordering Resolution
 
-A4, B0, B1, and the A3 remainder are published through A3 product/test head
-`9d69c82`. The next execution order is B2 under B0's conditional-GO
-constraints, then C1 → C2 → C3 → C4 → C5 → C6. S5–S7 and N2 remain
-evidence-gated deferred architecture, while M1–M3 remain inactive north-star
-work.
+A4, B0, B1, the A3 remainder, and B2 are complete through B2 product/test head
+`2989434`. The next execution order is C1 → C2 → C3 → C4 → C5 → C6. S5–S7
+and N2 remain evidence-gated deferred architecture, while M1–M3 remain
+inactive north-star work.

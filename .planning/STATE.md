@@ -2,7 +2,8 @@
 
 - Updated: 2026-07-14
 - Branch: `feat/native-fm`
-- Published product/test checkpoint: `9d69c82`
+- B2 product/test checkpoint: `2989434`; the continuity commit containing this
+  state file is part of the CyPack publication unit.
 - Completed local commits:
   - `6c7c58f` A2.2 responsive Miller columns (already pushed)
   - `01ba91d` A4 live filesystem watching (pushed to CyPack feature/master)
@@ -15,10 +16,13 @@
   - `d713b71..9d69c82` A3 cursor viewport, shared row hit geometry, runtime
     mouse dispatch, and cursor-only v1 selection scope (fully verified,
     graph-indexed, and published to CyPack feature/master)
+  - `de1eff5..2989434` B2 dependency decision, bounded decoder, client-local
+    placement, generation-safe worker, cached Kitty paint/cleanup, and
+    width-safe non-Kitty fallback (fully verified; publication gate in progress)
 - Continuity/tooling is versioned by the separate commit containing this state
   file.
-- Active increment: execute TP-B2.1 bounded common-format image decode
-  test-first under B0's conditional GO.
+- Active increment: close B2 graph/publication evidence, then begin C1.1 named
+  header-button geometry test-first.
 - Canonical current state: `/home/ayaz/projects/herdr/.codex/CURRENT.md`
 - Durable tasks: `/home/ayaz/projects/herdr/.codex/TASKS.md`
 - Full handoff: `/home/ayaz/projects/herdr/.codex/HANDOFF.md`
@@ -30,13 +34,11 @@
 - A3 final gates: targeted 164/164, full nextest 2966/2966 plus one named B0
   host-probe skip, Linux/Windows clippy, Bun 17/17, Python 64/64, and isolated
   real-PTY mouse/viewport/double-click closure with no temp/process residue.
-- B2.0 selected `image 0.25.10` with default features disabled and only
-  `png/jpeg/gif/webp`: 12 added packages, zero existing upgrades, compatible
-  licenses, no build/proc targets, historical advisories not affecting the
-  selected version, and a passing Rust 1.96.1 Windows check.
-- First code action: make TP-B2.1-DECODE RED before manifest or production
-  image changes. Hard-bound encoded bytes, strict dimensions, checked pixels,
-  decoder bytes, RGBA bytes, and target placement bytes.
-- Next code order: B2 image preview under B0's conditional GO; then C1 through
-  C6. Deferred
+- B2 final gates: targeted 96/96; full nextest 2983/2983 plus one named B0
+  interactive probe skip; Linux/Windows clippy; Bun 17/17; Python 64/64;
+  source-to-host image comparison 0/271425 pixel difference; host cleanup and
+  semantic exit with zero process/socket/temp residue.
+- First next code action: make C1.1 named header-button geometry RED before
+  production header/action code.
+- Next code order: C1 through C6. Deferred
   architecture and north-star missions remain recorded in `.codex/TASKS.md`.
