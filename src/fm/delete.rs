@@ -1,3 +1,345 @@
+use std::collections::HashSet;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use crate::fm::operations::FileOperationCancellation;
+use crate::fm::MAX_MULTI_SELECTION_PATHS;
+use crate::platform::FileIdentity;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DeleteOperationKind {
+    Trash,
+    Permanent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeleteOperationRequest {
+    pub(crate) kind: DeleteOperationKind,
+    pub(crate) paths: Vec<PathBuf>,
+    pub(crate) operation_in_flight: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DeleteOperationPreflightError {
+    NoPaths,
+    TooManyPaths { count: usize, limit: usize },
+    OperationInFlight,
+    DuplicatePath { path: PathBuf },
+    NonUtf8Path { path: PathBuf },
+    SourceMissing { path: PathBuf },
+    SourceUnavailable { path: PathBuf, kind: io::ErrorKind },
+    SourceUnsupported { path: PathBuf },
+    FileIdentityUnavailable { path: PathBuf, kind: io::ErrorKind },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlannedDeletePathKind {
+    File,
+    Directory,
+    Symlink,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeleteSourceSnapshot {
+    identity: FileIdentity,
+    path_kind: PlannedDeletePathKind,
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PlannedDeleteItem {
+    path: PathBuf,
+    snapshot: DeleteSourceSnapshot,
+}
+
+impl PlannedDeleteItem {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn path_kind(&self) -> PlannedDeletePathKind {
+        self.snapshot.path_kind
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeleteOperationPlan {
+    kind: DeleteOperationKind,
+    items: Vec<PlannedDeleteItem>,
+}
+
+impl DeleteOperationPlan {
+    pub(crate) fn preflight(
+        request: DeleteOperationRequest,
+    ) -> Result<Self, DeleteOperationPreflightError> {
+        if request.operation_in_flight {
+            return Err(DeleteOperationPreflightError::OperationInFlight);
+        }
+        if request.paths.is_empty() {
+            return Err(DeleteOperationPreflightError::NoPaths);
+        }
+        if request.paths.len() > MAX_MULTI_SELECTION_PATHS {
+            return Err(DeleteOperationPreflightError::TooManyPaths {
+                count: request.paths.len(),
+                limit: MAX_MULTI_SELECTION_PATHS,
+            });
+        }
+
+        let mut exact_paths = HashSet::with_capacity(request.paths.len());
+        let mut items = Vec::with_capacity(request.paths.len());
+        for path in request.paths {
+            if path.to_str().is_none() {
+                return Err(DeleteOperationPreflightError::NonUtf8Path { path });
+            }
+            if !exact_paths.insert(path.clone()) {
+                return Err(DeleteOperationPreflightError::DuplicatePath { path });
+            }
+            items.push(PlannedDeleteItem {
+                snapshot: snapshot_delete_source(&path)?,
+                path,
+            });
+        }
+        Ok(Self {
+            kind: request.kind,
+            items,
+        })
+    }
+
+    pub(crate) fn kind(&self) -> DeleteOperationKind {
+        self.kind
+    }
+
+    pub(crate) fn items(&self) -> &[PlannedDeleteItem] {
+        &self.items
+    }
+}
+
+fn snapshot_delete_source(
+    path: &Path,
+) -> Result<DeleteSourceSnapshot, DeleteOperationPreflightError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            DeleteOperationPreflightError::SourceMissing {
+                path: path.to_path_buf(),
+            }
+        } else {
+            DeleteOperationPreflightError::SourceUnavailable {
+                path: path.to_path_buf(),
+                kind: error.kind(),
+            }
+        }
+    })?;
+    let path_kind = if metadata.file_type().is_symlink() {
+        PlannedDeletePathKind::Symlink
+    } else if metadata.is_file() {
+        PlannedDeletePathKind::File
+    } else if metadata.is_dir() {
+        PlannedDeletePathKind::Directory
+    } else {
+        return Err(DeleteOperationPreflightError::SourceUnsupported {
+            path: path.to_path_buf(),
+        });
+    };
+    let identity = crate::platform::file_identity(path, &metadata).map_err(|error| {
+        DeleteOperationPreflightError::FileIdentityUnavailable {
+            path: path.to_path_buf(),
+            kind: error.kind(),
+        }
+    })?;
+    Ok(DeleteSourceSnapshot {
+        identity,
+        path_kind,
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+    })
+}
+
+fn snapshot_for_revalidation(path: &Path) -> Option<DeleteSourceSnapshot> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    let path_kind = if metadata.file_type().is_symlink() {
+        PlannedDeletePathKind::Symlink
+    } else if metadata.is_file() {
+        PlannedDeletePathKind::File
+    } else if metadata.is_dir() {
+        PlannedDeletePathKind::Directory
+    } else {
+        return None;
+    };
+    let identity = crate::platform::file_identity(path, &metadata).ok()?;
+    Some(DeleteSourceSnapshot {
+        identity,
+        path_kind,
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DeleteBackendError {
+    SourceChanged,
+    Io(io::ErrorKind),
+    Trash(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DeleteOperationExecutionStatus {
+    Completed,
+    Cancelled,
+    Partial,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DeleteOperationItemOutcome {
+    NotStarted,
+    Deleted,
+    Retained(DeleteBackendError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeleteOperationItemResult {
+    path: PathBuf,
+    outcome: DeleteOperationItemOutcome,
+}
+
+impl DeleteOperationItemResult {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn outcome(&self) -> &DeleteOperationItemOutcome {
+        &self.outcome
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeleteOperationExecutionResult {
+    status: DeleteOperationExecutionStatus,
+    items: Vec<DeleteOperationItemResult>,
+}
+
+impl DeleteOperationExecutionResult {
+    pub(crate) fn status(&self) -> DeleteOperationExecutionStatus {
+        self.status
+    }
+
+    pub(crate) fn items(&self) -> &[DeleteOperationItemResult] {
+        &self.items
+    }
+}
+
+pub(crate) trait DeleteOperationHost {
+    fn delete_path(
+        &mut self,
+        operation: DeleteOperationKind,
+        path_kind: PlannedDeletePathKind,
+        path: &Path,
+    ) -> Result<(), DeleteBackendError>;
+}
+
+struct RealDeleteOperationHost;
+
+impl DeleteOperationHost for RealDeleteOperationHost {
+    fn delete_path(
+        &mut self,
+        operation: DeleteOperationKind,
+        path_kind: PlannedDeletePathKind,
+        path: &Path,
+    ) -> Result<(), DeleteBackendError> {
+        match operation {
+            // Intentionally one call per item: the App runs this host on its
+            // single operation lane and needs exact partial-failure evidence.
+            DeleteOperationKind::Trash => trash::delete(path).map_err(map_trash_error),
+            DeleteOperationKind::Permanent => match path_kind {
+                PlannedDeletePathKind::File | PlannedDeletePathKind::Symlink => {
+                    fs::remove_file(path)
+                }
+                PlannedDeletePathKind::Directory => fs::remove_dir_all(path),
+            }
+            .map_err(|error| DeleteBackendError::Io(error.kind())),
+        }
+    }
+}
+
+fn map_trash_error(error: trash::Error) -> DeleteBackendError {
+    match error {
+        trash::Error::Os { code, .. } => {
+            DeleteBackendError::Io(io::Error::from_raw_os_error(code).kind())
+        }
+        #[cfg(all(
+            unix,
+            not(target_os = "macos"),
+            not(target_os = "ios"),
+            not(target_os = "android")
+        ))]
+        trash::Error::FileSystem { source, .. } => DeleteBackendError::Io(source.kind()),
+        other => DeleteBackendError::Trash(other.to_string()),
+    }
+}
+
+pub(crate) fn execute_delete_operation(
+    plan: &DeleteOperationPlan,
+    cancellation: &FileOperationCancellation,
+) -> DeleteOperationExecutionResult {
+    let mut host = RealDeleteOperationHost;
+    execute_delete_operation_with_host(plan, cancellation, &mut host)
+}
+
+pub(crate) fn execute_delete_operation_with_host<H: DeleteOperationHost>(
+    plan: &DeleteOperationPlan,
+    cancellation: &FileOperationCancellation,
+    host: &mut H,
+) -> DeleteOperationExecutionResult {
+    let mut result = DeleteOperationExecutionResult {
+        status: DeleteOperationExecutionStatus::Failed,
+        items: plan
+            .items
+            .iter()
+            .map(|item| DeleteOperationItemResult {
+                path: item.path.clone(),
+                outcome: DeleteOperationItemOutcome::NotStarted,
+            })
+            .collect(),
+    };
+
+    for (index, item) in plan.items.iter().enumerate() {
+        if cancellation.is_cancelled() {
+            result.status = DeleteOperationExecutionStatus::Cancelled;
+            return result;
+        }
+        if snapshot_for_revalidation(&item.path).as_ref() != Some(&item.snapshot) {
+            result.items[index].outcome =
+                DeleteOperationItemOutcome::Retained(DeleteBackendError::SourceChanged);
+            continue;
+        }
+        result.items[index].outcome =
+            match host.delete_path(plan.kind, item.snapshot.path_kind, &item.path) {
+                Ok(()) => DeleteOperationItemOutcome::Deleted,
+                Err(error) => DeleteOperationItemOutcome::Retained(error),
+            };
+    }
+
+    let deleted = result
+        .items
+        .iter()
+        .filter(|item| matches!(item.outcome, DeleteOperationItemOutcome::Deleted))
+        .count();
+    let retained = result
+        .items
+        .iter()
+        .filter(|item| matches!(item.outcome, DeleteOperationItemOutcome::Retained(_)))
+        .count();
+    result.status = match (deleted, retained) {
+        (_, 0) => DeleteOperationExecutionStatus::Completed,
+        (0, _) => DeleteOperationExecutionStatus::Failed,
+        _ => DeleteOperationExecutionStatus::Partial,
+    };
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
