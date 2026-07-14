@@ -138,7 +138,9 @@ fn rect_contains(rect: ratatui::layout::Rect, column: u16, row: u16) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::state::FileManagerRowArea;
+    use crate::app::state::{
+        FileManagerHeaderAction, FileManagerHeaderActionArea, FileManagerRowArea,
+    };
     use crate::fm::FmState;
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::layout::Rect;
@@ -215,6 +217,42 @@ mod tests {
             row,
             modifiers: KeyModifiers::NONE,
         }
+    }
+
+    fn mouse_with_modifiers(
+        kind: MouseEventKind,
+        col: u16,
+        row: u16,
+        modifiers: KeyModifiers,
+    ) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column: col,
+            row,
+            modifiers,
+        }
+    }
+
+    fn install_wide_header_actions(app: &mut crate::app::App) {
+        app.state.view.terminal_area = Rect::new(26, 0, 60, 6);
+        app.state.view.file_manager_header_action_areas = vec![
+            FileManagerHeaderActionArea {
+                rect: Rect::new(50, 0, 6, 1),
+                action: FileManagerHeaderAction::Copy,
+            },
+            FileManagerHeaderActionArea {
+                rect: Rect::new(57, 0, 7, 1),
+                action: FileManagerHeaderAction::Paste,
+            },
+            FileManagerHeaderActionArea {
+                rect: Rect::new(65, 0, 12, 1),
+                action: FileManagerHeaderAction::NewFolder,
+            },
+            FileManagerHeaderActionArea {
+                rect: Rect::new(78, 0, 8, 1),
+                action: FileManagerHeaderAction::Delete,
+            },
+        ];
     }
 
     // TP-A3.5: j/k (and arrows) move the cursor within the list.
@@ -438,6 +476,115 @@ mod tests {
         assert_eq!(
             app.state.file_manager.as_ref().expect("reopened fm").cursor,
             0
+        );
+    }
+
+    // TP-C1.2-DISPATCH: every complete visible header rectangle resolves to
+    // its exact tag, while C1.2 performs no filesystem mutation or selection.
+    #[test]
+    fn header_left_click_dispatches_exact_tags_without_filesystem_effects() {
+        let td = TempDir::new("header-actions");
+        td.file("selected.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_wide_header_actions(&mut app);
+        let before_entries = fs::read_dir(&td.root)
+            .expect("read fixture before clicks")
+            .map(|entry| entry.expect("fixture entry").file_name())
+            .collect::<Vec<_>>();
+
+        for (column, action) in [
+            (50, FileManagerHeaderAction::Copy),
+            (63, FileManagerHeaderAction::Paste),
+            (76, FileManagerHeaderAction::NewFolder),
+            (85, FileManagerHeaderAction::Delete),
+        ] {
+            assert_eq!(
+                app.handle_file_manager_mouse(mouse(
+                    MouseEventKind::Down(MouseButton::Left),
+                    column,
+                    0,
+                )),
+                FileManagerMouseDispatch::HeaderAction(action)
+            );
+        }
+
+        let fm = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(fm.cwd, td.root);
+        assert_eq!(fm.cursor, 0);
+        let after_entries = fs::read_dir(&td.root)
+            .expect("read fixture after clicks")
+            .map(|entry| entry.expect("fixture entry").file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(after_entries, before_entries);
+    }
+
+    // TP-C1.2-DISPATCH: identity/gap/outside/hidden/zero/stale/non-left input
+    // never invents a header action from coordinates or stale paint state.
+    #[test]
+    fn header_action_dispatch_fails_closed_for_non_targets() {
+        let td = TempDir::new("header-non-targets");
+        td.file("selected.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_wide_header_actions(&mut app);
+
+        for column in [26, 49, 56, 64, 77] {
+            assert_eq!(
+                app.handle_file_manager_mouse(mouse(
+                    MouseEventKind::Down(MouseButton::Left),
+                    column,
+                    0,
+                )),
+                FileManagerMouseDispatch::Consumed,
+                "non-action header column {column}"
+            );
+        }
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 50, 1,)),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 25, 0,)),
+            FileManagerMouseDispatch::NotHandled
+        );
+
+        app.state.view.file_manager_header_action_areas.truncate(1);
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 60, 0,)),
+            FileManagerMouseDispatch::Consumed,
+            "hidden Paste action is not inferred"
+        );
+        app.state.view.file_manager_header_action_areas.clear();
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 50, 0,)),
+            FileManagerMouseDispatch::Consumed,
+            "zero visible actions fail closed"
+        );
+
+        install_wide_header_actions(&mut app);
+        for kind in [
+            MouseEventKind::Down(MouseButton::Right),
+            MouseEventKind::Down(MouseButton::Middle),
+        ] {
+            assert_eq!(
+                app.handle_file_manager_mouse(mouse(kind, 50, 0)),
+                FileManagerMouseDispatch::Consumed
+            );
+        }
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse_with_modifiers(
+                MouseEventKind::Down(MouseButton::Left),
+                50,
+                0,
+                KeyModifiers::CONTROL,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+
+        app.state.file_manager = None;
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 50, 0,)),
+            FileManagerMouseDispatch::NotHandled,
+            "stale areas cannot dispatch after FM closes"
         );
     }
 }
