@@ -2,9 +2,9 @@
 
 ## 1. SONRAKI ADIM
 
-Start B2 with TP-B2.0-DEPENDENCY evidence, then make TP-B2.1-DECODE RED before
-production code. Execute the complete dependency/decode/placement/lifecycle/
-paint/real-host contract in `.codex/TASKS.md` sequentially.
+Make TP-B2.1-DECODE RED before manifest or production code changes. Then add
+the B2.0-selected common-format dependency and execute decode/placement/
+lifecycle/paint/real-host test points in `.codex/TASKS.md` sequentially.
 
 ## 2. AKTİF PROJE
 
@@ -168,8 +168,8 @@ All seven commits are published to both CyPack `feat/native-fm` and fork
 
 See `.codex/TASKS.md` for the completed A3 contract plus the now-expanded B2
 test-point table, C1–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, and A3 are
-closed. Immediate task is TP-B2.0-DEPENDENCY, followed by TP-B2.1-DECODE RED;
-do not skip directly to image painting.
+closed. B2.0 dependency evidence is complete; immediate task is
+TP-B2.1-DECODE RED. Do not skip directly to image placement or painting.
 
 ## 11. ORTAM
 

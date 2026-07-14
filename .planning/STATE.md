@@ -17,8 +17,8 @@
     graph-indexed, and published to CyPack feature/master)
 - Continuity/tooling is versioned by the separate commit containing this state
   file.
-- Active increment: execute B2 image preview test-point-first under B0's
-  conditional GO.
+- Active increment: execute TP-B2.1 bounded common-format image decode
+  test-first under B0's conditional GO.
 - Canonical current state: `/home/ayaz/projects/herdr/.codex/CURRENT.md`
 - Durable tasks: `/home/ayaz/projects/herdr/.codex/TASKS.md`
 - Full handoff: `/home/ayaz/projects/herdr/.codex/HANDOFF.md`
@@ -30,8 +30,13 @@
 - A3 final gates: targeted 164/164, full nextest 2966/2966 plus one named B0
   host-probe skip, Linux/Windows clippy, Bun 17/17, Python 64/64, and isolated
   real-PTY mouse/viewport/double-click closure with no temp/process residue.
-- First action after publication: complete TP-B2.0-DEPENDENCY evidence, then
-  make TP-B2.1-DECODE RED before production image code.
+- B2.0 selected `image 0.25.10` with default features disabled and only
+  `png/jpeg/gif/webp`: 12 added packages, zero existing upgrades, compatible
+  licenses, no build/proc targets, historical advisories not affecting the
+  selected version, and a passing Rust 1.96.1 Windows check.
+- First code action: make TP-B2.1-DECODE RED before manifest or production
+  image changes. Hard-bound encoded bytes, strict dimensions, checked pixels,
+  decoder bytes, RGBA bytes, and target placement bytes.
 - Next code order: B2 image preview under B0's conditional GO; then C1 through
   C6. Deferred
   architecture and north-star missions remain recorded in `.codex/TASKS.md`.

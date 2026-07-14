@@ -159,7 +159,10 @@ Path Beta feasibility, not unbounded image decoding or lifecycle safety.
 | TP-B2.4-PAINT | Existing `kitty_graphics` encoder/cache upload, display, dedup, redisplay, replacement, and removal from the FM preview slot | Reuse Path Beta framing/cache; unchanged frames do not re-upload; render performs no filesystem/decode work | A second graphics pipeline would duplicate lifecycle bugs and violate the established pure-render boundary |
 | TP-B2.5-HOST-GATES | Deterministic image comparison, isolated Kitty real-host capture, non-Kitty fallback, full nextest, Linux/Windows clippy, Bun/Python maintenance, and diff cleanliness | Pixels/placement/fallback match expected evidence; all applicable gates pass with no retry-only green; throwaway XDG leaves no process/temp artifact | Unit framing cannot prove terminal-host rendering, cleanup, or graceful unsupported-host behavior |
 
-- [ ] B2.0 complete dependency/cost/security decision before manifest changes.
+- [x] B2.0 select `image 0.25.10` with default features disabled and only
+  `png/jpeg/gif/webp` after exact lock, license, advisory, compile-cost, and
+  Windows checks. Keep direct `png 0.17.16` unchanged; full evidence is in
+  `.codex/evidence/b2-image-dependency.md`.
 - [ ] B2.1 bounded decode/downscale path with corrupt/huge image failures.
 - [ ] B2.2 construct preview placement with synthetic PaneId and no server/TUI
   protocol coupling.

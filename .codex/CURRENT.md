@@ -127,10 +127,28 @@
 
 ## Exact Next Action
 
-1. Start B2 with TP-B2.0-DEPENDENCY evidence; do not change the manifest until
-   the exact dependency/cost/security decision is recorded.
-2. Make TP-B2.1-DECODE RED before production decode/downscale code, then follow
-   the complete B2 test-point table in `.codex/TASKS.md` sequentially.
+1. Make TP-B2.1-DECODE RED before changing the manifest or adding production
+   decode/downscale code.
+2. Add the selected dependency only when that RED test requires it, implement
+   the bounded common-format decoder, then follow the remaining B2 test points
+   in `.codex/TASKS.md` sequentially.
+
+## Verified B2.0 Dependency Decision
+
+- Selected `image 0.25.10` with default features disabled and only
+  `png/jpeg/gif/webp`; default `image` was rejected because it adds 78 packages
+  including unnecessary rayon/AVIF/EXR surfaces.
+- Exact selected delta is 12 packages with no existing-version upgrade, no
+  build script, and no proc macro. All license metadata is compatible.
+- Package-registry advisories found only two historical `image` ranges, both
+  fixed long before `0.25.10`; the other selected packages returned no result.
+- Rust 1.96.1 Windows MSVC check passed. Three clean compile samples showed no
+  material RSS/wall penalty versus `image` PNG-only; common formats add seven
+  packages and about 2.43 MB of check artifacts.
+- `image::Limits::max_alloc` is best-effort, so TP-B2.1 must additionally hard
+  bound input bytes, dimensions, checked pixels, decoder total bytes, RGBA
+  output, and target placement allocation. Full evidence is in
+  `.codex/evidence/b2-image-dependency.md`.
 
 ## Verified Checkpoint — B1 Text Preview
 
