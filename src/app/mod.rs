@@ -96,6 +96,26 @@ impl PaneClickState {
     }
 }
 
+#[cfg(test)]
+#[test]
+fn file_manager_double_click_requires_same_entry_inside_window() {
+    let at = Instant::now();
+    let first = FileManagerClickState { entry_idx: 2, at };
+
+    assert!(first.is_double_click_for(FileManagerClickState {
+        entry_idx: 2,
+        at: at + FILE_MANAGER_DOUBLE_CLICK_WINDOW,
+    }));
+    assert!(!first.is_double_click_for(FileManagerClickState {
+        entry_idx: 3,
+        at: at + FILE_MANAGER_DOUBLE_CLICK_WINDOW,
+    }));
+    assert!(!first.is_double_click_for(FileManagerClickState {
+        entry_idx: 2,
+        at: at + FILE_MANAGER_DOUBLE_CLICK_WINDOW + Duration::from_millis(1),
+    }));
+}
+
 pub struct App {
     pub state: AppState,
     pub(crate) terminal_runtimes: crate::terminal::TerminalRuntimeRegistry,

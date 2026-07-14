@@ -49,8 +49,10 @@ pub(super) fn handle_file_manager_key(state: &mut AppState, key: KeyEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::state::FileManagerRowArea;
     use crate::fm::FmState;
-    use crossterm::event::KeyModifiers;
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::layout::Rect;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -97,6 +99,33 @@ mod tests {
         let mut app = AppState::test_new();
         app.file_manager = Some(fm);
         app
+    }
+
+    fn runtime_app_with_fm(fm: FmState) -> crate::app::App {
+        let mut app = super::super::app_for_mouse_test();
+        app.state.file_manager = Some(fm);
+        app.state.view.terminal_area = Rect::new(26, 0, 20, 6);
+        let entry_count = app
+            .state
+            .file_manager
+            .as_ref()
+            .map_or(0, |file_manager| file_manager.entries.len());
+        app.state.view.file_manager_row_areas = (0..entry_count.min(4))
+            .map(|entry_idx| FileManagerRowArea {
+                rect: Rect::new(26, 2 + entry_idx as u16, 20, 1),
+                entry_idx,
+            })
+            .collect();
+        app
+    }
+
+    fn mouse(kind: MouseEventKind, col: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column: col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
     }
 
     // TP-A3.5: j/k (and arrows) move the cursor within the list.
@@ -165,5 +194,113 @@ mod tests {
         let mut app = app_with_fm(FmState::new(&td.root));
         handle_file_manager_key(&mut app, key(KeyCode::Char('q')));
         assert!(app.file_manager.is_none(), "q closes the file manager");
+    }
+
+    // TP-A3.3-DISPATCH: one left press on a visible CURRENT row selects its
+    // absolute entry and refreshes the preview cache for that selection.
+    #[test]
+    fn single_click_selects_current_row_and_refreshes_preview() {
+        let td = TempDir::new("mouse-single");
+        td.dir("alpha-dir");
+        td.file("beta.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 27, 3));
+
+        let fm = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(fm.cursor, 1);
+        assert_eq!(
+            fm.selected().map(|entry| entry.name.as_str()),
+            Some("beta.txt")
+        );
+        assert!(matches!(fm.preview, crate::fm::FmPreview::File(_)));
+    }
+
+    // TP-A3.3-DISPATCH: the second unmodified press on the same directory row
+    // inside the double-click window selects then enters that directory.
+    #[test]
+    fn directory_double_click_enters_selected_directory() {
+        let td = TempDir::new("mouse-double-directory");
+        td.dir("alpha-dir");
+        fs::write(td.root.join("alpha-dir").join("child.txt"), b"x").expect("write child fixture");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let click = mouse(MouseEventKind::Down(MouseButton::Left), 27, 2);
+
+        app.handle_mouse(click);
+        app.handle_mouse(click);
+
+        let fm = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(fm.cwd, td.root.join("alpha-dir"));
+        assert_eq!(fm.cursor, 0);
+    }
+
+    // TP-A3.3-DISPATCH: double-clicking a file keeps it selected and never
+    // changes cwd; file opening belongs to a later product module.
+    #[test]
+    fn file_double_click_stays_selected_without_entering() {
+        let td = TempDir::new("mouse-double-file");
+        td.dir("alpha-dir");
+        td.file("beta.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let click = mouse(MouseEventKind::Down(MouseButton::Left), 27, 3);
+
+        app.handle_mouse(click);
+        app.handle_mouse(click);
+
+        let fm = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(fm.cwd, td.root);
+        assert_eq!(fm.cursor, 1);
+        assert_eq!(
+            fm.selected().map(|entry| entry.name.as_str()),
+            Some("beta.txt")
+        );
+    }
+
+    // TP-A3.3-DISPATCH: rapid clicks on different absolute entries are two
+    // selections, not a directory activation gesture.
+    #[test]
+    fn rapid_clicks_on_different_rows_do_not_activate_directory() {
+        let td = TempDir::new("mouse-different-rows");
+        td.dir("alpha-dir");
+        td.dir("beta-dir");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 27, 2));
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 27, 3));
+
+        let fm = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(fm.cwd, td.root);
+        assert_eq!(fm.cursor, 1);
+        assert_eq!(
+            fm.selected().map(|entry| entry.name.as_str()),
+            Some("beta-dir")
+        );
+    }
+
+    // TP-A3.3-DISPATCH: wheel input over CURRENT moves one bounded row per
+    // event. The FM header is not a list target and leaves cursor unchanged.
+    #[test]
+    fn wheel_moves_cursor_within_bounds_only_over_current_rows() {
+        let td = TempDir::new("mouse-wheel");
+        for index in 0..6 {
+            td.file(&format!("{index:02}.txt"));
+        }
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+
+        app.handle_mouse(mouse(MouseEventKind::ScrollUp, 27, 2));
+        assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 0);
+
+        for _ in 0..20 {
+            app.handle_mouse(mouse(MouseEventKind::ScrollDown, 27, 3));
+        }
+        assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 5);
+
+        app.handle_mouse(mouse(MouseEventKind::ScrollDown, 27, 0));
+        assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 5);
+
+        for _ in 0..20 {
+            app.handle_mouse(mouse(MouseEventKind::ScrollUp, 27, 2));
+        }
+        assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 0);
     }
 }
