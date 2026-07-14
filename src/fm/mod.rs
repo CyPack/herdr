@@ -16,8 +16,12 @@ pub(crate) mod watcher;
 
 use std::path::{Path, PathBuf};
 
+pub(crate) use text_preview::highlight_text_preview;
 use text_preview::{read_text_preview, TextPreviewLimits};
-pub use text_preview::{TextPreview, TextPreviewError};
+pub use text_preview::{
+    HighlightedTextPreview, PreviewTextLine, PreviewTextSpan, PreviewTextStyle, TextPreview,
+    TextPreviewError,
+};
 
 /// One entry in a browsed directory. Pure, cloneable data for rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]

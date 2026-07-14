@@ -1,8 +1,11 @@
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::thread::JoinHandle;
 
 use sha2::{Digest, Sha256};
+use tokio::sync::Notify;
 
-use crate::fm::TextPreview;
+use crate::fm::{highlight_text_preview, HighlightedTextPreview, TextPreview};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FilePreviewHighlightKey {
@@ -54,6 +57,195 @@ impl FilePreviewHighlightSlot {
 
     fn accepts(&self, generation: u64, key: &FilePreviewHighlightKey) -> bool {
         self.generation == generation && self.active.as_ref() == Some(key)
+    }
+}
+
+#[derive(Debug)]
+struct FilePreviewHighlightRequest {
+    generation: u64,
+    key: FilePreviewHighlightKey,
+    path: PathBuf,
+    preview: TextPreview,
+}
+
+#[derive(Debug)]
+struct FilePreviewHighlightResult {
+    generation: u64,
+    key: FilePreviewHighlightKey,
+    highlighted: HighlightedTextPreview,
+}
+
+#[derive(Debug, Default)]
+struct FilePreviewHighlightDrain {
+    current: Option<FilePreviewHighlightResult>,
+    disconnected: bool,
+}
+
+#[derive(Debug)]
+struct FilePreviewWorkerState {
+    pending: Option<FilePreviewHighlightRequest>,
+    result: Option<FilePreviewHighlightResult>,
+    alive: bool,
+    closed: bool,
+}
+
+impl Default for FilePreviewWorkerState {
+    fn default() -> Self {
+        Self {
+            pending: None,
+            result: None,
+            alive: true,
+            closed: false,
+        }
+    }
+}
+
+type SharedWorkerState = Arc<(Mutex<FilePreviewWorkerState>, Condvar)>;
+
+struct WorkerAliveGuard {
+    shared: SharedWorkerState,
+    wake: Arc<Notify>,
+}
+
+impl Drop for WorkerAliveGuard {
+    fn drop(&mut self) {
+        let (state, _) = &*self.shared;
+        lock_state(state).alive = false;
+        self.wake.notify_one();
+    }
+}
+
+struct FilePreviewHighlightWorker {
+    slot: FilePreviewHighlightSlot,
+    shared: SharedWorkerState,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl FilePreviewHighlightWorker {
+    fn new(wake: Arc<Notify>) -> Self {
+        Self::with_processor(wake, highlight_text_preview)
+    }
+
+    fn with_processor<F>(wake: Arc<Notify>, processor: F) -> Self
+    where
+        F: Fn(&Path, &TextPreview) -> HighlightedTextPreview + Send + 'static,
+    {
+        let shared = Arc::new((
+            Mutex::new(FilePreviewWorkerState::default()),
+            Condvar::new(),
+        ));
+        let worker_shared = shared.clone();
+        let handle = std::thread::spawn(move || {
+            let _alive_guard = WorkerAliveGuard {
+                shared: worker_shared.clone(),
+                wake: wake.clone(),
+            };
+            loop {
+                let Some(request) = take_next_request(&worker_shared) else {
+                    break;
+                };
+                let highlighted = processor(&request.path, &request.preview);
+                let result = FilePreviewHighlightResult {
+                    generation: request.generation,
+                    key: request.key,
+                    highlighted,
+                };
+                let (state, _) = &*worker_shared;
+                let mut state = lock_state(state);
+                if state.closed {
+                    break;
+                }
+                state.result = Some(result);
+                drop(state);
+                wake.notify_one();
+            }
+        });
+
+        Self {
+            slot: FilePreviewHighlightSlot::default(),
+            shared,
+            handle: Some(handle),
+        }
+    }
+
+    fn sync_target(&mut self, target: Option<(PathBuf, TextPreview)>) -> FilePreviewHighlightSync {
+        let target_key = target
+            .as_ref()
+            .map(|(path, preview)| FilePreviewHighlightKey::new(path, preview));
+        let sync = self.slot.sync(target_key.clone());
+        let (state, pending) = &*self.shared;
+        let mut state = lock_state(state);
+        match sync {
+            FilePreviewHighlightSync::Started { generation } => {
+                if let (Some(key), Some((path, preview))) = (target_key, target) {
+                    state.pending = Some(FilePreviewHighlightRequest {
+                        generation,
+                        key,
+                        path,
+                        preview,
+                    });
+                    pending.notify_one();
+                }
+            }
+            FilePreviewHighlightSync::Stopped => {
+                state.pending = None;
+                state.result = None;
+            }
+            FilePreviewHighlightSync::Unchanged => {}
+        }
+        sync
+    }
+
+    fn drain(&mut self) -> FilePreviewHighlightDrain {
+        let (state, _) = &*self.shared;
+        let mut state = lock_state(state);
+        let result = state.result.take();
+        let disconnected = !state.alive && !state.closed;
+        drop(state);
+
+        let current = result.filter(|result| self.slot.accepts(result.generation, &result.key));
+        FilePreviewHighlightDrain {
+            current,
+            disconnected,
+        }
+    }
+}
+
+impl Drop for FilePreviewHighlightWorker {
+    fn drop(&mut self) {
+        let (state, pending) = &*self.shared;
+        let mut state = lock_state(state);
+        state.closed = true;
+        state.pending = None;
+        state.result = None;
+        drop(state);
+        pending.notify_one();
+
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn take_next_request(shared: &SharedWorkerState) -> Option<FilePreviewHighlightRequest> {
+    let (state, pending) = &**shared;
+    let mut state = lock_state(state);
+    while state.pending.is_none() && !state.closed {
+        state = match pending.wait(state) {
+            Ok(state) => state,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+    }
+    if state.closed {
+        return None;
+    }
+    state.pending.take()
+}
+
+fn lock_state(state: &Mutex<FilePreviewWorkerState>) -> MutexGuard<'_, FilePreviewWorkerState> {
+    match state.lock() {
+        Ok(state) => state,
+        Err(poisoned) => poisoned.into_inner(),
     }
 }
 
