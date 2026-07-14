@@ -587,6 +587,7 @@ fn render_entry_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::state::FileManagerActionBarSelectionKind;
     use crate::fm::{
         FmFilePreview, FmImagePreviewState, FmState, HighlightedTextPreview, ImagePreviewTarget,
         PreparedImagePreview, PreviewTextLine, PreviewTextSpan, PreviewTextStyle, TextPreviewError,
@@ -1133,6 +1134,67 @@ mod tests {
             "narrow header: {narrow:?}"
         );
         assert!(!narrow.contains("[delete]"), "narrow header: {narrow:?}");
+    }
+
+    // TP-N3.1-CONTENT: the pure persistent action-bar model carries the live
+    // directory/file/empty selection identity and client-local clipboard
+    // summary without reading the filesystem during render.
+    #[test]
+    fn action_bar_model_tracks_selection_kind_and_clipboard_content() {
+        let td = TempDir::new("action-bar-model");
+        td.dir("alpha-dir");
+        td.file("beta.txt");
+        let mut fm = FmState::new(&td.root);
+
+        let directory = compute_file_manager_action_bar_model(&fm, &[]);
+        let selection = directory.selection.as_ref().expect("directory selection");
+        assert_eq!(selection.label, "alpha-dir");
+        assert_eq!(selection.path, td.root.join("alpha-dir"));
+        assert_eq!(selection.kind, FileManagerActionBarSelectionKind::Directory);
+        assert_eq!(directory.clipboard_count, 0);
+
+        fm.move_down();
+        let clipboard = vec![td.root.join("copied-one"), td.root.join("copied-two")];
+        let file = compute_file_manager_action_bar_model(&fm, &clipboard);
+        let selection = file.selection.as_ref().expect("file selection");
+        assert_eq!(selection.label, "beta.txt");
+        assert_eq!(selection.path, td.root.join("beta.txt"));
+        assert_eq!(selection.kind, FileManagerActionBarSelectionKind::File);
+        assert_eq!(file.clipboard_count, 2);
+
+        let empty = TempDir::new("action-bar-empty");
+        let empty_model = compute_file_manager_action_bar_model(&FmState::new(&empty.root), &[]);
+        assert!(empty_model.selection.is_none());
+        assert_eq!(empty_model.clipboard_count, 0);
+    }
+
+    // TP-N3.1-RENDER: the persistent header visibly follows prepared model
+    // content; the component fallback uses AppState only and performs no I/O.
+    #[test]
+    fn action_bar_renders_selected_name_clipboard_count_and_empty_state() {
+        let td = TempDir::new("action-bar-render");
+        td.file("selected.txt");
+        let mut app = app_with_fm(FmState::new(&td.root));
+        app.file_manager_clipboard = vec![td.root.join("copied.txt")];
+
+        let selected_header = render_rows(&app, 160, 5)[0].clone();
+        assert!(
+            selected_header.contains("selected.txt"),
+            "selected header: {selected_header:?}"
+        );
+        assert!(
+            selected_header.contains("clipboard: 1"),
+            "selected header: {selected_header:?}"
+        );
+
+        let empty = TempDir::new("action-bar-render-empty");
+        let empty_app = app_with_fm(FmState::new(&empty.root));
+        let empty_header = render_rows(&empty_app, 160, 5)[0].clone();
+        assert!(
+            empty_header.contains("empty"),
+            "empty header: {empty_header:?}"
+        );
+        assert!(!empty_header.contains("selected.txt"));
     }
 
     // TP-A2.2.5: the filesystem root has no parent but still renders a stable,

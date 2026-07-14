@@ -884,6 +884,96 @@ mod tests {
         std::fs::remove_dir_all(root).expect("remove temp root");
     }
 
+    // TP-N3.1-LIFECYCLE: compute_view rebuilds persistent action-bar content
+    // after navigation/reload, clears it on close, and restores current empty
+    // selection plus the client-local clipboard summary on reopen.
+    #[test]
+    fn compute_view_refreshes_and_clears_file_manager_action_bar_content() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "herdr-ui-fm-action-bar-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).expect("create temp root");
+        std::fs::write(root.join("a.txt"), b"a").expect("write a fixture");
+        std::fs::write(root.join("b.txt"), b"b").expect("write b fixture");
+
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.file_manager = Some(crate::fm::FmState::new(&root));
+        app.file_manager_clipboard = vec![root.join("clipboard.txt")];
+
+        compute_view(&mut app, Rect::new(0, 0, 100, 6));
+        let initial = app
+            .view
+            .file_manager_action_bar
+            .as_ref()
+            .expect("open FM action bar");
+        assert_eq!(
+            initial
+                .selection
+                .as_ref()
+                .map(|selection| selection.label.as_str()),
+            Some("a.txt")
+        );
+        assert_eq!(initial.clipboard_count, 1);
+
+        app.file_manager.as_mut().expect("open FM").move_down();
+        compute_view(&mut app, Rect::new(0, 0, 100, 6));
+        assert_eq!(
+            app.view
+                .file_manager_action_bar
+                .as_ref()
+                .and_then(|model| model.selection.as_ref())
+                .map(|selection| selection.label.as_str()),
+            Some("b.txt")
+        );
+
+        std::fs::remove_file(root.join("b.txt")).expect("remove selected fixture");
+        app.file_manager.as_mut().expect("open FM").reload();
+        compute_view(&mut app, Rect::new(0, 0, 100, 6));
+        assert_eq!(
+            app.view
+                .file_manager_action_bar
+                .as_ref()
+                .and_then(|model| model.selection.as_ref())
+                .map(|selection| selection.label.as_str()),
+            Some("a.txt")
+        );
+
+        std::fs::remove_file(root.join("a.txt")).expect("remove final fixture");
+        app.file_manager.as_mut().expect("open FM").reload();
+        compute_view(&mut app, Rect::new(0, 0, 100, 6));
+        let empty = app
+            .view
+            .file_manager_action_bar
+            .as_ref()
+            .expect("empty open FM action bar");
+        assert!(empty.selection.is_none());
+        assert_eq!(empty.clipboard_count, 1);
+
+        app.file_manager = None;
+        compute_view(&mut app, Rect::new(0, 0, 100, 6));
+        assert!(app.view.file_manager_action_bar.is_none());
+
+        app.file_manager = Some(crate::fm::FmState::new(&root));
+        compute_view(&mut app, Rect::new(0, 0, 100, 6));
+        let reopened = app
+            .view
+            .file_manager_action_bar
+            .as_ref()
+            .expect("reopened action bar");
+        assert!(reopened.selection.is_none());
+        assert_eq!(reopened.clipboard_count, 1);
+
+        std::fs::remove_dir_all(root).expect("remove temp root");
+    }
+
     // A2 integration: when the file manager is open, the base layer renders the
     // directory list in the center (CenterContent) instead of the terminal panes.
     #[test]
