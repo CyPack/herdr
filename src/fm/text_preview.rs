@@ -39,6 +39,8 @@ pub struct TextPreview {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextPreviewError {
     Io(io::ErrorKind),
+    NotRegularFile,
+    Binary,
     InvalidUtf8 { valid_up_to: usize },
 }
 
@@ -46,6 +48,8 @@ impl fmt::Display for TextPreviewError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(kind) => write!(formatter, "text preview I/O failed: {kind:?}"),
+            Self::NotRegularFile => formatter.write_str("text preview source is not a file"),
+            Self::Binary => formatter.write_str("text preview source is binary"),
             Self::InvalidUtf8 { valid_up_to } => {
                 write!(formatter, "text preview is not UTF-8 at byte {valid_up_to}")
             }
@@ -65,11 +69,19 @@ pub(super) fn read_text_preview(
     limits: TextPreviewLimits,
 ) -> Result<TextPreview, TextPreviewError> {
     let read_cap = limits.max_bytes.saturating_add(UTF8_SENTINEL_BYTES);
+    let metadata = std::fs::metadata(path).map_err(|error| TextPreviewError::Io(error.kind()))?;
+    if !metadata.is_file() {
+        return Err(TextPreviewError::NotRegularFile);
+    }
     let file = std::fs::File::open(path).map_err(|error| TextPreviewError::Io(error.kind()))?;
     let mut bytes = Vec::with_capacity(read_cap);
     file.take(read_cap as u64)
         .read_to_end(&mut bytes)
         .map_err(|error| TextPreviewError::Io(error.kind()))?;
+
+    if bytes.contains(&0) {
+        return Err(TextPreviewError::Binary);
+    }
 
     let truncated = bytes.len() > limits.max_bytes;
     let retained = &bytes[..bytes.len().min(limits.max_bytes)];
