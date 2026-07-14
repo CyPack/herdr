@@ -676,11 +676,34 @@ pub struct FileManagerActionBarSelection {
     pub kind: FileManagerActionBarSelectionKind,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileManagerActionDisabledReason {
+    NoSelection,
+    EmptyClipboard,
+    ReadOnlyTarget,
+    UnsupportedSelection,
+    OperationInFlight,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileManagerActionState {
+    pub action: FileManagerHeaderAction,
+    pub enabled: bool,
+    pub disabled_reason: Option<FileManagerActionDisabledReason>,
+}
+
 /// Pure presentation model for the persistent native-FM action bar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileManagerActionBarModel {
     pub selection: Option<FileManagerActionBarSelection>,
     pub clipboard_count: usize,
+    pub actions: [FileManagerActionState; 4],
+}
+
+impl FileManagerActionBarModel {
+    pub fn action_state(&self, action: FileManagerHeaderAction) -> Option<&FileManagerActionState> {
+        self.actions.iter().find(|state| state.action == action)
+    }
 }
 
 /// Deferred request to open a Claude Code chat as a new tab in a project
@@ -1555,6 +1578,9 @@ pub struct AppState {
     /// Closing the FM does not discard clipboard content; no filesystem work
     /// is performed merely by storing these paths.
     pub file_manager_clipboard: Vec<PathBuf>,
+    /// Client-local operation lifecycle authority. C4 will replace this
+    /// minimal gate with bounded operation state; render/input only consume it.
+    pub file_manager_operation_in_flight: bool,
     pub should_quit: bool,
     /// In monolithic --no-session mode, detach exits the app because there is no server to detach from.
     pub detach_exits: bool,
@@ -2003,6 +2029,7 @@ impl AppState {
             mode: Mode::Navigate,
             file_manager: None,
             file_manager_clipboard: Vec::new(),
+            file_manager_operation_in_flight: false,
             should_quit: false,
             detach_exits: false,
             detach_requested: false,

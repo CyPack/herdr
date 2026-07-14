@@ -593,6 +593,7 @@ impl App {
             mode,
             file_manager: None,
             file_manager_clipboard: Vec::new(),
+            file_manager_operation_in_flight: false,
             should_quit: false,
             detach_exits: no_session,
             detach_requested: false,

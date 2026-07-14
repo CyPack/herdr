@@ -254,7 +254,11 @@ fn compute_view_internal(
         .unwrap_or((Rect::default(), main_area));
     let file_manager_row_areas = sync_file_manager_view(app, terminal_area);
     let file_manager_action_bar = app.file_manager.as_ref().map(|file_manager| {
-        compute_file_manager_action_bar_model(file_manager, &app.file_manager_clipboard)
+        compute_file_manager_action_bar_model(
+            file_manager,
+            &app.file_manager_clipboard,
+            app.file_manager_operation_in_flight,
+        )
     });
     let file_manager_header_action_areas = if app.file_manager.is_some() {
         compute_file_manager_header_action_areas(terminal_area)
@@ -398,7 +402,11 @@ fn compute_mobile_view(
     };
     let file_manager_row_areas = sync_file_manager_view(app, terminal_area);
     let file_manager_action_bar = app.file_manager.as_ref().map(|file_manager| {
-        compute_file_manager_action_bar_model(file_manager, &app.file_manager_clipboard)
+        compute_file_manager_action_bar_model(
+            file_manager,
+            &app.file_manager_clipboard,
+            app.file_manager_operation_in_flight,
+        )
     });
     let file_manager_header_action_areas = if app.file_manager.is_some() {
         compute_file_manager_header_action_areas(terminal_area)

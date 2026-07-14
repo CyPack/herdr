@@ -20,7 +20,8 @@ use super::text::truncate_end;
 use crate::app::state::AppState;
 use crate::app::state::{
     FileManagerActionBarModel, FileManagerActionBarSelection, FileManagerActionBarSelectionKind,
-    FileManagerHeaderAction, FileManagerHeaderActionArea, FileManagerRowArea,
+    FileManagerActionDisabledReason, FileManagerActionState, FileManagerHeaderAction,
+    FileManagerHeaderActionArea, FileManagerRowArea,
 };
 use crate::fm::{
     FileEntry, FmFilePreview, FmImagePreviewState, FmPreview, FmState, HighlightedTextPreview,
@@ -153,21 +154,63 @@ pub(crate) fn compute_file_manager_row_areas(
 pub(crate) fn compute_file_manager_action_bar_model(
     file_manager: &FmState,
     clipboard: &[std::path::PathBuf],
+    operation_in_flight: bool,
 ) -> FileManagerActionBarModel {
-    let selection = file_manager
-        .selected()
-        .map(|entry| FileManagerActionBarSelection {
-            path: entry.path.clone(),
-            label: entry.name.clone(),
-            kind: if entry.is_dir {
-                FileManagerActionBarSelectionKind::Directory
-            } else {
-                FileManagerActionBarSelectionKind::File
-            },
-        });
+    let selected = file_manager.selected();
+    let selection = selected.map(|entry| FileManagerActionBarSelection {
+        path: entry.path.clone(),
+        label: entry.name.clone(),
+        kind: if entry.is_dir {
+            FileManagerActionBarSelectionKind::Directory
+        } else {
+            FileManagerActionBarSelectionKind::File
+        },
+    });
+    let actions = FileManagerHeaderAction::ALL.map(|action| {
+        let disabled_reason = if operation_in_flight {
+            Some(FileManagerActionDisabledReason::OperationInFlight)
+        } else {
+            match action {
+                FileManagerHeaderAction::Copy => match selected {
+                    None => Some(FileManagerActionDisabledReason::NoSelection),
+                    Some(entry) if !entry.operation_supported => {
+                        Some(FileManagerActionDisabledReason::UnsupportedSelection)
+                    }
+                    Some(_) => None,
+                },
+                FileManagerHeaderAction::Paste => {
+                    if clipboard.is_empty() {
+                        Some(FileManagerActionDisabledReason::EmptyClipboard)
+                    } else if !file_manager.cwd_writable {
+                        Some(FileManagerActionDisabledReason::ReadOnlyTarget)
+                    } else {
+                        None
+                    }
+                }
+                FileManagerHeaderAction::NewFolder => (!file_manager.cwd_writable)
+                    .then_some(FileManagerActionDisabledReason::ReadOnlyTarget),
+                FileManagerHeaderAction::Delete => match selected {
+                    None => Some(FileManagerActionDisabledReason::NoSelection),
+                    Some(entry) if !entry.operation_supported => {
+                        Some(FileManagerActionDisabledReason::UnsupportedSelection)
+                    }
+                    Some(_) if !file_manager.cwd_writable => {
+                        Some(FileManagerActionDisabledReason::ReadOnlyTarget)
+                    }
+                    Some(_) => None,
+                },
+            }
+        };
+        FileManagerActionState {
+            action,
+            enabled: disabled_reason.is_none(),
+            disabled_reason,
+        }
+    });
     FileManagerActionBarModel {
         selection,
         clipboard_count: clipboard.len(),
+        actions,
     }
 }
 
@@ -247,8 +290,11 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         app.view.file_manager_action_bar.as_ref()
     } else {
         // Unit/component callers can render without a preceding compute_view.
-        fallback_action_bar =
-            compute_file_manager_action_bar_model(fm, app.file_manager_clipboard.as_slice());
+        fallback_action_bar = compute_file_manager_action_bar_model(
+            fm,
+            app.file_manager_clipboard.as_slice(),
+            app.file_manager_operation_in_flight,
+        );
         Some(&fallback_action_bar)
     };
     let fallback_header_actions;
@@ -277,8 +323,16 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         identity_area,
     );
     for action in header_actions {
+        let enabled = action_bar
+            .and_then(|model| model.action_state(action.action))
+            .is_some_and(|state| state.enabled);
+        let style = if enabled {
+            Style::default().fg(p.overlay1)
+        } else {
+            Style::default().fg(p.overlay0).add_modifier(Modifier::DIM)
+        };
         frame.render_widget(
-            Paragraph::new(action.action.label()).style(Style::default().fg(p.overlay1)),
+            Paragraph::new(action.action.label()).style(style),
             action.rect,
         );
     }

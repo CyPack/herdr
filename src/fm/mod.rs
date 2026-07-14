@@ -34,6 +34,9 @@ pub struct FileEntry {
     pub path: PathBuf,
     /// Whether this entry resolves to a directory (symlinks are followed).
     pub is_dir: bool,
+    /// Whether the target resolves to a regular file or directory supported by
+    /// the native operation surface. Special/broken targets fail closed.
+    pub operation_supported: bool,
 }
 
 /// Parent-directory context for the left Miller column.
@@ -121,8 +124,10 @@ pub fn read_dir_entries(dir: &Path, show_hidden: bool) -> Vec<FileEntry> {
             if !show_hidden && name.starts_with('.') {
                 return None;
             }
+            let (is_dir, operation_supported) = entry_capabilities(&entry);
             Some(FileEntry {
-                is_dir: entry_is_dir(&entry),
+                is_dir,
+                operation_supported,
                 path: entry.path(),
                 name,
             })
@@ -138,12 +143,26 @@ pub fn read_dir_entries(dir: &Path, show_hidden: bool) -> Vec<FileEntry> {
 /// `file_type()` comes straight from the `readdir` result (no extra syscall for
 /// real files/dirs). Only symlinks need a follow-up `stat` to resolve their
 /// target; a broken symlink resolves to `false` (listed as a file).
-fn entry_is_dir(entry: &std::fs::DirEntry) -> bool {
+fn entry_capabilities(entry: &std::fs::DirEntry) -> (bool, bool) {
     match entry.file_type() {
-        Ok(ft) if ft.is_symlink() => entry.path().is_dir(),
-        Ok(ft) => ft.is_dir(),
-        Err(_) => entry.path().is_dir(),
+        Ok(ft) if ft.is_symlink() => {
+            let path = entry.path();
+            let is_dir = path.is_dir();
+            (is_dir, is_dir || path.is_file())
+        }
+        Ok(ft) => (ft.is_dir(), ft.is_dir() || ft.is_file()),
+        Err(_) => {
+            let path = entry.path();
+            let is_dir = path.is_dir();
+            (is_dir, is_dir || path.is_file())
+        }
     }
+}
+
+fn directory_is_writable(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|metadata| metadata.is_dir() && !metadata.permissions().readonly())
+        .unwrap_or(false)
 }
 
 /// Order entries directories-first, then by natural (case-insensitive) name,
@@ -176,6 +195,9 @@ pub struct FmState {
     pub viewport_start: usize,
     /// Whether dot-prefixed entries are shown.
     pub show_hidden: bool,
+    /// Prepared conservative writability hint for cwd. Actual C4 operations
+    /// must still handle TOCTOU and platform permission failures.
+    pub cwd_writable: bool,
     /// Cached parent-directory context for the left Miller column.
     pub parent: Option<FmParent>,
     /// Cached selected-entry context for the right Miller column.
@@ -195,12 +217,14 @@ impl FmState {
     pub fn with_hidden(cwd: impl Into<PathBuf>, show_hidden: bool) -> Self {
         let cwd = cwd.into();
         let entries = read_dir_entries(&cwd, show_hidden);
+        let cwd_writable = directory_is_writable(&cwd);
         let mut state = Self {
             cwd,
             entries,
             cursor: 0,
             viewport_start: 0,
             show_hidden,
+            cwd_writable,
             parent: None,
             preview: FmPreview::None,
             preview_generation: 0,
@@ -216,6 +240,7 @@ impl FmState {
         let selected_path = self.selected().map(|entry| entry.path.clone());
         let previous_cursor = self.cursor;
         self.entries = read_dir_entries(&self.cwd, self.show_hidden);
+        self.cwd_writable = directory_is_writable(&self.cwd);
         self.cursor = selected_path
             .as_ref()
             .and_then(|path| self.entries.iter().position(|entry| &entry.path == path))
@@ -499,8 +524,12 @@ mod tests {
     #[test]
     fn missing_directory_is_empty_and_panic_free() {
         let td = TempDir::new("missing");
-        let entries = read_dir_entries(&td.root.join("does-not-exist"), false);
+        let missing = td.root.join("does-not-exist");
+        let entries = read_dir_entries(&missing, false);
         assert!(entries.is_empty());
+
+        let state = FmState::new(missing);
+        assert!(!state.cwd_writable);
     }
 
     // T-A1.2d: a symlink to a directory is listed and sorted as a directory.
@@ -519,6 +548,52 @@ mod tests {
             .find(|e| e.name == "link")
             .expect("link entry");
         assert!(link.is_dir);
+        assert!(link.operation_supported);
+    }
+
+    // T-N3.2h: unsupported Unix special files remain visible but fail closed
+    // for copy/delete action authority.
+    #[cfg(unix)]
+    #[test]
+    fn special_entry_is_visible_but_operation_unsupported() {
+        let td = TempDir::new("special-entry");
+        let socket_path = td.root.join("agent.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket_path)
+            .expect("bind isolated Unix socket");
+
+        let entries = read_dir_entries(&td.root, false);
+        let socket = entries
+            .iter()
+            .find(|entry| entry.path == socket_path)
+            .expect("special entry remains visible");
+        assert!(!socket.is_dir);
+        assert!(!socket.operation_supported);
+    }
+
+    // T-N3.2i: cwd writability is prepared outside render and refreshed when
+    // filesystem permissions change.
+    #[cfg(unix)]
+    #[test]
+    fn reload_refreshes_cwd_writability() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let td = TempDir::new("cwd-writability");
+        let original_mode = fs::metadata(&td.root)
+            .expect("read temp directory metadata")
+            .permissions()
+            .mode();
+        let mut state = FmState::new(&td.root);
+        assert!(state.cwd_writable);
+
+        fs::set_permissions(&td.root, fs::Permissions::from_mode(original_mode & !0o222))
+            .expect("make temp directory read-only");
+        state.reload();
+        assert!(!state.cwd_writable);
+
+        fs::set_permissions(&td.root, fs::Permissions::from_mode(original_mode))
+            .expect("restore temp directory permissions");
+        state.reload();
+        assert!(state.cwd_writable);
     }
 
     // T-A1.2d: unicode / emoji names survive intact.

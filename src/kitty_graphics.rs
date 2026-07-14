@@ -1380,6 +1380,7 @@ mod tests {
             cursor: 0,
             viewport_start: 0,
             show_hidden: false,
+            cwd_writable: true,
             parent: None,
             preview: FmPreview::File(FmFilePreview::Image(FmImagePreview {
                 source_path: "/tmp/preview.png".into(),

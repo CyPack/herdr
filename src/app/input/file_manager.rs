@@ -101,7 +101,18 @@ impl App {
         {
             if let Some(header_action) = header_action {
                 self.last_file_manager_click = None;
-                return FileManagerMouseDispatch::HeaderAction(header_action);
+                let enabled = self
+                    .state
+                    .view
+                    .file_manager_action_bar
+                    .as_ref()
+                    .and_then(|model| model.action_state(header_action))
+                    .is_some_and(|state| state.enabled);
+                return if enabled {
+                    FileManagerMouseDispatch::HeaderAction(header_action)
+                } else {
+                    FileManagerMouseDispatch::Consumed
+                };
             }
         }
 
