@@ -1374,27 +1374,21 @@ mod tests {
         let mut app = AppState::test_new();
         app.mode = Mode::Terminal;
         app.view.terminal_area = Rect::new(10, 5, 38, 10);
-        app.file_manager = Some(FmState {
-            cwd: "/tmp".into(),
-            entries: Vec::new(),
-            cursor: 0,
-            viewport_start: 0,
-            show_hidden: false,
-            cwd_writable: true,
-            parent: None,
-            preview: FmPreview::File(FmFilePreview::Image(FmImagePreview {
-                source_path: "/tmp/preview.png".into(),
-                generation: 1,
-                state: FmImagePreviewState::Ready {
-                    target: ImagePreviewTarget {
-                        width_px: 96,
-                        height_px: 128,
-                    },
-                    prepared: first,
+        let mut file_manager = FmState::test_empty("/tmp");
+        file_manager.cwd_writable = true;
+        file_manager.preview = FmPreview::File(FmFilePreview::Image(FmImagePreview {
+            source_path: "/tmp/preview.png".into(),
+            generation: 1,
+            state: FmImagePreviewState::Ready {
+                target: ImagePreviewTarget {
+                    width_px: 96,
+                    height_px: 128,
                 },
-            })),
-            preview_generation: 1,
-        });
+                prepared: first,
+            },
+        }));
+        file_manager.preview_generation = 1;
+        app.file_manager = Some(file_manager);
         let runtimes = TerminalRuntimeRegistry::new();
         let mut cache = HostGraphicsCache::default();
 

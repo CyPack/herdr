@@ -15,6 +15,7 @@ mod natsort;
 mod text_preview;
 pub(crate) mod watcher;
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 pub use image_preview::{ImagePreviewError, ImagePreviewTarget, PreparedImagePreview};
@@ -176,11 +177,18 @@ fn sort_entries(entries: &mut [FileEntry]) {
     });
 }
 
+#[derive(Debug, Clone, Default)]
+struct FmMultiSelection {
+    paths: BTreeSet<PathBuf>,
+    anchor: Option<PathBuf>,
+}
+
 /// Pure, TUI-only browsing state for one directory pane: the current directory,
-/// its ordered entries, the cursor row, and hidden-file visibility. In v1 the
-/// cursor is the only visual selection; multi-select state and bulk semantics
-/// are intentionally deferred to N4/C2. No PTY, no runtime, no async —
-/// constructible and assertable without a terminal.
+/// its ordered entries, cursor focus, path-identity multi-selection, and hidden
+/// file visibility. The cursor remains preview/focus authority; the separate
+/// multi-selection set does not grant filesystem-operation authority. No PTY,
+/// runtime, or async state is held here, so the model remains constructible and
+/// assertable without a terminal.
 #[derive(Debug, Clone)]
 pub struct FmState {
     /// The directory currently being browsed.
@@ -205,6 +213,9 @@ pub struct FmState {
     /// Monotonic client-local identity for preview work. Every context refresh
     /// invalidates in-flight image results even when the path is unchanged.
     pub(crate) preview_generation: u64,
+    /// Explicit path identities selected for future bulk actions. This is
+    /// intentionally separate from cursor focus and private to the FM model.
+    multi_selection: FmMultiSelection,
 }
 
 impl FmState {
@@ -228,9 +239,27 @@ impl FmState {
             parent: None,
             preview: FmPreview::None,
             preview_generation: 0,
+            multi_selection: FmMultiSelection::default(),
         };
         state.refresh_context();
         state
+    }
+
+    /// Disk-free baseline for unit tests that need to install prepared state.
+    #[cfg(test)]
+    pub(crate) fn test_empty(cwd: impl Into<PathBuf>) -> Self {
+        Self {
+            cwd: cwd.into(),
+            entries: Vec::new(),
+            cursor: 0,
+            viewport_start: 0,
+            show_hidden: false,
+            cwd_writable: false,
+            parent: None,
+            preview: FmPreview::None,
+            preview_generation: 0,
+            multi_selection: FmMultiSelection::default(),
+        }
     }
 
     /// Re-read the current directory, keeping `show_hidden` and preserving the
@@ -286,6 +315,82 @@ impl FmState {
         if self.cursor != index {
             self.cursor = index;
             self.refresh_preview();
+        }
+        true
+    }
+
+    /// Path identities in the explicit multi-selection set. Cursor movement
+    /// alone never changes this set.
+    pub fn multi_selection_paths(&self) -> &BTreeSet<PathBuf> {
+        &self.multi_selection.paths
+    }
+
+    /// Stable path identity used as the origin for the next range selection.
+    pub fn multi_selection_anchor(&self) -> Option<&Path> {
+        self.multi_selection.anchor.as_deref()
+    }
+
+    /// Replace the explicit selection with one live entry and focus it.
+    pub fn replace_selection(&mut self, index: usize) -> bool {
+        let Some(path) = self.entries.get(index).map(|entry| entry.path.clone()) else {
+            return false;
+        };
+        if !self.select(index) {
+            return false;
+        }
+
+        self.multi_selection.paths.clear();
+        self.multi_selection.paths.insert(path.clone());
+        self.multi_selection.anchor = Some(path);
+        true
+    }
+
+    /// Toggle one live path in the explicit set and focus it. The last live
+    /// target remains the range anchor even when this toggle removes it.
+    pub fn toggle_selection(&mut self, index: usize) -> bool {
+        let Some(path) = self.entries.get(index).map(|entry| entry.path.clone()) else {
+            return false;
+        };
+        if !self.select(index) {
+            return false;
+        }
+
+        if !self.multi_selection.paths.insert(path.clone()) {
+            self.multi_selection.paths.remove(&path);
+        }
+        self.multi_selection.anchor = Some(path);
+        true
+    }
+
+    /// Replace the explicit set with the inclusive current-list range from the
+    /// anchor to `index`. A missing anchor falls back to a one-entry selection;
+    /// duplicate visible identities are naturally deduplicated by the set.
+    pub fn extend_selection(&mut self, index: usize) -> bool {
+        let Some(target_path) = self.entries.get(index).map(|entry| entry.path.clone()) else {
+            return false;
+        };
+        let anchor_index = self
+            .multi_selection
+            .anchor
+            .as_ref()
+            .and_then(|anchor| self.entries.iter().position(|entry| &entry.path == anchor));
+        let paths = if let Some(anchor_index) = anchor_index {
+            let start = anchor_index.min(index);
+            let end = anchor_index.max(index);
+            self.entries[start..=end]
+                .iter()
+                .map(|entry| entry.path.clone())
+                .collect()
+        } else {
+            BTreeSet::from([target_path.clone()])
+        };
+        if !self.select(index) {
+            return false;
+        }
+
+        self.multi_selection.paths = paths;
+        if anchor_index.is_none() {
+            self.multi_selection.anchor = Some(target_path);
         }
         true
     }
