@@ -18,9 +18,12 @@ use ratatui::Frame;
 
 use super::text::truncate_end;
 use crate::app::state::AppState;
-use crate::app::state::{FileManagerHeaderAction, FileManagerHeaderActionArea, FileManagerRowArea};
+use crate::app::state::{
+    FileManagerActionBarModel, FileManagerActionBarSelection, FileManagerActionBarSelectionKind,
+    FileManagerHeaderAction, FileManagerHeaderActionArea, FileManagerRowArea,
+};
 use crate::fm::{
-    FileEntry, FmFilePreview, FmImagePreviewState, FmPreview, HighlightedTextPreview,
+    FileEntry, FmFilePreview, FmImagePreviewState, FmPreview, FmState, HighlightedTextPreview,
     ImagePreviewError, PreviewTextLine, PreviewTextSpan, PreviewTextStyle, TextPreview,
     TextPreviewError,
 };
@@ -145,6 +148,45 @@ pub(crate) fn compute_file_manager_row_areas(
         .collect()
 }
 
+/// Build the persistent action-bar content from already-prepared FM state.
+/// This is pure client presentation logic: no metadata or directory reads.
+pub(crate) fn compute_file_manager_action_bar_model(
+    file_manager: &FmState,
+    clipboard: &[std::path::PathBuf],
+) -> FileManagerActionBarModel {
+    let selection = file_manager
+        .selected()
+        .map(|entry| FileManagerActionBarSelection {
+            path: entry.path.clone(),
+            label: entry.name.clone(),
+            kind: if entry.is_dir {
+                FileManagerActionBarSelectionKind::Directory
+            } else {
+                FileManagerActionBarSelectionKind::File
+            },
+        });
+    FileManagerActionBarModel {
+        selection,
+        clipboard_count: clipboard.len(),
+    }
+}
+
+fn file_manager_action_bar_identity(cwd: &str, action_bar: &FileManagerActionBarModel) -> String {
+    let mut identity = String::from(cwd);
+    match action_bar.selection.as_ref() {
+        Some(selection) => {
+            identity.push_str(" — ");
+            identity.push_str(&selection.label);
+        }
+        None => identity.push_str(" — empty"),
+    }
+    if action_bar.clipboard_count > 0 {
+        identity.push_str(" · clipboard: ");
+        identity.push_str(&action_bar.clipboard_count.to_string());
+    }
+    identity
+}
+
 /// Lay out complete native-FM header buttons from highest to lowest priority.
 /// The cwd identity keeps a readable minimum; actions that cannot fit in full
 /// are omitted so render/input can never expose a clipped phantom target.
@@ -200,12 +242,20 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
     };
     let p = &app.palette;
 
+    let fallback_action_bar;
+    let action_bar = if area == app.view.terminal_area {
+        app.view.file_manager_action_bar.as_ref()
+    } else {
+        // Unit/component callers can render without a preceding compute_view.
+        fallback_action_bar =
+            compute_file_manager_action_bar_model(fm, app.file_manager_clipboard.as_slice());
+        Some(&fallback_action_bar)
+    };
     let fallback_header_actions;
     let header_actions = if area == app.view.terminal_area {
         app.view.file_manager_header_action_areas.as_slice()
     } else {
-        // Unit/component callers can render without a preceding compute_view;
-        // use the exact same pure geometry seam as the full-frame path.
+        // Use the exact same pure geometry seam as the full-frame path.
         fallback_header_actions = compute_file_manager_header_action_areas(area);
         fallback_header_actions.as_slice()
     };
@@ -213,12 +263,15 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
     // A one-row identity header stays stable while responsive Miller columns
     // progressively disclose parent and preview context below it.
     let cwd_text = fm.cwd.to_string_lossy();
+    let action_bar_identity = action_bar
+        .map(|model| file_manager_action_bar_identity(&cwd_text, model))
+        .unwrap_or_else(|| cwd_text.into_owned());
     let identity_width = header_actions
         .first()
         .map(|action| action.rect.x.saturating_sub(areas.header.x))
         .unwrap_or(areas.header.width);
     let identity_area = Rect::new(areas.header.x, areas.header.y, identity_width, 1);
-    let header = truncate_end(&cwd_text, identity_area.width as usize);
+    let header = truncate_end(&action_bar_identity, identity_area.width as usize);
     frame.render_widget(
         Paragraph::new(header).style(Style::default().fg(p.subtext0).add_modifier(Modifier::BOLD)),
         identity_area,

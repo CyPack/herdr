@@ -2,6 +2,7 @@ use crate::config::{Keybinds, NewTerminalCwdConfig, SoundConfig, ToastConfig, To
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::{Direction, Rect};
 use ratatui::style::Color;
+use std::path::PathBuf;
 
 use crate::detect::AgentState;
 use crate::layout::{PaneId, PaneInfo, SplitBorder};
@@ -661,6 +662,27 @@ pub struct FileManagerHeaderActionArea {
     pub action: FileManagerHeaderAction,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileManagerActionBarSelectionKind {
+    File,
+    Directory,
+}
+
+/// Prepared client-local identity for the current native-FM selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileManagerActionBarSelection {
+    pub path: PathBuf,
+    pub label: String,
+    pub kind: FileManagerActionBarSelectionKind,
+}
+
+/// Pure presentation model for the persistent native-FM action bar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileManagerActionBarModel {
+    pub selection: Option<FileManagerActionBarSelection>,
+    pub clipboard_count: usize,
+}
+
 /// Deferred request to open a Claude Code chat as a new tab in a project
 /// directory (Projects tab, Task #5). `session_id` `Some` resumes that
 /// session, `None` starts a fresh chat. Set by the mouse handler and consumed
@@ -874,6 +896,9 @@ pub struct ViewState {
     /// Named native-FM header actions for this frame. Empty while FM is closed
     /// or when the header cannot preserve its minimum identity width.
     pub file_manager_header_action_areas: Vec<FileManagerHeaderActionArea>,
+    /// Selection-sensitive persistent action-bar content for this frame.
+    /// `None` while the native FM is closed.
+    pub file_manager_action_bar: Option<FileManagerActionBarModel>,
     pub tab_bar_rect: Rect,
     pub tab_hit_areas: Vec<Rect>,
     pub tab_scroll_left_hit_area: Rect,
@@ -1526,6 +1551,10 @@ pub struct AppState {
     /// panes render as usual). Client-side presentation state (v1 TUI-only,
     /// per the runtime/client boundary), swapped in like `SidebarTab` content.
     pub file_manager: Option<crate::fm::FmState>,
+    /// Client-local source paths prepared for future native-FM paste actions.
+    /// Closing the FM does not discard clipboard content; no filesystem work
+    /// is performed merely by storing these paths.
+    pub file_manager_clipboard: Vec<PathBuf>,
     pub should_quit: bool,
     /// In monolithic --no-session mode, detach exits the app because there is no server to detach from.
     pub detach_exits: bool,
@@ -1973,6 +2002,7 @@ impl AppState {
             selected: 0,
             mode: Mode::Navigate,
             file_manager: None,
+            file_manager_clipboard: Vec::new(),
             should_quit: false,
             detach_exits: false,
             detach_requested: false,
@@ -2034,6 +2064,7 @@ impl AppState {
                 project_row_areas: Vec::new(),
                 file_manager_row_areas: Vec::new(),
                 file_manager_header_action_areas: Vec::new(),
+                file_manager_action_bar: None,
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),
                 tab_scroll_left_hit_area: Rect::default(),
