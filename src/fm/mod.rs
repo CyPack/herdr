@@ -1295,4 +1295,40 @@ mod tests {
         assert_eq!(highlighted.lines.len(), 128);
         assert!(highlighted.truncated_lines);
     }
+
+    #[test]
+    fn image_preview_generation_rebinds_on_reload_and_navigation() {
+        let td = TempDir::new("image-generation");
+        fs::write(td.root.join("alpha.PNG"), b"first generation")
+            .expect("write first image candidate");
+        fs::write(td.root.join("beta.webp"), b"second generation")
+            .expect("write second image candidate");
+
+        let mut state = FmState::new(&td.root);
+        let first_generation = match &state.preview {
+            FmPreview::File(FmFilePreview::Image(preview)) => {
+                assert!(preview.source_path.ends_with("alpha.PNG"));
+                assert_eq!(preview.state, FmImagePreviewState::Pending);
+                preview.generation
+            }
+            other => panic!("expected first image candidate, got {other:?}"),
+        };
+
+        state.reload();
+        let reloaded_generation = match &state.preview {
+            FmPreview::File(FmFilePreview::Image(preview)) => preview.generation,
+            other => panic!("expected reloaded image candidate, got {other:?}"),
+        };
+        assert_ne!(reloaded_generation, first_generation);
+
+        state.move_down();
+        match &state.preview {
+            FmPreview::File(FmFilePreview::Image(preview)) => {
+                assert!(preview.source_path.ends_with("beta.webp"));
+                assert_eq!(preview.state, FmImagePreviewState::Pending);
+                assert_ne!(preview.generation, reloaded_generation);
+            }
+            other => panic!("expected navigated image candidate, got {other:?}"),
+        }
+    }
 }

@@ -14,6 +14,8 @@ mod creation;
 mod file_manager_watcher;
 mod file_preview_worker;
 mod ids;
+#[cfg(test)]
+mod image_preview_worker;
 mod input;
 mod preview;
 mod projects;
