@@ -7,8 +7,8 @@
 //!
 //! This is the first non-terminal *content* swapped into a named region
 //! (`CenterContent`): when `app.file_manager` is open, the base layer draws this
-//! here instead of the terminal panes. Text/image previews and per-row buttons
-//! land in later steps (B1/B2/C2).
+//! here instead of the terminal panes. Text/image previews and row-action
+//! geometry build on the same pure client-side projection.
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -21,7 +21,8 @@ use crate::app::state::AppState;
 use crate::app::state::{
     FileManagerActionBarModel, FileManagerActionBarSelection, FileManagerActionBarSelectionKind,
     FileManagerActionDisabledReason, FileManagerActionState, FileManagerHeaderAction,
-    FileManagerHeaderActionArea, FileManagerRowArea,
+    FileManagerHeaderActionArea, FileManagerRowAction, FileManagerRowActionArea,
+    FileManagerRowArea,
 };
 use crate::fm::{
     FileEntry, FmFilePreview, FmImagePreviewState, FmPreview, FmState, HighlightedTextPreview,
@@ -36,6 +37,7 @@ const TWO_COLUMN_MIN_WIDTH: u16 = MIN_COLUMN_WIDTH * 2 + DIVIDER_WIDTH;
 const MAX_RENDERED_PREVIEW_LINES: usize = 128;
 const HEADER_MIN_IDENTITY_WIDTH: u16 = 12;
 const HEADER_ACTION_GAP: u16 = 1;
+const ROW_ACTION_WIDTH: u16 = 1;
 
 #[derive(Debug, Clone, Copy)]
 struct MillerLayout {
@@ -125,28 +127,65 @@ pub(crate) fn file_manager_preview_content_area(area: Rect) -> Option<Rect> {
 /// Lay out visible CURRENT entry rows for both pure rendering and input hit
 /// testing. The viewport is defensively clamped so stale state cannot create
 /// off-list targets even if this helper is called before the next state sync.
-pub(crate) fn compute_file_manager_row_areas(
+#[derive(Debug, Default)]
+pub(crate) struct FileManagerRowGeometry {
+    pub(crate) rows: Vec<FileManagerRowArea>,
+    pub(crate) actions: Vec<FileManagerRowActionArea>,
+}
+
+pub(crate) fn compute_file_manager_row_geometry(
     area: Rect,
     entry_count: usize,
     viewport_start: usize,
-) -> Vec<FileManagerRowArea> {
+) -> FileManagerRowGeometry {
     let Some(areas) = file_manager_areas(area) else {
-        return Vec::new();
+        return FileManagerRowGeometry::default();
     };
     let list = panel_areas(areas.columns.current)[1];
     let visible_rows = list.height as usize;
     if list.width == 0 || visible_rows == 0 || entry_count == 0 {
-        return Vec::new();
+        return FileManagerRowGeometry::default();
     }
 
     let start = viewport_start.min(entry_count.saturating_sub(visible_rows));
     let count = visible_rows.min(entry_count.saturating_sub(start));
-    (0..count)
-        .map(|offset| FileManagerRowArea {
-            rect: Rect::new(list.x, list.y.saturating_add(offset as u16), list.width, 1),
-            entry_idx: start + offset,
-        })
-        .collect()
+    let visible_action_count = usize::from(list.width.saturating_sub(1) / ROW_ACTION_WIDTH)
+        .min(FileManagerRowAction::ALL.len());
+    let actions_width = visible_action_count as u16 * ROW_ACTION_WIDTH;
+    let name_width = list.width.saturating_sub(actions_width);
+    let mut rows = Vec::with_capacity(count);
+    let mut actions = Vec::with_capacity(count.saturating_mul(visible_action_count));
+
+    for offset in 0..count {
+        let entry_idx = start + offset;
+        let y = list.y.saturating_add(offset as u16);
+        let name_rect = Rect::new(list.x, y, name_width, 1);
+        rows.push(FileManagerRowArea {
+            rect: name_rect,
+            entry_idx,
+        });
+        for (action_idx, action) in FileManagerRowAction::ALL
+            .iter()
+            .copied()
+            .take(visible_action_count)
+            .enumerate()
+        {
+            actions.push(FileManagerRowActionArea {
+                rect: Rect::new(
+                    name_rect
+                        .right()
+                        .saturating_add(action_idx as u16 * ROW_ACTION_WIDTH),
+                    y,
+                    ROW_ACTION_WIDTH,
+                    1,
+                ),
+                entry_idx,
+                action,
+            });
+        }
+    }
+
+    FileManagerRowGeometry { rows, actions }
 }
 
 /// Build the persistent action-bar content from already-prepared FM state.
@@ -342,14 +381,21 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
     }
 
     let layout = areas.columns;
-    let fallback_rows;
-    let current_rows = if area == app.view.terminal_area {
-        app.view.file_manager_row_areas.as_slice()
+    let fallback_geometry;
+    let (current_rows, current_actions) = if area == app.view.terminal_area {
+        (
+            app.view.file_manager_row_areas.as_slice(),
+            app.view.file_manager_row_action_areas.as_slice(),
+        )
     } else {
         // Unit-level/component callers can render into an arbitrary rect
         // without a preceding full-frame compute_view pass.
-        fallback_rows = compute_file_manager_row_areas(area, fm.entries.len(), fm.viewport_start);
-        fallback_rows.as_slice()
+        fallback_geometry =
+            compute_file_manager_row_geometry(area, fm.entries.len(), fm.viewport_start);
+        (
+            fallback_geometry.rows.as_slice(),
+            fallback_geometry.actions.as_slice(),
+        )
     };
     for divider in layout.dividers.into_iter().flatten() {
         frame.render_widget(
@@ -387,6 +433,11 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         "(empty)",
         Some(current_rows),
     );
+    for action_area in current_actions {
+        if fm.entries.get(action_area.entry_idx).is_some() {
+            render_row_action(app, frame, action_area, fm.cursor == action_area.entry_idx);
+        }
+    }
 
     if let Some(preview_area) = layout.preview {
         match &fm.preview {
@@ -689,6 +740,24 @@ fn render_entry_row(
         Style::default().fg(p.subtext0)
     };
     frame.render_widget(Paragraph::new(label).style(style), row);
+}
+
+fn render_row_action(
+    app: &AppState,
+    frame: &mut Frame,
+    action_area: &FileManagerRowActionArea,
+    selected: bool,
+) {
+    let p = &app.palette;
+    let style = if selected {
+        Style::default().bg(p.surface0).fg(p.overlay1)
+    } else {
+        Style::default().fg(p.overlay1)
+    };
+    frame.render_widget(
+        Paragraph::new(action_area.action.label()).style(style),
+        action_area.rect,
+    );
 }
 
 #[cfg(test)]
@@ -1120,12 +1189,12 @@ mod tests {
                     current_list.right()
                 );
                 for (action_index, action) in actions.iter().enumerate() {
-                    assert_eq!(action.rect.width, 3, "width {width}");
+                    assert_eq!(action.rect.width, ROW_ACTION_WIDTH, "width {width}");
                     assert_eq!(action.rect.height, 1, "width {width}");
                     assert_eq!(action.rect.y, row.rect.y, "width {width}");
                     assert_eq!(
                         action.rect.x,
-                        row.rect.right() + action_index as u16 * 3,
+                        row.rect.right() + action_index as u16 * ROW_ACTION_WIDTH,
                         "width {width}",
                     );
                     assert!(action.rect.x >= current_list.x, "width {width}");
@@ -1149,6 +1218,8 @@ mod tests {
     // visible window instead of exposing stale paths.
     #[test]
     fn current_row_actions_apply_viewport_and_clamp_to_list_end() {
+        use crate::app::state::FileManagerRowAction;
+
         let area = Rect::new(10, 20, 20, 5); // three CURRENT list rows
 
         let geometry = compute_file_manager_row_geometry(area, 10, 6);
@@ -1160,8 +1231,15 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![6, 7, 8]
         );
-        assert_eq!(geometry.rows[0].rect, Rect::new(10, 22, 11, 1));
-        assert_eq!(geometry.rows[2].rect, Rect::new(10, 24, 11, 1));
+        let expected_name_width = area.width - FileManagerRowAction::ALL.len() as u16;
+        assert_eq!(
+            geometry.rows[0].rect,
+            Rect::new(10, 22, expected_name_width, 1)
+        );
+        assert_eq!(
+            geometry.rows[2].rect,
+            Rect::new(10, 24, expected_name_width, 1)
+        );
         assert_eq!(
             geometry
                 .actions
@@ -1186,14 +1264,14 @@ mod tests {
             .all(|action| (7..=9).contains(&action.entry_idx)));
     }
 
-    // TP-C2.1-NARROW: actions disappear as complete 3-cell units in priority
+    // TP-C2.1-NARROW: actions disappear as complete one-cell units in priority
     // order while preserving at least one name cell. This prevents clipped
     // labels from leaving phantom hit targets at narrow widths.
     #[test]
     fn current_row_actions_progressively_hide_and_preserve_name_cell() {
         use crate::app::state::FileManagerRowAction;
 
-        let cases = [(1, 0), (3, 0), (4, 1), (6, 1), (7, 2), (9, 2), (10, 3)];
+        let cases = [(1, 0), (2, 1), (3, 2), (4, 3), (10, 3)];
         for (width, expected_action_count) in cases {
             let area = Rect::new(4, 8, width, 4);
             let geometry = compute_file_manager_row_geometry(area, 1, 0);
@@ -1214,7 +1292,7 @@ mod tests {
             );
             assert_eq!(
                 geometry.rows[0].rect.width,
-                width - expected_action_count as u16 * 3,
+                width - expected_action_count as u16 * ROW_ACTION_WIDTH,
                 "width {width}",
             );
             assert!(geometry.rows[0].rect.width >= 1, "width {width}");

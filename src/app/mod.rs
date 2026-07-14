@@ -660,6 +660,7 @@ impl App {
                 sidebar_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
                 file_manager_row_areas: Vec::new(),
+                file_manager_row_action_areas: Vec::new(),
                 file_manager_header_action_areas: Vec::new(),
                 file_manager_action_bar: None,
                 tab_bar_rect: Rect::default(),

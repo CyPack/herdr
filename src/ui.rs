@@ -31,7 +31,8 @@ use self::dialogs::{
 pub(crate) use self::file_manager::file_manager_preview_content_area;
 use self::file_manager::{
     compute_file_manager_action_bar_model, compute_file_manager_header_action_areas,
-    compute_file_manager_row_areas, file_manager_visible_rows, render_file_manager,
+    compute_file_manager_row_geometry, file_manager_visible_rows, render_file_manager,
+    FileManagerRowGeometry,
 };
 use self::keybind_help::render_keybind_help_overlay;
 use self::menus::{
@@ -252,7 +253,10 @@ fn compute_view_internal(
         .and_then(|i| app.workspaces.get(i))
         .map(|ws| desktop_tab_bar_and_terminal_area(app, ws, main_area))
         .unwrap_or((Rect::default(), main_area));
-    let file_manager_row_areas = sync_file_manager_view(app, terminal_area);
+    let FileManagerRowGeometry {
+        rows: file_manager_row_areas,
+        actions: file_manager_row_action_areas,
+    } = sync_file_manager_view(app, terminal_area);
     let file_manager_action_bar = app.file_manager.as_ref().map(|file_manager| {
         compute_file_manager_action_bar_model(
             file_manager,
@@ -368,6 +372,7 @@ fn compute_view_internal(
         sidebar_tab_hit_areas,
         project_row_areas,
         file_manager_row_areas,
+        file_manager_row_action_areas,
         file_manager_header_action_areas,
         file_manager_action_bar,
         tab_bar_rect,
@@ -400,7 +405,10 @@ fn compute_mobile_view(
     } else {
         (area, Rect::default())
     };
-    let file_manager_row_areas = sync_file_manager_view(app, terminal_area);
+    let FileManagerRowGeometry {
+        rows: file_manager_row_areas,
+        actions: file_manager_row_action_areas,
+    } = sync_file_manager_view(app, terminal_area);
     let file_manager_action_bar = app.file_manager.as_ref().map(|file_manager| {
         compute_file_manager_action_bar_model(
             file_manager,
@@ -460,6 +468,7 @@ fn compute_mobile_view(
         sidebar_tab_hit_areas: Vec::new(),
         project_row_areas: Vec::new(),
         file_manager_row_areas,
+        file_manager_row_action_areas,
         file_manager_header_action_areas,
         file_manager_action_bar,
         tab_bar_rect: Rect::default(),
@@ -477,20 +486,17 @@ fn compute_mobile_view(
     app.sync_copy_mode_search_geometry();
 }
 
-fn sync_file_manager_view(
-    app: &mut AppState,
-    area: Rect,
-) -> Vec<crate::app::state::FileManagerRowArea> {
+fn sync_file_manager_view(app: &mut AppState, area: Rect) -> FileManagerRowGeometry {
     let visible_rows = file_manager_visible_rows(area);
     if let Some(file_manager) = app.file_manager.as_mut() {
         file_manager.sync_viewport(visible_rows);
-        compute_file_manager_row_areas(
+        compute_file_manager_row_geometry(
             area,
             file_manager.entries.len(),
             file_manager.viewport_start,
         )
     } else {
-        Vec::new()
+        FileManagerRowGeometry::default()
     }
 }
 

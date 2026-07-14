@@ -631,6 +631,37 @@ pub struct FileManagerRowArea {
     pub entry_idx: usize,
 }
 
+/// Client-local actions exposed at the right edge of a native file-manager
+/// CURRENT row. The order is also the responsive visibility priority: narrow
+/// layouts retain the earliest complete actions and drop the rest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileManagerRowAction {
+    SendAgent,
+    Rename,
+    Delete,
+}
+
+impl FileManagerRowAction {
+    pub const ALL: [Self; 3] = [Self::SendAgent, Self::Rename, Self::Delete];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::SendAgent => ">",
+            Self::Rename => "r",
+            Self::Delete => "x",
+        }
+    }
+}
+
+/// One exact row-action hit target. The absolute entry index is resolved while
+/// synchronizing the viewport so later input never reconstructs scroll math.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileManagerRowActionArea {
+    pub rect: Rect,
+    pub entry_idx: usize,
+    pub action: FileManagerRowAction,
+}
+
 /// Client-local actions exposed by the native file-manager header. These are
 /// presentation/input tags only; they are not server or wire-protocol state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -916,6 +947,9 @@ pub struct ViewState {
     /// Visible CURRENT rows for the native file manager. Empty while FM is
     /// closed or when its content area has no drawable rows.
     pub file_manager_row_areas: Vec<FileManagerRowArea>,
+    /// Exact, disjoint action targets at the right edge of visible CURRENT
+    /// rows. Empty while FM is closed or the row cannot fit a complete action.
+    pub file_manager_row_action_areas: Vec<FileManagerRowActionArea>,
     /// Named native-FM header actions for this frame. Empty while FM is closed
     /// or when the header cannot preserve its minimum identity width.
     pub file_manager_header_action_areas: Vec<FileManagerHeaderActionArea>,
@@ -2090,6 +2124,7 @@ impl AppState {
                 sidebar_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
                 file_manager_row_areas: Vec::new(),
+                file_manager_row_action_areas: Vec::new(),
                 file_manager_header_action_areas: Vec::new(),
                 file_manager_action_bar: None,
                 tab_bar_rect: Rect::default(),
