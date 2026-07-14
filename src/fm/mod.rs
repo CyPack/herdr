@@ -550,6 +550,26 @@ mod tests {
         assert!(matches!(st.preview, FmPreview::File));
     }
 
+    // TP-B1.1-BOUNDED-READ: selected-file content is prepared in FmState,
+    // before render. The renderer receives immutable text/truncation data and
+    // therefore has no reason to touch the filesystem.
+    #[test]
+    fn fmstate_prepares_selected_text_file_outside_render() {
+        let td = TempDir::new("text-preview-state");
+        let path = td.root.join("sample.txt");
+        fs::write(&path, "state-prepared\r\ncafé\n").expect("write state preview fixture");
+
+        let state = FmState::new(&td.root);
+
+        match &state.preview {
+            FmPreview::File(FmFilePreview::Text(preview)) => {
+                assert_eq!(preview.content, "state-prepared\r\ncafé\n");
+                assert!(!preview.truncated);
+            }
+            other => panic!("selected text file needs prepared preview, got {other:?}"),
+        }
+    }
+
     // TP-A2.2.5: filesystem root has no parent context.
     #[test]
     fn miller_context_at_root_has_no_parent() {
