@@ -2,11 +2,11 @@
 
 ## 1. SONRAKI ADIM
 
-Make TP-C3.2-POPUP-GEOMETRY RED before adding file-manager right-click routing.
-Prove exact live current-row path identity at all Miller breakpoints, bounded
-screen-edge placement, stale reorder/delete rejection, and non-target regions.
-Then make popup lifecycle/disabled dispatch RED. C3 emits intent only; C4/C5
-still own filesystem and agent side effects.
+Make TP-C3.3-PLUGIN-SURFACE RED before adding plugin file actions. Prove valid
+`contexts=["file"]`, wrong/unknown contexts, disabled plugins, one/many exact
+paths, deterministic ordering, duplicate action IDs, and invocation-context
+serialization. C3.3 must not deepen the private TUI socket boundary or perform
+filesystem/agent side effects; C4/C5 retain those responsibilities.
 
 ## 2. AKTİF PROJE
 
@@ -194,6 +194,25 @@ still own filesystem and agent side effects.
   plus one named B0 skip, Linux/Windows clippy, Bun 17/17, Python 64/64,
   fmt/diff clean. Fast graph reindex is fresh at 18,115 nodes / 84,003 edges
   and returned current constructor/variant source rather than relying on ready.
+- Completed C3.2 as six atomic RED/GREEN commits: popup geometry
+  `69864d6`/`ad5f8a5`, lifecycle/typed intent `73df647`/`45c151f`, and
+  disabled render `1078215`/`0915964`.
+- Exact current-row and row-action-cell right click now uses stable path
+  identity, preserves selected bulk members, replaces unselected targets, and
+  opens the existing globally bounded popup at every Miller breakpoint.
+- Context-menu keyboard/mouse focus precedes the visible FM. Disabled rows
+  remain dim and inert; enabled rows emit only typed client-local intent after
+  current path/order/action authority revalidation. Reorder, delete,
+  operation-in-flight, outside click, Esc, and FM close are fail-closed. C3.2
+  executes no filesystem or agent operation.
+- C3.2 gates: popup 4/4, lifecycle 3/3, render 1/1, broad FM/global-menu
+  51/51, menu/render 26/26, full nextest 3033/3033 plus one named B0 skip,
+  Linux/Windows clippy, Bun 17/17, Python 64/64, fmt/diff clean.
+- Fast parallel graph refresh crashed codebase-memory 0.8.1 in native
+  Tree-sitter cleanup. No service/process was restarted or killed. A supported
+  one-shot `CBM_WORKERS=1` CLI refresh completed with zero extraction errors;
+  the current graph is 18,139 nodes / 86,595 edges with fresh C3.2 symbols and
+  source snippet evidence.
 
 ## 6. KOD DURUMU
 
@@ -304,6 +323,15 @@ N4.1 is an auditable seven-commit sequence:
 The compile-failing RED checkpoints were never pushed alone. This continuity/
 graph commit completes the N4.1 publication unit.
 
+C3.2 is an auditable six-commit sequence:
+
+- `69864d6` / `ad5f8a5`: exact path-stable popup geometry RED/GREEN.
+- `73df647` / `45c151f`: keyboard/mouse lifecycle and typed intent RED/GREEN.
+- `1078215` / `0915964`: disabled/highlight-safe render RED/GREEN.
+
+No RED checkpoint is published alone. This continuity/graph commit completes
+the C3.2 publication unit before both CyPack heads are fast-forwarded.
+
 ## 7. TEST KANITI
 
 - B1/FM targeted: 64/64.
@@ -358,6 +386,10 @@ graph commit completes the N4.1 publication unit.
   final full nextest 3015/3015 plus one named B0 interactive probe skip, no
   retry-only closure. Linux/Windows clippy, Bun 17/17, Python 64/64, fmt/diff
   clean.
+- C3.2 focused popup 4/4, lifecycle 3/3, disabled render 1/1; broad
+  FM/global-menu 51/51 and menu/render 26/26. Final full nextest 3033/3033
+  plus one named B0 host-probe skip; Linux all-target and canonical Windows
+  MSVC bin clippy, Bun 17/17, Python 64/64, fmt/diff clean.
 
 ## 8. KRİTİK KARARLAR
 
@@ -383,6 +415,10 @@ graph commit completes the N4.1 publication unit.
 - C3.1 is implementation-complete, fully verified, and graph-indexed. It
   models context intent only and deliberately leaves popup routing/render/
   disabled dispatch to C3.2 and plugin extension to C3.3.
+- C3.2 is implementation-complete, fully verified, and graph-indexed. The
+  popup reuses the global modal stack, disabled actions are inert, and emitted
+  typed intents are revalidated against current prepared path/order authority.
+  C4/C5 remain the sole owners of real side effects.
 - B1 uses minimal pure-Rust syntect outside input/render in a dedicated bounded
   worker. Plain prepared content remains availability authority; highlighting
   is optional enhancement and stale generations never mutate current state.
@@ -404,9 +440,8 @@ graph commit completes the N4.1 publication unit.
 
 See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2/N4 contracts and the
 complete C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1, N3,
-C2, and N4 are closed. The immediate product task is
-TP-C3.2-POPUP-GEOMETRY RED; then follow C3 → C4 → C5 → C6 without skipping
-modules.
+C2, N4, C3.1, and C3.2 are closed. The immediate product task is
+TP-C3.3-PLUGIN-SURFACE RED; then follow C4 → C5 → C6 without skipping modules.
 
 ## 11. ORTAM
 
@@ -444,6 +479,12 @@ modules.
   Freshness queries and source snippets returned current
   `FileManagerContextMenuModel::from_action_bar` precedence/item mapping and
   `ContextMenuKind::File`. Freshness was not inferred from `ready` alone.
+- Post-C3.2 graph refresh completed at 18,139 nodes / 86,595 edges through
+  supported single-worker CLI fallback after the proxy-owned child crashed in
+  parallel native extraction. CLI status, graph search, and source snippet
+  returned `validated_file_context_action`, right-click selection tests, and
+  disabled-render tests. No process/service was restarted or killed, and
+  freshness was not inferred from `ready` alone.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.

@@ -303,10 +303,15 @@ owns filesystem mutation and C5 owns agent delivery.
   RED/GREEN `d9f28b5`/`0832ccc`; focused 5/5, menu-model 7/7, full nextest
   3025/3025 plus one named B0 skip, Linux/Windows clippy, Bun 17/17, Python
   64/64, fmt/diff, and graph freshness clean.
-- [ ] C3.2a route exact right-click current-row identity into the existing
-  popup lifecycle with bounded placement and selection policy.
-- [ ] C3.2b render enabled/disabled file items and prove keyboard/mouse close,
-  highlight, stale-target, and no-side-effect dispatch semantics.
+- [x] C3.2a route exact right-click current-row identity into the existing
+  popup lifecycle with bounded placement and selection policy. RED `69864d6`,
+  GREEN `ad5f8a5`; popup focused 4/4 and broad FM/global-menu 48/48.
+- [x] C3.2b render enabled/disabled file items and prove keyboard/mouse close,
+  highlight, stale-target, and no-side-effect dispatch semantics. Lifecycle
+  RED/GREEN `73df647`/`45c151f`; render RED/GREEN `1078215`/`0915964`.
+  Typed intent is revalidated against current path order and authority; no
+  filesystem or agent side effect runs. Full gate: 3033/3033 plus one named
+  B0 skip, Linux/Windows clippy, Bun 17/17, Python 64/64, fmt/diff clean.
 - [ ] C3.3 define and verify the plugin file-action surface without deepening
   private TUI socket coupling.
 
@@ -354,7 +359,8 @@ owns filesystem mutation and C5 owns agent delivery.
 
 ## Ordering Resolution
 
-A4, B0, B1, the A3 remainder, B2, C1, N3, C2, and N4.2 are complete through
-product head `cb5a43e`. The next execution order is C3 → C4 → C5 → C6.
+A4, B0, B1, the A3 remainder, B2, C1, N3, C2, N4.2, C3.1, and C3.2 are
+complete through product head `0915964`. The next execution order is C3.3 →
+C4 → C5 → C6.
 S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3 remain
 inactive north-star work.

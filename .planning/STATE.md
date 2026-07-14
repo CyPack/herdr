@@ -1,75 +1,76 @@
-# Herdr Planning State
+# Herdr Native-FM Planning State
 
 - Updated: 2026-07-14
 - Branch: `feat/native-fm`
-- N3.2 product checkpoint: `267ad91`. The continuity commit containing this
-  state file is part of the CyPack publication unit.
-- Completed local commits:
-  - `6c7c58f` A2.2 responsive Miller columns (already pushed)
-  - `01ba91d` A4 live filesystem watching (pushed to CyPack feature/master)
-  - `8cd4e89` deterministic lifecycle tests (pushed to CyPack feature/master)
-  - `bcba84d` B0 native image Path Beta feasibility (pushed to CyPack
-    feature/master)
-  - `439ff2c..2b2dcd3` B1 bounded, generation-safe text/syntax preview
-    (fully verified, graph-indexed, and published through continuity commit
-    `a0f82a3` to CyPack feature/master)
-  - `d713b71..9d69c82` A3 cursor viewport, shared row hit geometry, runtime
-    mouse dispatch, and cursor-only v1 selection scope (fully verified,
-    graph-indexed, and published to CyPack feature/master)
-  - `de1eff5..2989434` B2 dependency decision, bounded decoder, client-local
-    placement, generation-safe worker, cached Kitty paint/cleanup, and
-    width-safe non-Kitty fallback (fully verified, graph-indexed, and published
-    to CyPack feature/master)
-  - `0ed5e51` / `c9bfbf9` C1.1 header-action geometry RED/GREEN plus
-    independent test-stability fix `9aa1e59` (fully verified and graph-indexed;
-    published to CyPack feature/master)
-  - `dbc6798` / `7fd01de` C1.2 side-effect-free exact header action dispatch
-    RED/GREEN (fully verified, graph-indexed, and published to CyPack
-    feature/master)
-  - `b5cc95c` / `510eebc` N3.1 selection-sensitive persistent action-bar
-    content RED/GREEN (fully verified, graph-indexed, and published to CyPack
-    feature/master)
-  - `446613a` / `267ad91` N3.2 explicit fail-closed action authority RED/GREEN
-    (fully verified and graph-indexed; publication completes with this
-    continuity commit)
-- Continuity/tooling is versioned by the separate commit containing this state
-  file.
-- Active increment: begin TP-C2.1-ROW-GEOMETRY test-first; define disjoint
-  row name/action rectangles before any row-action dispatch or side effect.
-- Canonical current state: `/home/ayaz/projects/herdr/.codex/CURRENT.md`
-- Durable tasks: `/home/ayaz/projects/herdr/.codex/TASKS.md`
-- Full handoff: `/home/ayaz/projects/herdr/.codex/HANDOFF.md`
-- B1 is implementation-complete at `2b2dcd3`: 64 KiB reader, explicit
-  failures, minimal pure-Rust syntect behind one-active/one-pending worker,
-  path/content generation safety, 128-line and rendered-column limits, and
-  pure responsive render. Final gates: targeted 64/64, full 2948/2948,
-  Linux/Windows clippy, Bun 17/17, Python 64/64.
-- A3 final gates: targeted 164/164, full nextest 2966/2966 plus one named B0
-  host-probe skip, Linux/Windows clippy, Bun 17/17, Python 64/64, and isolated
-  real-PTY mouse/viewport/double-click closure with no temp/process residue.
-- B2 final gates: targeted 96/96; full nextest 2983/2983 plus one named B0
-  interactive probe skip; Linux/Windows clippy; Bun 17/17; Python 64/64;
-  source-to-host image comparison 0/271425 pixel difference; host cleanup and
-  semantic exit with zero process/socket/temp residue.
-- C1.1 final gates: geometry/render/ViewState 4/4; lifecycle family 27/27;
-  full nextest 2986/2986 plus one named B0 host-probe skip; Linux/Windows
-  clippy; Bun 17/17; Python 64/64; fmt/diff clean. Full graph: 17,986 nodes /
-  83,818 edges with the header action types and geometry seam verified.
-- C1.2 final gates: exact dispatch 2/2; FM input 13/13; full nextest 2988/2988
-  plus one named B0 host-probe skip; Linux/Windows clippy; Bun 17/17; Python
-  64/64; fmt/diff clean. Full graph: 17,993 nodes / 84,009 edges with dispatch,
-  handler, outer input connection, and tests verified.
-- N3.1 final gates: targeted 3/3; FM 135/135; full nextest 2991/2991 plus one
-  named B0 host-probe skip; Linux/Windows clippy; Bun 17/17; Python 64/64;
-  fmt/diff clean. Full graph: 18,009 nodes / 83,964 edges with action-bar
-  model, desktop/mobile/render connections, and tests verified.
-- N3.2 final gates: exact authority/preparation/render/dispatch 7/7; FM/input/
-  render/Kitty 165/165; full nextest 2996/2996 plus one named B0 host-probe
-  skip; Linux/Windows clippy; Bun 17/17; Python 64/64; fmt/diff clean. Full
-  graph: 18,026 nodes / 84,120 edges with `miller_layout`, action authority,
-  state preparation, and input consumption verified.
-- First next code action: make TP-C2.1-ROW-GEOMETRY RED for disjoint row
-  name/action rectangles across responsive, scrolled, narrow, Unicode, and
-  degenerate layouts.
-- Next code order: C2, N4, then C3 through C6. Deferred
-  architecture and north-star missions remain recorded in `.codex/TASKS.md`.
+- Published CyPack base: `4bedd55`
+- Verified C3.2 product head: `0915964`
+- Publication unit: six C3.2 RED/GREEN commits plus the continuity/graph commit
+  containing this file. Push only CyPack `feat/native-fm` and fork `master`
+  after fast-forward ancestry and exact remote-SHA verification.
+
+## Completed
+
+- A2.2 responsive Miller columns.
+- A3 viewport, stable row geometry, keyboard/mouse navigation.
+- A4 native watcher plus bounded reconciliation fallback.
+- B0 image Path Beta, B1 bounded text preview, B2 bounded native image preview.
+- C1/N3 header actions, prepared selection authority, and clipboard model.
+- C2/N4 stable row actions, cursor-independent bounded multi-selection, and
+  bulk authority.
+- C3.1 deterministic file context-menu model.
+- C3.2 global-popup reuse, exact path-stable right-click selection policy,
+  bounded placement, keyboard/mouse lifecycle, disabled styling, activation-
+  time authority revalidation, and typed client-local intent only.
+
+## Active Next Increment
+
+TP-C3.3-PLUGIN-SURFACE must be RED before production changes.
+
+Test points:
+
+- Accept only valid enabled manifest actions with `contexts=["file"]`.
+- Reject wrong/unknown contexts, disabled plugins, malformed or duplicate IDs.
+- Preserve deterministic built-in/plugin ordering for one and many exact paths.
+- Serialize invocation context from prepared explicit path authority only.
+- Do not add private TUI-only socket fields or execute filesystem/agent work.
+- Preserve existing plugin, context-menu, FM/watcher, and full-repo regressions.
+
+## Ordered Roadmap
+
+1. C3.3 plugin file-action surface.
+2. C4 safe copy/move, trash/delete, rename/bulk rename, bounded progress/cancel,
+   TOCTOU, collision, permission, cross-filesystem, partial-failure, and watcher
+   reconciliation tests.
+3. C5 exact pane/agent handoff, quoting/identity, split-and-launch failure
+   cleanup, and isolated-session safety.
+4. C6 Finder-fidelity sidebar, highlight/location marker, integrated actions,
+   theme/spacing/empty/error states, and visual review.
+5. Deferred evidence-gated architecture: S5 ComponentRegistry, S6 persisted
+   resizable shell, S7 popup stack, N2 dynamic Miller navigation.
+6. North-star backlog: M1 interactive CLI attachments, M2 git-worktree
+   controls, M3 general panel/page/button interface evaluation.
+
+## Fresh C3.2 Evidence
+
+- Focused popup 4/4; lifecycle 3/3; disabled render 1/1.
+- Broad FM/global-menu 51/51; menu/render 26/26.
+- Full nextest 3033/3033; only the named B0 interactive host probe skipped.
+- Linux all-target and canonical Windows MSVC bin clippy clean with
+  `-D warnings`.
+- Bun 17/17; Python maintenance 64/64; fmt and diff-check clean.
+- Graph refresh: 18,139 nodes / 86,595 edges. Parallel codebase-memory 0.8.1
+  extraction crashed in native Tree-sitter cleanup; without restarting or
+  killing any service, the supported `CBM_WORKERS=1` one-shot CLI fallback
+  completed with zero extraction errors and returned current C3.2 production,
+  test, and source-snippet evidence.
+
+## Non-Negotiable Boundaries
+
+- Pure render; filesystem preparation and execution stay outside render.
+- No production `unwrap()` and no hidden authority from labels/coordinates.
+- C3 emits intent only; C4/C5 own all side effects and execution-time checks.
+- Never touch stable Herdr/socket or kill/restart user processes.
+- Targeted staging only; never `git add -A`; never push `upstream` or force.
+
+Canonical sources: `.codex/CURRENT.md`, `.codex/TASKS.md`, and
+`.codex/HANDOFF.md`.

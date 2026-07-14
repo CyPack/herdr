@@ -4,10 +4,10 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Active C3.1 product checkpoint: `0832ccc`
-  (`fix: enforce file context menu authority precedence`).
-- The C3.1 publication unit is the four-commit test/product sequence, its
-  preceding test-point plan commit, and the
+- Active C3.2 product checkpoint: `0915964`
+  (`feat: render disabled native file context actions`).
+- The C3.2 publication unit is the six-commit RED/GREEN test/product sequence,
+  the preceding C3.1 model range, and the
   continuity/graph commit containing this file. At publication, CyPack
   `feat/native-fm` and fork `master` are verified at that same fast-forward
   branch tip.
@@ -224,13 +224,42 @@
   UnsupportedSelection; malformed/missing action state maps to stale rather
   than granting authority. C3.1 performs no popup opening or action execution.
 - Existing workspace/tab/pane/project menu item behavior and static-label API
-  remain unchanged. Temporary, commented dead-code allowances have the exact
-  C3.2 routing removal condition and preserve crate-wide `-D warnings`.
+  remain unchanged. The temporary C3.1 dead-code allowances named their C3.2
+  removal condition and were removed when production routing became live.
 - Fresh gates: C3.1 5/5, combined existing/new menu models 7/7, full nextest
   3025/3025 with only the named B0 host probe ignored, Linux all-target and
   Windows MSVC bin clippy clean, Bun 17/17, Python 64/64, fmt/diff clean. Fast
   graph reindex is fresh at 18,115 nodes / 84,003 edges and returns current
   model constructor and File kind source.
+
+## Verified Checkpoint — C3.2 File Context-Menu Popup and Lifecycle
+
+- C3.2 is an auditable six-commit RED/GREEN sequence: popup geometry
+  `69864d6`/`ad5f8a5`, lifecycle and typed intent `73df647`/`45c151f`, and
+  disabled render `1078215`/`0915964`. No RED checkpoint was pushed alone.
+- Exact unmodified right-click on a current Miller row or its row-action cells
+  requires matching live index/path identity. A selected member preserves the
+  explicit bulk set and moves cursor focus; an unselected row becomes the one
+  exact selection before the menu model is prepared. Stale, modified,
+  non-row, hidden, and zero geometry fail closed.
+- The existing global `ContextMenuState` owns placement, hover, keyboard,
+  outside-click, and close lifecycle. Popup geometry stays inside the complete
+  screen at one/two/three-column breakpoints and keeps all six rows plus
+  borders reachable.
+- Disabled items stay visibly dim even while highlighted and cannot be taken
+  by keyboard or mouse. Enabled activation emits only a client-local typed
+  `{ action, paths }` intent. Reorder, delete, unsupported/in-flight authority,
+  or FM close is revalidated/cleared before intent; C3 performs no filesystem
+  or agent side effect.
+- Fresh gates: popup 4/4, lifecycle 3/3, disabled render 1/1, broad FM/global
+  menu 51/51, menu/render regression 26/26, full nextest 3033/3033 with only
+  the named B0 host probe skipped, Linux all-target and Windows MSVC bin
+  clippy clean, Bun 17/17, Python 64/64, fmt/diff clean.
+- Parallel graph extraction exposed a native codebase-memory 0.8.1
+  `munmap_chunk()` crash. The proxy was not restarted or killed. The supported
+  one-shot `CBM_WORKERS=1` CLI fallback completed with zero extraction errors;
+  the fresh graph is 18,139 nodes / 86,595 edges and returns the current
+  validation function plus right-click and disabled-render tests.
 
 ## Completed Checkpoint — B2 Native Image Preview
 
@@ -368,6 +397,12 @@
   authority tests; freshness was not inferred from `ready` alone.
 - Publication uses sequential fast-forward pushes to both CyPack heads and
   exact remote-SHA equality. `upstream` is never pushed.
+- Post-C3.2 graph refresh completed through the supported single-worker CLI
+  fallback after parallel extraction crashed the proxy-owned child. Freshness
+  was proven at 18,139 nodes / 86,595 edges with
+  `validated_file_context_action`, the exact right-click selection test, the
+  disabled-render test, and a current source snippet; `ready` alone was not
+  accepted.
 
 ## Standing Git Authorization
 
@@ -379,12 +414,12 @@
 
 ## Exact Next Action
 
-1. Begin TP-N4.2-BULK-AUTHORITY RED before production changes. Characterize
-   zero/one/many selections, mixed supported/unsupported or stale members,
-   read-only destinations, clipboard state, clear/select-all bounds, range
-   limits, and operation-in-flight precedence. Toolbar labels/counts and every
-   enabled/disabled reason must derive only from prepared live selection
-   authority; no real filesystem operation lands in N4.2.
+1. Begin TP-C3.3-PLUGIN-SURFACE RED before production changes. Characterize
+   `contexts=["file"]`, wrong/unknown contexts, disabled plugins, one/many
+   paths, deterministic ordering, duplicate action IDs, and invocation-context
+   serialization. Valid actions append only from explicit prepared path
+   authority; invalid declarations fail closed, and no private TUI-only socket
+   field or filesystem/agent side effect lands in C3.3.
 
 ## Verified B2.0 Dependency Decision
 
