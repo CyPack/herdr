@@ -414,7 +414,10 @@ fn reject_destination_collision(
 #[cfg(test)]
 mod tests {
     use super::{
-        FileOperationKind, FileOperationPlan, FileOperationPreflightError, FileOperationRequest,
+        execute_file_operation, execute_file_operation_with_observer, FileOperationCancellation,
+        FileOperationExecutionError, FileOperationExecutionStatus, FileOperationItemOutcome,
+        FileOperationKind, FileOperationPhase, FileOperationPlan, FileOperationPreflightError,
+        FileOperationRequest,
     };
     use crate::fm::MAX_MULTI_SELECTION_PATHS;
     use std::fs;
@@ -475,6 +478,160 @@ mod tests {
             destination_directory,
             operation_in_flight: false,
         }
+    }
+
+    fn operation_artifacts(directory: &PathBuf) -> Vec<PathBuf> {
+        fs::read_dir(directory)
+            .expect("read operation destination")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".herdr-"))
+            .map(|entry| entry.path())
+            .collect()
+    }
+
+    // TP-C4.1-COPY: file, directory, and multi-source copy stage completely,
+    // publish in prepared order, preserve source data, and leave no temp data.
+    #[test]
+    fn file_operation_copy_commits_files_directories_and_metadata() {
+        let td = TempDir::new("copy-success");
+        let first = td.file("source/first.txt", b"first contents");
+        let directory = td.dir("source/tree");
+        td.file("source/tree/nested/child.txt", b"nested contents");
+        let destination = td.dir("destination");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+            fs::set_permissions(&first, fs::Permissions::from_mode(0o640))
+                .expect("set source mode");
+            assert_eq!(
+                fs::metadata(&first).expect("source metadata").mode() & 0o777,
+                0o640
+            );
+        }
+
+        let plan = FileOperationPlan::preflight(request(
+            FileOperationKind::Copy,
+            vec![first.clone(), directory.clone()],
+            destination.clone(),
+        ))
+        .expect("copy plan");
+        let result = execute_file_operation(&plan, &FileOperationCancellation::default());
+
+        assert_eq!(result.status(), FileOperationExecutionStatus::Completed);
+        assert_eq!(result.items().len(), 2);
+        assert_eq!(result.items()[0].source(), first);
+        assert_eq!(result.items()[1].source(), directory);
+        assert!(result
+            .items()
+            .iter()
+            .all(|item| item.outcome() == &FileOperationItemOutcome::Committed));
+        assert_eq!(
+            fs::read(destination.join("first.txt")).expect("read copied file"),
+            b"first contents"
+        );
+        assert_eq!(
+            fs::read(destination.join("tree/nested/child.txt")).expect("read copied nested file"),
+            b"nested contents"
+        );
+        assert_eq!(
+            fs::read(&first).expect("source file remains"),
+            b"first contents"
+        );
+        assert!(directory.exists());
+        assert!(operation_artifacts(&destination).is_empty());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+
+            assert_eq!(
+                fs::metadata(destination.join("first.txt"))
+                    .expect("copied metadata")
+                    .mode()
+                    & 0o777,
+                0o640
+            );
+        }
+    }
+
+    // TP-C4.1-COPY: an unsupported nested entry fails the item explicitly and
+    // removes every staged byte before any destination becomes visible.
+    #[cfg(unix)]
+    #[test]
+    fn file_operation_copy_failure_cleans_staging_without_partial_publish() {
+        let td = TempDir::new("copy-failure-cleanup");
+        let directory = td.dir("source/tree");
+        td.file("source/tree/00-before.txt", b"would have been staged");
+        std::os::unix::fs::symlink(td.root.join("outside"), td.root.join("source/tree/99-link"))
+            .expect("create unsupported nested symlink");
+        let destination = td.dir("destination");
+        let plan = FileOperationPlan::preflight(request(
+            FileOperationKind::Copy,
+            vec![directory.clone()],
+            destination.clone(),
+        ))
+        .expect("top-level directory plan");
+
+        let result = execute_file_operation(&plan, &FileOperationCancellation::default());
+
+        assert_eq!(result.status(), FileOperationExecutionStatus::Failed);
+        assert_eq!(result.items().len(), 1);
+        assert!(matches!(
+            result.items()[0].outcome(),
+            FileOperationItemOutcome::Failed(FileOperationExecutionError::SourceSymlink {
+                path
+            }) if path.ends_with("99-link")
+        ));
+        assert!(!destination.join("tree").exists());
+        assert!(operation_artifacts(&destination).is_empty());
+        assert!(directory.exists());
+    }
+
+    // TP-C4.1-COPY: cancellation is idempotent both before start and after a
+    // staging event, and neither path publishes or leaks temp artifacts.
+    #[test]
+    fn file_operation_copy_cancellation_is_idempotent_and_cleans_staging() {
+        let td = TempDir::new("copy-cancel");
+        let source = td.file("source.txt", b"source contents");
+        let destination = td.dir("destination");
+        let plan = FileOperationPlan::preflight(request(
+            FileOperationKind::Copy,
+            vec![source.clone()],
+            destination.clone(),
+        ))
+        .expect("copy plan");
+
+        let cancelled = FileOperationCancellation::default();
+        cancelled.cancel();
+        cancelled.cancel();
+        let before_start = execute_file_operation(&plan, &cancelled);
+        assert_eq!(
+            before_start.status(),
+            FileOperationExecutionStatus::Cancelled
+        );
+        assert_eq!(
+            before_start.items()[0].outcome(),
+            &FileOperationItemOutcome::NotStarted
+        );
+        assert!(!destination.join("source.txt").exists());
+        assert!(operation_artifacts(&destination).is_empty());
+
+        let during_staging = FileOperationCancellation::default();
+        let result = execute_file_operation_with_observer(&plan, &during_staging, |event| {
+            if event.phase() == FileOperationPhase::StagingEntry {
+                during_staging.cancel();
+            }
+        });
+        assert_eq!(result.status(), FileOperationExecutionStatus::Cancelled);
+        assert_eq!(
+            result.items()[0].outcome(),
+            &FileOperationItemOutcome::NotStarted
+        );
+        assert!(!destination.join("source.txt").exists());
+        assert!(operation_artifacts(&destination).is_empty());
+        assert!(source.exists());
     }
 
     // TP-C4.1-PREFLIGHT-PLAN: exact prepared path order survives planning and
