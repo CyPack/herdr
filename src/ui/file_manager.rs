@@ -1477,9 +1477,8 @@ mod tests {
         assert!(!narrow.contains("[delete]"), "narrow header: {narrow:?}");
     }
 
-    // TP-N3.1-CONTENT: the pure persistent action-bar model carries the live
-    // directory/file/empty selection identity and client-local clipboard
-    // summary without reading the filesystem during render.
+    // TP-N4.2-BULK-AUTHORITY: cursor focus alone is not bulk authority; the
+    // model carries explicit one/many paths in current visible order.
     #[test]
     fn action_bar_model_tracks_selection_kind_and_clipboard_content() {
         let td = TempDir::new("action-bar-model");
@@ -1487,21 +1486,37 @@ mod tests {
         td.file("beta.txt");
         let mut fm = FmState::new(&td.root);
 
+        let cursor_only = compute_file_manager_action_bar_model(&fm, &[], false);
+        assert!(cursor_only.selection.is_none());
+        assert_eq!(cursor_only.clipboard_count, 0);
+
+        assert!(fm.replace_selection(0));
         let directory = compute_file_manager_action_bar_model(&fm, &[], false);
         let selection = directory.selection.as_ref().expect("directory selection");
         assert_eq!(selection.label, "alpha-dir");
-        assert_eq!(selection.path, td.root.join("alpha-dir"));
+        assert_eq!(selection.paths, vec![td.root.join("alpha-dir")]);
         assert_eq!(selection.kind, FileManagerActionBarSelectionKind::Directory);
         assert_eq!(directory.clipboard_count, 0);
 
-        fm.move_down();
+        assert!(fm.toggle_selection(1));
         let clipboard = vec![td.root.join("copied-one"), td.root.join("copied-two")];
+        let multiple = compute_file_manager_action_bar_model(&fm, &clipboard, false);
+        let selection = multiple.selection.as_ref().expect("multiple selection");
+        assert_eq!(selection.label, "2 selected");
+        assert_eq!(
+            selection.paths,
+            vec![td.root.join("alpha-dir"), td.root.join("beta.txt")]
+        );
+        assert_eq!(selection.kind, FileManagerActionBarSelectionKind::Multiple);
+        assert_eq!(multiple.clipboard_count, 2);
+
+        fm.clear_multi_selection();
+        assert!(fm.replace_selection(1));
         let file = compute_file_manager_action_bar_model(&fm, &clipboard, false);
         let selection = file.selection.as_ref().expect("file selection");
         assert_eq!(selection.label, "beta.txt");
-        assert_eq!(selection.path, td.root.join("beta.txt"));
+        assert_eq!(selection.paths, vec![td.root.join("beta.txt")]);
         assert_eq!(selection.kind, FileManagerActionBarSelectionKind::File);
-        assert_eq!(file.clipboard_count, 2);
 
         let empty = TempDir::new("action-bar-empty");
         let empty_model =
@@ -1510,51 +1525,105 @@ mod tests {
         assert_eq!(empty_model.clipboard_count, 0);
     }
 
-    // TP-N3.1-RENDER: the persistent header visibly follows prepared model
-    // content; the component fallback uses AppState only and performs no I/O.
+    // TP-N4.2-BULK-AUTHORITY: prepared bulk paths follow current natural list
+    // order rather than the BTreeSet's lexical path order.
+    #[test]
+    fn bulk_selection_paths_follow_current_visible_order() {
+        let td = TempDir::new("bulk-selection-visible-order");
+        td.file("file2.txt");
+        td.file("file10.txt");
+        let mut fm = FmState::new(&td.root);
+        assert_eq!(
+            fm.entries
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["file2.txt", "file10.txt"]
+        );
+        assert!(fm.replace_selection(0));
+        assert!(fm.toggle_selection(1));
+
+        let model = compute_file_manager_action_bar_model(&fm, &[], false);
+        assert_eq!(
+            model.selection.expect("bulk selection").paths,
+            vec![td.root.join("file2.txt"), td.root.join("file10.txt")]
+        );
+    }
+
+    // TP-N4.2-BULK-AUTHORITY: the persistent header distinguishes no explicit
+    // selection, one selected identity, and a many-selection count.
     #[test]
     fn action_bar_renders_selected_name_clipboard_count_and_empty_state() {
         let td = TempDir::new("action-bar-render");
         td.file("selected.txt");
-        let mut app = app_with_fm(FmState::new(&td.root));
+        td.file("second.txt");
+        let mut fm = FmState::new(&td.root);
+        let mut app = app_with_fm(fm.clone());
         app.file_manager_clipboard = vec![td.root.join("copied.txt")];
 
+        let cursor_only_header = render_rows(&app, 160, 5)[0].clone();
+        assert!(
+            cursor_only_header.contains("no selection"),
+            "cursor-only header: {cursor_only_header:?}"
+        );
+        assert!(
+            cursor_only_header.contains("clipboard: 1"),
+            "cursor-only header: {cursor_only_header:?}"
+        );
+
+        let selected_index = fm
+            .entries
+            .iter()
+            .position(|entry| entry.name == "selected.txt")
+            .expect("selected fixture index");
+        assert!(fm.replace_selection(selected_index));
+        app.file_manager = Some(fm.clone());
         let selected_header = render_rows(&app, 160, 5)[0].clone();
-        assert!(
-            selected_header.contains("selected.txt"),
-            "selected header: {selected_header:?}"
-        );
-        assert!(
-            selected_header.contains("clipboard: 1"),
-            "selected header: {selected_header:?}"
-        );
+        assert!(selected_header.contains("selected.txt"));
+
+        let second_index = fm
+            .entries
+            .iter()
+            .position(|entry| entry.name == "second.txt")
+            .expect("second fixture index");
+        assert!(fm.toggle_selection(second_index));
+        app.file_manager = Some(fm);
+        let multiple_header = render_rows(&app, 160, 5)[0].clone();
+        assert!(multiple_header.contains("2 selected"));
 
         let empty = TempDir::new("action-bar-render-empty");
         let empty_app = app_with_fm(FmState::new(&empty.root));
         let empty_header = render_rows(&empty_app, 160, 5)[0].clone();
         assert!(
-            empty_header.contains("empty"),
+            empty_header.contains("no selection"),
             "empty header: {empty_header:?}"
         );
         assert!(!empty_header.contains("selected.txt"));
     }
 
-    // TP-N3.2-AUTHORITY: prepared selection, clipboard, target writability,
-    // target support, and in-flight state map to explicit action authority.
+    // TP-N4.2-BULK-AUTHORITY: every selected path must be live and supported;
+    // target writability and in-flight precedence remain explicit.
     #[test]
     fn action_bar_authority_is_explicit_and_fail_closed() {
         use crate::app::state::FileManagerActionDisabledReason;
 
         let td = TempDir::new("action-authority");
         td.file("selected.txt");
+        td.file("unsupported.txt");
         let mut fm = FmState::new(&td.root);
 
         let base = compute_file_manager_action_bar_model(&fm, &[], false);
-        assert!(
-            base.action_state(FileManagerHeaderAction::Copy)
-                .expect("copy state")
-                .enabled
-        );
+        for action in [
+            FileManagerHeaderAction::Copy,
+            FileManagerHeaderAction::Delete,
+        ] {
+            assert_eq!(
+                base.action_state(action)
+                    .expect("selection action state")
+                    .disabled_reason,
+                Some(FileManagerActionDisabledReason::NoSelection)
+            );
+        }
         assert_eq!(
             base.action_state(FileManagerHeaderAction::Paste)
                 .expect("paste state")
@@ -1566,8 +1635,17 @@ mod tests {
                 .expect("new-folder state")
                 .enabled
         );
+        assert!(fm.replace_selection(0));
+        let selected = compute_file_manager_action_bar_model(&fm, &[], false);
         assert!(
-            base.action_state(FileManagerHeaderAction::Delete)
+            selected
+                .action_state(FileManagerHeaderAction::Copy)
+                .expect("copy state")
+                .enabled
+        );
+        assert!(
+            selected
+                .action_state(FileManagerHeaderAction::Delete)
                 .expect("delete state")
                 .enabled
         );
@@ -1580,22 +1658,6 @@ mod tests {
                 .expect("paste state")
                 .enabled
         );
-
-        let empty = TempDir::new("authority-empty");
-        let no_selection =
-            compute_file_manager_action_bar_model(&FmState::new(&empty.root), &[], false);
-        for action in [
-            FileManagerHeaderAction::Copy,
-            FileManagerHeaderAction::Delete,
-        ] {
-            assert_eq!(
-                no_selection
-                    .action_state(action)
-                    .expect("selection action state")
-                    .disabled_reason,
-                Some(FileManagerActionDisabledReason::NoSelection)
-            );
-        }
 
         fm.cwd_writable = false;
         let read_only = compute_file_manager_action_bar_model(&fm, &clipboard, false);
@@ -1620,7 +1682,8 @@ mod tests {
         }
 
         fm.cwd_writable = true;
-        fm.entries[0].operation_supported = false;
+        assert!(fm.toggle_selection(1));
+        fm.entries[1].operation_supported = false;
         let unsupported = compute_file_manager_action_bar_model(&fm, &clipboard, false);
         for action in [
             FileManagerHeaderAction::Copy,
@@ -1632,6 +1695,22 @@ mod tests {
                     .expect("selection action state")
                     .disabled_reason,
                 Some(FileManagerActionDisabledReason::UnsupportedSelection)
+            );
+        }
+
+        fm.entries[1].operation_supported = true;
+        fm.entries.clear();
+        let stale = compute_file_manager_action_bar_model(&fm, &clipboard, false);
+        for action in [
+            FileManagerHeaderAction::Copy,
+            FileManagerHeaderAction::Delete,
+        ] {
+            assert_eq!(
+                stale
+                    .action_state(action)
+                    .expect("stale selection action state")
+                    .disabled_reason,
+                Some(FileManagerActionDisabledReason::StaleSelection)
             );
         }
 
@@ -1653,10 +1732,12 @@ mod tests {
     fn disabled_header_action_uses_distinct_style() {
         let td = TempDir::new("disabled-action-style");
         td.file("selected.txt");
-        let enabled_app = app_with_fm(FmState::new(&td.root));
+        let mut fm = FmState::new(&td.root);
+        assert!(fm.replace_selection(0));
+        let enabled_app = app_with_fm(fm.clone());
         let enabled = render_buffer(&enabled_app, 160, 5);
 
-        let mut disabled_app = app_with_fm(FmState::new(&td.root));
+        let mut disabled_app = app_with_fm(fm);
         disabled_app.file_manager_operation_in_flight = true;
         let disabled = render_buffer(&disabled_app, 160, 5);
 
