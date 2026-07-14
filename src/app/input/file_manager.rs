@@ -7,8 +7,11 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
-use crate::app::state::{AppState, FileManagerHeaderAction, FileManagerRowAction};
-use crate::app::{App, FileManagerClickState};
+use crate::app::state::{
+    AppState, ContextMenuKind, ContextMenuState, FileManagerContextMenuModel,
+    FileManagerHeaderAction, FileManagerRowAction, MenuListState,
+};
+use crate::app::{App, FileManagerClickState, Mode};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum FileManagerMouseDispatch {
@@ -141,6 +144,26 @@ impl App {
             });
         let entry_idx = entry_target.as_ref().map(|(entry_idx, _)| *entry_idx);
 
+        let context_entry_target = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right))
+            .then(|| {
+                entry_target.clone().or_else(|| {
+                    self.state
+                        .view
+                        .file_manager_row_action_areas
+                        .iter()
+                        .find(|area| rect_contains(area.rect, mouse.column, mouse.row))
+                        .and_then(|area| {
+                            let entry =
+                                self.state.file_manager.as_ref().and_then(|file_manager| {
+                                    file_manager.entries.get(area.entry_idx)
+                                })?;
+                            (entry.path == area.entry_path)
+                                .then(|| (area.entry_idx, area.entry_path.clone()))
+                        })
+                })
+            })
+            .flatten();
+
         let row_action = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
             .then_some(())
             .filter(|_| mouse.modifiers.is_empty())
@@ -187,6 +210,48 @@ impl App {
                 self.last_file_manager_click = None;
                 return row_action;
             }
+        }
+
+        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
+            self.last_file_manager_click = None;
+            if mouse.modifiers.is_empty() {
+                if let Some((entry_idx, entry_path)) = context_entry_target {
+                    let selection_ready =
+                        self.state
+                            .file_manager
+                            .as_mut()
+                            .is_some_and(|file_manager| {
+                                if file_manager.multi_selection_paths().contains(&entry_path) {
+                                    file_manager.select(entry_idx)
+                                } else {
+                                    file_manager.replace_selection(entry_idx)
+                                }
+                            });
+                    if selection_ready {
+                        let action_bar = self.state.file_manager.as_ref().map(|file_manager| {
+                            crate::ui::compute_file_manager_action_bar_model(
+                                file_manager,
+                                &self.state.file_manager_clipboard,
+                                self.state.file_manager_operation_in_flight,
+                            )
+                        });
+                        if let Some((action_bar, model)) = action_bar.and_then(|action_bar| {
+                            FileManagerContextMenuModel::from_action_bar(&action_bar)
+                                .map(|model| (action_bar, model))
+                        }) {
+                            self.state.view.file_manager_action_bar = Some(action_bar);
+                            self.state.context_menu = Some(ContextMenuState {
+                                kind: ContextMenuKind::File { model },
+                                x: mouse.column,
+                                y: mouse.row,
+                                list: MenuListState::new(0),
+                            });
+                            self.state.mode = Mode::ContextMenu;
+                        }
+                    }
+                }
+            }
+            return FileManagerMouseDispatch::Consumed;
         }
 
         match mouse.kind {

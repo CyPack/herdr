@@ -716,9 +716,6 @@ pub enum FileManagerActionDisabledReason {
     NoSelection,
     EmptyClipboard,
     ReadOnlyTarget,
-    // C3.1 prepares this reason before C3.2 production routing constructs a
-    // multi-target file menu; remove the allowance when that routing lands.
-    #[allow(dead_code)]
     MultipleSelection,
     StaleSelection,
     UnsupportedSelection,
@@ -746,9 +743,6 @@ impl FileManagerActionBarModel {
     }
 }
 
-// C3.1 is the testable model increment; C3.2 will construct these kinds from
-// live right-click routing and remove this temporary allowance.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileManagerContextMenuTargetKind {
     File,
@@ -757,9 +751,6 @@ pub enum FileManagerContextMenuTargetKind {
     Unavailable,
 }
 
-// C3.2 consumes these typed tags during popup dispatch; keep C3.1 warning-free
-// without weakening the crate-wide warning policy in the interim.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileManagerContextMenuAction {
     Open,
@@ -770,7 +761,6 @@ pub enum FileManagerContextMenuAction {
     SendAgent,
 }
 
-#[allow(dead_code)] // Removed when C3.2 render/dispatch consumes ALL and label.
 impl FileManagerContextMenuAction {
     pub const ALL: [Self; 6] = [
         Self::Open,
@@ -817,7 +807,6 @@ pub struct FileManagerContextMenuModel {
     pub items: [FileManagerContextMenuItem; 6],
 }
 
-#[allow(dead_code)] // Removed when C3.2 right-click routing builds this model.
 impl FileManagerContextMenuModel {
     /// Derive file-menu presentation authority only from the already-prepared
     /// N4.2 action-bar snapshot. This performs no cursor or filesystem reads.
@@ -895,7 +884,6 @@ impl FileManagerContextMenuModel {
     }
 }
 
-#[allow(dead_code)] // Transitively live once C3.2 calls from_action_bar.
 fn prepared_action_disabled_reason(
     state: Option<&FileManagerActionState>,
 ) -> Option<FileManagerActionDisabledReason> {
@@ -1571,7 +1559,6 @@ pub enum ContextMenuKind {
     },
     /// Native-FM action model prepared from explicit client-local selection.
     /// C3.1 models intent only; C4/C5 own eventual execution authority.
-    #[allow(dead_code)] // C3.2 constructs this variant from right-click input.
     File {
         model: FileManagerContextMenuModel,
     },
