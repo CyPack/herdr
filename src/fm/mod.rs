@@ -12,6 +12,7 @@
 
 pub(crate) mod image_preview;
 mod natsort;
+pub(crate) mod operations;
 mod text_preview;
 pub(crate) mod watcher;
 
