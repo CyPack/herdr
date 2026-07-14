@@ -646,8 +646,12 @@ mod tests {
     };
     use crate::app::state::{
         FileManagerContextActionIntent, FileManagerContextMenuAction, FileManagerDeleteKind,
-        FileManagerDeleteRequest, FileManagerHeaderAction, FileManagerOperationKind,
-        FileManagerOperationState, FileManagerOperationStatus,
+        FileManagerDeleteRequest, FileManagerHeaderAction, FileManagerOperationItemStatus,
+        FileManagerOperationKind, FileManagerOperationState, FileManagerOperationStatus,
+    };
+    use crate::fm::delete::{
+        execute_delete_operation_with_host, DeleteBackendError, DeleteOperationHost,
+        DeleteOperationKind, DeleteOperationPlan, DeleteOperationRequest, PlannedDeletePathKind,
     };
     use crate::fm::operations::{
         execute_file_operation, FileOperationCancellation, FileOperationExecutionStatus,
@@ -1149,6 +1153,78 @@ mod tests {
         assert_eq!(
             fs::read(source).expect("busy source preserved"),
             b"selected"
+        );
+    }
+
+    // TP-C4.2-RECOVERY: partial destructive completion remains exact path
+    // evidence in pure AppState instead of collapsing to aggregate counts.
+    #[test]
+    fn delete_partial_result_projects_ordered_per_item_recovery_state() {
+        struct PartialHost {
+            retained: PathBuf,
+        }
+
+        impl DeleteOperationHost for PartialHost {
+            fn delete_path(
+                &mut self,
+                _operation: DeleteOperationKind,
+                _path_kind: PlannedDeletePathKind,
+                path: &std::path::Path,
+            ) -> Result<(), DeleteBackendError> {
+                if path == self.retained {
+                    return Err(DeleteBackendError::Io(std::io::ErrorKind::PermissionDenied));
+                }
+                fs::remove_file(path).map_err(|error| DeleteBackendError::Io(error.kind()))
+            }
+        }
+
+        let td = TempDir::new("delete-partial-projection");
+        let first = td.root.join("first.txt");
+        let retained = td.root.join("retained.txt");
+        let last = td.root.join("last.txt");
+        fs::write(&first, b"first").expect("write first delete projection fixture");
+        fs::write(&retained, b"retained").expect("write retained delete projection fixture");
+        fs::write(&last, b"last").expect("write last delete projection fixture");
+        let plan = DeleteOperationPlan::preflight(DeleteOperationRequest {
+            kind: DeleteOperationKind::Permanent,
+            paths: vec![first.clone(), retained.clone(), last.clone()],
+            operation_in_flight: false,
+        })
+        .expect("valid partial delete plan");
+        let result = execute_delete_operation_with_host(
+            &plan,
+            &FileOperationCancellation::default(),
+            &mut PartialHost {
+                retained: retained.clone(),
+            },
+        );
+        let mut operation = FileManagerOperationState {
+            generation: 1,
+            kind: FileManagerOperationKind::PermanentDelete,
+            destination_directory: td.root.clone(),
+            total_items: 3,
+            completed_items: 0,
+            failed_items: 0,
+            status: FileManagerOperationStatus::Running,
+            items: Vec::new(),
+        };
+
+        super::apply_delete_execution_result(&mut operation, &result);
+
+        assert_eq!(operation.status, FileManagerOperationStatus::Partial);
+        assert_eq!(operation.completed_items, 2);
+        assert_eq!(operation.failed_items, 1);
+        assert_eq!(
+            operation
+                .items
+                .iter()
+                .map(|item| (item.path.clone(), item.status))
+                .collect::<Vec<_>>(),
+            vec![
+                (first, FileManagerOperationItemStatus::Completed),
+                (retained, FileManagerOperationItemStatus::Retained),
+                (last, FileManagerOperationItemStatus::Completed),
+            ]
         );
     }
 }
