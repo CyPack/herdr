@@ -884,6 +884,38 @@ mod tests {
             .is_empty());
     }
 
+    // TP-N4.2-BULK-AUTHORITY: keyboard range growth uses the same atomic
+    // ceiling as the state method; rejected growth cannot move focus alone.
+    #[test]
+    fn keyboard_range_overflow_preserves_cursor_paths_and_anchor() {
+        let mut fm = FmState::test_empty("/virtual");
+        fm.entries = (0..=MAX_MULTI_SELECTION_PATHS)
+            .map(|index| crate::fm::FileEntry {
+                name: format!("{index:05}.txt"),
+                path: PathBuf::from(format!("/virtual/{index:05}.txt")),
+                is_dir: false,
+                operation_supported: true,
+            })
+            .collect();
+        assert!(fm.replace_selection(0));
+        assert!(fm.extend_selection(MAX_MULTI_SELECTION_PATHS - 1));
+        let mut app = app_with_fm(fm);
+        let before = app.file_manager.as_ref().expect("open fm");
+        let before_cursor = before.cursor;
+        let before_paths = before.multi_selection_paths().clone();
+        let before_anchor = before.multi_selection_anchor().map(PathBuf::from);
+
+        handle_file_manager_key(
+            &mut app,
+            key_with_modifiers(KeyCode::Down, KeyModifiers::SHIFT),
+        );
+
+        let fm = app.file_manager.as_ref().expect("open fm");
+        assert_eq!(fm.cursor, before_cursor);
+        assert_eq!(fm.multi_selection_paths(), &before_paths);
+        assert_eq!(fm.multi_selection_anchor(), before_anchor.as_deref());
+    }
+
     // TP-N4.1-SELECTION-STATE: a stale row snapshot and unrecognized modifier
     // combinations are consumed without mutating cursor, paths, or anchor.
     #[test]
