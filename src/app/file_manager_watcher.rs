@@ -1,0 +1,687 @@
+//! Runtime ownership for native file-manager filesystem watching.
+
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
+use std::sync::Arc;
+use std::time::Duration;
+
+use notify_debouncer_full::{
+    new_debouncer,
+    notify::{RecommendedWatcher, RecursiveMode},
+    DebounceEventResult, Debouncer, RecommendedCache,
+};
+use tokio::sync::Notify;
+
+use crate::fm::watcher::{
+    drain_watch_messages, watch_message_from_result, FmWatchDrain, FmWatchMessage, FmWatcherSlot,
+    FmWatcherSync,
+};
+
+const WATCH_DEBOUNCE: Duration = Duration::from_millis(250);
+const WATCH_CHANNEL_CAPACITY: usize = 64;
+pub(super) const WATCH_DRAIN_LIMIT: usize = 32;
+const WATCH_RECONCILE_INTERVAL: Duration = Duration::from_secs(2);
+
+type NativeDebouncer = Debouncer<RecommendedWatcher, RecommendedCache>;
+
+enum NativeFmBackend {
+    Native { _debouncer: NativeDebouncer },
+    PollingFallback,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileManagerWatcherMode {
+    Inactive,
+    Native,
+    PollingFallback,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(super) struct FileManagerWatchDrain {
+    pub(super) events: FmWatchDrain,
+    pub(super) disconnected: bool,
+    pub(super) overflowed: bool,
+    pub(super) limit_reached: bool,
+}
+
+fn enqueue_message(
+    sender: &SyncSender<FmWatchMessage>,
+    overflowed: &AtomicBool,
+    wake: &Notify,
+    message: FmWatchMessage,
+) {
+    match sender.try_send(message) {
+        Ok(()) => wake.notify_one(),
+        Err(TrySendError::Full(_)) => {
+            overflowed.store(true, Ordering::Release);
+            wake.notify_one();
+        }
+        Err(TrySendError::Disconnected(_)) => {}
+    }
+}
+
+fn drain_receiver<B>(
+    slot: &FmWatcherSlot<B>,
+    receiver: &Receiver<FmWatchMessage>,
+    overflowed: &AtomicBool,
+    limit: usize,
+) -> FileManagerWatchDrain {
+    let mut messages = Vec::with_capacity(limit);
+    let mut disconnected = false;
+
+    for _ in 0..limit {
+        match receiver.try_recv() {
+            Ok(message) => messages.push(message),
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Disconnected) => {
+                disconnected = true;
+                break;
+            }
+        }
+    }
+
+    let limit_reached = messages.len() == limit && limit != 0;
+    let did_overflow = overflowed.swap(false, Ordering::AcqRel);
+    let mut events = drain_watch_messages(slot, messages);
+    if did_overflow && slot.has_backend() {
+        events.refresh = true;
+    }
+
+    FileManagerWatchDrain {
+        events,
+        disconnected,
+        overflowed: did_overflow,
+        limit_reached,
+    }
+}
+
+fn start_native_backend(
+    path: &Path,
+    generation: u64,
+    sender: SyncSender<FmWatchMessage>,
+    overflowed: Arc<AtomicBool>,
+    wake: Arc<Notify>,
+) -> notify_debouncer_full::notify::Result<NativeFmBackend> {
+    let mut debouncer = new_debouncer(WATCH_DEBOUNCE, None, move |result: DebounceEventResult| {
+        enqueue_message(
+            &sender,
+            &overflowed,
+            &wake,
+            watch_message_from_result(generation, result),
+        );
+    })?;
+    debouncer.watch(path, RecursiveMode::NonRecursive)?;
+    Ok(NativeFmBackend::Native {
+        _debouncer: debouncer,
+    })
+}
+
+pub(super) struct NativeFileManagerWatcher {
+    slot: FmWatcherSlot<NativeFmBackend>,
+    receiver: Option<Receiver<FmWatchMessage>>,
+    overflowed: Arc<AtomicBool>,
+    wake: Arc<Notify>,
+    mode: FileManagerWatcherMode,
+    last_native_error: Option<String>,
+    next_reconcile_at: Option<std::time::Instant>,
+}
+
+impl NativeFileManagerWatcher {
+    pub(super) fn new(wake: Arc<Notify>) -> Self {
+        Self {
+            slot: FmWatcherSlot::default(),
+            receiver: None,
+            overflowed: Arc::new(AtomicBool::new(false)),
+            wake,
+            mode: FileManagerWatcherMode::Inactive,
+            last_native_error: None,
+            next_reconcile_at: None,
+        }
+    }
+
+    pub(super) fn sync(&mut self, target: Option<&Path>, now: std::time::Instant) -> FmWatcherSync {
+        if self.slot.watched_dir() != target {
+            self.receiver = None;
+        }
+
+        let next_overflowed = Arc::new(AtomicBool::new(false));
+        let backend_overflowed = next_overflowed.clone();
+        let wake = self.wake.clone();
+        let mut next_receiver = None;
+        let mut next_mode = FileManagerWatcherMode::Inactive;
+        let mut next_native_error = None;
+        let result = self.slot.sync_with(target, |path, generation| {
+            let (sender, receiver) = mpsc::sync_channel(WATCH_CHANNEL_CAPACITY);
+            let backend =
+                match start_native_backend(path, generation, sender, backend_overflowed, wake) {
+                    Ok(backend) => {
+                        next_receiver = Some(receiver);
+                        next_mode = FileManagerWatcherMode::Native;
+                        backend
+                    }
+                    Err(error) => {
+                        next_mode = FileManagerWatcherMode::PollingFallback;
+                        next_native_error = Some(error.to_string());
+                        NativeFmBackend::PollingFallback
+                    }
+                };
+            Ok::<_, std::convert::Infallible>(backend)
+        });
+        let result = match result {
+            Ok(result) => result,
+            Err(never) => match never {},
+        };
+
+        match result {
+            FmWatcherSync::Unchanged => {}
+            FmWatcherSync::Started { .. } => {
+                self.receiver = next_receiver;
+                self.overflowed = next_overflowed;
+                self.mode = next_mode;
+                self.last_native_error = next_native_error;
+                self.next_reconcile_at = Some(now + WATCH_RECONCILE_INTERVAL);
+            }
+            FmWatcherSync::Stopped => {
+                self.receiver = None;
+                self.overflowed = next_overflowed;
+                self.mode = FileManagerWatcherMode::Inactive;
+                self.last_native_error = None;
+                self.next_reconcile_at = None;
+            }
+        }
+        result
+    }
+
+    pub(super) fn drain(&mut self) -> FileManagerWatchDrain {
+        let drained = self
+            .receiver
+            .as_ref()
+            .map_or_else(FileManagerWatchDrain::default, |receiver| {
+                drain_receiver(&self.slot, receiver, &self.overflowed, WATCH_DRAIN_LIMIT)
+            });
+        if drained.disconnected {
+            self.receiver = None;
+        }
+        if drained.disconnected || !drained.events.errors.is_empty() {
+            self.mode = FileManagerWatcherMode::PollingFallback;
+        }
+        drained
+    }
+
+    pub(super) fn watched_dir(&self) -> Option<&Path> {
+        self.slot.watched_dir()
+    }
+
+    fn mode(&self) -> FileManagerWatcherMode {
+        self.mode
+    }
+
+    fn last_native_error(&self) -> Option<&str> {
+        self.last_native_error.as_deref()
+    }
+
+    fn take_reconcile_due(&mut self, now: std::time::Instant) -> bool {
+        let Some(deadline) = self.next_reconcile_at else {
+            return false;
+        };
+        if now < deadline {
+            return false;
+        }
+        self.next_reconcile_at = Some(now + WATCH_RECONCILE_INTERVAL);
+        true
+    }
+
+    #[cfg(test)]
+    fn next_reconcile_at(&self) -> Option<std::time::Instant> {
+        self.next_reconcile_at
+    }
+
+    #[cfg(test)]
+    fn has_backend(&self) -> bool {
+        self.slot.has_backend()
+    }
+
+    #[cfg(test)]
+    fn generation(&self) -> u64 {
+        self.slot.generation()
+    }
+}
+
+impl super::App {
+    #[cfg(test)]
+    pub(super) fn sync_file_manager_watcher(&mut self) -> bool {
+        self.sync_file_manager_watcher_at(std::time::Instant::now())
+    }
+
+    pub(super) fn sync_file_manager_watcher_at(&mut self, now: std::time::Instant) -> bool {
+        let target = self
+            .state
+            .file_manager
+            .as_ref()
+            .map(|file_manager| file_manager.cwd.clone());
+
+        let watcher_sync = self.file_manager_watcher.sync(target.as_deref(), now);
+        if matches!(watcher_sync, FmWatcherSync::Started { .. })
+            && self.file_manager_watcher.mode() == FileManagerWatcherMode::PollingFallback
+        {
+            tracing::warn!(
+                ?target,
+                error = self.file_manager_watcher.last_native_error(),
+                "fm: native filesystem watcher unavailable; using bounded polling fallback"
+            );
+        }
+
+        let watched_dir = self
+            .file_manager_watcher
+            .watched_dir()
+            .map(Path::to_path_buf);
+        let drained = self.file_manager_watcher.drain();
+
+        if drained.disconnected {
+            tracing::warn!(?watched_dir, "fm: filesystem watcher channel disconnected");
+        }
+        if drained.overflowed {
+            tracing::warn!(
+                ?watched_dir,
+                "fm: filesystem watcher channel overflowed; forcing refresh"
+            );
+        }
+        for error in &drained.events.errors {
+            tracing::warn!(?watched_dir, %error, "fm: filesystem watcher runtime error");
+        }
+
+        let reconcile_due = self.file_manager_watcher.take_reconcile_due(now);
+        if !drained.events.refresh && !reconcile_due {
+            return false;
+        }
+
+        let Some(file_manager) = self.state.file_manager.as_mut() else {
+            return false;
+        };
+        if watched_dir.as_deref() != Some(file_manager.cwd.as_path()) {
+            return false;
+        }
+
+        let previous_entries = file_manager.entries.clone();
+        let previous_cursor = file_manager.cursor;
+        let previous_parent = file_manager.parent.clone();
+        let previous_preview = file_manager.preview.clone();
+        file_manager.reload();
+
+        previous_entries != file_manager.entries
+            || previous_cursor != file_manager.cursor
+            || previous_parent != file_manager.parent
+            || previous_preview != file_manager.preview
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fm::watcher::{watch_message_from_result, FmWatcherSlot};
+    use notify_debouncer_full::{
+        notify::{event::CreateKind, Event, EventKind},
+        DebouncedEvent,
+    };
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
+    use std::sync::mpsc::sync_channel;
+    use std::sync::Arc;
+    use std::time::Instant;
+    use tokio::sync::Notify;
+
+    struct TempDir {
+        root: PathBuf,
+    }
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "herdr-fmwatch-runtime-{}-{tag}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, AtomicOrdering::Relaxed)
+            ));
+            std::fs::create_dir_all(&root).expect("create watcher temp directory");
+            Self { root }
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn test_app() -> crate::app::App {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        crate::app::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        )
+    }
+
+    fn wait_for_file_manager_state(
+        app: &mut crate::app::App,
+        description: &str,
+        predicate: impl Fn(&crate::fm::FmState) -> bool,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let _ = app.sync_file_manager_watcher();
+            if app.state.file_manager.as_ref().is_some_and(&predicate) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {description}; entries={:?}",
+                app.state.file_manager.as_ref().map(|state| state
+                    .entries
+                    .iter()
+                    .map(|entry| entry.name.as_str())
+                    .collect::<Vec<_>>())
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn message(generation: u64, path: &str) -> crate::fm::watcher::FmWatchMessage {
+        let event = Event::new(EventKind::Create(CreateKind::File)).add_path(PathBuf::from(path));
+        watch_message_from_result(
+            generation,
+            Ok(vec![DebouncedEvent::new(event, Instant::now())]),
+        )
+    }
+
+    fn active_slot() -> FmWatcherSlot<()> {
+        let mut slot = FmWatcherSlot::default();
+        slot.sync_with(Some(Path::new("/work")), |_, _| Ok::<_, ()>(()))
+            .expect("activate test watcher");
+        slot
+    }
+
+    #[test]
+    fn closed_callback_channel_is_reported_without_refresh_or_panic() {
+        let slot = active_slot();
+        let (tx, rx) = sync_channel(1);
+        drop(tx);
+
+        let drained = drain_receiver(&slot, &rx, &AtomicBool::new(false), 8);
+        assert!(drained.disconnected);
+        assert!(!drained.events.refresh);
+        assert_eq!(drained.events.accepted_messages, 0);
+    }
+
+    #[test]
+    fn full_callback_channel_marks_overflow_and_forces_safe_refresh() {
+        let slot = active_slot();
+        let (tx, rx) = sync_channel(1);
+        let overflowed = Arc::new(AtomicBool::new(false));
+        let wake = Arc::new(Notify::new());
+
+        enqueue_message(&tx, &overflowed, &wake, message(1, "/work/first"));
+        enqueue_message(&tx, &overflowed, &wake, message(1, "/work/second"));
+
+        let drained = drain_receiver(&slot, &rx, &overflowed, 8);
+        assert!(drained.overflowed);
+        assert!(drained.events.refresh);
+        assert_eq!(drained.events.accepted_messages, 1);
+    }
+
+    #[test]
+    fn receiver_drain_is_bounded_per_iteration() {
+        let slot = active_slot();
+        let (tx, rx) = sync_channel(4);
+        let overflowed = Arc::new(AtomicBool::new(false));
+        let wake = Arc::new(Notify::new());
+
+        for index in 0..3 {
+            enqueue_message(
+                &tx,
+                &overflowed,
+                &wake,
+                message(1, &format!("/work/{index}")),
+            );
+        }
+
+        let first = drain_receiver(&slot, &rx, &overflowed, 2);
+        assert_eq!(first.events.accepted_messages, 2);
+        assert!(first.limit_reached);
+
+        let second = drain_receiver(&slot, &rx, &overflowed, 2);
+        assert_eq!(second.events.accepted_messages, 1);
+        assert!(!second.limit_reached);
+    }
+
+    #[test]
+    fn app_sync_binds_once_rebinds_on_cwd_change_and_stops_on_close() {
+        let first = TempDir::new("first");
+        let second = TempDir::new("second");
+        let mut app = test_app();
+
+        assert!(!app.sync_file_manager_watcher());
+        assert!(!app.file_manager_watcher.has_backend());
+
+        app.state.file_manager = Some(crate::fm::FmState::new(&first.root));
+        assert!(!app.sync_file_manager_watcher());
+        assert_eq!(
+            app.file_manager_watcher.watched_dir(),
+            Some(first.root.as_path())
+        );
+        assert!(app.file_manager_watcher.has_backend());
+        let first_generation = app.file_manager_watcher.generation();
+
+        assert!(!app.sync_file_manager_watcher());
+        assert_eq!(app.file_manager_watcher.generation(), first_generation);
+
+        app.state.file_manager = Some(crate::fm::FmState::new(&second.root));
+        assert!(!app.sync_file_manager_watcher());
+        assert_eq!(
+            app.file_manager_watcher.watched_dir(),
+            Some(second.root.as_path())
+        );
+        assert!(app.file_manager_watcher.generation() > first_generation);
+
+        app.state.file_manager = None;
+        assert!(!app.sync_file_manager_watcher());
+        assert_eq!(app.file_manager_watcher.watched_dir(), None);
+        assert!(!app.file_manager_watcher.has_backend());
+    }
+
+    #[test]
+    fn app_sync_uses_latched_polling_fallback_without_panicking_or_hot_retrying() {
+        let td = TempDir::new("missing");
+        let missing = td.root.join("does-not-exist");
+        let mut app = test_app();
+        app.state.file_manager = Some(crate::fm::FmState::new(&missing));
+
+        assert!(!app.sync_file_manager_watcher());
+        assert_eq!(
+            app.file_manager_watcher.watched_dir(),
+            Some(missing.as_path())
+        );
+        assert!(app.file_manager_watcher.has_backend());
+        assert_eq!(
+            app.file_manager_watcher.mode(),
+            FileManagerWatcherMode::PollingFallback
+        );
+        let failed_generation = app.file_manager_watcher.generation();
+
+        assert!(!app.sync_file_manager_watcher());
+        assert_eq!(app.file_manager_watcher.generation(), failed_generation);
+        assert!(app.file_manager_watcher.has_backend());
+        assert_eq!(
+            app.file_manager_watcher.mode(),
+            FileManagerWatcherMode::PollingFallback
+        );
+    }
+
+    #[test]
+    fn reconciliation_deadline_is_bounded_and_repeats_without_early_polling() {
+        let td = TempDir::new("poll-deadline");
+        let missing = td.root.join("does-not-exist");
+        let wake = Arc::new(Notify::new());
+        let mut watcher = NativeFileManagerWatcher::new(wake);
+        let started_at = Instant::now();
+
+        assert!(matches!(
+            watcher.sync(Some(&missing), started_at),
+            FmWatcherSync::Started { .. }
+        ));
+        assert_eq!(watcher.mode(), FileManagerWatcherMode::PollingFallback);
+        let first_deadline = watcher
+            .next_reconcile_at()
+            .expect("active watcher has reconciliation deadline");
+        assert!(first_deadline >= started_at + WATCH_RECONCILE_INTERVAL);
+        assert!(!watcher.take_reconcile_due(
+            first_deadline
+                .checked_sub(Duration::from_nanos(1))
+                .expect("deadline after instant origin")
+        ));
+        assert!(watcher.take_reconcile_due(first_deadline));
+
+        let second_deadline = watcher
+            .next_reconcile_at()
+            .expect("reconciliation deadline repeats");
+        assert!(second_deadline > first_deadline);
+        assert!(!watcher.take_reconcile_due(first_deadline));
+    }
+
+    #[test]
+    fn polling_fallback_converges_when_missing_directory_appears_without_dirty_loop() {
+        let td = TempDir::new("poll-converge");
+        let missing = td.root.join("appears-later");
+        let mut app = test_app();
+        app.state.file_manager = Some(crate::fm::FmState::new(&missing));
+        let started_at = Instant::now();
+
+        assert!(!app.sync_file_manager_watcher_at(started_at));
+        assert_eq!(
+            app.file_manager_watcher.mode(),
+            FileManagerWatcherMode::PollingFallback
+        );
+        std::fs::create_dir_all(&missing).expect("create previously missing directory");
+        std::fs::write(missing.join("arrived.txt"), b"arrived").expect("write fallback file");
+
+        let first_deadline = app
+            .file_manager_watcher
+            .next_reconcile_at()
+            .expect("fallback deadline");
+        assert!(app.sync_file_manager_watcher_at(first_deadline));
+        assert!(app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("file manager open")
+            .entries
+            .iter()
+            .any(|entry| entry.name == "arrived.txt"));
+
+        let unchanged_deadline = app
+            .file_manager_watcher
+            .next_reconcile_at()
+            .expect("next fallback deadline");
+        assert!(
+            !app.sync_file_manager_watcher_at(unchanged_deadline),
+            "unchanged reconciliation must not dirty the render loop"
+        );
+    }
+
+    #[test]
+    fn runtime_error_and_channel_disconnect_degrade_native_mode_to_polling() {
+        let wake = Arc::new(Notify::new());
+        let mut watcher = NativeFileManagerWatcher::new(wake);
+        watcher
+            .slot
+            .sync_with(Some(Path::new("/work")), |_, _| {
+                Ok::<_, ()>(NativeFmBackend::PollingFallback)
+            })
+            .expect("activate deterministic watcher slot");
+        watcher.mode = FileManagerWatcherMode::Native;
+        assert_eq!(watcher.mode(), FileManagerWatcherMode::Native);
+
+        let (error_tx, error_rx) = sync_channel(1);
+        error_tx
+            .send(watch_message_from_result(
+                watcher.generation(),
+                Err(vec![notify_debouncer_full::notify::Error::generic(
+                    "runtime failure",
+                )]),
+            ))
+            .expect("inject watcher runtime error");
+        watcher.receiver = Some(error_rx);
+        let error_drain = watcher.drain();
+        assert_eq!(
+            error_drain.events.errors,
+            vec!["runtime failure".to_string()]
+        );
+        assert_eq!(watcher.mode(), FileManagerWatcherMode::PollingFallback);
+
+        let (closed_tx, closed_rx) = sync_channel(1);
+        drop(closed_tx);
+        watcher.mode = FileManagerWatcherMode::Native;
+        watcher.receiver = Some(closed_rx);
+        let closed_drain = watcher.drain();
+        assert!(closed_drain.disconnected);
+        assert_eq!(watcher.mode(), FileManagerWatcherMode::PollingFallback);
+    }
+
+    #[test]
+    fn native_watcher_converges_create_rename_delete_and_burst_changes() {
+        let td = TempDir::new("real-fs");
+        std::fs::write(td.root.join("anchor.txt"), b"anchor").expect("write anchor");
+        let mut app = test_app();
+        app.state.file_manager = Some(crate::fm::FmState::new(&td.root));
+        assert!(!app.sync_file_manager_watcher());
+        assert!(app.file_manager_watcher.has_backend());
+
+        std::fs::write(td.root.join("old.txt"), b"old").expect("create watched file");
+        wait_for_file_manager_state(&mut app, "created file", |state| {
+            state.entries.iter().any(|entry| entry.name == "old.txt")
+        });
+
+        std::fs::rename(td.root.join("old.txt"), td.root.join("new.txt"))
+            .expect("rename watched file");
+        wait_for_file_manager_state(&mut app, "renamed file", |state| {
+            !state.entries.iter().any(|entry| entry.name == "old.txt")
+                && state
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.name == "new.txt")
+                    .count()
+                    == 1
+        });
+
+        std::fs::remove_file(td.root.join("new.txt")).expect("delete watched file");
+        wait_for_file_manager_state(&mut app, "deleted file", |state| {
+            !state.entries.iter().any(|entry| entry.name == "new.txt")
+        });
+
+        let burst_names = (0..16)
+            .map(|index| format!("{index:02}.txt"))
+            .collect::<Vec<_>>();
+        for name in &burst_names {
+            std::fs::write(td.root.join(name), b"burst").expect("write burst file");
+        }
+        wait_for_file_manager_state(&mut app, "burst files", |state| {
+            burst_names.iter().all(|name| {
+                state
+                    .entries
+                    .iter()
+                    .any(|entry| entry.name.as_str() == name)
+            })
+        });
+
+        let state = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(
+            state.selected().map(|entry| entry.name.as_str()),
+            Some("anchor.txt"),
+            "real watcher refreshes preserve the selected path"
+        );
+        assert!(state.cursor < state.entries.len());
+    }
+}

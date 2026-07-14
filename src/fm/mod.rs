@@ -11,6 +11,7 @@
 //! Design docs: `.local/prd/native-fm/` (A1-fs-reader.md, 00-MODULE-TREE.md).
 
 mod natsort;
+pub(crate) mod watcher;
 
 use std::path::{Path, PathBuf};
 
@@ -152,10 +153,17 @@ impl FmState {
         state
     }
 
-    /// Re-read the current directory, keeping `show_hidden` and clamping the
-    /// cursor into the (possibly shrunk) entry range.
+    /// Re-read the current directory, keeping `show_hidden` and preserving the
+    /// selected path when it still exists. If it disappeared, retain the old
+    /// row when possible and clamp it into the new entry range.
     pub fn reload(&mut self) {
+        let selected_path = self.selected().map(|entry| entry.path.clone());
+        let previous_cursor = self.cursor;
         self.entries = read_dir_entries(&self.cwd, self.show_hidden);
+        self.cursor = selected_path
+            .as_ref()
+            .and_then(|path| self.entries.iter().position(|entry| &entry.path == path))
+            .unwrap_or(previous_cursor);
         self.clamp_cursor();
         self.refresh_context();
     }
@@ -562,5 +570,114 @@ mod tests {
             .entries
             .iter()
             .any(|entry| entry.name == "visible-peer"));
+    }
+
+    // TP-A4.3: a refresh follows the selected path across re-sorting and
+    // rebuilds the right Miller column from the resulting selection.
+    #[test]
+    fn reload_preserves_selected_path_and_refreshes_preview_context() {
+        let td = TempDir::new("watch-selection-preserve");
+        td.dir("selected");
+        fs::write(td.root.join("selected").join("inside.txt"), b"x")
+            .expect("write selected directory child");
+        td.file("z.txt");
+        let mut state = FmState::new(&td.root);
+        let selected_path = td.root.join("selected");
+        assert_eq!(
+            state.selected().map(|entry| &entry.path),
+            Some(&selected_path)
+        );
+
+        td.dir("ahead");
+        state.reload();
+
+        assert_eq!(
+            state.selected().map(|entry| &entry.path),
+            Some(&selected_path)
+        );
+        match &state.preview {
+            FmPreview::Directory(entries) => {
+                assert_eq!(names(entries), vec!["inside.txt"]);
+            }
+            other => panic!("preserved directory needs refreshed preview, got {other:?}"),
+        }
+    }
+
+    // TP-A4.3: when the selected path disappears, retain the nearest valid row;
+    // when all rows disappear, clamp to zero and clear preview state.
+    #[test]
+    fn reload_deleted_selection_uses_nearest_row_then_handles_empty_directory() {
+        let td = TempDir::new("watch-selection-delete");
+        td.file("a.txt");
+        td.file("b.txt");
+        td.file("c.txt");
+        let mut state = FmState::new(&td.root);
+        state.cursor = 1;
+        assert_eq!(
+            state.selected().map(|entry| entry.name.as_str()),
+            Some("b.txt")
+        );
+
+        fs::remove_file(td.root.join("b.txt")).expect("remove selected file");
+        state.reload();
+        assert_eq!(state.cursor, 1);
+        assert_eq!(
+            state.selected().map(|entry| entry.name.as_str()),
+            Some("c.txt")
+        );
+        assert!(matches!(state.preview, FmPreview::File));
+
+        fs::remove_file(td.root.join("a.txt")).expect("remove first file");
+        fs::remove_file(td.root.join("c.txt")).expect("remove last file");
+        state.reload();
+        assert_eq!(state.cursor, 0);
+        assert!(state.selected().is_none());
+        assert!(matches!(state.preview, FmPreview::None));
+    }
+
+    // TP-A4.3: a rename removes the exact old path, so fallback is the old row
+    // index (or its clamped predecessor), never an out-of-range cursor.
+    #[test]
+    fn reload_renamed_selection_falls_back_to_safe_row() {
+        let td = TempDir::new("watch-selection-rename");
+        td.file("a.txt");
+        td.file("b.txt");
+        td.file("c.txt");
+        let mut state = FmState::new(&td.root);
+        state.cursor = 1;
+
+        fs::rename(td.root.join("b.txt"), td.root.join("z.txt")).expect("rename selected file");
+        state.reload();
+
+        assert_eq!(state.cursor, 1);
+        assert_eq!(
+            state.selected().map(|entry| entry.name.as_str()),
+            Some("c.txt")
+        );
+    }
+
+    // TP-A4.3: changing the hidden filter must preserve a still-visible path,
+    // even when removing a dotfile changes its row index.
+    #[test]
+    fn toggle_hidden_preserves_selection_that_remains_visible() {
+        let td = TempDir::new("watch-selection-hidden");
+        td.file(".hidden");
+        td.file("a.txt");
+        td.file("z.txt");
+        let mut state = FmState::with_hidden(&td.root, true);
+        state.cursor = state
+            .entries
+            .iter()
+            .position(|entry| entry.name == "a.txt")
+            .expect("visible selection");
+        let selected_path = td.root.join("a.txt");
+
+        state.toggle_hidden();
+
+        assert!(!state.show_hidden);
+        assert_eq!(
+            state.selected().map(|entry| &entry.path),
+            Some(&selected_path)
+        );
     }
 }
