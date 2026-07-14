@@ -4,9 +4,9 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Active N3.2 product checkpoint: `267ad91`
-  (`feat: add explicit file manager action authority`).
-- The N3.2 publication unit is the RED/GREEN product/test pair and the
+- Active C2.1 product checkpoint: `9a15328`
+  (`feat: add file manager row action geometry`).
+- The C2.1 publication unit is the RED/GREEN product/test pair and the
   continuity/graph commit containing this file. At publication, CyPack
   `feat/native-fm` and fork `master` are verified at that same fast-forward
   branch tip.
@@ -107,6 +107,29 @@
   host probe skipped; Linux all-target and canonical Windows bin clippy clean
   with `-D warnings`; Bun 17/17; Python 64/64; fmt/diff clean.
 
+## Verified Checkpoint — C2.1 Row Action Geometry
+
+- RED contract commit: `d4d404e` (`test: define file manager row action
+  geometry`). GREEN product commit: `9a15328` (`feat: add file manager row
+  action geometry`). The compile-failing RED was kept local until GREEN and
+  the complete gate passed.
+- `FileManagerRowAction` names SendAgent, Rename, and Delete as client-local
+  presentation/input tags. `compute_file_manager_row_geometry` produces the
+  visible name rows and row-action areas together from the current responsive
+  Miller column and persisted viewport.
+- Every action is a complete one-cell symbol (`>`, `r`, `x`) with an exact
+  disjoint rectangle. This preserves existing directory/file readability in
+  two-column Miller layouts; the first broad run caught and rejected a
+  nine-cell prototype that truncated ordinary names.
+- Desktop/mobile `compute_view` snapshot the same geometry in `ViewState`;
+  component render uses the same pure fallback. Closing FM clears both name
+  and action areas. C2.1 adds no server/wire/filesystem behavior; action cells
+  remain inert and fail closed until C2.2 exact-hit dispatch.
+- Fresh gates: focused invariant plus readability regression 8/8; FM impact
+  71/71; full nextest 2998/2998 with one named B0 host probe skipped; Linux
+  all-target and canonical Windows MSVC bin clippy clean with `-D warnings`;
+  Bun 17/17; Python 64/64; fmt/diff clean.
+
 ## Completed Checkpoint — B2 Native Image Preview
 
 - B2 is an auditable dependency decision plus four RED/GREEN increments and a
@@ -136,9 +159,9 @@
   `9d69c82`; intermediate compile-failing RED commits were never pushed alone.
 - `FmState.viewport_start` has explicit cursor-visible and clamp invariants for
   long lists, resize, reload shrink, zero-height, enter, and leave.
-- `compute_file_manager_row_areas` is the shared responsive one/two/three-column
-  CURRENT-row geometry consumed by render and snapshotted in `ViewState` for
-  input. Degenerate geometry and stale indices fail closed.
+- `compute_file_manager_row_geometry` is the shared responsive one/two/three-
+  column CURRENT-row geometry consumed by render and snapshotted in `ViewState`
+  for input. Degenerate geometry and stale indices fail closed.
 - Real runtime mouse dispatch selects on single click, enters only a directory
   on same-path double-click, leaves files selected, bounds wheel navigation,
   refreshes preview state, and consumes center input before hidden panes.

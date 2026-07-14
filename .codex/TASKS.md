@@ -235,8 +235,19 @@ authority has one explicit source of truth.
 | TP-N4.2-BULK-AUTHORITY | Zero/one/many selections, mixed supported/unsupported entries, read-only target, clipboard state, selection clear, select-all/range limits, and operation-in-flight state | Bulk toolbar labels/counts and enabled/disabled reasons derive only from prepared selection authority; one unsupported/stale member disables or excludes according to an explicit tested policy; clear/select-all are bounded and deterministic | Bulk operations need auditable all-target authority and cannot inherit single-row assumptions |
 | TP-C2-N4-GATES | Focused geometry/state/input/render tests, watcher reorder/delete regression, full nextest, Linux/Windows clippy, Bun/Python maintenance, isolated mouse cross-check if runtime dispatch lands, graph freshness, and diff cleanliness | Every applicable gate passes with the B0 host probe as the only named skip; no stable Herdr/socket, user process, or residual temp state is touched | Responsive row actions plus multi-selection cross rendering, input, watcher reconciliation, and future destructive-operation authority |
 
-- [ ] C2.1 split each row into disjoint name/action rectangles.
-- [ ] C2.2 map row-button tags to actions without ambiguous hit targets.
+- [x] C2.1 split each row into disjoint name/action rectangles. RED `d4d404e`,
+  GREEN `9a15328`; focused/readability 8/8, FM impact 71/71, full nextest
+  2998/2998 with one named B0 host probe skipped, Linux/Windows clippy, Bun
+  17/17, Python 64/64, fmt, diff-check, and graph freshness clean. The rejected
+  3-cell prototype proved ordinary-name truncation; complete one-cell `>rx`
+  targets retain all three tags without crossing the Miller column.
+- [ ] C2.2a make exact unmodified-left row-action classification RED for each
+  visible tag; row-name, non-left, modified, outside, and hidden targets remain
+  non-actions.
+- [ ] C2.2b bind every snapshotted action target to stable path identity and
+  prove watcher reorder/delete and stale-index cases fail closed.
+- [ ] C2.2c route exact row-action tags before terminal input while preserving
+  current row-name selection behavior and performing no filesystem mutation.
 - [ ] N4.1 multi-select state and keyboard/mouse semantics.
 - [ ] N4.2 bulk toolbar and selection-clear/range invariants.
 
@@ -291,7 +302,7 @@ authority has one explicit source of truth.
 
 ## Ordering Resolution
 
-A4, B0, B1, the A3 remainder, B2, C1, and N3 are complete through N3.2
-product head `267ad91`. The next execution order is C2 → N4 → C3 → C4 → C5
+A4, B0, B1, the A3 remainder, B2, C1, N3, and C2.1 are complete through
+product head `9a15328`. The next execution order is C2.2 → N4 → C3 → C4 → C5
 → C6. S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3
 remain inactive north-star work.
