@@ -233,7 +233,10 @@ fn render_panel(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fm::FmState;
+    use crate::fm::{
+        FmFilePreview, FmState, HighlightedTextPreview, PreviewTextLine, PreviewTextSpan,
+        PreviewTextStyle, TextPreviewError,
+    };
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
     use ratatui::Terminal;
@@ -351,18 +354,125 @@ mod tests {
         );
     }
 
-    // TP-A2.2.3: file selections reserve the preview seam without pretending
-    // that text preview has landed already.
+    // TP-B1.5-PLAIN-FALLBACK: prepared text remains visible before asynchronous
+    // highlighting arrives. Highlighting is enhancement, never availability
+    // authority.
     #[test]
-    fn file_selection_renders_explicit_preview_placeholder() {
+    fn file_selection_renders_prepared_plain_text() {
         let td = TempDir::new("file-preview");
-        td.file("selected.txt");
+        fs::write(
+            td.root.join("selected.txt"),
+            "plain fallback\nsecond line\n",
+        )
+        .expect("write plain preview fixture");
         let app = app_with_fm(FmState::new(&td.root));
 
         let rows = render_rows(&app, 80, 6);
         assert!(
-            rows.iter().any(|row| row.contains("(file preview later)")),
-            "file preview seam is explicit: {rows:?}"
+            rows.iter().any(|row| row.contains("plain fallback")),
+            "prepared text is visible while highlighting is pending: {rows:?}"
+        );
+        assert!(rows.iter().any(|row| row.contains("second line")));
+    }
+
+    // TP-B1.5-STYLES: render-ready foreground and font modifiers map exactly
+    // to Ratatui cells. Syntax preparation does not leak into render.
+    #[test]
+    fn highlighted_preview_maps_rgb_and_font_modifiers() {
+        let td = TempDir::new("file-preview-style");
+        fs::write(td.root.join("selected.rs"), "styled\n").expect("write styled fixture");
+        let mut fm = FmState::new(&td.root);
+        match &mut fm.preview {
+            FmPreview::File(FmFilePreview::Text(preview)) => {
+                preview.highlighted = Some(HighlightedTextPreview {
+                    lines: vec![PreviewTextLine {
+                        spans: vec![PreviewTextSpan {
+                            content: "styled".to_owned(),
+                            style: PreviewTextStyle {
+                                foreground: Some([12, 34, 56]),
+                                bold: true,
+                                italic: true,
+                                underline: true,
+                            },
+                        }],
+                    }],
+                    syntax_name: Some("Rust".to_owned()),
+                    truncated_bytes: false,
+                    truncated_lines: false,
+                });
+            }
+            other => panic!("selected text file needs preview state, got {other:?}"),
+        }
+        let app = app_with_fm(fm);
+
+        let rows = render_rows(&app, 80, 6);
+        let (y, row) = rows
+            .iter()
+            .enumerate()
+            .find(|(_, row)| row.contains("styled"))
+            .expect("styled preview row");
+        let x = row.find("styled").expect("styled preview column") as u16;
+        let buffer = render_buffer(&app, 80, 6);
+        let cell = &buffer[(x, y as u16)];
+
+        assert_eq!(cell.fg, ratatui::style::Color::Rgb(12, 34, 56));
+        assert!(cell.modifier.contains(Modifier::BOLD));
+        assert!(cell.modifier.contains(Modifier::ITALIC));
+        assert!(cell.modifier.contains(Modifier::UNDERLINED));
+    }
+
+    // TP-B1.5-FAILURES: preparation failures have stable, distinct user-facing
+    // states; none are confused with an empty directory or pending highlight.
+    #[test]
+    fn text_preview_failures_render_explicit_placeholders() {
+        let td = TempDir::new("file-preview-failures");
+        td.file("selected.txt");
+        let cases = [
+            (TextPreviewError::Binary, "(binary file)"),
+            (
+                TextPreviewError::InvalidUtf8 { valid_up_to: 3 },
+                "(not UTF-8)",
+            ),
+            (
+                TextPreviewError::Io(std::io::ErrorKind::PermissionDenied),
+                "(permission denied)",
+            ),
+            (
+                TextPreviewError::Io(std::io::ErrorKind::UnexpectedEof),
+                "(preview unavailable)",
+            ),
+            (TextPreviewError::NotRegularFile, "(not a regular file)"),
+        ];
+
+        for (error, expected) in cases {
+            let mut fm = FmState::new(&td.root);
+            fm.preview = FmPreview::File(FmFilePreview::Unavailable(error));
+            let rows = render_rows(&app_with_fm(fm), 80, 5);
+            assert!(
+                rows.iter().any(|row| row.contains(expected)),
+                "{error:?} renders {expected:?}: {rows:?}"
+            );
+        }
+    }
+
+    // TP-B1.5-TRUNCATION: both reader-byte and highlighter-line limits produce
+    // an explicit marker inside the preview viewport.
+    #[test]
+    fn truncated_text_preview_renders_marker() {
+        let td = TempDir::new("file-preview-truncated");
+        fs::write(td.root.join("selected.txt"), "visible prefix\n")
+            .expect("write truncated fixture");
+        let mut fm = FmState::new(&td.root);
+        match &mut fm.preview {
+            FmPreview::File(FmFilePreview::Text(preview)) => preview.truncated = true,
+            other => panic!("selected text file needs preview state, got {other:?}"),
+        }
+
+        let rows = render_rows(&app_with_fm(fm), 80, 6);
+        assert!(rows.iter().any(|row| row.contains("visible prefix")));
+        assert!(
+            rows.iter().any(|row| row.contains("(preview truncated)")),
+            "truncation is explicit: {rows:?}"
         );
     }
 
