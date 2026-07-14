@@ -4,6 +4,10 @@ use std::thread::JoinHandle;
 
 use tokio::sync::Notify;
 
+use crate::fm::delete::{
+    execute_delete_operation, DeleteOperationExecutionResult, DeleteOperationExecutionStatus,
+    DeleteOperationItemOutcome, DeleteOperationKind, DeleteOperationPlan, DeleteOperationRequest,
+};
 use crate::fm::operations::{
     execute_file_operation, FileOperationCancellation, FileOperationExecutionResult,
     FileOperationExecutionStatus, FileOperationItemOutcome, FileOperationKind, FileOperationPlan,
@@ -23,7 +27,13 @@ pub(super) enum FileOperationWorkerError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct FileOperationWorkerCompletion {
     pub(super) generation: u64,
-    pub(super) result: Result<FileOperationExecutionResult, FileOperationWorkerError>,
+    pub(super) result: Result<FileOperationWorkerResult, FileOperationWorkerError>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum FileOperationWorkerResult {
+    Transfer(FileOperationExecutionResult),
+    Delete(DeleteOperationExecutionResult),
 }
 
 #[derive(Debug, Default)]
@@ -34,8 +44,13 @@ pub(super) struct FileOperationWorkerDrain {
 
 struct FileOperationWorkerRequest {
     generation: u64,
-    plan: FileOperationPlan,
+    task: FileOperationWorkerTask,
     cancellation: FileOperationCancellation,
+}
+
+enum FileOperationWorkerTask {
+    Transfer(FileOperationPlan),
+    Delete(DeleteOperationPlan),
 }
 
 struct FileOperationWorkerState {
@@ -84,12 +99,36 @@ pub(super) struct FileOperationWorker {
 
 impl FileOperationWorker {
     pub(super) fn new(wake: Arc<Notify>) -> Self {
-        Self::with_executor(wake, execute_file_operation)
+        Self::with_task_executor(wake, |task, cancellation| match task {
+            FileOperationWorkerTask::Transfer(plan) => {
+                FileOperationWorkerResult::Transfer(execute_file_operation(plan, cancellation))
+            }
+            FileOperationWorkerTask::Delete(plan) => {
+                FileOperationWorkerResult::Delete(execute_delete_operation(plan, cancellation))
+            }
+        })
     }
 
+    #[cfg(test)]
     fn with_executor<F>(wake: Arc<Notify>, executor: F) -> Self
     where
         F: Fn(&FileOperationPlan, &FileOperationCancellation) -> FileOperationExecutionResult
+            + Send
+            + 'static,
+    {
+        Self::with_task_executor(wake, move |task, cancellation| match task {
+            FileOperationWorkerTask::Transfer(plan) => {
+                FileOperationWorkerResult::Transfer(executor(plan, cancellation))
+            }
+            FileOperationWorkerTask::Delete(plan) => {
+                FileOperationWorkerResult::Delete(execute_delete_operation(plan, cancellation))
+            }
+        })
+    }
+
+    fn with_task_executor<F>(wake: Arc<Notify>, executor: F) -> Self
+    where
+        F: Fn(&FileOperationWorkerTask, &FileOperationCancellation) -> FileOperationWorkerResult
             + Send
             + 'static,
     {
@@ -107,7 +146,7 @@ impl FileOperationWorker {
                 };
                 while let Some(request) = take_next_request(&worker_shared) {
                     let result = catch_unwind(AssertUnwindSafe(|| {
-                        executor(&request.plan, &request.cancellation)
+                        executor(&request.task, &request.cancellation)
                     }))
                     .map_err(|_| FileOperationWorkerError::Panicked);
                     let (state, _) = &*worker_shared;
@@ -135,6 +174,20 @@ impl FileOperationWorker {
         &mut self,
         plan: FileOperationPlan,
     ) -> Result<u64, FileOperationStartError> {
+        self.start_task(FileOperationWorkerTask::Transfer(plan))
+    }
+
+    pub(super) fn start_delete(
+        &mut self,
+        plan: DeleteOperationPlan,
+    ) -> Result<u64, FileOperationStartError> {
+        self.start_task(FileOperationWorkerTask::Delete(plan))
+    }
+
+    fn start_task(
+        &mut self,
+        task: FileOperationWorkerTask,
+    ) -> Result<u64, FileOperationStartError> {
         let (state, pending) = &*self.shared;
         let mut state = lock_state(state);
         if state.closed
@@ -152,7 +205,7 @@ impl FileOperationWorker {
         state.active_cancellation = Some(cancellation.clone());
         state.pending = Some(FileOperationWorkerRequest {
             generation,
-            plan,
+            task,
             cancellation,
         });
         pending.notify_one();
@@ -319,7 +372,8 @@ impl crate::app::App {
     /// result. Other context actions remain queued for their owning C4/C5
     /// modules instead of being silently discarded.
     pub(super) fn sync_file_operation_worker(&mut self) -> bool {
-        let mut changed = self.consume_file_manager_context_delete();
+        let mut changed = self.consume_file_manager_delete_request();
+        changed |= self.consume_file_manager_context_delete();
         changed |= self.consume_file_manager_context_copy();
         let drained = self.file_operation_worker.drain();
         if drained.disconnected {
@@ -346,7 +400,12 @@ impl crate::app::App {
 
         let destination_directory = operation.destination_directory.clone();
         match completion.result {
-            Ok(result) => apply_execution_result(operation, &result),
+            Ok(FileOperationWorkerResult::Transfer(result)) => {
+                apply_execution_result(operation, &result)
+            }
+            Ok(FileOperationWorkerResult::Delete(result)) => {
+                apply_delete_execution_result(operation, &result)
+            }
             Err(FileOperationWorkerError::Panicked) => {
                 operation.status = crate::app::state::FileManagerOperationStatus::Failed;
                 operation.failed_items = operation.total_items;
@@ -363,6 +422,79 @@ impl crate::app::App {
         }
         changed = true;
         changed
+    }
+
+    fn consume_file_manager_delete_request(&mut self) -> bool {
+        let Some(request) = self.state.request_file_manager_delete.take() else {
+            return false;
+        };
+        let _ = self.start_file_manager_delete(request);
+        true
+    }
+
+    fn start_file_manager_delete(
+        &mut self,
+        request: crate::app::state::FileManagerDeleteRequest,
+    ) -> bool {
+        use crate::app::state::{
+            FileManagerDeleteKind, FileManagerHeaderAction, FileManagerOperationKind,
+            FileManagerOperationState, FileManagerOperationStatus,
+        };
+
+        let Some(affected_directory) = self
+            .state
+            .file_manager
+            .as_ref()
+            .map(|file_manager| file_manager.cwd.clone())
+        else {
+            return false;
+        };
+        if current_action_paths(&self.state, FileManagerHeaderAction::Delete).as_ref()
+            != Some(&request.paths)
+        {
+            return false;
+        }
+        let operation_in_flight = self.file_operation_worker.is_busy()
+            || self
+                .state
+                .file_manager_operation
+                .as_ref()
+                .is_some_and(FileManagerOperationState::is_running);
+        let (delete_kind, operation_kind) = match request.kind {
+            FileManagerDeleteKind::Trash => {
+                (DeleteOperationKind::Trash, FileManagerOperationKind::Trash)
+            }
+            FileManagerDeleteKind::Permanent => (
+                DeleteOperationKind::Permanent,
+                FileManagerOperationKind::PermanentDelete,
+            ),
+        };
+        let plan = match DeleteOperationPlan::preflight(DeleteOperationRequest {
+            kind: delete_kind,
+            paths: request.paths,
+            operation_in_flight,
+        }) {
+            Ok(plan) => plan,
+            Err(error) => {
+                tracing::warn!(?error, "fm: delete operation preflight rejected request");
+                return false;
+            }
+        };
+        let total_items = plan.items().len();
+        let generation = match self.file_operation_worker.start_delete(plan) {
+            Ok(generation) => generation,
+            Err(FileOperationStartError::Busy) => return false,
+        };
+        self.state.file_manager_operation = Some(FileManagerOperationState {
+            generation,
+            kind: operation_kind,
+            destination_directory: affected_directory,
+            total_items,
+            completed_items: 0,
+            failed_items: 0,
+            status: FileManagerOperationStatus::Running,
+        });
+        true
     }
 
     fn consume_file_manager_context_copy(&mut self) -> bool {
@@ -477,9 +609,41 @@ fn apply_execution_result(
     };
 }
 
+fn apply_delete_execution_result(
+    operation: &mut crate::app::state::FileManagerOperationState,
+    result: &DeleteOperationExecutionResult,
+) {
+    use crate::app::state::FileManagerOperationStatus;
+
+    operation.completed_items = result
+        .items()
+        .iter()
+        .filter(|item| matches!(item.outcome(), DeleteOperationItemOutcome::Deleted))
+        .count();
+    operation.failed_items = result
+        .items()
+        .iter()
+        .filter(|item| matches!(item.outcome(), DeleteOperationItemOutcome::Retained(_)))
+        .count();
+    for item in result.items() {
+        if let DeleteOperationItemOutcome::Retained(error) = item.outcome() {
+            tracing::warn!(path = %item.path().display(), ?error, "fm: delete source retained");
+        }
+    }
+    operation.status = match result.status() {
+        DeleteOperationExecutionStatus::Completed => FileManagerOperationStatus::Completed,
+        DeleteOperationExecutionStatus::Cancelled => FileManagerOperationStatus::Cancelled,
+        DeleteOperationExecutionStatus::Partial => FileManagerOperationStatus::Partial,
+        DeleteOperationExecutionStatus::Failed => FileManagerOperationStatus::Failed,
+    };
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{FileOperationStartError, FileOperationWorker, FileOperationWorkerError};
+    use super::{
+        FileOperationStartError, FileOperationWorker, FileOperationWorkerError,
+        FileOperationWorkerResult,
+    };
     use crate::app::state::{
         FileManagerContextActionIntent, FileManagerContextMenuAction, FileManagerDeleteKind,
         FileManagerDeleteRequest, FileManagerHeaderAction, FileManagerOperationKind,
@@ -556,6 +720,15 @@ mod tests {
         }
     }
 
+    fn expect_transfer_result(
+        result: FileOperationWorkerResult,
+    ) -> crate::fm::operations::FileOperationExecutionResult {
+        match result {
+            FileOperationWorkerResult::Transfer(result) => result,
+            FileOperationWorkerResult::Delete(_) => panic!("expected transfer worker result"),
+        }
+    }
+
     fn test_app() -> crate::app::App {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         crate::app::App::new(
@@ -585,7 +758,7 @@ mod tests {
         let first = wait_for_completion(&mut worker);
         assert_eq!(first.generation, first_generation);
         assert_eq!(
-            first.result.expect("first execution").status(),
+            expect_transfer_result(first.result.expect("first execution")).status(),
             FileOperationExecutionStatus::Completed
         );
         assert!(!worker.is_busy());
@@ -595,7 +768,7 @@ mod tests {
         let second = wait_for_completion(&mut worker);
         assert_eq!(second.generation, second_generation);
         assert_eq!(
-            second.result.expect("second execution").status(),
+            expect_transfer_result(second.result.expect("second execution")).status(),
             FileOperationExecutionStatus::Completed
         );
     }
@@ -622,7 +795,7 @@ mod tests {
 
         assert_eq!(completion.generation, generation);
         assert_eq!(
-            completion.result.expect("cancel result").status(),
+            expect_transfer_result(completion.result.expect("cancel result")).status(),
             FileOperationExecutionStatus::Cancelled
         );
         assert!(fs::read_dir(destination)
@@ -886,7 +1059,9 @@ mod tests {
         let source = td.root.join("selected.txt");
         fs::write(&source, b"selected").expect("write permanent delete fixture");
         let mut app = test_app();
-        app.state.file_manager = Some(crate::fm::FmState::new(&td.root));
+        let mut file_manager = crate::fm::FmState::new(&td.root);
+        assert!(file_manager.replace_selection(0));
+        app.state.file_manager = Some(file_manager);
         app.state.request_file_manager_delete = Some(FileManagerDeleteRequest {
             kind: FileManagerDeleteKind::Permanent,
             paths: vec![source.clone()],

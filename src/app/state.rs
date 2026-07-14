@@ -680,6 +680,8 @@ pub enum FileManagerHeaderAction {
 pub enum FileManagerOperationKind {
     Copy,
     Move,
+    Trash,
+    PermanentDelete,
 }
 
 /// One explicit lifecycle state for a bounded native-FM operation.

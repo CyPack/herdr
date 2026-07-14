@@ -56,10 +56,12 @@ pub(crate) struct PlannedDeleteItem {
 }
 
 impl PlannedDeleteItem {
+    #[cfg(test)]
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 
+    #[cfg(test)]
     pub(crate) fn path_kind(&self) -> PlannedDeletePathKind {
         self.snapshot.path_kind
     }
@@ -108,6 +110,7 @@ impl DeleteOperationPlan {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn kind(&self) -> DeleteOperationKind {
         self.kind
     }
