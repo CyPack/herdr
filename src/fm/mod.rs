@@ -865,6 +865,138 @@ mod tests {
         assert!(state.multi_selection_paths().contains(&second));
     }
 
+    // TP-N4.1-SELECTION-STATE: watcher-style reload follows live path identity
+    // across reordering, prunes deleted members, and drops a missing anchor.
+    #[test]
+    fn reload_reconciles_multi_selection_by_live_path_identity() {
+        let td = TempDir::new("multi-selection-reload-lifecycle");
+        td.file("b.txt");
+        td.file("c.txt");
+        td.file("d.txt");
+        let mut state = FmState::new(&td.root);
+        let b = td.root.join("b.txt");
+        let d = td.root.join("d.txt");
+
+        assert!(state.replace_selection(0));
+        assert!(state.toggle_selection(2));
+        assert_eq!(state.multi_selection_anchor(), Some(d.as_path()));
+
+        td.file("a.txt");
+        state.reload();
+        assert_eq!(
+            state.multi_selection_paths().iter().collect::<Vec<_>>(),
+            vec![&b, &d]
+        );
+        assert_eq!(state.multi_selection_anchor(), Some(d.as_path()));
+
+        fs::remove_file(&d).expect("delete anchored selection");
+        state.reload();
+        assert_eq!(
+            state.multi_selection_paths().iter().collect::<Vec<_>>(),
+            vec![&b]
+        );
+        assert!(state.multi_selection_anchor().is_none());
+
+        fs::remove_file(&b).expect("delete final selection");
+        state.reload();
+        assert!(state.multi_selection_paths().is_empty());
+        assert!(state.multi_selection_anchor().is_none());
+    }
+
+    // TP-N4.1-SELECTION-STATE: hiding a selected dotfile removes only that
+    // invisible identity and clears its anchor while preserving live members.
+    #[test]
+    fn hidden_toggle_prunes_invisible_selection_and_anchor() {
+        let td = TempDir::new("multi-selection-hidden-lifecycle");
+        td.file("visible.txt");
+        td.file(".hidden.txt");
+        let visible = td.root.join("visible.txt");
+        let hidden = td.root.join(".hidden.txt");
+        let mut state = FmState::with_hidden(&td.root, true);
+        let visible_index = state
+            .entries
+            .iter()
+            .position(|entry| entry.path == visible)
+            .expect("visible entry index");
+        let hidden_index = state
+            .entries
+            .iter()
+            .position(|entry| entry.path == hidden)
+            .expect("hidden entry index");
+
+        assert!(state.replace_selection(visible_index));
+        assert!(state.toggle_selection(hidden_index));
+        assert_eq!(state.multi_selection_anchor(), Some(hidden.as_path()));
+
+        state.toggle_hidden();
+
+        assert_eq!(
+            state.multi_selection_paths().iter().collect::<Vec<_>>(),
+            vec![&visible]
+        );
+        assert!(state.multi_selection_anchor().is_none());
+    }
+
+    // TP-N4.1-SELECTION-STATE: successful directory changes clear identities
+    // from the old listing, while an enter attempt on a file remains a no-op.
+    #[test]
+    fn directory_navigation_clears_selection_but_file_enter_preserves_it() {
+        let td = TempDir::new("multi-selection-directory-lifecycle");
+        td.dir("child");
+        td.file("sibling.txt");
+        td.file("child/inside.txt");
+        let child = td.root.join("child");
+        let sibling = td.root.join("sibling.txt");
+        let mut state = FmState::new(&td.root);
+        let child_index = state
+            .entries
+            .iter()
+            .position(|entry| entry.path == child)
+            .expect("child entry index");
+        let sibling_index = state
+            .entries
+            .iter()
+            .position(|entry| entry.path == sibling)
+            .expect("sibling entry index");
+
+        assert!(state.replace_selection(sibling_index));
+        state.enter();
+        assert_eq!(state.cwd, td.root);
+        assert_eq!(
+            state.multi_selection_paths().iter().collect::<Vec<_>>(),
+            vec![&sibling]
+        );
+
+        assert!(state.toggle_selection(child_index));
+        assert!(state.select(child_index));
+        state.enter();
+        assert_eq!(state.cwd, child);
+        assert!(state.multi_selection_paths().is_empty());
+        assert!(state.multi_selection_anchor().is_none());
+
+        assert!(state.replace_selection(0));
+        state.leave();
+        assert_eq!(state.cwd, td.root);
+        assert!(state.multi_selection_paths().is_empty());
+        assert!(state.multi_selection_anchor().is_none());
+    }
+
+    // TP-N4.1-SELECTION-STATE: closing destroys FmState, and a fresh instance
+    // cannot inherit selection identity or anchor from the previous overlay.
+    #[test]
+    fn reopened_file_manager_starts_with_empty_multi_selection() {
+        let td = TempDir::new("multi-selection-reopen-lifecycle");
+        td.file("selected.txt");
+        let mut closed = FmState::new(&td.root);
+        assert!(closed.replace_selection(0));
+        assert_eq!(closed.multi_selection_paths().len(), 1);
+
+        drop(closed);
+        let reopened = FmState::new(&td.root);
+        assert!(reopened.multi_selection_paths().is_empty());
+        assert!(reopened.multi_selection_anchor().is_none());
+    }
+
     // T-A1.3b: the cursor is always clamped into range (empty, end, shrink).
     #[test]
     fn cursor_stays_in_range() {
