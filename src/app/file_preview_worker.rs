@@ -527,4 +527,139 @@ mod tests {
             "unchanged highlighted state must not dirty the frame"
         );
     }
+
+    // TP-B1.4-NAVIGATION: a result for the previous selection can become
+    // available while the current selection is still being processed. App
+    // must reject that stale result, then apply only the current generation.
+    #[test]
+    fn app_rejects_stale_highlight_after_navigation() {
+        let td = TempDir::new("app-navigation-stale");
+        std::fs::write(td.root.join("alpha.rs"), "fn alpha() {}\n")
+            .expect("write first preview fixture");
+        std::fs::write(td.root.join("beta.py"), "def beta():\n    pass\n")
+            .expect("write second preview fixture");
+        let (first_started_tx, first_started_rx) = mpsc::channel();
+        let (first_release_tx, first_release_rx) = mpsc::channel();
+        let (second_started_tx, second_started_rx) = mpsc::channel();
+        let (second_release_tx, second_release_rx) = mpsc::channel();
+        let worker = FilePreviewHighlightWorker::with_processor(
+            Arc::new(Notify::new()),
+            move |path, preview| {
+                if path.ends_with("alpha.rs") {
+                    first_started_tx.send(()).expect("signal first started");
+                    first_release_rx.recv().expect("release first result");
+                } else {
+                    second_started_tx.send(()).expect("signal second started");
+                    second_release_rx.recv().expect("release second result");
+                }
+                highlight_text_preview(path, preview)
+            },
+        );
+        let mut app = test_app();
+        app.file_preview_worker = worker;
+        app.state.file_manager = Some(crate::fm::FmState::new(&td.root));
+
+        assert!(!app.sync_file_preview_worker());
+        first_started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first request started");
+        app.state
+            .file_manager
+            .as_mut()
+            .expect("open file manager")
+            .move_down();
+        assert!(!app.sync_file_preview_worker());
+
+        first_release_tx.send(()).expect("release first result");
+        second_started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("second request started after first result was stored");
+        assert!(
+            !app.sync_file_preview_worker(),
+            "stale first result must not dirty or mutate current preview"
+        );
+        let current_highlight =
+            app.state
+                .file_manager
+                .as_ref()
+                .and_then(|state| match &state.preview {
+                    crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(preview)) => {
+                        preview.highlighted.as_ref()
+                    }
+                    _ => None,
+                });
+        assert!(current_highlight.is_none());
+
+        second_release_tx.send(()).expect("release second result");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if app.sync_file_preview_worker() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out applying current result"
+            );
+            std::thread::yield_now();
+        }
+        let current_highlight = app
+            .state
+            .file_manager
+            .as_ref()
+            .and_then(|state| match &state.preview {
+                crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(preview)) => {
+                    preview.highlighted.as_ref()
+                }
+                _ => None,
+            })
+            .expect("current result applied");
+        assert_eq!(current_highlight.syntax_name.as_deref(), Some("Python"));
+    }
+
+    // TP-B1.4-CLOSE: closing the FM invalidates a running request. Even when
+    // that request later publishes a result, scheduled sync must discard it
+    // without dirtying the frame or recreating file-manager state.
+    #[test]
+    fn app_discards_inflight_highlight_after_file_manager_close() {
+        let td = TempDir::new("app-close-stale");
+        std::fs::write(td.root.join("sample.rs"), "fn sample() {}\n")
+            .expect("write preview fixture");
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker = FilePreviewHighlightWorker::with_processor(
+            Arc::new(Notify::new()),
+            move |path, preview| {
+                started_tx.send(()).expect("signal request started");
+                release_rx.recv().expect("release result");
+                highlight_text_preview(path, preview)
+            },
+        );
+        let shared = worker.shared.clone();
+        let mut app = test_app();
+        app.file_preview_worker = worker;
+        app.state.file_manager = Some(crate::fm::FmState::new(&td.root));
+
+        assert!(!app.sync_file_preview_worker());
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("request started");
+        app.state.file_manager = None;
+        assert!(!app.sync_file_preview_worker());
+        release_tx.send(()).expect("release stale result");
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if lock_state(&shared.0).result.is_some() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for stale result"
+            );
+            std::thread::yield_now();
+        }
+        assert!(!app.sync_file_preview_worker());
+        assert!(app.state.file_manager.is_none());
+        assert!(!app.sync_file_preview_worker());
+    }
 }
