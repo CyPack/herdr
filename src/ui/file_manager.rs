@@ -18,6 +18,7 @@ use ratatui::Frame;
 
 use super::text::truncate_end;
 use crate::app::state::AppState;
+use crate::app::state::FileManagerRowArea;
 use crate::fm::{
     FileEntry, FmFilePreview, FmPreview, HighlightedTextPreview, PreviewTextLine, PreviewTextSpan,
     PreviewTextStyle, TextPreview, TextPreviewError,
@@ -105,6 +106,33 @@ pub(crate) fn file_manager_visible_rows(area: Rect) -> usize {
         .unwrap_or(0)
 }
 
+/// Lay out visible CURRENT entry rows for both pure rendering and input hit
+/// testing. The viewport is defensively clamped so stale state cannot create
+/// off-list targets even if this helper is called before the next state sync.
+pub(crate) fn compute_file_manager_row_areas(
+    area: Rect,
+    entry_count: usize,
+    viewport_start: usize,
+) -> Vec<FileManagerRowArea> {
+    let Some(areas) = file_manager_areas(area) else {
+        return Vec::new();
+    };
+    let list = panel_areas(areas.columns.current)[1];
+    let visible_rows = list.height as usize;
+    if list.width == 0 || visible_rows == 0 || entry_count == 0 {
+        return Vec::new();
+    }
+
+    let start = viewport_start.min(entry_count.saturating_sub(visible_rows));
+    let count = visible_rows.min(entry_count.saturating_sub(start));
+    (0..count)
+        .map(|offset| FileManagerRowArea {
+            rect: Rect::new(list.x, list.y.saturating_add(offset as u16), list.width, 1),
+            entry_idx: start + offset,
+        })
+        .collect()
+}
+
 /// Render the open file manager into `area`. Does nothing when the file manager
 /// is closed (`app.file_manager` is `None`) or the area is empty, so callers can
 /// invoke it unconditionally.
@@ -131,6 +159,15 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
     }
 
     let layout = areas.columns;
+    let fallback_rows;
+    let current_rows = if area == app.view.terminal_area {
+        app.view.file_manager_row_areas.as_slice()
+    } else {
+        // Unit-level/component callers can render into an arbitrary rect
+        // without a preceding full-frame compute_view pass.
+        fallback_rows = compute_file_manager_row_areas(area, fm.entries.len(), fm.viewport_start);
+        fallback_rows.as_slice()
+    };
     for divider in layout.dividers.into_iter().flatten() {
         frame.render_widget(
             Block::default()
@@ -165,7 +202,7 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         &fm.entries,
         (!fm.entries.is_empty()).then_some(fm.cursor),
         "(empty)",
-        Some(fm.viewport_start),
+        Some(current_rows),
     );
 
     if let Some(preview_area) = layout.preview {
@@ -354,7 +391,7 @@ fn render_panel(
     entries: &[FileEntry],
     selected: Option<usize>,
     empty_label: &str,
-    viewport_start: Option<usize>,
+    row_areas: Option<&[FileManagerRowArea]>,
 ) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -379,34 +416,55 @@ fn render_panel(
         return;
     }
 
-    // CURRENT consumes its persistent viewport. Context panels still derive a
-    // cursor-following window because they do not own independent scroll state.
+    if let Some(row_areas) = row_areas {
+        for row_area in row_areas {
+            if let Some(entry) = entries.get(row_area.entry_idx) {
+                render_entry_row(
+                    app,
+                    frame,
+                    row_area.rect,
+                    entry,
+                    selected == Some(row_area.entry_idx),
+                );
+            }
+        }
+        return;
+    }
+
+    // Context panels derive a cursor-following window because they do not own
+    // independent scroll state.
     let rows = list_area.height as usize;
     let cursor = selected.unwrap_or(0).min(entries.len() - 1);
-    let derived_start = if cursor < rows { 0 } else { cursor - rows + 1 };
-    let max_start = entries.len().saturating_sub(rows);
-    let first = viewport_start.unwrap_or(derived_start).min(max_start);
+    let first = if cursor < rows { 0 } else { cursor - rows + 1 };
 
     for (offset, entry) in entries.iter().skip(first).take(rows).enumerate() {
         let idx = first + offset;
         let row = Rect::new(list_area.x, list_area.y + offset as u16, list_area.width, 1);
-        let suffix = if entry.is_dir { "/" } else { "" };
-        let label = truncate_end(
-            &format!("  {}{}", entry.name, suffix),
-            list_area.width as usize,
-        );
-        let style = if selected.is_some_and(|selected| idx == selected) {
-            Style::default()
-                .bg(p.surface0)
-                .fg(p.text)
-                .add_modifier(Modifier::BOLD)
-        } else if entry.is_dir {
-            Style::default().fg(p.blue).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(p.subtext0)
-        };
-        frame.render_widget(Paragraph::new(label).style(style), row);
+        render_entry_row(app, frame, row, entry, selected == Some(idx));
     }
+}
+
+fn render_entry_row(
+    app: &AppState,
+    frame: &mut Frame,
+    row: Rect,
+    entry: &FileEntry,
+    selected: bool,
+) {
+    let p = &app.palette;
+    let suffix = if entry.is_dir { "/" } else { "" };
+    let label = truncate_end(&format!("  {}{}", entry.name, suffix), row.width as usize);
+    let style = if selected {
+        Style::default()
+            .bg(p.surface0)
+            .fg(p.text)
+            .add_modifier(Modifier::BOLD)
+    } else if entry.is_dir {
+        Style::default().fg(p.blue).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(p.subtext0)
+    };
+    frame.render_widget(Paragraph::new(label).style(style), row);
 }
 
 #[cfg(test)]
@@ -808,10 +866,7 @@ mod tests {
 
         let clamped = compute_file_manager_row_areas(area, 10, usize::MAX);
         assert_eq!(
-            clamped
-                .iter()
-                .map(|row| row.entry_idx)
-                .collect::<Vec<_>>(),
+            clamped.iter().map(|row| row.entry_idx).collect::<Vec<_>>(),
             vec![7, 8, 9]
         );
     }

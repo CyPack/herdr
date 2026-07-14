@@ -28,7 +28,9 @@ use self::dialogs::{
     render_confirm_close_overlay, render_new_linked_worktree_overlay,
     render_open_existing_worktree_overlay, render_remove_worktree_overlay, render_rename_overlay,
 };
-use self::file_manager::{file_manager_visible_rows, render_file_manager};
+use self::file_manager::{
+    compute_file_manager_row_areas, file_manager_visible_rows, render_file_manager,
+};
 use self::keybind_help::render_keybind_help_overlay;
 use self::menus::{
     render_context_menu, render_copy_mode_overlay, render_global_launcher_menu,
@@ -248,7 +250,7 @@ fn compute_view_internal(
         .and_then(|i| app.workspaces.get(i))
         .map(|ws| desktop_tab_bar_and_terminal_area(app, ws, main_area))
         .unwrap_or((Rect::default(), main_area));
-    sync_file_manager_viewport(app, terminal_area);
+    let file_manager_row_areas = sync_file_manager_view(app, terminal_area);
 
     if !app.sidebar_collapsed {
         app.workspace_scroll = normalized_workspace_scroll(app, sidebar_area, app.workspace_scroll);
@@ -351,6 +353,7 @@ fn compute_view_internal(
         workspace_card_areas,
         sidebar_tab_hit_areas,
         project_row_areas,
+        file_manager_row_areas,
         tab_bar_rect,
         tab_hit_areas: tab_bar_view.tab_hit_areas,
         tab_scroll_left_hit_area: tab_bar_view.scroll_left_hit_area,
@@ -381,7 +384,7 @@ fn compute_mobile_view(
     } else {
         (area, Rect::default())
     };
-    sync_file_manager_viewport(app, terminal_area);
+    let file_manager_row_areas = sync_file_manager_view(app, terminal_area);
 
     if app.mode == Mode::Navigate {
         let switcher_viewport_h = area.height.saturating_sub(header_h + 1);
@@ -428,6 +431,7 @@ fn compute_mobile_view(
         workspace_card_areas: Vec::new(),
         sidebar_tab_hit_areas: Vec::new(),
         project_row_areas: Vec::new(),
+        file_manager_row_areas,
         tab_bar_rect: Rect::default(),
         tab_hit_areas: Vec::new(),
         tab_scroll_left_hit_area: Rect::default(),
@@ -443,10 +447,20 @@ fn compute_mobile_view(
     app.sync_copy_mode_search_geometry();
 }
 
-fn sync_file_manager_viewport(app: &mut AppState, area: Rect) {
+fn sync_file_manager_view(
+    app: &mut AppState,
+    area: Rect,
+) -> Vec<crate::app::state::FileManagerRowArea> {
     let visible_rows = file_manager_visible_rows(area);
     if let Some(file_manager) = app.file_manager.as_mut() {
         file_manager.sync_viewport(visible_rows);
+        compute_file_manager_row_areas(
+            area,
+            file_manager.entries.len(),
+            file_manager.viewport_start,
+        )
+    } else {
+        Vec::new()
     }
 }
 

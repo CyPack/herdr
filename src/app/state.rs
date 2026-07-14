@@ -621,6 +621,15 @@ pub struct ProjectRowArea {
     pub kind: ProjectRowKind,
 }
 
+/// One visible CURRENT row in the native file manager. `compute_view` stores
+/// these shared render/input coordinates so mouse hit-testing never recreates
+/// responsive Miller geometry independently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileManagerRowArea {
+    pub rect: Rect,
+    pub entry_idx: usize,
+}
+
 /// Deferred request to open a Claude Code chat as a new tab in a project
 /// directory (Projects tab, Task #5). `session_id` `Some` resumes that
 /// session, `None` starts a fresh chat. Set by the mouse handler and consumed
@@ -828,6 +837,9 @@ pub struct ViewState {
     /// Laid-out rows for the Projects tab (project headers + chat sessions).
     /// Empty on every non-Projects tab and when the sidebar is collapsed.
     pub project_row_areas: Vec<ProjectRowArea>,
+    /// Visible CURRENT rows for the native file manager. Empty while FM is
+    /// closed or when its content area has no drawable rows.
+    pub file_manager_row_areas: Vec<FileManagerRowArea>,
     pub tab_bar_rect: Rect,
     pub tab_hit_areas: Vec<Rect>,
     pub tab_scroll_left_hit_area: Rect,
@@ -1986,6 +1998,7 @@ impl AppState {
                 workspace_card_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
+                file_manager_row_areas: Vec::new(),
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),
                 tab_scroll_left_hit_area: Rect::default(),
