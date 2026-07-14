@@ -4,9 +4,9 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Active N4.1 product checkpoint: `86b618a`
-  (`feat: add file manager multi-selection gestures`).
-- The N4.1 publication unit is the seven-commit test/product sequence and the
+- Active N4.2 product checkpoint: `cb5a43e`
+  (`fix: preserve file manager range state at bulk limit`).
+- The N4.2 publication unit is the seven-commit test/product sequence and the
   continuity/graph commit containing this file. At publication, CyPack
   `feat/native-fm` and fork `master` are verified at that same fast-forward
   branch tip.
@@ -176,6 +176,35 @@
   all-target and canonical Windows MSVC bin clippy clean with `-D warnings`,
   Bun 17/17, Python 64/64, fmt/diff clean. Fast graph reindex is fresh at
   18,078 nodes / 83,865 edges and returns the new model/input/render symbols.
+
+## Verified Checkpoint — N4.2 Bounded Bulk Authority
+
+- N4.2 is an auditable seven-commit sequence: bulk-model RED `d5e027f`,
+  full-frame lifecycle RED `0c76017`, authority GREEN `0302b10`, bounded
+  state/input RED `36c815f`, bounded GREEN `57e2a44`, keyboard-atomicity RED
+  `50619ff`, and keyboard-atomicity GREEN `cb5a43e`. No RED checkpoint was
+  pushed alone.
+- Cursor focus alone grants no bulk authority. The action bar derives only
+  from explicit path identities and carries zero/one/many content, paths in
+  current visible order, file/directory/multiple/unavailable kind, and stable
+  disabled reasons.
+- Copy/Delete fail closed for one stale or ambiguous path and for any
+  unsupported member. Operation-in-flight overrides all actions. Read-only
+  target disables Delete/Paste/NewFolder but not Copy; empty clipboard
+  disables Paste. C4 still owns execution-time TOCTOU and partial failures.
+- Ctrl+A selects all only when the complete unique set fits the 4,096-path
+  ceiling; Ctrl+Shift+A clears. Oversized, duplicate, stale-anchor, ambiguous,
+  and oversized-range attempts reject atomically without silently selecting a
+  subset. Keyboard Shift range cannot move cursor when the selection rejects.
+- Render remains pure and filesystem-free. Header identity distinguishes no
+  explicit selection, one selected name, and `N selected`; disabled authority
+  retains its distinct style. No server or wire-protocol state was added.
+- Fresh gates: focused N4.2 12/12 across the staged runs, broad FM/input/render
+  112/112, full nextest 3020/3020 with only the named B0 real-host probe
+  ignored, Linux all-target and canonical Windows MSVC bin clippy clean with
+  `-D warnings`, Bun 17/17, Python 64/64, fmt/diff clean. Fast graph reindex is
+  fresh at 18,091 nodes / 84,102 edges and returns current `select_all`,
+  `MAX_MULTI_SELECTION_PATHS`, action builder, and keyboard route source.
 
 ## Completed Checkpoint — B2 Native Image Preview
 

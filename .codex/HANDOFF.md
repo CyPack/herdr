@@ -2,11 +2,11 @@
 
 ## 1. SONRAKI ADIM
 
-Make TP-N4.2-BULK-AUTHORITY RED before adding bulk toolbar authority. Define
-zero/one/many selection counts, mixed supported/unsupported or stale members,
-read-only destinations, clipboard state, selection clear/select-all bounds,
-range limits, and operation-in-flight precedence. N4.1 selection must not grant
-real filesystem authority; C4 still owns operation-time TOCTOU and failures.
+Make TP-C3.1-CONTEXT-MODEL RED before adding context-menu production code.
+Define deterministic file/directory/mixed/empty menu items and ordering from
+prepared selection authority, including unsupported, stale, read-only, and
+operation-in-flight states. C3 must add no filesystem mutation; C4 still owns
+operation-time TOCTOU, partial failures, progress, cancellation, and rollback.
 
 ## 2. AKTİF PROJE
 
@@ -167,6 +167,22 @@ real filesystem authority; C4 still owns operation-time TOCTOU and failures.
   nextest 3015/3015 plus one named B0 probe skip, Linux/Windows clippy, Bun
   17/17, Python 64/64, fmt/diff clean. Fast graph reindex is fresh at 18,078
   nodes / 83,865 edges and returned live model/input/render connections.
+- Completed N4.2 test-first as seven atomic commits: bulk authority RED
+  `d5e027f`, ViewState lifecycle RED `0c76017`, bulk authority GREEN `0302b10`,
+  bounded selection RED/GREEN `36c815f`/`57e2a44`, and keyboard overflow
+  atomicity RED/GREEN `50619ff`/`cb5a43e`.
+- Cursor focus no longer grants Copy/Delete authority. Prepared bulk paths
+  retain current visible order; zero/one/many labels and file/directory/
+  multiple/unavailable kinds are explicit. Stale/ambiguous or any unsupported
+  member disables the complete selection; operation-in-flight has precedence.
+- Added atomic 4,096-path select-all/range ceilings, Ctrl+A select-all,
+  Ctrl+Shift+A clear, stale/duplicate rejection, and keyboard overflow cursor
+  preservation. No partial set is silently selected and render remains pure.
+- N4.2 gates: focused staged runs 6/6 + 4/4 + 2/2, broad FM/input/render
+  112/112, full nextest 3020/3020 plus one named B0 probe skip, Linux/Windows
+  clippy, Bun 17/17, Python 64/64, fmt/diff clean. Fast graph reindex is fresh
+  at 18,091 nodes / 84,102 edges and returned current selection, builder, and
+  keyboard source rather than relying on `ready`.
 
 ## 6. KOD DURUMU
 
@@ -349,9 +365,10 @@ graph commit completes the N4.1 publication unit.
   N3.2 supplies explicit selection/clipboard/target/in-flight authority and
   disabled-click no-side-effect behavior. C4 must still revalidate every real
   filesystem operation at execution time for TOCTOU and partial failure.
-- N4.1 is implementation-complete, fully verified, and graph-indexed. Its
-  path set and anchor are client-local selection facts only; N4.2 must derive
-  explicit bulk authority before C4 can execute any operation.
+- N4.2 is implementation-complete, fully verified, and graph-indexed. Its
+  prepared path vector and action states are client-local presentation/input
+  authority only; C3 may consume them for menu modeling, while C4 must still
+  revalidate every target at execution time.
 - B1 uses minimal pure-Rust syntect outside input/render in a dedicated bounded
   worker. Plain prepared content remains availability authority; highlighting
   is optional enhancement and stale generations never mutate current state.
@@ -371,11 +388,11 @@ graph commit completes the N4.1 publication unit.
 
 ## 10. AÇIK GÖREVLER
 
-See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2/N4.1 contracts and the
-complete N4.2/C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1,
-N3, C2, and N4.1 are closed. The immediate product task is
-TP-N4.2-BULK-AUTHORITY RED; then follow N4.2 → C3 → C4 → C5 → C6 without
-skipping modules.
+See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2/N4 contracts and the
+complete C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1, N3,
+C2, and N4 are closed. The immediate product task is
+TP-C3.1-CONTEXT-MODEL RED; then follow C3 → C4 → C5 → C6 without skipping
+modules.
 
 ## 11. ORTAM
 
@@ -404,6 +421,11 @@ skipping modules.
   `extend_selection`, `reconcile_multi_selection`, stable row identity input,
   and the multi-selection render test with live connections. Freshness was not
   inferred from `ready` alone.
+- Fast post-N4.2 graph reindex completed at 18,091 nodes / 84,102 edges.
+  Freshness queries and source snippets returned current `select_all`,
+  `MAX_MULTI_SELECTION_PATHS`, `compute_file_manager_action_bar_model`, and
+  `handle_file_manager_key`, including the 4,096 ceiling and atomic Shift
+  routing. Freshness was not inferred from `ready` alone.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.

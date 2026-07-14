@@ -262,7 +262,21 @@ authority has one explicit source of truth.
   projection. RED `699a6a6` + `fc19237`, GREEN `86b618a`; broad 137/137 and
   full 3015/3015 plus one named B0 skip, Linux/Windows clippy, Bun 17/17,
   Python 64/64, fmt/diff, and graph freshness clean.
-- [ ] N4.2 bulk toolbar and selection-clear/range invariants.
+- [x] N4.2a derive zero/one/many toolbar identity and Copy/Delete authority
+  only from explicit selection paths; preserve current visible order and fail
+  closed for stale, ambiguous, mixed unsupported, read-only, clipboard-empty,
+  and operation-in-flight states. RED `d5e027f` + `0c76017`, GREEN `0302b10`.
+- [x] N4.2b make Ctrl+A select-all and Ctrl+Shift+A clear exact and bounded.
+  Complete unique sets up to 4,096 paths succeed; overflow, duplicate, stale
+  anchor, ambiguous selected identity, and oversized range reject atomically.
+  RED `36c815f`, GREEN `57e2a44`.
+- [x] N4.2c prove rejected keyboard Shift range preserves cursor, paths, and
+  anchor; RED `50619ff`, GREEN `cb5a43e`. Persistent toolbar render covers no
+  selection, one name, `N selected`, clipboard count, and distinct disabled
+  styling without render-time I/O.
+- N4.2 gates: focused staged runs 6/6 + 4/4 + 2/2, broad FM/input/render
+  112/112, full nextest 3020/3020 plus one named B0 probe skip, Linux/Windows
+  clippy, Bun 17/17, Python 64/64, fmt/diff, and graph freshness clean.
 
 ## P3 — C3 Context Menu
 
@@ -315,7 +329,7 @@ authority has one explicit source of truth.
 
 ## Ordering Resolution
 
-A4, B0, B1, the A3 remainder, B2, C1, N3, C2, and N4.1 are complete through
-product head `86b618a`. The next execution order is N4.2 → C3 → C4 → C5 → C6.
+A4, B0, B1, the A3 remainder, B2, C1, N3, C2, and N4.2 are complete through
+product head `cb5a43e`. The next execution order is C3 → C4 → C5 → C6.
 S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3 remain
 inactive north-star work.
