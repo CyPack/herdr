@@ -716,6 +716,10 @@ pub enum FileManagerActionDisabledReason {
     NoSelection,
     EmptyClipboard,
     ReadOnlyTarget,
+    // C3.1 prepares this reason before C3.2 production routing constructs a
+    // multi-target file menu; remove the allowance when that routing lands.
+    #[allow(dead_code)]
+    MultipleSelection,
     StaleSelection,
     UnsupportedSelection,
     OperationInFlight,
@@ -739,6 +743,171 @@ pub struct FileManagerActionBarModel {
 impl FileManagerActionBarModel {
     pub fn action_state(&self, action: FileManagerHeaderAction) -> Option<&FileManagerActionState> {
         self.actions.iter().find(|state| state.action == action)
+    }
+}
+
+// C3.1 is the testable model increment; C3.2 will construct these kinds from
+// live right-click routing and remove this temporary allowance.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileManagerContextMenuTargetKind {
+    File,
+    Directory,
+    Multiple,
+    Unavailable,
+}
+
+// C3.2 consumes these typed tags during popup dispatch; keep C3.1 warning-free
+// without weakening the crate-wide warning policy in the interim.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileManagerContextMenuAction {
+    Open,
+    Copy,
+    Rename,
+    Delete,
+    Compress,
+    SendAgent,
+}
+
+#[allow(dead_code)] // Removed when C3.2 render/dispatch consumes ALL and label.
+impl FileManagerContextMenuAction {
+    pub const ALL: [Self; 6] = [
+        Self::Open,
+        Self::Copy,
+        Self::Rename,
+        Self::Delete,
+        Self::Compress,
+        Self::SendAgent,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Open => "Open",
+            Self::Copy => "Copy",
+            Self::Rename => "Rename",
+            Self::Delete => "Delete",
+            Self::Compress => "Compress",
+            Self::SendAgent => "Send to Agent",
+        }
+    }
+}
+
+const FILE_MANAGER_CONTEXT_MENU_LABELS: &[&str] = &[
+    "Open",
+    "Copy",
+    "Rename",
+    "Delete",
+    "Compress",
+    "Send to Agent",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileManagerContextMenuItem {
+    pub action: FileManagerContextMenuAction,
+    pub label: &'static str,
+    pub enabled: bool,
+    pub disabled_reason: Option<FileManagerActionDisabledReason>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileManagerContextMenuModel {
+    pub target_kind: FileManagerContextMenuTargetKind,
+    pub paths: Vec<PathBuf>,
+    pub items: [FileManagerContextMenuItem; 6],
+}
+
+#[allow(dead_code)] // Removed when C3.2 right-click routing builds this model.
+impl FileManagerContextMenuModel {
+    /// Derive file-menu presentation authority only from the already-prepared
+    /// N4.2 action-bar snapshot. This performs no cursor or filesystem reads.
+    pub fn from_action_bar(action_bar: &FileManagerActionBarModel) -> Option<Self> {
+        let selection = action_bar.selection.as_ref()?;
+        if selection.paths.is_empty() {
+            return None;
+        }
+
+        let target_kind = match selection.kind {
+            FileManagerActionBarSelectionKind::File => FileManagerContextMenuTargetKind::File,
+            FileManagerActionBarSelectionKind::Directory => {
+                FileManagerContextMenuTargetKind::Directory
+            }
+            FileManagerActionBarSelectionKind::Multiple => {
+                FileManagerContextMenuTargetKind::Multiple
+            }
+            FileManagerActionBarSelectionKind::Unavailable => {
+                FileManagerContextMenuTargetKind::Unavailable
+            }
+        };
+        let copy_reason =
+            prepared_action_disabled_reason(action_bar.action_state(FileManagerHeaderAction::Copy));
+        let write_reason = prepared_action_disabled_reason(
+            action_bar.action_state(FileManagerHeaderAction::Delete),
+        );
+        let selection_failure = [copy_reason, write_reason]
+            .into_iter()
+            .flatten()
+            .find(|reason| {
+                matches!(
+                    reason,
+                    FileManagerActionDisabledReason::StaleSelection
+                        | FileManagerActionDisabledReason::UnsupportedSelection
+                        | FileManagerActionDisabledReason::OperationInFlight
+                )
+            })
+            .or_else(|| {
+                matches!(target_kind, FileManagerContextMenuTargetKind::Unavailable)
+                    .then_some(FileManagerActionDisabledReason::StaleSelection)
+            });
+
+        let items = FileManagerContextMenuAction::ALL.map(|action| {
+            let disabled_reason = if let Some(reason) = selection_failure {
+                Some(reason)
+            } else if matches!(target_kind, FileManagerContextMenuTargetKind::Multiple)
+                && matches!(
+                    action,
+                    FileManagerContextMenuAction::Open
+                        | FileManagerContextMenuAction::Rename
+                        | FileManagerContextMenuAction::SendAgent
+                )
+            {
+                Some(FileManagerActionDisabledReason::MultipleSelection)
+            } else {
+                match action {
+                    FileManagerContextMenuAction::Open
+                    | FileManagerContextMenuAction::Copy
+                    | FileManagerContextMenuAction::SendAgent => copy_reason,
+                    FileManagerContextMenuAction::Rename
+                    | FileManagerContextMenuAction::Delete
+                    | FileManagerContextMenuAction::Compress => write_reason,
+                }
+            };
+            FileManagerContextMenuItem {
+                action,
+                label: action.label(),
+                enabled: disabled_reason.is_none(),
+                disabled_reason,
+            }
+        });
+
+        Some(Self {
+            target_kind,
+            paths: selection.paths.clone(),
+            items,
+        })
+    }
+}
+
+#[allow(dead_code)] // Transitively live once C3.2 calls from_action_bar.
+fn prepared_action_disabled_reason(
+    state: Option<&FileManagerActionState>,
+) -> Option<FileManagerActionDisabledReason> {
+    match state {
+        Some(state) if state.enabled && state.disabled_reason.is_none() => None,
+        Some(state) => state
+            .disabled_reason
+            .or(Some(FileManagerActionDisabledReason::StaleSelection)),
+        None => Some(FileManagerActionDisabledReason::StaleSelection),
     }
 }
 
@@ -1403,6 +1572,12 @@ pub enum ContextMenuKind {
         proj_idx: usize,
         has_workspace: bool,
     },
+    /// Native-FM action model prepared from explicit client-local selection.
+    /// C3.1 models intent only; C4/C5 own eventual execution authority.
+    #[allow(dead_code)] // C3.2 constructs this variant from right-click input.
+    File {
+        model: FileManagerContextMenuModel,
+    },
 }
 
 /// Right-click context menu state.
@@ -1459,6 +1634,7 @@ impl ContextMenuState {
                 has_workspace: true,
                 ..
             } => crate::app::projects::PROJECT_CHAT_MENU_WITH_WORKTREES,
+            ContextMenuKind::File { .. } => FILE_MANAGER_CONTEXT_MENU_LABELS,
             ContextMenuKind::Pane {
                 has_manual_label: true,
                 source_pane_id: Some(_),
@@ -2538,6 +2714,16 @@ impl AppState {
                         "project new-chat menu references project {} outside the cache (len {})",
                         proj_idx,
                         self.projects_sessions.len()
+                    );
+                }
+                ContextMenuKind::File { ref model } => {
+                    assert!(
+                        self.file_manager.is_some(),
+                        "file context menu requires an open file manager"
+                    );
+                    assert!(
+                        !model.paths.is_empty(),
+                        "file context menu requires explicit prepared paths"
                     );
                 }
                 ContextMenuKind::Pane {
