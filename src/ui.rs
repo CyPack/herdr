@@ -28,6 +28,7 @@ use self::dialogs::{
     render_confirm_close_overlay, render_new_linked_worktree_overlay,
     render_open_existing_worktree_overlay, render_remove_worktree_overlay, render_rename_overlay,
 };
+pub(crate) use self::file_manager::file_manager_preview_content_area;
 use self::file_manager::{
     compute_file_manager_row_areas, file_manager_visible_rows, render_file_manager,
 };

@@ -106,6 +106,15 @@ pub(crate) fn file_manager_visible_rows(area: Rect) -> usize {
         .unwrap_or(0)
 }
 
+/// Pixel graphics and text rendering share this exact PREVIEW content seam.
+/// The top-level FM header and the PREVIEW panel title are intentionally
+/// excluded so host graphics cannot cover either label.
+pub(crate) fn file_manager_preview_content_area(area: Rect) -> Option<Rect> {
+    let preview = file_manager_areas(area)?.columns.preview?;
+    let content = panel_areas(preview)[1];
+    (content.width > 0 && content.height > 0).then_some(content)
+}
+
 /// Lay out visible CURRENT entry rows for both pure rendering and input hit
 /// testing. The viewport is defensively clamped so stale state cannot create
 /// off-list targets even if this helper is called before the next state sync.

@@ -11,12 +11,19 @@ use ratatui::layout::Rect;
 
 use crate::app::state::AppState;
 use crate::app::Mode;
-use crate::ghostty::{KittyImageDescriptor, KittyImageFormat, KittyImagePlacement};
+use crate::fm::image_preview::{ImagePreviewTarget, PreparedImagePreview};
+use crate::ghostty::{
+    KittyImageDescriptor, KittyImageFormat, KittyImagePlacement, KittyPlacementRenderInfo,
+};
 use crate::layout::PaneId;
 use crate::terminal::TerminalRuntimeRegistry;
+use crate::ui::file_manager_preview_content_area;
 
 const KITTY_CHUNK_BYTES: usize = 3072;
 const HOST_IMAGE_ID_BASE: u32 = 10_000;
+const FILE_MANAGER_PREVIEW_PANE_RAW: u32 = u32::MAX;
+const FILE_MANAGER_PREVIEW_IMAGE_ID: u32 = 1;
+const FILE_MANAGER_PREVIEW_PLACEMENT_ID: u32 = 1;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct HostCellSize {
@@ -75,6 +82,111 @@ struct HostPlacement {
     cell_size: HostCellSize,
     placement: KittyImagePlacement,
     scrollback_offset: u32,
+}
+
+fn file_manager_image_geometry(
+    file_manager_area: Rect,
+    cell_size: HostCellSize,
+) -> Option<(Rect, ImagePreviewTarget)> {
+    if !cell_size.is_known() {
+        return None;
+    }
+    let area = file_manager_preview_content_area(file_manager_area)?;
+    let width_px = u32::from(area.width).checked_mul(cell_size.width_px)?;
+    let height_px = u32::from(area.height).checked_mul(cell_size.height_px)?;
+    if width_px == 0 || height_px == 0 {
+        return None;
+    }
+    Some((
+        area,
+        ImagePreviewTarget {
+            width_px,
+            height_px,
+        },
+    ))
+}
+
+// B2.2 establishes the pure geometry seam before B2.3 consumes it from the
+// async preview lifecycle. Remove this allowance with that integration.
+#[allow(dead_code)]
+fn file_manager_image_target(
+    file_manager_area: Rect,
+    cell_size: HostCellSize,
+) -> Option<ImagePreviewTarget> {
+    file_manager_image_geometry(file_manager_area, cell_size).map(|(_, target)| target)
+}
+
+// B2.2 establishes the pure placement seam before B2.3 feeds it prepared
+// state. This remains client-only and never enters the server wire protocol.
+#[allow(dead_code)]
+fn file_manager_image_placement(
+    file_manager_area: Rect,
+    cell_size: HostCellSize,
+    prepared: &PreparedImagePreview,
+) -> Option<HostPlacement> {
+    let (area, target) = file_manager_image_geometry(file_manager_area, cell_size)?;
+    if prepared.width == 0
+        || prepared.height == 0
+        || prepared.width > target.width_px
+        || prepared.height > target.height_px
+    {
+        return None;
+    }
+
+    let expected_len = u64::from(prepared.width)
+        .checked_mul(u64::from(prepared.height))?
+        .checked_mul(4)?;
+    if u64::try_from(prepared.rgba.len()).ok()? != expected_len {
+        return None;
+    }
+
+    let grid_cols = prepared.width.div_ceil(cell_size.width_px);
+    let grid_rows = prepared.height.div_ceil(cell_size.height_px);
+    if grid_cols == 0
+        || grid_rows == 0
+        || grid_cols > u32::from(area.width)
+        || grid_rows > u32::from(area.height)
+    {
+        return None;
+    }
+    let viewport_col = i32::try_from((u32::from(area.width) - grid_cols) / 2).ok()?;
+    let viewport_row = i32::try_from((u32::from(area.height) - grid_rows) / 2).ok()?;
+
+    let mut hasher = DefaultHasher::new();
+    prepared.rgba.hash(&mut hasher);
+    let data_fingerprint = hasher.finish();
+
+    Some(HostPlacement {
+        pane_id: PaneId::from_raw(FILE_MANAGER_PREVIEW_PANE_RAW),
+        area,
+        cell_size,
+        scrollback_offset: 0,
+        placement: KittyImagePlacement {
+            image_id: FILE_MANAGER_PREVIEW_IMAGE_ID,
+            placement_id: FILE_MANAGER_PREVIEW_PLACEMENT_ID,
+            z: 0,
+            x_offset: 0,
+            y_offset: 0,
+            image_width: prepared.width,
+            image_height: prepared.height,
+            format: KittyImageFormat::Rgba,
+            data_len: prepared.rgba.len(),
+            data_fingerprint,
+            data: prepared.rgba.clone(),
+            render: KittyPlacementRenderInfo {
+                pixel_width: prepared.width,
+                pixel_height: prepared.height,
+                grid_cols,
+                grid_rows,
+                viewport_col,
+                viewport_row,
+                source_x: 0,
+                source_y: 0,
+                source_width: 0,
+                source_height: 0,
+            },
+        },
+    })
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
