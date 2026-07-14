@@ -662,6 +662,126 @@ mod tests {
         }
     }
 
+    // TP-B1.4-REPLACE: replacement at the same path is still a new preview
+    // generation when visible bytes change. The old highlight must not survive
+    // into the new content.
+    #[test]
+    fn reload_replaced_selected_text_discards_old_highlight() {
+        let td = TempDir::new("text-preview-highlight-replace");
+        let path = td.root.join("sample.rs");
+        fs::write(&path, "fn old() {}\n").expect("write original fixture");
+        let mut state = FmState::new(&td.root);
+        match &mut state.preview {
+            FmPreview::File(FmFilePreview::Text(preview)) => {
+                preview.highlighted = Some(highlight_text_preview(&path, preview));
+            }
+            other => panic!("original file needs prepared preview, got {other:?}"),
+        }
+
+        fs::write(&path, "fn replacement() {}\n").expect("replace selected fixture");
+        state.reload();
+
+        match &state.preview {
+            FmPreview::File(FmFilePreview::Text(preview)) => {
+                assert_eq!(preview.source_path, path);
+                assert_eq!(preview.content, "fn replacement() {}\n");
+                assert!(preview.highlighted.is_none());
+            }
+            other => panic!("replacement needs prepared preview, got {other:?}"),
+        }
+    }
+
+    // TP-B1.4-DELETE: deleting the selected file falls forward to the nearest
+    // valid row and prepares that row's content; stale source identity and
+    // highlight data are both discarded.
+    #[test]
+    fn reload_deleted_selected_text_previews_new_selection() {
+        let td = TempDir::new("text-preview-highlight-delete");
+        let deleted = td.root.join("alpha.rs");
+        let remaining = td.root.join("beta.py");
+        fs::write(&deleted, "fn alpha() {}\n").expect("write selected fixture");
+        fs::write(&remaining, "def beta():\n    pass\n").expect("write remaining fixture");
+        let mut state = FmState::new(&td.root);
+        match &mut state.preview {
+            FmPreview::File(FmFilePreview::Text(preview)) => {
+                preview.highlighted = Some(highlight_text_preview(&deleted, preview));
+            }
+            other => panic!("selected file needs prepared preview, got {other:?}"),
+        }
+
+        fs::remove_file(&deleted).expect("delete selected fixture");
+        state.reload();
+
+        assert_eq!(state.selected().map(|entry| &entry.path), Some(&remaining));
+        match &state.preview {
+            FmPreview::File(FmFilePreview::Text(preview)) => {
+                assert_eq!(preview.source_path, remaining);
+                assert_eq!(preview.content, "def beta():\n    pass\n");
+                assert!(preview.highlighted.is_none());
+            }
+            other => panic!("remaining file needs prepared preview, got {other:?}"),
+        }
+    }
+
+    // TP-B1.4-HIDDEN: filter reloads preserve an unchanged visible selection,
+    // but hiding the selected dotfile must rebind preview identity to the next
+    // visible file.
+    #[test]
+    fn hidden_toggle_preserves_or_rebinds_text_highlight_by_path() {
+        let td = TempDir::new("text-preview-highlight-hidden");
+        let hidden = td.root.join(".hidden.rs");
+        let visible = td.root.join("visible.rs");
+        fs::write(&hidden, "fn hidden() {}\n").expect("write hidden fixture");
+        fs::write(&visible, "fn visible() {}\n").expect("write visible fixture");
+        let mut state = FmState::with_hidden(&td.root, true);
+        state.cursor = state
+            .entries
+            .iter()
+            .position(|entry| entry.path == visible)
+            .expect("visible selection");
+        state.refresh_preview();
+        let visible_highlight = match &mut state.preview {
+            FmPreview::File(FmFilePreview::Text(preview)) => {
+                let highlighted = highlight_text_preview(&visible, preview);
+                preview.highlighted = Some(highlighted.clone());
+                highlighted
+            }
+            other => panic!("visible file needs prepared preview, got {other:?}"),
+        };
+
+        state.toggle_hidden();
+        match &state.preview {
+            FmPreview::File(FmFilePreview::Text(preview)) => {
+                assert_eq!(preview.source_path, visible);
+                assert_eq!(preview.highlighted.as_ref(), Some(&visible_highlight));
+            }
+            other => panic!("visible file remains selected, got {other:?}"),
+        }
+
+        state.toggle_hidden();
+        state.cursor = state
+            .entries
+            .iter()
+            .position(|entry| entry.path == hidden)
+            .expect("hidden selection");
+        state.refresh_preview();
+        match &mut state.preview {
+            FmPreview::File(FmFilePreview::Text(preview)) => {
+                preview.highlighted = Some(highlight_text_preview(&hidden, preview));
+            }
+            other => panic!("hidden file needs prepared preview, got {other:?}"),
+        }
+
+        state.toggle_hidden();
+        match &state.preview {
+            FmPreview::File(FmFilePreview::Text(preview)) => {
+                assert_eq!(preview.source_path, visible);
+                assert!(preview.highlighted.is_none());
+            }
+            other => panic!("visible fallback needs prepared preview, got {other:?}"),
+        }
+    }
+
     // TP-A2.2.5: filesystem root has no parent context.
     #[test]
     fn miller_context_at_root_has_no_parent() {

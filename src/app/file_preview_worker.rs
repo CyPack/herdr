@@ -662,4 +662,78 @@ mod tests {
         assert!(app.state.file_manager.is_none());
         assert!(!app.sync_file_preview_worker());
     }
+
+    // TP-B1.4-REOPEN: an App-owned worker can stop with the closed FM and then
+    // bind a fresh generation after reopen. The prior path/syntax cannot leak
+    // into the reopened preview.
+    #[test]
+    fn app_reopen_highlights_only_the_new_file_manager_selection() {
+        let first = TempDir::new("app-reopen-first");
+        let second = TempDir::new("app-reopen-second");
+        std::fs::write(first.root.join("first.rs"), "fn first() {}\n")
+            .expect("write first fixture");
+        std::fs::write(second.root.join("second.py"), "def second():\n    pass\n")
+            .expect("write second fixture");
+        let mut app = test_app();
+        app.state.file_manager = Some(crate::fm::FmState::new(&first.root));
+
+        let first_deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            app.sync_file_preview_worker();
+            let syntax = app
+                .state
+                .file_manager
+                .as_ref()
+                .and_then(|state| match &state.preview {
+                    crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(preview)) => preview
+                        .highlighted
+                        .as_ref()
+                        .and_then(|highlighted| highlighted.syntax_name.as_deref()),
+                    _ => None,
+                });
+            if syntax == Some("Rust") {
+                break;
+            }
+            assert!(
+                Instant::now() < first_deadline,
+                "timed out highlighting first FM"
+            );
+            std::thread::yield_now();
+        }
+
+        app.state.file_manager = None;
+        assert!(!app.sync_file_preview_worker());
+        app.state.file_manager = Some(crate::fm::FmState::new(&second.root));
+
+        let second_deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            app.sync_file_preview_worker();
+            let syntax = app
+                .state
+                .file_manager
+                .as_ref()
+                .and_then(|state| match &state.preview {
+                    crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(preview)) => {
+                        assert!(preview.source_path.ends_with("second.py"));
+                        preview
+                            .highlighted
+                            .as_ref()
+                            .and_then(|highlighted| highlighted.syntax_name.as_deref())
+                    }
+                    _ => None,
+                });
+            if syntax == Some("Python") {
+                break;
+            }
+            assert!(
+                syntax != Some("Rust"),
+                "closed file-manager syntax leaked after reopen"
+            );
+            assert!(
+                Instant::now() < second_deadline,
+                "timed out highlighting reopened FM"
+            );
+            std::thread::yield_now();
+        }
+    }
 }
