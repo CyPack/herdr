@@ -313,3 +313,100 @@ pub(super) fn render_context_menu(app: &AppState, frame: &mut Frame) {
     let mut state = ListState::default().with_selected(Some(menu.list.highlighted));
     frame.render_stateful_widget(list, inner, &mut state);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::state::{
+        ContextMenuKind, ContextMenuState, FileManagerActionDisabledReason,
+        FileManagerContextMenuAction, FileManagerContextMenuItem, FileManagerContextMenuModel,
+        FileManagerContextMenuTargetKind, MenuListState,
+    };
+    use ratatui::{backend::TestBackend, buffer::Buffer, Terminal};
+    use std::path::PathBuf;
+
+    fn multiple_file_menu(highlighted: usize) -> AppState {
+        let mut app = AppState::test_new();
+        app.view.sidebar_rect = Rect::new(0, 0, 1, 12);
+        app.view.terminal_area = Rect::new(1, 0, 39, 12);
+        let items = FileManagerContextMenuAction::ALL.map(|action| {
+            let disabled = matches!(
+                action,
+                FileManagerContextMenuAction::Open
+                    | FileManagerContextMenuAction::Rename
+                    | FileManagerContextMenuAction::SendAgent
+            );
+            FileManagerContextMenuItem {
+                action,
+                label: action.label(),
+                enabled: !disabled,
+                disabled_reason: disabled
+                    .then_some(FileManagerActionDisabledReason::MultipleSelection),
+            }
+        });
+        app.context_menu = Some(ContextMenuState {
+            kind: ContextMenuKind::File {
+                model: FileManagerContextMenuModel {
+                    target_kind: FileManagerContextMenuTargetKind::Multiple,
+                    paths: vec![PathBuf::from("a.txt"), PathBuf::from("b.txt")],
+                    items,
+                },
+            },
+            x: 2,
+            y: 1,
+            list: MenuListState::new(highlighted),
+        });
+        app
+    }
+
+    fn render_menu(app: &AppState) -> Buffer {
+        let backend = TestBackend::new(40, 12);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| render_context_menu(app, frame))
+            .expect("render context menu");
+        terminal.backend().buffer().clone()
+    }
+
+    fn glyph_fg(buffer: &Buffer, row: u16, glyph: &str) -> ratatui::style::Color {
+        (0..buffer.area.width)
+            .find_map(|column| {
+                let cell = &buffer[(column, row)];
+                (cell.symbol() == glyph).then_some(cell.fg)
+            })
+            .unwrap_or_else(|| panic!("missing glyph {glyph:?} on row {row}"))
+    }
+
+    // TP-C3.2-POPUP-LIFECYCLE: disabled file actions remain visibly dim even
+    // when highlighted, while enabled rows retain normal and selected menu
+    // contrast. The model is read-only during rendering.
+    #[test]
+    fn disabled_file_context_items_have_distinct_highlight_safe_style() {
+        let disabled_highlight = multiple_file_menu(0);
+        let menu_rect = disabled_highlight.context_menu_rect().expect("menu rect");
+        let buffer = render_menu(&disabled_highlight);
+        assert_eq!(
+            glyph_fg(&buffer, menu_rect.y + 1, "O"),
+            disabled_highlight.palette.overlay0,
+            "highlighted disabled Open remains dim"
+        );
+        assert_eq!(
+            glyph_fg(&buffer, menu_rect.y + 2, "C"),
+            disabled_highlight.palette.text,
+            "enabled Copy uses normal text while not highlighted"
+        );
+
+        let enabled_highlight = multiple_file_menu(1);
+        let buffer = render_menu(&enabled_highlight);
+        assert_eq!(
+            glyph_fg(&buffer, menu_rect.y + 1, "O"),
+            enabled_highlight.palette.overlay0,
+            "non-highlighted disabled Open remains dim"
+        );
+        assert_eq!(
+            glyph_fg(&buffer, menu_rect.y + 2, "C"),
+            panel_contrast_fg(&enabled_highlight.palette),
+            "highlighted enabled Copy keeps selected contrast"
+        );
+    }
+}
