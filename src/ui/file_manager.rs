@@ -37,6 +37,12 @@ struct MillerLayout {
     dividers: [Option<Rect>; 2],
 }
 
+#[derive(Debug, Clone, Copy)]
+struct FileManagerAreas {
+    header: Rect,
+    columns: MillerLayout,
+}
+
 fn miller_layout(area: Rect) -> MillerLayout {
     if area.width >= THREE_COLUMN_MIN_WIDTH {
         let [parent, first_divider, current, second_divider, preview] = Layout::horizontal([
@@ -76,6 +82,29 @@ fn miller_layout(area: Rect) -> MillerLayout {
     }
 }
 
+fn file_manager_areas(area: Rect) -> Option<FileManagerAreas> {
+    if area.width == 0 || area.height == 0 {
+        return None;
+    }
+    let [header, body] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+    Some(FileManagerAreas {
+        header,
+        columns: miller_layout(body),
+    })
+}
+
+fn panel_areas(area: Rect) -> [Rect; 2] {
+    Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area)
+}
+
+/// Number of rows available to CURRENT entries for this responsive FM area.
+/// `compute_view` uses the same pure geometry that render consumes.
+pub(crate) fn file_manager_visible_rows(area: Rect) -> usize {
+    file_manager_areas(area)
+        .map(|areas| panel_areas(areas.columns.current)[1].height as usize)
+        .unwrap_or(0)
+}
+
 /// Render the open file manager into `area`. Does nothing when the file manager
 /// is closed (`app.file_manager` is `None`) or the area is empty, so callers can
 /// invoke it unconditionally.
@@ -83,28 +112,25 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
     let Some(fm) = app.file_manager.as_ref() else {
         return;
     };
-    if area.width == 0 || area.height == 0 {
+    let Some(areas) = file_manager_areas(area) else {
         return;
-    }
+    };
     let p = &app.palette;
 
     // A one-row identity header stays stable while responsive Miller columns
     // progressively disclose parent and preview context below it.
-    let [header_area, body_area] =
-        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
-
     let cwd_text = fm.cwd.to_string_lossy();
-    let header = truncate_end(&cwd_text, header_area.width as usize);
+    let header = truncate_end(&cwd_text, areas.header.width as usize);
     frame.render_widget(
         Paragraph::new(header).style(Style::default().fg(p.subtext0).add_modifier(Modifier::BOLD)),
-        header_area,
+        areas.header,
     );
 
-    if body_area.height == 0 {
+    if areas.columns.current.height == 0 {
         return;
     }
 
-    let layout = miller_layout(body_area);
+    let layout = areas.columns;
     for divider in layout.dividers.into_iter().flatten() {
         frame.render_widget(
             Block::default()
@@ -124,9 +150,10 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
                 &parent.entries,
                 parent.cursor,
                 "(empty)",
+                None,
             );
         } else {
-            render_panel(app, frame, parent_area, "PARENT", &[], None, "(root)");
+            render_panel(app, frame, parent_area, "PARENT", &[], None, "(root)", None);
         }
     }
 
@@ -138,6 +165,7 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         &fm.entries,
         (!fm.entries.is_empty()).then_some(fm.cursor),
         "(empty)",
+        Some(fm.viewport_start),
     );
 
     if let Some(preview_area) = layout.preview {
@@ -150,6 +178,7 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
                 &[],
                 None,
                 "(nothing selected)",
+                None,
             ),
             FmPreview::File(preview) => {
                 render_file_preview(app, frame, preview_area, preview);
@@ -162,6 +191,7 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
                 entries,
                 None,
                 "(empty)",
+                None,
             ),
         }
     }
@@ -324,13 +354,13 @@ fn render_panel(
     entries: &[FileEntry],
     selected: Option<usize>,
     empty_label: &str,
+    viewport_start: Option<usize>,
 ) {
     if area.width == 0 || area.height == 0 {
         return;
     }
     let p = &app.palette;
-    let [title_area, list_area] =
-        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+    let [title_area, list_area] = panel_areas(area);
     let title = truncate_end(&format!(" {title}"), title_area.width as usize);
     frame.render_widget(
         Paragraph::new(title).style(Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD)),
@@ -349,12 +379,13 @@ fn render_panel(
         return;
     }
 
-    // Show a window of entries that keeps the cursor visible. Persistent scroll
-    // state lands later; the window is derived so highlighted context remains
-    // visible even in long parent/current directories.
+    // CURRENT consumes its persistent viewport. Context panels still derive a
+    // cursor-following window because they do not own independent scroll state.
     let rows = list_area.height as usize;
     let cursor = selected.unwrap_or(0).min(entries.len() - 1);
-    let first = if cursor < rows { 0 } else { cursor - rows + 1 };
+    let derived_start = if cursor < rows { 0 } else { cursor - rows + 1 };
+    let max_start = entries.len().saturating_sub(rows);
+    let first = viewport_start.unwrap_or(derived_start).min(max_start);
 
     for (offset, entry) in entries.iter().skip(first).take(rows).enumerate() {
         let idx = first + offset;

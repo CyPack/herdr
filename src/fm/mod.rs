@@ -140,6 +140,9 @@ pub struct FmState {
     /// Index of the highlighted row; always within `[0, entries.len())`, or 0
     /// when the directory is empty.
     pub cursor: usize,
+    /// First entry rendered in the current-directory list. Geometry-dependent
+    /// normalization happens in `compute_view`; render only consumes it.
+    pub viewport_start: usize,
     /// Whether dot-prefixed entries are shown.
     pub show_hidden: bool,
     /// Cached parent-directory context for the left Miller column.
@@ -162,6 +165,7 @@ impl FmState {
             cwd,
             entries,
             cursor: 0,
+            viewport_start: 0,
             show_hidden,
             parent: None,
             preview: FmPreview::None,
@@ -213,6 +217,26 @@ impl FmState {
         }
     }
 
+    /// Keep the cursor inside a viewport with `visible_rows` entries and clamp
+    /// the first rendered row to the current list length. A zero-height or
+    /// empty viewport has the canonical start offset 0.
+    pub(crate) fn sync_viewport(&mut self, visible_rows: usize) {
+        self.clamp_cursor();
+        if visible_rows == 0 || self.entries.is_empty() {
+            self.viewport_start = 0;
+            return;
+        }
+
+        let max_start = self.entries.len().saturating_sub(visible_rows);
+        self.viewport_start = self.viewport_start.min(max_start);
+        if self.cursor < self.viewport_start {
+            self.viewport_start = self.cursor;
+        } else if self.cursor >= self.viewport_start.saturating_add(visible_rows) {
+            self.viewport_start = self.cursor.saturating_add(1).saturating_sub(visible_rows);
+        }
+        self.viewport_start = self.viewport_start.min(max_start);
+    }
+
     /// Descend into the selected entry when it is a directory, re-reading its
     /// contents with the cursor back at the top. A no-op when the selection is a
     /// file (or the directory is empty).
@@ -224,6 +248,7 @@ impl FmState {
         if let Some(path) = target {
             self.cwd = path;
             self.cursor = 0;
+            self.viewport_start = 0;
             self.reload();
         }
     }
@@ -234,6 +259,7 @@ impl FmState {
         if let Some(parent) = self.cwd.parent() {
             self.cwd = parent.to_path_buf();
             self.cursor = 0;
+            self.viewport_start = 0;
             self.reload();
         }
     }
@@ -242,9 +268,13 @@ impl FmState {
     fn clamp_cursor(&mut self) {
         if self.entries.is_empty() {
             self.cursor = 0;
+            self.viewport_start = 0;
         } else if self.cursor >= self.entries.len() {
             self.cursor = self.entries.len() - 1;
         }
+        self.viewport_start = self
+            .viewport_start
+            .min(self.entries.len().saturating_sub(1));
     }
 
     /// Refresh parent and preview caches after the browsed directory or its
