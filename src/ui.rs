@@ -30,7 +30,8 @@ use self::dialogs::{
 };
 pub(crate) use self::file_manager::file_manager_preview_content_area;
 use self::file_manager::{
-    compute_file_manager_row_areas, file_manager_visible_rows, render_file_manager,
+    compute_file_manager_header_action_areas, compute_file_manager_row_areas,
+    file_manager_visible_rows, render_file_manager,
 };
 use self::keybind_help::render_keybind_help_overlay;
 use self::menus::{
@@ -252,6 +253,11 @@ fn compute_view_internal(
         .map(|ws| desktop_tab_bar_and_terminal_area(app, ws, main_area))
         .unwrap_or((Rect::default(), main_area));
     let file_manager_row_areas = sync_file_manager_view(app, terminal_area);
+    let file_manager_header_action_areas = if app.file_manager.is_some() {
+        compute_file_manager_header_action_areas(terminal_area)
+    } else {
+        Vec::new()
+    };
 
     if !app.sidebar_collapsed {
         app.workspace_scroll = normalized_workspace_scroll(app, sidebar_area, app.workspace_scroll);
@@ -355,6 +361,7 @@ fn compute_view_internal(
         sidebar_tab_hit_areas,
         project_row_areas,
         file_manager_row_areas,
+        file_manager_header_action_areas,
         tab_bar_rect,
         tab_hit_areas: tab_bar_view.tab_hit_areas,
         tab_scroll_left_hit_area: tab_bar_view.scroll_left_hit_area,
@@ -386,6 +393,11 @@ fn compute_mobile_view(
         (area, Rect::default())
     };
     let file_manager_row_areas = sync_file_manager_view(app, terminal_area);
+    let file_manager_header_action_areas = if app.file_manager.is_some() {
+        compute_file_manager_header_action_areas(terminal_area)
+    } else {
+        Vec::new()
+    };
 
     if app.mode == Mode::Navigate {
         let switcher_viewport_h = area.height.saturating_sub(header_h + 1);
@@ -433,6 +445,7 @@ fn compute_mobile_view(
         sidebar_tab_hit_areas: Vec::new(),
         project_row_areas: Vec::new(),
         file_manager_row_areas,
+        file_manager_header_action_areas,
         tab_bar_rect: Rect::default(),
         tab_hit_areas: Vec::new(),
         tab_scroll_left_hit_area: Rect::default(),

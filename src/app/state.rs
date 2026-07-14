@@ -630,6 +630,37 @@ pub struct FileManagerRowArea {
     pub entry_idx: usize,
 }
 
+/// Client-local actions exposed by the native file-manager header. These are
+/// presentation/input tags only; they are not server or wire-protocol state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileManagerHeaderAction {
+    Copy,
+    Paste,
+    NewFolder,
+    Delete,
+}
+
+impl FileManagerHeaderAction {
+    pub const ALL: [Self; 4] = [Self::Copy, Self::Paste, Self::NewFolder, Self::Delete];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Copy => "[copy]",
+            Self::Paste => "[paste]",
+            Self::NewFolder => "[new folder]",
+            Self::Delete => "[delete]",
+        }
+    }
+}
+
+/// Named header-action rectangle shared by pure view computation and future
+/// render/input consumers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileManagerHeaderActionArea {
+    pub rect: Rect,
+    pub action: FileManagerHeaderAction,
+}
+
 /// Deferred request to open a Claude Code chat as a new tab in a project
 /// directory (Projects tab, Task #5). `session_id` `Some` resumes that
 /// session, `None` starts a fresh chat. Set by the mouse handler and consumed
@@ -840,6 +871,9 @@ pub struct ViewState {
     /// Visible CURRENT rows for the native file manager. Empty while FM is
     /// closed or when its content area has no drawable rows.
     pub file_manager_row_areas: Vec<FileManagerRowArea>,
+    /// Named native-FM header actions for this frame. Empty while FM is closed
+    /// or when the header cannot preserve its minimum identity width.
+    pub file_manager_header_action_areas: Vec<FileManagerHeaderActionArea>,
     pub tab_bar_rect: Rect,
     pub tab_hit_areas: Vec<Rect>,
     pub tab_scroll_left_hit_area: Rect,
@@ -1999,6 +2033,7 @@ impl AppState {
                 sidebar_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
                 file_manager_row_areas: Vec::new(),
+                file_manager_header_action_areas: Vec::new(),
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),
                 tab_scroll_left_hit_area: Rect::default(),

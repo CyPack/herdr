@@ -18,7 +18,7 @@ use ratatui::Frame;
 
 use super::text::truncate_end;
 use crate::app::state::AppState;
-use crate::app::state::FileManagerRowArea;
+use crate::app::state::{FileManagerHeaderAction, FileManagerHeaderActionArea, FileManagerRowArea};
 use crate::fm::{
     FileEntry, FmFilePreview, FmImagePreviewState, FmPreview, HighlightedTextPreview,
     ImagePreviewError, PreviewTextLine, PreviewTextSpan, PreviewTextStyle, TextPreview,
@@ -30,6 +30,8 @@ const DIVIDER_WIDTH: u16 = 1;
 const THREE_COLUMN_MIN_WIDTH: u16 = MIN_COLUMN_WIDTH * 3 + DIVIDER_WIDTH * 2;
 const TWO_COLUMN_MIN_WIDTH: u16 = MIN_COLUMN_WIDTH * 2 + DIVIDER_WIDTH;
 const MAX_RENDERED_PREVIEW_LINES: usize = 128;
+const HEADER_MIN_IDENTITY_WIDTH: u16 = 12;
+const HEADER_ACTION_GAP: u16 = 1;
 
 #[derive(Debug, Clone, Copy)]
 struct MillerLayout {
@@ -143,6 +145,49 @@ pub(crate) fn compute_file_manager_row_areas(
         .collect()
 }
 
+/// Lay out complete native-FM header buttons from highest to lowest priority.
+/// The cwd identity keeps a readable minimum; actions that cannot fit in full
+/// are omitted so render/input can never expose a clipped phantom target.
+pub(crate) fn compute_file_manager_header_action_areas(
+    area: Rect,
+) -> Vec<FileManagerHeaderActionArea> {
+    if area.width == 0 || area.height == 0 {
+        return Vec::new();
+    }
+
+    let available = area.width.saturating_sub(HEADER_MIN_IDENTITY_WIDTH);
+    let mut selected = Vec::new();
+    let mut used = 0_u16;
+    for action in FileManagerHeaderAction::ALL {
+        let width = action.label().len() as u16;
+        let gap = if selected.is_empty() {
+            0
+        } else {
+            HEADER_ACTION_GAP
+        };
+        let required = gap.saturating_add(width);
+        if required > available.saturating_sub(used) {
+            break;
+        }
+        used = used.saturating_add(required);
+        selected.push((action, width));
+    }
+
+    let mut x = area.right().saturating_sub(used);
+    selected
+        .into_iter()
+        .enumerate()
+        .map(|(index, (action, width))| {
+            if index > 0 {
+                x = x.saturating_add(HEADER_ACTION_GAP);
+            }
+            let rect = Rect::new(x, area.y, width, 1);
+            x = x.saturating_add(width);
+            FileManagerHeaderActionArea { rect, action }
+        })
+        .collect()
+}
+
 /// Render the open file manager into `area`. Does nothing when the file manager
 /// is closed (`app.file_manager` is `None`) or the area is empty, so callers can
 /// invoke it unconditionally.
@@ -155,14 +200,35 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
     };
     let p = &app.palette;
 
+    let fallback_header_actions;
+    let header_actions = if area == app.view.terminal_area {
+        app.view.file_manager_header_action_areas.as_slice()
+    } else {
+        // Unit/component callers can render without a preceding compute_view;
+        // use the exact same pure geometry seam as the full-frame path.
+        fallback_header_actions = compute_file_manager_header_action_areas(area);
+        fallback_header_actions.as_slice()
+    };
+
     // A one-row identity header stays stable while responsive Miller columns
     // progressively disclose parent and preview context below it.
     let cwd_text = fm.cwd.to_string_lossy();
-    let header = truncate_end(&cwd_text, areas.header.width as usize);
+    let identity_width = header_actions
+        .first()
+        .map(|action| action.rect.x.saturating_sub(areas.header.x))
+        .unwrap_or(areas.header.width);
+    let identity_area = Rect::new(areas.header.x, areas.header.y, identity_width, 1);
+    let header = truncate_end(&cwd_text, identity_area.width as usize);
     frame.render_widget(
         Paragraph::new(header).style(Style::default().fg(p.subtext0).add_modifier(Modifier::BOLD)),
-        areas.header,
+        identity_area,
     );
+    for action in header_actions {
+        frame.render_widget(
+            Paragraph::new(action.action.label()).style(Style::default().fg(p.overlay1)),
+            action.rect,
+        );
+    }
 
     if areas.columns.current.height == 0 {
         return;
@@ -1044,6 +1110,29 @@ mod tests {
         assert!(
             compute_file_manager_header_action_areas(Rect::new(u16::MAX - 3, 2, 3, 1)).is_empty()
         );
+    }
+
+    // TP-C1.1-RENDER-SEAM: rendering consumes the same complete tagged rects
+    // that compute_view snapshots for future input hit-testing.
+    #[test]
+    fn header_actions_render_from_shared_responsive_geometry() {
+        let td = TempDir::new("header-actions");
+        td.file("selected.txt");
+        let app = app_with_fm(FmState::new(&td.root));
+
+        let wide = render_rows(&app, 60, 5)[0].clone();
+        for label in ["[copy]", "[paste]", "[new folder]", "[delete]"] {
+            assert!(wide.contains(label), "wide header shows {label}: {wide:?}");
+        }
+
+        let narrow = render_rows(&app, 30, 5)[0].clone();
+        assert!(narrow.contains("[copy]"), "narrow header: {narrow:?}");
+        assert!(narrow.contains("[paste]"), "narrow header: {narrow:?}");
+        assert!(
+            !narrow.contains("[new folder]"),
+            "narrow header: {narrow:?}"
+        );
+        assert!(!narrow.contains("[delete]"), "narrow header: {narrow:?}");
     }
 
     // TP-A2.2.5: the filesystem root has no parent but still renders a stable,
