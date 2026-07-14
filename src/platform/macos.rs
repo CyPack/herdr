@@ -25,6 +25,31 @@ pub(crate) fn file_identity(
     Ok(FileIdentity::new(metadata.dev(), metadata.ino()))
 }
 
+pub(crate) fn publish_staged_path_no_replace(
+    source: &Path,
+    destination: &Path,
+) -> std::io::Result<()> {
+    let source = std::ffi::CString::new(source.as_os_str().as_bytes()).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "staging path contains an interior NUL",
+        )
+    })?;
+    let destination = std::ffi::CString::new(destination.as_os_str().as_bytes()).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "destination path contains an interior NUL",
+        )
+    })?;
+    let result =
+        unsafe { libc::renamex_np(source.as_ptr(), destination.as_ptr(), libc::RENAME_EXCL) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
 pub(crate) fn should_draw_host_cursor_by_default() -> bool {
     false
 }

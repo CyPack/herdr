@@ -2,6 +2,8 @@ use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use crate::fm::MAX_MULTI_SELECTION_PATHS;
@@ -411,6 +413,512 @@ fn reject_destination_collision(
     }
 }
 
+const MAX_OPERATION_TREE_ENTRIES: usize = 1_000_000;
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct FileOperationCancellation {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl FileOperationCancellation {
+    pub(crate) fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FileOperationExecutionStatus {
+    Completed,
+    Cancelled,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FileOperationIoAction {
+    ReadSource,
+    CreateStaging,
+    CopyData,
+    SetPermissions,
+    Publish,
+    Cleanup,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FileOperationExecutionError {
+    Preflight(FileOperationPreflightError),
+    SourceSymlink {
+        path: PathBuf,
+    },
+    SourceUnsupported {
+        path: PathBuf,
+    },
+    TreeEntryLimitExceeded {
+        source: PathBuf,
+        limit: usize,
+    },
+    MoveNotImplemented,
+    Io {
+        path: PathBuf,
+        action: FileOperationIoAction,
+        kind: io::ErrorKind,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FileOperationItemOutcome {
+    NotStarted,
+    Committed,
+    RolledBack,
+    Failed(FileOperationExecutionError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FileOperationItemResult {
+    source: PathBuf,
+    destination: PathBuf,
+    outcome: FileOperationItemOutcome,
+}
+
+impl FileOperationItemResult {
+    pub(crate) fn source(&self) -> &Path {
+        &self.source
+    }
+
+    pub(crate) fn destination(&self) -> &Path {
+        &self.destination
+    }
+
+    pub(crate) fn outcome(&self) -> &FileOperationItemOutcome {
+        &self.outcome
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FileOperationExecutionResult {
+    status: FileOperationExecutionStatus,
+    items: Vec<FileOperationItemResult>,
+}
+
+impl FileOperationExecutionResult {
+    pub(crate) fn status(&self) -> FileOperationExecutionStatus {
+        self.status
+    }
+
+    pub(crate) fn items(&self) -> &[FileOperationItemResult] {
+        &self.items
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FileOperationPhase {
+    StagingEntry,
+    Committing,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FileOperationProgressEvent {
+    phase: FileOperationPhase,
+    source: PathBuf,
+    destination: PathBuf,
+}
+
+impl FileOperationProgressEvent {
+    pub(crate) fn phase(&self) -> FileOperationPhase {
+        self.phase
+    }
+}
+
+struct StagedTransfer {
+    item_index: usize,
+    container: PathBuf,
+    payload: PathBuf,
+}
+
+enum CopyWorkItem {
+    Copy {
+        source: PathBuf,
+        destination: PathBuf,
+    },
+    FinishDirectory {
+        source: PathBuf,
+        destination: PathBuf,
+    },
+}
+
+pub(crate) fn execute_file_operation(
+    plan: &FileOperationPlan,
+    cancellation: &FileOperationCancellation,
+) -> FileOperationExecutionResult {
+    execute_file_operation_with_observer(plan, cancellation, |_| {})
+}
+
+pub(crate) fn execute_file_operation_with_observer<F>(
+    plan: &FileOperationPlan,
+    cancellation: &FileOperationCancellation,
+    mut observer: F,
+) -> FileOperationExecutionResult
+where
+    F: FnMut(&FileOperationProgressEvent),
+{
+    let mut result = FileOperationExecutionResult {
+        status: FileOperationExecutionStatus::Failed,
+        items: plan
+            .transfers
+            .iter()
+            .map(|transfer| FileOperationItemResult {
+                source: transfer.source.clone(),
+                destination: transfer.destination.clone(),
+                outcome: FileOperationItemOutcome::NotStarted,
+            })
+            .collect(),
+    };
+
+    if cancellation.is_cancelled() {
+        result.status = FileOperationExecutionStatus::Cancelled;
+        return result;
+    }
+    if plan.kind != FileOperationKind::Copy {
+        fail_first_unstarted(&mut result, FileOperationExecutionError::MoveNotImplemented);
+        return result;
+    }
+    if let Err(error) = plan.revalidate() {
+        fail_first_unstarted(&mut result, FileOperationExecutionError::Preflight(error));
+        return result;
+    }
+
+    let operation_id = next_operation_id();
+    let mut staged = Vec::with_capacity(plan.transfers.len());
+    for (item_index, transfer) in plan.transfers.iter().enumerate() {
+        if cancellation.is_cancelled() {
+            cleanup_staged(&staged);
+            result.status = FileOperationExecutionStatus::Cancelled;
+            return result;
+        }
+        match stage_transfer(
+            plan,
+            transfer,
+            item_index,
+            operation_id,
+            cancellation,
+            &mut observer,
+        ) {
+            Ok(staged_transfer) => staged.push(staged_transfer),
+            Err(StageFailure::Cancelled { container }) => {
+                cleanup_path(&container);
+                cleanup_staged(&staged);
+                result.status = FileOperationExecutionStatus::Cancelled;
+                return result;
+            }
+            Err(StageFailure::Failed { container, error }) => {
+                cleanup_path(&container);
+                cleanup_staged(&staged);
+                if let Some(item) = result.items.get_mut(item_index) {
+                    item.outcome = FileOperationItemOutcome::Failed(error);
+                }
+                return result;
+            }
+        }
+    }
+
+    if let Err(error) = plan.revalidate() {
+        cleanup_staged(&staged);
+        fail_first_unstarted(&mut result, FileOperationExecutionError::Preflight(error));
+        return result;
+    }
+
+    let mut committed = Vec::new();
+    for staged_transfer in &staged {
+        let item_index = staged_transfer.item_index;
+        let Some(item) = result.items.get(item_index) else {
+            cleanup_staged(&staged);
+            return result;
+        };
+        observer(&FileOperationProgressEvent {
+            phase: FileOperationPhase::Committing,
+            source: item.source.clone(),
+            destination: item.destination.clone(),
+        });
+        if cancellation.is_cancelled() {
+            rollback_committed(&mut result, &committed);
+            cleanup_staged(&staged);
+            result.status = FileOperationExecutionStatus::Cancelled;
+            return result;
+        }
+        if let Err(error) = crate::platform::publish_staged_path_no_replace(
+            &staged_transfer.payload,
+            &item.destination,
+        ) {
+            let execution_error = FileOperationExecutionError::Io {
+                path: item.destination.clone(),
+                action: FileOperationIoAction::Publish,
+                kind: error.kind(),
+            };
+            rollback_committed(&mut result, &committed);
+            cleanup_staged(&staged);
+            if let Some(item) = result.items.get_mut(item_index) {
+                item.outcome = FileOperationItemOutcome::Failed(execution_error);
+            }
+            return result;
+        }
+        cleanup_path(&staged_transfer.container);
+        if let Some(item) = result.items.get_mut(item_index) {
+            item.outcome = FileOperationItemOutcome::Committed;
+        }
+        committed.push(item_index);
+    }
+
+    result.status = FileOperationExecutionStatus::Completed;
+    result
+}
+
+enum StageFailure {
+    Cancelled {
+        container: PathBuf,
+    },
+    Failed {
+        container: PathBuf,
+        error: FileOperationExecutionError,
+    },
+}
+
+fn stage_transfer<F>(
+    plan: &FileOperationPlan,
+    transfer: &PlannedFileTransfer,
+    item_index: usize,
+    operation_id: u64,
+    cancellation: &FileOperationCancellation,
+    observer: &mut F,
+) -> Result<StagedTransfer, StageFailure>
+where
+    F: FnMut(&FileOperationProgressEvent),
+{
+    let container = plan.destination_directory.join(format!(
+        ".herdr-operation-{}-{operation_id}-{item_index}",
+        std::process::id()
+    ));
+    if let Err(error) = fs::create_dir(&container) {
+        return Err(StageFailure::Failed {
+            container: container.clone(),
+            error: FileOperationExecutionError::Io {
+                path: container,
+                action: FileOperationIoAction::CreateStaging,
+                kind: error.kind(),
+            },
+        });
+    }
+    let payload = container.join("payload");
+    match copy_path_bounded(&transfer.source, &payload, cancellation, observer) {
+        Ok(()) => Ok(StagedTransfer {
+            item_index,
+            container,
+            payload,
+        }),
+        Err(CopyFailure::Cancelled) => Err(StageFailure::Cancelled { container }),
+        Err(CopyFailure::Failed(error)) => Err(StageFailure::Failed { container, error }),
+    }
+}
+
+enum CopyFailure {
+    Cancelled,
+    Failed(FileOperationExecutionError),
+}
+
+fn copy_path_bounded<F>(
+    source: &Path,
+    destination: &Path,
+    cancellation: &FileOperationCancellation,
+    observer: &mut F,
+) -> Result<(), CopyFailure>
+where
+    F: FnMut(&FileOperationProgressEvent),
+{
+    let root_source = source.to_path_buf();
+    let mut processed = 0_usize;
+    let mut work = vec![CopyWorkItem::Copy {
+        source: source.to_path_buf(),
+        destination: destination.to_path_buf(),
+    }];
+    while let Some(item) = work.pop() {
+        if cancellation.is_cancelled() {
+            return Err(CopyFailure::Cancelled);
+        }
+        processed = processed.saturating_add(1);
+        if processed > MAX_OPERATION_TREE_ENTRIES {
+            return Err(CopyFailure::Failed(
+                FileOperationExecutionError::TreeEntryLimitExceeded {
+                    source: root_source,
+                    limit: MAX_OPERATION_TREE_ENTRIES,
+                },
+            ));
+        }
+        match item {
+            CopyWorkItem::Copy {
+                source,
+                destination,
+            } => {
+                observer(&FileOperationProgressEvent {
+                    phase: FileOperationPhase::StagingEntry,
+                    source: source.clone(),
+                    destination: destination.clone(),
+                });
+                if cancellation.is_cancelled() {
+                    return Err(CopyFailure::Cancelled);
+                }
+                let metadata = fs::symlink_metadata(&source).map_err(|error| {
+                    CopyFailure::Failed(FileOperationExecutionError::Io {
+                        path: source.clone(),
+                        action: FileOperationIoAction::ReadSource,
+                        kind: error.kind(),
+                    })
+                })?;
+                if metadata.file_type().is_symlink() {
+                    return Err(CopyFailure::Failed(
+                        FileOperationExecutionError::SourceSymlink { path: source },
+                    ));
+                }
+                if metadata.is_file() {
+                    fs::copy(&source, &destination).map_err(|error| {
+                        CopyFailure::Failed(FileOperationExecutionError::Io {
+                            path: destination,
+                            action: FileOperationIoAction::CopyData,
+                            kind: error.kind(),
+                        })
+                    })?;
+                } else if metadata.is_dir() {
+                    fs::create_dir(&destination).map_err(|error| {
+                        CopyFailure::Failed(FileOperationExecutionError::Io {
+                            path: destination.clone(),
+                            action: FileOperationIoAction::CopyData,
+                            kind: error.kind(),
+                        })
+                    })?;
+                    let mut children = Vec::new();
+                    let read_dir = fs::read_dir(&source).map_err(|error| {
+                        CopyFailure::Failed(FileOperationExecutionError::Io {
+                            path: source.clone(),
+                            action: FileOperationIoAction::ReadSource,
+                            kind: error.kind(),
+                        })
+                    })?;
+                    for entry in read_dir {
+                        let entry = entry.map_err(|error| {
+                            CopyFailure::Failed(FileOperationExecutionError::Io {
+                                path: source.clone(),
+                                action: FileOperationIoAction::ReadSource,
+                                kind: error.kind(),
+                            })
+                        })?;
+                        children.push((entry.path(), destination.join(entry.file_name())));
+                        if processed.saturating_add(children.len()) > MAX_OPERATION_TREE_ENTRIES {
+                            return Err(CopyFailure::Failed(
+                                FileOperationExecutionError::TreeEntryLimitExceeded {
+                                    source: root_source,
+                                    limit: MAX_OPERATION_TREE_ENTRIES,
+                                },
+                            ));
+                        }
+                    }
+                    children.sort_by(|left, right| left.0.cmp(&right.0));
+                    work.push(CopyWorkItem::FinishDirectory {
+                        source: source.clone(),
+                        destination: destination.clone(),
+                    });
+                    work.extend(children.into_iter().rev().map(|(source, destination)| {
+                        CopyWorkItem::Copy {
+                            source,
+                            destination,
+                        }
+                    }));
+                } else {
+                    return Err(CopyFailure::Failed(
+                        FileOperationExecutionError::SourceUnsupported { path: source },
+                    ));
+                }
+            }
+            CopyWorkItem::FinishDirectory {
+                source,
+                destination,
+            } => {
+                let permissions = fs::symlink_metadata(&source)
+                    .map_err(|error| {
+                        CopyFailure::Failed(FileOperationExecutionError::Io {
+                            path: source,
+                            action: FileOperationIoAction::ReadSource,
+                            kind: error.kind(),
+                        })
+                    })?
+                    .permissions();
+                fs::set_permissions(&destination, permissions).map_err(|error| {
+                    CopyFailure::Failed(FileOperationExecutionError::Io {
+                        path: destination,
+                        action: FileOperationIoAction::SetPermissions,
+                        kind: error.kind(),
+                    })
+                })?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn next_operation_id() -> u64 {
+    static NEXT_OPERATION_ID: AtomicU64 = AtomicU64::new(1);
+    NEXT_OPERATION_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+fn cleanup_staged(staged: &[StagedTransfer]) {
+    for transfer in staged {
+        cleanup_path(&transfer.container);
+    }
+}
+
+fn cleanup_path(path: &Path) {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return;
+    };
+    let result = if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    };
+    if let Err(error) = result {
+        tracing::warn!(?path, %error, "fm: failed to clean file-operation staging path");
+    }
+}
+
+fn rollback_committed(result: &mut FileOperationExecutionResult, committed: &[usize]) {
+    for item_index in committed.iter().rev().copied() {
+        let Some(item) = result.items.get_mut(item_index) else {
+            continue;
+        };
+        let path = item.destination.clone();
+        let existed = fs::symlink_metadata(&path).is_ok();
+        cleanup_path(&path);
+        if existed && fs::symlink_metadata(&path).is_err() {
+            item.outcome = FileOperationItemOutcome::RolledBack;
+        } else {
+            item.outcome = FileOperationItemOutcome::Failed(FileOperationExecutionError::Io {
+                path,
+                action: FileOperationIoAction::Cleanup,
+                kind: io::ErrorKind::Other,
+            });
+        }
+    }
+}
+
+fn fail_first_unstarted(
+    result: &mut FileOperationExecutionResult,
+    error: FileOperationExecutionError,
+) {
+    if let Some(item) = result.items.first_mut() {
+        item.outcome = FileOperationItemOutcome::Failed(error);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -632,6 +1140,93 @@ mod tests {
         assert!(!destination.join("source.txt").exists());
         assert!(operation_artifacts(&destination).is_empty());
         assert!(source.exists());
+    }
+
+    // TP-C4.1-COPY: a target created after the final revalidation but before
+    // publish is never replaced; the racing writer's bytes remain authoritative.
+    #[test]
+    fn file_operation_copy_publish_is_atomic_no_replace() {
+        let td = TempDir::new("copy-no-replace");
+        let source = td.file("source.txt", b"copy bytes");
+        let destination = td.dir("destination");
+        let published = destination.join("source.txt");
+        let plan = FileOperationPlan::preflight(request(
+            FileOperationKind::Copy,
+            vec![source.clone()],
+            destination.clone(),
+        ))
+        .expect("copy plan");
+
+        let result = execute_file_operation_with_observer(
+            &plan,
+            &FileOperationCancellation::default(),
+            |event| {
+                if event.phase() == FileOperationPhase::Committing {
+                    fs::write(&published, b"racing writer").expect("create late collision");
+                }
+            },
+        );
+
+        assert_eq!(result.status(), FileOperationExecutionStatus::Failed);
+        assert!(matches!(
+            result.items()[0].outcome(),
+            FileOperationItemOutcome::Failed(FileOperationExecutionError::Io {
+                action: super::FileOperationIoAction::Publish,
+                ..
+            })
+        ));
+        assert_eq!(
+            fs::read(&published).expect("read racing target"),
+            b"racing writer"
+        );
+        assert_eq!(fs::read(&source).expect("source remains"), b"copy bytes");
+        assert!(operation_artifacts(&destination).is_empty());
+    }
+
+    // TP-C4.1-COPY: cancellation between item commits rolls back already
+    // published copy outputs and reports the distinction from untouched items.
+    #[test]
+    fn file_operation_copy_cancel_between_commits_rolls_back_published_items() {
+        let td = TempDir::new("copy-commit-cancel");
+        let first = td.file("source/first.txt", b"first");
+        let second = td.file("source/second.txt", b"second");
+        let destination = td.dir("destination");
+        let plan = FileOperationPlan::preflight(request(
+            FileOperationKind::Copy,
+            vec![first.clone(), second.clone()],
+            destination.clone(),
+        ))
+        .expect("multi-copy plan");
+        let cancellation = FileOperationCancellation::default();
+        let mut commit_count = 0;
+
+        let result = execute_file_operation_with_observer(&plan, &cancellation, |event| {
+            if event.phase() == FileOperationPhase::Committing {
+                commit_count += 1;
+                if commit_count == 2 {
+                    cancellation.cancel();
+                }
+            }
+        });
+
+        assert_eq!(result.status(), FileOperationExecutionStatus::Cancelled);
+        assert_eq!(
+            result.items()[0].outcome(),
+            &FileOperationItemOutcome::RolledBack
+        );
+        assert_eq!(
+            result.items()[1].outcome(),
+            &FileOperationItemOutcome::NotStarted
+        );
+        assert_eq!(
+            result.items()[0].destination(),
+            destination.join("first.txt")
+        );
+        assert!(!destination.join("first.txt").exists());
+        assert!(!destination.join("second.txt").exists());
+        assert!(operation_artifacts(&destination).is_empty());
+        assert!(first.exists());
+        assert!(second.exists());
     }
 
     // TP-C4.1-PREFLIGHT-PLAN: exact prepared path order survives planning and

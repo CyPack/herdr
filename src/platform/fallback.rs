@@ -13,6 +13,16 @@ pub(crate) fn file_identity(
     ))
 }
 
+pub(crate) fn publish_staged_path_no_replace(
+    _source: &std::path::Path,
+    _destination: &std::path::Path,
+) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "atomic no-replace publish is unavailable on this platform",
+    ))
+}
+
 /// Unsupported platform stub.
 pub fn raise_server_nofile_limit() {}
 

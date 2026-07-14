@@ -25,6 +25,40 @@ pub(crate) fn file_identity(
     Ok(FileIdentity::new(metadata.dev(), metadata.ino()))
 }
 
+pub(crate) fn publish_staged_path_no_replace(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let source = std::ffi::CString::new(source.as_os_str().as_bytes()).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "staging path contains an interior NUL",
+        )
+    })?;
+    let destination = std::ffi::CString::new(destination.as_os_str().as_bytes()).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "destination path contains an interior NUL",
+        )
+    })?;
+    let result = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            source.as_ptr(),
+            libc::AT_FDCWD,
+            destination.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProcGroupMember {
     pid: u32,
