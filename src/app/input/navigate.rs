@@ -389,6 +389,10 @@ impl App {
                 self.state.sidebar_collapsed = !self.state.sidebar_collapsed;
                 leave_navigate_mode(&mut self.state);
             }
+            NavigateAction::ToggleFileManager => {
+                self.state.toggle_file_manager();
+                leave_navigate_mode(&mut self.state);
+            }
             NavigateAction::CyclePaneNext => {
                 self.cycle_pane_via_api(false);
                 leave_navigate_mode(&mut self.state);
@@ -1317,6 +1321,7 @@ pub(crate) enum NavigateAction {
     Zoom,
     EnterResizeMode,
     ToggleSidebar,
+    ToggleFileManager,
     CyclePaneNext,
     CyclePanePrevious,
     LastPane,
@@ -1454,6 +1459,7 @@ fn non_indexed_action_for_key(
         (&kb.zoom, NavigateAction::Zoom),
         (&kb.resize_mode, NavigateAction::EnterResizeMode),
         (&kb.toggle_sidebar, NavigateAction::ToggleSidebar),
+        (&kb.toggle_file_manager, NavigateAction::ToggleFileManager),
         (&kb.reload_config, NavigateAction::ReloadConfig),
         (
             &kb.open_notification_target,
@@ -1706,6 +1712,10 @@ pub(super) fn execute_navigate_action_in_context(
         NavigateAction::EnterResizeMode => state.mode = Mode::Resize,
         NavigateAction::ToggleSidebar => {
             state.sidebar_collapsed = !state.sidebar_collapsed;
+            leave_navigate_mode(state);
+        }
+        NavigateAction::ToggleFileManager => {
+            state.toggle_file_manager();
             leave_navigate_mode(state);
         }
         NavigateAction::CyclePaneNext => {
@@ -3252,6 +3262,77 @@ navigate_pane_down = "ctrl+j"
         execute_navigate_action(&mut state, NavigateAction::NewChatTab);
 
         assert!(state.request_project_chat_tab.is_some());
+    }
+
+    // TP-Act.1: toggle_file_manager opens then closes the file manager.
+    #[test]
+    fn toggle_file_manager_opens_and_closes() {
+        let mut state = state_with_workspaces(&["ws"]);
+        assert!(state.file_manager.is_none());
+        state.toggle_file_manager();
+        assert!(
+            state.file_manager.is_some(),
+            "toggle opens the file manager"
+        );
+        state.toggle_file_manager();
+        assert!(
+            state.file_manager.is_none(),
+            "toggle closes the file manager"
+        );
+    }
+
+    // TP-Act.2: opening the file manager uses the active workspace's directory.
+    #[test]
+    fn open_file_manager_uses_active_workspace_cwd() {
+        let mut state = state_with_workspaces(&["ws"]);
+        let dir = std::env::temp_dir();
+        state.workspaces[0].identity_cwd = dir.clone();
+        state.active = Some(0);
+
+        state.open_file_manager();
+
+        assert_eq!(
+            state.file_manager.as_ref().expect("fm open").cwd,
+            dir,
+            "file manager opens at the active workspace directory"
+        );
+    }
+
+    // TP-Act.4: dispatching the ToggleFileManager action toggles the file
+    // manager and leaves navigate mode.
+    #[test]
+    fn toggle_file_manager_action_opens_and_leaves_navigate_mode() {
+        let mut state = state_with_workspaces(&["ws"]);
+        state.mode = Mode::Navigate;
+
+        execute_navigate_action(&mut state, NavigateAction::ToggleFileManager);
+        assert!(
+            state.file_manager.is_some(),
+            "action opens the file manager"
+        );
+        assert_ne!(state.mode, Mode::Navigate, "action leaves navigate mode");
+
+        state.mode = Mode::Navigate;
+        execute_navigate_action(&mut state, NavigateAction::ToggleFileManager);
+        assert!(state.file_manager.is_none(), "action toggles it closed");
+    }
+
+    // TP-Act.3: the bound key (default prefix+f) drives the toggle end-to-end
+    // through the navigate-key handler (enum + mapping + dispatch wiring).
+    #[test]
+    fn prefix_f_key_toggles_file_manager() {
+        let mut state = state_with_workspaces(&["ws"]);
+        state.keybinds.toggle_file_manager = crate::config::ActionKeybinds::prefix("f");
+
+        handle_navigate_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE),
+        );
+
+        assert!(
+            state.file_manager.is_some(),
+            "prefix+f opens the file manager via the keybind"
+        );
     }
 
     #[test]

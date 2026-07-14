@@ -539,6 +539,8 @@ pub struct KeysConfig {
     pub resize_mode: BindingConfig,
     /// Toggle sidebar collapse. Default: "prefix+b"
     pub toggle_sidebar: BindingConfig,
+    /// Toggle the native file manager. Default: "prefix+f"
+    pub toggle_file_manager: BindingConfig,
     /// Optional indexed shortcuts expanded over number keys 1-9.
     pub indexed: IndexedKeysConfig,
     /// Prefix-mode custom command bindings.
@@ -660,6 +662,8 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     toggle_sidebar: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    toggle_file_manager: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     indexed: Option<IndexedKeysConfig>,
     #[serde(skip_serializing)]
     command: Option<Vec<CommandKeybindConfig>>,
@@ -736,6 +740,7 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(zoom);
         apply_field!(resize_mode);
         apply_field!(toggle_sidebar);
+        apply_field!(toggle_file_manager);
         apply_field!(indexed);
         apply_field!(command);
 
@@ -835,6 +840,7 @@ impl KeysConfig {
         copy_effective_action_field!(zoom, keybinds.zoom);
         copy_effective_action_field!(resize_mode, keybinds.resize_mode);
         copy_effective_action_field!(toggle_sidebar, keybinds.toggle_sidebar);
+        copy_effective_action_field!(toggle_file_manager, keybinds.toggle_file_manager);
         copy_user_field!(indexed);
 
         profile
@@ -1095,6 +1101,7 @@ impl Default for KeysConfig {
             zoom: BindingConfig::one("prefix+z"),
             resize_mode: BindingConfig::one("prefix+r"),
             toggle_sidebar: BindingConfig::one("prefix+b"),
+            toggle_file_manager: BindingConfig::one("prefix+f"),
             indexed: IndexedKeysConfig::default(),
             command: Vec::new(),
             user_fields: BTreeSet::new(),
@@ -1226,6 +1233,15 @@ impl Default for AdvancedConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // TP-Act.default: the default keybinds bind prefix+f to the file manager.
+    #[test]
+    fn default_binds_prefix_f_to_file_manager() {
+        assert_eq!(
+            KeysConfig::default().toggle_file_manager,
+            BindingConfig::one("prefix+f")
+        );
+    }
 
     #[test]
     fn update_config_defaults_and_parses() {

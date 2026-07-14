@@ -346,6 +346,7 @@ pub struct Keybinds {
     pub zoom: ActionKeybinds,
     pub resize_mode: ActionKeybinds,
     pub toggle_sidebar: ActionKeybinds,
+    pub toggle_file_manager: ActionKeybinds,
     pub custom_commands: Vec<CustomCommandKeybind>,
 }
 
@@ -509,6 +510,7 @@ impl Config {
             zoom: empty_action!(),
             resize_mode: empty_action!(),
             toggle_sidebar: empty_action!(),
+            toggle_file_manager: empty_action!(),
             custom_commands: Vec::new(),
         };
 
@@ -651,6 +653,7 @@ impl Config {
             apply_action!(keybinds.zoom, zoom, source);
             apply_action!(keybinds.resize_mode, resize_mode, source);
             apply_action!(keybinds.toggle_sidebar, toggle_sidebar, source);
+            apply_action!(keybinds.toggle_file_manager, toggle_file_manager, source);
 
             if source == field_source!(indexed) {
                 append_legacy_indexed_bindings(

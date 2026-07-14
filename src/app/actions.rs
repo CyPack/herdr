@@ -345,6 +345,33 @@ impl AppState {
         self.open_navigator_from(&terminal_runtimes);
     }
 
+    /// Open the native file manager at the active workspace's directory (or the
+    /// process working directory when there is no active workspace).
+    pub(crate) fn open_file_manager(&mut self) {
+        let cwd = self
+            .active
+            .and_then(|i| self.workspaces.get(i))
+            .map(|ws| ws.identity_cwd.clone())
+            .unwrap_or_else(|| {
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+            });
+        self.file_manager = Some(crate::fm::FmState::new(cwd));
+    }
+
+    /// Close the native file manager, returning the center to the terminal panes.
+    pub(crate) fn close_file_manager(&mut self) {
+        self.file_manager = None;
+    }
+
+    /// Toggle the native file manager open/closed.
+    pub(crate) fn toggle_file_manager(&mut self) {
+        if self.file_manager.is_some() {
+            self.close_file_manager();
+        } else {
+            self.open_file_manager();
+        }
+    }
+
     pub(crate) fn open_navigator_from(
         &mut self,
         terminal_runtimes: &crate::terminal::TerminalRuntimeRegistry,
