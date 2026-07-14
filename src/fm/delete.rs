@@ -696,4 +696,91 @@ mod tests {
             b"second"
         );
     }
+
+    // TP-C4.2-TRASH/GATES: exercise the real Freedesktop backend only inside
+    // a child process whose HOME and XDG_DATA_HOME are throwaway directories.
+    // The parent process environment and the user's real Trash stay untouched.
+    #[cfg(all(
+        unix,
+        not(target_os = "macos"),
+        not(target_os = "ios"),
+        not(target_os = "android")
+    ))]
+    #[test]
+    fn real_trash_backend_isolated_child_preserves_symlink_target() {
+        const CHILD_MARKER: &str = "HERDR_TEST_REAL_TRASH_CHILD";
+        const ROOT_ENV: &str = "HERDR_TEST_REAL_TRASH_ROOT";
+
+        if std::env::var_os(CHILD_MARKER).is_some() {
+            let root = PathBuf::from(std::env::var_os(ROOT_ENV).expect("child fixture root"));
+            let file = root.join("input/file.txt");
+            let link = root.join("input/link.txt");
+            let plan = DeleteOperationPlan::preflight(request(
+                DeleteOperationKind::Trash,
+                vec![file, link],
+                false,
+            ))
+            .expect("real trash child preflight");
+
+            let result =
+                super::execute_delete_operation(&plan, &FileOperationCancellation::default());
+
+            assert_eq!(result.status(), DeleteOperationExecutionStatus::Completed);
+            assert!(result
+                .items()
+                .iter()
+                .all(|item| matches!(item.outcome(), DeleteOperationItemOutcome::Deleted)));
+            return;
+        }
+
+        use std::os::unix::fs::symlink;
+        use std::process::Command;
+
+        let td = TempDir::new("real-trash-child");
+        let input = td.root.join("input");
+        let preserved = td.root.join("preserved");
+        let xdg_data = td.root.join("xdg-data");
+        let home = td.root.join("home");
+        fs::create_dir_all(&input).expect("create real trash input");
+        fs::create_dir_all(&preserved).expect("create real trash preserved root");
+        fs::create_dir_all(&xdg_data).expect("create throwaway XDG data home");
+        fs::create_dir_all(&home).expect("create throwaway home");
+        let file = input.join("file.txt");
+        let target = preserved.join("target.txt");
+        let link = input.join("link.txt");
+        fs::write(&file, b"file").expect("write real trash file");
+        fs::write(&target, b"target").expect("write symlink target");
+        symlink(&target, &link).expect("create real trash symlink");
+
+        let output = Command::new(std::env::current_exe().expect("current test executable"))
+            .arg("--exact")
+            .arg("fm::delete::tests::real_trash_backend_isolated_child_preserves_symlink_target")
+            .arg("--nocapture")
+            .env(CHILD_MARKER, "1")
+            .env(ROOT_ENV, &td.root)
+            .env("XDG_DATA_HOME", &xdg_data)
+            .env("HOME", &home)
+            .output()
+            .expect("run isolated real trash child");
+
+        assert!(
+            output.status.success(),
+            "isolated trash child failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!file.exists());
+        assert!(!link.exists());
+        assert_eq!(
+            fs::read(target).expect("symlink target preserved"),
+            b"target"
+        );
+        let trash_files = xdg_data.join("Trash/files");
+        assert_eq!(
+            fs::read_dir(trash_files)
+                .expect("read throwaway trash payloads")
+                .count(),
+            2
+        );
+    }
 }
