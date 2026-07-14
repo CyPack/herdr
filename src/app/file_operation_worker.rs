@@ -1,3 +1,241 @@
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::thread::JoinHandle;
+
+use tokio::sync::Notify;
+
+use crate::fm::operations::{
+    execute_file_operation, FileOperationCancellation, FileOperationExecutionResult,
+    FileOperationPlan,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FileOperationStartError {
+    Busy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FileOperationWorkerError {
+    Panicked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct FileOperationWorkerCompletion {
+    pub(super) generation: u64,
+    pub(super) result: Result<FileOperationExecutionResult, FileOperationWorkerError>,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct FileOperationWorkerDrain {
+    pub(super) completion: Option<FileOperationWorkerCompletion>,
+    pub(super) disconnected: bool,
+}
+
+struct FileOperationWorkerRequest {
+    generation: u64,
+    plan: FileOperationPlan,
+    cancellation: FileOperationCancellation,
+}
+
+struct FileOperationWorkerState {
+    pending: Option<FileOperationWorkerRequest>,
+    completion: Option<FileOperationWorkerCompletion>,
+    active_generation: Option<u64>,
+    active_cancellation: Option<FileOperationCancellation>,
+    next_generation: u64,
+    alive: bool,
+    closed: bool,
+}
+
+impl Default for FileOperationWorkerState {
+    fn default() -> Self {
+        Self {
+            pending: None,
+            completion: None,
+            active_generation: None,
+            active_cancellation: None,
+            next_generation: 0,
+            alive: true,
+            closed: false,
+        }
+    }
+}
+
+type SharedWorkerState = Arc<(Mutex<FileOperationWorkerState>, Condvar)>;
+
+struct WorkerAliveGuard {
+    shared: SharedWorkerState,
+    wake: Arc<Notify>,
+}
+
+impl Drop for WorkerAliveGuard {
+    fn drop(&mut self) {
+        let (state, _) = &*self.shared;
+        lock_state(state).alive = false;
+        self.wake.notify_one();
+    }
+}
+
+pub(super) struct FileOperationWorker {
+    shared: SharedWorkerState,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl FileOperationWorker {
+    pub(super) fn new(wake: Arc<Notify>) -> Self {
+        Self::with_executor(wake, execute_file_operation)
+    }
+
+    fn with_executor<F>(wake: Arc<Notify>, executor: F) -> Self
+    where
+        F: Fn(&FileOperationPlan, &FileOperationCancellation) -> FileOperationExecutionResult
+            + Send
+            + 'static,
+    {
+        let shared = Arc::new((
+            Mutex::new(FileOperationWorkerState::default()),
+            Condvar::new(),
+        ));
+        let worker_shared = shared.clone();
+        let handle = std::thread::Builder::new()
+            .name("herdr-fm-operation".into())
+            .spawn(move || {
+                let _alive_guard = WorkerAliveGuard {
+                    shared: worker_shared.clone(),
+                    wake: wake.clone(),
+                };
+                while let Some(request) = take_next_request(&worker_shared) {
+                    let result = catch_unwind(AssertUnwindSafe(|| {
+                        executor(&request.plan, &request.cancellation)
+                    }))
+                    .map_err(|_| FileOperationWorkerError::Panicked);
+                    let (state, _) = &*worker_shared;
+                    let mut state = lock_state(state);
+                    if state.closed {
+                        break;
+                    }
+                    state.completion = Some(FileOperationWorkerCompletion {
+                        generation: request.generation,
+                        result,
+                    });
+                    drop(state);
+                    wake.notify_one();
+                }
+            })
+            .ok();
+        if handle.is_none() {
+            let (state, _) = &*shared;
+            lock_state(state).alive = false;
+        }
+        Self { shared, handle }
+    }
+
+    pub(super) fn start(
+        &mut self,
+        plan: FileOperationPlan,
+    ) -> Result<u64, FileOperationStartError> {
+        let (state, pending) = &*self.shared;
+        let mut state = lock_state(state);
+        if state.closed
+            || !state.alive
+            || state.active_generation.is_some()
+            || state.pending.is_some()
+            || state.completion.is_some()
+        {
+            return Err(FileOperationStartError::Busy);
+        }
+        state.next_generation = state.next_generation.wrapping_add(1).max(1);
+        let generation = state.next_generation;
+        let cancellation = FileOperationCancellation::default();
+        state.active_generation = Some(generation);
+        state.active_cancellation = Some(cancellation.clone());
+        state.pending = Some(FileOperationWorkerRequest {
+            generation,
+            plan,
+            cancellation,
+        });
+        pending.notify_one();
+        Ok(generation)
+    }
+
+    pub(super) fn is_busy(&self) -> bool {
+        let (state, _) = &*self.shared;
+        lock_state(state).active_generation.is_some()
+    }
+
+    pub(super) fn cancel(&self) -> bool {
+        let cancellation = {
+            let (state, _) = &*self.shared;
+            lock_state(state).active_cancellation.clone()
+        };
+        if let Some(cancellation) = cancellation {
+            cancellation.cancel();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(super) fn drain(&mut self) -> FileOperationWorkerDrain {
+        let (state, _) = &*self.shared;
+        let mut state = lock_state(state);
+        let completion = state.completion.take();
+        if let Some(completion) = &completion {
+            if state.active_generation == Some(completion.generation) {
+                state.active_generation = None;
+                state.active_cancellation = None;
+            }
+        }
+        FileOperationWorkerDrain {
+            disconnected: !state.alive && completion.is_none(),
+            completion,
+        }
+    }
+}
+
+impl Drop for FileOperationWorker {
+    fn drop(&mut self) {
+        let cancellation = {
+            let (state, pending) = &*self.shared;
+            let mut state = lock_state(state);
+            state.closed = true;
+            state.pending = None;
+            pending.notify_all();
+            state.active_cancellation.clone()
+        };
+        if let Some(cancellation) = cancellation {
+            cancellation.cancel();
+        }
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn take_next_request(shared: &SharedWorkerState) -> Option<FileOperationWorkerRequest> {
+    let (state, pending) = &**shared;
+    let mut state = lock_state(state);
+    loop {
+        if state.closed {
+            return None;
+        }
+        if let Some(request) = state.pending.take() {
+            return Some(request);
+        }
+        state = match pending.wait(state) {
+            Ok(state) => state,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+    }
+}
+
+fn lock_state(state: &Mutex<FileOperationWorkerState>) -> MutexGuard<'_, FileOperationWorkerState> {
+    match state.lock() {
+        Ok(state) => state,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{FileOperationStartError, FileOperationWorker, FileOperationWorkerError};
