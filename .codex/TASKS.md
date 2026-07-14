@@ -71,22 +71,46 @@ code to make it GREEN. Complete one test point before beginning the next.
 - [x] Fetch and verify fast-forward ancestry, then push only the CyPack feature
   branch and fork master. Never push `upstream`; never force.
 
-## P1 — B0 Image Path Beta Spike (Independent Risk Track)
+## P1 — B0 Image Path Beta Spike (Published — GO)
 
-- [ ] B0.1 decode a generated test PNG to RGBA and record dependency/cost.
-- [ ] B0.2 construct a synthetic `KittyImagePlacement`/PaneId without touching
+- [x] B0.1 decode a generated test PNG to RGBA and record dependency/cost.
+- [x] B0.2 construct a synthetic `KittyImagePlacement`/PaneId without touching
   the stable Herdr session.
-- [ ] B0.3 prove `encode_graphics_update` framing and lifecycle cleanup.
-- [ ] B0.4 render Path Beta in a throwaway Kitty/Ghostty host and capture a
+- [x] B0.3 prove `encode_graphics_update` framing and lifecycle cleanup.
+- [x] B0.4 render Path Beta in a throwaway Kitty host and capture a
   Path Alpha Yazi-in-pane baseline.
-- [ ] Record wiring size, failure modes, image-compare evidence, and B2
-  go/no-go. B0 must pass before B2; it does not block B1/A3.
+- [x] Record wiring size, failure modes, visual-capture evidence, and B2
+  go/no-go. Decision: conditional GO; B2 must reuse the existing
+  `kitty_graphics` encoder/cache and add bounded decode, generation safety,
+  cleanup, and real-host closure tests.
+- [x] Commit the isolated product/test concern as `bcba84d`
+  (`test: prove native image path beta feasibility`), full-reindex, and
+  fast-forward publish to CyPack feature/master only.
 
 ## P2 — B1 Text Preview
 
-- [ ] B1.1 bounded text read in state refresh path; render performs no I/O.
-- [ ] B1.2 syntax highlighting with explicit unsupported/binary/encoding paths.
-- [ ] B1.3 large-file truncation/lazy policy with byte/line limits and tests.
+Production code begins only after the matching test point is RED.
+
+### B1 Test-Point Contract
+
+| Test point | What is tested | Expected result | Why it is required |
+|------------|----------------|-----------------|--------------------|
+| TP-B1.1-BOUNDED-READ | Small regular UTF-8, exact byte boundary, over-limit input, CRLF, multi-byte boundary, newline-free input, and one very long line | Exact in-limit content is preserved; over-limit input produces explicit truncation metadata without splitting UTF-8; allocation/read work is bounded before I/O | Large or adversarial files must not freeze state refresh or cause uncontrolled allocation |
+| TP-B1.2-FAILURES | Missing/read-race, permission denied, directory/non-regular, binary NUL, and invalid UTF-8 | No panic or silent lossy success; each case maps to a stable explicit preview status/fallback | Selection and disk state can change between metadata and read, so a happy-path loader is unsafe |
+| TP-B1.3-CLASSIFY | Known extension, shebang evidence, unknown extension, unsupported syntax, and highlighter failure | Deterministic syntax choice or plain-text fallback; content remains visible; styles stay bounded | Highlighting must not become a new availability authority for preview content |
+| TP-B1.4-LIFECYCLE | Cursor movement, A4 watcher reload, selected-file delete/replace, hidden toggle, and close/reopen | Preview always matches the current selection/generation; stale content is never rendered; closing clears prepared preview state | Navigation and filesystem refresh can otherwise display content from the wrong file |
+| TP-B1.5-RENDER | Normal, narrow, and zero preview rectangles plus empty/error/truncated/long styled models | Buffer output has the expected content/status/truncation marker; zero-area is panic-free; render performs no filesystem I/O | Pure render and responsive Miller layout are project invariants |
+| TP-B1.6-GATES | Targeted/full nextest, doctest applicability, Linux/Windows canonical clippy, Bun/Python maintenance, render cross-check, and diff cleanliness | Zero fail/retry; skipped or N/A gates are named; a zero-test filter cannot count as green | Narrow unit success cannot establish repo-level production readiness |
+
+- [ ] B1.0 measure highlighter options for compile cost, binary size, syntax/theme
+  coverage, license, and OSV status; do not edit dependencies before the
+  decision and first RED test require it.
+- [ ] B1.1 add a bounded text-read model in the state refresh path; render
+  performs no I/O.
+- [ ] B1.2 add deterministic syntax classification/highlighting with explicit
+  unsupported, binary, invalid-encoding, and highlighter-failure paths.
+- [ ] B1.3 enforce byte, line, and rendered-column truncation/lazy limits.
+- [ ] B1.4 prove navigation/watcher lifecycle freshness and responsive render.
 - [ ] Cross-check render/truncation behavior and pass the full gate.
 
 ## P2 — A3 Navigation and Selection Remainder
@@ -97,7 +121,7 @@ code to make it GREEN. Complete one test point before beginning the next.
 - [ ] A3.4 make the visual-selection versus multi-selection scope explicit;
   define state only after test points and C2/N4 dependency review.
 
-## P2 — B2 Image Preview (Blocked by B0)
+## P2 — B2 Image Preview (B0 GO; Ordered After B1/A3)
 
 - [ ] B2.1 bounded decode/downscale path with corrupt/huge image failures.
 - [ ] B2.2 construct preview placement with synthetic PaneId and no server/TUI
@@ -168,12 +192,12 @@ code to make it GREEN. Complete one test point before beginning the next.
 - [ ] M1 FM-interactive CLI attachment buttons.
 - [ ] M2 git-worktree management buttons.
 - [ ] M3 general panel/page/button super-interface evaluation.
-- These remain north-star items and must not preempt the active B0/B1/A3 path.
+- These remain north-star items and must not preempt the active B1/A3/B2 path.
 
 ## Ordering Resolution
 
-A4 and the separate continuity concern are published. The next execution order
-is: run B0 risk spike; implement B1 and A3 remainder; allow B2 only after B0
-passes; then execute
+A4, B0, and their separate continuity concerns are published. The next
+execution order is: implement B1 test-point-first; complete the A3 remainder;
+implement B2 under B0's conditional-GO constraints; then execute
 C1 → C2 → C3 → C4 → C5 → C6. S5–S7 and N2 remain evidence-gated deferred
 architecture, while M1–M3 remain inactive north-star work.

@@ -16,8 +16,10 @@
 - The former S3 ComponentRegistry design is deferred to S5 because Herdr's current grain is central content-swap plus `ViewState` hit areas.
 - A2.2 uses cached `FmParent`/`FmPreview` state so render performs no filesystem I/O.
 - Responsive Miller thresholds: three columns when the area can hold three 12-cell panels plus dividers, two columns when it can hold two, otherwise current-only.
-- A4 native watching is published on the CyPack fork. B0 is the active
-  independent risk spike required before B2.
+- A4 native watching and B0 Image Path Beta are published on the CyPack fork.
+  B0 recorded a conditional GO for B2: reuse the existing `kitty_graphics`
+  lifecycle with bounded decode, generation safety, cleanup, and real-host
+  evidence. B1 text preview is active before the A3 remainder and B2.
 - The user granted standing authorization for autonomous targeted commits and
   CyPack fork-only fast-forward pushes. Preserve all verification and atomicity
   gates, but do not repeatedly ask for commit-message alignment.

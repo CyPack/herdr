@@ -2,8 +2,9 @@
 
 ## 1. SONRAKI ADIM
 
-Execute B0 Image Path Beta test-point-first. Keep B2 blocked until B0 records
-a go decision.
+Execute B1.0 highlighter/dependency research, then make
+TP-B1.1-BOUNDED-READ RED before writing B1 production code. Follow the full B1
+test-point contract in `.codex/TASKS.md` sequentially.
 
 ## 2. AKTİF PROJE
 
@@ -46,10 +47,21 @@ a go decision.
   nextest exposed them under parallel load.
 - Committed A4 separately as `01ba91d` and the deterministic test-only fixes
   separately as `8cd4e89`, using targeted staging only.
+- Completed B0 Image Path Beta test-point-first with generated exact RGBA,
+  malformed decode, synthetic local placement, upload/display/dedup/view/
+  replacement/removal lifecycle, cursor framing, and isolated real-host tests.
+- Captured a visible local Path Beta pattern in throwaway Kitty and an
+  independent Path Alpha Yazi preview baseline; closed only the test windows
+  with targeted semantic input.
+- Recorded a conditional GO for B2: reuse existing `kitty_graphics`, bound all
+  decode/allocation work, keep I/O outside render, reject stale generations,
+  and prove cleanup plus real-host output.
+- Committed B0 separately as `bcba84d`, full-reindexed it, and fast-forward
+  published only to CyPack feature/master.
 
 ## 6. KOD DURUMU
 
-Committed history through `8cd4e89`:
+Committed product/test history through `bcba84d`:
 
 - `c043c1e`: `src/ui/shell.rs`, `src/ui.rs`, `src/app/state.rs`, `src/app/mod.rs`.
 - `d026e94`: `src/ui/file_manager.rs`, `src/ui.rs`, `src/app/state.rs`, `src/app/mod.rs`, `src/main.rs`.
@@ -60,22 +72,24 @@ Committed history through `8cd4e89`:
   `src/app/file_manager_watcher.rs`, `src/app/mod.rs`, `src/app/runtime.rs`,
   `src/fm/watcher.rs`, `src/fm/mod.rs`.
 - `8cd4e89`: `src/server/headless.rs`, `src/terminal/state.rs`.
+- `bcba84d`: `src/kitty_graphics.rs`.
 
-`01ba91d` and `8cd4e89` are fast-forward published to
-both CyPack `feat/native-fm` and fork `master`; both remote refs were verified
-at local `8cd4e89`. The separate continuity/tooling commit containing this
-handoff is published after them. Product staging is empty.
+`bcba84d` is fast-forward published to both CyPack `feat/native-fm` and fork
+`master`; both remote refs were verified at the exact local SHA. The separate
+continuity/task-state commit containing this handoff follows it. Product
+staging is empty.
 
 ## 7. TEST KANITI
 
-- A4 broad FM/file-manager filter: 69/69 passed.
-- Final full nextest: 2912/2912 passed, 0 skipped, no retry in the final run.
-- Linux all-target and Windows MSVC-target clippy passed with `-D warnings`.
+- B0 targeted Path Beta: 4/4; full `kitty_graphics`: 25/25.
+- Final full nextest: 2916/2916 passed, one explicit interactive host probe
+  skipped, no retry.
+- Linux all-target and canonical Windows MSVC binary-target clippy passed with
+  `-D warnings`.
 - Bun 17/17; Python maintenance 64/64; fmt and diff-check clean.
-- Exactly 22 new watcher/target packages; no existing version upgrades; the
-  exact-version OSV batch returned zero advisories.
-- Real filesystem create/rename/delete/16-file burst convergence passed under
-  bounded deadlines. No stable Herdr process or socket was touched.
+- No new dependency. Doctests are N/A because Herdr has no library target.
+- Real Path Beta and Path Alpha both rendered in separate throwaway Kitty
+  windows. No stable Herdr process or socket was touched.
 
 ## 8. KRİTİK KARARLAR
 
@@ -87,8 +101,8 @@ handoff is published after them. Product staging is empty.
 - Native watching is primary; startup/runtime errors enter explicit polling
   fallback, and all active watchers reconcile every 2 seconds to cover silent
   FUSE/NFS/exFAT-class delivery failures.
-- A4 is implementation-complete, verified, and published. B0 remains
-  independent and mandatory before B2.
+- A4 and B0 are implementation-complete, verified, and published. B0's B2
+  decision is conditional GO; B2 remains ordered after B1 and the A3 remainder.
 - The user granted standing authorization for autonomous atomic commits and
   CyPack fork-only fast-forward pushes. Do not repeatedly ask for alignment;
   never relax targeted staging, verification, ancestry, or remote-SHA checks.
@@ -103,15 +117,16 @@ handoff is published after them. Product staging is empty.
 
 ## 10. AÇIK GÖREVLER
 
-See `.codex/TASKS.md` for the full B0, B1, A3, B2, C1–C6, S5–S7, N2, and
-M1–M3 roadmap. A4 and continuity publication are closed. B0 is active.
+See `.codex/TASKS.md` for the full B1 test-point contract plus A3, B2,
+C1–C6, S5–S7, N2, and M1–M3 roadmap. A4 and B0 are closed. B1 is active.
 
 ## 11. ORTAM
 
 - `codex-cli 0.144.1` is installed.
 - `just` is absent; direct recipe execution is required unless installed later.
-- Full A4 graph reindex completed at 17,613 nodes / 83,598 edges and returned
-  `miller_layout`, `NativeFileManagerWatcher`, and `normalize_watch_events`.
+- Full post-B0 graph reindex completed at 17,624 nodes / 83,295 edges and
+  returned `frame_graphics_bytes`, the exact-RGBA Path Beta test, and
+  `miller_layout`.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.

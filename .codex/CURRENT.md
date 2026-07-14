@@ -4,10 +4,10 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Published product/test checkpoint: `8cd4e89`
-  (`test: make timing-sensitive lifecycle tests deterministic`).
-- `origin/feat/native-fm` and fork `origin/master` include `8cd4e89` and the
-  separate continuity/tooling commit containing this state file.
+- Published product/test checkpoint: `bcba84d`
+  (`test: prove native image path beta feasibility`).
+- `origin/feat/native-fm` and fork `origin/master` both resolve to `bcba84d`;
+  the separate continuity/tooling commit containing this state file follows it.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
 
 ## Completed Checkpoint
@@ -47,18 +47,45 @@
 - These fixes were required after full-suite parallel load exposed two existing
   wall-clock races. Keep them separate from the A4 feature commit.
 
-## Fresh Verification Evidence
+## Published Checkpoint — B0 Image Path Beta
 
-- Broad FM/file-manager filter: 69/69 passed.
-- Full nextest final run: 2912/2912 passed, 0 skipped, no retry in the final run.
+- B0 product/test commit: `bcba84d` (`test: prove native image path beta
+  feasibility`).
+- A generated 2×2 RGBA PNG round-trips byte-for-byte through existing
+  `png 0.17`; truncated input is rejected without panic and no dependency was
+  added.
+- A synthetic local `HostPlacement` proves stable content/placement identity,
+  RGBA upload, display, full-frame deduplication, view redisplay, content
+  replacement, placement removal, and superseded-image cleanup through the
+  existing `kitty_graphics` lifecycle.
+- `paint_local_pane_graphics` now uses the private `frame_graphics_bytes` seam;
+  behavior remains cursor save + existing Kitty bytes + cursor restore.
+- The ignored probe rendered the four-color/alpha pattern in an isolated Kitty
+  0.46.2 X11 window with throwaway XDG and cleared inherited Herdr socket
+  variables. A separate Yazi 26.5.6 Path Alpha baseline rendered the source
+  image in another throwaway window. Test windows were closed with targeted
+  semantic `q`; no stable Herdr process/socket was touched.
+- B2 decision: conditional GO. Reuse the existing encoder/cache; require
+  bounded decode/allocation, state-refresh-only I/O, selection generation
+  safety, cleanup on every transition, and fresh real-host evidence.
+
+## Fresh B0 Verification Evidence
+
+- Path Beta targeted: 4/4 passed; `kitty_graphics` scope: 25/25 passed.
+- Full nextest final run: 2916/2916 passed, one intentionally ignored
+  real-host probe skipped, no retry.
 - `cargo fmt --check`: passed.
 - Linux `cargo clippy --all-targets --locked -- -D warnings`: passed.
-- Windows MSVC target clippy with `LIBGHOSTTY_VT_SIMD=false`: passed.
+- Canonical Windows MSVC binary-target clippy with
+  `LIBGHOSTTY_VT_SIMD=false`: passed. A stronger exploratory `--all-targets`
+  command is not an applicable repo gate because Unix-only integration tests
+  import `std::os::unix`/Unix `libc`; the Justfile intentionally uses `--bin
+  herdr`.
 - Bun integration assets: 5/5; plugin marketplace: 12/12.
 - Python maintenance: 64/64.
 - `git diff --check`: passed.
-- Lock audit: exactly 22 new watcher/target packages, no existing version
-  upgrades; exact-version OSV batch returned zero advisories.
+- Doctest probe reported no library target, so doctests are not applicable to
+  this binary-only package.
 - `just` is absent; every applicable `just check` command was run directly.
 
 ## Graph and Publication Evidence
@@ -67,12 +94,12 @@
   process. A 26-server cold start measured 54 seconds; the bounded readiness
   budget is now 120 seconds inside a 150-second systemd start budget.
 - Readiness passed with `expected=26 observed=26 critical_tools=14`.
-- Full graph reindex completed at 17,613 nodes / 83,598 edges.
-- `miller_layout`, `NativeFileManagerWatcher`, and `normalize_watch_events`
-  were each found as a current graph symbol in their expected source file.
-- `01ba91d` and `8cd4e89` were fast-forward pushed to both CyPack
-  `feat/native-fm` and fork `master`; remote SHA verification matched local
-  `8cd4e89`. `upstream` was not pushed.
+- Full post-B0 graph reindex completed at 17,624 nodes / 83,295 edges.
+- `frame_graphics_bytes`, the new exact-RGBA Path Beta test, and
+  `miller_layout` were found as current graph symbols.
+- `bcba84d` was fast-forward pushed sequentially to both CyPack
+  `feat/native-fm` and fork `master`; both remote SHA checks matched local
+  `bcba84d`. `upstream` was not pushed.
 
 ## Standing Git Authorization
 
@@ -84,7 +111,8 @@
 
 ## Exact Next Action
 
-1. Execute B0 Image Path Beta test-point-first: bounded decode, synthetic
-   placement, graphics framing/lifecycle, then isolated real-host evidence.
-2. Record the B2 go/no-go decision before starting B2. B0 does not block B1 or
-   the A3 remainder.
+1. Execute B1.0 highlighter/dependency research, then write and run the first
+   bounded-reader RED test before any B1 production change.
+2. Complete B1 test point by test point, then the A3 navigation remainder.
+   B2 is unblocked by B0 but remains ordered after B1/A3 and bound by the
+   conditional-GO constraints above.
