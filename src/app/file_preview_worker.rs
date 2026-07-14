@@ -60,13 +60,45 @@ impl FilePreviewHighlightSlot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fm::TextPreview;
-    use std::path::Path;
+    use crate::fm::{
+        HighlightedTextPreview, PreviewTextLine, PreviewTextSpan, PreviewTextStyle, TextPreview,
+    };
+    use std::path::{Path, PathBuf};
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::time::{Duration, Instant};
+    use tokio::sync::Notify;
 
     fn preview(content: &str) -> TextPreview {
         TextPreview {
             content: content.to_owned(),
             truncated: false,
+        }
+    }
+
+    fn highlighted(content: &str) -> HighlightedTextPreview {
+        HighlightedTextPreview {
+            lines: vec![PreviewTextLine {
+                spans: vec![PreviewTextSpan {
+                    content: content.to_owned(),
+                    style: PreviewTextStyle::default(),
+                }],
+            }],
+            syntax_name: None,
+            truncated_bytes: false,
+            truncated_lines: false,
+        }
+    }
+
+    fn wait_for_current(worker: &mut FilePreviewHighlightWorker) -> FilePreviewHighlightResult {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let drained = worker.drain();
+            assert!(!drained.disconnected, "worker disconnected before result");
+            if let Some(current) = drained.current {
+                return current;
+            }
+            assert!(Instant::now() < deadline, "timed out waiting for highlight");
+            std::thread::sleep(Duration::from_millis(5));
         }
     }
 
@@ -111,5 +143,75 @@ mod tests {
         assert_eq!(slot.sync(None), FilePreviewHighlightSync::Stopped);
         assert!(!slot.accepts(generation, &key));
         assert_eq!(slot.sync(None), FilePreviewHighlightSync::Unchanged);
+    }
+
+    // TP-B1.4-LIFECYCLE: one active job plus one replaceable pending slot is
+    // the complete work queue. Rapid navigation never builds an unbounded
+    // backlog, and only the latest generation can be applied.
+    #[test]
+    fn highlight_worker_keeps_only_latest_pending_request() {
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let processed = Arc::new(Mutex::new(Vec::new()));
+        let processed_by_worker = processed.clone();
+        let mut worker = FilePreviewHighlightWorker::with_processor(
+            Arc::new(Notify::new()),
+            move |_path, preview| {
+                if preview.content == "first" {
+                    started_tx.send(()).expect("signal first started");
+                    release_rx.recv().expect("release first request");
+                }
+                processed_by_worker
+                    .lock()
+                    .expect("processed lock")
+                    .push(preview.content.clone());
+                highlighted(&preview.content)
+            },
+        );
+        let path = PathBuf::from("sample.rs");
+
+        worker.sync_target(Some((path.clone(), preview("first"))));
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first request started");
+        worker.sync_target(Some((path.clone(), preview("second"))));
+        let third = preview("third");
+        let third_key = FilePreviewHighlightKey::new(&path, &third);
+        worker.sync_target(Some((path, third)));
+        release_tx.send(()).expect("release first request");
+
+        let current = wait_for_current(&mut worker);
+        assert_eq!(current.key, third_key);
+        assert_eq!(
+            *processed.lock().expect("processed lock"),
+            vec!["first".to_owned(), "third".to_owned()]
+        );
+    }
+
+    // TP-B1.4-LIFECYCLE: a processor panic closes the result channel. Draining
+    // reports degradation instead of panicking or applying partial data.
+    #[test]
+    fn highlight_worker_reports_processor_disconnect_without_panic() {
+        let mut worker = FilePreviewHighlightWorker::with_processor(
+            Arc::new(Notify::new()),
+            |_path, _preview| -> HighlightedTextPreview {
+                panic!("intentional worker failure fixture")
+            },
+        );
+        worker.sync_target(Some((PathBuf::from("panic.rs"), preview("panic"))));
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let drained = worker.drain();
+            assert!(drained.current.is_none());
+            if drained.disconnected {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for disconnect"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 }
