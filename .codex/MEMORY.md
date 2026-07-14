@@ -20,6 +20,9 @@
   B0 recorded a conditional GO for B2: reuse the existing `kitty_graphics`
   lifecycle with bounded decode, generation safety, cleanup, and real-host
   evidence. B1 text preview is active before the A3 remainder and B2.
+- B1.1 is dependency-free. B1.2 selected minimal pure-Rust `syntect 5.3.0`,
+  but measured latency forbids synchronous input/render highlighting; use a
+  generation-safe bounded preparation worker and re-audit the exact lock delta.
 - The user granted standing authorization for autonomous targeted commits and
   CyPack fork-only fast-forward pushes. Preserve all verification and atomicity
   gates, but do not repeatedly ask for commit-message alignment.

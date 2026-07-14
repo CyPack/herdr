@@ -2,9 +2,9 @@
 
 ## 1. SONRAKI ADIM
 
-Execute B1.0 highlighter/dependency research, then make
-TP-B1.1-BOUNDED-READ RED before writing B1 production code. Follow the full B1
-test-point contract in `.codex/TASKS.md` sequentially.
+Make TP-B1.1-BOUNDED-READ RED before writing B1 production code. B1.1 is
+dependency-free; follow the full B1 test-point contract in `.codex/TASKS.md`
+sequentially.
 
 ## 2. AKTİF PROJE
 
@@ -58,6 +58,9 @@ test-point contract in `.codex/TASKS.md` sequentially.
   and prove cleanup plus real-host output.
 - Committed B0 separately as `bcba84d`, full-reindexed it, and fast-forward
   published only to CyPack feature/master.
+- Closed B1.0 dependency research: minimal pure-Rust `syntect 5.3.0` is the
+  B1.2 choice, but measured latency requires generation-safe bounded background
+  preparation. B1.1 begins without adding it.
 
 ## 6. KOD DURUMU
 
@@ -103,6 +106,9 @@ staging is empty.
   FUSE/NFS/exFAT-class delivery failures.
 - A4 and B0 are implementation-complete, verified, and published. B0's B2
   decision is conditional GO; B2 remains ordered after B1 and the A3 remainder.
+- B1.0 selected minimal pure-Rust syntect for B1.2. The actual manifest change
+  is deferred until its RED tests/worker seam require it; exact package and OSV
+  deltas must be rerun then.
 - The user granted standing authorization for autonomous atomic commits and
   CyPack fork-only fast-forward pushes. Do not repeatedly ask for alignment;
   never relax targeted staging, verification, ancestry, or remote-SHA checks.

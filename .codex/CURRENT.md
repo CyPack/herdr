@@ -111,8 +111,25 @@
 
 ## Exact Next Action
 
-1. Execute B1.0 highlighter/dependency research, then write and run the first
-   bounded-reader RED test before any B1 production change.
-2. Complete B1 test point by test point, then the A3 navigation remainder.
+1. Write and run TP-B1.1-BOUNDED-READ as a real RED test before any B1
+   production change.
+2. Make the bounded plain-text reader/model GREEN without adding a dependency,
+   then complete B1 test point by test point and the A3 navigation remainder.
    B2 is unblocked by B0 but remains ordered after B1/A3 and bound by the
    conditional-GO constraints above.
+
+## B1.0 Dependency Decision
+
+- B1.1 starts dependency-free.
+- B1.2 selected `syntect 5.3.0` with default features disabled and only
+  `default-syntaxes`, `default-themes`, and pure-Rust `regex-fancy` enabled.
+- Measured synchronous highlighting is too slow for the input/render path
+  (64 sample lines: ~460 ms debug / ~40 ms release), so B1.2 requires a
+  generation-safe preparation worker and bounded visible-line budget.
+- Scratch delta: 10 new/additional exact package versions relative to Herdr,
+  ~2.69 MiB stripped isolated binary upper-bound delta, permissive licenses,
+  and Rust 1.96.1 Windows MSVC check passed.
+- OSV found only severity-less `RUSTSEC-2025-0141` for transitive
+  `bincode 1.3.3` (unmaintained, no patched version); Herdr's existing
+  `bincode 2.0.1` already carries the same informational advisory. Re-audit at
+  the actual manifest change and reject any security-severity advisory.

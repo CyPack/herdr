@@ -15,8 +15,9 @@
 - Canonical current state: `/home/ayaz/projects/herdr/.codex/CURRENT.md`
 - Durable tasks: `/home/ayaz/projects/herdr/.codex/TASKS.md`
 - Full handoff: `/home/ayaz/projects/herdr/.codex/HANDOFF.md`
-- First action: complete B1.0 highlighter/dependency research, then make
-  TP-B1.1-BOUNDED-READ RED before any B1 production code.
+- B1.0 dependency research is complete: B1.1 stays dependency-free; B1.2 uses
+  minimal pure-Rust syntect only behind generation-safe bounded preparation.
+- First action: make TP-B1.1-BOUNDED-READ RED before any B1 production code.
 - Next code order: B1 text preview; A3 navigation remainder; B2 image preview
   under B0's conditional GO; then C1 through C6. Deferred
   architecture and north-star missions remain recorded in `.codex/TASKS.md`.

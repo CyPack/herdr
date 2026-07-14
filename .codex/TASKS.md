@@ -102,9 +102,10 @@ Production code begins only after the matching test point is RED.
 | TP-B1.5-RENDER | Normal, narrow, and zero preview rectangles plus empty/error/truncated/long styled models | Buffer output has the expected content/status/truncation marker; zero-area is panic-free; render performs no filesystem I/O | Pure render and responsive Miller layout are project invariants |
 | TP-B1.6-GATES | Targeted/full nextest, doctest applicability, Linux/Windows canonical clippy, Bun/Python maintenance, render cross-check, and diff cleanliness | Zero fail/retry; skipped or N/A gates are named; a zero-test filter cannot count as green | Narrow unit success cannot establish repo-level production readiness |
 
-- [ ] B1.0 measure highlighter options for compile cost, binary size, syntax/theme
-  coverage, license, and OSV status; do not edit dependencies before the
-  decision and first RED test require it.
+- [x] B1.0 select minimal pure-Rust `syntect 5.3.0` for B1.2 after measuring
+  compile/runtime/binary/license/OSV/Windows cost. B1.1 adds no dependency;
+  B1.2 must use a generation-safe bounded worker, not synchronous input/render
+  highlighting. Re-run exact dependency and OSV deltas before manifest change.
 - [ ] B1.1 add a bounded text-read model in the state refresh path; render
   performs no I/O.
 - [ ] B1.2 add deterministic syntax classification/highlighting with explicit
