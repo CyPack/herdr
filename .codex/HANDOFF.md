@@ -2,9 +2,10 @@
 
 ## 1. SONRAKI ADIM
 
-Make TP-B1.1-BOUNDED-READ RED before writing B1 production code. B1.1 is
-dependency-free; follow the full B1 test-point contract in `.codex/TASKS.md`
-sequentially.
+Finish B1's graph/fast-forward publication if it is not already complete, then
+make TP-A3.2-VIEWPORT RED before production code. Execute the full A3 remainder
+contract in `.codex/TASKS.md` sequentially: viewport/clamp, shared mouse hit
+geometry, click/double-click/wheel dispatch, and v1 single-selection scope.
 
 ## 2. AKTİF PROJE
 
@@ -61,10 +62,21 @@ sequentially.
 - Closed B1.0 dependency research: minimal pure-Rust `syntect 5.3.0` is the
   B1.2 choice, but measured latency requires generation-safe bounded background
   preparation. B1.1 begins without adding it.
+- Completed B1 text preview through strict RED/GREEN commits: 64 KiB bounded
+  UTF-8 reader, explicit failures, state-refresh ownership, pure deterministic
+  syntax preparation, one-active/one-pending generation-safe worker, reload
+  identity preservation, lifecycle rejection, Ratatui style mapping, explicit
+  error/truncation states, and bounded responsive render.
+- Proved cursor navigation, watcher reload, selected-file replace/delete,
+  hidden toggle, close/reopen, worker panic/disconnect, narrow/zero geometry,
+  long lines, and stale-result rejection without touching stable Herdr.
+- Re-ran the actual five-package dependency/OSV delta and the entire direct
+  `just check` equivalent. B1 product/test head is `2b2dcd3`; continuity and
+  graph/publication follow separately.
 
 ## 6. KOD DURUMU
 
-Committed product/test history through `bcba84d`:
+Previously published product/test history through `bcba84d`:
 
 - `c043c1e`: `src/ui/shell.rs`, `src/ui.rs`, `src/app/state.rs`, `src/app/mod.rs`.
 - `d026e94`: `src/ui/file_manager.rs`, `src/ui.rs`, `src/app/state.rs`, `src/app/mod.rs`, `src/main.rs`.
@@ -77,22 +89,25 @@ Committed product/test history through `bcba84d`:
 - `8cd4e89`: `src/server/headless.rs`, `src/terminal/state.rs`.
 - `bcba84d`: `src/kitty_graphics.rs`.
 
-`bcba84d` is fast-forward published to both CyPack `feat/native-fm` and fork
-`master`; both remote refs were verified at the exact local SHA. The separate
-continuity/task-state commit containing this handoff follows it. Product
-staging is empty.
+B1 is an auditable 21-commit test/feature sequence from `439ff2c` through
+`2b2dcd3`. Product paths are `Cargo.toml`, `Cargo.lock`,
+`src/app/file_preview_worker.rs`, `src/app/mod.rs`, `src/app/runtime.rs`,
+`src/fm/mod.rs`, `src/fm/text_preview.rs`, and `src/ui/file_manager.rs`.
+Intermediate RED commits are intentional TDD checkpoints; the range tip is
+fully green. The continuity/task files remain a separate commit.
 
 ## 7. TEST KANITI
 
-- B0 targeted Path Beta: 4/4; full `kitty_graphics`: 25/25.
-- Final full nextest: 2916/2916 passed, one explicit interactive host probe
+- B1/FM targeted: 64/64.
+- Final full nextest: 2948/2948 passed, one explicit B0 interactive host probe
   skipped, no retry.
 - Linux all-target and canonical Windows MSVC binary-target clippy passed with
   `-D warnings`.
 - Bun 17/17; Python maintenance 64/64; fmt and diff-check clean.
-- No new dependency. Doctests are N/A because Herdr has no library target.
-- Real Path Beta and Path Alpha both rendered in separate throwaway Kitty
-  windows. No stable Herdr process or socket was touched.
+- Doctests are N/A because Herdr has no library target.
+- Actual B1 lock delta is five packages with no existing-version upgrade.
+  Exact OSV batch returned only severity-less `RUSTSEC-2025-0141` for
+  unmaintained `bincode 1.3.3`; no security-severity advisory.
 
 ## 8. KRİTİK KARARLAR
 
@@ -104,11 +119,15 @@ staging is empty.
 - Native watching is primary; startup/runtime errors enter explicit polling
   fallback, and all active watchers reconcile every 2 seconds to cover silent
   FUSE/NFS/exFAT-class delivery failures.
-- A4 and B0 are implementation-complete, verified, and published. B0's B2
-  decision is conditional GO; B2 remains ordered after B1 and the A3 remainder.
-- B1.0 selected minimal pure-Rust syntect for B1.2. The actual manifest change
-  is deferred until its RED tests/worker seam require it; exact package and OSV
-  deltas must be rerun then.
+- A4 and B0 are implementation-complete, verified, and published. B1 is
+  implementation-complete and fully verified at `2b2dcd3`; publication must
+  retain the normal graph/FF/remote-SHA discipline.
+- B1 uses minimal pure-Rust syntect outside input/render in a dedicated bounded
+  worker. Plain prepared content remains availability authority; highlighting
+  is optional enhancement and stale generations never mutate current state.
+- B0's B2 decision is conditional GO; B2 remains ordered after the A3
+  remainder and must retain bounded decode, generation, cleanup, and real-host
+  evidence constraints.
 - The user granted standing authorization for autonomous atomic commits and
   CyPack fork-only fast-forward pushes. Do not repeatedly ask for alignment;
   never relax targeted staging, verification, ancestry, or remote-SHA checks.
@@ -123,16 +142,19 @@ staging is empty.
 
 ## 10. AÇIK GÖREVLER
 
-See `.codex/TASKS.md` for the full B1 test-point contract plus A3, B2,
-C1–C6, S5–S7, N2, and M1–M3 roadmap. A4 and B0 are closed. B1 is active.
+See `.codex/TASKS.md` for the now-populated A3 remainder contract plus B2,
+C1–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, and B1 are closed at the code/
+verification level. Immediate code task is TP-A3.2-VIEWPORT RED; do not skip
+ahead to B2.
 
 ## 11. ORTAM
 
 - `codex-cli 0.144.1` is installed.
 - `just` is absent; direct recipe execution is required unless installed later.
-- Full post-B0 graph reindex completed at 17,624 nodes / 83,295 edges and
-  returned `frame_graphics_bytes`, the exact-RGBA Path Beta test, and
-  `miller_layout`.
+- Full post-B1 graph reindex completed at 17,774 nodes / 84,033 edges and
+  returned `miller_layout`, `highlight_text_preview`,
+  `sync_file_preview_worker`, and `render_file_preview` with current
+  connections; freshness was not inferred from `ready` alone.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.

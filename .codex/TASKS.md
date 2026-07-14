@@ -87,7 +87,7 @@ code to make it GREEN. Complete one test point before beginning the next.
   (`test: prove native image path beta feasibility`), full-reindex, and
   fast-forward publish to CyPack feature/master only.
 
-## P2 — B1 Text Preview
+## P2 — B1 Text Preview (Verified — Publication Pending)
 
 Production code begins only after the matching test point is RED.
 
@@ -106,21 +106,42 @@ Production code begins only after the matching test point is RED.
   compile/runtime/binary/license/OSV/Windows cost. B1.1 adds no dependency;
   B1.2 must use a generation-safe bounded worker, not synchronous input/render
   highlighting. Re-run exact dependency and OSV deltas before manifest change.
-- [ ] B1.1 add a bounded text-read model in the state refresh path; render
+- [x] B1.1 add a bounded text-read model in the state refresh path; render
   performs no I/O.
-- [ ] B1.2 add deterministic syntax classification/highlighting with explicit
+- [x] B1.2 add deterministic syntax classification/highlighting with explicit
   unsupported, binary, invalid-encoding, and highlighter-failure paths.
-- [ ] B1.3 enforce byte, line, and rendered-column truncation/lazy limits.
-- [ ] B1.4 prove navigation/watcher lifecycle freshness and responsive render.
-- [ ] Cross-check render/truncation behavior and pass the full gate.
+- [x] B1.3 enforce byte, line, and rendered-column truncation/lazy limits.
+- [x] B1.4 prove navigation/watcher lifecycle freshness and responsive render.
+- [x] Cross-check render/truncation behavior and pass the full gate: targeted
+  64/64, full nextest 2948/2948 with one named B0 host-probe skip, Linux and
+  canonical Windows clippy clean, Bun 17/17, Python 64/64, fmt/diff clean,
+  doctest N/A for the binary-only crate, and exact five-package OSV delta with
+  no security-severity advisory.
 
 ## P2 — A3 Navigation and Selection Remainder
 
-- [ ] A2.4/A3.2 cursor-follow viewport and scroll state with clamp invariants.
-- [ ] A3.3 mouse row hit areas, click dispatch, double-click/enter behavior,
-  and zero-width/narrow-layout tests.
-- [ ] A3.4 make the visual-selection versus multi-selection scope explicit;
-  define state only after test points and C2/N4 dependency review.
+Production code begins only after the matching test point is RED. Keep layout
+geometry pure and shared by render/hit-testing; do not infer rows from painted
+buffer content.
+
+### A3 Remainder Test-Point Contract
+
+| Test point | What is tested | Expected result | Why it is required |
+|------------|----------------|-----------------|--------------------|
+| TP-A3.2-VIEWPORT | Long current list; repeated up/down; top/bottom; resize taller/narrower/zero-height; reload that removes rows; enter/leave | Cursor is always in range, selected row is visible whenever a row can be drawn, viewport start clamps to the last valid window, and empty/zero-height states remain zero and panic-free | A cursor without explicit viewport invariants disappears or underflows after navigation, resize, and watcher refresh |
+| TP-A3.3-HIT-GEOMETRY | Current-row rectangles in one/two/three-column layouts; header/title/divider/parent/preview/empty space; scrolled row offsets; zero-width/height | Only a visible current-row rectangle resolves to its exact entry index; all non-row and degenerate points return no action; render and input consume the same computed geometry | Independent mouse arithmetic drifts from responsive Miller layout and can activate the wrong file |
+| TP-A3.3-DISPATCH | Single click on file/dir, double click on directory/file, wheel up/down at bounds, selection followed by keyboard enter | Single click selects exactly that row; directory double-click follows the same enter path; file double-click remains selected until an opener action is explicitly designed; wheel/navigation preserve clamp and refresh preview generation | Hit-testing alone does not prove input routing, action semantics, or stale-preview safety |
+| TP-A3.4-SCOPE | Cursor highlight versus multi-selection state across keyboard/mouse navigation and close/reopen | v1 has one cursor-owned visual selection only; no speculative multi-select collection is added. N4/C2 owns later multi-select semantics and must start with its own RED tests | Mixing cursor focus and future bulk selection now would create ambiguous destructive-operation authority |
+| TP-A3.5-GATES | Targeted state/geometry/input/render tests, full nextest, Linux/Windows clippy, Bun/Python maintenance, isolated manual mouse cross-check, and diff cleanliness | Every applicable gate passes without retry-only green; manual testing uses throwaway XDG and cleared Herdr socket variables | Mouse geometry is terminal-sensitive and cannot be closed by a narrow unit test alone |
+
+- [ ] A3.2 add explicit cursor-follow viewport/scroll state and clamp
+  invariants, beginning with TP-A3.2-VIEWPORT RED.
+- [ ] A3.3 compute named current-row hit rectangles from the responsive Miller
+  layout, then wire click/double-click/wheel dispatch test-first.
+- [ ] A3.4 record v1 single visual-selection scope in code/tests; defer actual
+  multi-select state and bulk semantics to N4/C2.
+- [ ] Run the complete A3.5 gate and isolated manual mouse cross-check before
+  publishing the increment.
 
 ## P2 — B2 Image Preview (B0 GO; Ordered After B1/A3)
 
@@ -197,8 +218,8 @@ Production code begins only after the matching test point is RED.
 
 ## Ordering Resolution
 
-A4, B0, and their separate continuity concerns are published. The next
-execution order is: implement B1 test-point-first; complete the A3 remainder;
-implement B2 under B0's conditional-GO constraints; then execute
+A4 and B0 are published; B1 is verified and closes with its publication and
+continuity commit. The next execution order is: complete the A3 remainder
+test-point-first; implement B2 under B0's conditional-GO constraints; then execute
 C1 → C2 → C3 → C4 → C5 → C6. S5–S7 and N2 remain evidence-gated deferred
 architecture, while M1–M3 remain inactive north-star work.
