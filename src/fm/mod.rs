@@ -589,6 +589,66 @@ mod tests {
         }
     }
 
+    // TP-B1.4-RELOAD: a watcher refresh that re-reads the same selected path
+    // and unchanged content preserves the already prepared highlight. This
+    // prevents plain/highlight flicker and duplicate CPU work after harmless
+    // filesystem notifications.
+    #[test]
+    fn reload_preserves_highlight_for_unchanged_selected_text() {
+        let td = TempDir::new("text-preview-highlight-reload");
+        let path = td.root.join("sample.rs");
+        fs::write(&path, "fn main() {}\n").expect("write Rust preview fixture");
+        let mut state = FmState::new(&td.root);
+        let prepared = match &mut state.preview {
+            FmPreview::File(FmFilePreview::Text(preview)) => {
+                assert_eq!(preview.source_path, path);
+                let highlighted = highlight_text_preview(&path, preview);
+                preview.highlighted = Some(highlighted.clone());
+                highlighted
+            }
+            other => panic!("selected text file needs prepared preview, got {other:?}"),
+        };
+
+        state.reload();
+
+        match &state.preview {
+            FmPreview::File(FmFilePreview::Text(preview)) => {
+                assert_eq!(preview.source_path, path);
+                assert_eq!(preview.highlighted.as_ref(), Some(&prepared));
+            }
+            other => panic!("reloaded text file needs prepared preview, got {other:?}"),
+        }
+    }
+
+    // TP-B1.4-PATH-IDENTITY: equal bytes are not sufficient identity. Moving
+    // to a different path, especially one with a different extension, must
+    // discard the old syntax result and bind the new preview to the new path.
+    #[test]
+    fn cursor_move_does_not_reuse_highlight_for_equal_content_at_new_path() {
+        let td = TempDir::new("text-preview-highlight-path");
+        let first = td.root.join("alpha.rs");
+        let second = td.root.join("beta.py");
+        fs::write(&first, "same bytes\n").expect("write first preview fixture");
+        fs::write(&second, "same bytes\n").expect("write second preview fixture");
+        let mut state = FmState::new(&td.root);
+        match &mut state.preview {
+            FmPreview::File(FmFilePreview::Text(preview)) => {
+                preview.highlighted = Some(highlight_text_preview(&first, preview));
+            }
+            other => panic!("first text file needs prepared preview, got {other:?}"),
+        }
+
+        state.move_down();
+
+        match &state.preview {
+            FmPreview::File(FmFilePreview::Text(preview)) => {
+                assert_eq!(preview.source_path, second);
+                assert!(preview.highlighted.is_none());
+            }
+            other => panic!("second text file needs prepared preview, got {other:?}"),
+        }
+    }
+
     // TP-A2.2.5: filesystem root has no parent context.
     #[test]
     fn miller_context_at_root_has_no_parent() {
