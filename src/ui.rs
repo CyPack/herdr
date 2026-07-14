@@ -838,9 +838,9 @@ mod tests {
         std::fs::remove_dir_all(root).expect("remove temp root");
     }
 
-    // TP-A3.3-HIT-GEOMETRY: compute_view snapshots CURRENT row rects for input
-    // using the same pure layout function as render, then clears them when FM
-    // closes so stale terminal coordinates can never remain clickable.
+    // TP-C2.1-VIEWSTATE: desktop compute_view snapshots CURRENT name and action
+    // rects from one geometry source, then clears both when FM closes so stale
+    // terminal coordinates can never remain clickable.
     #[test]
     fn compute_view_snapshots_and_clears_file_manager_row_areas() {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -880,6 +880,19 @@ mod tests {
             .all(|row| row.rect.width > 0 && row.rect.height == 1));
         assert_eq!(
             app.view
+                .file_manager_row_action_areas
+                .iter()
+                .map(|area| (area.entry_idx, area.action))
+                .collect::<Vec<_>>(),
+            [2, 3, 4]
+                .into_iter()
+                .flat_map(|entry_idx| {
+                    crate::app::state::FileManagerRowAction::ALL.map(|action| (entry_idx, action))
+                })
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            app.view
                 .file_manager_header_action_areas
                 .iter()
                 .map(|area| area.action)
@@ -895,6 +908,7 @@ mod tests {
         app.file_manager = None;
         compute_view(&mut app, Rect::new(0, 0, 100, 6));
         assert!(app.view.file_manager_row_areas.is_empty());
+        assert!(app.view.file_manager_row_action_areas.is_empty());
         assert!(app.view.file_manager_header_action_areas.is_empty());
 
         std::fs::remove_dir_all(root).expect("remove temp root");

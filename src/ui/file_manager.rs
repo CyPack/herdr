@@ -1081,67 +1081,163 @@ mod tests {
         assert!(rows.contains("05.txt"), "viewport last row: {rows:?}");
     }
 
-    // TP-A3.3-HIT-GEOMETRY: at each responsive breakpoint, CURRENT row hit
-    // rects occupy exactly the same list geometry that the pure renderer uses.
+    // TP-C2.1-MILLER-GEOMETRY: at each responsive breakpoint, every CURRENT
+    // entry exposes one bounded name rect followed by the complete, ordered,
+    // and pairwise-disjoint row-action set. Render and input must consume this
+    // one geometry snapshot rather than independently recreating the split.
     #[test]
-    fn current_row_areas_follow_miller_geometry_at_all_breakpoints() {
+    fn current_row_actions_follow_miller_geometry_at_all_breakpoints() {
+        use crate::app::state::FileManagerRowAction;
+
         for width in [20, 30, 40] {
             let area = Rect::new(5, 7, width, 6);
             let body = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
             let current_list = panel_areas(miller_layout(body).current)[1];
 
-            let rows = compute_file_manager_row_areas(area, 3, 0);
-            assert_eq!(rows.len(), 3, "width {width}");
-            for (index, row) in rows.iter().enumerate() {
+            let geometry = compute_file_manager_row_geometry(area, 3, 0);
+            assert_eq!(geometry.rows.len(), 3, "width {width}");
+            assert_eq!(geometry.actions.len(), 9, "width {width}");
+            for (index, row) in geometry.rows.iter().enumerate() {
                 assert_eq!(row.entry_idx, index, "width {width}");
+                assert_eq!(row.rect.x, current_list.x, "width {width}");
+                assert_eq!(row.rect.y, current_list.y + index as u16, "width {width}");
+                assert_eq!(row.rect.height, 1, "width {width}");
+                assert!(row.rect.width >= 1, "width {width}");
+
+                let actions = geometry
+                    .actions
+                    .iter()
+                    .filter(|action| action.entry_idx == index)
+                    .collect::<Vec<_>>();
                 assert_eq!(
-                    row.rect,
-                    Rect::new(
-                        current_list.x,
-                        current_list.y + index as u16,
-                        current_list.width,
-                        1,
-                    ),
+                    actions.iter().map(|area| area.action).collect::<Vec<_>>(),
+                    FileManagerRowAction::ALL,
                     "width {width}",
                 );
+                assert_eq!(row.rect.right(), actions[0].rect.x, "width {width}");
+                assert_eq!(
+                    actions.last().expect("delete action").rect.right(),
+                    current_list.right()
+                );
+                for (action_index, action) in actions.iter().enumerate() {
+                    assert_eq!(action.rect.width, 3, "width {width}");
+                    assert_eq!(action.rect.height, 1, "width {width}");
+                    assert_eq!(action.rect.y, row.rect.y, "width {width}");
+                    assert_eq!(
+                        action.rect.x,
+                        row.rect.right() + action_index as u16 * 3,
+                        "width {width}",
+                    );
+                    assert!(action.rect.x >= current_list.x, "width {width}");
+                    assert!(action.rect.right() <= current_list.right(), "width {width}");
+                }
+                for (left_index, left) in actions.iter().enumerate() {
+                    assert!(row.rect.intersection(left.rect).is_empty(), "width {width}");
+                    for right in actions.iter().skip(left_index + 1) {
+                        assert!(
+                            left.rect.intersection(right.rect).is_empty(),
+                            "width {width}"
+                        );
+                    }
+                }
             }
         }
     }
 
-    // TP-A3.3-HIT-GEOMETRY: viewport offsets map screen rows to absolute entry
-    // indices, and adversarial offsets clamp to the last full visible window.
+    // TP-C2.1-VIEWPORT: viewport offsets map both name and action rects to
+    // absolute entry indices, and adversarial offsets clamp to the last full
+    // visible window instead of exposing stale paths.
     #[test]
-    fn current_row_areas_apply_viewport_and_clamp_to_list_end() {
+    fn current_row_actions_apply_viewport_and_clamp_to_list_end() {
         let area = Rect::new(10, 20, 20, 5); // three CURRENT list rows
 
-        let rows = compute_file_manager_row_areas(area, 10, 6);
+        let geometry = compute_file_manager_row_geometry(area, 10, 6);
         assert_eq!(
-            rows.iter().map(|row| row.entry_idx).collect::<Vec<_>>(),
+            geometry
+                .rows
+                .iter()
+                .map(|row| row.entry_idx)
+                .collect::<Vec<_>>(),
             vec![6, 7, 8]
         );
-        assert_eq!(rows[0].rect, Rect::new(10, 22, 20, 1));
-        assert_eq!(rows[2].rect, Rect::new(10, 24, 20, 1));
-
-        let clamped = compute_file_manager_row_areas(area, 10, usize::MAX);
+        assert_eq!(geometry.rows[0].rect, Rect::new(10, 22, 11, 1));
+        assert_eq!(geometry.rows[2].rect, Rect::new(10, 24, 11, 1));
         assert_eq!(
-            clamped.iter().map(|row| row.entry_idx).collect::<Vec<_>>(),
+            geometry
+                .actions
+                .chunks_exact(3)
+                .map(|actions| actions[0].entry_idx)
+                .collect::<Vec<_>>(),
+            vec![6, 7, 8]
+        );
+
+        let clamped = compute_file_manager_row_geometry(area, 10, usize::MAX);
+        assert_eq!(
+            clamped
+                .rows
+                .iter()
+                .map(|row| row.entry_idx)
+                .collect::<Vec<_>>(),
             vec![7, 8, 9]
         );
+        assert!(clamped
+            .actions
+            .iter()
+            .all(|action| (7..=9).contains(&action.entry_idx)));
     }
 
-    // TP-A3.3-HIT-GEOMETRY: no content cells means no clickable rows. All
-    // degenerate rectangles and an empty directory remain panic-free.
+    // TP-C2.1-NARROW: actions disappear as complete 3-cell units in priority
+    // order while preserving at least one name cell. This prevents clipped
+    // labels from leaving phantom hit targets at narrow widths.
     #[test]
-    fn current_row_areas_are_empty_for_degenerate_geometry_or_list() {
+    fn current_row_actions_progressively_hide_and_preserve_name_cell() {
+        use crate::app::state::FileManagerRowAction;
+
+        let cases = [(1, 0), (3, 0), (4, 1), (6, 1), (7, 2), (9, 2), (10, 3)];
+        for (width, expected_action_count) in cases {
+            let area = Rect::new(4, 8, width, 4);
+            let geometry = compute_file_manager_row_geometry(area, 1, 0);
+            assert_eq!(geometry.rows.len(), 1, "width {width}");
+            assert_eq!(
+                geometry.actions.len(),
+                expected_action_count,
+                "width {width}"
+            );
+            assert_eq!(
+                geometry
+                    .actions
+                    .iter()
+                    .map(|area| area.action)
+                    .collect::<Vec<_>>(),
+                FileManagerRowAction::ALL[..expected_action_count],
+                "width {width}",
+            );
+            assert_eq!(
+                geometry.rows[0].rect.width,
+                width - expected_action_count as u16 * 3,
+                "width {width}",
+            );
+            assert!(geometry.rows[0].rect.width >= 1, "width {width}");
+        }
+    }
+
+    // TP-C2.1-DEGENERATE: headers, dividers, empty lists, and zero-sized
+    // content expose neither name nor action targets.
+    #[test]
+    fn current_row_actions_are_empty_for_degenerate_geometry_or_list() {
         for area in [
             Rect::new(0, 0, 0, 6),
             Rect::new(0, 0, 20, 0),
             Rect::new(0, 0, 20, 1),
             Rect::new(0, 0, 20, 2),
         ] {
-            assert!(compute_file_manager_row_areas(area, 10, 0).is_empty());
+            let geometry = compute_file_manager_row_geometry(area, 10, 0);
+            assert!(geometry.rows.is_empty());
+            assert!(geometry.actions.is_empty());
         }
-        assert!(compute_file_manager_row_areas(Rect::new(0, 0, 20, 6), 0, usize::MAX).is_empty());
+        let empty = compute_file_manager_row_geometry(Rect::new(0, 0, 20, 6), 0, usize::MAX);
+        assert!(empty.rows.is_empty());
+        assert!(empty.actions.is_empty());
     }
 
     // TP-C1.1-GEOMETRY: header actions are named, ordered, disjoint, and
@@ -1591,6 +1687,28 @@ mod tests {
             rows.iter().any(|r| r.contains('…')),
             "long name ellipsized: {rows:?}"
         );
+    }
+
+    // TP-C2.1-UNICODE-RENDER: row geometry is display-cell based and remains
+    // independent from UTF-8 byte length. A long Unicode name is truncated
+    // inside the name rect while all complete action labels remain visible.
+    #[test]
+    fn unicode_name_does_not_overwrite_row_action_cells() {
+        use crate::app::state::FileManagerRowAction;
+
+        let td = TempDir::new("unicode-row-actions");
+        td.file("çalışma-🚀-uzun-dosya-adı.txt");
+        let app = app_with_fm(FmState::new(&td.root));
+        let buffer = render_buffer(&app, 20, 4);
+        let geometry = compute_file_manager_row_geometry(Rect::new(0, 0, 20, 4), 1, 0);
+
+        assert_eq!(geometry.actions.len(), FileManagerRowAction::ALL.len());
+        for action in &geometry.actions {
+            let rendered = (action.rect.x..action.rect.right())
+                .map(|x| buffer[(x, action.rect.y)].symbol())
+                .collect::<String>();
+            assert_eq!(rendered, action.action.label());
+        }
     }
 
     // TP-A2.6 (render side): a closed file manager draws nothing, so the base
