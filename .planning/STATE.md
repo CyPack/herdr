@@ -2,9 +2,8 @@
 
 - Updated: 2026-07-14
 - Branch: `feat/native-fm`
-- C1.1 product checkpoint: `c9bfbf9`; independent deterministic-test fix:
-  `9aa1e59`. The continuity commit containing this state file is part of the
-  CyPack publication unit.
+- C1.2 product checkpoint: `7fd01de`. The continuity commit containing this
+  state file is part of the CyPack publication unit.
 - Completed local commits:
   - `6c7c58f` A2.2 responsive Miller columns (already pushed)
   - `01ba91d` A4 live filesystem watching (pushed to CyPack feature/master)
@@ -23,11 +22,14 @@
     to CyPack feature/master)
   - `0ed5e51` / `c9bfbf9` C1.1 header-action geometry RED/GREEN plus
     independent test-stability fix `9aa1e59` (fully verified and graph-indexed;
-    publication completes with this continuity commit)
+    published to CyPack feature/master)
+  - `dbc6798` / `7fd01de` C1.2 side-effect-free exact header action dispatch
+    RED/GREEN (fully verified and graph-indexed; publication completes with
+    this continuity commit)
 - Continuity/tooling is versioned by the separate commit containing this state
   file.
-- Active increment: begin TP-C1.2-DISPATCH test-first; map current visible
-  header rectangles to tags without executing filesystem operations.
+- Active increment: begin TP-N3.1-CONTENT test-first; define a pure,
+  selection-sensitive persistent action-bar model before action authority.
 - Canonical current state: `/home/ayaz/projects/herdr/.codex/CURRENT.md`
 - Durable tasks: `/home/ayaz/projects/herdr/.codex/TASKS.md`
 - Full handoff: `/home/ayaz/projects/herdr/.codex/HANDOFF.md`
@@ -47,7 +49,11 @@
   full nextest 2986/2986 plus one named B0 host-probe skip; Linux/Windows
   clippy; Bun 17/17; Python 64/64; fmt/diff clean. Full graph: 17,986 nodes /
   83,818 edges with the header action types and geometry seam verified.
-- First next code action: make TP-C1.2-DISPATCH RED for left-click action-tag
-  routing and gap/cwd/outside/narrow/zero/stale/non-left fail-closed cases.
-- Next code order: C1.2, N3, then C2 through C6. Deferred
+- C1.2 final gates: exact dispatch 2/2; FM input 13/13; full nextest 2988/2988
+  plus one named B0 host-probe skip; Linux/Windows clippy; Bun 17/17; Python
+  64/64; fmt/diff clean. Full graph: 17,993 nodes / 84,009 edges with dispatch,
+  handler, outer input connection, and tests verified.
+- First next code action: make TP-N3.1-CONTENT RED for directory/file/empty,
+  clipboard, watcher/navigation, and close/reopen action-bar state.
+- Next code order: N3.1, N3.2, then C2 through C6. Deferred
   architecture and north-star missions remain recorded in `.codex/TASKS.md`.

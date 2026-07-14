@@ -198,7 +198,11 @@ server protocol, and render must remain pure.
   `0ed5e51`; GREEN commit `c9bfbf9`. Geometry/render/ViewState targeted 4/4;
   full nextest 2986/2986 with one named B0 host probe skipped; Linux/Windows
   clippy, Bun 17/17, Python 64/64, fmt, and diff-check clean.
-- [ ] C1.2 hit-test dispatch with disjoint geometry and narrow/zero-area cases.
+- [x] C1.2 hit-test dispatch with disjoint geometry and narrow/zero-area cases.
+  RED commit `dbc6798`; GREEN commit `7fd01de`. Exact tags 2/2, full FM
+  input 13/13, full nextest 2988/2988 with one named B0 host probe skipped;
+  Linux/Windows clippy, Bun 17/17, Python 64/64, fmt, and diff-check clean.
+  Dispatch is deliberately side-effect free until N3 defines authority.
 - [ ] N3.1 selection-sensitive persistent action-bar content.
 - [ ] N3.2 explicit enabled/disabled states with no hidden side effects.
 
@@ -260,8 +264,7 @@ server protocol, and render must remain pure.
 
 ## Ordering Resolution
 
-A4, B0, B1, the A3 remainder, B2, and C1.1 are complete through C1.1 product
-head `c9bfbf9` (with independent deterministic-test fix `9aa1e59`). The next
-execution order is C1.2 → N3 → C2 → C3 → C4 → C5 → C6. S5–S7 and N2 remain
-evidence-gated deferred architecture, while M1–M3 remain inactive north-star
-work.
+A4, B0, B1, the A3 remainder, B2, C1.1, and C1.2 are complete through C1.2
+product head `7fd01de`. The next execution order is N3.1 → N3.2 → C2 → C3 →
+C4 → C5 → C6. S5–S7 and N2 remain evidence-gated deferred architecture,
+while M1–M3 remain inactive north-star work.

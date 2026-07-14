@@ -4,13 +4,10 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Active C1.1 product checkpoint: `c9bfbf9`
-  (`feat: add file manager header action geometry`).
-- Independent full-suite stability fix: `9aa1e59`
-  (`test: make process-generation suppression deterministic`).
-- The C1.1 publication unit is the RED/GREEN product/test pair, the independent
-  test-stability fix, and the continuity/graph commit containing this file. At
-  publication, CyPack
+- Active C1.2 product checkpoint: `7fd01de`
+  (`feat: dispatch file manager header action tags`).
+- The C1.2 publication unit is the RED/GREEN product/test pair and the
+  continuity/graph commit containing this file. At publication, CyPack
   `feat/native-fm` and fork `master` are verified at that same fast-forward
   branch tip.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
@@ -44,6 +41,28 @@
 - Fresh gates: C1 geometry/render/ViewState 4/4; full nextest 2986/2986 with
   one named B0 host probe skipped; Linux all-target and canonical Windows bin
   clippy clean with `-D warnings`; Bun 17/17; Python 64/64; fmt/diff clean.
+
+## Verified Checkpoint — C1.2 Header Action Dispatch
+
+- RED contract commit: `dbc6798` (`test: define file manager header action
+  dispatch`). GREEN product commit: `7fd01de` (`feat: dispatch file manager
+  header action tags`). Intermediate compile-failing RED was never pushed
+  alone.
+- Private `FileManagerMouseDispatch` distinguishes `NotHandled`, `Consumed`,
+  and `HeaderAction(tag)` without adding App/AppState fields or server/wire
+  state. The outer mouse router consumes visible header tags before the hidden
+  terminal path.
+- Only an unmodified left press inside a current named rectangle returns its
+  exact Copy/Paste/NewFolder/Delete tag. Identity/gap/outside/hidden/zero,
+  stale-closed-FM, right/middle, and modified-left paths cannot invent an
+  action.
+- C1.2 intentionally executes no filesystem mutation and preserves cwd,
+  cursor, and disk entries. N3 must provide explicit selection-sensitive
+  content and enablement authority before any action tag can cause a side
+  effect.
+- Fresh gates: exact dispatch 2/2; full FM input 13/13; full nextest 2988/2988
+  with one named B0 host probe skipped; Linux all-target and canonical Windows
+  bin clippy clean with `-D warnings`; Bun 17/17; Python 64/64; fmt/diff clean.
 
 ## Completed Checkpoint — B2 Native Image Preview
 
@@ -167,13 +186,11 @@
   `handle_file_manager_mouse` were found as current production graph symbols
   with their call/test connections; freshness was not inferred from `ready`
   alone.
-- Full post-C1.1 graph reindex completed at 17,986 nodes / 83,818 edges.
-  `compute_file_manager_header_action_areas` is connected to desktop/mobile
-  view computation, render, and both geometry tests; `FileManagerHeaderAction`
-  and `FileManagerHeaderActionArea` are current graph types. The first query's
-  invalid file-pattern filter returned zero and was rejected as evidence; the
-  corrected symbol query returned five current nodes. Freshness was not
-  inferred from `ready` alone.
+- Full post-C1.2 graph reindex completed at 17,993 nodes / 84,009 edges.
+  `FileManagerMouseDispatch` and `handle_file_manager_mouse` are current graph
+  symbols; the handler remains connected to the outer input module, and both
+  exact-tag/fail-closed tests are present with their fixture calls. Freshness
+  was not inferred from `ready` alone.
 - Publication uses sequential fast-forward pushes to both CyPack heads and
   exact remote-SHA equality. `upstream` is never pushed.
 
@@ -187,11 +204,11 @@
 
 ## Exact Next Action
 
-1. Begin TP-C1.2-DISPATCH RED: prove exact left-click mapping for current
-   visible header rectangles and fail-closed behavior for gaps, cwd identity,
-   outside-header, hidden/narrow, zero-area, stale-frame, and non-left events.
-   Do not execute filesystem operations in C1.2; N3 owns explicit authority
-   state, then continue C2 → C3 → C4 → C5 → C6 in `.codex/TASKS.md` order.
+1. Begin TP-N3.1-CONTENT RED: define a pure, selection-sensitive persistent
+   action-bar model for directory/file/empty selection, clipboard state, and
+   watcher/navigation/close transitions. Render must stay filesystem-free and
+   stale selection state must clear. Then TP-N3.2 must prove explicit disabled
+   actions dispatch no side effect before C2 begins.
 
 ## Verified B2.0 Dependency Decision
 

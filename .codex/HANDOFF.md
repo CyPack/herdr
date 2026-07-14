@@ -2,10 +2,11 @@
 
 ## 1. SONRAKI ADIM
 
-Make TP-C1.2-DISPATCH RED before adding header mouse routing. Prove exact
-left-click mapping plus gap/cwd/outside/narrow/zero/stale/non-left fail-closed
-behavior; do not execute filesystem operations in C1.2. Then complete N3 and
-continue C2 → C3 → C4 → C5 → C6 in `.codex/TASKS.md` order.
+Make TP-N3.1-CONTENT RED before adding action authority. Define a pure,
+selection-sensitive persistent action-bar model for directory/file/empty,
+clipboard, watcher/navigation, and close/reopen transitions. Render remains
+filesystem-free; stale state clears. Then prove TP-N3.2 disabled actions have
+no side effects before continuing C2 → C3 → C4 → C5 → C6.
 
 ## 2. AKTİF PROJE
 
@@ -101,6 +102,14 @@ continue C2 → C3 → C4 → C5 → C6 in `.codex/TASKS.md` order.
 - Ran the complete direct `just check` equivalent at the C1.1 tip: targeted
   4/4, lifecycle family 27/27, full nextest 2986/2986 plus one named B0 probe
   skip, Linux/Windows clippy, Bun 17/17, Python 64/64, fmt, and diff-check.
+- Completed C1.2 test-first: RED `dbc6798`, GREEN `7fd01de`. Added a private
+  `NotHandled`/`Consumed`/`HeaderAction(tag)` dispatch seam, exact unmodified
+  left-click tag mapping, and fail-closed identity/gap/outside/hidden/zero/
+  stale/non-left behavior without AppState/protocol/filesystem mutation.
+- Ran exact dispatch 2/2, all FM input 13/13, full nextest 2988/2988 plus one
+  named B0 probe skip, Linux/Windows clippy, Bun 17/17, Python 64/64, fmt, and
+  diff-check. Cwd, cursor, and fixture disk entries remain unchanged by header
+  tag dispatch.
 
 ## 6. KOD DURUMU
 
@@ -160,6 +169,14 @@ The intermediate RED commit was never pushed alone. The publication unit adds
 this continuity/graph commit and fast-forwards both CyPack heads only after all
 fresh gates pass. Upstream is not pushed.
 
+C1.2 is an auditable RED/GREEN pair:
+
+- `dbc6798`: compile-failing exact-tag and fail-closed dispatch contract.
+- `7fd01de`: private side-effect-free header action tag dispatch.
+
+The intermediate RED commit was never pushed alone. This continuity/graph
+commit completes the C1.2 publication unit.
+
 ## 7. TEST KANITI
 
 - B1/FM targeted: 64/64.
@@ -190,6 +207,10 @@ fresh gates pass. Upstream is not pushed.
   interactive probe skip, no retry-only closure.
 - C1.1 Linux all-target and canonical Windows MSVC bin clippy passed with
   `-D warnings`; Bun 17/17; Python maintenance 64/64; fmt/diff clean.
+- C1.2 exact dispatch: 2/2; full FM input: 13/13; final full nextest:
+  2988/2988 plus one named B0 interactive probe skip, no retry-only closure.
+- C1.2 Linux all-target and canonical Windows MSVC bin clippy passed with
+  `-D warnings`; Bun 17/17; Python maintenance 64/64; fmt/diff clean.
 
 ## 8. KRİTİK KARARLAR
 
@@ -204,9 +225,9 @@ fresh gates pass. Upstream is not pushed.
 - A4, B0, B1, A3, and B2 are implementation-complete, fully verified,
   graph-indexed, and published to the CyPack fork.
 - C1.1 is implementation-complete, fully verified, and graph-indexed; C1.2 is
-  the next test-first increment. C1.2 maps action tags only—N3 must establish
-  explicit selection-sensitive enabled/disabled authority before filesystem
-  mutations are wired.
+  also implementation-complete, fully verified, and graph-indexed. C1.2 maps
+  action tags only—N3 must establish explicit selection-sensitive
+  enabled/disabled authority before filesystem mutations are wired.
 - B1 uses minimal pure-Rust syntect outside input/render in a dedicated bounded
   worker. Plain prepared content remains availability authority; highlighting
   is optional enhancement and stale generations never mutate current state.
@@ -226,22 +247,20 @@ fresh gates pass. Upstream is not pushed.
 
 ## 10. AÇIK GÖREVLER
 
-See `.codex/TASKS.md` for the completed A3/B2/C1.1 contracts and the complete
-C1–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, and C1.1 are closed.
-The immediate product task is TP-C1.2-DISPATCH RED, followed by N3; then follow
-C2 → C3 → C4 → C5 → C6 without skipping modules.
+See `.codex/TASKS.md` for the completed A3/B2/C1 contracts and the complete
+N3/C2–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, and C1 are closed.
+The immediate product task is TP-N3.1-CONTENT RED, followed by TP-N3.2;
+then follow C2 → C3 → C4 → C5 → C6 without skipping modules.
 
 ## 11. ORTAM
 
 - `codex-cli 0.144.1` is installed.
 - `just` is absent; direct recipe execution is required unless installed later.
-- Full post-C1.1 graph reindex completed at 17,986 nodes / 83,818 edges.
-  Corrected freshness query returned current `FileManagerHeaderAction`,
-  `FileManagerHeaderActionArea`, and
-  `compute_file_manager_header_action_areas`; the geometry function is linked
-  to desktop/mobile view computation, render, and tests. Freshness was not
-  inferred from `ready` alone, and a prior zero-result query with an invalid
-  file-pattern filter was explicitly rejected.
+- Full post-C1.2 graph reindex completed at 17,993 nodes / 84,009 edges.
+  Freshness query returned current `FileManagerMouseDispatch`,
+  `handle_file_manager_mouse`, and both exact-tag/fail-closed tests. The
+  handler remains connected to the outer input module. Freshness was not
+  inferred from `ready` alone.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.
