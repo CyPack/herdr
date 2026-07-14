@@ -922,10 +922,11 @@ fn fail_first_unstarted(
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_file_operation, execute_file_operation_with_observer, FileOperationCancellation,
-        FileOperationExecutionError, FileOperationExecutionStatus, FileOperationItemOutcome,
-        FileOperationKind, FileOperationPhase, FileOperationPlan, FileOperationPreflightError,
-        FileOperationRequest,
+        execute_file_operation, execute_file_operation_with_host,
+        execute_file_operation_with_observer, FileOperationCancellation,
+        FileOperationExecutionError, FileOperationExecutionStatus, FileOperationHost,
+        FileOperationItemOutcome, FileOperationKind, FileOperationPhase, FileOperationPlan,
+        FileOperationPreflightError, FileOperationRequest,
     };
     use crate::fm::MAX_MULTI_SELECTION_PATHS;
     use std::fs;
@@ -995,6 +996,186 @@ mod tests {
             .filter(|entry| entry.file_name().to_string_lossy().starts_with(".herdr-"))
             .map(|entry| entry.path())
             .collect()
+    }
+
+    struct CrossDeviceHost {
+        direct_source: PathBuf,
+        fail_remove: bool,
+    }
+
+    impl FileOperationHost for CrossDeviceHost {
+        fn publish_no_replace(
+            &mut self,
+            source: &std::path::Path,
+            destination: &std::path::Path,
+        ) -> std::io::Result<()> {
+            if source == self.direct_source {
+                return Err(std::io::Error::from(std::io::ErrorKind::CrossesDevices));
+            }
+            crate::platform::publish_staged_path_no_replace(source, destination)
+        }
+
+        fn remove_source(&mut self, source: &std::path::Path) -> std::io::Result<()> {
+            if self.fail_remove {
+                return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+            }
+            let metadata = fs::symlink_metadata(source)?;
+            if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                fs::remove_dir_all(source)
+            } else {
+                fs::remove_file(source)
+            }
+        }
+    }
+
+    // TP-C4.1-MOVE: a same-filesystem move uses direct atomic no-replace
+    // publish and creates exactly one destination without staging residue.
+    #[test]
+    fn file_operation_move_same_filesystem_renames_without_copy_residue() {
+        let td = TempDir::new("move-same-filesystem");
+        let source = td.file("source.txt", b"move contents");
+        let destination = td.dir("destination");
+        let plan = FileOperationPlan::preflight(request(
+            FileOperationKind::Move,
+            vec![source.clone()],
+            destination.clone(),
+        ))
+        .expect("move plan");
+
+        let result = execute_file_operation(&plan, &FileOperationCancellation::default());
+
+        assert_eq!(result.status(), FileOperationExecutionStatus::Completed);
+        assert_eq!(
+            result.items()[0].outcome(),
+            &FileOperationItemOutcome::Committed
+        );
+        assert!(!source.exists());
+        assert_eq!(
+            fs::read(destination.join("source.txt")).expect("read moved file"),
+            b"move contents"
+        );
+        assert!(operation_artifacts(&destination).is_empty());
+    }
+
+    // TP-C4.1-MOVE: EXDEV falls back to staged copy, publishes the verified
+    // destination, and only then removes the original source.
+    #[test]
+    fn file_operation_move_cross_filesystem_commits_copy_before_source_removal() {
+        let td = TempDir::new("move-cross-filesystem");
+        let source = td.dir("source-tree");
+        td.file("source-tree/nested.txt", b"cross-device contents");
+        let destination = td.dir("destination");
+        let plan = FileOperationPlan::preflight(request(
+            FileOperationKind::Move,
+            vec![source.clone()],
+            destination.clone(),
+        ))
+        .expect("move plan");
+        let mut host = CrossDeviceHost {
+            direct_source: source.clone(),
+            fail_remove: false,
+        };
+
+        let result = execute_file_operation_with_host(
+            &plan,
+            &FileOperationCancellation::default(),
+            &mut host,
+            |_| {},
+        );
+
+        assert_eq!(result.status(), FileOperationExecutionStatus::Completed);
+        assert_eq!(
+            result.items()[0].outcome(),
+            &FileOperationItemOutcome::Committed
+        );
+        assert!(!source.exists());
+        assert_eq!(
+            fs::read(destination.join("source-tree/nested.txt"))
+                .expect("read fallback move output"),
+            b"cross-device contents"
+        );
+        assert!(operation_artifacts(&destination).is_empty());
+    }
+
+    // TP-C4.1-MOVE: if destructive source removal fails after the copied
+    // destination commits, the explicit partial result preserves both paths.
+    #[test]
+    fn file_operation_move_source_removal_failure_is_explicit_and_recoverable() {
+        let td = TempDir::new("move-source-retained");
+        let source = td.file("source.txt", b"retained source");
+        let destination = td.dir("destination");
+        let plan = FileOperationPlan::preflight(request(
+            FileOperationKind::Move,
+            vec![source.clone()],
+            destination.clone(),
+        ))
+        .expect("move plan");
+        let mut host = CrossDeviceHost {
+            direct_source: source.clone(),
+            fail_remove: true,
+        };
+
+        let result = execute_file_operation_with_host(
+            &plan,
+            &FileOperationCancellation::default(),
+            &mut host,
+            |_| {},
+        );
+
+        assert_eq!(result.status(), FileOperationExecutionStatus::Failed);
+        assert!(matches!(
+            result.items()[0].outcome(),
+            FileOperationItemOutcome::SourceRetained(FileOperationExecutionError::Io {
+                action: super::FileOperationIoAction::RemoveSource,
+                kind: std::io::ErrorKind::PermissionDenied,
+                ..
+            })
+        ));
+        assert_eq!(
+            fs::read(&source).expect("source retained"),
+            b"retained source"
+        );
+        assert_eq!(
+            fs::read(destination.join("source.txt")).expect("destination committed"),
+            b"retained source"
+        );
+        assert!(operation_artifacts(&destination).is_empty());
+    }
+
+    // TP-C4.1-MOVE: fallback traversal failure never reaches the destructive
+    // phase, so the complete source remains and no destination is published.
+    #[cfg(unix)]
+    #[test]
+    fn file_operation_move_fallback_failure_never_removes_source() {
+        let td = TempDir::new("move-fallback-failure");
+        let source = td.dir("source-tree");
+        td.file("source-tree/00-file.txt", b"source");
+        std::os::unix::fs::symlink(td.root.join("outside"), td.root.join("source-tree/99-link"))
+            .expect("create unsupported nested symlink");
+        let destination = td.dir("destination");
+        let plan = FileOperationPlan::preflight(request(
+            FileOperationKind::Move,
+            vec![source.clone()],
+            destination.clone(),
+        ))
+        .expect("move plan");
+        let mut host = CrossDeviceHost {
+            direct_source: source.clone(),
+            fail_remove: false,
+        };
+
+        let result = execute_file_operation_with_host(
+            &plan,
+            &FileOperationCancellation::default(),
+            &mut host,
+            |_| {},
+        );
+
+        assert_eq!(result.status(), FileOperationExecutionStatus::Failed);
+        assert!(source.exists());
+        assert!(source.join("00-file.txt").exists());
+        assert!(!destination.join("source-tree").exists());
+        assert!(operation_artifacts(&destination).is_empty());
     }
 
     // TP-C4.1-COPY: file, directory, and multi-source copy stage completely,
