@@ -135,7 +135,7 @@ pub(crate) struct FileManagerRowGeometry {
 
 pub(crate) fn compute_file_manager_row_geometry(
     area: Rect,
-    entry_count: usize,
+    entries: &[FileEntry],
     viewport_start: usize,
 ) -> FileManagerRowGeometry {
     let Some(areas) = file_manager_areas(area) else {
@@ -143,6 +143,7 @@ pub(crate) fn compute_file_manager_row_geometry(
     };
     let list = panel_areas(areas.columns.current)[1];
     let visible_rows = list.height as usize;
+    let entry_count = entries.len();
     if list.width == 0 || visible_rows == 0 || entry_count == 0 {
         return FileManagerRowGeometry::default();
     }
@@ -180,6 +181,7 @@ pub(crate) fn compute_file_manager_row_geometry(
                     1,
                 ),
                 entry_idx,
+                entry_path: entries[entry_idx].path.clone(),
                 action,
             });
         }
@@ -390,8 +392,7 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
     } else {
         // Unit-level/component callers can render into an arbitrary rect
         // without a preceding full-frame compute_view pass.
-        fallback_geometry =
-            compute_file_manager_row_geometry(area, fm.entries.len(), fm.viewport_start);
+        fallback_geometry = compute_file_manager_row_geometry(area, &fm.entries, fm.viewport_start);
         (
             fallback_geometry.rows.as_slice(),
             fallback_geometry.actions.as_slice(),
@@ -839,6 +840,17 @@ mod tests {
         terminal.backend().buffer().clone()
     }
 
+    fn geometry_entries(count: usize) -> Vec<FileEntry> {
+        (0..count)
+            .map(|entry_idx| FileEntry {
+                name: format!("{entry_idx:02}.txt"),
+                path: PathBuf::from("geometry-fixture").join(format!("{entry_idx:02}.txt")),
+                is_dir: false,
+                operation_supported: true,
+            })
+            .collect()
+    }
+
     // TP-A2.2.1/2/3: a directory selection renders parent, current, and child
     // context side by side. Both the cwd in its parent and the selected child
     // in the current directory are visibly highlighted.
@@ -1163,7 +1175,8 @@ mod tests {
             let body = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
             let current_list = panel_areas(miller_layout(body).current)[1];
 
-            let geometry = compute_file_manager_row_geometry(area, 3, 0);
+            let entries = geometry_entries(3);
+            let geometry = compute_file_manager_row_geometry(area, &entries, 0);
             assert_eq!(geometry.rows.len(), 3, "width {width}");
             assert_eq!(geometry.actions.len(), 9, "width {width}");
             for (index, row) in geometry.rows.iter().enumerate() {
@@ -1189,6 +1202,7 @@ mod tests {
                     current_list.right()
                 );
                 for (action_index, action) in actions.iter().enumerate() {
+                    assert_eq!(&action.entry_path, &entries[index].path, "width {width}");
                     assert_eq!(action.rect.width, ROW_ACTION_WIDTH, "width {width}");
                     assert_eq!(action.rect.height, 1, "width {width}");
                     assert_eq!(action.rect.y, row.rect.y, "width {width}");
@@ -1222,7 +1236,8 @@ mod tests {
 
         let area = Rect::new(10, 20, 20, 5); // three CURRENT list rows
 
-        let geometry = compute_file_manager_row_geometry(area, 10, 6);
+        let entries = geometry_entries(10);
+        let geometry = compute_file_manager_row_geometry(area, &entries, 6);
         assert_eq!(
             geometry
                 .rows
@@ -1249,7 +1264,7 @@ mod tests {
             vec![6, 7, 8]
         );
 
-        let clamped = compute_file_manager_row_geometry(area, 10, usize::MAX);
+        let clamped = compute_file_manager_row_geometry(area, &entries, usize::MAX);
         assert_eq!(
             clamped
                 .rows
@@ -1274,7 +1289,8 @@ mod tests {
         let cases = [(1, 0), (2, 1), (3, 2), (4, 3), (10, 3)];
         for (width, expected_action_count) in cases {
             let area = Rect::new(4, 8, width, 4);
-            let geometry = compute_file_manager_row_geometry(area, 1, 0);
+            let entries = geometry_entries(1);
+            let geometry = compute_file_manager_row_geometry(area, &entries, 0);
             assert_eq!(geometry.rows.len(), 1, "width {width}");
             assert_eq!(
                 geometry.actions.len(),
@@ -1309,11 +1325,16 @@ mod tests {
             Rect::new(0, 0, 20, 1),
             Rect::new(0, 0, 20, 2),
         ] {
-            let geometry = compute_file_manager_row_geometry(area, 10, 0);
+            let entries = geometry_entries(10);
+            let geometry = compute_file_manager_row_geometry(area, &entries, 0);
             assert!(geometry.rows.is_empty());
             assert!(geometry.actions.is_empty());
         }
-        let empty = compute_file_manager_row_geometry(Rect::new(0, 0, 20, 6), 0, usize::MAX);
+        let empty = compute_file_manager_row_geometry(
+            Rect::new(0, 0, 20, 6),
+            &geometry_entries(0),
+            usize::MAX,
+        );
         assert!(empty.rows.is_empty());
         assert!(empty.actions.is_empty());
     }
@@ -1778,7 +1799,8 @@ mod tests {
         td.file("çalışma-🚀-uzun-dosya-adı.txt");
         let app = app_with_fm(FmState::new(&td.root));
         let buffer = render_buffer(&app, 20, 4);
-        let geometry = compute_file_manager_row_geometry(Rect::new(0, 0, 20, 4), 1, 0);
+        let entries = geometry_entries(1);
+        let geometry = compute_file_manager_row_geometry(Rect::new(0, 0, 20, 4), &entries, 0);
 
         assert_eq!(geometry.actions.len(), FileManagerRowAction::ALL.len());
         for action in &geometry.actions {

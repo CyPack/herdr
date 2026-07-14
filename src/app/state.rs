@@ -655,10 +655,11 @@ impl FileManagerRowAction {
 
 /// One exact row-action hit target. The absolute entry index is resolved while
 /// synchronizing the viewport so later input never reconstructs scroll math.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileManagerRowActionArea {
     pub rect: Rect,
     pub entry_idx: usize,
+    pub entry_path: std::path::PathBuf,
     pub action: FileManagerRowAction,
 }
 

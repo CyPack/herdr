@@ -1,4 +1,4 @@
-//! Native file manager — navigation input (A3).
+//! Native file manager — navigation and tagged action input (A3/C1/C2).
 //!
 //! While the file manager is open it captures keyboard input (intercepted in
 //! `handle_key` before the mode dispatch), driving the cursor and directory
@@ -7,14 +7,18 @@
 
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 
-use crate::app::state::{AppState, FileManagerHeaderAction};
+use crate::app::state::{AppState, FileManagerHeaderAction, FileManagerRowAction};
 use crate::app::{App, FileManagerClickState};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum FileManagerMouseDispatch {
     NotHandled,
     Consumed,
     HeaderAction(FileManagerHeaderAction),
+    RowAction {
+        action: FileManagerRowAction,
+        entry_path: std::path::PathBuf,
+    },
 }
 
 /// Handle one key while the file manager is open. `Esc`/`q` close it; the arrow
@@ -56,8 +60,8 @@ pub(super) fn handle_file_manager_key(state: &mut AppState, key: KeyEvent) {
 
 impl App {
     /// Route native-FM center-content mouse input before the hidden terminal
-    /// pane path. Header actions are tagged but remain side-effect free until
-    /// explicit action authority is implemented by N3.
+    /// pane path. Row actions carry stable path identity but remain side-effect
+    /// free until their operation modules provide explicit execution authority.
     pub(super) fn handle_file_manager_mouse(
         &mut self,
         mouse: MouseEvent,
@@ -96,6 +100,30 @@ impl App {
             .find(|row| rect_contains(row.rect, mouse.column, mouse.row))
             .map(|row| row.entry_idx);
 
+        let row_action = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+            .then_some(())
+            .filter(|_| mouse.modifiers.is_empty())
+            .and_then(|()| {
+                self.state
+                    .view
+                    .file_manager_row_action_areas
+                    .iter()
+                    .find(|area| rect_contains(area.rect, mouse.column, mouse.row))
+            })
+            .and_then(|area| {
+                let entry = self
+                    .state
+                    .file_manager
+                    .as_ref()
+                    .and_then(|file_manager| file_manager.entries.get(area.entry_idx))?;
+                (entry.operation_supported && entry.path == area.entry_path).then(|| {
+                    FileManagerMouseDispatch::RowAction {
+                        action: area.action,
+                        entry_path: area.entry_path.clone(),
+                    }
+                })
+            });
+
         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
             && mouse.modifiers.is_empty()
         {
@@ -113,6 +141,10 @@ impl App {
                 } else {
                     FileManagerMouseDispatch::Consumed
                 };
+            }
+            if let Some(row_action) = row_action {
+                self.last_file_manager_click = None;
+                return row_action;
             }
         }
 
@@ -806,7 +838,7 @@ mod tests {
                 3,
                 KeyModifiers::CONTROL,
             ),
-            mouse(MouseEventKind::Down(MouseButton::Left), 46, 3),
+            mouse(MouseEventKind::Down(MouseButton::Left), 43, 4),
             mouse(MouseEventKind::Down(MouseButton::Left), 43, 1),
         ] {
             assert_eq!(

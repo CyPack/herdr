@@ -490,11 +490,7 @@ fn sync_file_manager_view(app: &mut AppState, area: Rect) -> FileManagerRowGeome
     let visible_rows = file_manager_visible_rows(area);
     if let Some(file_manager) = app.file_manager.as_mut() {
         file_manager.sync_viewport(visible_rows);
-        compute_file_manager_row_geometry(
-            area,
-            file_manager.entries.len(),
-            file_manager.viewport_start,
-        )
+        compute_file_manager_row_geometry(area, &file_manager.entries, file_manager.viewport_start)
     } else {
         FileManagerRowGeometry::default()
     }
