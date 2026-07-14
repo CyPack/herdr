@@ -1732,10 +1732,43 @@ mod tests {
         );
     }
 
-    // TP-A3.4-SCOPE: CURRENT paints exactly one cursor-owned selection. Bulk
-    // selection visuals remain deferred with N4/C2 semantics.
+    // TP-N4.1-SELECTION-STATE: explicit multi-selection uses a distinct row
+    // background, while cursor focus remains the unique stronger projection.
     #[test]
-    fn current_panel_has_exactly_one_visual_selection() {
+    fn multi_selection_rows_are_distinct_from_cursor_focus() {
+        let td = TempDir::new("multi-selection-style");
+        td.file("a.txt");
+        td.file("b.txt");
+        td.file("c.txt");
+        let mut fm = FmState::new(&td.root);
+        assert!(fm.replace_selection(0));
+        assert!(fm.toggle_selection(2));
+        assert!(fm.select(1));
+        let app = app_with_fm(fm);
+        let buffer = render_buffer(&app, 20, 5);
+        let rows = (0..5)
+            .map(|y| {
+                (0..20)
+                    .map(|x| buffer[(x, y)].symbol().chars().next().unwrap_or(' '))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        let row_for = |name: &str| {
+            rows.iter()
+                .position(|row| row.contains(name))
+                .expect("rendered entry row") as u16
+        };
+
+        assert_ne!(app.palette.surface0, app.palette.surface1);
+        assert_eq!(buffer[(2, row_for("a.txt"))].bg, app.palette.surface1);
+        assert_eq!(buffer[(2, row_for("c.txt"))].bg, app.palette.surface1);
+        assert_eq!(buffer[(2, row_for("b.txt"))].bg, app.palette.surface0);
+    }
+
+    // TP-N4.1-SELECTION-STATE: CURRENT paints exactly one cursor-focus style,
+    // independently from any explicit multi-selection background.
+    #[test]
+    fn current_panel_has_exactly_one_cursor_focus_style() {
         let td = TempDir::new("single-visual-selection");
         td.file("a.txt");
         td.file("b.txt");

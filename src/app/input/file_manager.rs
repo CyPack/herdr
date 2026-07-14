@@ -263,6 +263,10 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
+    fn key_with_modifiers(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, modifiers)
+    }
+
     fn app_with_fm(fm: FmState) -> AppState {
         let mut app = AppState::test_new();
         app.file_manager = Some(fm);
@@ -569,29 +573,192 @@ mod tests {
         );
     }
 
-    // TP-A3.4-SCOPE: v1 mouse and keyboard navigation move one cursor-owned
-    // visual selection. Closing and reopening starts a fresh cursor at row 0;
-    // no multi-select collection survives or is speculatively introduced.
+    // TP-N4.1-SELECTION-STATE: plain mouse selection establishes one explicit
+    // path, normal keyboard navigation moves only cursor focus, and reopen
+    // drops the overlay-local selection.
     #[test]
-    fn cursor_only_selection_follows_mouse_keyboard_and_reopen() {
-        let td = TempDir::new("cursor-only-scope");
+    fn plain_selection_and_cursor_focus_follow_close_reopen_lifecycle() {
+        let td = TempDir::new("selection-focus-reopen");
         for index in 0..3 {
             td.file(&format!("{index:02}.txt"));
         }
         let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let selected_path = td.root.join("02.txt");
 
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 27, 4));
-        assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 2);
+        let fm = app.state.file_manager.as_ref().expect("open fm");
+        assert_eq!(fm.cursor, 2);
+        assert_eq!(
+            fm.multi_selection_paths().iter().collect::<Vec<_>>(),
+            vec![&selected_path]
+        );
+        assert_eq!(fm.multi_selection_anchor(), Some(selected_path.as_path()));
 
         handle_file_manager_key(&mut app.state, key(KeyCode::Up));
-        assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 1);
+        let fm = app.state.file_manager.as_ref().expect("open fm");
+        assert_eq!(fm.cursor, 1);
+        assert_eq!(
+            fm.multi_selection_paths().iter().collect::<Vec<_>>(),
+            vec![&selected_path]
+        );
 
         handle_file_manager_key(&mut app.state, key(KeyCode::Esc));
         assert!(app.state.file_manager.is_none());
         app.state.file_manager = Some(FmState::new(&td.root));
+        let fm = app.state.file_manager.as_ref().expect("reopened fm");
+        assert_eq!(fm.cursor, 0);
+        assert!(fm.multi_selection_paths().is_empty());
+        assert!(fm.multi_selection_anchor().is_none());
+    }
+
+    // TP-N4.1-SELECTION-STATE: exact mouse modifiers share the pure model
+    // semantics; combined modifiers fail closed without changing the set.
+    #[test]
+    fn mouse_plain_control_shift_and_combined_gestures_are_exact() {
+        let td = TempDir::new("multi-selection-mouse-gestures");
+        for index in 0..4 {
+            td.file(&format!("{index:02}.txt"));
+        }
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let path = |index| td.root.join(format!("{index:02}.txt"));
+
+        app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 27, 3));
+        let fm = app.state.file_manager.as_ref().expect("open fm");
+        assert_eq!(fm.multi_selection_paths().len(), 1);
+        assert!(fm.multi_selection_paths().contains(&path(1)));
+
+        app.handle_file_manager_mouse(mouse_with_modifiers(
+            MouseEventKind::Down(MouseButton::Left),
+            27,
+            5,
+            KeyModifiers::CONTROL,
+        ));
+        let fm = app.state.file_manager.as_ref().expect("open fm");
+        assert_eq!(fm.cursor, 3);
+        assert_eq!(fm.multi_selection_paths().len(), 2);
+        assert!(fm.multi_selection_paths().contains(&path(1)));
+        assert!(fm.multi_selection_paths().contains(&path(3)));
+        assert_eq!(fm.multi_selection_anchor(), Some(path(3).as_path()));
+
+        app.handle_file_manager_mouse(mouse_with_modifiers(
+            MouseEventKind::Down(MouseButton::Left),
+            27,
+            4,
+            KeyModifiers::SHIFT,
+        ));
+        let fm = app.state.file_manager.as_ref().expect("open fm");
+        assert_eq!(fm.cursor, 2);
+        assert_eq!(fm.multi_selection_paths().len(), 2);
+        assert!(fm.multi_selection_paths().contains(&path(2)));
+        assert!(fm.multi_selection_paths().contains(&path(3)));
+        assert!(!fm.multi_selection_paths().contains(&path(1)));
+        assert_eq!(fm.multi_selection_anchor(), Some(path(3).as_path()));
+
+        let before_paths = fm.multi_selection_paths().clone();
+        let before_anchor = fm.multi_selection_anchor().map(PathBuf::from);
+        app.handle_file_manager_mouse(mouse_with_modifiers(
+            MouseEventKind::Down(MouseButton::Left),
+            27,
+            2,
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ));
+        let fm = app.state.file_manager.as_ref().expect("open fm");
+        assert_eq!(fm.cursor, 2);
+        assert_eq!(fm.multi_selection_paths(), &before_paths);
+        assert_eq!(fm.multi_selection_anchor(), before_anchor.as_deref());
+    }
+
+    // TP-N4.1-SELECTION-STATE: Space toggles the focused identity, Shift plus
+    // vertical navigation extends from the stable anchor, and plain movement
+    // does not rewrite the explicit set.
+    #[test]
+    fn keyboard_toggle_range_and_cursor_only_movement_share_selection_model() {
+        let td = TempDir::new("multi-selection-keyboard-gestures");
+        for index in 0..4 {
+            td.file(&format!("{index:02}.txt"));
+        }
+        let mut app = app_with_fm(FmState::new(&td.root));
+        let path = |index| td.root.join(format!("{index:02}.txt"));
+
+        handle_file_manager_key(&mut app, key(KeyCode::Char(' ')));
+        handle_file_manager_key(
+            &mut app,
+            key_with_modifiers(KeyCode::Down, KeyModifiers::SHIFT),
+        );
+        handle_file_manager_key(
+            &mut app,
+            key_with_modifiers(KeyCode::Down, KeyModifiers::SHIFT),
+        );
+        let fm = app.file_manager.as_ref().expect("open fm");
+        assert_eq!(fm.cursor, 2);
+        assert_eq!(fm.multi_selection_paths().len(), 3);
+        assert_eq!(fm.multi_selection_anchor(), Some(path(0).as_path()));
+
+        handle_file_manager_key(
+            &mut app,
+            key_with_modifiers(KeyCode::Up, KeyModifiers::SHIFT),
+        );
+        let fm = app.file_manager.as_ref().expect("open fm");
+        assert_eq!(fm.cursor, 1);
+        assert_eq!(fm.multi_selection_paths().len(), 2);
+        assert!(fm.multi_selection_paths().contains(&path(0)));
+        assert!(fm.multi_selection_paths().contains(&path(1)));
+
+        handle_file_manager_key(&mut app, key(KeyCode::Down));
+        let fm = app.file_manager.as_ref().expect("open fm");
+        assert_eq!(fm.cursor, 2);
+        assert_eq!(fm.multi_selection_paths().len(), 2);
+
+        handle_file_manager_key(&mut app, key(KeyCode::Char(' ')));
+        let fm = app.file_manager.as_ref().expect("open fm");
+        assert_eq!(fm.multi_selection_paths().len(), 3);
+        assert!(fm.multi_selection_paths().contains(&path(2)));
+        assert_eq!(fm.multi_selection_anchor(), Some(path(2).as_path()));
+    }
+
+    // TP-N4.1-SELECTION-STATE: a stale row snapshot and unrecognized modifier
+    // combinations are consumed without mutating cursor, paths, or anchor.
+    #[test]
+    fn stale_and_unrecognized_selection_gestures_fail_closed() {
+        let td = TempDir::new("multi-selection-stale-gesture");
+        td.file("00.txt");
+        td.file("01.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        assert!(app
+            .state
+            .file_manager
+            .as_mut()
+            .expect("open fm")
+            .replace_selection(0));
+        app.state.view.file_manager_row_areas[1].entry_idx = usize::MAX;
+        let before_paths = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open fm")
+            .multi_selection_paths()
+            .clone();
+
         assert_eq!(
-            app.state.file_manager.as_ref().expect("reopened fm").cursor,
-            0
+            app.handle_file_manager_mouse(mouse_with_modifiers(
+                MouseEventKind::Down(MouseButton::Left),
+                27,
+                3,
+                KeyModifiers::CONTROL,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        handle_file_manager_key(
+            &mut app.state,
+            key_with_modifiers(KeyCode::Down, KeyModifiers::CONTROL),
+        );
+
+        let fm = app.state.file_manager.as_ref().expect("open fm");
+        assert_eq!(fm.cursor, 0);
+        assert_eq!(fm.multi_selection_paths(), &before_paths);
+        assert_eq!(
+            fm.multi_selection_anchor(),
+            Some(td.root.join("00.txt").as_path())
         );
     }
 
