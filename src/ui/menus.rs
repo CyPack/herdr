@@ -296,19 +296,42 @@ pub(super) fn render_context_menu(app: &AppState, frame: &mut Frame) {
         return;
     };
 
-    let items: Vec<ListItem> = menu
-        .items()
-        .iter()
-        .map(|item| ListItem::new(Line::from(*item)))
-        .collect();
-    let list = List::new(items)
-        .style(Style::default().fg(p.text))
-        .highlight_style(
+    let (items, highlight_style): (Vec<ListItem>, Style) = match &menu.kind {
+        crate::app::state::ContextMenuKind::File { model } => {
+            let items = model
+                .items
+                .iter()
+                .enumerate()
+                .map(|(idx, item)| {
+                    let fg = if !item.enabled {
+                        p.overlay0
+                    } else if idx == menu.list.highlighted {
+                        panel_contrast_fg(p)
+                    } else {
+                        p.text
+                    };
+                    ListItem::new(Line::from(item.label)).style(Style::default().fg(fg))
+                })
+                .collect();
+            (
+                items,
+                Style::default().bg(p.accent).add_modifier(Modifier::BOLD),
+            )
+        }
+        _ => (
+            menu.items()
+                .iter()
+                .map(|item| ListItem::new(Line::from(*item)))
+                .collect(),
             Style::default()
                 .bg(p.accent)
                 .fg(panel_contrast_fg(p))
                 .add_modifier(Modifier::BOLD),
-        )
+        ),
+    };
+    let list = List::new(items)
+        .style(Style::default().fg(p.text))
+        .highlight_style(highlight_style)
         .highlight_symbol(" ");
     let mut state = ListState::default().with_selected(Some(menu.list.highlighted));
     frame.render_stateful_widget(list, inner, &mut state);
