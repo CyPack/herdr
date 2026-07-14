@@ -762,6 +762,22 @@ mod tests {
         );
     }
 
+    // TP-N4.1-SELECTION-STATE: row hit geometry snapshots stable path identity
+    // so a watcher reorder at the same valid index can be rejected on input.
+    #[test]
+    fn row_selection_snapshot_carries_stable_path_identity() {
+        let td = TempDir::new("multi-selection-row-identity");
+        td.file("00.txt");
+        td.file("01.txt");
+        let app = runtime_app_with_fm(FmState::new(&td.root));
+        let expected = td.root.join("00.txt");
+
+        assert_eq!(
+            app.state.view.file_manager_row_areas[0].entry_path,
+            expected
+        );
+    }
+
     // TP-C1.2-DISPATCH: every complete visible header rectangle resolves to
     // its exact tag, while C1.2 performs no filesystem mutation or selection.
     #[test]
