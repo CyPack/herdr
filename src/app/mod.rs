@@ -11,6 +11,7 @@ mod api;
 mod api_helpers;
 mod config_io;
 mod creation;
+mod file_delete_confirmation;
 mod file_manager_watcher;
 mod file_operation_worker;
 mod file_preview_worker;
