@@ -785,4 +785,80 @@ mod tests {
         assert_eq!(preview.content, "xxxxxxxx");
         assert!(preview.truncated);
     }
+
+    // TP-B1.2-FAILURES: selection can disappear between directory refresh and
+    // preview preparation; the race is explicit and panic-free.
+    #[test]
+    fn bounded_text_preview_reports_missing_path() {
+        let td = TempDir::new("text-preview-missing");
+        let error = read_text_preview(
+            &td.root.join("removed-before-preview.txt"),
+            TextPreviewLimits::default(),
+        )
+        .expect_err("missing file must not produce text");
+
+        assert_eq!(error, TextPreviewError::Io(std::io::ErrorKind::NotFound));
+    }
+
+    // TP-B1.2-FAILURES: directories and other non-regular inputs are not read
+    // as text, regardless of the host-specific error returned by `read`.
+    #[test]
+    fn bounded_text_preview_rejects_directory_as_non_regular() {
+        let td = TempDir::new("text-preview-directory");
+        let error = read_text_preview(&td.root, TextPreviewLimits::default())
+            .expect_err("directory must not produce text");
+
+        assert_eq!(error, TextPreviewError::NotRegularFile);
+    }
+
+    // TP-B1.2-FAILURES: a NUL in the bounded sample classifies the selected
+    // file as binary instead of sending control bytes into the text renderer.
+    #[test]
+    fn bounded_text_preview_rejects_binary_nul() {
+        let td = TempDir::new("text-preview-binary");
+        let path = td.root.join("binary.dat");
+        fs::write(&path, b"plain\0binary").expect("write binary fixture");
+
+        let error = read_text_preview(&path, TextPreviewLimits::default())
+            .expect_err("binary file must not produce text");
+
+        assert_eq!(error, TextPreviewError::Binary);
+    }
+
+    // TP-B1.2-FAILURES: invalid encoding remains an explicit error; no lossy
+    // replacement characters are invented.
+    #[test]
+    fn bounded_text_preview_rejects_invalid_utf8() {
+        let td = TempDir::new("text-preview-invalid-utf8");
+        let path = td.root.join("invalid.txt");
+        fs::write(&path, [b'a', 0xff, b'b']).expect("write invalid UTF-8 fixture");
+
+        let error = read_text_preview(&path, TextPreviewLimits::default())
+            .expect_err("invalid UTF-8 must not produce text");
+
+        assert_eq!(error, TextPreviewError::InvalidUtf8 { valid_up_to: 1 });
+    }
+
+    // TP-B1.2-FAILURES: permission errors are stable domain data. Unix mode
+    // bits give this test a deterministic local fixture; Windows coverage is
+    // provided by the shared I/O error mapping and MSVC compile gate.
+    #[cfg(unix)]
+    #[test]
+    fn bounded_text_preview_reports_permission_denied() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let td = TempDir::new("text-preview-permission");
+        let path = td.root.join("denied.txt");
+        fs::write(&path, "secret").expect("write permission fixture");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000))
+            .expect("remove read permission");
+
+        let error = read_text_preview(&path, TextPreviewLimits::default())
+            .expect_err("unreadable file must not produce text");
+
+        assert_eq!(
+            error,
+            TextPreviewError::Io(std::io::ErrorKind::PermissionDenied)
+        );
+    }
 }
