@@ -701,7 +701,7 @@ fn apply_delete_execution_result(
 mod tests {
     use super::{
         FileOperationStartError, FileOperationWorker, FileOperationWorkerError,
-        FileOperationWorkerResult,
+        FileOperationWorkerResult, FileOperationWorkerTask,
     };
     use crate::app::state::{
         FileManagerContextActionIntent, FileManagerContextMenuAction, FileManagerDeleteKind,
@@ -709,8 +709,9 @@ mod tests {
         FileManagerOperationKind, FileManagerOperationState, FileManagerOperationStatus,
     };
     use crate::fm::delete::{
-        execute_delete_operation_with_host, DeleteBackendError, DeleteOperationHost,
-        DeleteOperationKind, DeleteOperationPlan, DeleteOperationRequest, PlannedDeletePathKind,
+        execute_delete_operation, execute_delete_operation_with_host, DeleteBackendError,
+        DeleteOperationHost, DeleteOperationKind, DeleteOperationPlan, DeleteOperationRequest,
+        PlannedDeletePathKind,
     };
     use crate::fm::operations::{
         execute_file_operation, FileOperationCancellation, FileOperationExecutionStatus,
@@ -1285,6 +1286,124 @@ mod tests {
                 (retained, FileManagerOperationItemStatus::Retained),
                 (last, FileManagerOperationItemStatus::Completed),
             ]
+        );
+    }
+
+    // TP-C4.2-TRASH: the confirmed UI kind maps to a real Trash worker task.
+    // Cancellation is injected before execution so the test never touches a
+    // platform trash backend or the user's Trash.
+    #[test]
+    fn app_trash_request_maps_to_trash_task_without_ui_thread_mutation() {
+        let td = TempDir::new("app-trash-task-mapping");
+        let source = td.root.join("selected.txt");
+        fs::write(&source, b"selected").expect("write trash task fixture");
+        let worker = FileOperationWorker::with_task_executor(
+            Arc::new(Notify::new()),
+            |task, cancellation| match task {
+                FileOperationWorkerTask::Delete(plan) => {
+                    assert_eq!(plan.kind(), DeleteOperationKind::Trash);
+                    cancellation.cancel();
+                    FileOperationWorkerResult::Delete(execute_delete_operation(plan, cancellation))
+                }
+                FileOperationWorkerTask::Transfer(_) => panic!("expected trash delete task"),
+            },
+        );
+        let mut app = test_app();
+        app.file_operation_worker = worker;
+        let mut file_manager = crate::fm::FmState::new(&td.root);
+        assert!(file_manager.replace_selection(0));
+        app.state.file_manager = Some(file_manager);
+        app.state.request_file_manager_delete = Some(FileManagerDeleteRequest {
+            kind: FileManagerDeleteKind::Trash,
+            paths: vec![source.clone()],
+        });
+
+        assert!(app.sync_file_operation_worker());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let _ = app.sync_file_operation_worker();
+            if app
+                .state
+                .file_manager_operation
+                .as_ref()
+                .is_some_and(|operation| !operation.is_running())
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "trash cancellation timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let operation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("trash state");
+        assert_eq!(operation.kind, FileManagerOperationKind::Trash);
+        assert_eq!(operation.status, FileManagerOperationStatus::Cancelled);
+        assert_eq!(
+            operation.items[0].status,
+            FileManagerOperationItemStatus::Pending
+        );
+        assert_eq!(
+            fs::read(source).expect("cancelled trash source retained"),
+            b"selected"
+        );
+    }
+
+    // TP-C4.2-RECOVERY: a worker panic is terminal for every exact item. No
+    // item may remain visually Pending after the lane has failed.
+    #[test]
+    fn app_delete_worker_panic_marks_every_item_failed() {
+        let td = TempDir::new("app-delete-panic-items");
+        let source = td.root.join("selected.txt");
+        fs::write(&source, b"selected").expect("write delete panic fixture");
+        let worker = FileOperationWorker::with_task_executor(
+            Arc::new(Notify::new()),
+            |_task, _cancellation| panic!("injected delete task panic"),
+        );
+        let mut app = test_app();
+        app.file_operation_worker = worker;
+        let mut file_manager = crate::fm::FmState::new(&td.root);
+        assert!(file_manager.replace_selection(0));
+        app.state.file_manager = Some(file_manager);
+        app.state.request_file_manager_delete = Some(FileManagerDeleteRequest {
+            kind: FileManagerDeleteKind::Permanent,
+            paths: vec![source.clone()],
+        });
+
+        assert!(app.sync_file_operation_worker());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let _ = app.sync_file_operation_worker();
+            if app
+                .state
+                .file_manager_operation
+                .as_ref()
+                .is_some_and(|operation| !operation.is_running())
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "delete panic timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let operation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("panic terminal state");
+        assert_eq!(operation.status, FileManagerOperationStatus::Failed);
+        assert_eq!(operation.failed_items, 1);
+        assert_eq!(operation.items.len(), 1);
+        assert_eq!(operation.items[0].path, source);
+        assert_eq!(
+            operation.items[0].status,
+            FileManagerOperationItemStatus::Failed
+        );
+        assert_eq!(
+            fs::read(&operation.items[0].path).expect("panic source retained"),
+            b"selected"
         );
     }
 }
