@@ -1,3 +1,62 @@
+use std::path::{Path, PathBuf};
+
+use sha2::{Digest, Sha256};
+
+use crate::fm::TextPreview;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FilePreviewHighlightKey {
+    path: PathBuf,
+    content_sha256: [u8; 32],
+    truncated: bool,
+}
+
+impl FilePreviewHighlightKey {
+    fn new(path: &Path, preview: &TextPreview) -> Self {
+        let digest = Sha256::digest(preview.content.as_bytes());
+        Self {
+            path: path.to_path_buf(),
+            content_sha256: digest.into(),
+            truncated: preview.truncated,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FilePreviewHighlightSync {
+    Unchanged,
+    Started { generation: u64 },
+    Stopped,
+}
+
+#[derive(Debug, Default)]
+struct FilePreviewHighlightSlot {
+    generation: u64,
+    active: Option<FilePreviewHighlightKey>,
+}
+
+impl FilePreviewHighlightSlot {
+    fn sync(&mut self, target: Option<FilePreviewHighlightKey>) -> FilePreviewHighlightSync {
+        if self.active == target {
+            return FilePreviewHighlightSync::Unchanged;
+        }
+
+        self.generation = self.generation.wrapping_add(1).max(1);
+        self.active = target;
+        if self.active.is_some() {
+            FilePreviewHighlightSync::Started {
+                generation: self.generation,
+            }
+        } else {
+            FilePreviewHighlightSync::Stopped
+        }
+    }
+
+    fn accepts(&self, generation: u64, key: &FilePreviewHighlightKey) -> bool {
+        self.generation == generation && self.active.as_ref() == Some(key)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
