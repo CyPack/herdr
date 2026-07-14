@@ -4,9 +4,9 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Active N3.1 product checkpoint: `510eebc`
-  (`feat: add selection-sensitive file manager action bar`).
-- The N3.1 publication unit is the RED/GREEN product/test pair and the
+- Active N3.2 product checkpoint: `267ad91`
+  (`feat: add explicit file manager action authority`).
+- The N3.2 publication unit is the RED/GREEN product/test pair and the
   continuity/graph commit containing this file. At publication, CyPack
   `feat/native-fm` and fork `master` are verified at that same fast-forward
   branch tip.
@@ -84,6 +84,28 @@
 - Fresh gates: targeted 3/3; FM regression 135/135; full nextest 2991/2991
   with one named B0 host probe skipped; Linux all-target and canonical Windows
   bin clippy clean with `-D warnings`; Bun 17/17; Python 64/64; fmt/diff clean.
+
+## Verified Checkpoint — N3.2 Explicit Action Authority
+
+- RED contract commit: `446613a` (`test: define file manager action
+  authority`). GREEN product commit: `267ad91` (`feat: add explicit file
+  manager action authority`). Intermediate compile-failing RED was never
+  pushed alone.
+- `FileManagerActionState` names both boolean authority and a deterministic
+  disabled reason for Copy, Paste, NewFolder, and Delete. Operation-in-flight
+  overrides every other reason; selection/clipboard absence, unsupported
+  special or broken targets, and read-only destinations then fail closed.
+- `FmState` prepares cwd writability and regular-file/directory support during
+  state refresh. Render remains pure, and C4 remains responsible for
+  operation-time TOCTOU, permission, and partial-failure handling.
+- Disabled actions render with a distinct dim style. Mouse input returns an
+  action tag only when the current ViewState model explicitly enables it;
+  disabled or malformed/stale authority is consumed without changing cwd,
+  cursor, clipboard, or filesystem entries.
+- Fresh gates: exact authority/preparation/render/dispatch 7/7; broad FM/input/
+  render/Kitty regression 165/165; full nextest 2996/2996 with one named B0
+  host probe skipped; Linux all-target and canonical Windows bin clippy clean
+  with `-D warnings`; Bun 17/17; Python 64/64; fmt/diff clean.
 
 ## Completed Checkpoint — B2 Native Image Preview
 
@@ -213,6 +235,12 @@
   model builder is connected to desktop/mobile compute, render fallback, and
   model tests. Render and lifecycle tests are present. Freshness was not
   inferred from `ready` alone.
+- Full post-N3.2 graph reindex completed at 18,026 nodes / 84,120 edges.
+  `miller_layout`, `FileManagerActionState`,
+  `compute_file_manager_action_bar_model`, `entry_capabilities`, and
+  `handle_file_manager_mouse` are current production symbols. The builder is
+  connected to desktop/mobile view computation, render fallback, and its
+  authority tests; freshness was not inferred from `ready` alone.
 - Publication uses sequential fast-forward pushes to both CyPack heads and
   exact remote-SHA equality. `upstream` is never pushed.
 
@@ -226,11 +254,11 @@
 
 ## Exact Next Action
 
-1. Begin TP-N3.2-AUTHORITY RED: define explicit enabled/disabled state for
-   Copy/Paste/NewFolder/Delete across selection, clipboard, missing path,
-   unsupported/read-only target, and in-flight operation. Disabled actions
-   must render distinctly and dispatch no state or filesystem side effect.
-   Enablement must come from prepared state, never label or paint output.
+1. Begin TP-C2.1-ROW-GEOMETRY RED before production changes. Characterize
+   disjoint current-row name/action rectangles across one/two/three-column,
+   scrolled, narrow, Unicode, and zero/degenerate layouts. Only complete
+   visible action targets may survive; all rectangles must remain inside the
+   current Miller column and use the same ViewState snapshot as render/input.
 
 ## Verified B2.0 Dependency Decision
 

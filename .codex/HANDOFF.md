@@ -2,11 +2,11 @@
 
 ## 1. SONRAKI ADIM
 
-Make TP-N3.2-AUTHORITY RED before wiring any action side effect. Define explicit
-enabled/disabled state for Copy/Paste/NewFolder/Delete across selection,
-clipboard, missing/unsupported/read-only target, and in-flight operation.
-Disabled actions render distinctly and dispatch no state/filesystem mutation;
-enablement comes from prepared state, never painted labels.
+Make TP-C2.1-ROW-GEOMETRY RED before adding row-action production code. Define
+disjoint current-row name/action rectangles across one/two/three-column,
+scrolled, narrow, Unicode, and zero/degenerate layouts. Only complete visible
+targets may survive; every rectangle remains inside the current Miller column
+and is snapshotted once for both render and input.
 
 ## 2. AKTİF PROJE
 
@@ -118,6 +118,15 @@ enablement comes from prepared state, never painted labels.
   selected-name rendering, and clipboard-summary persistence. Gates: 3/3,
   FM 135/135, full 2991/2991 plus one named B0 skip, Linux/Windows clippy,
   Bun 17/17, Python 64/64, fmt/diff clean.
+- Completed N3.2 test-first: RED `446613a`, GREEN `267ad91`. Added explicit
+  per-action enabled/disabled authority and reasons, prepared cwd writability
+  and regular-target support, distinct disabled rendering, and fail-closed
+  input dispatch with no disabled-click state/filesystem mutation.
+- Proved missing cwd, read-only reload, Unix special target, empty clipboard,
+  absent selection, unsupported target, and in-flight precedence. Gates:
+  exact authority/preparation/render/dispatch 7/7, broad FM/input/render/Kitty
+  165/165, full 2996/2996 plus one named B0 skip, Linux/Windows clippy, Bun
+  17/17, Python 64/64, fmt/diff clean.
 
 ## 6. KOD DURUMU
 
@@ -193,6 +202,14 @@ N3.1 is an auditable RED/GREEN pair:
 The intermediate RED commit was never pushed alone. This continuity/graph
 commit completes the N3.1 publication unit.
 
+N3.2 is an auditable RED/GREEN pair:
+
+- `446613a`: compile-failing explicit action-authority contract.
+- `267ad91`: prepared fail-closed authority, disabled render, and input gate.
+
+The intermediate RED commit was never pushed alone. This continuity/graph
+commit completes the N3.2 publication unit.
+
 ## 7. TEST KANITI
 
 - B1/FM targeted: 64/64.
@@ -231,6 +248,11 @@ commit completes the N3.1 publication unit.
   plus one named B0 interactive probe skip, no retry-only closure.
 - N3.1 Linux all-target and canonical Windows MSVC bin clippy passed with
   `-D warnings`; Bun 17/17; Python maintenance 64/64; fmt/diff clean.
+- N3.2 exact authority/preparation/render/dispatch: 7/7; broad FM/input/render/
+  Kitty regression: 165/165; final full nextest: 2996/2996 plus one named B0
+  interactive probe skip, no retry-only closure.
+- N3.2 Linux all-target and canonical Windows MSVC bin clippy passed with
+  `-D warnings`; Bun 17/17; Python maintenance 64/64; fmt/diff clean.
 
 ## 8. KRİTİK KARARLAR
 
@@ -244,13 +266,10 @@ commit completes the N3.1 publication unit.
   FUSE/NFS/exFAT-class delivery failures.
 - A4, B0, B1, A3, and B2 are implementation-complete, fully verified,
   graph-indexed, and published to the CyPack fork.
-- C1.1 is implementation-complete, fully verified, and graph-indexed; C1.2 is
-  also implementation-complete, fully verified, and graph-indexed. C1.2 maps
-  action tags only—N3 must establish explicit selection-sensitive
-  enabled/disabled authority before filesystem mutations are wired.
-- N3.1 content is implementation-complete, fully verified, and graph-indexed.
-  N3.2 owns action authority; no action side effect may be added before its RED
-  disabled-state and no-side-effect contract exists.
+- C1 and N3 are implementation-complete, fully verified, and graph-indexed.
+  N3.2 supplies explicit selection/clipboard/target/in-flight authority and
+  disabled-click no-side-effect behavior. C4 must still revalidate every real
+  filesystem operation at execution time for TOCTOU and partial failure.
 - B1 uses minimal pure-Rust syntect outside input/render in a dedicated bounded
   worker. Plain prepared content remains availability authority; highlighting
   is optional enhancement and stale generations never mutate current state.
@@ -270,10 +289,10 @@ commit completes the N3.1 publication unit.
 
 ## 10. AÇIK GÖREVLER
 
-See `.codex/TASKS.md` for the completed A3/B2/C1/N3.1 contracts and the
-complete N3.2/C2–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1,
-and N3.1 are closed. The immediate product task is TP-N3.2-AUTHORITY RED;
-then follow C2 → C3 → C4 → C5 → C6 without skipping modules.
+See `.codex/TASKS.md` for the completed A3/B2/C1/N3 contracts and the complete
+C2/N4/C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1, and N3
+are closed. The immediate product task is TP-C2.1-ROW-GEOMETRY RED; then follow
+C2 → N4 → C3 → C4 → C5 → C6 without skipping modules.
 
 ## 11. ORTAM
 
@@ -284,6 +303,11 @@ then follow C2 → C3 → C4 → C5 → C6 without skipping modules.
   `compute_file_manager_action_bar_model`; the builder is connected to
   desktop/mobile view computation, render fallback, and model tests. Lifecycle
   and render tests are present. Freshness was not inferred from `ready` alone.
+- Full post-N3.2 graph reindex completed at 18,026 nodes / 84,120 edges.
+  Freshness queries returned current `miller_layout`, action state, authority
+  builder, entry-capability preparation, and mouse handler symbols. The pure
+  builder is connected to desktop/mobile view computation, render fallback,
+  and authority tests. Freshness was not inferred from `ready` alone.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.

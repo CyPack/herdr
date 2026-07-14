@@ -208,9 +208,32 @@ server protocol, and render must remain pure.
   2991/2991 with one named B0 host probe skipped; Linux/Windows clippy, Bun
   17/17, Python 64/64, fmt, and diff-check clean. Selection/clipboard content
   is client-local and render remains filesystem-free.
-- [ ] N3.2 explicit enabled/disabled states with no hidden side effects.
+- [x] N3.2 explicit enabled/disabled states with no hidden side effects. RED
+  commit `446613a`; GREEN commit `267ad91`. Exact authority/preparation/render/
+  dispatch 7/7, FM/input/render/Kitty regression 165/165, full nextest
+  2996/2996 with one named B0 host probe skipped; Linux/Windows clippy, Bun
+  17/17, Python 64/64, fmt, and diff-check clean. Missing cwd, read-only cwd,
+  unsupported Unix special targets, empty clipboard, absent selection, and
+  in-flight operation all fail closed. Disabled clicks are consumed with no
+  state or filesystem mutation.
 
 ## P3 — C2 Row Actions + N4 Multi-Select
+
+Production code begins only after the matching test point is RED. Row action
+geometry is a client-local ViewState projection. It must share the existing
+responsive Miller layout and must never infer authority from rendered text.
+N4 selection state remains distinct from the cursor so destructive bulk
+authority has one explicit source of truth.
+
+### C2/N4 Test-Point Contract
+
+| Test point | What is tested | Expected result | Why it is required |
+|------------|----------------|-----------------|--------------------|
+| TP-C2.1-ROW-GEOMETRY | Current-row name and action rectangles in one/two/three-column layouts, first/middle/last visible row, scrolled viewport, narrow/zero dimensions, long Unicode names, and divider/header/empty regions | Every visible current row has one bounded name rectangle plus zero or more complete disjoint action rectangles; clipped actions disappear as whole targets; rectangles never cross the current Miller column or resolve outside the visible viewport | Row-local controls that use independent arithmetic can overlap names, dividers, or adjacent rows and dispatch an action for the wrong path |
+| TP-C2.2-ROW-DISPATCH | Unmodified left click on each visible row action, row name, gaps, hidden/clipped actions, stale row index/path after watcher reload, non-left and modified clicks | Only a current visible rectangle whose snapshotted row identity still matches returns its exact row-action tag; name clicks preserve selection behavior; gaps, stale identities, hidden actions, and unsupported buttons fail closed without filesystem mutation | Coordinates alone are insufficient authority when watcher refresh can reorder or delete entries between compute and input |
+| TP-N4.1-SELECTION-STATE | Ctrl-toggle, Shift-range anchor, plain click/cursor movement, keyboard equivalents, hidden toggle, reload reorder/delete, directory enter/leave, and close/reopen | Multi-selection is an explicit deduplicated path/identity set separate from cursor focus; range order follows the current visible list; missing entries are pruned deterministically; navigation and lifecycle rules are explicit and panic-free | Conflating cursor focus with bulk selection can silently expand a destructive operation to unintended files |
+| TP-N4.2-BULK-AUTHORITY | Zero/one/many selections, mixed supported/unsupported entries, read-only target, clipboard state, selection clear, select-all/range limits, and operation-in-flight state | Bulk toolbar labels/counts and enabled/disabled reasons derive only from prepared selection authority; one unsupported/stale member disables or excludes according to an explicit tested policy; clear/select-all are bounded and deterministic | Bulk operations need auditable all-target authority and cannot inherit single-row assumptions |
+| TP-C2-N4-GATES | Focused geometry/state/input/render tests, watcher reorder/delete regression, full nextest, Linux/Windows clippy, Bun/Python maintenance, isolated mouse cross-check if runtime dispatch lands, graph freshness, and diff cleanliness | Every applicable gate passes with the B0 host probe as the only named skip; no stable Herdr/socket, user process, or residual temp state is touched | Responsive row actions plus multi-selection cross rendering, input, watcher reconciliation, and future destructive-operation authority |
 
 - [ ] C2.1 split each row into disjoint name/action rectangles.
 - [ ] C2.2 map row-button tags to actions without ambiguous hit targets.
@@ -268,7 +291,7 @@ server protocol, and render must remain pure.
 
 ## Ordering Resolution
 
-A4, B0, B1, the A3 remainder, B2, C1, and N3.1 are complete through N3.1
-product head `510eebc`. The next execution order is N3.2 → C2 → C3 → C4 → C5
+A4, B0, B1, the A3 remainder, B2, C1, and N3 are complete through N3.2
+product head `267ad91`. The next execution order is C2 → N4 → C3 → C4 → C5
 → C6. S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3
 remain inactive north-star work.
