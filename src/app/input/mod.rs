@@ -84,6 +84,9 @@ impl App {
         // reaching the terminal underneath.
         if self.state.file_manager.is_some() {
             file_manager::handle_file_manager_key(&mut self.state, key_event);
+            if self.state.file_manager.is_none() {
+                self.last_file_manager_click = None;
+            }
             return;
         }
 
@@ -249,6 +252,10 @@ impl App {
 
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent) {
         if self.handle_overlay_mouse(mouse) {
+            return;
+        }
+
+        if self.handle_file_manager_mouse(mouse) {
             return;
         }
 

@@ -5,9 +5,10 @@
 //! navigation on `AppState.file_manager`. Client-side presentation input; keys
 //! that it does not use are swallowed so they never reach the hidden terminal.
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::app::state::AppState;
+use crate::app::{App, FileManagerClickState};
 
 /// Handle one key while the file manager is open. `Esc`/`q` close it; the arrow
 /// keys and `hjkl` move the cursor or navigate directories; `.` toggles hidden
@@ -44,6 +45,94 @@ pub(super) fn handle_file_manager_key(state: &mut AppState, key: KeyEvent) {
         }
         _ => {}
     }
+}
+
+impl App {
+    /// Route native-FM center-content mouse input before the hidden terminal
+    /// pane path. Returns true whenever the FM owns the event's screen area.
+    pub(super) fn handle_file_manager_mouse(&mut self, mouse: MouseEvent) -> bool {
+        if self.state.file_manager.is_none() {
+            self.last_file_manager_click = None;
+            return false;
+        }
+
+        let center = self.state.view.terminal_area;
+        let in_center = rect_contains(center, mouse.column, mouse.row);
+        if !in_center {
+            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                self.last_file_manager_click = None;
+            }
+            return false;
+        }
+
+        let entry_idx = self
+            .state
+            .view
+            .file_manager_row_areas
+            .iter()
+            .find(|row| rect_contains(row.rect, mouse.column, mouse.row))
+            .map(|row| row.entry_idx);
+
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) if mouse.modifiers.is_empty() => {
+                let Some(entry_idx) = entry_idx else {
+                    self.last_file_manager_click = None;
+                    return true;
+                };
+                let entry_path = self
+                    .state
+                    .file_manager
+                    .as_ref()
+                    .and_then(|file_manager| file_manager.entries.get(entry_idx))
+                    .map(|entry| entry.path.clone());
+                let Some(entry_path) = entry_path else {
+                    self.last_file_manager_click = None;
+                    return true;
+                };
+
+                let click = FileManagerClickState {
+                    entry_path,
+                    at: std::time::Instant::now(),
+                };
+                let is_double_click = self
+                    .last_file_manager_click
+                    .as_ref()
+                    .is_some_and(|last| last.is_double_click_for(&click));
+                self.last_file_manager_click = if is_double_click { None } else { Some(click) };
+
+                if let Some(file_manager) = self.state.file_manager.as_mut() {
+                    if file_manager.select(entry_idx) && is_double_click {
+                        file_manager.enter();
+                    }
+                }
+            }
+            MouseEventKind::ScrollUp if entry_idx.is_some() => {
+                self.last_file_manager_click = None;
+                if let Some(file_manager) = self.state.file_manager.as_mut() {
+                    file_manager.move_up();
+                }
+            }
+            MouseEventKind::ScrollDown if entry_idx.is_some() => {
+                self.last_file_manager_click = None;
+                if let Some(file_manager) = self.state.file_manager.as_mut() {
+                    file_manager.move_down();
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.last_file_manager_click = None;
+            }
+            _ => {}
+        }
+
+        true
+    }
+}
+
+fn rect_contains(rect: ratatui::layout::Rect, column: u16, row: u16) -> bool {
+    column >= rect.x
+        && column < rect.x.saturating_add(rect.width)
+        && row >= rect.y
+        && row < rect.y.saturating_add(rect.height)
 }
 
 #[cfg(test)]
@@ -302,5 +391,27 @@ mod tests {
             app.handle_mouse(mouse(MouseEventKind::ScrollUp, 27, 2));
         }
         assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 0);
+    }
+
+    // TP-A3.3-DISPATCH-STALE: a row snapshot can outlive a watcher reload for
+    // one frame. An invalid absolute index is consumed but must not clamp to or
+    // activate an unrelated live entry.
+    #[test]
+    fn stale_row_index_is_consumed_without_selecting_another_entry() {
+        let td = TempDir::new("mouse-stale-row");
+        td.dir("alpha-dir");
+        td.file("beta.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        app.state.view.file_manager_row_areas[0].entry_idx = usize::MAX;
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 27, 2));
+
+        let fm = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(fm.cwd, td.root);
+        assert_eq!(fm.cursor, 0);
+        assert_eq!(
+            fm.selected().map(|entry| entry.name.as_str()),
+            Some("alpha-dir")
+        );
     }
 }

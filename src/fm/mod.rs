@@ -217,6 +217,19 @@ impl FmState {
         }
     }
 
+    /// Select an absolute entry row and refresh its cached preview. Invalid
+    /// indices are rejected so stale hit geometry cannot select another row.
+    pub(crate) fn select(&mut self, index: usize) -> bool {
+        if index >= self.entries.len() {
+            return false;
+        }
+        if self.cursor != index {
+            self.cursor = index;
+            self.refresh_preview();
+        }
+        true
+    }
+
     /// Keep the cursor inside a viewport with `visible_rows` entries and clamp
     /// the first rendered row to the current list length. A zero-height or
     /// empty viewport has the canonical start offset 0.
