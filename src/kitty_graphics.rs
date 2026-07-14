@@ -136,6 +136,14 @@ pub(crate) fn is_enabled() -> bool {
     KITTY_GRAPHICS_ENABLED.load(Ordering::Acquire)
 }
 
+fn frame_graphics_bytes(bytes: &[u8]) -> Vec<u8> {
+    let mut framed = Vec::with_capacity(bytes.len() + 4);
+    framed.extend_from_slice(b"\x1b7");
+    framed.extend_from_slice(bytes);
+    framed.extend_from_slice(b"\x1b8");
+    framed
+}
+
 pub(crate) fn paint_local_pane_graphics(
     app: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
@@ -150,10 +158,7 @@ pub(crate) fn paint_local_pane_graphics(
         return Ok(());
     }
 
-    let mut framed = Vec::with_capacity(bytes.len() + 8);
-    framed.extend_from_slice(b"\x1b7");
-    framed.extend_from_slice(&bytes);
-    framed.extend_from_slice(b"\x1b8");
+    let framed = frame_graphics_bytes(&bytes);
 
     let mut stdout = io::stdout().lock();
     stdout.write_all(&framed)?;
@@ -850,6 +855,234 @@ fn encode_kitty_data(out: &mut Vec<u8>, control: &str, data: &[u8]) {
 mod tests {
     use super::*;
     use crate::ghostty::KittyPlacementRenderInfo;
+
+    const PATH_BETA_RGBA: [u8; 16] = [
+        255, 0, 0, 255, // red
+        0, 255, 0, 192, // translucent green
+        0, 0, 255, 128, // translucent blue
+        255, 255, 255, 0, // transparent white
+    ];
+
+    fn generated_path_beta_png() -> Vec<u8> {
+        let mut png_bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut png_bytes, 2, 2);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().expect("valid PNG header");
+            writer
+                .write_image_data(&PATH_BETA_RGBA)
+                .expect("valid RGBA payload");
+        }
+        png_bytes
+    }
+
+    fn decode_path_beta_png(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+        let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+        decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+        let mut reader = decoder.read_info().ok()?;
+        let mut output = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut output).ok()?;
+        if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+            return None;
+        }
+        output.truncate(info.buffer_size());
+        Some((info.width, info.height, output))
+    }
+
+    fn path_beta_placement(rgba: Vec<u8>) -> HostPlacement {
+        let mut hasher = DefaultHasher::new();
+        rgba.hash(&mut hasher);
+        let data_fingerprint = hasher.finish();
+        let data_len = rgba.len();
+
+        HostPlacement {
+            pane_id: PaneId::from_raw(0xB0),
+            area: Rect::new(2, 2, 8, 4),
+            cell_size: HostCellSize {
+                width_px: 1,
+                height_px: 1,
+            },
+            scrollback_offset: 0,
+            placement: KittyImagePlacement {
+                image_id: 1,
+                placement_id: 1,
+                z: 0,
+                x_offset: 0,
+                y_offset: 0,
+                image_width: 2,
+                image_height: 2,
+                format: KittyImageFormat::Rgba,
+                data_len,
+                data_fingerprint,
+                data: rgba,
+                render: KittyPlacementRenderInfo {
+                    pixel_width: 2,
+                    pixel_height: 2,
+                    grid_cols: 8,
+                    grid_rows: 4,
+                    viewport_col: 0,
+                    viewport_row: 0,
+                    source_x: 0,
+                    source_y: 0,
+                    source_width: 0,
+                    source_height: 0,
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn path_beta_generated_png_roundtrips_exact_rgba_and_rejects_truncation() {
+        let png = generated_path_beta_png();
+        let (width, height, rgba) = decode_path_beta_png(&png).expect("generated PNG decodes");
+
+        assert_eq!((width, height), (2, 2));
+        assert_eq!(rgba, PATH_BETA_RGBA);
+        assert!(decode_path_beta_png(&png[..png.len() / 2]).is_none());
+    }
+
+    #[test]
+    fn path_beta_generated_rgba_constructs_stable_local_placement() {
+        let (_, _, rgba) =
+            decode_path_beta_png(&generated_path_beta_png()).expect("generated PNG decodes");
+        let first = path_beta_placement(rgba.clone());
+        let same = path_beta_placement(rgba);
+
+        assert_eq!(first.pane_id, PaneId::from_raw(0xB0));
+        assert_eq!(first.placement.format, KittyImageFormat::Rgba);
+        assert_eq!(first.placement.data_len, PATH_BETA_RGBA.len());
+        assert_eq!(first.placement.data, PATH_BETA_RGBA);
+        assert_eq!(first.placement.render.grid_cols, 8);
+        assert_eq!(first.placement.render.grid_rows, 4);
+        assert_eq!(
+            host_image_id(first.pane_id, &first.placement),
+            host_image_id(same.pane_id, &same.placement)
+        );
+        assert_eq!(
+            host_placement_id(first.pane_id, &first.placement),
+            host_placement_id(same.pane_id, &same.placement)
+        );
+    }
+
+    #[test]
+    fn path_beta_generated_png_uses_existing_graphics_lifecycle() {
+        let (_, _, rgba) =
+            decode_path_beta_png(&generated_path_beta_png()).expect("generated PNG decodes");
+        let mut images = HashMap::new();
+        let mut placements = HashMap::new();
+        let mut sources = HashMap::new();
+        let mut bytes = Vec::new();
+
+        encode_graphics_update(
+            &mut bytes,
+            &[path_beta_placement(rgba.clone())],
+            false,
+            &mut images,
+            &mut placements,
+            &mut sources,
+        );
+        let first = String::from_utf8_lossy(&bytes);
+        assert!(first.contains("a=t,t=d,f=32,s=2,v=2"));
+        assert!(first.contains("a=p"));
+        assert!(first.contains("c=8,r=4"));
+        assert!(first.contains("\x1b[3;3H"));
+
+        bytes.clear();
+        encode_graphics_update(
+            &mut bytes,
+            &[path_beta_placement(rgba.clone())],
+            false,
+            &mut images,
+            &mut placements,
+            &mut sources,
+        );
+        assert!(
+            bytes.is_empty(),
+            "unchanged local image is fully deduplicated"
+        );
+
+        encode_graphics_update(
+            &mut bytes,
+            &[path_beta_placement(rgba.clone())],
+            true,
+            &mut images,
+            &mut placements,
+            &mut sources,
+        );
+        let redisplay = String::from_utf8_lossy(&bytes);
+        assert!(!redisplay.contains("a=t"));
+        assert!(redisplay.contains("a=p"));
+
+        bytes.clear();
+        let mut changed_rgba = rgba;
+        changed_rgba[0] = 254;
+        encode_graphics_update(
+            &mut bytes,
+            &[path_beta_placement(changed_rgba)],
+            false,
+            &mut images,
+            &mut placements,
+            &mut sources,
+        );
+        let replacement = String::from_utf8_lossy(&bytes);
+        assert!(replacement.contains("a=d,d=I"));
+        assert!(replacement.contains("a=t"));
+        assert!(replacement.contains("a=p"));
+
+        bytes.clear();
+        encode_graphics_update(
+            &mut bytes,
+            &[],
+            false,
+            &mut images,
+            &mut placements,
+            &mut sources,
+        );
+        let removal = String::from_utf8_lossy(&bytes);
+        assert!(removal.contains("a=d,d=i"));
+        assert!(placements.is_empty());
+    }
+
+    #[test]
+    fn path_beta_frames_graphics_without_cursor_drift() {
+        let framed = frame_graphics_bytes(b"graphics");
+
+        assert_eq!(framed, b"\x1b7graphics\x1b8");
+    }
+
+    #[test]
+    #[ignore = "requires an explicit throwaway Kitty/Ghostty host and --no-capture"]
+    fn path_beta_real_host_probe() {
+        let (_, _, rgba) =
+            decode_path_beta_png(&generated_path_beta_png()).expect("generated PNG decodes");
+        let mut cache = HostGraphicsCache::default();
+        let mut encoded = Vec::new();
+        encode_graphics_update(
+            &mut encoded,
+            &[path_beta_placement(rgba)],
+            false,
+            &mut cache.images,
+            &mut cache.placements,
+            &mut cache.sources,
+        );
+
+        let mut stdout = std::io::stdout().lock();
+        stdout
+            .write_all(b"\x1b[2J\x1b[HPath Beta probe: 2x2 RGBA pattern\n")
+            .expect("write probe heading");
+        stdout
+            .write_all(&frame_graphics_bytes(&encoded))
+            .expect("write graphics probe");
+        stdout.flush().expect("flush graphics probe");
+        std::thread::sleep(std::time::Duration::from_secs(12));
+
+        let cleanup = cache.clear_bytes();
+        stdout
+            .write_all(&frame_graphics_bytes(&cleanup))
+            .expect("remove graphics resources");
+        stdout.flush().expect("flush graphics cleanup");
+    }
 
     fn test_placement(viewport_col: i32, viewport_row: i32) -> HostPlacement {
         HostPlacement {
