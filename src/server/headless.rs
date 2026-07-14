@@ -5464,7 +5464,9 @@ next_tab = ""
                 clear_custom_status: false,
                 clear_state_labels: false,
                 seq: None,
-                ttl: Some(Duration::from_millis(1)),
+                // The expiry is driven below with a synthetic `now`; keep the
+                // real-time TTL comfortably beyond full-suite scheduling jitter.
+                ttl: Some(Duration::from_secs(60)),
             })
         );
 
