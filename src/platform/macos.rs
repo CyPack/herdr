@@ -8,13 +8,22 @@ use std::ptr::NonNull;
 use std::sync::OnceLock;
 
 use super::{
-    read_limited_reader, ClipboardCommand, ClipboardImage, ForegroundJob, ForegroundProcess,
-    LimitedRead, Signal,
+    read_limited_reader, ClipboardCommand, ClipboardImage, FileIdentity, ForegroundJob,
+    ForegroundProcess, LimitedRead, Signal,
 };
 
 const PROC_PGRP_ONLY: u32 = 2;
 const SERVER_NOFILE_LIMIT_TARGET: libc::rlim_t = 8192;
 const CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
+
+pub(crate) fn file_identity(
+    _path: &Path,
+    metadata: &std::fs::Metadata,
+) -> std::io::Result<FileIdentity> {
+    use std::os::unix::fs::MetadataExt;
+
+    Ok(FileIdentity::new(metadata.dev(), metadata.ino()))
+}
 
 pub(crate) fn should_draw_host_cursor_by_default() -> bool {
     false

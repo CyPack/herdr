@@ -1,3 +1,416 @@
+use std::collections::HashSet;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use crate::fm::MAX_MULTI_SELECTION_PATHS;
+use crate::platform::FileIdentity;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FileOperationKind {
+    Copy,
+    Move,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FileOperationRequest {
+    pub(crate) kind: FileOperationKind,
+    pub(crate) sources: Vec<PathBuf>,
+    pub(crate) destination_directory: PathBuf,
+    pub(crate) operation_in_flight: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FileOperationPreflightError {
+    NoSources,
+    TooManySources {
+        count: usize,
+        limit: usize,
+    },
+    OperationInFlight,
+    DuplicateSource {
+        path: PathBuf,
+    },
+    NonUtf8Path {
+        path: PathBuf,
+    },
+    SourceMissing {
+        path: PathBuf,
+    },
+    SourceUnavailable {
+        path: PathBuf,
+        kind: io::ErrorKind,
+    },
+    SourceSymlink {
+        path: PathBuf,
+    },
+    SourceUnsupported {
+        path: PathBuf,
+    },
+    SourceHasNoFileName {
+        path: PathBuf,
+    },
+    DestinationMissing {
+        path: PathBuf,
+    },
+    DestinationUnavailable {
+        path: PathBuf,
+        kind: io::ErrorKind,
+    },
+    DestinationSymlink {
+        path: PathBuf,
+    },
+    DestinationNotDirectory {
+        path: PathBuf,
+    },
+    DestinationReadOnly {
+        path: PathBuf,
+    },
+    PathResolutionFailed {
+        path: PathBuf,
+        kind: io::ErrorKind,
+    },
+    FileIdentityUnavailable {
+        path: PathBuf,
+        kind: io::ErrorKind,
+    },
+    SourceEqualsDestination {
+        path: PathBuf,
+    },
+    DestinationInsideSource {
+        source: PathBuf,
+        destination_directory: PathBuf,
+    },
+    DestinationCollision {
+        source: PathBuf,
+        destination: PathBuf,
+    },
+    SourceChanged {
+        path: PathBuf,
+    },
+    DestinationChanged {
+        path: PathBuf,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlannedSourceKind {
+    File,
+    Directory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SourceSnapshot {
+    identity: FileIdentity,
+    kind: PlannedSourceKind,
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PlannedFileTransfer {
+    source: PathBuf,
+    destination: PathBuf,
+    canonical_source: PathBuf,
+    source_snapshot: SourceSnapshot,
+}
+
+impl PlannedFileTransfer {
+    pub(crate) fn source(&self) -> &Path {
+        &self.source
+    }
+
+    pub(crate) fn destination(&self) -> &Path {
+        &self.destination
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FileOperationPlan {
+    kind: FileOperationKind,
+    destination_directory: PathBuf,
+    canonical_destination_directory: PathBuf,
+    destination_identity: FileIdentity,
+    transfers: Vec<PlannedFileTransfer>,
+}
+
+impl FileOperationPlan {
+    pub(crate) fn preflight(
+        request: FileOperationRequest,
+    ) -> Result<Self, FileOperationPreflightError> {
+        validate_request_bounds(&request)?;
+        validate_utf8_path(&request.destination_directory)?;
+        let destination_identity = destination_snapshot(&request.destination_directory)?;
+        let canonical_destination_directory = canonicalize(&request.destination_directory)?;
+
+        let mut source_paths = HashSet::with_capacity(request.sources.len());
+        let mut source_identities = HashSet::with_capacity(request.sources.len());
+        let mut transfers = Vec::with_capacity(request.sources.len());
+        for source in request.sources {
+            validate_utf8_path(&source)?;
+            if !source_paths.insert(source.clone()) {
+                return Err(FileOperationPreflightError::DuplicateSource { path: source });
+            }
+            let source_snapshot = source_snapshot(&source)?;
+            if !source_identities.insert(source_snapshot.identity) {
+                return Err(FileOperationPreflightError::DuplicateSource { path: source });
+            }
+            let canonical_source = canonicalize(&source)?;
+            let file_name = source.file_name().ok_or_else(|| {
+                FileOperationPreflightError::SourceHasNoFileName {
+                    path: source.clone(),
+                }
+            })?;
+            let destination = request.destination_directory.join(file_name);
+            let canonical_destination = canonical_destination_directory.join(file_name);
+
+            if canonical_source == canonical_destination {
+                return Err(FileOperationPreflightError::SourceEqualsDestination { path: source });
+            }
+            if source_snapshot.kind == PlannedSourceKind::Directory
+                && canonical_destination_directory.starts_with(&canonical_source)
+            {
+                return Err(FileOperationPreflightError::DestinationInsideSource {
+                    source,
+                    destination_directory: request.destination_directory,
+                });
+            }
+            reject_destination_collision(&source, &destination)?;
+            transfers.push(PlannedFileTransfer {
+                source,
+                destination,
+                canonical_source,
+                source_snapshot,
+            });
+        }
+
+        Ok(Self {
+            kind: request.kind,
+            destination_directory: request.destination_directory,
+            canonical_destination_directory,
+            destination_identity,
+            transfers,
+        })
+    }
+
+    pub(crate) fn kind(&self) -> FileOperationKind {
+        self.kind
+    }
+
+    pub(crate) fn destination_directory(&self) -> &Path {
+        &self.destination_directory
+    }
+
+    pub(crate) fn transfers(&self) -> &[PlannedFileTransfer] {
+        &self.transfers
+    }
+
+    /// Revalidate all captured authority immediately before future COPY/MOVE
+    /// code performs its first write. This method is read-only.
+    pub(crate) fn revalidate(&self) -> Result<(), FileOperationPreflightError> {
+        let metadata = fs::symlink_metadata(&self.destination_directory).map_err(|_| {
+            FileOperationPreflightError::DestinationChanged {
+                path: self.destination_directory.clone(),
+            }
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(FileOperationPreflightError::DestinationChanged {
+                path: self.destination_directory.clone(),
+            });
+        }
+        if metadata.permissions().readonly() {
+            return Err(FileOperationPreflightError::DestinationReadOnly {
+                path: self.destination_directory.clone(),
+            });
+        }
+        let identity = crate::platform::file_identity(&self.destination_directory, &metadata)
+            .map_err(|_| FileOperationPreflightError::DestinationChanged {
+                path: self.destination_directory.clone(),
+            })?;
+        if identity != self.destination_identity
+            || canonicalize_for_revalidation(&self.destination_directory)
+                != Some(self.canonical_destination_directory.clone())
+        {
+            return Err(FileOperationPreflightError::DestinationChanged {
+                path: self.destination_directory.clone(),
+            });
+        }
+
+        for transfer in &self.transfers {
+            let snapshot = source_snapshot_for_revalidation(&transfer.source).ok_or_else(|| {
+                FileOperationPreflightError::SourceChanged {
+                    path: transfer.source.clone(),
+                }
+            })?;
+            if snapshot != transfer.source_snapshot
+                || canonicalize_for_revalidation(&transfer.source)
+                    != Some(transfer.canonical_source.clone())
+            {
+                return Err(FileOperationPreflightError::SourceChanged {
+                    path: transfer.source.clone(),
+                });
+            }
+            reject_destination_collision(&transfer.source, &transfer.destination)?;
+        }
+        Ok(())
+    }
+}
+
+fn validate_request_bounds(
+    request: &FileOperationRequest,
+) -> Result<(), FileOperationPreflightError> {
+    if request.operation_in_flight {
+        return Err(FileOperationPreflightError::OperationInFlight);
+    }
+    if request.sources.is_empty() {
+        return Err(FileOperationPreflightError::NoSources);
+    }
+    if request.sources.len() > MAX_MULTI_SELECTION_PATHS {
+        return Err(FileOperationPreflightError::TooManySources {
+            count: request.sources.len(),
+            limit: MAX_MULTI_SELECTION_PATHS,
+        });
+    }
+    Ok(())
+}
+
+fn validate_utf8_path(path: &Path) -> Result<(), FileOperationPreflightError> {
+    if path.to_str().is_none() {
+        return Err(FileOperationPreflightError::NonUtf8Path {
+            path: path.to_path_buf(),
+        });
+    }
+    Ok(())
+}
+
+fn destination_snapshot(path: &Path) -> Result<FileIdentity, FileOperationPreflightError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            FileOperationPreflightError::DestinationMissing {
+                path: path.to_path_buf(),
+            }
+        } else {
+            FileOperationPreflightError::DestinationUnavailable {
+                path: path.to_path_buf(),
+                kind: error.kind(),
+            }
+        }
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(FileOperationPreflightError::DestinationSymlink {
+            path: path.to_path_buf(),
+        });
+    }
+    if !metadata.is_dir() {
+        return Err(FileOperationPreflightError::DestinationNotDirectory {
+            path: path.to_path_buf(),
+        });
+    }
+    if metadata.permissions().readonly() {
+        return Err(FileOperationPreflightError::DestinationReadOnly {
+            path: path.to_path_buf(),
+        });
+    }
+    let identity = crate::platform::file_identity(path, &metadata).map_err(|error| {
+        FileOperationPreflightError::FileIdentityUnavailable {
+            path: path.to_path_buf(),
+            kind: error.kind(),
+        }
+    })?;
+    Ok(identity)
+}
+
+fn source_snapshot(path: &Path) -> Result<SourceSnapshot, FileOperationPreflightError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            FileOperationPreflightError::SourceMissing {
+                path: path.to_path_buf(),
+            }
+        } else {
+            FileOperationPreflightError::SourceUnavailable {
+                path: path.to_path_buf(),
+                kind: error.kind(),
+            }
+        }
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(FileOperationPreflightError::SourceSymlink {
+            path: path.to_path_buf(),
+        });
+    }
+    let kind = if metadata.is_file() {
+        PlannedSourceKind::File
+    } else if metadata.is_dir() {
+        PlannedSourceKind::Directory
+    } else {
+        return Err(FileOperationPreflightError::SourceUnsupported {
+            path: path.to_path_buf(),
+        });
+    };
+    let identity = crate::platform::file_identity(path, &metadata).map_err(|error| {
+        FileOperationPreflightError::FileIdentityUnavailable {
+            path: path.to_path_buf(),
+            kind: error.kind(),
+        }
+    })?;
+    Ok(SourceSnapshot {
+        identity,
+        kind,
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+    })
+}
+
+fn source_snapshot_for_revalidation(path: &Path) -> Option<SourceSnapshot> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if metadata.file_type().is_symlink() {
+        return None;
+    }
+    let kind = if metadata.is_file() {
+        PlannedSourceKind::File
+    } else if metadata.is_dir() {
+        PlannedSourceKind::Directory
+    } else {
+        return None;
+    };
+    let identity = crate::platform::file_identity(path, &metadata).ok()?;
+    Some(SourceSnapshot {
+        identity,
+        kind,
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+    })
+}
+
+fn canonicalize(path: &Path) -> Result<PathBuf, FileOperationPreflightError> {
+    fs::canonicalize(path).map_err(|error| FileOperationPreflightError::PathResolutionFailed {
+        path: path.to_path_buf(),
+        kind: error.kind(),
+    })
+}
+
+fn canonicalize_for_revalidation(path: &Path) -> Option<PathBuf> {
+    fs::canonicalize(path).ok()
+}
+
+fn reject_destination_collision(
+    source: &Path,
+    destination: &Path,
+) -> Result<(), FileOperationPreflightError> {
+    match fs::symlink_metadata(destination) {
+        Ok(_) => Err(FileOperationPreflightError::DestinationCollision {
+            source: source.to_path_buf(),
+            destination: destination.to_path_buf(),
+        }),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(FileOperationPreflightError::DestinationUnavailable {
+            path: destination.to_path_buf(),
+            kind: error.kind(),
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

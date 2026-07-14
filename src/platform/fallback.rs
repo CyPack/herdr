@@ -1,7 +1,17 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use super::{ClipboardImage, ForegroundJob, Signal};
+use super::{ClipboardImage, FileIdentity, ForegroundJob, Signal};
+
+pub(crate) fn file_identity(
+    _path: &std::path::Path,
+    _metadata: &std::fs::Metadata,
+) -> std::io::Result<FileIdentity> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "stable filesystem identity is unavailable on this platform",
+    ))
+}
 
 /// Unsupported platform stub.
 pub fn raise_server_nofile_limit() {}

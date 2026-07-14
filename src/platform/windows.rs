@@ -34,9 +34,41 @@ use windows_sys::{
     },
 };
 
-use super::{ClipboardImage, ForegroundJob, Signal};
+use super::{ClipboardImage, FileIdentity, ForegroundJob, Signal};
 
 const STILL_ACTIVE: u32 = 259;
+
+pub(crate) fn file_identity(
+    path: &std::path::Path,
+    _metadata: &std::fs::Metadata,
+) -> std::io::Result<FileIdentity> {
+    use std::fs::OpenOptions;
+    use std::mem::MaybeUninit;
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FLAG_OPEN_REPARSE_POINT,
+    };
+
+    let file = OpenOptions::new()
+        .access_mode(0)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)?;
+    let mut info = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+    let succeeded =
+        unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, info.as_mut_ptr()) };
+    if succeeded == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let info = unsafe { info.assume_init() };
+    let file_index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+    Ok(FileIdentity::new(
+        u64::from(info.dwVolumeSerialNumber),
+        file_index,
+    ))
+}
 
 pub(crate) fn should_draw_host_cursor_by_default() -> bool {
     true

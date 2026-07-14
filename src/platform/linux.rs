@@ -9,12 +9,21 @@ use std::{
 };
 
 use super::{
-    read_limited_reader, ClipboardCommand, ClipboardImage, ForegroundJob, ForegroundProcess,
-    LimitedRead, Signal,
+    read_limited_reader, ClipboardCommand, ClipboardImage, FileIdentity, ForegroundJob,
+    ForegroundProcess, LimitedRead, Signal,
 };
 
 const FOREGROUND_MEMBERS_CACHE_TTL: Duration = Duration::from_millis(250);
 const WSL_MARKER_ENV_VARS: &[&str] = &["WSL_DISTRO_NAME", "WSL_INTEROP"];
+
+pub(crate) fn file_identity(
+    _path: &std::path::Path,
+    metadata: &std::fs::Metadata,
+) -> std::io::Result<FileIdentity> {
+    use std::os::unix::fs::MetadataExt;
+
+    Ok(FileIdentity::new(metadata.dev(), metadata.ino()))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProcGroupMember {

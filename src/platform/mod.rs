@@ -33,6 +33,21 @@ pub(crate) fn pane_custom_command_pty_builder(command: &str) -> portable_pty::Co
     pane_custom_command_pty_builder_platform(command)
 }
 
+/// Stable same-object identity captured from the host filesystem. Core file
+/// operations use this opaque pair to reject path replacement between intent,
+/// preflight, and the final write boundary without importing OS APIs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct FileIdentity {
+    first: u64,
+    second: u64,
+}
+
+impl FileIdentity {
+    pub(crate) const fn new(first: u64, second: u64) -> Self {
+        Self { first, second }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PlatformCapabilities {
     pub(crate) live_handoff: bool,
