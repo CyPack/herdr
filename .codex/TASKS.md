@@ -252,12 +252,16 @@ authority has one explicit source of truth.
   impact 74/74, full nextest 3001/3001 with one named B0 probe skipped,
   Linux/Windows clippy, Bun 17/17, Python 64/64, fmt, diff-check, and graph
   freshness clean.
-- [ ] N4.1a define cursor-independent, path-identity multi-selection state and
-  make plain/Ctrl-toggle/Shift-range/anchor policy RED before production state.
-- [ ] N4.1b prove watcher reorder/delete, hidden toggle, directory enter/leave,
-  empty transition, and close/reopen prune/lifecycle behavior test-first.
-- [ ] N4.1c route mouse and keyboard selection gestures and project a pure
-  multi-selection visual without granting destructive-operation authority.
+- [x] N4.1a cursor-independent path-identity state. RED `e876223`, GREEN
+  `590e376`; plain replace, Ctrl toggle, current-order Shift range, stable
+  anchor, deduplication, stale-target rejection, and cursor independence.
+- [x] N4.1b watcher/reload, hidden, navigation, empty, and close/reopen
+  lifecycle. RED `1789bbd`, GREEN `5c14439`; live paths survive reorder while
+  missing/hidden identities and anchors prune deterministically.
+- [x] N4.1c exact mouse/keyboard gestures, stable row identity, and pure visual
+  projection. RED `699a6a6` + `fc19237`, GREEN `86b618a`; broad 137/137 and
+  full 3015/3015 plus one named B0 skip, Linux/Windows clippy, Bun 17/17,
+  Python 64/64, fmt/diff, and graph freshness clean.
 - [ ] N4.2 bulk toolbar and selection-clear/range invariants.
 
 ## P3 — C3 Context Menu
@@ -307,11 +311,11 @@ authority has one explicit source of truth.
 - [ ] M1 FM-interactive CLI attachment buttons.
 - [ ] M2 git-worktree management buttons.
 - [ ] M3 general panel/page/button super-interface evaluation.
-- These remain north-star items and must not preempt the active B1/A3/B2 path.
+- These remain north-star items and must not preempt active N4.2/C3–C6 work.
 
 ## Ordering Resolution
 
-A4, B0, B1, the A3 remainder, B2, C1, N3, and C2 are complete through
-product head `9ef90c6`. The next execution order is N4.1 → N4.2 → C3 → C4 → C5
-→ C6. S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3
-remain inactive north-star work.
+A4, B0, B1, the A3 remainder, B2, C1, N3, C2, and N4.1 are complete through
+product head `86b618a`. The next execution order is N4.2 → C3 → C4 → C5 → C6.
+S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3 remain
+inactive north-star work.

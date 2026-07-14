@@ -2,11 +2,11 @@
 
 ## 1. SONRAKI ADIM
 
-Make TP-N4.1-SELECTION-STATE RED before adding multi-selection production
-state. Define cursor-independent path identity plus plain-click, Ctrl-toggle,
-Shift-range, anchor, watcher reorder/delete, hidden toggle, enter/leave, and
-close/reopen policy. Destructive or bulk authority remains out of scope until
-N4.2 and must not be inferred from cursor focus.
+Make TP-N4.2-BULK-AUTHORITY RED before adding bulk toolbar authority. Define
+zero/one/many selection counts, mixed supported/unsupported or stale members,
+read-only destinations, clipboard state, selection clear/select-all bounds,
+range limits, and operation-in-flight precedence. N4.1 selection must not grant
+real filesystem authority; C4 still owns operation-time TOCTOU and failures.
 
 ## 2. AKTİF PROJE
 
@@ -152,6 +152,21 @@ N4.2 and must not be inferred from cursor focus.
   Python 64/64, fmt/diff clean. Fast graph reindex is fresh at 18,049 nodes /
   83,839 edges and returned the current path-bearing area plus validation
   handler snippets; freshness was not inferred from `ready` alone.
+- Completed N4.1 test-first as seven atomic commits: state `e876223`/`590e376`,
+  lifecycle `1789bbd`/`5c14439`, gesture/render RED `699a6a6`, stable row
+  identity RED `fc19237`, and integrated GREEN `86b618a`.
+- Added a cursor-independent deduplicated path set and stable anchor, current-
+  order inclusive range selection, reload/hidden pruning, enter/leave clearing,
+  close/reopen reset, exact plain/Ctrl/Shift mouse gestures, Space and
+  Shift+Up/Down keyboard equivalents, and distinct pure multi-row rendering.
+- `FileManagerRowArea` now carries stable path identity; same-index watcher
+  reorder is consumed without selecting the wrong live entry. Combined or
+  unknown modifiers and stale targets fail closed. N4.1 performs no filesystem
+  operation and adds no server or wire-protocol state.
+- N4.1 gates: focused 7/7, broad FM/watcher/input/render/Kitty 137/137, full
+  nextest 3015/3015 plus one named B0 probe skip, Linux/Windows clippy, Bun
+  17/17, Python 64/64, fmt/diff clean. Fast graph reindex is fresh at 18,078
+  nodes / 83,865 edges and returned live model/input/render connections.
 
 ## 6. KOD DURUMU
 
@@ -251,6 +266,17 @@ C2.2 is an auditable RED/GREEN pair:
 The intermediate RED commit was never pushed alone. This continuity/graph
 commit completes the C2.2 publication unit.
 
+N4.1 is an auditable seven-commit sequence:
+
+- `e876223` / `590e376`: selection state RED/GREEN.
+- `1789bbd` / `5c14439`: lifecycle reconcile RED/GREEN.
+- `699a6a6`: gesture and render RED.
+- `fc19237`: stable row identity RED.
+- `86b618a`: exact input, stable identity, and pure visual projection GREEN.
+
+The compile-failing RED checkpoints were never pushed alone. This continuity/
+graph commit completes the N4.1 publication unit.
+
 ## 7. TEST KANITI
 
 - B1/FM targeted: 64/64.
@@ -301,6 +327,10 @@ commit completes the C2.2 publication unit.
   74/74; final full nextest: 3001/3001 plus one named B0 interactive probe
   skip, no retry-only closure. Linux/Windows clippy, Bun 17/17, Python 64/64,
   fmt/diff clean.
+- N4.1 focused input/render: 7/7; broad FM/watcher/input/render/Kitty: 137/137;
+  final full nextest 3015/3015 plus one named B0 interactive probe skip, no
+  retry-only closure. Linux/Windows clippy, Bun 17/17, Python 64/64, fmt/diff
+  clean.
 
 ## 8. KRİTİK KARARLAR
 
@@ -319,6 +349,9 @@ commit completes the C2.2 publication unit.
   N3.2 supplies explicit selection/clipboard/target/in-flight authority and
   disabled-click no-side-effect behavior. C4 must still revalidate every real
   filesystem operation at execution time for TOCTOU and partial failure.
+- N4.1 is implementation-complete, fully verified, and graph-indexed. Its
+  path set and anchor are client-local selection facts only; N4.2 must derive
+  explicit bulk authority before C4 can execute any operation.
 - B1 uses minimal pure-Rust syntect outside input/render in a dedicated bounded
   worker. Plain prepared content remains availability authority; highlighting
   is optional enhancement and stale generations never mutate current state.
@@ -338,10 +371,11 @@ commit completes the C2.2 publication unit.
 
 ## 10. AÇIK GÖREVLER
 
-See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2 contracts and the
-complete N4/C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1, N3,
-and C2 are closed. The immediate product task is TP-N4.1-SELECTION-STATE RED;
-then follow N4.1 → N4.2 → C3 → C4 → C5 → C6 without skipping modules.
+See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2/N4.1 contracts and the
+complete N4.2/C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1,
+N3, C2, and N4.1 are closed. The immediate product task is
+TP-N4.2-BULK-AUTHORITY RED; then follow N4.2 → C3 → C4 → C5 → C6 without
+skipping modules.
 
 ## 11. ORTAM
 
@@ -365,6 +399,11 @@ then follow N4.1 → N4.2 → C3 → C4 → C5 → C6 without skipping modules.
   Freshness queries and snippets returned the current path-bearing
   `FileManagerRowActionArea` and live path/support validation in
   `handle_file_manager_mouse`. Freshness was not inferred from `ready` alone.
+- Fast post-N4.1 graph reindex completed at 18,078 nodes / 83,865 edges.
+  Freshness queries returned `replace_selection`, `toggle_selection`,
+  `extend_selection`, `reconcile_multi_selection`, stable row identity input,
+  and the multi-selection render test with live connections. Freshness was not
+  inferred from `ready` alone.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.

@@ -4,9 +4,9 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Active C2.2 product checkpoint: `9ef90c6`
-  (`feat: dispatch file manager row action tags`).
-- The C2.2 publication unit is the RED/GREEN product/test pair and the
+- Active N4.1 product checkpoint: `86b618a`
+  (`feat: add file manager multi-selection gestures`).
+- The N4.1 publication unit is the seven-commit test/product sequence and the
   continuity/graph commit containing this file. At publication, CyPack
   `feat/native-fm` and fork `master` are verified at that same fast-forward
   branch tip.
@@ -149,6 +149,33 @@
   impact 74/74; full nextest 3001/3001 with one named B0 host probe skipped;
   Linux all-target and canonical Windows MSVC bin clippy clean with
   `-D warnings`; Bun 17/17; Python 64/64; fmt/diff clean.
+
+## Verified Checkpoint — N4.1 Cursor-Independent Multi-Selection
+
+- N4.1 is an auditable seven-commit test/product sequence: state RED/GREEN
+  `e876223`/`590e376`, lifecycle RED/GREEN `1789bbd`/`5c14439`, gesture/render
+  RED `699a6a6`, stable row-identity RED `fc19237`, and integrated GREEN
+  `86b618a`. No compile-failing RED checkpoint was pushed alone.
+- `FmState` owns a client-local `BTreeSet<PathBuf>` plus stable path anchor,
+  separate from cursor focus/preview. Plain selection replaces, Ctrl toggles,
+  and Shift rebuilds an inclusive range from the current visible entry order;
+  duplicate identities cannot inflate the set and stale targets fail closed.
+- Reload/watch reconciliation preserves live path identities across reorder,
+  prunes deleted or hidden paths and missing anchors, and successful enter/
+  leave clears the old directory selection. No-op file enter preserves state;
+  close/reopen starts empty.
+- Mouse and keyboard use the same state methods: plain/Ctrl/Shift clicks,
+  Space toggle, and Shift+Up/Down range. Combined/unrecognized modifiers fail
+  closed. `FileManagerRowArea` now snapshots stable path identity so a valid
+  but reordered index cannot select another entry.
+- Pure render paints explicit non-cursor rows with `surface1` and keeps the
+  single cursor/preview focus at `surface0`. N4.1 grants no filesystem,
+  destructive, server, or wire-protocol authority; N4.2 owns bulk authority.
+- Fresh gates: focused 7/7, broad FM/watcher/input/render/Kitty 137/137, full
+  nextest 3015/3015 with only the named B0 real-host probe ignored, Linux
+  all-target and canonical Windows MSVC bin clippy clean with `-D warnings`,
+  Bun 17/17, Python 64/64, fmt/diff clean. Fast graph reindex is fresh at
+  18,078 nodes / 83,865 edges and returns the new model/input/render symbols.
 
 ## Completed Checkpoint — B2 Native Image Preview
 
@@ -297,11 +324,12 @@
 
 ## Exact Next Action
 
-1. Begin TP-C2.1-ROW-GEOMETRY RED before production changes. Characterize
-   disjoint current-row name/action rectangles across one/two/three-column,
-   scrolled, narrow, Unicode, and zero/degenerate layouts. Only complete
-   visible action targets may survive; all rectangles must remain inside the
-   current Miller column and use the same ViewState snapshot as render/input.
+1. Begin TP-N4.2-BULK-AUTHORITY RED before production changes. Characterize
+   zero/one/many selections, mixed supported/unsupported or stale members,
+   read-only destinations, clipboard state, clear/select-all bounds, range
+   limits, and operation-in-flight precedence. Toolbar labels/counts and every
+   enabled/disabled reason must derive only from prepared live selection
+   authority; no real filesystem operation lands in N4.2.
 
 ## Verified B2.0 Dependency Decision
 
