@@ -119,7 +119,6 @@ pub(crate) struct PlannedFileTransfer {
 }
 
 impl PlannedFileTransfer {
-    #[cfg(test)]
     pub(crate) fn source(&self) -> &Path {
         &self.source
     }
@@ -487,7 +486,6 @@ pub(crate) struct FileOperationItemResult {
 }
 
 impl FileOperationItemResult {
-    #[cfg(test)]
     pub(crate) fn source(&self) -> &Path {
         &self.source
     }

@@ -352,6 +352,16 @@ impl crate::app::App {
         let operation_kind = file_manager_operation_kind(plan.kind());
         let destination_directory = plan.destination_directory().to_path_buf();
         let total_items = plan.transfers().len();
+        let items = plan
+            .transfers()
+            .iter()
+            .map(
+                |transfer| crate::app::state::FileManagerOperationItemState {
+                    path: transfer.source().to_path_buf(),
+                    status: crate::app::state::FileManagerOperationItemStatus::Pending,
+                },
+            )
+            .collect();
         let generation = match self.file_operation_worker.start(plan) {
             Ok(generation) => generation,
             Err(FileOperationStartError::Busy) => return false,
@@ -364,6 +374,7 @@ impl crate::app::App {
             completed_items: 0,
             failed_items: 0,
             status: FileManagerOperationStatus::Running,
+            items,
         });
         true
     }
@@ -481,6 +492,14 @@ impl crate::app::App {
             }
         };
         let total_items = plan.items().len();
+        let items = plan
+            .items()
+            .iter()
+            .map(|item| crate::app::state::FileManagerOperationItemState {
+                path: item.path().to_path_buf(),
+                status: crate::app::state::FileManagerOperationItemStatus::Pending,
+            })
+            .collect();
         let generation = match self.file_operation_worker.start_delete(plan) {
             Ok(generation) => generation,
             Err(FileOperationStartError::Busy) => return false,
@@ -493,6 +512,7 @@ impl crate::app::App {
             completed_items: 0,
             failed_items: 0,
             status: FileManagerOperationStatus::Running,
+            items,
         });
         true
     }
@@ -599,6 +619,27 @@ fn apply_execution_result(
         .count();
     operation.completed_items = completed_items;
     operation.failed_items = failed_items;
+    operation.items = result
+        .items()
+        .iter()
+        .map(|item| crate::app::state::FileManagerOperationItemState {
+            path: item.source().to_path_buf(),
+            status: match item.outcome() {
+                FileOperationItemOutcome::NotStarted => {
+                    crate::app::state::FileManagerOperationItemStatus::Pending
+                }
+                FileOperationItemOutcome::Committed => {
+                    crate::app::state::FileManagerOperationItemStatus::Completed
+                }
+                FileOperationItemOutcome::SourceRetained(_) => {
+                    crate::app::state::FileManagerOperationItemStatus::Retained
+                }
+                FileOperationItemOutcome::RolledBack | FileOperationItemOutcome::Failed(_) => {
+                    crate::app::state::FileManagerOperationItemStatus::Failed
+                }
+            },
+        })
+        .collect();
     operation.status = match result.status() {
         FileOperationExecutionStatus::Completed => FileManagerOperationStatus::Completed,
         FileOperationExecutionStatus::Cancelled => FileManagerOperationStatus::Cancelled,
@@ -625,6 +666,24 @@ fn apply_delete_execution_result(
         .iter()
         .filter(|item| matches!(item.outcome(), DeleteOperationItemOutcome::Retained(_)))
         .count();
+    operation.items = result
+        .items()
+        .iter()
+        .map(|item| crate::app::state::FileManagerOperationItemState {
+            path: item.path().to_path_buf(),
+            status: match item.outcome() {
+                DeleteOperationItemOutcome::NotStarted => {
+                    crate::app::state::FileManagerOperationItemStatus::Pending
+                }
+                DeleteOperationItemOutcome::Deleted => {
+                    crate::app::state::FileManagerOperationItemStatus::Completed
+                }
+                DeleteOperationItemOutcome::Retained(_) => {
+                    crate::app::state::FileManagerOperationItemStatus::Retained
+                }
+            },
+        })
+        .collect();
     for item in result.items() {
         if let DeleteOperationItemOutcome::Retained(error) = item.outcome() {
             tracing::warn!(path = %item.path().display(), ?error, "fm: delete source retained");
@@ -1133,6 +1192,7 @@ mod tests {
             completed_items: 0,
             failed_items: 0,
             status: FileManagerOperationStatus::Running,
+            items: Vec::new(),
         });
         app.state.request_file_manager_delete = Some(FileManagerDeleteRequest {
             kind: FileManagerDeleteKind::Trash,

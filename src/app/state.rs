@@ -694,6 +694,20 @@ pub enum FileManagerOperationStatus {
     Failed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileManagerOperationItemStatus {
+    Pending,
+    Completed,
+    Retained,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileManagerOperationItemState {
+    pub path: PathBuf,
+    pub status: FileManagerOperationItemStatus,
+}
+
 /// Destructive native-FM action selected by the user after confirmation.
 /// This is client-local authority only; the App-owned worker performs any
 /// eventual filesystem mutation.
@@ -732,6 +746,8 @@ pub struct FileManagerOperationState {
     pub completed_items: usize,
     pub failed_items: usize,
     pub status: FileManagerOperationStatus,
+    /// Ordered exact source identities and their latest terminal projection.
+    pub items: Vec<FileManagerOperationItemState>,
 }
 
 impl FileManagerOperationState {

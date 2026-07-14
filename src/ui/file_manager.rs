@@ -1821,6 +1821,7 @@ mod tests {
             completed_items: 0,
             failed_items: 0,
             status: crate::app::state::FileManagerOperationStatus::Running,
+            items: Vec::new(),
         });
         let disabled = render_buffer(&disabled_app, 160, 5);
 

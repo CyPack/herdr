@@ -56,7 +56,6 @@ pub(crate) struct PlannedDeleteItem {
 }
 
 impl PlannedDeleteItem {
-    #[cfg(test)]
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }

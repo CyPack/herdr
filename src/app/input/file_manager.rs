@@ -1787,6 +1787,7 @@ command = ["inspect"]
             completed_items: 0,
             failed_items: 0,
             status: crate::app::state::FileManagerOperationStatus::Running,
+            items: Vec::new(),
         });
         app.route_client_input(b"\r".to_vec());
         assert!(app.state.request_file_manager_context_action.is_none());

@@ -236,6 +236,7 @@ mod tests {
             completed_items: 0,
             failed_items: 0,
             status: FileManagerOperationStatus::Running,
+            items: Vec::new(),
         });
         assert!(!app.dispatch_file_manager_header_action(FileManagerHeaderAction::Delete));
         assert!(app.state.file_manager_delete_confirmation.is_none());
