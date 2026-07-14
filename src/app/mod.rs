@@ -146,6 +146,7 @@ pub struct App {
     pub(crate) no_session: bool,
     pub(crate) input_rx: Option<mpsc::Receiver<crate::raw_input::RawInputEvent>>,
     file_manager_watcher: file_manager_watcher::NativeFileManagerWatcher,
+    file_operation_worker: file_operation_worker::FileOperationWorker,
     file_preview_worker: file_preview_worker::FilePreviewHighlightWorker,
     image_preview_worker: image_preview_worker::ImagePreviewWorker,
     image_preview_cell_size: crate::kitty_graphics::HostCellSize,
@@ -594,7 +595,7 @@ impl App {
             mode,
             file_manager: None,
             file_manager_clipboard: Vec::new(),
-            file_manager_operation_in_flight: false,
+            file_manager_operation: None,
             request_file_manager_context_action: None,
             should_quit: false,
             detach_exits: no_session,
@@ -853,6 +854,9 @@ impl App {
             no_session,
             input_rx: None,
             file_manager_watcher: file_manager_watcher::NativeFileManagerWatcher::new(
+                render_notify.clone(),
+            ),
+            file_operation_worker: file_operation_worker::FileOperationWorker::new(
                 render_notify.clone(),
             ),
             file_preview_worker: file_preview_worker::FilePreviewHighlightWorker::new(

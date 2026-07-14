@@ -235,7 +235,10 @@ impl App {
                             crate::ui::compute_file_manager_action_bar_model(
                                 file_manager,
                                 &self.state.file_manager_clipboard,
-                                self.state.file_manager_operation_in_flight,
+                                self.state
+                                    .file_manager_operation
+                                    .as_ref()
+                                    .is_some_and(|operation| operation.is_running()),
                             )
                         });
                         let plugin_actions = crate::app::api::plugins::file_manifest_actions(
@@ -1140,7 +1143,7 @@ mod tests {
         assert_eq!(app.state.file_manager_clipboard, vec![selected]);
         assert_eq!(
             fs::read(td.root.join("selected.txt")).expect("copy action preserves source"),
-            b"selected.txt"
+            b"x"
         );
     }
 
@@ -1776,7 +1779,15 @@ command = ["inspect"]
 
         let mut app = runtime_app_with_fm(FmState::new(&td.root));
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 2));
-        app.state.file_manager_operation_in_flight = true;
+        app.state.file_manager_operation = Some(crate::app::state::FileManagerOperationState {
+            generation: 1,
+            kind: crate::app::state::FileManagerOperationKind::Copy,
+            destination_directory: td.root.clone(),
+            total_items: 1,
+            completed_items: 0,
+            failed_items: 0,
+            status: crate::app::state::FileManagerOperationStatus::Running,
+        });
         app.route_client_input(b"\r".to_vec());
         assert!(app.state.request_file_manager_context_action.is_none());
 

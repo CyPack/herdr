@@ -674,6 +674,41 @@ pub enum FileManagerHeaderAction {
     Delete,
 }
 
+/// Client-local native-FM operation kind. Runtime execution stays in the
+/// App-owned worker; this pure projection is safe for render and unit tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileManagerOperationKind {
+    Copy,
+    Move,
+}
+
+/// One explicit lifecycle state for a bounded native-FM operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileManagerOperationStatus {
+    Running,
+    Completed,
+    Cancelled,
+    Partial,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileManagerOperationState {
+    pub generation: u64,
+    pub kind: FileManagerOperationKind,
+    pub destination_directory: PathBuf,
+    pub total_items: usize,
+    pub completed_items: usize,
+    pub failed_items: usize,
+    pub status: FileManagerOperationStatus,
+}
+
+impl FileManagerOperationState {
+    pub fn is_running(&self) -> bool {
+        self.status == FileManagerOperationStatus::Running
+    }
+}
+
 impl FileManagerHeaderAction {
     pub const ALL: [Self; 4] = [Self::Copy, Self::Paste, Self::NewFolder, Self::Delete];
 
@@ -1863,9 +1898,9 @@ pub struct AppState {
     /// Closing the FM does not discard clipboard content; no filesystem work
     /// is performed merely by storing these paths.
     pub file_manager_clipboard: Vec<PathBuf>,
-    /// Client-local operation lifecycle authority. C4 will replace this
-    /// minimal gate with bounded operation state; render/input only consume it.
-    pub file_manager_operation_in_flight: bool,
+    /// Pure client-local projection of the App-owned bounded operation worker.
+    /// Render/input consume this state but never perform filesystem work.
+    pub file_manager_operation: Option<FileManagerOperationState>,
     /// Exact, revalidated client-local intent from the native-FM context menu.
     /// C3 only emits this tag; C4/C5 will consume it to perform real work.
     pub request_file_manager_context_action: Option<FileManagerContextActionIntent>,
@@ -2317,7 +2352,7 @@ impl AppState {
             mode: Mode::Navigate,
             file_manager: None,
             file_manager_clipboard: Vec::new(),
-            file_manager_operation_in_flight: false,
+            file_manager_operation: None,
             request_file_manager_context_action: None,
             should_quit: false,
             detach_exits: false,

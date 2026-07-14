@@ -408,7 +408,9 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         fallback_action_bar = compute_file_manager_action_bar_model(
             fm,
             app.file_manager_clipboard.as_slice(),
-            app.file_manager_operation_in_flight,
+            app.file_manager_operation
+                .as_ref()
+                .is_some_and(crate::app::state::FileManagerOperationState::is_running),
         );
         Some(&fallback_action_bar)
     };
@@ -1811,7 +1813,15 @@ mod tests {
         let enabled = render_buffer(&enabled_app, 160, 5);
 
         let mut disabled_app = app_with_fm(fm);
-        disabled_app.file_manager_operation_in_flight = true;
+        disabled_app.file_manager_operation = Some(crate::app::state::FileManagerOperationState {
+            generation: 1,
+            kind: crate::app::state::FileManagerOperationKind::Copy,
+            destination_directory: std::path::PathBuf::from("/tmp"),
+            total_items: 1,
+            completed_items: 0,
+            failed_items: 0,
+            status: crate::app::state::FileManagerOperationStatus::Running,
+        });
         let disabled = render_buffer(&disabled_app, 160, 5);
 
         let copy_x = compute_file_manager_header_action_areas(Rect::new(0, 0, 160, 5))[0]

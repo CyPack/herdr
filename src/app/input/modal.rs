@@ -668,7 +668,10 @@ fn validated_file_context_action(
     let action_bar = crate::ui::compute_file_manager_action_bar_model(
         file_manager,
         &state.file_manager_clipboard,
-        state.file_manager_operation_in_flight,
+        state
+            .file_manager_operation
+            .as_ref()
+            .is_some_and(|operation| operation.is_running()),
     );
     let plugin_actions = crate::app::api::plugins::file_manifest_actions(&state.installed_plugins);
     let current =

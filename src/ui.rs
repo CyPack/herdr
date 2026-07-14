@@ -263,7 +263,9 @@ fn compute_view_internal(
         compute_file_manager_action_bar_model(
             file_manager,
             &app.file_manager_clipboard,
-            app.file_manager_operation_in_flight,
+            app.file_manager_operation
+                .as_ref()
+                .is_some_and(crate::app::state::FileManagerOperationState::is_running),
         )
     });
     let file_manager_header_action_areas = if app.file_manager.is_some() {
@@ -415,7 +417,9 @@ fn compute_mobile_view(
         compute_file_manager_action_bar_model(
             file_manager,
             &app.file_manager_clipboard,
-            app.file_manager_operation_in_flight,
+            app.file_manager_operation
+                .as_ref()
+                .is_some_and(crate::app::state::FileManagerOperationState::is_running),
         )
     });
     let file_manager_header_action_areas = if app.file_manager.is_some() {

@@ -119,10 +119,12 @@ pub(crate) struct PlannedFileTransfer {
 }
 
 impl PlannedFileTransfer {
+    #[cfg(test)]
     pub(crate) fn source(&self) -> &Path {
         &self.source
     }
 
+    #[cfg(test)]
     pub(crate) fn destination(&self) -> &Path {
         &self.destination
     }
@@ -485,10 +487,12 @@ pub(crate) struct FileOperationItemResult {
 }
 
 impl FileOperationItemResult {
+    #[cfg(test)]
     pub(crate) fn source(&self) -> &Path {
         &self.source
     }
 
+    #[cfg(test)]
     pub(crate) fn destination(&self) -> &Path {
         &self.destination
     }
@@ -529,6 +533,7 @@ pub(crate) struct FileOperationProgressEvent {
 }
 
 impl FileOperationProgressEvent {
+    #[cfg(test)]
     pub(crate) fn phase(&self) -> FileOperationPhase {
         self.phase
     }
@@ -576,6 +581,7 @@ pub(crate) fn execute_file_operation(
     execute_file_operation_with_host(plan, cancellation, &mut host, |_| {})
 }
 
+#[cfg(test)]
 pub(crate) fn execute_file_operation_with_observer<F>(
     plan: &FileOperationPlan,
     cancellation: &FileOperationCancellation,

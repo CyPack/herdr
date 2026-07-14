@@ -265,8 +265,11 @@ impl App {
         match self.handle_file_manager_mouse(mouse) {
             file_manager::FileManagerMouseDispatch::NotHandled => {}
             file_manager::FileManagerMouseDispatch::Consumed
-            | file_manager::FileManagerMouseDispatch::HeaderAction(_)
             | file_manager::FileManagerMouseDispatch::RowAction { .. } => return,
+            file_manager::FileManagerMouseDispatch::HeaderAction(action) => {
+                let _ = self.dispatch_file_manager_header_action(action);
+                return;
+            }
         }
 
         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))

@@ -6,7 +6,8 @@ use tokio::sync::Notify;
 
 use crate::fm::operations::{
     execute_file_operation, FileOperationCancellation, FileOperationExecutionResult,
-    FileOperationPlan,
+    FileOperationExecutionStatus, FileOperationItemOutcome, FileOperationKind, FileOperationPlan,
+    FileOperationRequest,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,17 +196,14 @@ impl FileOperationWorker {
 
 impl Drop for FileOperationWorker {
     fn drop(&mut self) {
-        let cancellation = {
+        {
             let (state, pending) = &*self.shared;
             let mut state = lock_state(state);
             state.closed = true;
             state.pending = None;
             pending.notify_all();
-            state.active_cancellation.clone()
-        };
-        if let Some(cancellation) = cancellation {
-            cancellation.cancel();
         }
+        let _ = self.cancel();
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
@@ -234,6 +232,224 @@ fn lock_state(state: &Mutex<FileOperationWorkerState>) -> MutexGuard<'_, FileOpe
         Ok(state) => state,
         Err(poisoned) => poisoned.into_inner(),
     }
+}
+
+impl crate::app::App {
+    /// Dispatch one currently enabled native-FM header action. Copy only
+    /// prepares exact path identities; Paste performs immutable preflight and
+    /// hands the plan to the bounded worker before returning to the UI loop.
+    pub(super) fn dispatch_file_manager_header_action(
+        &mut self,
+        action: crate::app::state::FileManagerHeaderAction,
+    ) -> bool {
+        use crate::app::state::FileManagerHeaderAction;
+
+        match action {
+            FileManagerHeaderAction::Copy => {
+                let Some(paths) = current_action_paths(&self.state, action) else {
+                    return false;
+                };
+                self.state.file_manager_clipboard = paths;
+                true
+            }
+            FileManagerHeaderAction::Paste => self.start_file_manager_paste(),
+            FileManagerHeaderAction::NewFolder | FileManagerHeaderAction::Delete => false,
+        }
+    }
+
+    fn start_file_manager_paste(&mut self) -> bool {
+        use crate::app::state::{
+            FileManagerHeaderAction, FileManagerOperationState, FileManagerOperationStatus,
+        };
+
+        if current_action_paths(&self.state, FileManagerHeaderAction::Paste).is_none() {
+            return false;
+        }
+        let Some(destination_directory) = self
+            .state
+            .file_manager
+            .as_ref()
+            .map(|file_manager| file_manager.cwd.clone())
+        else {
+            return false;
+        };
+        let plan = match FileOperationPlan::preflight(FileOperationRequest {
+            kind: FileOperationKind::Copy,
+            sources: self.state.file_manager_clipboard.clone(),
+            destination_directory: destination_directory.clone(),
+            operation_in_flight: self.file_operation_worker.is_busy()
+                || self
+                    .state
+                    .file_manager_operation
+                    .as_ref()
+                    .is_some_and(FileManagerOperationState::is_running),
+        }) {
+            Ok(plan) => plan,
+            Err(error) => {
+                tracing::warn!(?error, "fm: file operation preflight rejected paste");
+                return false;
+            }
+        };
+        let operation_kind = file_manager_operation_kind(plan.kind());
+        let destination_directory = plan.destination_directory().to_path_buf();
+        let total_items = plan.transfers().len();
+        let generation = match self.file_operation_worker.start(plan) {
+            Ok(generation) => generation,
+            Err(FileOperationStartError::Busy) => return false,
+        };
+        self.state.file_manager_operation = Some(FileManagerOperationState {
+            generation,
+            kind: operation_kind,
+            destination_directory,
+            total_items,
+            completed_items: 0,
+            failed_items: 0,
+            status: FileManagerOperationStatus::Running,
+        });
+        true
+    }
+
+    /// Consume C3's revalidated Copy intent and reconcile one worker terminal
+    /// result. Other context actions remain queued for their owning C4/C5
+    /// modules instead of being silently discarded.
+    pub(super) fn sync_file_operation_worker(&mut self) -> bool {
+        let mut changed = self.consume_file_manager_context_copy();
+        let drained = self.file_operation_worker.drain();
+        if drained.disconnected {
+            let Some(operation) = self.state.file_manager_operation.as_mut() else {
+                return changed;
+            };
+            if operation.is_running() {
+                operation.status = crate::app::state::FileManagerOperationStatus::Failed;
+                operation.failed_items = operation.total_items;
+                tracing::warn!("fm: file operation worker stopped before completion");
+                return true;
+            }
+            return changed;
+        }
+        let Some(completion) = drained.completion else {
+            return changed;
+        };
+        let Some(operation) = self.state.file_manager_operation.as_mut() else {
+            return changed;
+        };
+        if !operation.is_running() || operation.generation != completion.generation {
+            return changed;
+        }
+
+        let destination_directory = operation.destination_directory.clone();
+        match completion.result {
+            Ok(result) => apply_execution_result(operation, &result),
+            Err(FileOperationWorkerError::Panicked) => {
+                operation.status = crate::app::state::FileManagerOperationStatus::Failed;
+                operation.failed_items = operation.total_items;
+                tracing::error!(
+                    generation = completion.generation,
+                    "fm: file operation worker converted panic to terminal failure"
+                );
+            }
+        }
+        if let Some(file_manager) = self.state.file_manager.as_mut() {
+            if file_manager.cwd == destination_directory {
+                file_manager.reload();
+            }
+        }
+        changed = true;
+        changed
+    }
+
+    fn consume_file_manager_context_copy(&mut self) -> bool {
+        use crate::app::state::{FileManagerContextMenuAction, FileManagerHeaderAction};
+
+        let is_copy = self
+            .state
+            .request_file_manager_context_action
+            .as_ref()
+            .is_some_and(|intent| intent.action == FileManagerContextMenuAction::Copy);
+        if !is_copy {
+            return false;
+        }
+        let Some(intent) = self.state.request_file_manager_context_action.take() else {
+            return false;
+        };
+        if current_action_paths(&self.state, FileManagerHeaderAction::Copy)
+            .is_some_and(|paths| paths == intent.paths)
+        {
+            self.state.file_manager_clipboard = intent.paths;
+        }
+        true
+    }
+}
+
+fn current_action_paths(
+    state: &crate::app::state::AppState,
+    action: crate::app::state::FileManagerHeaderAction,
+) -> Option<Vec<std::path::PathBuf>> {
+    let file_manager = state.file_manager.as_ref()?;
+    let action_bar = crate::ui::compute_file_manager_action_bar_model(
+        file_manager,
+        &state.file_manager_clipboard,
+        state
+            .file_manager_operation
+            .as_ref()
+            .is_some_and(crate::app::state::FileManagerOperationState::is_running),
+    );
+    action_bar
+        .action_state(action)
+        .is_some_and(|action_state| action_state.enabled)
+        .then(|| {
+            action_bar
+                .selection
+                .map(|selection| selection.paths)
+                .unwrap_or_default()
+        })
+}
+
+fn file_manager_operation_kind(
+    kind: FileOperationKind,
+) -> crate::app::state::FileManagerOperationKind {
+    match kind {
+        FileOperationKind::Copy => crate::app::state::FileManagerOperationKind::Copy,
+        FileOperationKind::Move => crate::app::state::FileManagerOperationKind::Move,
+    }
+}
+
+fn apply_execution_result(
+    operation: &mut crate::app::state::FileManagerOperationState,
+    result: &FileOperationExecutionResult,
+) {
+    use crate::app::state::FileManagerOperationStatus;
+
+    let completed_items = result
+        .items()
+        .iter()
+        .filter(|item| matches!(item.outcome(), FileOperationItemOutcome::Committed))
+        .count();
+    let source_retained = result
+        .items()
+        .iter()
+        .filter(|item| matches!(item.outcome(), FileOperationItemOutcome::SourceRetained(_)))
+        .count();
+    let failed_items = result
+        .items()
+        .iter()
+        .filter(|item| {
+            matches!(
+                item.outcome(),
+                FileOperationItemOutcome::Failed(_) | FileOperationItemOutcome::SourceRetained(_)
+            )
+        })
+        .count();
+    operation.completed_items = completed_items;
+    operation.failed_items = failed_items;
+    operation.status = match result.status() {
+        FileOperationExecutionStatus::Completed => FileManagerOperationStatus::Completed,
+        FileOperationExecutionStatus::Cancelled => FileManagerOperationStatus::Cancelled,
+        FileOperationExecutionStatus::Failed if completed_items > 0 || source_retained > 0 => {
+            FileManagerOperationStatus::Partial
+        }
+        FileOperationExecutionStatus::Failed => FileManagerOperationStatus::Failed,
+    };
 }
 
 #[cfg(test)]
@@ -516,17 +732,16 @@ mod tests {
         release_tx.send(()).expect("release paste worker");
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            if app.sync_file_operation_worker() {
-                if app
+            if app.sync_file_operation_worker()
+                && app
                     .state
                     .file_manager_operation
                     .as_ref()
                     .is_some_and(|operation| {
                         operation.status == FileManagerOperationStatus::Completed
                     })
-                {
-                    break;
-                }
+            {
+                break;
             }
             assert!(Instant::now() < deadline, "paste completion timed out");
             std::thread::sleep(Duration::from_millis(5));
