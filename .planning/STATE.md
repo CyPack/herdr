@@ -2,7 +2,7 @@
 
 - Updated: 2026-07-14
 - Branch: `feat/native-fm`
-- C1.2 product checkpoint: `7fd01de`. The continuity commit containing this
+- N3.1 product checkpoint: `510eebc`. The continuity commit containing this
   state file is part of the CyPack publication unit.
 - Completed local commits:
   - `6c7c58f` A2.2 responsive Miller columns (already pushed)
@@ -24,12 +24,15 @@
     independent test-stability fix `9aa1e59` (fully verified and graph-indexed;
     published to CyPack feature/master)
   - `dbc6798` / `7fd01de` C1.2 side-effect-free exact header action dispatch
-    RED/GREEN (fully verified and graph-indexed; publication completes with
-    this continuity commit)
+    RED/GREEN (fully verified, graph-indexed, and published to CyPack
+    feature/master)
+  - `b5cc95c` / `510eebc` N3.1 selection-sensitive persistent action-bar
+    content RED/GREEN (fully verified and graph-indexed; publication completes
+    with this continuity commit)
 - Continuity/tooling is versioned by the separate commit containing this state
   file.
-- Active increment: begin TP-N3.1-CONTENT test-first; define a pure,
-  selection-sensitive persistent action-bar model before action authority.
+- Active increment: begin TP-N3.2-AUTHORITY test-first; define explicit
+  enabled/disabled action state before any side effect.
 - Canonical current state: `/home/ayaz/projects/herdr/.codex/CURRENT.md`
 - Durable tasks: `/home/ayaz/projects/herdr/.codex/TASKS.md`
 - Full handoff: `/home/ayaz/projects/herdr/.codex/HANDOFF.md`
@@ -53,7 +56,11 @@
   plus one named B0 host-probe skip; Linux/Windows clippy; Bun 17/17; Python
   64/64; fmt/diff clean. Full graph: 17,993 nodes / 84,009 edges with dispatch,
   handler, outer input connection, and tests verified.
-- First next code action: make TP-N3.1-CONTENT RED for directory/file/empty,
-  clipboard, watcher/navigation, and close/reopen action-bar state.
-- Next code order: N3.1, N3.2, then C2 through C6. Deferred
+- N3.1 final gates: targeted 3/3; FM 135/135; full nextest 2991/2991 plus one
+  named B0 host-probe skip; Linux/Windows clippy; Bun 17/17; Python 64/64;
+  fmt/diff clean. Full graph: 18,009 nodes / 83,964 edges with action-bar
+  model, desktop/mobile/render connections, and tests verified.
+- First next code action: make TP-N3.2-AUTHORITY RED for explicit disabled
+  states, distinct render, and zero side effect on disabled dispatch.
+- Next code order: N3.2, then C2 through C6. Deferred
   architecture and north-star missions remain recorded in `.codex/TASKS.md`.

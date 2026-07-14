@@ -4,9 +4,9 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Active C1.2 product checkpoint: `7fd01de`
-  (`feat: dispatch file manager header action tags`).
-- The C1.2 publication unit is the RED/GREEN product/test pair and the
+- Active N3.1 product checkpoint: `510eebc`
+  (`feat: add selection-sensitive file manager action bar`).
+- The N3.1 publication unit is the RED/GREEN product/test pair and the
   continuity/graph commit containing this file. At publication, CyPack
   `feat/native-fm` and fork `master` are verified at that same fast-forward
   branch tip.
@@ -61,6 +61,27 @@
   content and enablement authority before any action tag can cause a side
   effect.
 - Fresh gates: exact dispatch 2/2; full FM input 13/13; full nextest 2988/2988
+  with one named B0 host probe skipped; Linux all-target and canonical Windows
+  bin clippy clean with `-D warnings`; Bun 17/17; Python 64/64; fmt/diff clean.
+
+## Verified Checkpoint — N3.1 Selection-Sensitive Action-Bar Content
+
+- RED contract commit: `b5cc95c` (`test: define selection-sensitive file
+  manager action bar`). GREEN product commit: `510eebc` (`feat: add
+  selection-sensitive file manager action bar`). Intermediate compile-failing
+  RED was never pushed alone.
+- `FileManagerActionBarModel` is a pure ViewState snapshot of selected path,
+  display label, file/directory kind, and clipboard count. Source clipboard
+  paths remain client-local AppState and persist across FM close/reopen; no
+  server or wire state was added.
+- Desktop/mobile `compute_view` rebuild the model from current prepared
+  `FmState`; navigation and reload-selected-delete transitions cannot leave a
+  stale label. Close clears the model; reopen restores the current empty or
+  selected state plus clipboard summary.
+- The persistent header visibly carries selected name, explicit empty state,
+  and non-empty clipboard count while retaining the existing four action tags
+  and responsive geometry. Render performs no filesystem or metadata I/O.
+- Fresh gates: targeted 3/3; FM regression 135/135; full nextest 2991/2991
   with one named B0 host probe skipped; Linux all-target and canonical Windows
   bin clippy clean with `-D warnings`; Bun 17/17; Python 64/64; fmt/diff clean.
 
@@ -186,11 +207,12 @@
   `handle_file_manager_mouse` were found as current production graph symbols
   with their call/test connections; freshness was not inferred from `ready`
   alone.
-- Full post-C1.2 graph reindex completed at 17,993 nodes / 84,009 edges.
-  `FileManagerMouseDispatch` and `handle_file_manager_mouse` are current graph
-  symbols; the handler remains connected to the outer input module, and both
-  exact-tag/fail-closed tests are present with their fixture calls. Freshness
-  was not inferred from `ready` alone.
+- Full post-N3.1 graph reindex completed at 18,009 nodes / 83,964 edges.
+  `FileManagerActionBarModel`, selection/kind types, and
+  `compute_file_manager_action_bar_model` are current graph symbols; the pure
+  model builder is connected to desktop/mobile compute, render fallback, and
+  model tests. Render and lifecycle tests are present. Freshness was not
+  inferred from `ready` alone.
 - Publication uses sequential fast-forward pushes to both CyPack heads and
   exact remote-SHA equality. `upstream` is never pushed.
 
@@ -204,11 +226,11 @@
 
 ## Exact Next Action
 
-1. Begin TP-N3.1-CONTENT RED: define a pure, selection-sensitive persistent
-   action-bar model for directory/file/empty selection, clipboard state, and
-   watcher/navigation/close transitions. Render must stay filesystem-free and
-   stale selection state must clear. Then TP-N3.2 must prove explicit disabled
-   actions dispatch no side effect before C2 begins.
+1. Begin TP-N3.2-AUTHORITY RED: define explicit enabled/disabled state for
+   Copy/Paste/NewFolder/Delete across selection, clipboard, missing path,
+   unsupported/read-only target, and in-flight operation. Disabled actions
+   must render distinctly and dispatch no state or filesystem side effect.
+   Enablement must come from prepared state, never label or paint output.
 
 ## Verified B2.0 Dependency Decision
 

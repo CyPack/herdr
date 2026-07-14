@@ -2,11 +2,11 @@
 
 ## 1. SONRAKI ADIM
 
-Make TP-N3.1-CONTENT RED before adding action authority. Define a pure,
-selection-sensitive persistent action-bar model for directory/file/empty,
-clipboard, watcher/navigation, and close/reopen transitions. Render remains
-filesystem-free; stale state clears. Then prove TP-N3.2 disabled actions have
-no side effects before continuing C2 → C3 → C4 → C5 → C6.
+Make TP-N3.2-AUTHORITY RED before wiring any action side effect. Define explicit
+enabled/disabled state for Copy/Paste/NewFolder/Delete across selection,
+clipboard, missing/unsupported/read-only target, and in-flight operation.
+Disabled actions render distinctly and dispatch no state/filesystem mutation;
+enablement comes from prepared state, never painted labels.
 
 ## 2. AKTİF PROJE
 
@@ -110,6 +110,14 @@ no side effects before continuing C2 → C3 → C4 → C5 → C6.
   named B0 probe skip, Linux/Windows clippy, Bun 17/17, Python 64/64, fmt, and
   diff-check. Cwd, cursor, and fixture disk entries remain unchanged by header
   tag dispatch.
+- Completed N3.1 test-first: RED `b5cc95c`, GREEN `510eebc`. Added a pure
+  selection/clipboard action-bar ViewState model, client-local clipboard paths,
+  selected file/directory identity, explicit empty content, desktop/mobile
+  refresh, and render fallback without filesystem or protocol coupling.
+- Proved navigation, reload-selected-delete, empty transition, close/reopen,
+  selected-name rendering, and clipboard-summary persistence. Gates: 3/3,
+  FM 135/135, full 2991/2991 plus one named B0 skip, Linux/Windows clippy,
+  Bun 17/17, Python 64/64, fmt/diff clean.
 
 ## 6. KOD DURUMU
 
@@ -177,6 +185,14 @@ C1.2 is an auditable RED/GREEN pair:
 The intermediate RED commit was never pushed alone. This continuity/graph
 commit completes the C1.2 publication unit.
 
+N3.1 is an auditable RED/GREEN pair:
+
+- `b5cc95c`: compile-failing selection/clipboard/lifecycle/render contract.
+- `510eebc`: pure selection-sensitive persistent action-bar content.
+
+The intermediate RED commit was never pushed alone. This continuity/graph
+commit completes the N3.1 publication unit.
+
 ## 7. TEST KANITI
 
 - B1/FM targeted: 64/64.
@@ -211,6 +227,10 @@ commit completes the C1.2 publication unit.
   2988/2988 plus one named B0 interactive probe skip, no retry-only closure.
 - C1.2 Linux all-target and canonical Windows MSVC bin clippy passed with
   `-D warnings`; Bun 17/17; Python maintenance 64/64; fmt/diff clean.
+- N3.1 targeted: 3/3; FM regression: 135/135; final full nextest: 2991/2991
+  plus one named B0 interactive probe skip, no retry-only closure.
+- N3.1 Linux all-target and canonical Windows MSVC bin clippy passed with
+  `-D warnings`; Bun 17/17; Python maintenance 64/64; fmt/diff clean.
 
 ## 8. KRİTİK KARARLAR
 
@@ -228,6 +248,9 @@ commit completes the C1.2 publication unit.
   also implementation-complete, fully verified, and graph-indexed. C1.2 maps
   action tags only—N3 must establish explicit selection-sensitive
   enabled/disabled authority before filesystem mutations are wired.
+- N3.1 content is implementation-complete, fully verified, and graph-indexed.
+  N3.2 owns action authority; no action side effect may be added before its RED
+  disabled-state and no-side-effect contract exists.
 - B1 uses minimal pure-Rust syntect outside input/render in a dedicated bounded
   worker. Plain prepared content remains availability authority; highlighting
   is optional enhancement and stale generations never mutate current state.
@@ -247,20 +270,20 @@ commit completes the C1.2 publication unit.
 
 ## 10. AÇIK GÖREVLER
 
-See `.codex/TASKS.md` for the completed A3/B2/C1 contracts and the complete
-N3/C2–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, and C1 are closed.
-The immediate product task is TP-N3.1-CONTENT RED, followed by TP-N3.2;
+See `.codex/TASKS.md` for the completed A3/B2/C1/N3.1 contracts and the
+complete N3.2/C2–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1,
+and N3.1 are closed. The immediate product task is TP-N3.2-AUTHORITY RED;
 then follow C2 → C3 → C4 → C5 → C6 without skipping modules.
 
 ## 11. ORTAM
 
 - `codex-cli 0.144.1` is installed.
 - `just` is absent; direct recipe execution is required unless installed later.
-- Full post-C1.2 graph reindex completed at 17,993 nodes / 84,009 edges.
-  Freshness query returned current `FileManagerMouseDispatch`,
-  `handle_file_manager_mouse`, and both exact-tag/fail-closed tests. The
-  handler remains connected to the outer input module. Freshness was not
-  inferred from `ready` alone.
+- Full post-N3.1 graph reindex completed at 18,009 nodes / 83,964 edges.
+  Freshness query returned current action-bar model/selection/kind types and
+  `compute_file_manager_action_bar_model`; the builder is connected to
+  desktop/mobile view computation, render fallback, and model tests. Lifecycle
+  and render tests are present. Freshness was not inferred from `ready` alone.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.

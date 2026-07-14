@@ -203,7 +203,11 @@ server protocol, and render must remain pure.
   input 13/13, full nextest 2988/2988 with one named B0 host probe skipped;
   Linux/Windows clippy, Bun 17/17, Python 64/64, fmt, and diff-check clean.
   Dispatch is deliberately side-effect free until N3 defines authority.
-- [ ] N3.1 selection-sensitive persistent action-bar content.
+- [x] N3.1 selection-sensitive persistent action-bar content. RED commit
+  `b5cc95c`; GREEN commit `510eebc`. Targeted 3/3, FM 135/135, full nextest
+  2991/2991 with one named B0 host probe skipped; Linux/Windows clippy, Bun
+  17/17, Python 64/64, fmt, and diff-check clean. Selection/clipboard content
+  is client-local and render remains filesystem-free.
 - [ ] N3.2 explicit enabled/disabled states with no hidden side effects.
 
 ## P3 — C2 Row Actions + N4 Multi-Select
@@ -264,7 +268,7 @@ server protocol, and render must remain pure.
 
 ## Ordering Resolution
 
-A4, B0, B1, the A3 remainder, B2, C1.1, and C1.2 are complete through C1.2
-product head `7fd01de`. The next execution order is N3.1 → N3.2 → C2 → C3 →
-C4 → C5 → C6. S5–S7 and N2 remain evidence-gated deferred architecture,
-while M1–M3 remain inactive north-star work.
+A4, B0, B1, the A3 remainder, B2, C1, and N3.1 are complete through N3.1
+product head `510eebc`. The next execution order is N3.2 → C2 → C3 → C4 → C5
+→ C6. S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3
+remain inactive north-star work.
