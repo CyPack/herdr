@@ -327,9 +327,9 @@ mod tests {
     use super::*;
     use crate::app::state::{
         ContextMenuKind, FileManagerActionBarModel, FileManagerActionDisabledReason,
-        FileManagerActionState, FileManagerContextMenuTargetKind, FileManagerHeaderAction,
-        FileManagerHeaderActionArea, FileManagerRowAction, FileManagerRowActionArea,
-        FileManagerRowArea,
+        FileManagerActionState, FileManagerContextMenuAction, FileManagerContextMenuTargetKind,
+        FileManagerHeaderAction, FileManagerHeaderActionArea, FileManagerRowAction,
+        FileManagerRowActionArea, FileManagerRowArea,
     };
     use crate::app::Mode;
     use crate::fm::{FmState, MAX_MULTI_SELECTION_PATHS};
@@ -1574,5 +1574,171 @@ mod tests {
             panic!("expected file menu")
         };
         assert_eq!(model.paths, vec![expected]);
+    }
+
+    // TP-C3.2-POPUP-LIFECYCLE: ContextMenu keyboard routing owns focus even
+    // while the FM remains open. Down selects Copy without moving the FM
+    // cursor; Enter emits one exact client-local intent and no filesystem
+    // mutation.
+    #[test]
+    fn file_context_menu_keyboard_owns_focus_and_emits_exact_intent() {
+        let td = TempDir::new("file-context-keyboard-intent");
+        td.file("00.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let before_entries = fs::read_dir(&td.root)
+            .expect("read keyboard fixture before")
+            .count();
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 2));
+        assert_eq!(app.state.mode, Mode::ContextMenu);
+        let cursor = app.state.file_manager.as_ref().expect("open FM").cursor;
+
+        app.route_client_input(b"\x1b[B".to_vec());
+        assert_eq!(
+            app.state
+                .context_menu
+                .as_ref()
+                .expect("menu after Down")
+                .list
+                .highlighted,
+            1
+        );
+        assert_eq!(
+            app.state.file_manager.as_ref().expect("open FM").cursor,
+            cursor,
+            "menu navigation cannot move the FM cursor"
+        );
+
+        app.route_client_input(b"\r".to_vec());
+        assert!(app.state.context_menu.is_none());
+        assert_ne!(app.state.mode, Mode::ContextMenu);
+        let intent = app
+            .state
+            .request_file_manager_context_action
+            .as_ref()
+            .expect("exact file action intent");
+        assert_eq!(intent.action, FileManagerContextMenuAction::Copy);
+        assert_eq!(intent.paths, vec![td.root.join("00.txt")]);
+        assert_eq!(
+            fs::read_dir(&td.root)
+                .expect("read keyboard fixture after")
+                .count(),
+            before_entries,
+            "C3 intent dispatch performs no filesystem mutation"
+        );
+    }
+
+    // TP-C3.2-POPUP-LIFECYCLE: disabled activation stays open and emits
+    // nothing. Reorder, delete, and operation-in-flight changes after menu
+    // creation invalidate the snapshot before any intent can escape.
+    #[test]
+    fn disabled_and_stale_file_context_actions_fail_closed() {
+        let td = TempDir::new("file-context-disabled-stale");
+        td.file("00.txt");
+        td.file("01.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let fm = app.state.file_manager.as_mut().expect("open FM");
+        assert!(fm.replace_selection(0));
+        assert!(fm.toggle_selection(1));
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 2));
+        app.route_client_input(b"\r".to_vec());
+        assert!(app.state.context_menu.is_some(), "disabled Open stays open");
+        assert!(app.state.request_file_manager_context_action.is_none());
+
+        app.route_client_input(b"\x1b[B".to_vec());
+        app.state
+            .file_manager
+            .as_mut()
+            .expect("open FM")
+            .entries
+            .swap(0, 1);
+        app.route_client_input(b"\r".to_vec());
+        assert!(app.state.context_menu.is_none(), "stale menu closes");
+        assert!(app.state.request_file_manager_context_action.is_none());
+
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 2));
+        app.state.file_manager_operation_in_flight = true;
+        app.route_client_input(b"\r".to_vec());
+        assert!(app.state.request_file_manager_context_action.is_none());
+
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 2));
+        fs::remove_file(td.root.join("00.txt")).expect("delete selected fixture path");
+        app.state.file_manager.as_mut().expect("open FM").reload();
+        app.route_client_input(b"\r".to_vec());
+        assert!(app.state.context_menu.is_none());
+        assert!(app.state.request_file_manager_context_action.is_none());
+    }
+
+    // TP-C3.2-POPUP-LIFECYCLE: mouse hover uses the existing global menu hit
+    // geometry. Disabled click stays open, enabled click emits exact intent,
+    // outside click closes, and closing FM clears its owned popup.
+    #[test]
+    fn file_context_menu_mouse_hover_click_outside_and_close_lifecycle() {
+        let td = TempDir::new("file-context-mouse-lifecycle");
+        td.file("00.txt");
+        td.file("01.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let fm = app.state.file_manager.as_mut().expect("open FM");
+        assert!(fm.replace_selection(0));
+        assert!(fm.toggle_selection(1));
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 2));
+        let popup = app.state.context_menu_rect().expect("popup");
+        let item_x = popup.x + 1;
+        let open_y = popup.y + 1;
+        let copy_y = popup.y + 2;
+
+        app.handle_mouse(mouse(MouseEventKind::Moved, item_x, copy_y));
+        assert_eq!(
+            app.state
+                .context_menu
+                .as_ref()
+                .expect("hovered menu")
+                .list
+                .highlighted,
+            1
+        );
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            item_x,
+            open_y,
+        ));
+        assert!(
+            app.state.context_menu.is_some(),
+            "disabled mouse row stays open"
+        );
+        assert!(app.state.request_file_manager_context_action.is_none());
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            item_x,
+            copy_y,
+        ));
+        let intent = app
+            .state
+            .request_file_manager_context_action
+            .take()
+            .expect("enabled mouse intent");
+        assert_eq!(intent.action, FileManagerContextMenuAction::Copy);
+        assert_eq!(intent.paths.len(), 2);
+
+        app.state.mode = Mode::Terminal;
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 2));
+        let popup = app.state.context_menu_rect().expect("reopened popup");
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            popup.right(),
+            popup.bottom(),
+        ));
+        assert!(app.state.context_menu.is_none(), "outside click closes");
+
+        app.state.mode = Mode::Terminal;
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 2));
+        assert!(app.state.context_menu.is_some());
+        app.state.close_file_manager();
+        assert!(app.state.context_menu.is_none());
+        assert_ne!(app.state.mode, Mode::ContextMenu);
     }
 }
