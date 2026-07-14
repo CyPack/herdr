@@ -1199,7 +1199,7 @@ mod tests {
         td.file("beta.txt");
         let mut fm = FmState::new(&td.root);
 
-        let directory = compute_file_manager_action_bar_model(&fm, &[]);
+        let directory = compute_file_manager_action_bar_model(&fm, &[], false);
         let selection = directory.selection.as_ref().expect("directory selection");
         assert_eq!(selection.label, "alpha-dir");
         assert_eq!(selection.path, td.root.join("alpha-dir"));
@@ -1208,7 +1208,7 @@ mod tests {
 
         fm.move_down();
         let clipboard = vec![td.root.join("copied-one"), td.root.join("copied-two")];
-        let file = compute_file_manager_action_bar_model(&fm, &clipboard);
+        let file = compute_file_manager_action_bar_model(&fm, &clipboard, false);
         let selection = file.selection.as_ref().expect("file selection");
         assert_eq!(selection.label, "beta.txt");
         assert_eq!(selection.path, td.root.join("beta.txt"));
@@ -1216,7 +1216,8 @@ mod tests {
         assert_eq!(file.clipboard_count, 2);
 
         let empty = TempDir::new("action-bar-empty");
-        let empty_model = compute_file_manager_action_bar_model(&FmState::new(&empty.root), &[]);
+        let empty_model =
+            compute_file_manager_action_bar_model(&FmState::new(&empty.root), &[], false);
         assert!(empty_model.selection.is_none());
         assert_eq!(empty_model.clipboard_count, 0);
     }
@@ -1248,6 +1249,133 @@ mod tests {
             "empty header: {empty_header:?}"
         );
         assert!(!empty_header.contains("selected.txt"));
+    }
+
+    // TP-N3.2-AUTHORITY: prepared selection, clipboard, target writability,
+    // target support, and in-flight state map to explicit action authority.
+    #[test]
+    fn action_bar_authority_is_explicit_and_fail_closed() {
+        use crate::app::state::FileManagerActionDisabledReason;
+
+        let td = TempDir::new("action-authority");
+        td.file("selected.txt");
+        let mut fm = FmState::new(&td.root);
+
+        let base = compute_file_manager_action_bar_model(&fm, &[], false);
+        assert!(
+            base.action_state(FileManagerHeaderAction::Copy)
+                .expect("copy state")
+                .enabled
+        );
+        assert_eq!(
+            base.action_state(FileManagerHeaderAction::Paste)
+                .expect("paste state")
+                .disabled_reason,
+            Some(FileManagerActionDisabledReason::EmptyClipboard)
+        );
+        assert!(
+            base.action_state(FileManagerHeaderAction::NewFolder)
+                .expect("new-folder state")
+                .enabled
+        );
+        assert!(
+            base.action_state(FileManagerHeaderAction::Delete)
+                .expect("delete state")
+                .enabled
+        );
+
+        let clipboard = vec![td.root.join("copied.txt")];
+        let with_clipboard = compute_file_manager_action_bar_model(&fm, &clipboard, false);
+        assert!(
+            with_clipboard
+                .action_state(FileManagerHeaderAction::Paste)
+                .expect("paste state")
+                .enabled
+        );
+
+        let empty = TempDir::new("authority-empty");
+        let no_selection =
+            compute_file_manager_action_bar_model(&FmState::new(&empty.root), &[], false);
+        for action in [
+            FileManagerHeaderAction::Copy,
+            FileManagerHeaderAction::Delete,
+        ] {
+            assert_eq!(
+                no_selection
+                    .action_state(action)
+                    .expect("selection action state")
+                    .disabled_reason,
+                Some(FileManagerActionDisabledReason::NoSelection)
+            );
+        }
+
+        fm.cwd_writable = false;
+        let read_only = compute_file_manager_action_bar_model(&fm, &clipboard, false);
+        assert!(
+            read_only
+                .action_state(FileManagerHeaderAction::Copy)
+                .expect("copy state")
+                .enabled
+        );
+        for action in [
+            FileManagerHeaderAction::Paste,
+            FileManagerHeaderAction::NewFolder,
+            FileManagerHeaderAction::Delete,
+        ] {
+            assert_eq!(
+                read_only
+                    .action_state(action)
+                    .expect("write action state")
+                    .disabled_reason,
+                Some(FileManagerActionDisabledReason::ReadOnlyTarget)
+            );
+        }
+
+        fm.cwd_writable = true;
+        fm.entries[0].operation_supported = false;
+        let unsupported = compute_file_manager_action_bar_model(&fm, &clipboard, false);
+        for action in [
+            FileManagerHeaderAction::Copy,
+            FileManagerHeaderAction::Delete,
+        ] {
+            assert_eq!(
+                unsupported
+                    .action_state(action)
+                    .expect("selection action state")
+                    .disabled_reason,
+                Some(FileManagerActionDisabledReason::UnsupportedSelection)
+            );
+        }
+
+        let in_flight = compute_file_manager_action_bar_model(&fm, &clipboard, true);
+        for action in FileManagerHeaderAction::ALL {
+            assert_eq!(
+                in_flight
+                    .action_state(action)
+                    .expect("in-flight action state")
+                    .disabled_reason,
+                Some(FileManagerActionDisabledReason::OperationInFlight)
+            );
+        }
+    }
+
+    // TP-N3.2-RENDER: disabled authority is visibly distinct and is sourced
+    // from prepared action state rather than label presence or paint output.
+    #[test]
+    fn disabled_header_action_uses_distinct_style() {
+        let td = TempDir::new("disabled-action-style");
+        td.file("selected.txt");
+        let enabled_app = app_with_fm(FmState::new(&td.root));
+        let enabled = render_buffer(&enabled_app, 160, 5);
+
+        let mut disabled_app = app_with_fm(FmState::new(&td.root));
+        disabled_app.file_manager_operation_in_flight = true;
+        let disabled = render_buffer(&disabled_app, 160, 5);
+
+        let copy_x = compute_file_manager_header_action_areas(Rect::new(0, 0, 160, 5))[0]
+            .rect
+            .x;
+        assert_ne!(enabled[(copy_x, 0)].fg, disabled[(copy_x, 0)].fg);
     }
 
     // TP-A2.2.5: the filesystem root has no parent but still renders a stable,

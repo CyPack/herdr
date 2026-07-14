@@ -171,6 +171,7 @@ fn rect_contains(rect: ratatui::layout::Rect, column: u16, row: u16) -> bool {
 mod tests {
     use super::*;
     use crate::app::state::{
+        FileManagerActionBarModel, FileManagerActionDisabledReason, FileManagerActionState,
         FileManagerHeaderAction, FileManagerHeaderActionArea, FileManagerRowArea,
     };
     use crate::fm::FmState;
@@ -285,6 +286,15 @@ mod tests {
                 action: FileManagerHeaderAction::Delete,
             },
         ];
+        app.state.view.file_manager_action_bar = Some(FileManagerActionBarModel {
+            selection: None,
+            clipboard_count: 0,
+            actions: FileManagerHeaderAction::ALL.map(|action| FileManagerActionState {
+                action,
+                enabled: true,
+                disabled_reason: None,
+            }),
+        });
     }
 
     // TP-A3.5: j/k (and arrows) move the cursor within the list.
@@ -617,6 +627,62 @@ mod tests {
             app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 50, 0,)),
             FileManagerMouseDispatch::NotHandled,
             "stale areas cannot dispatch after FM closes"
+        );
+    }
+
+    // TP-N3.2-AUTHORITY: a disabled visible action is consumed without tag,
+    // selection, clipboard, cwd, or filesystem mutation.
+    #[test]
+    fn disabled_header_action_is_consumed_without_side_effects() {
+        let td = TempDir::new("disabled-header-action");
+        td.file("selected.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_wide_header_actions(&mut app);
+        let action_bar = app
+            .state
+            .view
+            .file_manager_action_bar
+            .as_mut()
+            .expect("action bar model");
+        let copy = action_bar
+            .actions
+            .iter_mut()
+            .find(|state| state.action == FileManagerHeaderAction::Copy)
+            .expect("copy state");
+        copy.enabled = false;
+        copy.disabled_reason = Some(FileManagerActionDisabledReason::OperationInFlight);
+
+        let before_cursor = app.state.file_manager.as_ref().expect("open FM").cursor;
+        let before_cwd = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .cwd
+            .clone();
+        let before_clipboard = app.state.file_manager_clipboard.clone();
+        let before_entries = fs::read_dir(&td.root)
+            .expect("read fixture before click")
+            .count();
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 50, 0,)),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.state.file_manager.as_ref().expect("open FM").cursor,
+            before_cursor
+        );
+        assert_eq!(
+            app.state.file_manager.as_ref().expect("open FM").cwd,
+            before_cwd
+        );
+        assert_eq!(app.state.file_manager_clipboard, before_clipboard);
+        assert_eq!(
+            fs::read_dir(&td.root)
+                .expect("read fixture after click")
+                .count(),
+            before_entries
         );
     }
 }
