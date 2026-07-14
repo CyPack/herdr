@@ -87,7 +87,7 @@ code to make it GREEN. Complete one test point before beginning the next.
   (`test: prove native image path beta feasibility`), full-reindex, and
   fast-forward publish to CyPack feature/master only.
 
-## P2 — B1 Text Preview (Verified — Publication Pending)
+## P2 — B1 Text Preview (Verified and Published)
 
 Production code begins only after the matching test point is RED.
 
@@ -218,8 +218,8 @@ buffer content.
 
 ## Ordering Resolution
 
-A4 and B0 are published; B1 is verified and closes with its publication and
-continuity commit. The next execution order is: complete the A3 remainder
+A4, B0, and B1 are published through `a0f82a3`. The next execution order is:
+complete the A3 remainder
 test-point-first; implement B2 under B0's conditional-GO constraints; then execute
 C1 → C2 → C3 → C4 → C5 → C6. S5–S7 and N2 remain evidence-gated deferred
 architecture, while M1–M3 remain inactive north-star work.

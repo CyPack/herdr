@@ -2,8 +2,7 @@
 
 ## 1. SONRAKI ADIM
 
-Finish B1's graph/fast-forward publication if it is not already complete, then
-make TP-A3.2-VIEWPORT RED before production code. Execute the full A3 remainder
+Make TP-A3.2-VIEWPORT RED before production code. Execute the full A3 remainder
 contract in `.codex/TASKS.md` sequentially: viewport/clamp, shared mouse hit
 geometry, click/double-click/wheel dispatch, and v1 single-selection scope.
 
@@ -94,7 +93,9 @@ B1 is an auditable 21-commit test/feature sequence from `439ff2c` through
 `src/app/file_preview_worker.rs`, `src/app/mod.rs`, `src/app/runtime.rs`,
 `src/fm/mod.rs`, `src/fm/text_preview.rs`, and `src/ui/file_manager.rs`.
 Intermediate RED commits are intentional TDD checkpoints; the range tip is
-fully green. The continuity/task files remain a separate commit.
+fully green. Continuity/task commit `a0f82a3` and the complete B1 range were
+fast-forward published to both CyPack `feat/native-fm` and fork `master`; exact
+remote SHAs matched. Upstream was not pushed.
 
 ## 7. TEST KANITI
 
@@ -119,9 +120,8 @@ fully green. The continuity/task files remain a separate commit.
 - Native watching is primary; startup/runtime errors enter explicit polling
   fallback, and all active watchers reconcile every 2 seconds to cover silent
   FUSE/NFS/exFAT-class delivery failures.
-- A4 and B0 are implementation-complete, verified, and published. B1 is
-  implementation-complete and fully verified at `2b2dcd3`; publication must
-  retain the normal graph/FF/remote-SHA discipline.
+- A4, B0, and B1 are implementation-complete, fully verified, graph-indexed,
+  and published to the CyPack fork through `a0f82a3`.
 - B1 uses minimal pure-Rust syntect outside input/render in a dedicated bounded
   worker. Plain prepared content remains availability authority; highlighting
   is optional enhancement and stale generations never mutate current state.

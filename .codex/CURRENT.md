@@ -4,11 +4,10 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Last published continuity checkpoint before this increment: `68abf61`
-  (`docs: record text preview dependency decision`).
-- B1 product/test head ready for fast-forward publication: `2b2dcd3`
-  (`refactor: simplify text preview worker loop`); this continuity/task commit
-  follows it and must be pushed only after graph and ancestry verification.
+- Published B1 continuity checkpoint: `a0f82a3`
+  (`docs: close text preview and plan navigation remainder`).
+- CyPack `feat/native-fm` and fork `master` were both fast-forwarded from
+  `68abf61` to `a0f82a3` and verified at the exact remote SHA.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
 
 ## Completed Checkpoint
@@ -113,13 +112,10 @@
 
 ## Exact Next Action
 
-1. Close B1 publication: full graph reindex, prove current text-preview symbols,
-   fetch and verify fast-forward ancestry, then push CyPack feature and fork
-   master sequentially with exact remote-SHA checks. Never push upstream.
-2. Begin A3 remainder with TP-A3.2-VIEWPORT RED. Follow the complete A3 test
+1. Begin A3 remainder with TP-A3.2-VIEWPORT RED. Follow the complete A3 test
    contract in `.codex/TASKS.md`: viewport/clamp, shared mouse hit geometry,
    click/double-click/wheel dispatch, and explicit v1 single-selection scope.
-3. B2 follows A3 and remains bound by B0's conditional-GO constraints.
+2. B2 follows A3 and remains bound by B0's conditional-GO constraints.
 
 ## Verified Checkpoint — B1 Text Preview
 

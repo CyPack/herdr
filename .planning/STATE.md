@@ -2,7 +2,7 @@
 
 - Updated: 2026-07-14
 - Branch: `feat/native-fm`
-- Last published continuity checkpoint: `68abf61`
+- Published continuity checkpoint: `a0f82a3`
 - Completed local commits:
   - `6c7c58f` A2.2 responsive Miller columns (already pushed)
   - `01ba91d` A4 live filesystem watching (pushed to CyPack feature/master)
@@ -10,11 +10,11 @@
   - `bcba84d` B0 native image Path Beta feasibility (pushed to CyPack
     feature/master)
   - `439ff2c..2b2dcd3` B1 bounded, generation-safe text/syntax preview
-    (fully verified; graph/FF publication is the current close-out action)
+    (fully verified, graph-indexed, and published through continuity commit
+    `a0f82a3` to CyPack feature/master)
 - Continuity/tooling is versioned by the separate commit containing this state
   file.
-- Active increment: close B1 publication, then execute A3 remainder
-  test-point-first.
+- Active increment: execute A3 remainder test-point-first.
 - Canonical current state: `/home/ayaz/projects/herdr/.codex/CURRENT.md`
 - Durable tasks: `/home/ayaz/projects/herdr/.codex/TASKS.md`
 - Full handoff: `/home/ayaz/projects/herdr/.codex/HANDOFF.md`
