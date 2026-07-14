@@ -270,6 +270,7 @@ impl FmState {
         let previous_cursor = self.cursor;
         self.entries = read_dir_entries(&self.cwd, self.show_hidden);
         self.cwd_writable = directory_is_writable(&self.cwd);
+        self.reconcile_multi_selection();
         self.cursor = selected_path
             .as_ref()
             .and_then(|path| self.entries.iter().position(|entry| &entry.path == path))
@@ -395,6 +396,12 @@ impl FmState {
         true
     }
 
+    /// Clear all explicit path identities and their range anchor.
+    pub fn clear_multi_selection(&mut self) {
+        self.multi_selection.paths.clear();
+        self.multi_selection.anchor = None;
+    }
+
     /// Keep the cursor inside a viewport with `visible_rows` entries and clamp
     /// the first rendered row to the current list length. A zero-height or
     /// empty viewport has the canonical start offset 0.
@@ -424,6 +431,7 @@ impl FmState {
             .filter(|entry| entry.is_dir)
             .map(|entry| entry.path.clone());
         if let Some(path) = target {
+            self.clear_multi_selection();
             self.cwd = path;
             self.cursor = 0;
             self.viewport_start = 0;
@@ -434,8 +442,9 @@ impl FmState {
     /// Go to the parent directory, re-reading its contents with the cursor at the
     /// top. A no-op at the filesystem root (no parent).
     pub fn leave(&mut self) {
-        if let Some(parent) = self.cwd.parent() {
-            self.cwd = parent.to_path_buf();
+        if let Some(parent) = self.cwd.parent().map(Path::to_path_buf) {
+            self.clear_multi_selection();
+            self.cwd = parent;
             self.cursor = 0;
             self.viewport_start = 0;
             self.reload();
@@ -453,6 +462,23 @@ impl FmState {
         self.viewport_start = self
             .viewport_start
             .min(self.entries.len().saturating_sub(1));
+    }
+
+    /// Keep only identities present in the current visible list. The anchor is
+    /// independent from membership but must still name a live visible entry.
+    fn reconcile_multi_selection(&mut self) {
+        let entries = &self.entries;
+        self.multi_selection
+            .paths
+            .retain(|path| entries.iter().any(|entry| &entry.path == path));
+        if self
+            .multi_selection
+            .anchor
+            .as_ref()
+            .is_some_and(|anchor| !entries.iter().any(|entry| &entry.path == anchor))
+        {
+            self.multi_selection.anchor = None;
+        }
     }
 
     /// Refresh parent and preview caches after the browsed directory or its
