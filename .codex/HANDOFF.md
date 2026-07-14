@@ -2,11 +2,11 @@
 
 ## 1. SONRAKI ADIM
 
-Make TP-C2.2-ROW-DISPATCH RED before adding row-action input production code.
-Test exact unmodified-left clicks for SendAgent/Rename/Delete, row-name clicks,
-non-left/modified/outside/hidden targets, and watcher reorder/delete between
-view snapshot and input. Coordinates alone are not authority: bind each target
-to stable path identity and fail closed without filesystem mutation.
+Make TP-N4.1-SELECTION-STATE RED before adding multi-selection production
+state. Define cursor-independent path identity plus plain-click, Ctrl-toggle,
+Shift-range, anchor, watcher reorder/delete, hidden toggle, enter/leave, and
+close/reopen policy. Destructive or bulk authority remains out of scope until
+N4.2 and must not be inferred from cursor focus.
 
 ## 2. AKTİF PROJE
 
@@ -139,6 +139,19 @@ to stable path identity and fail closed without filesystem mutation.
   Windows MSVC bin clippy, Bun 17/17, Python 64/64, fmt, and diff-check clean.
   Fast graph reindex is fresh at 18,042 nodes / 84,123 edges and returns the
   new geometry/action symbols; freshness was not inferred from `ready` alone.
+- Completed C2.2 test-first: RED `94e4a02`, GREEN `9ef90c6`. Row action
+  snapshots now carry stable path identity, and exact unmodified-left dispatch
+  requires the live index to match that path and remain operation-supported.
+- Proved exact SendAgent/Rename/Delete tags, unchanged name selection,
+  non-left/modifier/outside/hidden/closed fail-closed behavior, watcher-style
+  reorder rejection, unsupported-target rejection, and zero cwd/cursor/
+  clipboard/filesystem side effects. The outer router consumes tags before
+  hidden terminal input but deliberately executes no real operation.
+- C2.2 gates: exact 3/3, all FM input 17/17, FM impact 74/74, full nextest
+  3001/3001 plus one named B0 probe skip, Linux/Windows clippy, Bun 17/17,
+  Python 64/64, fmt/diff clean. Fast graph reindex is fresh at 18,049 nodes /
+  83,839 edges and returned the current path-bearing area plus validation
+  handler snippets; freshness was not inferred from `ready` alone.
 
 ## 6. KOD DURUMU
 
@@ -230,6 +243,14 @@ C2.1 is an auditable RED/GREEN pair:
 The intermediate RED commit was never pushed alone. This continuity/graph
 commit completes the C2.1 publication unit.
 
+C2.2 is an auditable RED/GREEN pair:
+
+- `94e4a02`: compile-failing stable-path row dispatch contract.
+- `9ef90c6`: exact fail-closed path-and-tag dispatch before terminal input.
+
+The intermediate RED commit was never pushed alone. This continuity/graph
+commit completes the C2.2 publication unit.
+
 ## 7. TEST KANITI
 
 - B1/FM targeted: 64/64.
@@ -276,6 +297,10 @@ commit completes the C2.1 publication unit.
 - C2.1 focused invariant/readability set: 8/8; FM impact: 71/71; final full
   nextest: 2998/2998 plus one named B0 interactive probe skip, no retry-only
   closure. Linux/Windows clippy, Bun 17/17, Python 64/64, fmt/diff clean.
+- C2.2 exact dispatch/stale/no-side-effect: 3/3; all FM input: 17/17; FM impact:
+  74/74; final full nextest: 3001/3001 plus one named B0 interactive probe
+  skip, no retry-only closure. Linux/Windows clippy, Bun 17/17, Python 64/64,
+  fmt/diff clean.
 
 ## 8. KRİTİK KARARLAR
 
@@ -289,7 +314,7 @@ commit completes the C2.1 publication unit.
   FUSE/NFS/exFAT-class delivery failures.
 - A4, B0, B1, A3, and B2 are implementation-complete, fully verified,
   graph-indexed, and published to the CyPack fork.
-- C1, N3, and C2.1 are implementation-complete, fully verified, and
+- C1, N3, and C2 are implementation-complete, fully verified, and
   graph-indexed.
   N3.2 supplies explicit selection/clipboard/target/in-flight authority and
   disabled-click no-side-effect behavior. C4 must still revalidate every real
@@ -313,10 +338,10 @@ commit completes the C2.1 publication unit.
 
 ## 10. AÇIK GÖREVLER
 
-See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2.1 contracts and the
-complete C2.2/N4/C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1,
-N3, and C2.1 are closed. The immediate product task is TP-C2.2-ROW-DISPATCH
-RED; then follow C2.2 → N4 → C3 → C4 → C5 → C6 without skipping modules.
+See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2 contracts and the
+complete N4/C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1, N3,
+and C2 are closed. The immediate product task is TP-N4.1-SELECTION-STATE RED;
+then follow N4.1 → N4.2 → C3 → C4 → C5 → C6 without skipping modules.
 
 ## 11. ORTAM
 
@@ -336,6 +361,10 @@ RED; then follow C2.2 → N4 → C3 → C4 → C5 → C6 without skipping module
   Freshness queries returned `compute_file_manager_row_geometry`,
   `FileManagerRowAction`, and `FileManagerRowActionArea` from their current
   source files. Freshness was not inferred from `ready` alone.
+- Fast post-C2.2 graph reindex completed at 18,049 nodes / 83,839 edges.
+  Freshness queries and snippets returned the current path-bearing
+  `FileManagerRowActionArea` and live path/support validation in
+  `handle_file_manager_mouse`. Freshness was not inferred from `ready` alone.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.

@@ -4,9 +4,9 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Active C2.1 product checkpoint: `9a15328`
-  (`feat: add file manager row action geometry`).
-- The C2.1 publication unit is the RED/GREEN product/test pair and the
+- Active C2.2 product checkpoint: `9ef90c6`
+  (`feat: dispatch file manager row action tags`).
+- The C2.2 publication unit is the RED/GREEN product/test pair and the
   continuity/graph commit containing this file. At publication, CyPack
   `feat/native-fm` and fork `master` are verified at that same fast-forward
   branch tip.
@@ -123,12 +123,32 @@
   nine-cell prototype that truncated ordinary names.
 - Desktop/mobile `compute_view` snapshot the same geometry in `ViewState`;
   component render uses the same pure fallback. Closing FM clears both name
-  and action areas. C2.1 adds no server/wire/filesystem behavior; action cells
-  remain inert and fail closed until C2.2 exact-hit dispatch.
+  and action areas. C2.1 adds no server/wire/filesystem behavior.
 - Fresh gates: focused invariant plus readability regression 8/8; FM impact
   71/71; full nextest 2998/2998 with one named B0 host probe skipped; Linux
   all-target and canonical Windows MSVC bin clippy clean with `-D warnings`;
   Bun 17/17; Python 64/64; fmt/diff clean.
+
+## Verified Checkpoint — C2.2 Stable Row Action Dispatch
+
+- RED contract commit: `94e4a02` (`test: define file manager row action
+  dispatch`). GREEN product commit: `9ef90c6` (`feat: dispatch file manager row
+  action tags`). The compile-failing RED was kept local until GREEN and the
+  complete gate passed.
+- Every `FileManagerRowActionArea` snapshots both absolute visible index and
+  stable `entry_path`. An unmodified left press emits `RowAction { action,
+  entry_path }` only when the live entry at that index still matches the path
+  and remains operation-supported.
+- Watcher-style reorder, unsupported targets, hidden/cleared areas, closed FM,
+  outside/empty regions, non-left presses, and modifiers fail closed. Row-name
+  selection/double-click behavior remains separate and unchanged.
+- The outer mouse router consumes row tags before hidden terminal input. C2.2
+  deliberately performs no SendAgent/Rename/Delete side effect; C4/C5 must
+  provide operation-time authority and TOCTOU/failure handling.
+- Fresh gates: exact dispatch/stale/no-side-effect 3/3; all FM input 17/17; FM
+  impact 74/74; full nextest 3001/3001 with one named B0 host probe skipped;
+  Linux all-target and canonical Windows MSVC bin clippy clean with
+  `-D warnings`; Bun 17/17; Python 64/64; fmt/diff clean.
 
 ## Completed Checkpoint — B2 Native Image Preview
 

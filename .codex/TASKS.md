@@ -241,14 +241,23 @@ authority has one explicit source of truth.
   17/17, Python 64/64, fmt, diff-check, and graph freshness clean. The rejected
   3-cell prototype proved ordinary-name truncation; complete one-cell `>rx`
   targets retain all three tags without crossing the Miller column.
-- [ ] C2.2a make exact unmodified-left row-action classification RED for each
+- [x] C2.2a make exact unmodified-left row-action classification RED for each
   visible tag; row-name, non-left, modified, outside, and hidden targets remain
   non-actions.
-- [ ] C2.2b bind every snapshotted action target to stable path identity and
+- [x] C2.2b bind every snapshotted action target to stable path identity and
   prove watcher reorder/delete and stale-index cases fail closed.
-- [ ] C2.2c route exact row-action tags before terminal input while preserving
+- [x] C2.2c route exact row-action tags before terminal input while preserving
   current row-name selection behavior and performing no filesystem mutation.
-- [ ] N4.1 multi-select state and keyboard/mouse semantics.
+- C2.2 RED `94e4a02`, GREEN `9ef90c6`; exact 3/3, all FM input 17/17, FM
+  impact 74/74, full nextest 3001/3001 with one named B0 probe skipped,
+  Linux/Windows clippy, Bun 17/17, Python 64/64, fmt, diff-check, and graph
+  freshness clean.
+- [ ] N4.1a define cursor-independent, path-identity multi-selection state and
+  make plain/Ctrl-toggle/Shift-range/anchor policy RED before production state.
+- [ ] N4.1b prove watcher reorder/delete, hidden toggle, directory enter/leave,
+  empty transition, and close/reopen prune/lifecycle behavior test-first.
+- [ ] N4.1c route mouse and keyboard selection gestures and project a pure
+  multi-selection visual without granting destructive-operation authority.
 - [ ] N4.2 bulk toolbar and selection-clear/range invariants.
 
 ## P3 — C3 Context Menu
@@ -302,7 +311,7 @@ authority has one explicit source of truth.
 
 ## Ordering Resolution
 
-A4, B0, B1, the A3 remainder, B2, C1, N3, and C2.1 are complete through
-product head `9a15328`. The next execution order is C2.2 → N4 → C3 → C4 → C5
+A4, B0, B1, the A3 remainder, B2, C1, N3, and C2 are complete through
+product head `9ef90c6`. The next execution order is N4.1 → N4.2 → C3 → C4 → C5
 → C6. S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3
 remain inactive north-star work.
