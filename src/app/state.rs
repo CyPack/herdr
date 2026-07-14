@@ -844,21 +844,18 @@ impl FileManagerContextMenuModel {
         let write_reason = prepared_action_disabled_reason(
             action_bar.action_state(FileManagerHeaderAction::Delete),
         );
-        let selection_failure = [copy_reason, write_reason]
-            .into_iter()
-            .flatten()
-            .find(|reason| {
-                matches!(
-                    reason,
-                    FileManagerActionDisabledReason::StaleSelection
-                        | FileManagerActionDisabledReason::UnsupportedSelection
-                        | FileManagerActionDisabledReason::OperationInFlight
-                )
-            })
-            .or_else(|| {
-                matches!(target_kind, FileManagerContextMenuTargetKind::Unavailable)
-                    .then_some(FileManagerActionDisabledReason::StaleSelection)
-            });
+        let selection_reasons = [copy_reason, write_reason];
+        let selection_failure = [
+            FileManagerActionDisabledReason::OperationInFlight,
+            FileManagerActionDisabledReason::StaleSelection,
+            FileManagerActionDisabledReason::UnsupportedSelection,
+        ]
+        .into_iter()
+        .find(|reason| selection_reasons.contains(&Some(*reason)))
+        .or_else(|| {
+            matches!(target_kind, FileManagerContextMenuTargetKind::Unavailable)
+                .then_some(FileManagerActionDisabledReason::StaleSelection)
+        });
 
         let items = FileManagerContextMenuAction::ALL.map(|action| {
             let disabled_reason = if let Some(reason) = selection_failure {
