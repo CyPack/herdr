@@ -280,10 +280,31 @@ authority has one explicit source of truth.
 
 ## P3 — C3 Context Menu
 
-- [ ] C3.1 add file context-menu kind and deterministic item model.
-- [ ] C3.2 right-click popup placement/render/close/focus tests.
-- [ ] C3.3 define the plugin file-action surface without deepening private
-  TUI socket coupling.
+Production code begins only after the matching test point is RED. Reuse the
+existing `ContextMenuKind`/`ContextMenuState` popup lifecycle; do not create a
+parallel FM-only modal stack. C3 models and dispatches action intent only. C4
+owns filesystem mutation and C5 owns agent delivery.
+
+### C3 Test-Point Contract
+
+| Test point | What is tested | Expected result | Why it is required |
+|------------|----------------|-----------------|--------------------|
+| TP-C3.1-CONTEXT-MODEL | Cursor-only/zero, one file, one directory, multiple, stale/ambiguous, unsupported, read-only, and operation-in-flight prepared selection | No explicit selection produces no file menu; otherwise Open/Copy/Rename/Delete/Compress/Send-to-Agent remain in deterministic order with exact enabled/disabled reasons; multiple selection permits only bulk-capable actions; in-flight overrides every item | A context menu cannot invent authority from focus or hide one unsafe member inside an apparently valid bulk action |
+| TP-C3.2-POPUP-GEOMETRY | Right-click first/middle/last visible rows at all Miller breakpoints, screen edges, narrow/zero areas, stale row identity, and background/divider/header/preview regions | Only an exact live current-row identity opens the existing context-menu state; popup clamps inside the screen, keeps complete rows, and never crosses into a hidden terminal target | Watcher reorder plus responsive geometry can otherwise open a menu for the wrong path or place unreachable items off-screen |
+| TP-C3.2-POPUP-LIFECYCLE | Right-click selection policy, hover, Up/Down, Enter, Esc, outside click, FM close, reload delete/reorder, and disabled item activation | Focus/highlight remains bounded; close paths clear menu state; stale/disabled activation is consumed without action or filesystem mutation; enabled items emit only exact intent tags | Existing pane/workspace modal behavior must remain intact while FM-specific state fails closed across watcher and input races |
+| TP-C3.3-PLUGIN-SURFACE | Manifest `contexts=["file"]`, wrong/unknown contexts, disabled plugin, one/many paths, ordering, duplicate action IDs, and invocation context serialization | Valid enabled file actions append deterministically with exact path context; invalid/disabled/duplicate declarations fail closed; shared plugin/runtime facts use neutral API names rather than TUI-only socket fields | Plugin extension is part of the C3 promise and must not deepen the private TUI client boundary or fabricate unsafe filesystem authority |
+| TP-C3-GATES | Focused model/geometry/input/render/plugin tests, existing context-menu regressions, FM/watcher regressions, full nextest, Linux/Windows clippy, Bun/Python maintenance, graph freshness, and diff cleanliness | Every applicable gate passes; the named B0 host probe is the only skip; no stable Herdr/socket or user process is touched | C3 crosses a mature global modal path, so isolated happy-path tests cannot establish production safety |
+
+- [ ] C3.1a add `ContextMenuKind::File` and a deterministic six-item model from
+  prepared N4.2 selection authority; add no popup opening or real action.
+- [ ] C3.1b preserve all existing workspace/tab/pane/project menu item and
+  invariant behavior while adding exact disabled reasons for file items.
+- [ ] C3.2a route exact right-click current-row identity into the existing
+  popup lifecycle with bounded placement and selection policy.
+- [ ] C3.2b render enabled/disabled file items and prove keyboard/mouse close,
+  highlight, stale-target, and no-side-effect dispatch semantics.
+- [ ] C3.3 define and verify the plugin file-action surface without deepening
+  private TUI socket coupling.
 
 ## P3 — C4 Safe File Operations
 
