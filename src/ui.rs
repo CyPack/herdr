@@ -734,6 +734,57 @@ mod tests {
         );
     }
 
+    // TP-A3.2-VIEWPORT: compute_view owns viewport normalization for both
+    // responsive layouts. Shrinking and expanding the available height keeps
+    // the cursor visible and clamps stale offsets to the new maximum.
+    #[test]
+    fn compute_view_normalizes_file_manager_viewport_after_resize() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "herdr-ui-fm-viewport-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).expect("create temp root");
+        for index in 0..10 {
+            std::fs::write(root.join(format!("{index:02}.txt")), b"x")
+                .expect("write viewport fixture");
+        }
+
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.file_manager = Some(crate::fm::FmState::new(&root));
+        app.file_manager.as_mut().expect("open fm").cursor = 8;
+
+        // Desktop: height 7 -> tab bar 1, FM header 1, panel title 1, list 4.
+        compute_view(&mut app, Rect::new(0, 0, 100, 7));
+        assert_eq!(
+            app.file_manager.as_ref().expect("open fm").viewport_start,
+            5
+        );
+
+        // Expanding to nine list rows clamps the old start to max_start=1.
+        compute_view(&mut app, Rect::new(0, 0, 100, 12));
+        assert_eq!(
+            app.file_manager.as_ref().expect("open fm").viewport_start,
+            1
+        );
+
+        // Mobile: height 7 -> mobile header 2, FM header 1, panel title 1,
+        // leaving three visible rows and requiring start=6 for cursor 8.
+        compute_view(&mut app, Rect::new(0, 0, 30, 7));
+        assert_eq!(
+            app.file_manager.as_ref().expect("open fm").viewport_start,
+            6
+        );
+
+        std::fs::remove_dir_all(root).expect("remove temp root");
+    }
+
     // A2 integration: when the file manager is open, the base layer renders the
     // directory list in the center (CenterContent) instead of the terminal panes.
     #[test]

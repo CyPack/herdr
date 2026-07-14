@@ -480,6 +480,105 @@ mod tests {
         assert_eq!(st.cursor, 0);
     }
 
+    // TP-A3.2-VIEWPORT: a three-row viewport follows repeated cursor movement
+    // in both directions, only scrolling when the cursor would leave the
+    // visible window and clamping exactly at the final valid start row.
+    #[test]
+    fn viewport_follows_cursor_and_clamps_at_both_edges() {
+        let td = TempDir::new("viewport-follow");
+        for index in 0..10 {
+            td.file(&format!("{index:02}.txt"));
+        }
+        let mut st = FmState::new(&td.root);
+
+        st.sync_viewport(3);
+        assert_eq!((st.cursor, st.viewport_start), (0, 0));
+
+        for _ in 0..3 {
+            st.move_down();
+            st.sync_viewport(3);
+        }
+        assert_eq!((st.cursor, st.viewport_start), (3, 1));
+
+        for _ in 0..20 {
+            st.move_down();
+            st.sync_viewport(3);
+        }
+        assert_eq!((st.cursor, st.viewport_start), (9, 7));
+
+        for _ in 0..3 {
+            st.move_up();
+            st.sync_viewport(3);
+        }
+        assert_eq!((st.cursor, st.viewport_start), (6, 6));
+
+        for _ in 0..20 {
+            st.move_up();
+            st.sync_viewport(3);
+        }
+        assert_eq!((st.cursor, st.viewport_start), (0, 0));
+    }
+
+    // TP-A3.2-VIEWPORT: degenerate height and asynchronous directory shrink
+    // cannot leave a stale offset beyond the new list; an empty list has the
+    // canonical cursor/viewport pair (0, 0).
+    #[test]
+    fn viewport_handles_zero_rows_reload_shrink_and_empty_list() {
+        let td = TempDir::new("viewport-shrink");
+        for index in 0..5 {
+            td.file(&format!("{index:02}.txt"));
+        }
+        let mut st = FmState::new(&td.root);
+        for _ in 0..4 {
+            st.move_down();
+        }
+        st.sync_viewport(2);
+        assert_eq!((st.cursor, st.viewport_start), (4, 3));
+
+        fs::remove_file(td.root.join("03.txt")).expect("remove penultimate file");
+        fs::remove_file(td.root.join("04.txt")).expect("remove selected file");
+        st.reload();
+        st.sync_viewport(2);
+        assert_eq!((st.cursor, st.viewport_start), (2, 1));
+
+        st.sync_viewport(0);
+        assert_eq!(st.viewport_start, 0);
+
+        for index in 0..3 {
+            fs::remove_file(td.root.join(format!("{index:02}.txt")))
+                .expect("empty directory fixture");
+        }
+        st.reload();
+        st.sync_viewport(2);
+        assert_eq!((st.cursor, st.viewport_start), (0, 0));
+    }
+
+    // TP-A3.2-VIEWPORT: changing directory must not carry an unrelated scroll
+    // anchor into the child or parent listing.
+    #[test]
+    fn enter_and_leave_normalize_viewport_for_new_directory() {
+        let td = TempDir::new("viewport-directory-change");
+        td.dir("sub");
+        td.file("sibling.txt");
+        for index in 0..4 {
+            fs::write(td.root.join("sub").join(format!("{index:02}.txt")), b"x")
+                .expect("write child entry");
+        }
+        let mut st = FmState::new(&td.root);
+        st.viewport_start = usize::MAX;
+
+        st.enter();
+        st.sync_viewport(2);
+        assert_eq!(st.cwd, td.root.join("sub"));
+        assert_eq!((st.cursor, st.viewport_start), (0, 0));
+
+        st.viewport_start = usize::MAX;
+        st.leave();
+        st.sync_viewport(2);
+        assert_eq!(st.cwd, td.root);
+        assert_eq!((st.cursor, st.viewport_start), (0, 0));
+    }
+
     // T-A1.3c: toggling hidden re-reads and changes what is visible.
     #[test]
     fn toggle_hidden_reveals_and_hides_dotfiles() {

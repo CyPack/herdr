@@ -715,6 +715,25 @@ mod tests {
         assert!(!one.contains("PREVIEW"), "preview hides second: {one:?}");
     }
 
+    // TP-A3.2-VIEWPORT: CURRENT consumes the persistent viewport anchor rather
+    // than deriving a new window from the cursor during the pure render pass.
+    #[test]
+    fn current_panel_renders_from_persisted_viewport() {
+        let td = TempDir::new("persisted-viewport");
+        for index in 0..6 {
+            td.file(&format!("{index:02}.txt"));
+        }
+        let mut fm = FmState::new(&td.root);
+        fm.cursor = 4;
+        fm.viewport_start = 3;
+
+        let rows = render_rows(&app_with_fm(fm), 20, 5).join("\n");
+        assert!(!rows.contains("02.txt"), "stale derived window: {rows:?}");
+        assert!(rows.contains("03.txt"), "viewport first row: {rows:?}");
+        assert!(rows.contains("04.txt"), "cursor remains visible: {rows:?}");
+        assert!(rows.contains("05.txt"), "viewport last row: {rows:?}");
+    }
+
     // TP-A2.2.5: the filesystem root has no parent but still renders a stable,
     // explicit parent-column state without panicking.
     #[test]
