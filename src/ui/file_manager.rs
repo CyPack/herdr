@@ -1,24 +1,75 @@
-//! Native file manager — directory-list render (A2).
+//! Native file manager — Miller-capable directory-list render (A2.2).
 //!
-//! Draws the open [`FmState`](crate::fm::FmState) into a rect: a one-row header
-//! with the current directory, then its entries (directories first, natural
-//! order — see `crate::fm`) with the cursor row highlighted. Pure draw (reads
-//! state, never mutates), matching herdr's `compute_view`/`render` split, and it
-//! reuses the same list-row idiom as `render_modal_choice_list` and the sidebar
-//! lists. Client-side presentation only (runtime/client boundary).
+//! Draws the open [`FmState`](crate::fm::FmState) into a rect: a one-row current
+//! directory header followed by responsive parent/current/preview columns. Pure
+//! draw (reads state, never mutates or touches the filesystem), matching herdr's
+//! `compute_view`/`render` split. Client-side presentation only.
 //!
 //! This is the first non-terminal *content* swapped into a named region
 //! (`CenterContent`): when `app.file_manager` is open, the base layer draws this
-//! here instead of the terminal panes. Navigation input, scrolling, previews,
-//! and per-row buttons land in later steps (A3+).
+//! here instead of the terminal panes. Text/image previews and per-row buttons
+//! land in later steps (B1/B2/C2).
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 use super::text::truncate_end;
 use crate::app::state::AppState;
+use crate::fm::{FileEntry, FmPreview};
+
+const MIN_COLUMN_WIDTH: u16 = 12;
+const DIVIDER_WIDTH: u16 = 1;
+const THREE_COLUMN_MIN_WIDTH: u16 = MIN_COLUMN_WIDTH * 3 + DIVIDER_WIDTH * 2;
+const TWO_COLUMN_MIN_WIDTH: u16 = MIN_COLUMN_WIDTH * 2 + DIVIDER_WIDTH;
+
+#[derive(Debug, Clone, Copy)]
+struct MillerLayout {
+    parent: Option<Rect>,
+    current: Rect,
+    preview: Option<Rect>,
+    dividers: [Option<Rect>; 2],
+}
+
+fn miller_layout(area: Rect) -> MillerLayout {
+    if area.width >= THREE_COLUMN_MIN_WIDTH {
+        let [parent, first_divider, current, second_divider, preview] = Layout::horizontal([
+            Constraint::Min(MIN_COLUMN_WIDTH),
+            Constraint::Length(DIVIDER_WIDTH),
+            Constraint::Min(MIN_COLUMN_WIDTH),
+            Constraint::Length(DIVIDER_WIDTH),
+            Constraint::Min(MIN_COLUMN_WIDTH),
+        ])
+        .areas(area);
+        MillerLayout {
+            parent: Some(parent),
+            current,
+            preview: Some(preview),
+            dividers: [Some(first_divider), Some(second_divider)],
+        }
+    } else if area.width >= TWO_COLUMN_MIN_WIDTH {
+        let [current, divider, preview] = Layout::horizontal([
+            Constraint::Min(MIN_COLUMN_WIDTH),
+            Constraint::Length(DIVIDER_WIDTH),
+            Constraint::Min(MIN_COLUMN_WIDTH),
+        ])
+        .areas(area);
+        MillerLayout {
+            parent: None,
+            current,
+            preview: Some(preview),
+            dividers: [Some(divider), None],
+        }
+    } else {
+        MillerLayout {
+            parent: None,
+            current: area,
+            preview: None,
+            dividers: [None, None],
+        }
+    }
+}
 
 /// Render the open file manager into `area`. Does nothing when the file manager
 /// is closed (`app.file_manager` is `None`) or the area is empty, so callers can
@@ -32,8 +83,9 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
     }
     let p = &app.palette;
 
-    // A one-row header (current directory) above the entry list.
-    let [header_area, list_area] =
+    // A one-row identity header stays stable while responsive Miller columns
+    // progressively disclose parent and preview context below it.
+    let [header_area, body_area] =
         Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
 
     let cwd_text = fm.cwd.to_string_lossy();
@@ -43,28 +95,120 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         header_area,
     );
 
+    if body_area.height == 0 {
+        return;
+    }
+
+    let layout = miller_layout(body_area);
+    for divider in layout.dividers.into_iter().flatten() {
+        frame.render_widget(
+            Block::default()
+                .borders(Borders::LEFT)
+                .border_style(Style::default().fg(p.surface1)),
+            divider,
+        );
+    }
+
+    if let Some(parent_area) = layout.parent {
+        if let Some(parent) = fm.parent.as_ref() {
+            render_panel(
+                app,
+                frame,
+                parent_area,
+                "PARENT",
+                &parent.entries,
+                parent.cursor,
+                "(empty)",
+            );
+        } else {
+            render_panel(app, frame, parent_area, "PARENT", &[], None, "(root)");
+        }
+    }
+
+    render_panel(
+        app,
+        frame,
+        layout.current,
+        "CURRENT",
+        &fm.entries,
+        (!fm.entries.is_empty()).then_some(fm.cursor),
+        "(empty)",
+    );
+
+    if let Some(preview_area) = layout.preview {
+        match &fm.preview {
+            FmPreview::None => render_panel(
+                app,
+                frame,
+                preview_area,
+                "PREVIEW",
+                &[],
+                None,
+                "(nothing selected)",
+            ),
+            FmPreview::File => render_panel(
+                app,
+                frame,
+                preview_area,
+                "PREVIEW",
+                &[],
+                None,
+                "(file preview later)",
+            ),
+            FmPreview::Directory(entries) => render_panel(
+                app,
+                frame,
+                preview_area,
+                "PREVIEW",
+                entries,
+                None,
+                "(empty)",
+            ),
+        }
+    }
+}
+
+fn render_panel(
+    app: &AppState,
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    entries: &[FileEntry],
+    selected: Option<usize>,
+    empty_label: &str,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let p = &app.palette;
+    let [title_area, list_area] =
+        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+    let title = truncate_end(&format!(" {title}"), title_area.width as usize);
+    frame.render_widget(
+        Paragraph::new(title).style(Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD)),
+        title_area,
+    );
+
     if list_area.height == 0 {
         return;
     }
-    if fm.entries.is_empty() {
+    if entries.is_empty() {
+        let label = truncate_end(&format!("  {empty_label}"), list_area.width as usize);
         frame.render_widget(
-            Paragraph::new("  (empty)").style(Style::default().fg(p.overlay1)),
+            Paragraph::new(label).style(Style::default().fg(p.overlay1)),
             list_area,
         );
         return;
     }
 
     // Show a window of entries that keeps the cursor visible. Persistent scroll
-    // state lands with navigation (A3); here the window is derived from the
-    // cursor so a long list still renders the highlighted row.
+    // state lands later; the window is derived so highlighted context remains
+    // visible even in long parent/current directories.
     let rows = list_area.height as usize;
-    let first = if fm.cursor < rows {
-        0
-    } else {
-        fm.cursor - rows + 1
-    };
+    let cursor = selected.unwrap_or(0).min(entries.len() - 1);
+    let first = if cursor < rows { 0 } else { cursor - rows + 1 };
 
-    for (offset, entry) in fm.entries.iter().skip(first).take(rows).enumerate() {
+    for (offset, entry) in entries.iter().skip(first).take(rows).enumerate() {
         let idx = first + offset;
         let row = Rect::new(list_area.x, list_area.y + offset as u16, list_area.width, 1);
         let suffix = if entry.is_dir { "/" } else { "" };
@@ -72,7 +216,7 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
             &format!("  {}{}", entry.name, suffix),
             list_area.width as usize,
         );
-        let style = if idx == fm.cursor {
+        let style = if selected.is_some_and(|selected| idx == selected) {
             Style::default()
                 .bg(p.surface0)
                 .fg(p.text)
@@ -91,6 +235,7 @@ mod tests {
     use super::*;
     use crate::fm::FmState;
     use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
     use ratatui::Terminal;
     use std::fs;
     use std::path::PathBuf;
@@ -140,11 +285,7 @@ mod tests {
     /// Render into a (w, h) TestBackend and return each row as a right-trimmed
     /// string.
     fn render_rows(app: &AppState, w: u16, h: u16) -> Vec<String> {
-        let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
-        terminal
-            .draw(|frame| render_file_manager(app, frame, Rect::new(0, 0, w, h)))
-            .unwrap();
-        let buffer = terminal.backend().buffer().clone();
+        let buffer = render_buffer(app, w, h);
         (0..h)
             .map(|y| {
                 (0..w)
@@ -154,6 +295,157 @@ mod tests {
                     .to_string()
             })
             .collect()
+    }
+
+    fn render_buffer(app: &AppState, w: u16, h: u16) -> Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+        terminal
+            .draw(|frame| render_file_manager(app, frame, Rect::new(0, 0, w, h)))
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    // TP-A2.2.1/2/3: a directory selection renders parent, current, and child
+    // context side by side. Both the cwd in its parent and the selected child
+    // in the current directory are visibly highlighted.
+    #[test]
+    fn miller_columns_render_parent_current_and_directory_preview() {
+        let td = TempDir::new("miller");
+        td.dir("work");
+        td.file("parent-peer.txt");
+        fs::create_dir_all(td.root.join("work").join("child")).expect("create child dir");
+        fs::write(td.root.join("work").join("current.txt"), b"x").expect("write current file");
+        fs::write(td.root.join("work").join("child").join("preview.txt"), b"x")
+            .expect("write preview file");
+
+        let app = app_with_fm(FmState::new(td.root.join("work")));
+        let rows = render_rows(&app, 80, 8);
+        let joined = rows.join("\n");
+
+        assert!(joined.contains("PARENT"), "parent title: {rows:?}");
+        assert!(joined.contains("CURRENT"), "current title: {rows:?}");
+        assert!(joined.contains("PREVIEW"), "preview title: {rows:?}");
+        assert!(joined.contains("work/"), "cwd shown in parent: {rows:?}");
+        assert!(
+            joined.contains("current.txt"),
+            "current entries shown: {rows:?}"
+        );
+        assert!(
+            joined.contains("preview.txt"),
+            "selected directory contents shown: {rows:?}"
+        );
+
+        let buffer = render_buffer(&app, 80, 8);
+        assert_eq!(
+            buffer[(2, 2)].bg,
+            app.palette.surface0,
+            "cwd row is highlighted in the parent column"
+        );
+        let first_divider = (0..80)
+            .find(|&x| buffer[(x, 2)].symbol() == "│")
+            .expect("first Miller divider");
+        assert_eq!(
+            buffer[(first_divider + 3, 2)].bg,
+            app.palette.surface0,
+            "selected row is highlighted in the current column"
+        );
+    }
+
+    // TP-A2.2.3: file selections reserve the preview seam without pretending
+    // that text preview has landed already.
+    #[test]
+    fn file_selection_renders_explicit_preview_placeholder() {
+        let td = TempDir::new("file-preview");
+        td.file("selected.txt");
+        let app = app_with_fm(FmState::new(&td.root));
+
+        let rows = render_rows(&app, 80, 6);
+        assert!(
+            rows.iter().any(|row| row.contains("(file preview later)")),
+            "file preview seam is explicit: {rows:?}"
+        );
+    }
+
+    // TP-A2.2.4/N1: at forty columns the two one-cell dividers leave all three
+    // content columns at least twelve cells wide.
+    #[test]
+    fn forty_columns_preserve_three_readable_miller_columns() {
+        let td = TempDir::new("forty-columns");
+        td.dir("child");
+        let app = app_with_fm(FmState::new(&td.root));
+        let buffer = render_buffer(&app, 40, 6);
+        let dividers: Vec<u16> = (0..40)
+            .filter(|&x| buffer[(x, 2)].symbol() == "│")
+            .collect();
+
+        assert_eq!(dividers.len(), 2, "three columns need two dividers");
+        let widths = [
+            dividers[0],
+            dividers[1] - dividers[0] - 1,
+            40 - dividers[1] - 1,
+        ];
+        assert!(
+            widths.iter().all(|&width| width >= 12),
+            "all Miller columns remain readable: {widths:?}"
+        );
+    }
+
+    // TP-A2.2.4: when three minimum-width columns cannot fit, parent context is
+    // progressively disclosed first; current and preview remain readable.
+    #[test]
+    fn narrower_areas_degrade_to_two_then_one_column() {
+        let td = TempDir::new("responsive-columns");
+        td.dir("child");
+        let app = app_with_fm(FmState::new(&td.root));
+
+        let two = render_rows(&app, 30, 6).join("\n");
+        assert!(!two.contains("PARENT"), "parent is hidden first: {two:?}");
+        assert!(two.contains("CURRENT"), "current remains: {two:?}");
+        assert!(two.contains("PREVIEW"), "preview remains: {two:?}");
+
+        let one = render_rows(&app, 20, 6).join("\n");
+        assert!(!one.contains("PARENT"), "parent stays hidden: {one:?}");
+        assert!(one.contains("CURRENT"), "current remains: {one:?}");
+        assert!(!one.contains("PREVIEW"), "preview hides second: {one:?}");
+    }
+
+    // TP-A2.2.5: the filesystem root has no parent but still renders a stable,
+    // explicit parent-column state without panicking.
+    #[test]
+    fn filesystem_root_renders_no_parent_state() {
+        let app = app_with_fm(FmState::new("/"));
+        let rows = render_rows(&app, 40, 5);
+        assert!(
+            rows.iter().any(|row| row.contains("(root)")),
+            "root parent state is explicit: {rows:?}"
+        );
+    }
+
+    // TP-A2.2.3: moving the cursor refreshes the directory preview; stale child
+    // contents from the previous selection must not survive.
+    #[test]
+    fn cursor_movement_refreshes_directory_preview() {
+        let td = TempDir::new("preview-cursor");
+        td.dir("alpha");
+        td.dir("beta");
+        fs::write(td.root.join("alpha").join("alpha-only.txt"), b"x").expect("write alpha preview");
+        fs::write(td.root.join("beta").join("beta-only.txt"), b"x").expect("write beta preview");
+        let mut fm = FmState::new(&td.root);
+
+        let alpha = render_rows(&app_with_fm(fm.clone()), 80, 6).join("\n");
+        assert!(alpha.contains("alpha-only.txt"), "alpha preview: {alpha:?}");
+        assert!(
+            !alpha.contains("beta-only.txt"),
+            "beta is not stale: {alpha:?}"
+        );
+
+        fm.move_down();
+        let beta = render_rows(&app_with_fm(fm), 80, 6).join("\n");
+        assert!(beta.contains("beta-only.txt"), "beta preview: {beta:?}");
+        assert!(
+            !beta.contains("alpha-only.txt"),
+            "alpha is not stale: {beta:?}"
+        );
     }
 
     // TP-A2.2: an open file manager renders its entries, directories first, each
@@ -195,9 +487,21 @@ mod tests {
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
 
-        // Header is row 0; entries start at row 1: a.txt (row 1), b.txt (row 2).
-        let cursor_row = 2u16;
-        let other_row = 1u16;
+        let rows: Vec<String> = (0..4)
+            .map(|y| {
+                (0..20)
+                    .map(|x| buffer[(x, y)].symbol().chars().next().unwrap_or(' '))
+                    .collect()
+            })
+            .collect();
+        let cursor_row = rows
+            .iter()
+            .position(|row| row.contains("b.txt"))
+            .expect("b.txt row") as u16;
+        let other_row = rows
+            .iter()
+            .position(|row| row.contains("a.txt"))
+            .expect("a.txt row") as u16;
         assert_eq!(
             buffer[(2, cursor_row)].bg,
             app.palette.surface0,

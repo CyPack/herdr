@@ -25,6 +25,28 @@ pub struct FileEntry {
     pub is_dir: bool,
 }
 
+/// Parent-directory context for the left Miller column.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FmParent {
+    /// Ordered entries of `cwd.parent()`.
+    pub entries: Vec<FileEntry>,
+    /// Position of `cwd` in `entries`. This can be `None` when the parent is
+    /// unreadable or changes between the directory read and state refresh.
+    pub cursor: Option<usize>,
+}
+
+/// Cached content for the right Miller column. Keeping this in [`FmState`]
+/// preserves the project's pure-render boundary: rendering never reads disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FmPreview {
+    /// The current directory has no selected entry.
+    None,
+    /// The selected entry is a file; text preview lands in B1.
+    File,
+    /// The selected entry is a directory and these are its ordered children.
+    Directory(Vec<FileEntry>),
+}
+
 /// Read the immediate children of `dir`: directories first, then files, each
 /// group in natural (human) order. When `show_hidden` is false, dot-prefixed
 /// names are dropped.
@@ -102,6 +124,10 @@ pub struct FmState {
     pub cursor: usize,
     /// Whether dot-prefixed entries are shown.
     pub show_hidden: bool,
+    /// Cached parent-directory context for the left Miller column.
+    pub parent: Option<FmParent>,
+    /// Cached selected-entry context for the right Miller column.
+    pub preview: FmPreview,
 }
 
 impl FmState {
@@ -114,12 +140,16 @@ impl FmState {
     pub fn with_hidden(cwd: impl Into<PathBuf>, show_hidden: bool) -> Self {
         let cwd = cwd.into();
         let entries = read_dir_entries(&cwd, show_hidden);
-        Self {
+        let mut state = Self {
             cwd,
             entries,
             cursor: 0,
             show_hidden,
-        }
+            parent: None,
+            preview: FmPreview::None,
+        };
+        state.refresh_context();
+        state
     }
 
     /// Re-read the current directory, keeping `show_hidden` and clamping the
@@ -127,6 +157,7 @@ impl FmState {
     pub fn reload(&mut self) {
         self.entries = read_dir_entries(&self.cwd, self.show_hidden);
         self.clamp_cursor();
+        self.refresh_context();
     }
 
     /// Toggle hidden-file visibility and re-read the directory.
@@ -144,12 +175,17 @@ impl FmState {
     pub fn move_down(&mut self) {
         if self.cursor + 1 < self.entries.len() {
             self.cursor += 1;
+            self.refresh_preview();
         }
     }
 
     /// Move the cursor up one row, stopping at the top.
     pub fn move_up(&mut self) {
+        let previous = self.cursor;
         self.cursor = self.cursor.saturating_sub(1);
+        if self.cursor != previous {
+            self.refresh_preview();
+        }
     }
 
     /// Descend into the selected entry when it is a directory, re-reading its
@@ -184,6 +220,55 @@ impl FmState {
         } else if self.cursor >= self.entries.len() {
             self.cursor = self.entries.len() - 1;
         }
+    }
+
+    /// Refresh parent and preview caches after the browsed directory or its
+    /// entries change. Filesystem I/O stays here, outside the render pass.
+    fn refresh_context(&mut self) {
+        self.parent = self.read_parent_context();
+        self.refresh_preview();
+    }
+
+    fn read_parent_context(&self) -> Option<FmParent> {
+        let parent_path = self.cwd.parent()?;
+        let mut entries = read_dir_entries(parent_path, self.show_hidden);
+        let current_name = self.cwd.file_name().and_then(|name| name.to_str());
+        let mut cursor = entries.iter().position(|entry| {
+            entry.path == self.cwd || current_name.is_some_and(|name| entry.name == name)
+        });
+
+        // A user can browse inside a dot-directory while hidden entries are
+        // disabled. Add only cwd back into the parent context; do not reveal
+        // unrelated hidden siblings merely to keep the highlight visible.
+        if cursor.is_none()
+            && current_name.is_some_and(|name| name.starts_with('.'))
+            && !self.show_hidden
+        {
+            if let Some(current) = read_dir_entries(parent_path, true)
+                .into_iter()
+                .find(|entry| {
+                    entry.path == self.cwd || current_name.is_some_and(|name| entry.name == name)
+                })
+            {
+                entries.push(current);
+                sort_entries(&mut entries);
+                cursor = entries.iter().position(|entry| {
+                    entry.path == self.cwd || current_name.is_some_and(|name| entry.name == name)
+                });
+            }
+        }
+
+        Some(FmParent { entries, cursor })
+    }
+
+    fn refresh_preview(&mut self) {
+        self.preview = match self.selected() {
+            None => FmPreview::None,
+            Some(entry) if entry.is_dir => {
+                FmPreview::Directory(read_dir_entries(&entry.path, self.show_hidden))
+            }
+            Some(_) => FmPreview::File,
+        };
     }
 }
 
@@ -419,5 +504,63 @@ mod tests {
         let mut st = FmState::new("/");
         st.leave();
         assert_eq!(st.cwd, PathBuf::from("/"));
+    }
+
+    // TP-A2.2.2/3: Miller context is loaded into pure state before render. The
+    // parent cursor identifies cwd and a selected directory exposes its child
+    // entries without filesystem access from the renderer.
+    #[test]
+    fn miller_context_loads_parent_cursor_and_directory_preview() {
+        let td = TempDir::new("miller-context");
+        td.dir("work");
+        fs::create_dir_all(td.root.join("work").join("child")).expect("create child");
+        fs::write(td.root.join("work").join("child").join("inside.txt"), b"x")
+            .expect("write preview file");
+        let st = FmState::new(td.root.join("work"));
+
+        let parent = st.parent.as_ref().expect("parent context");
+        let parent_cursor = parent.cursor.expect("cwd in parent entries");
+        assert_eq!(parent.entries[parent_cursor].name, "work");
+        match &st.preview {
+            FmPreview::Directory(entries) => {
+                assert!(entries.iter().any(|entry| entry.name == "inside.txt"));
+            }
+            other => panic!("directory selection needs directory preview, got {other:?}"),
+        }
+    }
+
+    // TP-A2.2.3: a selected file is explicitly classified; it is not confused
+    // with an empty directory preview.
+    #[test]
+    fn miller_context_classifies_file_preview() {
+        let td = TempDir::new("file-context");
+        td.file("only.txt");
+        let st = FmState::new(&td.root);
+        assert!(matches!(st.preview, FmPreview::File));
+    }
+
+    // TP-A2.2.5: filesystem root has no parent context.
+    #[test]
+    fn miller_context_at_root_has_no_parent() {
+        let st = FmState::new("/");
+        assert!(st.parent.is_none());
+    }
+
+    // No-happy-path: entering a dot-directory while hidden files are disabled
+    // must not erase cwd from its own parent context.
+    #[test]
+    fn hidden_cwd_remains_visible_in_parent_context() {
+        let td = TempDir::new("hidden-cwd");
+        td.dir(".work");
+        td.dir("visible-peer");
+        let st = FmState::new(td.root.join(".work"));
+
+        let parent = st.parent.as_ref().expect("parent context");
+        let parent_cursor = parent.cursor.expect("hidden cwd in parent entries");
+        assert_eq!(parent.entries[parent_cursor].name, ".work");
+        assert!(parent
+            .entries
+            .iter()
+            .any(|entry| entry.name == "visible-peer"));
     }
 }
