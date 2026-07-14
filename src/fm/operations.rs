@@ -444,6 +444,7 @@ pub(crate) enum FileOperationIoAction {
     CopyData,
     SetPermissions,
     Publish,
+    RemoveSource,
     Cleanup,
 }
 
@@ -460,7 +461,6 @@ pub(crate) enum FileOperationExecutionError {
         source: PathBuf,
         limit: usize,
     },
-    MoveNotImplemented,
     Io {
         path: PathBuf,
         action: FileOperationIoAction,
@@ -473,6 +473,7 @@ pub(crate) enum FileOperationItemOutcome {
     NotStarted,
     Committed,
     RolledBack,
+    SourceRetained(FileOperationExecutionError),
     Failed(FileOperationExecutionError),
 }
 
@@ -517,6 +518,7 @@ impl FileOperationExecutionResult {
 pub(crate) enum FileOperationPhase {
     StagingEntry,
     Committing,
+    RemovingSource,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -549,19 +551,51 @@ enum CopyWorkItem {
     },
 }
 
+pub(crate) trait FileOperationHost {
+    fn publish_no_replace(&mut self, source: &Path, destination: &Path) -> io::Result<()>;
+    fn remove_source(&mut self, source: &Path) -> io::Result<()>;
+}
+
+struct RealFileOperationHost;
+
+impl FileOperationHost for RealFileOperationHost {
+    fn publish_no_replace(&mut self, source: &Path, destination: &Path) -> io::Result<()> {
+        crate::platform::publish_staged_path_no_replace(source, destination)
+    }
+
+    fn remove_source(&mut self, source: &Path) -> io::Result<()> {
+        remove_path(source)
+    }
+}
+
 pub(crate) fn execute_file_operation(
     plan: &FileOperationPlan,
     cancellation: &FileOperationCancellation,
 ) -> FileOperationExecutionResult {
-    execute_file_operation_with_observer(plan, cancellation, |_| {})
+    let mut host = RealFileOperationHost;
+    execute_file_operation_with_host(plan, cancellation, &mut host, |_| {})
 }
 
 pub(crate) fn execute_file_operation_with_observer<F>(
     plan: &FileOperationPlan,
     cancellation: &FileOperationCancellation,
+    observer: F,
+) -> FileOperationExecutionResult
+where
+    F: FnMut(&FileOperationProgressEvent),
+{
+    let mut host = RealFileOperationHost;
+    execute_file_operation_with_host(plan, cancellation, &mut host, observer)
+}
+
+pub(crate) fn execute_file_operation_with_host<H, F>(
+    plan: &FileOperationPlan,
+    cancellation: &FileOperationCancellation,
+    host: &mut H,
     mut observer: F,
 ) -> FileOperationExecutionResult
 where
+    H: FileOperationHost,
     F: FnMut(&FileOperationProgressEvent),
 {
     let mut result = FileOperationExecutionResult {
@@ -581,13 +615,13 @@ where
         result.status = FileOperationExecutionStatus::Cancelled;
         return result;
     }
-    if plan.kind != FileOperationKind::Copy {
-        fail_first_unstarted(&mut result, FileOperationExecutionError::MoveNotImplemented);
-        return result;
-    }
     if let Err(error) = plan.revalidate() {
         fail_first_unstarted(&mut result, FileOperationExecutionError::Preflight(error));
         return result;
+    }
+
+    if plan.kind == FileOperationKind::Move {
+        return execute_move_after_preflight(plan, cancellation, host, &mut observer, result);
     }
 
     let operation_id = next_operation_id();
@@ -648,10 +682,7 @@ where
             result.status = FileOperationExecutionStatus::Cancelled;
             return result;
         }
-        if let Err(error) = crate::platform::publish_staged_path_no_replace(
-            &staged_transfer.payload,
-            &item.destination,
-        ) {
+        if let Err(error) = host.publish_no_replace(&staged_transfer.payload, &item.destination) {
             let execution_error = FileOperationExecutionError::Io {
                 path: item.destination.clone(),
                 action: FileOperationIoAction::Publish,
@@ -669,6 +700,150 @@ where
             item.outcome = FileOperationItemOutcome::Committed;
         }
         committed.push(item_index);
+    }
+
+    result.status = FileOperationExecutionStatus::Completed;
+    result
+}
+
+fn execute_move_after_preflight<H, F>(
+    plan: &FileOperationPlan,
+    cancellation: &FileOperationCancellation,
+    host: &mut H,
+    observer: &mut F,
+    mut result: FileOperationExecutionResult,
+) -> FileOperationExecutionResult
+where
+    H: FileOperationHost,
+    F: FnMut(&FileOperationProgressEvent),
+{
+    let operation_id = next_operation_id();
+    for (item_index, transfer) in plan.transfers.iter().enumerate() {
+        if cancellation.is_cancelled() {
+            result.status = FileOperationExecutionStatus::Cancelled;
+            return result;
+        }
+        observer(&FileOperationProgressEvent {
+            phase: FileOperationPhase::Committing,
+            source: transfer.source.clone(),
+            destination: transfer.destination.clone(),
+        });
+        if cancellation.is_cancelled() {
+            result.status = FileOperationExecutionStatus::Cancelled;
+            return result;
+        }
+
+        match host.publish_no_replace(&transfer.source, &transfer.destination) {
+            Ok(()) => {
+                if let Some(item) = result.items.get_mut(item_index) {
+                    item.outcome = FileOperationItemOutcome::Committed;
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+                let staged_transfer = match stage_transfer(
+                    plan,
+                    transfer,
+                    item_index,
+                    operation_id,
+                    cancellation,
+                    observer,
+                ) {
+                    Ok(staged_transfer) => staged_transfer,
+                    Err(StageFailure::Cancelled { container }) => {
+                        cleanup_path(&container);
+                        result.status = FileOperationExecutionStatus::Cancelled;
+                        return result;
+                    }
+                    Err(StageFailure::Failed { container, error }) => {
+                        cleanup_path(&container);
+                        if let Some(item) = result.items.get_mut(item_index) {
+                            item.outcome = FileOperationItemOutcome::Failed(error);
+                        }
+                        return result;
+                    }
+                };
+
+                if cancellation.is_cancelled() {
+                    cleanup_path(&staged_transfer.container);
+                    result.status = FileOperationExecutionStatus::Cancelled;
+                    return result;
+                }
+                observer(&FileOperationProgressEvent {
+                    phase: FileOperationPhase::Committing,
+                    source: transfer.source.clone(),
+                    destination: transfer.destination.clone(),
+                });
+                if cancellation.is_cancelled() {
+                    cleanup_path(&staged_transfer.container);
+                    result.status = FileOperationExecutionStatus::Cancelled;
+                    return result;
+                }
+                if let Err(error) =
+                    host.publish_no_replace(&staged_transfer.payload, &transfer.destination)
+                {
+                    cleanup_path(&staged_transfer.container);
+                    if let Some(item) = result.items.get_mut(item_index) {
+                        item.outcome =
+                            FileOperationItemOutcome::Failed(FileOperationExecutionError::Io {
+                                path: transfer.destination.clone(),
+                                action: FileOperationIoAction::Publish,
+                                kind: error.kind(),
+                            });
+                    }
+                    return result;
+                }
+                cleanup_path(&staged_transfer.container);
+
+                observer(&FileOperationProgressEvent {
+                    phase: FileOperationPhase::RemovingSource,
+                    source: transfer.source.clone(),
+                    destination: transfer.destination.clone(),
+                });
+                if cancellation.is_cancelled() {
+                    let rollback_error = remove_path(&transfer.destination).err();
+                    if let Some(item) = result.items.get_mut(item_index) {
+                        item.outcome = match rollback_error {
+                            None => FileOperationItemOutcome::RolledBack,
+                            Some(error) => FileOperationItemOutcome::SourceRetained(
+                                FileOperationExecutionError::Io {
+                                    path: transfer.destination.clone(),
+                                    action: FileOperationIoAction::Cleanup,
+                                    kind: error.kind(),
+                                },
+                            ),
+                        };
+                    }
+                    result.status = FileOperationExecutionStatus::Cancelled;
+                    return result;
+                }
+                if let Err(error) = host.remove_source(&transfer.source) {
+                    if let Some(item) = result.items.get_mut(item_index) {
+                        item.outcome = FileOperationItemOutcome::SourceRetained(
+                            FileOperationExecutionError::Io {
+                                path: transfer.source.clone(),
+                                action: FileOperationIoAction::RemoveSource,
+                                kind: error.kind(),
+                            },
+                        );
+                    }
+                    return result;
+                }
+                if let Some(item) = result.items.get_mut(item_index) {
+                    item.outcome = FileOperationItemOutcome::Committed;
+                }
+            }
+            Err(error) => {
+                if let Some(item) = result.items.get_mut(item_index) {
+                    item.outcome =
+                        FileOperationItemOutcome::Failed(FileOperationExecutionError::Io {
+                            path: transfer.destination.clone(),
+                            action: FileOperationIoAction::Publish,
+                            kind: error.kind(),
+                        });
+                }
+                return result;
+            }
+        }
     }
 
     result.status = FileOperationExecutionStatus::Completed;
@@ -877,16 +1052,20 @@ fn cleanup_staged(staged: &[StagedTransfer]) {
 }
 
 fn cleanup_path(path: &Path) {
-    let Ok(metadata) = fs::symlink_metadata(path) else {
-        return;
-    };
-    let result = if metadata.is_dir() && !metadata.file_type().is_symlink() {
+    if let Err(error) = remove_path(path) {
+        if error.kind() == io::ErrorKind::NotFound {
+            return;
+        }
+        tracing::warn!(?path, %error, "fm: failed to clean file-operation staging path");
+    }
+}
+
+fn remove_path(path: &Path) -> io::Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
         fs::remove_dir_all(path)
     } else {
         fs::remove_file(path)
-    };
-    if let Err(error) = result {
-        tracing::warn!(?path, %error, "fm: failed to clean file-operation staging path");
     }
 }
 
