@@ -117,6 +117,8 @@ mod tests {
     };
     use crate::app::Mode;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::layout::Rect;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -175,6 +177,15 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn click(rect: Rect) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x,
+            row: rect.y,
+            modifiers: KeyModifiers::NONE,
+        }
     }
 
     // TP-C4.2-CONFIRM: header Delete snapshots current prepared path order into
@@ -349,5 +360,50 @@ mod tests {
         assert_eq!(app.state.mode, Mode::Navigate);
         assert_eq!(fs::read(first_path).expect("first preserved"), b"first");
         assert_eq!(fs::read(second_path).expect("second preserved"), b"second");
+    }
+
+    // TP-C4.2-CONFIRM: only named modal button geometry may advance or emit
+    // delete authority. A click outside is consumed without falling through
+    // to the file manager underneath.
+    #[test]
+    fn delete_confirmation_mouse_buttons_are_bounded_and_fail_closed() {
+        let td = TempDir::new("mouse-bounds");
+        let source = td.file("selected.txt", b"selected");
+        let mut app = test_app(&td.root);
+        let paths = select_all(&mut app);
+        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Delete));
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 100, 30));
+
+        app.handle_mouse(click(Rect::new(0, 0, 1, 1)));
+        assert_eq!(app.state.mode, Mode::ConfirmFileDelete);
+        assert!(app.state.request_file_manager_delete.is_none());
+
+        let inner = crate::ui::file_delete_confirmation_inner_rect(app.state.view.terminal_area)
+            .expect("delete modal geometry");
+        let (_, permanent, _) = crate::ui::file_delete_choose_button_rects(inner);
+        app.handle_mouse(click(permanent));
+        assert_eq!(
+            app.state
+                .file_manager_delete_confirmation
+                .as_ref()
+                .expect("second-stage confirmation")
+                .stage,
+            FileManagerDeleteConfirmationStage::ConfirmPermanent
+        );
+        assert!(app.state.request_file_manager_delete.is_none());
+
+        let (confirm, _) = crate::ui::file_delete_permanent_button_rects(inner);
+        app.handle_mouse(click(confirm));
+        let request = app
+            .state
+            .request_file_manager_delete
+            .as_ref()
+            .expect("mouse-confirmed permanent request");
+        assert_eq!(request.kind, FileManagerDeleteKind::Permanent);
+        assert_eq!(request.paths, paths);
+        assert_eq!(
+            fs::read(source).expect("UI request preserves source"),
+            b"selected"
+        );
     }
 }

@@ -762,7 +762,10 @@ mod tests {
     };
     use ratatui::{backend::TestBackend, layout::Rect, Terminal};
 
-    use super::{confirm_close_overlay_text, render_new_linked_worktree_overlay};
+    use super::{
+        confirm_close_overlay_text, render_file_delete_confirmation_overlay,
+        render_new_linked_worktree_overlay,
+    };
 
     #[test]
     fn confirm_close_text_reports_parent_group_scope() {
@@ -838,5 +841,59 @@ mod tests {
         assert_eq!(inner.height, super::NEW_LINKED_WORKTREE_POPUP_HEIGHT - 2);
         assert_eq!(create.y, inner.y + inner.height - 1);
         assert_eq!(cancel.y, inner.y + inner.height - 1);
+    }
+
+    fn rendered_delete_confirmation(
+        stage: crate::app::state::FileManagerDeleteConfirmationStage,
+    ) -> String {
+        let mut app = AppState::test_new();
+        app.mode = crate::app::Mode::ConfirmFileDelete;
+        app.file_manager_delete_confirmation =
+            Some(crate::app::state::FileManagerDeleteConfirmation {
+                paths: vec!["/tmp/alpha".into(), "/tmp/beta".into()],
+                stage,
+            });
+        let mut terminal =
+            Terminal::new(TestBackend::new(100, 30)).expect("test terminal should initialize");
+        terminal
+            .draw(|frame| {
+                render_file_delete_confirmation_overlay(&app, frame, Rect::new(0, 0, 100, 30))
+            })
+            .expect("delete confirmation should render");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    // TP-C4.2-CONFIRM: the first modal makes reversible and irreversible
+    // choices explicit and reports the exact bounded selection size.
+    #[test]
+    fn file_delete_choose_action_renders_distinct_safe_choices() {
+        let rendered = rendered_delete_confirmation(
+            crate::app::state::FileManagerDeleteConfirmationStage::ChooseAction,
+        );
+
+        assert!(rendered.contains("Delete 2 selected items?"));
+        assert!(rendered.contains("move to trash"));
+        assert!(rendered.contains("delete permanently"));
+        assert!(rendered.contains("cancel"));
+    }
+
+    // TP-C4.2-CONFIRM: irreversible authority has a visibly separate second
+    // gate and cannot be mistaken for the default trash action.
+    #[test]
+    fn file_delete_permanent_stage_renders_irreversible_warning() {
+        let rendered = rendered_delete_confirmation(
+            crate::app::state::FileManagerDeleteConfirmationStage::ConfirmPermanent,
+        );
+
+        assert!(rendered.contains("Permanent deletion cannot be undone"));
+        assert!(rendered.contains("confirm permanent delete"));
+        assert!(rendered.contains("cancel"));
+        assert!(!rendered.contains("move to trash"));
     }
 }
