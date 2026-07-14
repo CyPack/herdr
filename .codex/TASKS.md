@@ -329,10 +329,24 @@ owns filesystem mutation and C5 owns agent delivery.
 | TP-C4.1-MOVE | Same-filesystem rename, cross-filesystem fallback, collision, source/destination replacement, partial copy, cancellation, and source-removal failure | Same-filesystem move uses atomic rename where supported; fallback commits verified copy before source removal; source is never deleted after failed/incomplete copy; any partial terminal state is explicit and recoverable | Cross-device moves turn one apparent action into copy plus destructive delete and require a stronger commit boundary |
 | TP-C4.1-LIFECYCLE | Bounded worker/queue, one in-flight operation, progress monotonicity, cancel idempotence, FM close/reopen, stale completion generation, and panic/error conversion | Filesystem work stays outside render; memory/work concurrency is bounded; stale callbacks cannot mutate current state; every operation reaches one explicit terminal state | A responsive TUI must not trade UI liveness for unsafe background mutation or accept late results into new state |
 | TP-C4.1-WATCHER | Own-operation watcher bursts, rename/create/delete reorder, reconciliation deadline, selection pruning, and polling fallback | Watcher and explicit completion converge to one current listing without duplicate entries, stale selection, hot retry, or lost terminal result | Native operations and watcher refresh race by design and must have a deterministic reconciliation owner |
+| TP-C4.2-CONFIRM | Header/context destructive intents, current path/order authority, explicit trash versus permanent-delete choice, stale dialog, FM close/reopen, and operation-in-flight state | No destructive worker plan exists before a current explicit confirmation; stale, unsupported, missing, reordered, or in-flight authority fails closed | A click snapshot must never become delayed destructive authority |
+| TP-C4.2-TRASH | File/directory/multi-source trash, symlink-as-link behavior, missing/replaced paths, backend unavailable/permission failures, cancellation boundaries, and platform result mapping | Default destructive action moves exact entries to platform trash without following symlinks; every item has an explicit terminal result and failures preserve remaining sources | Trash is the recoverable default but platform backends can partially fail and must not be reported as all-or-nothing success |
+| TP-C4.2-DELETE | Separately gated permanent delete for file, empty/non-empty directory, symlink, read-only/permission failure, replacement race, cancellation, and partial progress | Permanent deletion is never implicit, requires stronger confirmation, revalidates identity immediately before mutation, never follows symlinks, and reports irreversible partial completion exactly | Permanent delete has no rollback boundary and therefore needs stronger authority and failure accounting than trash |
+| TP-C4.2-RECOVERY | Worker panic/disconnect, partial multi-item terminal state, watcher event reorder/burst, selection pruning, retry, and temp-artifact scan | UI remains responsive; completed items, retained sources, and failed items stay distinguishable; current listing converges once without hot retry or leaked staging data | Destructive partial failure must remain understandable and recoverable instead of looking like a clean success |
 | TP-C4-GATES | Focused preflight/copy/move/failure/cancel/watcher tests, isolated real-filesystem cross-check, existing FM/context/plugin regressions, full nextest, Linux/Windows clippy, Bun/Python maintenance, graph freshness, temp-artifact and diff cleanliness | All applicable gates pass; only the named B0 host probe is skipped; no stable Herdr/socket or user process is touched; no staging/temp artifact remains | Destructive-capable filesystem work cannot be closed by happy-path unit tests alone |
 
-- [ ] C4.1 copy/move outside render, with collision, permission, partial-write,
+- [x] C4.1 copy/move outside render, with collision, permission, partial-write,
   cancellation, and cross-filesystem tests.
+- C4.1 RED/GREEN chain: preflight `386ddce`/`a9f022b`, staged COPY
+  `47c753e`/`2848d97`, safe MOVE `e422d03`/`606d7ea`, bounded worker
+  `f1590be`/`88cda7f`, and App lifecycle `626b7c3`/`98c51e4`.
+- C4.1 exact-path preflight is immutable and revalidated; COPY stages then
+  no-replace publishes, MOVE prefers same-filesystem rename and uses
+  copy-before-delete on EXDEV. The App owns one persistent worker lane and a
+  pure generation/status projection; completion reloads only the matching cwd.
+- C4.1 gates: operation core 15/15, App/worker 8/8, broad FM/watcher/preview
+  147/147, full nextest 3064/3064 plus one named B0 skip, Linux/Windows clippy,
+  Bun 17/17, Python 64/64, fmt/diff/temp clean. Fresh graph: 18,453 / 86,399.
 - [ ] C4.2 trash/delete with confirmation, symlink, missing-path, and rollback
   policy; destructive permanent delete is never implicit.
 - [ ] C4.3 rename and bulk-rename validation, conflicts, and atomicity limits.
@@ -369,12 +383,12 @@ owns filesystem mutation and C5 owns agent delivery.
 - [ ] M1 FM-interactive CLI attachment buttons.
 - [ ] M2 git-worktree management buttons.
 - [ ] M3 general panel/page/button super-interface evaluation.
-- These remain north-star items and must not preempt active N4.2/C3–C6 work.
+- These remain north-star items and must not preempt active C4–C6 work.
 
 ## Ordering Resolution
 
-A4, B0, B1, the A3 remainder, B2, C1, N3, C2, N4.2, C3.1, C3.2, and C3.3
-are complete through product head `3c11369`. The next execution order is C4 →
-C5 → C6.
+A4, B0, B1, the A3 remainder, B2, C1, N3, C2, N4.2, C3.1, C3.2, C3.3,
+and C4.1 are complete through product head `98c51e4`. The next execution order
+is C4.2 → C4.3 → C4.4 → C5 → C6.
 S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3 remain
 inactive north-star work.

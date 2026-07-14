@@ -2,9 +2,9 @@
 
 - Updated: 2026-07-15
 - Branch: `feat/native-fm`
-- Published CyPack base: `e4af288`
-- Verified C3.3 product head: `3c11369`
-- Publication unit: C3.3 RED `0e06181`, GREEN `3c11369`, plus the continuity/graph commit
+- Published CyPack base: `445add3`
+- Verified C4.1 product head: `98c51e4`
+- Publication unit: C4.1 five RED/GREEN pairs through `98c51e4`, plus the continuity/graph commit
   containing this file. Push only CyPack `feat/native-fm` and fork `master`
   after fast-forward ancestry and exact remote-SHA verification.
 
@@ -24,22 +24,25 @@
 - C3.3 enabled/available/host-supported plugin file actions, deterministic
   ordering, exact public path context, activation-time disable-race checks,
   non-UTF-8 fail-closed behavior, and display-width-aware dynamic labels.
+- C4.1 immutable exact-path preflight, staged no-replace COPY, atomic/EXDEV-safe
+  MOVE, bounded single-lane worker, pure generation/terminal state, header and
+  context Copy authority, Paste dispatch, and matching-cwd reconciliation.
 
 ## Active Next Increment
 
-TP-C4.1-PREFLIGHT must be RED before production changes.
+TP-C4.2-CONFIRM must be RED before production changes.
 
 Test points:
 
-- Exact prepared source identity must be revalidated immediately before work.
-- Collision/same-path/descendant/read-only/permission/symlink cases fail before
-  mutation; no implicit overwrite and no implicit symlink traversal.
-- Copy publishes only complete staged destinations and cleans failure/cancel.
-- Move uses same-filesystem rename where possible; cross-filesystem fallback
-  commits copy before any source removal and reports partial terminal states.
-- Worker/queue/progress/cancel are bounded, generation-safe, and outside render.
-- Watcher completion/reconciliation converges without stale selection or
-  duplicate entries; isolated tests leave no temp artifact.
+- Trash versus permanent delete must be explicit and confirmed from current
+  exact path/order authority; a stale dialog or closed FM fails closed.
+- Trash is the recoverable default; symlinks are moved as links, never followed.
+- Missing/replaced/read-only/backend/permission failures and partial multi-item
+  results retain exact per-item state; no destructive success is inferred.
+- Permanent delete is a separately gated irreversible path with stronger
+  confirmation, immediate identity revalidation, and cancellation boundaries.
+- Completion and watcher bursts converge without stale selection, duplicate
+  entries, hot retry, or leaked temp artifacts.
 
 ## Ordered Roadmap
 
@@ -55,18 +58,18 @@ Test points:
 5. North-star backlog: M1 interactive CLI attachments, M2 git-worktree
    controls, M3 general panel/page/button interface evaluation.
 
-## Fresh C3.3 Evidence
+## Fresh C4.1 Evidence
 
-- Focused C3.3 8/8; plugin/context 35/35; FM/watcher/global-menu 112/112.
-- Full nextest 3041/3041; only `path_beta_real_host_probe` skipped.
+- Operation core 15/15; App/worker 8/8; FM/watcher/preview 147/147.
+- Full nextest 3064/3064; only `path_beta_real_host_probe` skipped.
 - Linux all-target and canonical Windows MSVC bin clippy clean with
   `-D warnings`.
 - Bun 17/17; Python maintenance 64/64; fmt and diff-check clean.
-- Generated next API schema is current; protocol stays 16 because the extension
-  is optional JSON API data, not a private transport-frame change.
-- Graph refresh: 18,246 nodes / 85,535 edges. Supported `CBM_WORKERS=1`
+- Isolated real-filesystem COPY/MOVE/failure/cancel/reopen tests left no
+  operation, staging, or preflight temp artifact.
+- Graph refresh: 18,453 nodes / 86,399 edges. Supported `CBM_WORKERS=1`
   one-shot CLI completed with zero extraction errors and returned current
-  selector, typed params, Unicode geometry, and disable-race source evidence.
+  operation state, dispatch/sync methods, and exact source snippet.
 
 ## Non-Negotiable Boundaries
 

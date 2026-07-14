@@ -2,12 +2,12 @@
 
 ## 1. SONRAKI ADIM
 
-Make TP-C4.1-PREFLIGHT RED before production changes. Graph-first inspect the
-existing operation/request/worker seams, then prove exact source/destination
-revalidation, collision/same-path/descendant/read-only/permission/symlink
-failure, and in-flight exclusion before the first write. Continue COPY then
-MOVE in separate RED/GREEN commits; cross-filesystem fallback must commit copy
-before source removal and every failure/cancel must have explicit cleanup.
+Make TP-C4.2-CONFIRM RED before production changes. Graph-first inspect the
+existing confirmation modal, typed file intents, bounded operation/result
+model, platform seams, and selected trash backend API. Prove exact current
+path authority, explicit Trash versus Permanent Delete choice, stale-dialog
+rejection, symlink no-follow policy, partial failure evidence, and in-flight
+exclusion before the first destructive mutation.
 
 ## 2. AKTİF PROJE
 
@@ -228,6 +228,17 @@ before source removal and every failure/cancel must have explicit cleanup.
   112/112, full 3041/3041 plus only `path_beta_real_host_probe` skipped,
   Linux/Windows clippy, Bun 17/17, Python 64/64, schema/fmt/diff clean. Graph
   is fresh at 18,246 nodes / 85,535 edges with current snippets.
+- Completed C4.1 as five RED/GREEN pairs: preflight `386ddce`/`a9f022b`,
+  staged COPY `47c753e`/`2848d97`, safe MOVE `e422d03`/`606d7ea`, bounded
+  worker `f1590be`/`88cda7f`, and App lifecycle `626b7c3`/`98c51e4`.
+  Preflight revalidates exact identities before writes; COPY staged-publishes
+  without replacement; MOVE is atomic on one filesystem and copy-before-delete
+  on EXDEV. Panic/cancel/partial results are explicit and render stays pure.
+- Header/context Copy share exact clipboard authority. Paste owns one App
+  worker lane and matching-cwd reconciliation; close/reopen cannot project old
+  entries. C4.1 gates: core 15/15, App/worker 8/8, broad 147/147, full
+  3064/3064 plus one named B0 skip, Linux/Windows clippy, Bun 17/17, Python
+  64/64, fmt/diff/temp clean. Fresh graph: 18,453 / 86,399.
 
 ## 6. KOD DURUMU
 
@@ -345,7 +356,7 @@ C3.2 is an auditable six-commit sequence:
 - `1078215` / `0915964`: disabled/highlight-safe render RED/GREEN.
 
 No RED checkpoint is published alone. This continuity/graph commit completes
-the C3.3 publication unit before both CyPack heads are fast-forwarded.
+the C4.1 publication unit before both CyPack heads are fast-forwarded.
 
 ## 7. TEST KANITI
 
@@ -409,6 +420,10 @@ the C3.3 publication unit before both CyPack heads are fast-forwarded.
   final full nextest 3041/3041 plus only the named B0 host probe skip. Linux
   all-target and canonical Windows MSVC bin clippy, Bun 17/17, Python 64/64,
   generated schema, fmt, and diff-check are clean.
+- C4.1 operation core 15/15, App/worker 8/8, broad FM/watcher/preview 147/147;
+  final full nextest 3064/3064 plus only the named B0 host probe skip. Linux
+  all-target and canonical Windows MSVC bin clippy, Bun 17/17, Python 64/64,
+  fmt/diff/temp checks, and graph freshness are clean.
 
 ## 8. KRİTİK KARARLAR
 
@@ -462,8 +477,8 @@ the C3.3 publication unit before both CyPack heads are fast-forwarded.
 
 See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2/N4 contracts and the
 complete C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1, N3,
-C2, N4, C3.1, C3.2, and C3.3 are closed. The immediate product task is
-TP-C4.1-PREFLIGHT RED; then follow C4.1 COPY/MOVE → C4.2 → C4.3 → C4.4 → C5
+C2, N4, C3.1, C3.2, C3.3, and C4.1 are closed. The immediate product task is
+TP-C4.2-CONFIRM RED; then follow C4.2 → C4.3 → C4.4 → C5
 → C6 without skipping modules. S5–S7/N2 remain evidence-gated; M1–M3 remain
 north-star backlog.
 

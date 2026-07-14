@@ -4,11 +4,11 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Active C3.3 product checkpoint: `3c11369`
-  (`feat: add plugin file actions to native file manager`).
-- The C3.3 publication unit is RED `0e06181`, GREEN `3c11369`, the preceding
-  C3.1/C3.2 range, and the
-  continuity/graph commit containing this file. At publication, CyPack
+- Active C4.1 product checkpoint: `98c51e4`
+  (`feat: integrate bounded native file operations`).
+- The C4.1 publication unit is five RED/GREEN pairs from `386ddce` through
+  `98c51e4`, plus the continuity/graph commit containing this file. At
+  publication, CyPack
   `feat/native-fm` and fork `master` are verified at that same fast-forward
   branch tip.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
@@ -288,6 +288,27 @@
   nodes / 85,535 edges. Search and snippets returned current selector,
   typed-param method, Unicode geometry test, and disable-race input test.
 
+## Verified Checkpoint — C4.1 Safe Copy/Move and App Lifecycle
+
+- C4.1 is five atomic RED/GREEN pairs: immutable preflight
+  `386ddce`/`a9f022b`, staged COPY `47c753e`/`2848d97`, safe MOVE
+  `e422d03`/`606d7ea`, bounded worker `f1590be`/`88cda7f`, and App lifecycle
+  `626b7c3`/`98c51e4`. No RED checkpoint is published alone.
+- Preflight snapshots exact file identity and destination authority, rejects
+  collision/same-path/descendant/symlink/non-UTF-8/read-only/in-flight cases,
+  and revalidates before the first write. COPY publishes staged complete trees
+  with platform no-replace primitives. MOVE uses atomic same-filesystem rename
+  and EXDEV copy-before-delete; partial source-removal failure is explicit.
+- One App-owned persistent worker lane converts panic/cancel/disconnect into
+  terminal state. Header and context Copy share exact clipboard authority;
+  Paste starts no second lane, runs outside render, and reloads only a matching
+  destination cwd, so close/reopen cannot project stale entries.
+- Gates: operation core 15/15, App/worker 8/8, broad FM/watcher/preview
+  147/147, full nextest 3064/3064 with only the named B0 probe skipped,
+  Linux/Windows clippy, Bun 17/17, Python 64/64, fmt/diff/temp clean. Supported
+  single-worker graph refresh is fresh at 18,453 nodes / 86,399 edges and
+  returns current operation state, dispatch, sync, and exact source snippets.
+
 ## Completed Checkpoint — B2 Native Image Preview
 
 - B2 is an auditable dependency decision plus four RED/GREEN increments and a
@@ -434,6 +455,9 @@
   returned current `file_manifest_actions`, `plugin_invocation_params`, Unicode
   popup geometry, and end-to-end disable-race evidence; `ready` alone was not
   accepted.
+- Post-C4.1 sequential refresh completed at 18,453 nodes / 86,399 edges and
+  returned current `FileManagerOperationState`, header dispatch, scheduled
+  sync, and exact source snippet; `ready` alone was not accepted.
 
 ## Standing Git Authorization
 
@@ -445,15 +469,15 @@
 
 ## Exact Next Action
 
-1. Begin TP-C4.1-PREFLIGHT RED before production changes. Graph-first inspect
-   existing operation/request/worker seams, then characterize exact source
-   snapshots, destination collision/same-path/descendant checks, missing or
-   replaced targets, read-only/permission failures, symlink no-follow policy,
-   and operation-in-flight exclusion. Expected: an immutable bounded plan or
-   fail-before-write with no render I/O and no filesystem mutation.
-2. Continue C4.1 COPY then MOVE RED/GREEN in separate atomic commits. Copy must
-   stage and clean partial outputs; move must prefer same-filesystem rename and
-   never remove a source before a cross-filesystem destination is committed.
+1. Begin C4.2 test-point-first. Graph-first inspect existing confirmation modal,
+   typed file intents, bounded operation result model, platform seams, and the
+   selected trash backend API before any dependency or production edit.
+2. Make TP-C4.2-CONFIRM RED first: destructive intent must require current exact
+   path authority plus explicit Trash/Permanent Delete confirmation; stale,
+   reordered, missing, unsupported, closed-FM, and in-flight cases fail closed.
+3. Continue TP-C4.2-TRASH RED/GREEN, then permanent delete separately. Trash is
+   the recoverable default, symlinks are handled as links rather than followed,
+   and every partial platform failure must retain per-item terminal evidence.
 
 ## Verified B2.0 Dependency Decision
 
