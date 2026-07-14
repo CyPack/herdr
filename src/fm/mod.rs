@@ -11,9 +11,12 @@
 //! Design docs: `.local/prd/native-fm/` (A1-fs-reader.md, 00-MODULE-TREE.md).
 
 mod natsort;
+mod text_preview;
 pub(crate) mod watcher;
 
 use std::path::{Path, PathBuf};
+
+use text_preview::{read_text_preview, TextPreviewLimits};
 
 /// One entry in a browsed directory. Pure, cloneable data for rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]
