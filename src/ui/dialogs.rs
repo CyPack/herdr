@@ -15,6 +15,8 @@ use crate::app::{state::WorktreeOpenState, AppState, Mode};
 
 const NEW_LINKED_WORKTREE_POPUP_WIDTH: u16 = 68;
 const NEW_LINKED_WORKTREE_POPUP_HEIGHT: u16 = 12;
+const FILE_DELETE_POPUP_WIDTH: u16 = 76;
+const FILE_DELETE_POPUP_HEIGHT: u16 = 8;
 
 pub(crate) fn rename_button_rects(inner: Rect) -> (Rect, Rect, Rect) {
     let rects = action_button_row_rects(
@@ -728,6 +730,168 @@ pub(super) fn render_confirm_close_overlay(app: &AppState, frame: &mut Frame, ar
                 .bg(app.palette.surface0)
                 .add_modifier(Modifier::BOLD),
         );
+    }
+}
+
+pub(crate) fn file_delete_confirmation_inner_rect(area: Rect) -> Option<Rect> {
+    centered_popup_rect(area, FILE_DELETE_POPUP_WIDTH, FILE_DELETE_POPUP_HEIGHT).map(|popup| {
+        Rect::new(
+            popup.x + 1,
+            popup.y + 1,
+            popup.width.saturating_sub(2),
+            popup.height.saturating_sub(2),
+        )
+    })
+}
+
+pub(crate) fn file_delete_choose_button_rects(inner: Rect) -> (Rect, Rect, Rect) {
+    let rects = action_button_row_rects(
+        inner,
+        &[
+            ActionButtonSpec {
+                hint: Some("t"),
+                label: "move to trash",
+            },
+            ActionButtonSpec {
+                hint: Some("d"),
+                label: "delete permanently",
+            },
+            ActionButtonSpec {
+                hint: Some("esc"),
+                label: "cancel",
+            },
+        ],
+        2,
+        inner.height.saturating_sub(1),
+    );
+    (rects[0], rects[1], rects[2])
+}
+
+pub(crate) fn file_delete_permanent_button_rects(inner: Rect) -> (Rect, Rect) {
+    let rects = action_button_row_rects(
+        inner,
+        &[
+            ActionButtonSpec {
+                hint: Some("↵"),
+                label: "confirm permanent delete",
+            },
+            ActionButtonSpec {
+                hint: Some("esc"),
+                label: "cancel",
+            },
+        ],
+        2,
+        inner.height.saturating_sub(1),
+    );
+    (rects[0], rects[1])
+}
+
+pub(super) fn render_file_delete_confirmation_overlay(
+    app: &AppState,
+    frame: &mut Frame,
+    area: Rect,
+) {
+    use crate::app::state::FileManagerDeleteConfirmationStage;
+
+    let Some(confirmation) = app.file_manager_delete_confirmation.as_ref() else {
+        return;
+    };
+    super::dim_background(frame, area);
+    let Some(inner) = render_modal_shell(
+        frame,
+        area,
+        FILE_DELETE_POPUP_WIDTH,
+        FILE_DELETE_POPUP_HEIGHT,
+        &app.palette,
+    ) else {
+        return;
+    };
+    if inner.height < 5 {
+        return;
+    }
+
+    let count = confirmation.paths.len();
+    let noun = if count == 1 { "item" } else { "items" };
+    render_modal_header(
+        frame,
+        Rect::new(inner.x, inner.y, inner.width, 1),
+        &format!("Delete {count} selected {noun}?"),
+        &app.palette,
+    );
+
+    let detail_rect = Rect::new(inner.x, inner.y + 2, inner.width, 1);
+    match confirmation.stage {
+        FileManagerDeleteConfirmationStage::ChooseAction => {
+            frame.render_widget(
+                Paragraph::new(
+                    " Choose a reversible trash action or continue to permanent deletion.",
+                )
+                .style(Style::default().fg(app.palette.overlay0)),
+                detail_rect,
+            );
+            let (trash, permanent, cancel) = file_delete_choose_button_rects(inner);
+            render_action_button(
+                frame,
+                trash,
+                Some("t"),
+                "move to trash",
+                Style::default()
+                    .fg(panel_contrast_fg(&app.palette))
+                    .bg(app.palette.accent)
+                    .add_modifier(Modifier::BOLD),
+            );
+            render_action_button(
+                frame,
+                permanent,
+                Some("d"),
+                "delete permanently",
+                Style::default()
+                    .fg(app.palette.text)
+                    .bg(app.palette.surface0)
+                    .add_modifier(Modifier::BOLD),
+            );
+            render_action_button(
+                frame,
+                cancel,
+                Some("esc"),
+                "cancel",
+                Style::default()
+                    .fg(app.palette.text)
+                    .bg(app.palette.surface0)
+                    .add_modifier(Modifier::BOLD),
+            );
+        }
+        FileManagerDeleteConfirmationStage::ConfirmPermanent => {
+            frame.render_widget(
+                Paragraph::new(" Permanent deletion cannot be undone.").style(
+                    Style::default()
+                        .fg(app.palette.red)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                detail_rect,
+            );
+            let (confirm, cancel) = file_delete_permanent_button_rects(inner);
+            render_action_button(
+                frame,
+                confirm,
+                Some("↵"),
+                "confirm permanent delete",
+                Style::default()
+                    .fg(panel_contrast_fg(&app.palette))
+                    .bg(app.palette.red)
+                    .add_modifier(Modifier::BOLD),
+            );
+            render_action_button(
+                frame,
+                cancel,
+                Some("esc"),
+                "cancel",
+                Style::default()
+                    .fg(app.palette.text)
+                    .bg(app.palette.surface0)
+                    .add_modifier(Modifier::BOLD),
+            );
+        }
     }
 }
 

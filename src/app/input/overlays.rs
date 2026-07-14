@@ -1,4 +1,4 @@
-use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     layout::Rect,
     widgets::{Block, Borders},
@@ -20,6 +20,55 @@ fn rect_contains(rect: Rect, col: u16, row: u16) -> bool {
 
 impl App {
     pub(super) fn handle_overlay_mouse(&mut self, mouse: MouseEvent) -> bool {
+        if self.state.mode == Mode::ConfirmFileDelete {
+            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                let stage = self
+                    .state
+                    .file_manager_delete_confirmation
+                    .as_ref()
+                    .map(|confirmation| confirmation.stage);
+                if let (Some(stage), Some(inner)) = (
+                    stage,
+                    crate::ui::file_delete_confirmation_inner_rect(self.state.view.terminal_area),
+                ) {
+                    use crate::app::state::FileManagerDeleteConfirmationStage;
+                    let code = match stage {
+                        FileManagerDeleteConfirmationStage::ChooseAction => {
+                            let (trash, permanent, cancel) =
+                                crate::ui::file_delete_choose_button_rects(inner);
+                            if rect_contains(trash, mouse.column, mouse.row) {
+                                Some(KeyCode::Char('t'))
+                            } else if rect_contains(permanent, mouse.column, mouse.row) {
+                                Some(KeyCode::Char('d'))
+                            } else if rect_contains(cancel, mouse.column, mouse.row) {
+                                Some(KeyCode::Esc)
+                            } else {
+                                None
+                            }
+                        }
+                        FileManagerDeleteConfirmationStage::ConfirmPermanent => {
+                            let (confirm, cancel) =
+                                crate::ui::file_delete_permanent_button_rects(inner);
+                            if rect_contains(confirm, mouse.column, mouse.row) {
+                                Some(KeyCode::Enter)
+                            } else if rect_contains(cancel, mouse.column, mouse.row) {
+                                Some(KeyCode::Esc)
+                            } else {
+                                None
+                            }
+                        }
+                    };
+                    if let Some(code) = code {
+                        self.handle_file_manager_delete_confirmation_key(KeyEvent::new(
+                            code,
+                            KeyModifiers::NONE,
+                        ));
+                    }
+                }
+            }
+            return true;
+        }
+
         if self.state.mode == Mode::ReleaseNotes {
             match mouse.kind {
                 MouseEventKind::Down(MouseButton::Left)
