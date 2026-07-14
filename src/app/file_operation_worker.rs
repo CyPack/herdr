@@ -239,6 +239,10 @@ fn lock_state(state: &Mutex<FileOperationWorkerState>) -> MutexGuard<'_, FileOpe
 #[cfg(test)]
 mod tests {
     use super::{FileOperationStartError, FileOperationWorker, FileOperationWorkerError};
+    use crate::app::state::{
+        FileManagerContextActionIntent, FileManagerContextMenuAction, FileManagerHeaderAction,
+        FileManagerOperationStatus,
+    };
     use crate::fm::operations::{
         execute_file_operation, FileOperationCancellation, FileOperationExecutionStatus,
         FileOperationKind, FileOperationPlan, FileOperationRequest,
@@ -308,6 +312,17 @@ mod tests {
             assert!(Instant::now() < deadline, "worker completion timed out");
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    fn test_app() -> crate::app::App {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        crate::app::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        )
     }
 
     // TP-C4.1-LIFECYCLE: one bounded lane rejects concurrent work and reopens
@@ -404,5 +419,220 @@ mod tests {
         let completion = wait_for_completion(&mut worker);
         assert_eq!(completion.generation, second_generation);
         assert_eq!(completion.result, Err(FileOperationWorkerError::Panicked));
+    }
+
+    // TP-C4.1-LIFECYCLE: Copy consumes the current live selection identity
+    // only. Preparing clipboard content performs no filesystem mutation and
+    // does not create an operation generation.
+    #[test]
+    fn app_copy_action_prepares_exact_selection_without_filesystem_work() {
+        let td = TempDir::new("app-copy-action");
+        let first = td.root.join("first.txt");
+        let second = td.root.join("second.txt");
+        fs::write(&first, b"first").expect("write first selection fixture");
+        fs::write(&second, b"second").expect("write second selection fixture");
+        let mut app = test_app();
+        let mut file_manager = crate::fm::FmState::new(&td.root);
+        let first_idx = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == first)
+            .expect("first selection row");
+        let second_idx = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == second)
+            .expect("second selection row");
+        assert!(file_manager.replace_selection(first_idx));
+        assert!(file_manager.toggle_selection(second_idx));
+        app.state.file_manager = Some(file_manager);
+        let before_first = fs::read(&first).expect("read first before copy action");
+        let before_second = fs::read(&second).expect("read second before copy action");
+
+        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Copy));
+
+        assert_eq!(
+            app.state.file_manager_clipboard,
+            vec![first.clone(), second.clone()]
+        );
+        assert!(app.state.file_manager_operation.is_none());
+        assert_eq!(
+            fs::read(first).expect("read first after copy action"),
+            before_first
+        );
+        assert_eq!(
+            fs::read(second).expect("read second after copy action"),
+            before_second
+        );
+    }
+
+    // TP-C4.1-LIFECYCLE/WATCHER: Paste starts one background generation,
+    // rejects concurrent work, publishes the copy, reaches one terminal state,
+    // and explicitly reloads only the destination currently shown by the FM.
+    #[test]
+    fn app_paste_is_single_lane_and_completion_reloads_matching_destination() {
+        let td = TempDir::new("app-paste-lifecycle");
+        let source_root = td.root.join("sources");
+        let destination = td.root.join("destination");
+        fs::create_dir(&source_root).expect("create source root");
+        fs::create_dir(&destination).expect("create destination root");
+        let source = source_root.join("payload.txt");
+        fs::write(&source, b"payload").expect("write paste source");
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let worker = FileOperationWorker::with_executor(
+            Arc::new(Notify::new()),
+            move |plan, cancellation| {
+                started_tx.send(()).expect("signal paste started");
+                release_rx.recv().expect("release paste");
+                execute_file_operation(plan, cancellation)
+            },
+        );
+        let mut app = test_app();
+        app.file_operation_worker = worker;
+        app.state.file_manager = Some(crate::fm::FmState::new(&destination));
+        app.state.file_manager_clipboard = vec![source.clone()];
+
+        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("paste worker started");
+        let generation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("running operation state")
+            .generation;
+        assert!(app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .is_some_and(|operation| operation.status == FileManagerOperationStatus::Running));
+        assert!(
+            !app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste),
+            "second paste must fail closed while the lane is occupied"
+        );
+
+        release_tx.send(()).expect("release paste worker");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if app.sync_file_operation_worker() {
+                if app
+                    .state
+                    .file_manager_operation
+                    .as_ref()
+                    .is_some_and(|operation| {
+                        operation.status == FileManagerOperationStatus::Completed
+                    })
+                {
+                    break;
+                }
+            }
+            assert!(Instant::now() < deadline, "paste completion timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let operation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("terminal operation state");
+        assert_eq!(operation.generation, generation);
+        assert_eq!(operation.completed_items, 1);
+        assert_eq!(
+            fs::read(destination.join("payload.txt")).expect("copied payload"),
+            b"payload"
+        );
+        assert!(app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open destination")
+            .entries
+            .iter()
+            .any(|entry| entry.path == destination.join("payload.txt")));
+    }
+
+    // TP-C4.1-LIFECYCLE: a completion for the prior destination may finish
+    // after close/reopen, but it cannot reload or project entries into the new
+    // file-manager cwd.
+    #[test]
+    fn app_reopen_rejects_prior_destination_projection() {
+        let td = TempDir::new("app-reopen-stale-completion");
+        let source_root = td.root.join("sources");
+        let old_destination = td.root.join("old-destination");
+        let reopened_destination = td.root.join("reopened-destination");
+        fs::create_dir(&source_root).expect("create source root");
+        fs::create_dir(&old_destination).expect("create old destination");
+        fs::create_dir(&reopened_destination).expect("create reopened destination");
+        let source = source_root.join("old-only.txt");
+        fs::write(&source, b"old").expect("write stale source");
+        fs::write(reopened_destination.join("current.txt"), b"current")
+            .expect("write reopened fixture");
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let worker = FileOperationWorker::with_executor(
+            Arc::new(Notify::new()),
+            move |plan, cancellation| {
+                started_tx.send(()).expect("signal stale operation started");
+                release_rx.recv().expect("release stale operation");
+                execute_file_operation(plan, cancellation)
+            },
+        );
+        let mut app = test_app();
+        app.file_operation_worker = worker;
+        app.state.file_manager = Some(crate::fm::FmState::new(&old_destination));
+        app.state.file_manager_clipboard = vec![source];
+        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("stale operation started");
+
+        app.state.file_manager = None;
+        app.state.file_manager = Some(crate::fm::FmState::new(&reopened_destination));
+        release_tx.send(()).expect("release stale operation");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .is_some_and(|operation| operation.status == FileManagerOperationStatus::Running)
+        {
+            let _ = app.sync_file_operation_worker();
+            assert!(Instant::now() < deadline, "stale completion timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let reopened = app.state.file_manager.as_ref().expect("reopened FM");
+        assert_eq!(reopened.cwd, reopened_destination);
+        assert_eq!(reopened.entries.len(), 1);
+        assert_eq!(
+            reopened.entries[0].path,
+            reopened_destination.join("current.txt")
+        );
+        assert!(old_destination.join("old-only.txt").exists());
+    }
+
+    // TP-C4.1-LIFECYCLE: C3 context-menu Copy converges on the same exact,
+    // revalidated clipboard authority as the persistent header action.
+    #[test]
+    fn app_consumes_revalidated_context_copy_intent() {
+        let td = TempDir::new("app-context-copy");
+        let source = td.root.join("selected.txt");
+        fs::write(&source, b"selected").expect("write context source");
+        let mut file_manager = crate::fm::FmState::new(&td.root);
+        assert!(file_manager.replace_selection(0));
+        let mut app = test_app();
+        app.state.file_manager = Some(file_manager);
+        app.state.request_file_manager_context_action = Some(FileManagerContextActionIntent {
+            action: FileManagerContextMenuAction::Copy,
+            paths: vec![source.clone()],
+        });
+
+        assert!(app.sync_file_operation_worker());
+
+        assert_eq!(app.state.file_manager_clipboard, vec![source]);
+        assert!(app.state.request_file_manager_context_action.is_none());
+        assert!(app.state.file_manager_operation.is_none());
     }
 }

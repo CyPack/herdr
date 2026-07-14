@@ -1118,6 +1118,32 @@ mod tests {
         assert_eq!(after_entries, before_entries);
     }
 
+    // TP-C4.1-LIFECYCLE: the top-level mouse router must consume the typed
+    // header result and dispatch it to the App controller instead of silently
+    // dropping an enabled Copy action.
+    #[test]
+    fn top_level_mouse_dispatches_header_copy_to_clipboard_controller() {
+        let td = TempDir::new("header-copy-controller");
+        td.file("selected.txt");
+        let selected = td.root.join("selected.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        assert!(app
+            .state
+            .file_manager
+            .as_mut()
+            .expect("open FM")
+            .replace_selection(0));
+        install_wide_header_actions(&mut app);
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 50, 0));
+
+        assert_eq!(app.state.file_manager_clipboard, vec![selected]);
+        assert_eq!(
+            fs::read(td.root.join("selected.txt")).expect("copy action preserves source"),
+            b"selected.txt"
+        );
+    }
+
     // TP-C1.2-DISPATCH: identity/gap/outside/hidden/zero/stale/non-left input
     // never invents a header action from coordinates or stale paint state.
     #[test]
