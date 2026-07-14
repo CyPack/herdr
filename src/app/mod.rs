@@ -606,6 +606,7 @@ impl App {
             mobile_switcher_scroll: 0,
             view: state::ViewState {
                 layout: state::ViewLayout::Desktop,
+                regions: Default::default(),
                 sidebar_rect: Rect::default(),
                 workspace_card_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),

@@ -813,6 +813,13 @@ impl SidebarTab {
 
 pub struct ViewState {
     pub layout: ViewLayout,
+    /// Resolved rects of the named outer-shell regions for this frame (from
+    /// `ShellLayout`). Desktop populates `LeftPanel` + `CenterContent`; mobile
+    /// leaves it empty (mobile keeps its own header/terminal split for now).
+    // Populated now to establish the named-region seam; first read in production
+    // by the shell components introduced in S4 (the FM list fills CenterContent).
+    #[allow(dead_code)]
+    pub regions: crate::ui::shell::RegionRects,
     pub sidebar_rect: Rect,
     pub workspace_card_areas: Vec<WorkspaceCardArea>,
     /// Hit areas for the Spaces/Projects/Files header tabs (one per
@@ -1968,6 +1975,7 @@ impl AppState {
             mobile_switcher_scroll: 0,
             view: ViewState {
                 layout: ViewLayout::Desktop,
+                regions: Default::default(),
                 sidebar_rect: Rect::default(),
                 workspace_card_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),

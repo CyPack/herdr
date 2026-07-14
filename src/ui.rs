@@ -16,6 +16,7 @@ mod panes;
 mod release_notes;
 mod scrollbar;
 mod settings;
+pub(crate) mod shell;
 mod sidebar;
 mod status;
 mod tabs;
@@ -51,6 +52,7 @@ pub(crate) use self::scrollbar::{
     scrollbar_offset_from_row, scrollbar_thumb_grab_offset, should_show_scrollbar,
 };
 use self::settings::render_settings_overlay;
+use self::shell::{RegionId, ShellLayout};
 use self::sidebar::{render_sidebar, render_sidebar_collapsed};
 use self::status::{
     copy_feedback_rect, render_config_diagnostic, render_copy_feedback, render_toast_notification,
@@ -225,8 +227,19 @@ fn compute_view_internal(
             .clamp(app.sidebar_min_width, app.sidebar_max_width)
     };
 
-    let [sidebar_area, main_area] =
-        Layout::horizontal([Constraint::Length(sidebar_w), Constraint::Min(1)]).areas(area);
+    // Derive the outer split from the named-region shell tree. `default()`
+    // encodes exactly today's `sidebar | main` layout, so this stays
+    // behavior-identical to `Layout::horizontal([Length(sidebar_w), Min(1)])`
+    // while making the regions individually addressable for future composition.
+    let shell_regions = ShellLayout::default().compute_regions(area, |region| {
+        if region == RegionId::LeftPanel {
+            sidebar_w
+        } else {
+            0
+        }
+    });
+    let sidebar_area = shell_regions.get(RegionId::LeftPanel);
+    let main_area = shell_regions.get(RegionId::CenterContent);
 
     let (tab_bar_rect, terminal_area) = app
         .active
@@ -330,6 +343,7 @@ fn compute_view_internal(
 
     app.view = crate::app::ViewState {
         layout: ViewLayout::Desktop,
+        regions: shell_regions,
         sidebar_rect: sidebar_area,
         workspace_card_areas,
         sidebar_tab_hit_areas,
@@ -403,6 +417,9 @@ fn compute_mobile_view(
 
     app.view = crate::app::ViewState {
         layout: ViewLayout::Mobile,
+        // Mobile keeps its own header/terminal split; named shell regions are a
+        // desktop concept for now, so leave the region map empty.
+        regions: shell::RegionRects::default(),
         sidebar_rect: Rect::default(),
         workspace_card_areas: Vec::new(),
         sidebar_tab_hit_areas: Vec::new(),
@@ -649,6 +666,63 @@ mod tests {
     use crate::{app::state::ViewLayout, layout::PaneInfo, workspace::Workspace};
     use ratatui::style::Color;
     use ratatui::{backend::TestBackend, Terminal};
+
+    // S2 integration: `compute_view` populates `view.regions` from the shell tree
+    // consistently with the established `sidebar_rect`/main-area geometry — the
+    // named-region map is the same outer split, just addressable by `RegionId`.
+    #[test]
+    fn desktop_shell_regions_match_computed_geometry() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+
+        let frame = Rect::new(0, 0, 100, 30);
+        compute_view(&mut app, frame);
+
+        let left = app.view.regions.get(RegionId::LeftPanel);
+        let center = app.view.regions.get(RegionId::CenterContent);
+
+        // LeftPanel is exactly the sidebar; CenterContent is the rest of the frame.
+        assert_eq!(left, app.view.sidebar_rect);
+        assert!(left.width > 0, "expanded sidebar should have width");
+        assert_eq!(center.x, left.x + left.width);
+        assert_eq!(center.y, frame.y);
+        assert_eq!(center.height, frame.height);
+        assert_eq!(center.width, frame.width - left.width);
+        // The tab bar + terminal partition the CenterContent region vertically.
+        assert_eq!(app.view.tab_bar_rect.x, center.x);
+        assert_eq!(app.view.terminal_area.x, center.x);
+        assert_eq!(
+            app.view.terminal_area.y + app.view.terminal_area.height,
+            center.y + center.height
+        );
+        // Reserved regions are not laid out yet.
+        assert_eq!(app.view.regions.get(RegionId::RightPanel), Rect::default());
+        assert_eq!(app.view.regions.get(RegionId::TopBar), Rect::default());
+    }
+
+    // Mobile keeps its own header/terminal split; the named shell regions stay
+    // empty there for now (desktop-only concept).
+    #[test]
+    fn mobile_view_leaves_shell_regions_empty() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+
+        // Width <= mobile threshold (64) selects the mobile layout path.
+        compute_view(&mut app, Rect::new(0, 0, 30, 20));
+
+        assert_eq!(app.view.layout, ViewLayout::Mobile);
+        assert_eq!(app.view.regions.get(RegionId::LeftPanel), Rect::default());
+        assert_eq!(
+            app.view.regions.get(RegionId::CenterContent),
+            Rect::default()
+        );
+    }
 
     #[test]
     fn copy_feedback_offset_only_increases_when_toast_rect_overlaps() {
