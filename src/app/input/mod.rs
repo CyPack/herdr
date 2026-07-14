@@ -86,6 +86,14 @@ impl App {
             return;
         }
 
+        // The delete modal owns focus ahead of the native-FM capture below.
+        // Otherwise confirmation keys would be interpreted as navigation in
+        // the still-visible file manager.
+        if self.state.mode == Mode::ConfirmFileDelete {
+            self.handle_file_manager_delete_confirmation_key(key_event);
+            return;
+        }
+
         // When the native file manager is open it captures all keyboard input,
         // ahead of the mode dispatch, so keys drive its navigation instead of
         // reaching the terminal underneath.
@@ -115,6 +123,9 @@ impl App {
                 Mode::ConfirmRemoveWorktree => self.handle_worktree_remove_key(key_event),
                 Mode::Resize => self.handle_resize_key_via_api(key),
                 Mode::ConfirmClose => self.handle_confirm_close_key_via_api(key_event),
+                Mode::ConfirmFileDelete => {
+                    self.handle_file_manager_delete_confirmation_key(key_event)
+                }
                 Mode::ContextMenu => {
                     self.handle_context_menu_key_via_api(key_event);
                 }

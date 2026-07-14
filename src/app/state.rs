@@ -692,6 +692,35 @@ pub enum FileManagerOperationStatus {
     Failed,
 }
 
+/// Destructive native-FM action selected by the user after confirmation.
+/// This is client-local authority only; the App-owned worker performs any
+/// eventual filesystem mutation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileManagerDeleteKind {
+    Trash,
+    Permanent,
+}
+
+/// Explicit phases keep reversible trash and irreversible deletion from
+/// sharing a single ambiguous confirmation action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileManagerDeleteConfirmationStage {
+    ChooseAction,
+    ConfirmPermanent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileManagerDeleteConfirmation {
+    pub paths: Vec<PathBuf>,
+    pub stage: FileManagerDeleteConfirmationStage,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileManagerDeleteRequest {
+    pub kind: FileManagerDeleteKind,
+    pub paths: Vec<PathBuf>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileManagerOperationState {
     pub generation: u64,
@@ -1255,6 +1284,7 @@ pub enum Mode {
     ConfirmRemoveWorktree,
     Resize,
     ConfirmClose,
+    ConfirmFileDelete,
     ContextMenu,
     Settings,
     GlobalMenu,
@@ -1281,6 +1311,7 @@ impl Mode {
                 | Mode::Copy
                 | Mode::Resize
                 | Mode::ConfirmClose
+                | Mode::ConfirmFileDelete
                 | Mode::ConfirmRemoveWorktree
                 | Mode::ContextMenu
                 | Mode::GlobalMenu
@@ -1901,6 +1932,11 @@ pub struct AppState {
     /// Pure client-local projection of the App-owned bounded operation worker.
     /// Render/input consume this state but never perform filesystem work.
     pub file_manager_operation: Option<FileManagerOperationState>,
+    /// Exact native-FM identities awaiting an explicit destructive choice.
+    /// Opening or rendering this modal never performs filesystem work.
+    pub file_manager_delete_confirmation: Option<FileManagerDeleteConfirmation>,
+    /// One confirmed, revalidated delete request for the App-owned worker.
+    pub request_file_manager_delete: Option<FileManagerDeleteRequest>,
     /// Exact, revalidated client-local intent from the native-FM context menu.
     /// C3 only emits this tag; C4/C5 will consume it to perform real work.
     pub request_file_manager_context_action: Option<FileManagerContextActionIntent>,
@@ -2353,6 +2389,8 @@ impl AppState {
             file_manager: None,
             file_manager_clipboard: Vec::new(),
             file_manager_operation: None,
+            file_manager_delete_confirmation: None,
+            request_file_manager_delete: None,
             request_file_manager_context_action: None,
             should_quit: false,
             detach_exits: false,

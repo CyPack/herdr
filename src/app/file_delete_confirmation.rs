@@ -1,3 +1,113 @@
+use crossterm::event::{KeyCode, KeyEvent};
+
+use crate::app::state::{
+    FileManagerDeleteConfirmation, FileManagerDeleteConfirmationStage, FileManagerDeleteKind,
+    FileManagerDeleteRequest, FileManagerHeaderAction, FileManagerOperationState, Mode,
+};
+
+impl crate::app::App {
+    pub(super) fn open_file_manager_delete_confirmation(
+        &mut self,
+        paths: Vec<std::path::PathBuf>,
+    ) -> bool {
+        if paths.is_empty()
+            || self.file_operation_worker.is_busy()
+            || self
+                .state
+                .file_manager_operation
+                .as_ref()
+                .is_some_and(FileManagerOperationState::is_running)
+            || super::file_operation_worker::current_action_paths(
+                &self.state,
+                FileManagerHeaderAction::Delete,
+            )
+            .is_none_or(|current| current != paths)
+        {
+            return false;
+        }
+
+        self.state.request_file_manager_delete = None;
+        self.state.file_manager_delete_confirmation = Some(FileManagerDeleteConfirmation {
+            paths,
+            stage: FileManagerDeleteConfirmationStage::ChooseAction,
+        });
+        self.state.mode = Mode::ConfirmFileDelete;
+        true
+    }
+
+    pub(super) fn handle_file_manager_delete_confirmation_key(&mut self, key: KeyEvent) {
+        if key.code == KeyCode::Esc {
+            self.clear_file_manager_delete_confirmation();
+            return;
+        }
+
+        let Some(confirmation) = self
+            .state
+            .file_manager_delete_confirmation
+            .as_ref()
+            .cloned()
+        else {
+            self.clear_file_manager_delete_confirmation();
+            return;
+        };
+        let current_paths = super::file_operation_worker::current_action_paths(
+            &self.state,
+            FileManagerHeaderAction::Delete,
+        );
+        if self.file_operation_worker.is_busy()
+            || self
+                .state
+                .file_manager_operation
+                .as_ref()
+                .is_some_and(FileManagerOperationState::is_running)
+            || current_paths.as_ref() != Some(&confirmation.paths)
+        {
+            self.clear_file_manager_delete_confirmation();
+            return;
+        }
+
+        match (confirmation.stage, key.code) {
+            (
+                FileManagerDeleteConfirmationStage::ChooseAction,
+                KeyCode::Char('t') | KeyCode::Enter,
+            ) => {
+                self.emit_file_manager_delete_request(
+                    FileManagerDeleteKind::Trash,
+                    confirmation.paths,
+                );
+            }
+            (FileManagerDeleteConfirmationStage::ChooseAction, KeyCode::Char('d')) => {
+                if let Some(current) = self.state.file_manager_delete_confirmation.as_mut() {
+                    current.stage = FileManagerDeleteConfirmationStage::ConfirmPermanent;
+                }
+            }
+            (FileManagerDeleteConfirmationStage::ConfirmPermanent, KeyCode::Enter) => {
+                self.emit_file_manager_delete_request(
+                    FileManagerDeleteKind::Permanent,
+                    confirmation.paths,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    fn emit_file_manager_delete_request(
+        &mut self,
+        kind: FileManagerDeleteKind,
+        paths: Vec<std::path::PathBuf>,
+    ) {
+        self.state.request_file_manager_delete = Some(FileManagerDeleteRequest { kind, paths });
+        self.state.file_manager_delete_confirmation = None;
+        self.state.mode = Mode::Navigate;
+    }
+
+    fn clear_file_manager_delete_confirmation(&mut self) {
+        self.state.file_manager_delete_confirmation = None;
+        self.state.request_file_manager_delete = None;
+        self.state.mode = Mode::Navigate;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::app::state::{

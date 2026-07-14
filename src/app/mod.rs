@@ -597,6 +597,8 @@ impl App {
             file_manager: None,
             file_manager_clipboard: Vec::new(),
             file_manager_operation: None,
+            file_manager_delete_confirmation: None,
+            request_file_manager_delete: None,
             request_file_manager_context_action: None,
             should_quit: false,
             detach_exits: no_session,
@@ -1810,6 +1812,9 @@ impl App {
             Mode::ConfirmClose => {
                 self.handle_confirm_close_key_via_api(key_event);
             }
+            Mode::ConfirmFileDelete => {
+                self.handle_file_manager_delete_confirmation_key(key_event);
+            }
             Mode::ContextMenu => {
                 self.handle_context_menu_key_via_api(key_event);
             }
@@ -2004,6 +2009,7 @@ mod tests {
             Mode::Copy,
             Mode::Resize,
             Mode::ConfirmClose,
+            Mode::ConfirmFileDelete,
             Mode::ConfirmRemoveWorktree,
             Mode::ContextMenu,
             Mode::GlobalMenu,

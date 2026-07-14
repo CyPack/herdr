@@ -593,6 +593,9 @@ impl compose::Component for OverlayLayer {
             Mode::Copy => render_copy_mode_overlay(app, frame, terminal_area),
             Mode::Resize => render_resize_overlay(app, frame, terminal_area),
             Mode::ConfirmClose => render_confirm_close_overlay(app, frame, terminal_area),
+            // The confirmation state/keyboard contract lands before its
+            // dedicated render-and-mouse TDD slice.
+            Mode::ConfirmFileDelete => {}
             Mode::ContextMenu => {
                 render_context_menu(app, frame);
             }

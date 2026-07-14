@@ -253,7 +253,13 @@ impl crate::app::App {
                 true
             }
             FileManagerHeaderAction::Paste => self.start_file_manager_paste(),
-            FileManagerHeaderAction::NewFolder | FileManagerHeaderAction::Delete => false,
+            FileManagerHeaderAction::Delete => {
+                let Some(paths) = current_action_paths(&self.state, action) else {
+                    return false;
+                };
+                self.open_file_manager_delete_confirmation(paths)
+            }
+            FileManagerHeaderAction::NewFolder => false,
         }
     }
 
@@ -313,7 +319,8 @@ impl crate::app::App {
     /// result. Other context actions remain queued for their owning C4/C5
     /// modules instead of being silently discarded.
     pub(super) fn sync_file_operation_worker(&mut self) -> bool {
-        let mut changed = self.consume_file_manager_context_copy();
+        let mut changed = self.consume_file_manager_context_delete();
+        changed |= self.consume_file_manager_context_copy();
         let drained = self.file_operation_worker.drain();
         if drained.disconnected {
             let Some(operation) = self.state.file_manager_operation.as_mut() else {
@@ -379,9 +386,27 @@ impl crate::app::App {
         }
         true
     }
+
+    fn consume_file_manager_context_delete(&mut self) -> bool {
+        use crate::app::state::FileManagerContextMenuAction;
+
+        let is_delete = self
+            .state
+            .request_file_manager_context_action
+            .as_ref()
+            .is_some_and(|intent| intent.action == FileManagerContextMenuAction::Delete);
+        if !is_delete {
+            return false;
+        }
+        let Some(intent) = self.state.request_file_manager_context_action.take() else {
+            return false;
+        };
+        let _ = self.open_file_manager_delete_confirmation(intent.paths);
+        true
+    }
 }
 
-fn current_action_paths(
+pub(super) fn current_action_paths(
     state: &crate::app::state::AppState,
     action: crate::app::state::FileManagerHeaderAction,
 ) -> Option<Vec<std::path::PathBuf>> {
