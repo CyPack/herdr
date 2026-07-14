@@ -2436,7 +2436,7 @@ mod tests {
         let session_a = test_session_path("generation-a.jsonl");
         let session_b = test_session_path("generation-b.jsonl");
         let session_c = test_session_path("generation-c.jsonl");
-        let now = Instant::now();
+        let now = Instant::now() + Duration::from_secs(1);
         terminal.set_detected_state(Some(Agent::Pi), AgentState::Idle);
         terminal.set_hook_authority_with_custom_status_at(
             "herdr:pi".into(),
