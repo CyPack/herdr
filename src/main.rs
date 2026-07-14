@@ -67,11 +67,8 @@ mod config;
 mod detect;
 mod events;
 // The native file manager domain model is built bottom-up (natsort -> directory
-// reader -> state). A2 (file-list render) consumes the data model, but the
-// FmState navigation methods (move_up/move_down/reload/toggle_hidden/selected)
-// are not wired until navigation input (A3), so keep silencing dead_code
-// module-wide until then. Remove this allow at A3.
-#[allow(dead_code)]
+// reader -> state). Fully consumed as of A3: the data model feeds the file-list
+// render (A2) and the navigation input handler (A3).
 mod fm;
 mod ghostty;
 mod handoff_runtime;

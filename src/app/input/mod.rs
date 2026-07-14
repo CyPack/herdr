@@ -35,6 +35,7 @@ fn modified_url_click_modifier_matches_terminal_mouse_reporting() {
 }
 
 mod copy_mode;
+mod file_manager;
 mod modal;
 mod mouse;
 mod navigate;
@@ -75,6 +76,14 @@ impl App {
             if let Some(text) = crate::platform::read_clipboard_text() {
                 self.paste_into_active_text_input(&text);
             }
+            return;
+        }
+
+        // When the native file manager is open it captures all keyboard input,
+        // ahead of the mode dispatch, so keys drive its navigation instead of
+        // reaching the terminal underneath.
+        if self.state.file_manager.is_some() {
+            file_manager::handle_file_manager_key(&mut self.state, key_event);
             return;
         }
 

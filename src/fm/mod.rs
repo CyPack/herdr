@@ -152,6 +152,31 @@ impl FmState {
         self.cursor = self.cursor.saturating_sub(1);
     }
 
+    /// Descend into the selected entry when it is a directory, re-reading its
+    /// contents with the cursor back at the top. A no-op when the selection is a
+    /// file (or the directory is empty).
+    pub fn enter(&mut self) {
+        let target = self
+            .selected()
+            .filter(|entry| entry.is_dir)
+            .map(|entry| entry.path.clone());
+        if let Some(path) = target {
+            self.cwd = path;
+            self.cursor = 0;
+            self.reload();
+        }
+    }
+
+    /// Go to the parent directory, re-reading its contents with the cursor at the
+    /// top. A no-op at the filesystem root (no parent).
+    pub fn leave(&mut self) {
+        if let Some(parent) = self.cwd.parent() {
+            self.cwd = parent.to_path_buf();
+            self.cursor = 0;
+            self.reload();
+        }
+    }
+
     /// Force the cursor back into `[0, entries.len())` (0 when empty).
     fn clamp_cursor(&mut self) {
         if self.entries.is_empty() {
@@ -341,5 +366,58 @@ mod tests {
         st.toggle_hidden();
         assert!(!st.show_hidden);
         assert_eq!(st.entries.len(), 1);
+    }
+
+    // TP-A3.1: entering a selected directory reads its contents, cursor at top.
+    #[test]
+    fn enter_descends_into_selected_directory() {
+        let td = TempDir::new("enter");
+        td.dir("sub");
+        td.file("top.txt");
+        fs::write(td.root.join("sub").join("child.txt"), b"x").expect("write child");
+        let mut st = FmState::new(&td.root);
+        // Directories sort first, so "sub" is selected at the top.
+        assert_eq!(st.selected().map(|e| e.name.as_str()), Some("sub"));
+
+        st.enter();
+
+        assert_eq!(st.cwd, td.root.join("sub"));
+        assert_eq!(st.cursor, 0);
+        assert!(st.entries.iter().any(|e| e.name == "child.txt"));
+    }
+
+    // TP-A3.2: entering a file selection is a no-op.
+    #[test]
+    fn enter_on_file_is_noop() {
+        let td = TempDir::new("enterfile");
+        td.file("only.txt");
+        let mut st = FmState::new(&td.root);
+        assert_eq!(st.selected().map(|e| e.name.as_str()), Some("only.txt"));
+
+        let before = st.cwd.clone();
+        st.enter();
+
+        assert_eq!(st.cwd, before, "entering a file does not change directory");
+    }
+
+    // TP-A3.3: leaving goes to the parent directory, cursor at top.
+    #[test]
+    fn leave_ascends_to_parent() {
+        let td = TempDir::new("leave");
+        td.dir("sub");
+        let mut st = FmState::new(td.root.join("sub"));
+
+        st.leave();
+
+        assert_eq!(st.cwd, td.root);
+        assert_eq!(st.cursor, 0);
+    }
+
+    // TP-A3.4: leaving at the filesystem root is a no-op (no panic).
+    #[test]
+    fn leave_at_root_is_noop() {
+        let mut st = FmState::new("/");
+        st.leave();
+        assert_eq!(st.cwd, PathBuf::from("/"));
     }
 }
