@@ -2858,4 +2858,250 @@ mod tests {
             ]
         );
     }
+
+    fn file_action_bar_model(
+        kind: FileManagerActionBarSelectionKind,
+        paths: Vec<PathBuf>,
+        copy_reason: Option<FileManagerActionDisabledReason>,
+        delete_reason: Option<FileManagerActionDisabledReason>,
+    ) -> FileManagerActionBarModel {
+        let selection = FileManagerActionBarSelection {
+            label: paths
+                .first()
+                .and_then(|path| path.file_name())
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| String::from("selection")),
+            paths,
+            kind,
+        };
+        let actions = FileManagerHeaderAction::ALL.map(|action| {
+            let disabled_reason = match action {
+                FileManagerHeaderAction::Copy => copy_reason,
+                FileManagerHeaderAction::Delete => delete_reason,
+                FileManagerHeaderAction::Paste | FileManagerHeaderAction::NewFolder => None,
+            };
+            FileManagerActionState {
+                action,
+                enabled: disabled_reason.is_none(),
+                disabled_reason,
+            }
+        });
+        FileManagerActionBarModel {
+            selection: Some(selection),
+            clipboard_count: 0,
+            actions,
+        }
+    }
+
+    fn file_context_item(
+        model: &FileManagerContextMenuModel,
+        action: FileManagerContextMenuAction,
+    ) -> &FileManagerContextMenuItem {
+        model
+            .items
+            .iter()
+            .find(|item| item.action == action)
+            .expect("context action item")
+    }
+
+    // TP-C3.1-CONTEXT-MODEL: cursor focus or an empty prepared selection does
+    // not invent a file context menu; one file/directory carries exact paths.
+    #[test]
+    fn file_context_menu_requires_explicit_prepared_selection() {
+        let empty = FileManagerActionBarModel {
+            selection: None,
+            clipboard_count: 0,
+            actions: FileManagerHeaderAction::ALL.map(|action| FileManagerActionState {
+                action,
+                enabled: false,
+                disabled_reason: Some(FileManagerActionDisabledReason::NoSelection),
+            }),
+        };
+        assert!(FileManagerContextMenuModel::from_action_bar(&empty).is_none());
+
+        for (kind, expected_kind, name) in [
+            (
+                FileManagerActionBarSelectionKind::File,
+                FileManagerContextMenuTargetKind::File,
+                "file.txt",
+            ),
+            (
+                FileManagerActionBarSelectionKind::Directory,
+                FileManagerContextMenuTargetKind::Directory,
+                "directory",
+            ),
+        ] {
+            let path = PathBuf::from("/prepared").join(name);
+            let action_bar = file_action_bar_model(kind, vec![path.clone()], None, None);
+            let model = FileManagerContextMenuModel::from_action_bar(&action_bar)
+                .expect("explicit context model");
+            assert_eq!(model.target_kind, expected_kind);
+            assert_eq!(model.paths, vec![path]);
+            assert!(model.items.iter().all(|item| item.enabled));
+        }
+    }
+
+    // TP-C3.1-CONTEXT-MODEL: the six core actions retain deterministic order;
+    // read-only state disables only cwd-writing actions.
+    #[test]
+    fn single_file_context_menu_has_stable_order_and_read_only_authority() {
+        let action_bar = file_action_bar_model(
+            FileManagerActionBarSelectionKind::File,
+            vec![PathBuf::from("/prepared/file.txt")],
+            None,
+            Some(FileManagerActionDisabledReason::ReadOnlyTarget),
+        );
+        let model = FileManagerContextMenuModel::from_action_bar(&action_bar)
+            .expect("single-file context model");
+        assert_eq!(
+            model
+                .items
+                .iter()
+                .map(|item| item.action)
+                .collect::<Vec<_>>(),
+            vec![
+                FileManagerContextMenuAction::Open,
+                FileManagerContextMenuAction::Copy,
+                FileManagerContextMenuAction::Rename,
+                FileManagerContextMenuAction::Delete,
+                FileManagerContextMenuAction::Compress,
+                FileManagerContextMenuAction::SendAgent,
+            ]
+        );
+        assert_eq!(
+            model
+                .items
+                .iter()
+                .map(|item| item.label)
+                .collect::<Vec<_>>(),
+            vec![
+                "Open",
+                "Copy",
+                "Rename",
+                "Delete",
+                "Compress",
+                "Send to Agent",
+            ]
+        );
+        for action in [
+            FileManagerContextMenuAction::Open,
+            FileManagerContextMenuAction::Copy,
+            FileManagerContextMenuAction::SendAgent,
+        ] {
+            assert!(file_context_item(&model, action).enabled);
+        }
+        for action in [
+            FileManagerContextMenuAction::Rename,
+            FileManagerContextMenuAction::Delete,
+            FileManagerContextMenuAction::Compress,
+        ] {
+            let item = file_context_item(&model, action);
+            assert!(!item.enabled);
+            assert_eq!(
+                item.disabled_reason,
+                Some(FileManagerActionDisabledReason::ReadOnlyTarget)
+            );
+        }
+    }
+
+    // TP-C3.1-CONTEXT-MODEL: multiple selection permits only bulk-capable
+    // actions while preserving prepared path order.
+    #[test]
+    fn multiple_file_context_menu_disables_single_target_actions() {
+        let paths = vec![
+            PathBuf::from("/prepared/file2.txt"),
+            PathBuf::from("/prepared/file10.txt"),
+        ];
+        let action_bar = file_action_bar_model(
+            FileManagerActionBarSelectionKind::Multiple,
+            paths.clone(),
+            None,
+            None,
+        );
+        let model = FileManagerContextMenuModel::from_action_bar(&action_bar)
+            .expect("multiple context model");
+        assert_eq!(
+            model.target_kind,
+            FileManagerContextMenuTargetKind::Multiple
+        );
+        assert_eq!(model.paths, paths);
+        for action in [
+            FileManagerContextMenuAction::Copy,
+            FileManagerContextMenuAction::Delete,
+            FileManagerContextMenuAction::Compress,
+        ] {
+            assert!(file_context_item(&model, action).enabled);
+        }
+        for action in [
+            FileManagerContextMenuAction::Open,
+            FileManagerContextMenuAction::Rename,
+            FileManagerContextMenuAction::SendAgent,
+        ] {
+            let item = file_context_item(&model, action);
+            assert!(!item.enabled);
+            assert_eq!(
+                item.disabled_reason,
+                Some(FileManagerActionDisabledReason::MultipleSelection)
+            );
+        }
+    }
+
+    // TP-C3.1-CONTEXT-MODEL: unsupported, stale, and in-flight selection
+    // authority disables every item, with in-flight already carrying priority.
+    #[test]
+    fn invalid_or_in_flight_file_context_menu_fails_closed() {
+        for reason in [
+            FileManagerActionDisabledReason::UnsupportedSelection,
+            FileManagerActionDisabledReason::StaleSelection,
+            FileManagerActionDisabledReason::OperationInFlight,
+        ] {
+            let action_bar = file_action_bar_model(
+                FileManagerActionBarSelectionKind::Unavailable,
+                vec![PathBuf::from("/prepared/unavailable")],
+                Some(reason),
+                Some(reason),
+            );
+            let model = FileManagerContextMenuModel::from_action_bar(&action_bar)
+                .expect("fail-closed context model");
+            assert_eq!(
+                model.target_kind,
+                FileManagerContextMenuTargetKind::Unavailable
+            );
+            assert!(model
+                .items
+                .iter()
+                .all(|item| { !item.enabled && item.disabled_reason == Some(reason) }));
+        }
+    }
+
+    // TP-C3.1-CONTEXT-MODEL: the global popup kind exposes the exact file
+    // labels without changing the established menu state shape.
+    #[test]
+    fn file_context_kind_exposes_deterministic_labels() {
+        let action_bar = file_action_bar_model(
+            FileManagerActionBarSelectionKind::File,
+            vec![PathBuf::from("/prepared/file.txt")],
+            None,
+            None,
+        );
+        let model =
+            FileManagerContextMenuModel::from_action_bar(&action_bar).expect("file context model");
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::File { model },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        assert_eq!(
+            menu.items(),
+            vec![
+                "Open",
+                "Copy",
+                "Rename",
+                "Delete",
+                "Compress",
+                "Send to Agent",
+            ]
+        );
+    }
 }
