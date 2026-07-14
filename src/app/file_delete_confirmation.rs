@@ -339,6 +339,41 @@ mod tests {
         );
     }
 
+    // TP-C4.2-CONFIRM: modified character shortcuts cannot accidentally
+    // authorize a destructive choice through a terminal keybinding chord.
+    #[test]
+    fn delete_confirmation_ignores_modified_destructive_shortcuts() {
+        let td = TempDir::new("modified-shortcuts");
+        let source = td.file("selected.txt", b"selected");
+        let mut app = test_app(&td.root);
+        select_all(&mut app);
+        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Delete));
+
+        app.handle_file_manager_delete_confirmation_key(KeyEvent::new(
+            KeyCode::Char('t'),
+            KeyModifiers::CONTROL,
+        ));
+        app.handle_file_manager_delete_confirmation_key(KeyEvent::new(
+            KeyCode::Char('d'),
+            KeyModifiers::ALT,
+        ));
+
+        assert_eq!(app.state.mode, Mode::ConfirmFileDelete);
+        assert_eq!(
+            app.state
+                .file_manager_delete_confirmation
+                .as_ref()
+                .expect("unchanged delete confirmation")
+                .stage,
+            FileManagerDeleteConfirmationStage::ChooseAction
+        );
+        assert!(app.state.request_file_manager_delete.is_none());
+        assert_eq!(
+            fs::read(source).expect("modified keys preserve source"),
+            b"selected"
+        );
+    }
+
     // TP-C4.2-CONFIRM: closing/reopening or changing the selected identity
     // invalidates the old modal. A late key cannot authorize another target.
     #[test]
