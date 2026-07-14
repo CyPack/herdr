@@ -261,10 +261,12 @@ fn rect_contains(rect: ratatui::layout::Rect, column: u16, row: u16) -> bool {
 mod tests {
     use super::*;
     use crate::app::state::{
-        FileManagerActionBarModel, FileManagerActionDisabledReason, FileManagerActionState,
-        FileManagerHeaderAction, FileManagerHeaderActionArea, FileManagerRowAction,
-        FileManagerRowActionArea, FileManagerRowArea,
+        ContextMenuKind, FileManagerActionBarModel, FileManagerActionDisabledReason,
+        FileManagerActionState, FileManagerContextMenuTargetKind, FileManagerHeaderAction,
+        FileManagerHeaderActionArea, FileManagerRowAction, FileManagerRowActionArea,
+        FileManagerRowArea,
     };
+    use crate::app::Mode;
     use crate::fm::{FmState, MAX_MULTI_SELECTION_PATHS};
     use crate::ui::compute_view;
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -1305,5 +1307,207 @@ mod tests {
             FileManagerMouseDispatch::Consumed,
             "unsupported live target fails closed"
         );
+    }
+
+    // TP-C3.2-POPUP-GEOMETRY: right-clicking a member of an explicit bulk
+    // selection preserves that set while focusing the clicked row. A row
+    // outside the set replaces it with one exact live path before the menu
+    // model is prepared.
+    #[test]
+    fn right_click_applies_exact_selection_policy_before_opening_file_menu() {
+        let td = TempDir::new("file-context-selection-policy");
+        td.file("00.txt");
+        td.file("01.txt");
+        td.file("02.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let fm = app.state.file_manager.as_mut().expect("open FM");
+        assert!(fm.replace_selection(0));
+        assert!(fm.toggle_selection(1));
+        let bulk_paths = fm.multi_selection_paths().clone();
+        let before_entries = fs::read_dir(&td.root)
+            .expect("read context-menu fixture before clicks")
+            .map(|entry| entry.expect("fixture entry").file_name())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 3,)),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(app.state.mode, Mode::ContextMenu);
+        let fm = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(fm.cursor, 1, "right-click focuses the exact live row");
+        assert_eq!(fm.multi_selection_paths(), &bulk_paths);
+        let menu = app.state.context_menu.as_ref().expect("file context menu");
+        assert_eq!((menu.x, menu.y), (27, 3));
+        let ContextMenuKind::File { model } = &menu.kind else {
+            panic!("expected file context menu")
+        };
+        assert_eq!(
+            model.target_kind,
+            FileManagerContextMenuTargetKind::Multiple
+        );
+        assert_eq!(model.paths, bulk_paths.iter().cloned().collect::<Vec<_>>());
+
+        app.state.context_menu = None;
+        app.state.mode = Mode::Terminal;
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 4,)),
+            FileManagerMouseDispatch::Consumed
+        );
+        let fm = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(fm.cursor, 2);
+        assert_eq!(
+            fm.multi_selection_paths().iter().collect::<Vec<_>>(),
+            vec![&td.root.join("02.txt")]
+        );
+        let menu = app.state.context_menu.as_ref().expect("replacement menu");
+        let ContextMenuKind::File { model } = &menu.kind else {
+            panic!("expected replacement file context menu")
+        };
+        assert_eq!(model.target_kind, FileManagerContextMenuTargetKind::File);
+        assert_eq!(model.paths, vec![td.root.join("02.txt")]);
+        assert_eq!(
+            fs::read_dir(&td.root)
+                .expect("read context-menu fixture after clicks")
+                .map(|entry| entry.expect("fixture entry").file_name())
+                .collect::<Vec<_>>(),
+            before_entries,
+            "C3 routing performs no filesystem mutation"
+        );
+    }
+
+    // TP-C3.2-POPUP-GEOMETRY: the same snapshotted current-row geometry used
+    // by render/input opens the existing popup at one/two/three-column Miller
+    // widths. First, middle, and last visible rows remain reachable and the
+    // popup clamps to the complete screen rectangle at every edge.
+    #[test]
+    fn right_click_popup_is_bounded_at_all_miller_breakpoints() {
+        let td = TempDir::new("file-context-breakpoints");
+        for index in 0..12 {
+            td.file(&format!("{index:02}.txt"));
+        }
+
+        for width in [20, 30, 45] {
+            let mut app = runtime_app_with_fm(FmState::new(&td.root));
+            app.state.mobile_width_threshold = 0;
+            app.state.sidebar_collapsed = true;
+            compute_view(&mut app.state, Rect::new(0, 0, width, 12));
+            let rows = app.state.view.file_manager_row_areas.clone();
+            assert!(!rows.is_empty(), "width {width} exposes current rows");
+            let row_indices = [0, rows.len() / 2, rows.len() - 1];
+
+            for row_index in row_indices {
+                let row = &rows[row_index];
+                assert_eq!(
+                    app.handle_file_manager_mouse(mouse(
+                        MouseEventKind::Down(MouseButton::Right),
+                        row.rect.x,
+                        row.rect.y,
+                    )),
+                    FileManagerMouseDispatch::Consumed,
+                    "width {width}, visible row {row_index}"
+                );
+                let menu = app.state.context_menu.as_ref().expect("bounded file menu");
+                let ContextMenuKind::File { model } = &menu.kind else {
+                    panic!("expected file menu at width {width}")
+                };
+                assert_eq!(model.paths, vec![row.entry_path.clone()]);
+
+                let popup = app.state.context_menu_rect().expect("popup geometry");
+                let screen = app.state.screen_rect();
+                assert!(popup.x >= screen.x && popup.y >= screen.y);
+                assert!(popup.right() <= screen.right());
+                assert!(popup.bottom() <= screen.bottom());
+                assert_eq!(popup.height, 8, "six complete rows plus borders");
+
+                app.state.context_menu = None;
+                app.state.mode = Mode::Terminal;
+            }
+        }
+    }
+
+    // TP-C3.2-POPUP-GEOMETRY: stale row identity, non-row center regions,
+    // modified right-click, and zero geometry are consumed without opening a
+    // menu or changing the existing selection.
+    #[test]
+    fn right_click_file_menu_fails_closed_for_stale_and_non_targets() {
+        let td = TempDir::new("file-context-stale");
+        td.file("00.txt");
+        td.file("01.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        assert!(app
+            .state
+            .file_manager
+            .as_mut()
+            .expect("open FM")
+            .replace_selection(1));
+        let before_paths = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .multi_selection_paths()
+            .clone();
+        app.state
+            .file_manager
+            .as_mut()
+            .expect("open FM")
+            .entries
+            .swap(0, 1);
+
+        for event in [
+            mouse(MouseEventKind::Down(MouseButton::Right), 27, 2),
+            mouse(MouseEventKind::Down(MouseButton::Right), 27, 0),
+            mouse(MouseEventKind::Down(MouseButton::Right), 27, 1),
+            mouse(MouseEventKind::Down(MouseButton::Right), 45, 5),
+            mouse_with_modifiers(
+                MouseEventKind::Down(MouseButton::Right),
+                27,
+                3,
+                KeyModifiers::CONTROL,
+            ),
+        ] {
+            assert_eq!(
+                app.handle_file_manager_mouse(event),
+                FileManagerMouseDispatch::Consumed
+            );
+            assert!(app.state.context_menu.is_none());
+        }
+        let fm = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(fm.cursor, 1);
+        assert_eq!(fm.multi_selection_paths(), &before_paths);
+
+        app.state.view.terminal_area = Rect::default();
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 3,)),
+            FileManagerMouseDispatch::NotHandled
+        );
+        assert!(app.state.context_menu.is_none());
+    }
+
+    // TP-C3.2-POPUP-GEOMETRY: row-local action cells are still part of the
+    // exact current-row identity for right-click context, but no row action
+    // tag or side effect escapes.
+    #[test]
+    fn right_click_row_action_cell_opens_the_same_file_context() {
+        let td = TempDir::new("file-context-row-action");
+        td.file("00.txt");
+        td.file("01.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let expected = install_row_actions(&mut app, 1);
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 44, 3,)),
+            FileManagerMouseDispatch::Consumed
+        );
+        let menu = app
+            .state
+            .context_menu
+            .as_ref()
+            .expect("row action file menu");
+        let ContextMenuKind::File { model } = &menu.kind else {
+            panic!("expected file menu")
+        };
+        assert_eq!(model.paths, vec![expected]);
     }
 }
