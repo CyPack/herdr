@@ -299,6 +299,7 @@ impl FmState {
 
 #[cfg(test)]
 mod tests {
+    use super::text_preview::{highlight_text_preview, HighlightedTextPreview};
     use super::*;
     use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -860,5 +861,85 @@ mod tests {
             error,
             TextPreviewError::Io(std::io::ErrorKind::PermissionDenied)
         );
+    }
+
+    fn highlighted_line_text(preview: &HighlightedTextPreview, line: usize) -> String {
+        preview.lines[line]
+            .spans
+            .iter()
+            .map(|span| span.content.as_str())
+            .collect()
+    }
+
+    // TP-B1.3-CLASSIFY: a known extension selects a bundled syntax. Styling
+    // may evolve with the bundled theme, but text preservation and the
+    // presence of semantic styling are stable contracts.
+    #[test]
+    fn text_highlight_selects_rust_and_preserves_content() {
+        let source = "pub fn main() { println!(\"hi\"); }\n";
+        let preview = TextPreview {
+            content: source.to_owned(),
+            truncated: false,
+        };
+
+        let highlighted = highlight_text_preview(Path::new("main.rs"), &preview);
+
+        assert_eq!(highlighted.syntax_name.as_deref(), Some("Rust"));
+        assert_eq!(highlighted_line_text(&highlighted, 0), source.trim_end());
+        assert!(highlighted.lines[0]
+            .spans
+            .iter()
+            .any(|span| !span.style.is_plain()));
+    }
+
+    // TP-B1.3-CLASSIFY: extension-less scripts use first-line evidence.
+    #[test]
+    fn text_highlight_uses_python_shebang() {
+        let preview = TextPreview {
+            content: "#!/usr/bin/env python3\nprint('hi')\n".to_owned(),
+            truncated: false,
+        };
+
+        let highlighted = highlight_text_preview(Path::new("script"), &preview);
+
+        assert_eq!(highlighted.syntax_name.as_deref(), Some("Python"));
+        assert_eq!(highlighted_line_text(&highlighted, 1), "print('hi')");
+    }
+
+    // TP-B1.3-CLASSIFY: unsupported types remain readable plain text. A
+    // classifier miss must never become a preview availability failure.
+    #[test]
+    fn text_highlight_unknown_extension_falls_back_to_plain_text() {
+        let preview = TextPreview {
+            content: "unknown but readable\n".to_owned(),
+            truncated: false,
+        };
+
+        let highlighted = highlight_text_preview(Path::new("sample.mystery"), &preview);
+
+        assert!(highlighted.syntax_name.is_none());
+        assert_eq!(
+            highlighted_line_text(&highlighted, 0),
+            "unknown but readable"
+        );
+        assert!(highlighted.lines[0]
+            .spans
+            .iter()
+            .all(|span| span.style.is_plain()));
+    }
+
+    // TP-B1.3-CLASSIFY: highlighting cost is bounded independently from the
+    // reader byte cap. Remaining text stays available in the underlying model.
+    #[test]
+    fn text_highlight_caps_prepared_line_count() {
+        let preview = TextPreview {
+            content: "let value = 1;\n".repeat(130),
+            truncated: false,
+        };
+
+        let highlighted = highlight_text_preview(Path::new("many.rs"), &preview);
+
+        assert_eq!(highlighted.lines.len(), 128);
+        assert!(highlighted.truncated_lines);
     }
 }
