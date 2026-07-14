@@ -680,4 +680,72 @@ mod tests {
             Some(&selected_path)
         );
     }
+
+    // TP-B1.1-BOUNDED-READ: an in-limit text file remains byte-for-byte UTF-8,
+    // including CRLF. The preview model records that no truncation occurred.
+    #[test]
+    fn bounded_text_preview_preserves_exact_utf8_and_crlf() {
+        let td = TempDir::new("text-preview-exact");
+        let path = td.root.join("sample.txt");
+        let content = "alpha\r\ncafé\n";
+        fs::write(&path, content).expect("write UTF-8 preview fixture");
+
+        let preview = read_text_preview(&path, TextPreviewLimits::new(content.len()))
+            .expect("bounded UTF-8 preview");
+
+        assert_eq!(preview.content, content);
+        assert!(!preview.truncated);
+    }
+
+    // TP-B1.1-BOUNDED-READ: a file exactly at the byte budget is complete;
+    // one additional byte flips the explicit truncation marker.
+    #[test]
+    fn bounded_text_preview_distinguishes_exact_limit_from_overflow() {
+        let td = TempDir::new("text-preview-boundary");
+        let path = td.root.join("boundary.txt");
+
+        fs::write(&path, "1234").expect("write exact-limit fixture");
+        let exact =
+            read_text_preview(&path, TextPreviewLimits::new(4)).expect("read exact-limit preview");
+        assert_eq!(exact.content, "1234");
+        assert!(!exact.truncated);
+
+        fs::write(&path, "12345").expect("write over-limit fixture");
+        let overflow =
+            read_text_preview(&path, TextPreviewLimits::new(4)).expect("read over-limit preview");
+        assert_eq!(overflow.content, "1234");
+        assert!(overflow.truncated);
+    }
+
+    // TP-B1.1-BOUNDED-READ: a byte limit may land inside a multi-byte scalar.
+    // The bounded preview retreats to a valid boundary instead of emitting
+    // lossy or invalid UTF-8.
+    #[test]
+    fn bounded_text_preview_never_splits_utf8_scalar() {
+        let td = TempDir::new("text-preview-utf8-boundary");
+        let path = td.root.join("unicode.txt");
+        fs::write(&path, "abcé-tail").expect("write multi-byte fixture");
+
+        let preview = read_text_preview(&path, TextPreviewLimits::new(4))
+            .expect("read UTF-8-boundary preview");
+
+        assert_eq!(preview.content, "abc");
+        assert!(preview.truncated);
+        assert!(preview.content.len() <= 4);
+    }
+
+    // TP-B1.1-BOUNDED-READ: newline-free input is still bounded by bytes; the
+    // implementation must not scan or allocate through the rest of the file.
+    #[test]
+    fn bounded_text_preview_caps_one_long_line() {
+        let td = TempDir::new("text-preview-long-line");
+        let path = td.root.join("long.txt");
+        fs::write(&path, "x".repeat(64)).expect("write long-line fixture");
+
+        let preview = read_text_preview(&path, TextPreviewLimits::new(8))
+            .expect("read bounded long-line preview");
+
+        assert_eq!(preview.content, "xxxxxxxx");
+        assert!(preview.truncated);
+    }
 }
