@@ -36,6 +36,9 @@ impl crate::app::App {
     }
 
     pub(super) fn handle_file_manager_delete_confirmation_key(&mut self, key: KeyEvent) {
+        if !key.modifiers.is_empty() {
+            return;
+        }
         if key.code == KeyCode::Esc {
             self.clear_file_manager_delete_confirmation();
             return;
