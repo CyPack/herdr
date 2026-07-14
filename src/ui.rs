@@ -946,16 +946,40 @@ mod tests {
             .file_manager_action_bar
             .as_ref()
             .expect("open FM action bar");
+        assert!(initial.selection.is_none());
+        assert_eq!(initial.clipboard_count, 1);
+
+        assert!(app
+            .file_manager
+            .as_mut()
+            .expect("open FM")
+            .replace_selection(0));
+        compute_view(&mut app, Rect::new(0, 0, 100, 6));
         assert_eq!(
-            initial
-                .selection
+            app.view
+                .file_manager_action_bar
                 .as_ref()
+                .and_then(|model| model.selection.as_ref())
                 .map(|selection| selection.label.as_str()),
             Some("a.txt")
         );
-        assert_eq!(initial.clipboard_count, 1);
 
         app.file_manager.as_mut().expect("open FM").move_down();
+        compute_view(&mut app, Rect::new(0, 0, 100, 6));
+        assert_eq!(
+            app.view
+                .file_manager_action_bar
+                .as_ref()
+                .and_then(|model| model.selection.as_ref())
+                .map(|selection| selection.label.as_str()),
+            Some("a.txt")
+        );
+
+        assert!(app
+            .file_manager
+            .as_mut()
+            .expect("open FM")
+            .replace_selection(1));
         compute_view(&mut app, Rect::new(0, 0, 100, 6));
         assert_eq!(
             app.view
@@ -975,7 +999,7 @@ mod tests {
                 .as_ref()
                 .and_then(|model| model.selection.as_ref())
                 .map(|selection| selection.label.as_str()),
-            Some("a.txt")
+            None
         );
 
         std::fs::remove_file(root.join("a.txt")).expect("remove final fixture");
