@@ -183,7 +183,8 @@ mod tests {
     use super::*;
     use crate::app::state::{
         FileManagerActionBarModel, FileManagerActionDisabledReason, FileManagerActionState,
-        FileManagerHeaderAction, FileManagerHeaderActionArea, FileManagerRowArea,
+        FileManagerHeaderAction, FileManagerHeaderActionArea, FileManagerRowAction,
+        FileManagerRowActionArea, FileManagerRowArea,
     };
     use crate::fm::FmState;
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -252,6 +253,36 @@ mod tests {
             })
             .collect();
         app
+    }
+
+    fn install_row_actions(app: &mut crate::app::App, entry_idx: usize) -> PathBuf {
+        let entry_path = app
+            .state
+            .file_manager
+            .as_ref()
+            .and_then(|file_manager| file_manager.entries.get(entry_idx))
+            .expect("row-action fixture entry")
+            .path
+            .clone();
+        let row = app
+            .state
+            .view
+            .file_manager_row_areas
+            .iter_mut()
+            .find(|row| row.entry_idx == entry_idx)
+            .expect("row-action fixture row");
+        row.rect.width = 17;
+        app.state.view.file_manager_row_action_areas = FileManagerRowAction::ALL
+            .into_iter()
+            .enumerate()
+            .map(|(action_idx, action)| FileManagerRowActionArea {
+                rect: Rect::new(43 + action_idx as u16, row.rect.y, 1, 1),
+                entry_idx,
+                entry_path: entry_path.clone(),
+                action,
+            })
+            .collect();
+        entry_path
     }
 
     fn mouse(kind: MouseEventKind, col: u16, row: u16) -> MouseEvent {
@@ -694,6 +725,145 @@ mod tests {
                 .expect("read fixture after click")
                 .count(),
             before_entries
+        );
+    }
+
+    // TP-C2.2-ROW-DISPATCH: every complete visible row-action rectangle
+    // resolves to its exact tag plus stable path identity. C2.2 only routes
+    // tags; it must not select the row or mutate clipboard/cwd/filesystem.
+    #[test]
+    fn row_left_click_dispatches_exact_tags_without_side_effects() {
+        let td = TempDir::new("row-actions");
+        td.file("alpha.txt");
+        td.file("beta.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let entry_path = install_row_actions(&mut app, 1);
+        let before_cursor = app.state.file_manager.as_ref().expect("open FM").cursor;
+        let before_cwd = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .cwd
+            .clone();
+        let before_clipboard = app.state.file_manager_clipboard.clone();
+        let before_entries = fs::read_dir(&td.root)
+            .expect("read row-action fixture before clicks")
+            .map(|entry| entry.expect("fixture entry").file_name())
+            .collect::<Vec<_>>();
+
+        for (column, action) in [
+            (43, FileManagerRowAction::SendAgent),
+            (44, FileManagerRowAction::Rename),
+            (45, FileManagerRowAction::Delete),
+        ] {
+            assert_eq!(
+                app.handle_file_manager_mouse(mouse(
+                    MouseEventKind::Down(MouseButton::Left),
+                    column,
+                    3,
+                )),
+                FileManagerMouseDispatch::RowAction {
+                    action,
+                    entry_path: entry_path.clone(),
+                }
+            );
+        }
+
+        let fm = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(fm.cwd, before_cwd);
+        assert_eq!(fm.cursor, before_cursor);
+        assert_eq!(app.state.file_manager_clipboard, before_clipboard);
+        assert_eq!(
+            fs::read_dir(&td.root)
+                .expect("read row-action fixture after clicks")
+                .map(|entry| entry.expect("fixture entry").file_name())
+                .collect::<Vec<_>>(),
+            before_entries
+        );
+    }
+
+    // TP-C2.2-NON-TARGETS: the name rectangle preserves selection, while
+    // gaps, hidden actions, non-left presses, modifiers, and stale closed-FM
+    // geometry cannot invent a row action.
+    #[test]
+    fn row_action_dispatch_preserves_names_and_fails_closed_for_non_targets() {
+        let td = TempDir::new("row-action-non-targets");
+        td.file("alpha.txt");
+        td.file("beta.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_row_actions(&mut app, 1);
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 27, 3));
+        assert_eq!(app.state.file_manager.as_ref().expect("open FM").cursor, 1);
+
+        for event in [
+            mouse(MouseEventKind::Down(MouseButton::Right), 43, 3),
+            mouse(MouseEventKind::Down(MouseButton::Middle), 43, 3),
+            mouse_with_modifiers(
+                MouseEventKind::Down(MouseButton::Left),
+                43,
+                3,
+                KeyModifiers::CONTROL,
+            ),
+            mouse(MouseEventKind::Down(MouseButton::Left), 46, 3),
+            mouse(MouseEventKind::Down(MouseButton::Left), 43, 1),
+        ] {
+            assert_eq!(
+                app.handle_file_manager_mouse(event),
+                FileManagerMouseDispatch::Consumed
+            );
+        }
+
+        app.state.view.file_manager_row_action_areas.clear();
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 3,)),
+            FileManagerMouseDispatch::Consumed,
+            "hidden action is not inferred from its former coordinates"
+        );
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 25, 3,)),
+            FileManagerMouseDispatch::NotHandled
+        );
+
+        app.state.file_manager = None;
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 3,)),
+            FileManagerMouseDispatch::NotHandled
+        );
+    }
+
+    // TP-C2.2-STALE-IDENTITY: a watcher reload can reorder entries between
+    // compute_view and input. Matching coordinates and index are insufficient;
+    // the snapshotted path must still match and the live target must remain
+    // supported before a tag can escape.
+    #[test]
+    fn row_action_dispatch_rejects_reordered_and_unsupported_targets() {
+        let td = TempDir::new("row-action-stale");
+        td.file("alpha.txt");
+        td.file("beta.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_row_actions(&mut app, 0);
+        app.state
+            .file_manager
+            .as_mut()
+            .expect("open FM")
+            .entries
+            .swap(0, 1);
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 2,)),
+            FileManagerMouseDispatch::Consumed,
+            "same index with a different path is stale"
+        );
+
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_row_actions(&mut app, 0);
+        app.state.file_manager.as_mut().expect("open FM").entries[0].operation_supported = false;
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 2,)),
+            FileManagerMouseDispatch::Consumed,
+            "unsupported live target fails closed"
         );
     }
 }
