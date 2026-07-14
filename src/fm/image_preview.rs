@@ -3,6 +3,7 @@ use image::metadata::Orientation;
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits};
 use std::fmt;
 use std::fs::{self, File};
+use std::hash::{Hash, Hasher};
 use std::io::{Cursor, Read};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
@@ -46,6 +47,7 @@ impl Default for ImagePreviewLimits {
 pub struct PreparedImagePreview {
     pub width: u32,
     pub height: u32,
+    pub data_fingerprint: u64,
     pub rgba: Vec<u8>,
 }
 
@@ -272,10 +274,16 @@ fn decode_image(
         return Err(ImagePreviewError::DecodeFailed);
     }
 
+    let rgba = rgba.into_raw();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    rgba.hash(&mut hasher);
+    let data_fingerprint = hasher.finish();
+
     Ok(PreparedImagePreview {
         width: actual_width,
         height: actual_height,
-        rgba: rgba.into_raw(),
+        data_fingerprint,
+        rgba,
     })
 }
 

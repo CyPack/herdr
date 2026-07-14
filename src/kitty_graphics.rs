@@ -73,6 +73,7 @@ impl HostCellSize {
 struct HostViewKey {
     workspace_index: usize,
     tab_index: usize,
+    file_manager_open: bool,
 }
 
 #[derive(Debug)]
@@ -113,13 +114,20 @@ pub(crate) fn file_manager_image_target(
     file_manager_image_geometry(file_manager_area, cell_size).map(|(_, target)| target)
 }
 
-// B2.2 establishes the pure placement seam before B2.3 feeds it prepared
-// state. This remains client-only and never enters the server wire protocol.
-#[allow(dead_code)]
+#[cfg(test)]
 fn file_manager_image_placement(
     file_manager_area: Rect,
     cell_size: HostCellSize,
     prepared: &PreparedImagePreview,
+) -> Option<HostPlacement> {
+    file_manager_image_placement_with_data(file_manager_area, cell_size, prepared, true)
+}
+
+fn file_manager_image_placement_with_data(
+    file_manager_area: Rect,
+    cell_size: HostCellSize,
+    prepared: &PreparedImagePreview,
+    include_data: bool,
 ) -> Option<HostPlacement> {
     let (area, target) = file_manager_image_geometry(file_manager_area, cell_size)?;
     if prepared.width == 0
@@ -149,10 +157,6 @@ fn file_manager_image_placement(
     let viewport_col = i32::try_from((u32::from(area.width) - grid_cols) / 2).ok()?;
     let viewport_row = i32::try_from((u32::from(area.height) - grid_rows) / 2).ok()?;
 
-    let mut hasher = DefaultHasher::new();
-    prepared.rgba.hash(&mut hasher);
-    let data_fingerprint = hasher.finish();
-
     Some(HostPlacement {
         pane_id: PaneId::from_raw(FILE_MANAGER_PREVIEW_PANE_RAW),
         area,
@@ -168,8 +172,12 @@ fn file_manager_image_placement(
             image_height: prepared.height,
             format: KittyImageFormat::Rgba,
             data_len: prepared.rgba.len(),
-            data_fingerprint,
-            data: prepared.rgba.clone(),
+            data_fingerprint: prepared.data_fingerprint,
+            data: if include_data {
+                prepared.rgba.clone()
+            } else {
+                Vec::new()
+            },
             render: KittyPlacementRenderInfo {
                 pixel_width: prepared.width,
                 pixel_height: prepared.height,
@@ -184,6 +192,35 @@ fn file_manager_image_placement(
             },
         },
     })
+}
+
+fn collect_file_manager_image_placement(
+    app: &AppState,
+    cell_size: HostCellSize,
+    uploaded_images: &HashMap<u32, ImageSignature>,
+) -> Option<HostPlacement> {
+    let file_manager = app.file_manager.as_ref()?;
+    let crate::fm::FmPreview::File(crate::fm::FmFilePreview::Image(preview)) =
+        &file_manager.preview
+    else {
+        return None;
+    };
+    let crate::fm::FmImagePreviewState::Ready { target, prepared } = &preview.state else {
+        return None;
+    };
+    if file_manager_image_target(app.view.terminal_area, cell_size)? != *target {
+        return None;
+    }
+
+    let mut placement =
+        file_manager_image_placement_with_data(app.view.terminal_area, cell_size, prepared, false)?;
+    let format_code = kitty_format_code(placement.placement.format);
+    let signature = image_signature(&placement, format_code);
+    let host_id = host_image_id(placement.pane_id, &placement.placement);
+    if uploaded_images.get(&host_id).copied() != Some(signature) {
+        placement.placement.data = prepared.rgba.clone();
+    }
+    Some(placement)
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -304,15 +341,43 @@ pub(crate) fn encode_local_pane_graphics(
     }
 
     let view_key = active_view_key(app);
+    let surface_changed = cache
+        .view
+        .as_ref()
+        .zip(view_key.as_ref())
+        .is_some_and(|(previous, next)| previous.file_manager_open != next.file_manager_open)
+        || cache
+            .view
+            .as_ref()
+            .is_some_and(|previous| previous.file_manager_open && view_key.is_none());
+    let mut bytes = if surface_changed {
+        cache.clear_bytes()
+    } else {
+        Vec::new()
+    };
     let uploaded_images = cache.images.clone();
-    let placements =
-        collect_visible_placements(app, terminal_runtimes, cell_size, &uploaded_images);
+    let placements = if app.file_manager.is_some() {
+        collect_file_manager_image_placement(app, cell_size, &uploaded_images)
+            .into_iter()
+            .collect()
+    } else {
+        collect_visible_placements(app, terminal_runtimes, cell_size, &uploaded_images)
+    };
     tracing::debug!(
         placements_collected = placements.len(),
         "collect_visible_placements result"
     );
 
-    let mut bytes = Vec::new();
+    let file_manager_source = (
+        PaneId::from_raw(FILE_MANAGER_PREVIEW_PANE_RAW),
+        FILE_MANAGER_PREVIEW_IMAGE_ID,
+    );
+    if app.file_manager.is_some()
+        && placements.is_empty()
+        && cache.sources.contains_key(&file_manager_source)
+    {
+        bytes.extend(cache.clear_bytes());
+    }
     let view_changed = cache.update_view(view_key);
     encode_graphics_update(
         &mut bytes,
@@ -580,11 +645,25 @@ impl HostGraphicsCache {
 }
 
 fn active_view_key(app: &AppState) -> Option<HostViewKey> {
+    if app.file_manager.is_some() {
+        let workspace_index = app.active.unwrap_or(usize::MAX);
+        let tab_index = app
+            .active
+            .and_then(|index| app.workspaces.get(index))
+            .map(crate::workspace::Workspace::active_tab_index)
+            .unwrap_or(usize::MAX);
+        return Some(HostViewKey {
+            workspace_index,
+            tab_index,
+            file_manager_open: true,
+        });
+    }
     let ws_idx = app.active?;
     let ws = app.workspaces.get(ws_idx)?;
     Some(HostViewKey {
         workspace_index: ws_idx,
         tab_index: ws.active_tab_index(),
+        file_manager_open: false,
     })
 }
 
@@ -1151,8 +1230,9 @@ mod tests {
             &mut sources,
         );
         let removal = String::from_utf8_lossy(&bytes);
-        assert!(removal.contains("a=d,d=I"));
-        assert!(images.is_empty());
+        assert!(removal.contains("a=d,d=i"));
+        assert!(!removal.contains("d=I"));
+        assert_eq!(images.len(), 1);
         assert!(placements.is_empty());
         assert!(sources.is_empty());
     }

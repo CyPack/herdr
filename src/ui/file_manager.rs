@@ -291,11 +291,20 @@ fn render_file_preview(app: &AppState, frame: &mut Frame, area: Rect, preview: &
             frame.render_widget(Paragraph::new(lines), content_area);
         }
         FmFilePreview::Image(preview) => {
-            let label = match &preview.state {
-                FmImagePreviewState::Pending => "(image preview pending)",
-                FmImagePreviewState::Loading { .. } => "(loading image...)",
-                FmImagePreviewState::Ready { .. } => "(image preview ready)",
-                FmImagePreviewState::Unavailable { error, .. } => image_preview_error_label(*error),
+            let label = if !app.kitty_graphics_enabled {
+                Some("(image preview requires Kitty graphics)")
+            } else {
+                match &preview.state {
+                    FmImagePreviewState::Pending => Some("(image preview pending)"),
+                    FmImagePreviewState::Loading { .. } => Some("(loading image...)"),
+                    FmImagePreviewState::Ready { .. } => None,
+                    FmImagePreviewState::Unavailable { error, .. } => {
+                        Some(image_preview_error_label(*error))
+                    }
+                }
+            };
+            let Some(label) = label else {
+                return;
             };
             let label = truncate_end(&format!("  {label}"), content_area.width as usize);
             frame.render_widget(
