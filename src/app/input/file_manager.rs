@@ -44,16 +44,16 @@ pub(super) fn handle_file_manager_key(state: &mut AppState, key: KeyEvent) {
         }
         (KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J'), KeyModifiers::SHIFT) => {
             if let Some(fm) = state.file_manager.as_mut() {
-                fm.move_down();
-                let cursor = fm.cursor;
-                fm.extend_selection(cursor);
+                let target = fm
+                    .cursor
+                    .saturating_add(1)
+                    .min(fm.entries.len().saturating_sub(1));
+                fm.extend_selection(target);
             }
         }
         (KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K'), KeyModifiers::SHIFT) => {
             if let Some(fm) = state.file_manager.as_mut() {
-                fm.move_up();
-                let cursor = fm.cursor;
-                fm.extend_selection(cursor);
+                fm.extend_selection(fm.cursor.saturating_sub(1));
             }
         }
         (KeyCode::Char(' '), KeyModifiers::NONE) => {
