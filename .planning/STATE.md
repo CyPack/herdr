@@ -1,10 +1,10 @@
 # Herdr Native-FM Planning State
 
-- Updated: 2026-07-14
+- Updated: 2026-07-15
 - Branch: `feat/native-fm`
-- Published CyPack base: `4bedd55`
-- Verified C3.2 product head: `0915964`
-- Publication unit: six C3.2 RED/GREEN commits plus the continuity/graph commit
+- Published CyPack base: `e4af288`
+- Verified C3.3 product head: `3c11369`
+- Publication unit: C3.3 RED `0e06181`, GREEN `3c11369`, plus the continuity/graph commit
   containing this file. Push only CyPack `feat/native-fm` and fork `master`
   after fast-forward ancestry and exact remote-SHA verification.
 
@@ -21,48 +21,52 @@
 - C3.2 global-popup reuse, exact path-stable right-click selection policy,
   bounded placement, keyboard/mouse lifecycle, disabled styling, activation-
   time authority revalidation, and typed client-local intent only.
+- C3.3 enabled/available/host-supported plugin file actions, deterministic
+  ordering, exact public path context, activation-time disable-race checks,
+  non-UTF-8 fail-closed behavior, and display-width-aware dynamic labels.
 
 ## Active Next Increment
 
-TP-C3.3-PLUGIN-SURFACE must be RED before production changes.
+TP-C4.1-PREFLIGHT must be RED before production changes.
 
 Test points:
 
-- Accept only valid enabled manifest actions with `contexts=["file"]`.
-- Reject wrong/unknown contexts, disabled plugins, malformed or duplicate IDs.
-- Preserve deterministic built-in/plugin ordering for one and many exact paths.
-- Serialize invocation context from prepared explicit path authority only.
-- Do not add private TUI-only socket fields or execute filesystem/agent work.
-- Preserve existing plugin, context-menu, FM/watcher, and full-repo regressions.
+- Exact prepared source identity must be revalidated immediately before work.
+- Collision/same-path/descendant/read-only/permission/symlink cases fail before
+  mutation; no implicit overwrite and no implicit symlink traversal.
+- Copy publishes only complete staged destinations and cleans failure/cancel.
+- Move uses same-filesystem rename where possible; cross-filesystem fallback
+  commits copy before any source removal and reports partial terminal states.
+- Worker/queue/progress/cancel are bounded, generation-safe, and outside render.
+- Watcher completion/reconciliation converges without stale selection or
+  duplicate entries; isolated tests leave no temp artifact.
 
 ## Ordered Roadmap
 
-1. C3.3 plugin file-action surface.
-2. C4 safe copy/move, trash/delete, rename/bulk rename, bounded progress/cancel,
+1. C4 safe copy/move, trash/delete, rename/bulk rename, bounded progress/cancel,
    TOCTOU, collision, permission, cross-filesystem, partial-failure, and watcher
    reconciliation tests.
-3. C5 exact pane/agent handoff, quoting/identity, split-and-launch failure
+2. C5 exact pane/agent handoff, quoting/identity, split-and-launch failure
    cleanup, and isolated-session safety.
-4. C6 Finder-fidelity sidebar, highlight/location marker, integrated actions,
+3. C6 Finder-fidelity sidebar, highlight/location marker, integrated actions,
    theme/spacing/empty/error states, and visual review.
-5. Deferred evidence-gated architecture: S5 ComponentRegistry, S6 persisted
+4. Deferred evidence-gated architecture: S5 ComponentRegistry, S6 persisted
    resizable shell, S7 popup stack, N2 dynamic Miller navigation.
-6. North-star backlog: M1 interactive CLI attachments, M2 git-worktree
+5. North-star backlog: M1 interactive CLI attachments, M2 git-worktree
    controls, M3 general panel/page/button interface evaluation.
 
-## Fresh C3.2 Evidence
+## Fresh C3.3 Evidence
 
-- Focused popup 4/4; lifecycle 3/3; disabled render 1/1.
-- Broad FM/global-menu 51/51; menu/render 26/26.
-- Full nextest 3033/3033; only the named B0 interactive host probe skipped.
+- Focused C3.3 8/8; plugin/context 35/35; FM/watcher/global-menu 112/112.
+- Full nextest 3041/3041; only `path_beta_real_host_probe` skipped.
 - Linux all-target and canonical Windows MSVC bin clippy clean with
   `-D warnings`.
 - Bun 17/17; Python maintenance 64/64; fmt and diff-check clean.
-- Graph refresh: 18,139 nodes / 86,595 edges. Parallel codebase-memory 0.8.1
-  extraction crashed in native Tree-sitter cleanup; without restarting or
-  killing any service, the supported `CBM_WORKERS=1` one-shot CLI fallback
-  completed with zero extraction errors and returned current C3.2 production,
-  test, and source-snippet evidence.
+- Generated next API schema is current; protocol stays 16 because the extension
+  is optional JSON API data, not a private transport-frame change.
+- Graph refresh: 18,246 nodes / 85,535 edges. Supported `CBM_WORKERS=1`
+  one-shot CLI completed with zero extraction errors and returned current
+  selector, typed params, Unicode geometry, and disable-race source evidence.
 
 ## Non-Negotiable Boundaries
 

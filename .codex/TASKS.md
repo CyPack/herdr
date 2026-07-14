@@ -312,10 +312,24 @@ owns filesystem mutation and C5 owns agent delivery.
   Typed intent is revalidated against current path order and authority; no
   filesystem or agent side effect runs. Full gate: 3033/3033 plus one named
   B0 skip, Linux/Windows clippy, Bun 17/17, Python 64/64, fmt/diff clean.
-- [ ] C3.3 define and verify the plugin file-action surface without deepening
-  private TUI socket coupling.
+- [x] C3.3 define and verify the plugin file-action surface without deepening
+  private TUI socket coupling. RED `0e06181`, GREEN `3c11369`. Focused 8/8,
+  plugin/context 35/35, FM/watcher/global-menu 112/112, full nextest 3041/3041
+  plus only the named B0 host probe skip, Linux/Windows clippy, Bun 17/17,
+  Python 64/64, schema/fmt/diff clean. Graph 18,246 / 85,535 is fresh.
 
 ## P3 — C4 Safe File Operations
+
+### C4 Test-Point Contract
+
+| Test point | What is tested | Expected result | Why it is required |
+|------------|----------------|-----------------|--------------------|
+| TP-C4.1-PREFLIGHT | Zero/one/many exact prepared sources; missing, replaced, unsupported, and non-UTF-8 targets; destination absent/file/directory/read-only; same path, ancestor/descendant, symlink, collision, and operation-in-flight state | Build one immutable bounded operation plan from current authority or fail before the first write; default collision policy never overwrites; symlinks are never followed implicitly; render performs no filesystem work | C3 intent is only a snapshot, so every real operation must defeat TOCTOU and path-identity ambiguity before mutation |
+| TP-C4.1-COPY | File/directory/multi-source copy, staged destination, existing target, permission/disk/write failure injection, cancellation at each phase, metadata policy, symlink no-follow behavior, and partial cleanup | Success publishes complete destinations in deterministic order; failure/cancel removes staging data and reports every committed/uncommitted item explicitly; no silent partial success or implicit overwrite | Recursive copy and multi-source operations otherwise leave plausible-looking but incomplete data |
+| TP-C4.1-MOVE | Same-filesystem rename, cross-filesystem fallback, collision, source/destination replacement, partial copy, cancellation, and source-removal failure | Same-filesystem move uses atomic rename where supported; fallback commits verified copy before source removal; source is never deleted after failed/incomplete copy; any partial terminal state is explicit and recoverable | Cross-device moves turn one apparent action into copy plus destructive delete and require a stronger commit boundary |
+| TP-C4.1-LIFECYCLE | Bounded worker/queue, one in-flight operation, progress monotonicity, cancel idempotence, FM close/reopen, stale completion generation, and panic/error conversion | Filesystem work stays outside render; memory/work concurrency is bounded; stale callbacks cannot mutate current state; every operation reaches one explicit terminal state | A responsive TUI must not trade UI liveness for unsafe background mutation or accept late results into new state |
+| TP-C4.1-WATCHER | Own-operation watcher bursts, rename/create/delete reorder, reconciliation deadline, selection pruning, and polling fallback | Watcher and explicit completion converge to one current listing without duplicate entries, stale selection, hot retry, or lost terminal result | Native operations and watcher refresh race by design and must have a deterministic reconciliation owner |
+| TP-C4-GATES | Focused preflight/copy/move/failure/cancel/watcher tests, isolated real-filesystem cross-check, existing FM/context/plugin regressions, full nextest, Linux/Windows clippy, Bun/Python maintenance, graph freshness, temp-artifact and diff cleanliness | All applicable gates pass; only the named B0 host probe is skipped; no stable Herdr/socket or user process is touched; no staging/temp artifact remains | Destructive-capable filesystem work cannot be closed by happy-path unit tests alone |
 
 - [ ] C4.1 copy/move outside render, with collision, permission, partial-write,
   cancellation, and cross-filesystem tests.
@@ -359,8 +373,8 @@ owns filesystem mutation and C5 owns agent delivery.
 
 ## Ordering Resolution
 
-A4, B0, B1, the A3 remainder, B2, C1, N3, C2, N4.2, C3.1, and C3.2 are
-complete through product head `0915964`. The next execution order is C3.3 →
-C4 → C5 → C6.
+A4, B0, B1, the A3 remainder, B2, C1, N3, C2, N4.2, C3.1, C3.2, and C3.3
+are complete through product head `3c11369`. The next execution order is C4 →
+C5 → C6.
 S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3 remain
 inactive north-star work.

@@ -1,12 +1,13 @@
-# SESSION HANDOFF — Herdr Native FM — 2026-07-14
+# SESSION HANDOFF — Herdr Native FM — 2026-07-15
 
 ## 1. SONRAKI ADIM
 
-Make TP-C3.3-PLUGIN-SURFACE RED before adding plugin file actions. Prove valid
-`contexts=["file"]`, wrong/unknown contexts, disabled plugins, one/many exact
-paths, deterministic ordering, duplicate action IDs, and invocation-context
-serialization. C3.3 must not deepen the private TUI socket boundary or perform
-filesystem/agent side effects; C4/C5 retain those responsibilities.
+Make TP-C4.1-PREFLIGHT RED before production changes. Graph-first inspect the
+existing operation/request/worker seams, then prove exact source/destination
+revalidation, collision/same-path/descendant/read-only/permission/symlink
+failure, and in-flight exclusion before the first write. Continue COPY then
+MOVE in separate RED/GREEN commits; cross-filesystem fallback must commit copy
+before source removal and every failure/cancel must have explicit cleanup.
 
 ## 2. AKTİF PROJE
 
@@ -213,6 +214,20 @@ filesystem/agent side effects; C4/C5 retain those responsibilities.
   one-shot `CBM_WORKERS=1` CLI refresh completed with zero extraction errors;
   the current graph is 18,139 nodes / 86,595 edges with fresh C3.2 symbols and
   source snippet evidence.
+- Completed C3.3 as RED `0e06181` and GREEN `3c11369`. Enabled, available,
+  host-supported `contexts=["file"]` actions append after built-ins in stable
+  qualified-ID order; duplicate identities, unknown/wrong contexts, disabled
+  plugins, and non-UTF-8 path conversion fail closed.
+- Added neutral `PluginActionContext::File` and optional exact
+  `PluginInvocationContext.file_paths`; generated next API schema is current.
+  Right-click/activation revalidate registry plus path authority, disable races
+  emit no intent, and CJK titles use display-cell geometry. No plugin command,
+  filesystem operation, agent action, stable socket, or user process was
+  touched.
+- C3.3 gates: focused 8/8, plugin/context 35/35, FM/watcher/global-menu
+  112/112, full 3041/3041 plus only `path_beta_real_host_probe` skipped,
+  Linux/Windows clippy, Bun 17/17, Python 64/64, schema/fmt/diff clean. Graph
+  is fresh at 18,246 nodes / 85,535 edges with current snippets.
 
 ## 6. KOD DURUMU
 
@@ -330,7 +345,7 @@ C3.2 is an auditable six-commit sequence:
 - `1078215` / `0915964`: disabled/highlight-safe render RED/GREEN.
 
 No RED checkpoint is published alone. This continuity/graph commit completes
-the C3.2 publication unit before both CyPack heads are fast-forwarded.
+the C3.3 publication unit before both CyPack heads are fast-forwarded.
 
 ## 7. TEST KANITI
 
@@ -390,6 +405,10 @@ the C3.2 publication unit before both CyPack heads are fast-forwarded.
   FM/global-menu 51/51 and menu/render 26/26. Final full nextest 3033/3033
   plus one named B0 host-probe skip; Linux all-target and canonical Windows
   MSVC bin clippy, Bun 17/17, Python 64/64, fmt/diff clean.
+- C3.3 focused 8/8; plugin/context 35/35; FM/watcher/global-menu 112/112;
+  final full nextest 3041/3041 plus only the named B0 host probe skip. Linux
+  all-target and canonical Windows MSVC bin clippy, Bun 17/17, Python 64/64,
+  generated schema, fmt, and diff-check are clean.
 
 ## 8. KRİTİK KARARLAR
 
@@ -435,13 +454,18 @@ the C3.2 publication unit before both CyPack heads are fast-forwarded.
 - Clear inherited socket variables and use throwaway XDG directories for runtime tests.
 - Never stage ignored `.local` files into product commits.
 - Never push `upstream`.
+- C3.3 extends the neutral public JSON plugin context, not private TUI
+  transport frames; `PROTOCOL_VERSION` remains 16 per `v0.7.3` comparison and
+  repository precedent. C4 owns every filesystem side effect.
 
 ## 10. AÇIK GÖREVLER
 
 See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2/N4 contracts and the
 complete C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1, N3,
-C2, N4, C3.1, and C3.2 are closed. The immediate product task is
-TP-C3.3-PLUGIN-SURFACE RED; then follow C4 → C5 → C6 without skipping modules.
+C2, N4, C3.1, C3.2, and C3.3 are closed. The immediate product task is
+TP-C4.1-PREFLIGHT RED; then follow C4.1 COPY/MOVE → C4.2 → C4.3 → C4.4 → C5
+→ C6 without skipping modules. S5–S7/N2 remain evidence-gated; M1–M3 remain
+north-star backlog.
 
 ## 11. ORTAM
 
@@ -485,6 +509,10 @@ TP-C3.3-PLUGIN-SURFACE RED; then follow C4 → C5 → C6 without skipping module
   returned `validated_file_context_action`, right-click selection tests, and
   disabled-render tests. No process/service was restarted or killed, and
   freshness was not inferred from `ready` alone.
+- Post-C3.3 sequential graph refresh completed at 18,246 nodes / 85,535 edges
+  with zero extraction errors. CLI status/search/snippet proof returned
+  `file_manifest_actions`, `plugin_invocation_params`, Unicode popup geometry,
+  and the end-to-end plugin disable-race test; `ready` alone was not accepted.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.

@@ -1,13 +1,13 @@
-# Current State — 2026-07-14
+# Current State — 2026-07-15
 
 ## Repository
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Active C3.2 product checkpoint: `0915964`
-  (`feat: render disabled native file context actions`).
-- The C3.2 publication unit is the six-commit RED/GREEN test/product sequence,
-  the preceding C3.1 model range, and the
+- Active C3.3 product checkpoint: `3c11369`
+  (`feat: add plugin file actions to native file manager`).
+- The C3.3 publication unit is RED `0e06181`, GREEN `3c11369`, the preceding
+  C3.1/C3.2 range, and the
   continuity/graph commit containing this file. At publication, CyPack
   `feat/native-fm` and fork `master` are verified at that same fast-forward
   branch tip.
@@ -261,6 +261,33 @@
   the fresh graph is 18,139 nodes / 86,595 edges and returns the current
   validation function plus right-click and disabled-render tests.
 
+## Verified Checkpoint — C3.3 Plugin File-Action Surface
+
+- RED `0e06181` defined manifest, registry, model, exact-path serialization,
+  wrong/unknown context, disabled plugin, ordering, and non-UTF-8 fail-closed
+  behavior. GREEN `3c11369` implemented the contract; neither was pushed
+  alone.
+- Existing neutral plugin types now include `PluginActionContext::File` and
+  optional `PluginInvocationContext.file_paths`. The generated next API schema
+  is current. This is a backward-compatible JSON API extension; private TUI
+  transport protocol remains 16, matching release `v0.7.3` and repository
+  precedent for API-only schema additions.
+- The file menu appends only enabled, manifest-available, host-supported file
+  actions in deterministic qualified-ID order. Duplicate qualified identities
+  fail closed. Built-ins remain first; multi-path order is preserved.
+- Right-click and activation both rebuild current registry/path authority.
+  Disable/reorder/removal races emit no intent. Exact UTF-8 paths produce typed
+  public invocation params; non-UTF-8 paths expose no plugin action rather
+  than using lossy conversion. C3.3 starts no plugin command and performs no
+  filesystem/agent mutation.
+- Dynamic labels use terminal display width, including CJK titles. Focused
+  C3.3 8/8, plugin/context 35/35, FM/watcher/global-menu 112/112, full nextest
+  3041/3041 with only `path_beta_real_host_probe` skipped, Linux and Windows
+  clippy clean, Bun 17/17, Python 64/64, schema/fmt/diff clean.
+- Sequential graph refresh completed with zero extraction errors at 18,246
+  nodes / 85,535 edges. Search and snippets returned current selector,
+  typed-param method, Unicode geometry test, and disable-race input test.
+
 ## Completed Checkpoint — B2 Native Image Preview
 
 - B2 is an auditable dependency decision plus four RED/GREEN increments and a
@@ -403,6 +430,10 @@
   `validated_file_context_action`, the exact right-click selection test, the
   disabled-render test, and a current source snippet; `ready` alone was not
   accepted.
+- Post-C3.3 sequential refresh completed at 18,246 nodes / 85,535 edges and
+  returned current `file_manifest_actions`, `plugin_invocation_params`, Unicode
+  popup geometry, and end-to-end disable-race evidence; `ready` alone was not
+  accepted.
 
 ## Standing Git Authorization
 
@@ -414,12 +445,15 @@
 
 ## Exact Next Action
 
-1. Begin TP-C3.3-PLUGIN-SURFACE RED before production changes. Characterize
-   `contexts=["file"]`, wrong/unknown contexts, disabled plugins, one/many
-   paths, deterministic ordering, duplicate action IDs, and invocation-context
-   serialization. Valid actions append only from explicit prepared path
-   authority; invalid declarations fail closed, and no private TUI-only socket
-   field or filesystem/agent side effect lands in C3.3.
+1. Begin TP-C4.1-PREFLIGHT RED before production changes. Graph-first inspect
+   existing operation/request/worker seams, then characterize exact source
+   snapshots, destination collision/same-path/descendant checks, missing or
+   replaced targets, read-only/permission failures, symlink no-follow policy,
+   and operation-in-flight exclusion. Expected: an immutable bounded plan or
+   fail-before-write with no render I/O and no filesystem mutation.
+2. Continue C4.1 COPY then MOVE RED/GREEN in separate atomic commits. Copy must
+   stage and clean partial outputs; move must prefer same-filesystem rename and
+   never remove a source before a cross-filesystem destination is committed.
 
 ## Verified B2.0 Dependency Decision
 
