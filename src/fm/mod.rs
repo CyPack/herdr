@@ -10,6 +10,8 @@
 //!
 //! Design docs: `.local/prd/native-fm/` (A1-fs-reader.md, 00-MODULE-TREE.md).
 
+#[cfg(test)]
+mod image_preview;
 mod natsort;
 mod text_preview;
 pub(crate) mod watcher;
