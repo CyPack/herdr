@@ -854,6 +854,7 @@ fn encode_kitty_data(out: &mut Vec<u8>, control: &str, data: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fm::image_preview::{ImagePreviewTarget, PreparedImagePreview};
     use crate::ghostty::KittyPlacementRenderInfo;
 
     const PATH_BETA_RGBA: [u8; 16] = [
@@ -1042,6 +1043,125 @@ mod tests {
         let removal = String::from_utf8_lossy(&bytes);
         assert!(removal.contains("a=d,d=i"));
         assert!(placements.is_empty());
+    }
+
+    #[test]
+    fn file_manager_image_target_uses_only_the_responsive_preview_content_area() {
+        let cells = HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+
+        assert_eq!(
+            file_manager_image_target(Rect::new(10, 5, 24, 10), cells),
+            None,
+            "one-column layout has no preview slot"
+        );
+        assert_eq!(
+            file_manager_image_target(Rect::new(10, 5, 25, 10), cells),
+            Some(ImagePreviewTarget {
+                width_px: 96,
+                height_px: 128,
+            }),
+            "two-column preview excludes the FM header and PREVIEW title"
+        );
+        assert_eq!(
+            file_manager_image_target(Rect::new(10, 5, 38, 10), cells),
+            Some(ImagePreviewTarget {
+                width_px: 96,
+                height_px: 128,
+            }),
+            "three-column preview consumes the same named preview content seam"
+        );
+        assert_eq!(
+            file_manager_image_target(Rect::new(10, 5, 38, 2), cells),
+            None,
+            "header-only preview column has no image content rows"
+        );
+        assert_eq!(
+            file_manager_image_target(Rect::new(10, 5, 38, 10), HostCellSize::default()),
+            None,
+            "unknown host cell pixels cannot produce a decode target"
+        );
+        assert_eq!(
+            file_manager_image_target(
+                Rect::new(10, 5, 38, 10),
+                HostCellSize {
+                    width_px: u32::MAX,
+                    height_px: u32::MAX,
+                },
+            ),
+            None,
+            "pixel multiplication overflow is rejected"
+        );
+    }
+
+    #[test]
+    fn file_manager_image_placement_is_centered_bounded_and_client_local() {
+        let cells = HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        let prepared = PreparedImagePreview {
+            width: 80,
+            height: 64,
+            rgba: vec![0x7f; 80 * 64 * 4],
+        };
+        let placement = file_manager_image_placement(Rect::new(10, 5, 38, 10), cells, &prepared)
+            .expect("valid three-column local placement");
+
+        assert_eq!(placement.pane_id, PaneId::from_raw(u32::MAX));
+        assert_eq!(placement.area, Rect::new(36, 7, 12, 8));
+        assert_eq!(placement.scrollback_offset, 0);
+        assert_eq!(placement.placement.format, KittyImageFormat::Rgba);
+        assert_eq!(
+            (
+                placement.placement.image_width,
+                placement.placement.image_height
+            ),
+            (80, 64)
+        );
+        assert_eq!(placement.placement.data_len, prepared.rgba.len());
+        assert_eq!(placement.placement.data, prepared.rgba);
+        assert_eq!(
+            (
+                placement.placement.render.grid_cols,
+                placement.placement.render.grid_rows
+            ),
+            (10, 4)
+        );
+        assert_eq!(
+            (
+                placement.placement.render.viewport_col,
+                placement.placement.render.viewport_row
+            ),
+            (1, 2)
+        );
+
+        let (clipped, format) = clipped_placement(&placement).expect("placement remains visible");
+        assert_eq!(format, 32);
+        assert_eq!(
+            (clipped.x, clipped.y, clipped.cols, clipped.rows),
+            (37, 9, 10, 4)
+        );
+
+        let malformed = PreparedImagePreview {
+            width: 80,
+            height: 64,
+            rgba: vec![0; 3],
+        };
+        assert!(
+            file_manager_image_placement(Rect::new(10, 5, 38, 10), cells, &malformed,).is_none()
+        );
+
+        let oversized = PreparedImagePreview {
+            width: 97,
+            height: 64,
+            rgba: vec![0; 97 * 64 * 4],
+        };
+        assert!(
+            file_manager_image_placement(Rect::new(10, 5, 38, 10), cells, &oversized,).is_none()
+        );
     }
 
     #[test]
