@@ -481,8 +481,9 @@ fn apply_execution_result(
 mod tests {
     use super::{FileOperationStartError, FileOperationWorker, FileOperationWorkerError};
     use crate::app::state::{
-        FileManagerContextActionIntent, FileManagerContextMenuAction, FileManagerHeaderAction,
-        FileManagerOperationStatus,
+        FileManagerContextActionIntent, FileManagerContextMenuAction, FileManagerDeleteKind,
+        FileManagerDeleteRequest, FileManagerHeaderAction, FileManagerOperationKind,
+        FileManagerOperationState, FileManagerOperationStatus,
     };
     use crate::fm::operations::{
         execute_file_operation, FileOperationCancellation, FileOperationExecutionStatus,
@@ -874,5 +875,105 @@ mod tests {
         assert_eq!(app.state.file_manager_clipboard, vec![source]);
         assert!(app.state.request_file_manager_context_action.is_none());
         assert!(app.state.file_manager_operation.is_none());
+    }
+
+    // TP-C4.2-DELETE/RECOVERY: a separately confirmed permanent request enters
+    // the same bounded worker lane, reaches terminal per-item state, and
+    // reloads the matching native-FM directory after completion.
+    #[test]
+    fn app_permanent_delete_runs_in_worker_and_reloads_matching_directory() {
+        let td = TempDir::new("app-permanent-delete");
+        let source = td.root.join("selected.txt");
+        fs::write(&source, b"selected").expect("write permanent delete fixture");
+        let mut app = test_app();
+        app.state.file_manager = Some(crate::fm::FmState::new(&td.root));
+        app.state.request_file_manager_delete = Some(FileManagerDeleteRequest {
+            kind: FileManagerDeleteKind::Permanent,
+            paths: vec![source.clone()],
+        });
+
+        assert!(app.sync_file_operation_worker());
+        assert!(app.state.request_file_manager_delete.is_none());
+        let generation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("running permanent delete")
+            .generation;
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let _ = app.sync_file_operation_worker();
+            if app
+                .state
+                .file_manager_operation
+                .as_ref()
+                .is_some_and(|operation| !operation.is_running())
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "permanent delete timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let operation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("terminal permanent delete");
+        assert_eq!(operation.generation, generation);
+        assert_eq!(operation.kind, FileManagerOperationKind::PermanentDelete);
+        assert_eq!(operation.status, FileManagerOperationStatus::Completed);
+        assert_eq!(operation.completed_items, 1);
+        assert_eq!(operation.failed_items, 0);
+        assert!(!source.exists());
+        assert!(app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .entries
+            .is_empty());
+    }
+
+    // TP-C4.2-TRASH: a confirmed trash request is consumed but fails closed
+    // before preflight while another operation is projected in flight. This
+    // test deliberately never invokes the host trash backend.
+    #[test]
+    fn app_trash_request_fails_closed_while_operation_is_inflight() {
+        let td = TempDir::new("app-trash-busy");
+        let source = td.root.join("selected.txt");
+        fs::write(&source, b"selected").expect("write trash busy fixture");
+        let mut app = test_app();
+        app.state.file_manager = Some(crate::fm::FmState::new(&td.root));
+        app.state.file_manager_operation = Some(FileManagerOperationState {
+            generation: 41,
+            kind: FileManagerOperationKind::Copy,
+            destination_directory: td.root.clone(),
+            total_items: 1,
+            completed_items: 0,
+            failed_items: 0,
+            status: FileManagerOperationStatus::Running,
+        });
+        app.state.request_file_manager_delete = Some(FileManagerDeleteRequest {
+            kind: FileManagerDeleteKind::Trash,
+            paths: vec![source.clone()],
+        });
+
+        assert!(app.sync_file_operation_worker());
+
+        assert!(app.state.request_file_manager_delete.is_none());
+        assert_eq!(
+            app.state
+                .file_manager_operation
+                .as_ref()
+                .expect("existing operation retained")
+                .generation,
+            41
+        );
+        assert_eq!(
+            fs::read(source).expect("busy source preserved"),
+            b"selected"
+        );
     }
 }
