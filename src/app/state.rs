@@ -3258,6 +3258,19 @@ mod tests {
                 .iter()
                 .all(|item| { !item.enabled && item.disabled_reason == Some(reason) }));
         }
+
+        let mixed = file_action_bar_model(
+            FileManagerActionBarSelectionKind::Unavailable,
+            vec![PathBuf::from("/prepared/in-flight")],
+            Some(FileManagerActionDisabledReason::UnsupportedSelection),
+            Some(FileManagerActionDisabledReason::OperationInFlight),
+        );
+        let model = FileManagerContextMenuModel::from_action_bar(&mixed)
+            .expect("mixed-priority context model");
+        assert!(model.items.iter().all(|item| {
+            !item.enabled
+                && item.disabled_reason == Some(FileManagerActionDisabledReason::OperationInFlight)
+        }));
     }
 
     // TP-C3.1-CONTEXT-MODEL: the global popup kind exposes the exact file
