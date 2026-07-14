@@ -884,6 +884,7 @@ mod tests {
         let preview = TextPreview {
             content: source.to_owned(),
             truncated: false,
+            highlighted: None,
         };
 
         let highlighted = highlight_text_preview(Path::new("main.rs"), &preview);
@@ -902,6 +903,7 @@ mod tests {
         let preview = TextPreview {
             content: "#!/usr/bin/env python3\nprint('hi')\n".to_owned(),
             truncated: false,
+            highlighted: None,
         };
 
         let highlighted = highlight_text_preview(Path::new("script"), &preview);
@@ -917,6 +919,7 @@ mod tests {
         let preview = TextPreview {
             content: "unknown but readable\n".to_owned(),
             truncated: false,
+            highlighted: None,
         };
 
         let highlighted = highlight_text_preview(Path::new("sample.mystery"), &preview);
@@ -939,6 +942,7 @@ mod tests {
         let preview = TextPreview {
             content: "let value = 1;\n".repeat(130),
             truncated: false,
+            highlighted: None,
         };
 
         let highlighted = highlight_text_preview(Path::new("many.rs"), &preview);

@@ -107,6 +107,7 @@ pub struct App {
     pub(crate) no_session: bool,
     pub(crate) input_rx: Option<mpsc::Receiver<crate::raw_input::RawInputEvent>>,
     file_manager_watcher: file_manager_watcher::NativeFileManagerWatcher,
+    file_preview_worker: file_preview_worker::FilePreviewHighlightWorker,
     pub(crate) last_terminal_size: Option<(u16, u16)>,
     pub(crate) config_diagnostic_deadline: Option<Instant>,
     pub(crate) toast_deadline: Option<Instant>,
@@ -802,6 +803,9 @@ impl App {
             no_session,
             input_rx: None,
             file_manager_watcher: file_manager_watcher::NativeFileManagerWatcher::new(
+                render_notify.clone(),
+            ),
+            file_preview_worker: file_preview_worker::FilePreviewHighlightWorker::new(
                 render_notify.clone(),
             ),
             last_terminal_size: terminal::size().ok(),

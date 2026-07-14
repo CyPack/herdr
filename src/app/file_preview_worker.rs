@@ -115,14 +115,15 @@ impl Drop for WorkerAliveGuard {
     }
 }
 
-struct FilePreviewHighlightWorker {
+pub(super) struct FilePreviewHighlightWorker {
     slot: FilePreviewHighlightSlot,
     shared: SharedWorkerState,
     handle: Option<JoinHandle<()>>,
+    disconnect_reported: bool,
 }
 
 impl FilePreviewHighlightWorker {
-    fn new(wake: Arc<Notify>) -> Self {
+    pub(super) fn new(wake: Arc<Notify>) -> Self {
         Self::with_processor(wake, highlight_text_preview)
     }
 
@@ -165,6 +166,7 @@ impl FilePreviewHighlightWorker {
             slot: FilePreviewHighlightSlot::default(),
             shared,
             handle: Some(handle),
+            disconnect_reported: false,
         }
     }
 
@@ -200,7 +202,8 @@ impl FilePreviewHighlightWorker {
         let (state, _) = &*self.shared;
         let mut state = lock_state(state);
         let result = state.result.take();
-        let disconnected = !state.alive && !state.closed;
+        let disconnected = !state.alive && !state.closed && !self.disconnect_reported;
+        self.disconnect_reported |= disconnected;
         drop(state);
 
         let current = result.filter(|result| self.slot.accepts(result.generation, &result.key));
@@ -246,6 +249,50 @@ fn lock_state(state: &Mutex<FilePreviewWorkerState>) -> MutexGuard<'_, FilePrevi
     match state.lock() {
         Ok(state) => state,
         Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+impl super::App {
+    pub(super) fn sync_file_preview_worker(&mut self) -> bool {
+        let target = self.state.file_manager.as_ref().and_then(|file_manager| {
+            let selected_path = file_manager.selected()?.path.clone();
+            let crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(preview)) =
+                &file_manager.preview
+            else {
+                return None;
+            };
+            let mut source = preview.clone();
+            source.highlighted = None;
+            Some((selected_path, source))
+        });
+
+        let _ = self.file_preview_worker.sync_target(target);
+        let drained = self.file_preview_worker.drain();
+        if drained.disconnected {
+            tracing::warn!("fm: text preview highlight worker stopped; using plain-text fallback");
+        }
+        let Some(result) = drained.current else {
+            return false;
+        };
+        let Some(file_manager) = self.state.file_manager.as_mut() else {
+            return false;
+        };
+        let Some(selected_path) = file_manager.selected().map(|entry| entry.path.clone()) else {
+            return false;
+        };
+        let crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(preview)) =
+            &mut file_manager.preview
+        else {
+            return false;
+        };
+        if FilePreviewHighlightKey::new(&selected_path, preview) != result.key {
+            return false;
+        }
+        if preview.highlighted.as_ref() == Some(&result.highlighted) {
+            return false;
+        }
+        preview.highlighted = Some(result.highlighted);
+        true
     }
 }
 
@@ -298,6 +345,7 @@ mod tests {
         TextPreview {
             content: content.to_owned(),
             truncated: false,
+            highlighted: None,
         }
     }
 

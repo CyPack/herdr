@@ -41,6 +41,7 @@ impl Default for TextPreviewLimits {
 pub struct TextPreview {
     pub content: String,
     pub truncated: bool,
+    pub highlighted: Option<HighlightedTextPreview>,
 }
 
 /// Terminal-independent style prepared from a syntax scope.
@@ -151,7 +152,11 @@ pub(super) fn read_text_preview(
         }
     };
 
-    Ok(TextPreview { content, truncated })
+    Ok(TextPreview {
+        content,
+        truncated,
+        highlighted: None,
+    })
 }
 
 fn crossing_scalar_is_valid(bytes: &[u8], valid_up_to: usize, max_bytes: usize) -> bool {
