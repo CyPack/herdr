@@ -1,3 +1,355 @@
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::thread::JoinHandle;
+
+use tokio::sync::Notify;
+
+use crate::fm::image_preview::{read_image_preview, ImagePreviewLimits};
+use crate::fm::{
+    FmFilePreview, FmImagePreviewState, FmPreview, ImagePreviewError, ImagePreviewTarget,
+    PreparedImagePreview,
+};
+use crate::kitty_graphics::file_manager_image_target;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ImagePreviewKey {
+    path: PathBuf,
+    model_generation: u64,
+    target: ImagePreviewTarget,
+}
+
+impl ImagePreviewKey {
+    fn new(path: &Path, model_generation: u64, target: ImagePreviewTarget) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            model_generation,
+            target,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImagePreviewSync {
+    Unchanged,
+    Started { generation: u64 },
+    Stopped,
+}
+
+#[derive(Debug, Default)]
+struct ImagePreviewSlot {
+    generation: u64,
+    active: Option<ImagePreviewKey>,
+}
+
+impl ImagePreviewSlot {
+    fn sync(&mut self, target: Option<ImagePreviewKey>) -> ImagePreviewSync {
+        if self.active == target {
+            return ImagePreviewSync::Unchanged;
+        }
+        self.generation = self.generation.wrapping_add(1).max(1);
+        self.active = target;
+        if self.active.is_some() {
+            ImagePreviewSync::Started {
+                generation: self.generation,
+            }
+        } else {
+            ImagePreviewSync::Stopped
+        }
+    }
+
+    fn accepts(&self, generation: u64, key: &ImagePreviewKey) -> bool {
+        self.generation == generation && self.active.as_ref() == Some(key)
+    }
+}
+
+#[derive(Debug)]
+struct ImagePreviewRequest {
+    generation: u64,
+    key: ImagePreviewKey,
+}
+
+#[derive(Debug)]
+struct ImagePreviewResult {
+    generation: u64,
+    key: ImagePreviewKey,
+    output: Result<PreparedImagePreview, ImagePreviewError>,
+}
+
+#[derive(Debug, Default)]
+struct ImagePreviewDrain {
+    current: Option<ImagePreviewResult>,
+    disconnected: bool,
+}
+
+#[derive(Debug)]
+struct ImagePreviewWorkerState {
+    pending: Option<ImagePreviewRequest>,
+    result: Option<ImagePreviewResult>,
+    alive: bool,
+    closed: bool,
+}
+
+impl Default for ImagePreviewWorkerState {
+    fn default() -> Self {
+        Self {
+            pending: None,
+            result: None,
+            alive: true,
+            closed: false,
+        }
+    }
+}
+
+type SharedImageWorkerState = Arc<(Mutex<ImagePreviewWorkerState>, Condvar)>;
+
+struct ImageWorkerAliveGuard {
+    shared: SharedImageWorkerState,
+    wake: Arc<Notify>,
+}
+
+impl Drop for ImageWorkerAliveGuard {
+    fn drop(&mut self) {
+        let (state, _) = &*self.shared;
+        lock_image_state(state).alive = false;
+        self.wake.notify_one();
+    }
+}
+
+pub(super) struct ImagePreviewWorker {
+    slot: ImagePreviewSlot,
+    shared: SharedImageWorkerState,
+    handle: Option<JoinHandle<()>>,
+    disconnect_reported: bool,
+}
+
+impl ImagePreviewWorker {
+    pub(super) fn new(wake: Arc<Notify>) -> Self {
+        Self::with_processor(wake, |path, target| {
+            read_image_preview(path, target, ImagePreviewLimits::default())
+        })
+    }
+
+    fn with_processor<F>(wake: Arc<Notify>, processor: F) -> Self
+    where
+        F: Fn(&Path, ImagePreviewTarget) -> Result<PreparedImagePreview, ImagePreviewError>
+            + Send
+            + 'static,
+    {
+        let shared = Arc::new((
+            Mutex::new(ImagePreviewWorkerState::default()),
+            Condvar::new(),
+        ));
+        let worker_shared = shared.clone();
+        let handle = std::thread::spawn(move || {
+            let _alive_guard = ImageWorkerAliveGuard {
+                shared: worker_shared.clone(),
+                wake: wake.clone(),
+            };
+            while let Some(request) = take_next_image_request(&worker_shared) {
+                let output = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    processor(&request.key.path, request.key.target)
+                }))
+                .unwrap_or(Err(ImagePreviewError::DecoderPanicked));
+                let result = ImagePreviewResult {
+                    generation: request.generation,
+                    key: request.key,
+                    output,
+                };
+                let (state, _) = &*worker_shared;
+                let mut state = lock_image_state(state);
+                if state.closed {
+                    break;
+                }
+                state.result = Some(result);
+                drop(state);
+                wake.notify_one();
+            }
+        });
+
+        Self {
+            slot: ImagePreviewSlot::default(),
+            shared,
+            handle: Some(handle),
+            disconnect_reported: false,
+        }
+    }
+
+    fn sync_target(&mut self, target: Option<ImagePreviewKey>) -> ImagePreviewSync {
+        let sync = self.slot.sync(target.clone());
+        let (state, pending) = &*self.shared;
+        let mut state = lock_image_state(state);
+        match sync {
+            ImagePreviewSync::Started { generation } => {
+                if let Some(key) = target {
+                    state.pending = Some(ImagePreviewRequest { generation, key });
+                    pending.notify_one();
+                }
+            }
+            ImagePreviewSync::Stopped => {
+                state.pending = None;
+                state.result = None;
+            }
+            ImagePreviewSync::Unchanged => {}
+        }
+        sync
+    }
+
+    fn drain(&mut self) -> ImagePreviewDrain {
+        let (state, _) = &*self.shared;
+        let mut state = lock_image_state(state);
+        let result = state.result.take();
+        let disconnected = !state.alive && !state.closed && !self.disconnect_reported;
+        self.disconnect_reported |= disconnected;
+        drop(state);
+
+        let current = result.filter(|result| self.slot.accepts(result.generation, &result.key));
+        ImagePreviewDrain {
+            current,
+            disconnected,
+        }
+    }
+}
+
+impl Drop for ImagePreviewWorker {
+    fn drop(&mut self) {
+        let (state, pending) = &*self.shared;
+        let mut state = lock_image_state(state);
+        state.closed = true;
+        state.pending = None;
+        state.result = None;
+        drop(state);
+        pending.notify_one();
+
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn take_next_image_request(shared: &SharedImageWorkerState) -> Option<ImagePreviewRequest> {
+    let (state, pending) = &**shared;
+    let mut state = lock_image_state(state);
+    while state.pending.is_none() && !state.closed {
+        state = match pending.wait(state) {
+            Ok(state) => state,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+    }
+    if state.closed {
+        return None;
+    }
+    state.pending.take()
+}
+
+fn lock_image_state(
+    state: &Mutex<ImagePreviewWorkerState>,
+) -> MutexGuard<'_, ImagePreviewWorkerState> {
+    match state.lock() {
+        Ok(state) => state,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+impl super::App {
+    pub(super) fn sync_image_preview_worker(&mut self) -> bool {
+        let target = self.state.file_manager.as_ref().and_then(|file_manager| {
+            let FmPreview::File(FmFilePreview::Image(preview)) = &file_manager.preview else {
+                return None;
+            };
+            let target = file_manager_image_target(
+                self.state.view.terminal_area,
+                self.image_preview_cell_size,
+            )?;
+            Some(ImagePreviewKey::new(
+                &preview.source_path,
+                preview.generation,
+                target,
+            ))
+        });
+
+        match self.image_preview_worker.sync_target(target.clone()) {
+            ImagePreviewSync::Started { .. } => {
+                return target.is_some_and(|key| {
+                    set_image_state(
+                        &mut self.state,
+                        &key,
+                        FmImagePreviewState::Loading { target: key.target },
+                    )
+                });
+            }
+            ImagePreviewSync::Stopped => {
+                return set_pending_image_state(&mut self.state);
+            }
+            ImagePreviewSync::Unchanged => {}
+        }
+
+        let drained = self.image_preview_worker.drain();
+        let mut changed = false;
+        if drained.disconnected {
+            tracing::warn!("fm: image preview worker stopped; using explicit failure fallback");
+            if let Some(key) = target.as_ref() {
+                changed |= set_image_state(
+                    &mut self.state,
+                    key,
+                    FmImagePreviewState::Unavailable {
+                        target: key.target,
+                        error: ImagePreviewError::DecodeFailed,
+                    },
+                );
+            }
+        }
+        if let Some(result) = drained.current {
+            let state = match result.output {
+                Ok(prepared) => FmImagePreviewState::Ready {
+                    target: result.key.target,
+                    prepared,
+                },
+                Err(error) => FmImagePreviewState::Unavailable {
+                    target: result.key.target,
+                    error,
+                },
+            };
+            changed |= set_image_state(&mut self.state, &result.key, state);
+        }
+        changed
+    }
+}
+
+fn set_pending_image_state(state: &mut crate::app::state::AppState) -> bool {
+    let Some(file_manager) = state.file_manager.as_mut() else {
+        return false;
+    };
+    let FmPreview::File(FmFilePreview::Image(preview)) = &mut file_manager.preview else {
+        return false;
+    };
+    if preview.state == FmImagePreviewState::Pending {
+        return false;
+    }
+    preview.state = FmImagePreviewState::Pending;
+    true
+}
+
+fn set_image_state(
+    state: &mut crate::app::state::AppState,
+    key: &ImagePreviewKey,
+    next: FmImagePreviewState,
+) -> bool {
+    let Some(file_manager) = state.file_manager.as_mut() else {
+        return false;
+    };
+    let FmPreview::File(FmFilePreview::Image(preview)) = &mut file_manager.preview else {
+        return false;
+    };
+    if preview.source_path != key.path || preview.generation != key.model_generation {
+        return false;
+    }
+    if preview.state == next {
+        return false;
+    }
+    preview.state = next;
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

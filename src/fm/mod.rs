@@ -10,9 +10,6 @@
 //!
 //! Design docs: `.local/prd/native-fm/` (A1-fs-reader.md, 00-MODULE-TREE.md).
 
-// B2.1 lands the bounded decoder before B2.3 wires it into the asynchronous
-// preview lifecycle. Remove this allowance with that integration.
-#[allow(dead_code)]
 pub(crate) mod image_preview;
 mod natsort;
 mod text_preview;
@@ -20,6 +17,7 @@ pub(crate) mod watcher;
 
 use std::path::{Path, PathBuf};
 
+pub use image_preview::{ImagePreviewError, ImagePreviewTarget, PreparedImagePreview};
 pub(crate) use text_preview::highlight_text_preview;
 use text_preview::{read_text_preview, TextPreviewLimits};
 pub use text_preview::{
@@ -65,8 +63,35 @@ pub enum FmPreview {
 pub enum FmFilePreview {
     /// Valid bounded UTF-8 content, prepared outside render.
     Text(TextPreview),
+    /// Common image format prepared asynchronously outside render.
+    Image(FmImagePreview),
     /// Stable preparation failure; TP-B1.2 defines the complete UI mapping.
     Unavailable(TextPreviewError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FmImagePreview {
+    pub source_path: PathBuf,
+    pub generation: u64,
+    pub state: FmImagePreviewState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FmImagePreviewState {
+    /// No drawable preview geometry/cell size has been published yet.
+    Pending,
+    /// The current path/generation is being decoded for this exact pixel box.
+    Loading { target: ImagePreviewTarget },
+    /// Current generation pixels, ready for client-local Kitty placement.
+    Ready {
+        target: ImagePreviewTarget,
+        prepared: PreparedImagePreview,
+    },
+    /// Stable failure for the current generation and target.
+    Unavailable {
+        target: ImagePreviewTarget,
+        error: ImagePreviewError,
+    },
 }
 
 /// Read the immediate children of `dir`: directories first, then files, each
@@ -155,6 +180,9 @@ pub struct FmState {
     pub parent: Option<FmParent>,
     /// Cached selected-entry context for the right Miller column.
     pub preview: FmPreview,
+    /// Monotonic client-local identity for preview work. Every context refresh
+    /// invalidates in-flight image results even when the path is unchanged.
+    pub(crate) preview_generation: u64,
 }
 
 impl FmState {
@@ -175,6 +203,7 @@ impl FmState {
             show_hidden,
             parent: None,
             preview: FmPreview::None,
+            preview_generation: 0,
         };
         state.refresh_context();
         state
@@ -336,6 +365,8 @@ impl FmState {
     }
 
     fn refresh_preview(&mut self) {
+        self.preview_generation = self.preview_generation.wrapping_add(1).max(1);
+        let generation = self.preview_generation;
         let previous_text = match std::mem::replace(&mut self.preview, FmPreview::None) {
             FmPreview::File(FmFilePreview::Text(preview)) => Some(preview),
             _ => None,
@@ -346,6 +377,13 @@ impl FmState {
         self.preview = match selected {
             None => FmPreview::None,
             Some((path, true)) => FmPreview::Directory(read_dir_entries(&path, self.show_hidden)),
+            Some((path, false)) if is_image_preview_path(&path) => {
+                FmPreview::File(FmFilePreview::Image(FmImagePreview {
+                    source_path: path,
+                    generation,
+                    state: FmImagePreviewState::Pending,
+                }))
+            }
             Some((path, false)) => match read_text_preview(&path, TextPreviewLimits::default()) {
                 Ok(mut preview) => {
                     if let Some(previous) = previous_text.filter(|previous| {
@@ -361,6 +399,16 @@ impl FmState {
             },
         };
     }
+}
+
+fn is_image_preview_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["png", "jpg", "jpeg", "gif", "webp"]
+                .iter()
+                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        })
 }
 
 #[cfg(test)]

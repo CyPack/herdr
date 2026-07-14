@@ -14,9 +14,9 @@ const DEFAULT_MAX_DECODED_BYTES: u64 = 256 * 1024 * 1024;
 const DEFAULT_MAX_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ImagePreviewTarget {
-    pub(crate) width_px: u32,
-    pub(crate) height_px: u32,
+pub struct ImagePreviewTarget {
+    pub width_px: u32,
+    pub height_px: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,14 +43,14 @@ impl Default for ImagePreviewLimits {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PreparedImagePreview {
-    pub(crate) width: u32,
-    pub(crate) height: u32,
-    pub(crate) rgba: Vec<u8>,
+pub struct PreparedImagePreview {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ImagePreviewError {
+pub enum ImagePreviewError {
     Io(std::io::ErrorKind),
     NotRegularFile,
     EmptyTarget,

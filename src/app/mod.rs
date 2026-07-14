@@ -14,7 +14,6 @@ mod creation;
 mod file_manager_watcher;
 mod file_preview_worker;
 mod ids;
-#[cfg(test)]
 mod image_preview_worker;
 mod input;
 mod preview;
@@ -147,6 +146,8 @@ pub struct App {
     pub(crate) input_rx: Option<mpsc::Receiver<crate::raw_input::RawInputEvent>>,
     file_manager_watcher: file_manager_watcher::NativeFileManagerWatcher,
     file_preview_worker: file_preview_worker::FilePreviewHighlightWorker,
+    image_preview_worker: image_preview_worker::ImagePreviewWorker,
+    image_preview_cell_size: crate::kitty_graphics::HostCellSize,
     pub(crate) last_terminal_size: Option<(u16, u16)>,
     pub(crate) config_diagnostic_deadline: Option<Instant>,
     pub(crate) toast_deadline: Option<Instant>,
@@ -850,6 +851,10 @@ impl App {
             file_preview_worker: file_preview_worker::FilePreviewHighlightWorker::new(
                 render_notify.clone(),
             ),
+            image_preview_worker: image_preview_worker::ImagePreviewWorker::new(
+                render_notify.clone(),
+            ),
+            image_preview_cell_size: crate::kitty_graphics::HostCellSize::default(),
             last_terminal_size: terminal::size().ok(),
             render_notify,
             render_dirty,
@@ -1153,6 +1158,11 @@ impl App {
                         frame,
                     );
                 })?;
+                self.image_preview_cell_size = cell_size;
+                if self.sync_image_preview_worker() {
+                    self.render_dirty.store(true, Ordering::Release);
+                    self.render_notify.notify_one();
+                }
                 if kitty_graphics_enabled {
                     crate::kitty_graphics::paint_local_pane_graphics(
                         &self.state,

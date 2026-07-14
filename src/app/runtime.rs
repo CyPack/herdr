@@ -201,6 +201,7 @@ impl App {
 
         changed |= self.sync_file_manager_watcher_at(now);
         changed |= self.sync_file_preview_worker();
+        changed |= self.sync_image_preview_worker();
         self.sync_animation_timer(now);
         changed |= self.refresh_projects_if_due(now);
         changed |= self.refresh_tab_branches_if_due(now);

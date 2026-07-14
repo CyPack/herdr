@@ -106,10 +106,7 @@ fn file_manager_image_geometry(
     ))
 }
 
-// B2.2 establishes the pure geometry seam before B2.3 consumes it from the
-// async preview lifecycle. Remove this allowance with that integration.
-#[allow(dead_code)]
-fn file_manager_image_target(
+pub(crate) fn file_manager_image_target(
     file_manager_area: Rect,
     cell_size: HostCellSize,
 ) -> Option<ImagePreviewTarget> {

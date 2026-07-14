@@ -20,8 +20,9 @@ use super::text::truncate_end;
 use crate::app::state::AppState;
 use crate::app::state::FileManagerRowArea;
 use crate::fm::{
-    FileEntry, FmFilePreview, FmPreview, HighlightedTextPreview, PreviewTextLine, PreviewTextSpan,
-    PreviewTextStyle, TextPreview, TextPreviewError,
+    FileEntry, FmFilePreview, FmImagePreviewState, FmPreview, HighlightedTextPreview,
+    ImagePreviewError, PreviewTextLine, PreviewTextSpan, PreviewTextStyle, TextPreview,
+    TextPreviewError,
 };
 
 const MIN_COLUMN_WIDTH: u16 = 12;
@@ -289,6 +290,38 @@ fn render_file_preview(app: &AppState, frame: &mut Frame, area: Rect, preview: &
             }
             frame.render_widget(Paragraph::new(lines), content_area);
         }
+        FmFilePreview::Image(preview) => {
+            let label = match &preview.state {
+                FmImagePreviewState::Pending => "(image preview pending)",
+                FmImagePreviewState::Loading { .. } => "(loading image...)",
+                FmImagePreviewState::Ready { .. } => "(image preview ready)",
+                FmImagePreviewState::Unavailable { error, .. } => image_preview_error_label(*error),
+            };
+            let label = truncate_end(&format!("  {label}"), content_area.width as usize);
+            frame.render_widget(
+                Paragraph::new(label).style(Style::default().fg(p.overlay1)),
+                content_area,
+            );
+        }
+    }
+}
+
+fn image_preview_error_label(error: ImagePreviewError) -> &'static str {
+    match error {
+        ImagePreviewError::Io(std::io::ErrorKind::PermissionDenied) => "(permission denied)",
+        ImagePreviewError::EncodedTooLarge { .. }
+        | ImagePreviewError::DimensionsTooLarge { .. }
+        | ImagePreviewError::PixelCountTooLarge { .. }
+        | ImagePreviewError::DecodedBytesTooLarge { .. }
+        | ImagePreviewError::OutputTooLarge { .. } => "(image too large)",
+        ImagePreviewError::UnsupportedFormat => "(unsupported image)",
+        ImagePreviewError::DecodeFailed | ImagePreviewError::DecoderPanicked => {
+            "(image decode failed)"
+        }
+        ImagePreviewError::Io(_)
+        | ImagePreviewError::NotRegularFile
+        | ImagePreviewError::EmptyTarget
+        | ImagePreviewError::ArithmeticOverflow => "(image preview unavailable)",
     }
 }
 
