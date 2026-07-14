@@ -11,18 +11,23 @@
 //! land in later steps (B1/B2/C2).
 
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 use super::text::truncate_end;
 use crate::app::state::AppState;
-use crate::fm::{FileEntry, FmPreview};
+use crate::fm::{
+    FileEntry, FmFilePreview, FmPreview, HighlightedTextPreview, PreviewTextLine, PreviewTextSpan,
+    PreviewTextStyle, TextPreview, TextPreviewError,
+};
 
 const MIN_COLUMN_WIDTH: u16 = 12;
 const DIVIDER_WIDTH: u16 = 1;
 const THREE_COLUMN_MIN_WIDTH: u16 = MIN_COLUMN_WIDTH * 3 + DIVIDER_WIDTH * 2;
 const TWO_COLUMN_MIN_WIDTH: u16 = MIN_COLUMN_WIDTH * 2 + DIVIDER_WIDTH;
+const MAX_RENDERED_PREVIEW_LINES: usize = 128;
 
 #[derive(Debug, Clone, Copy)]
 struct MillerLayout {
@@ -146,15 +151,9 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
                 None,
                 "(nothing selected)",
             ),
-            FmPreview::File(_) => render_panel(
-                app,
-                frame,
-                preview_area,
-                "PREVIEW",
-                &[],
-                None,
-                "(file preview later)",
-            ),
+            FmPreview::File(preview) => {
+                render_file_preview(app, frame, preview_area, preview);
+            }
             FmPreview::Directory(entries) => render_panel(
                 app,
                 frame,
@@ -166,6 +165,155 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
             ),
         }
     }
+}
+
+fn render_file_preview(app: &AppState, frame: &mut Frame, area: Rect, preview: &FmFilePreview) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let p = &app.palette;
+    let [title_area, content_area] =
+        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+    let title = truncate_end(" PREVIEW", title_area.width as usize);
+    frame.render_widget(
+        Paragraph::new(title).style(Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD)),
+        title_area,
+    );
+    if content_area.height == 0 {
+        return;
+    }
+
+    match preview {
+        FmFilePreview::Unavailable(error) => {
+            let label = truncate_end(
+                &format!("  {}", text_preview_error_label(*error)),
+                content_area.width as usize,
+            );
+            frame.render_widget(
+                Paragraph::new(label).style(Style::default().fg(p.overlay1)),
+                content_area,
+            );
+        }
+        FmFilePreview::Text(preview) => {
+            let (mut lines, truncated) = preview_lines(preview, p.subtext0);
+            let available_rows = content_area.height as usize;
+            let content_rows = if truncated {
+                available_rows.saturating_sub(1)
+            } else {
+                available_rows
+            };
+            lines.truncate(content_rows);
+            if truncated {
+                lines.push(Line::styled(
+                    "  (preview truncated)",
+                    Style::default()
+                        .fg(p.overlay1)
+                        .add_modifier(Modifier::ITALIC),
+                ));
+            }
+            frame.render_widget(Paragraph::new(lines), content_area);
+        }
+    }
+}
+
+fn text_preview_error_label(error: TextPreviewError) -> &'static str {
+    match error {
+        TextPreviewError::Binary => "(binary file)",
+        TextPreviewError::InvalidUtf8 { .. } => "(not UTF-8)",
+        TextPreviewError::Io(std::io::ErrorKind::PermissionDenied) => "(permission denied)",
+        TextPreviewError::Io(_) => "(preview unavailable)",
+        TextPreviewError::NotRegularFile => "(not a regular file)",
+    }
+}
+
+fn preview_lines(preview: &TextPreview, fallback: Color) -> (Vec<Line<'static>>, bool) {
+    if let Some(highlighted) = preview.highlighted.as_ref() {
+        return highlighted_preview_lines(highlighted, fallback);
+    }
+
+    let mut source_lines = preview.content.lines();
+    let mut lines = Vec::new();
+    for _ in 0..MAX_RENDERED_PREVIEW_LINES {
+        let Some(content) = source_lines.next() else {
+            break;
+        };
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(content.to_owned(), Style::default().fg(fallback)),
+        ]));
+    }
+    let truncated_lines = source_lines.next().is_some();
+    if lines.is_empty() {
+        lines.push(Line::styled(
+            "  (empty file)",
+            Style::default().fg(fallback),
+        ));
+    }
+    (lines, preview.truncated || truncated_lines)
+}
+
+fn highlighted_preview_lines(
+    preview: &HighlightedTextPreview,
+    fallback: Color,
+) -> (Vec<Line<'static>>, bool) {
+    let mut lines: Vec<Line<'static>> = preview
+        .lines
+        .iter()
+        .take(MAX_RENDERED_PREVIEW_LINES)
+        .map(|line| highlighted_preview_line(line, fallback))
+        .collect();
+    if lines.is_empty() {
+        lines.push(Line::styled(
+            "  (empty file)",
+            Style::default().fg(fallback),
+        ));
+    }
+    (
+        lines,
+        preview.truncated_bytes
+            || preview.truncated_lines
+            || preview.lines.len() > MAX_RENDERED_PREVIEW_LINES,
+    )
+}
+
+fn highlighted_preview_line(line: &PreviewTextLine, fallback: Color) -> Line<'static> {
+    let mut spans = Vec::with_capacity(line.spans.len().saturating_add(1));
+    spans.push(Span::raw("  "));
+    spans.extend(
+        line.spans
+            .iter()
+            .map(|span| highlighted_preview_span(span, fallback)),
+    );
+    Line::from(spans)
+}
+
+fn highlighted_preview_span(span: &PreviewTextSpan, fallback: Color) -> Span<'static> {
+    Span::styled(
+        span.content.clone(),
+        preview_text_style(span.style, fallback),
+    )
+}
+
+fn preview_text_style(source: PreviewTextStyle, fallback: Color) -> Style {
+    if source.is_plain() {
+        return Style::default().fg(fallback);
+    }
+    let mut style = Style::default().fg(match source.foreground {
+        Some([red, green, blue]) => Color::Rgb(red, green, blue),
+        None => fallback,
+    });
+    let mut modifiers = Modifier::empty();
+    if source.bold {
+        modifiers |= Modifier::BOLD;
+    }
+    if source.italic {
+        modifiers |= Modifier::ITALIC;
+    }
+    if source.underline {
+        modifiers |= Modifier::UNDERLINED;
+    }
+    style = style.add_modifier(modifiers);
+    style
 }
 
 fn render_panel(
@@ -411,7 +559,8 @@ mod tests {
             .enumerate()
             .find(|(_, row)| row.contains("styled"))
             .expect("styled preview row");
-        let x = row.find("styled").expect("styled preview column") as u16;
+        let styled_byte = row.find("styled").expect("styled preview column");
+        let x = row[..styled_byte].chars().count() as u16;
         let buffer = render_buffer(&app, 80, 6);
         let cell = &buffer[(x, y as u16)];
 
@@ -473,6 +622,53 @@ mod tests {
         assert!(
             rows.iter().any(|row| row.contains("(preview truncated)")),
             "truncation is explicit: {rows:?}"
+        );
+    }
+
+    // TP-B1.5-LINE-LIMIT: a highlighter that stops at its independent line
+    // budget exposes the same stable truncation marker as the byte reader.
+    #[test]
+    fn highlighted_line_limit_renders_truncation_marker() {
+        let td = TempDir::new("file-preview-line-limit");
+        fs::write(td.root.join("selected.rs"), "line\n").expect("write line-limit fixture");
+        let mut fm = FmState::new(&td.root);
+        match &mut fm.preview {
+            FmPreview::File(FmFilePreview::Text(preview)) => {
+                preview.highlighted = Some(HighlightedTextPreview {
+                    lines: vec![PreviewTextLine {
+                        spans: vec![PreviewTextSpan {
+                            content: "bounded line".to_owned(),
+                            style: PreviewTextStyle::default(),
+                        }],
+                    }],
+                    syntax_name: Some("Rust".to_owned()),
+                    truncated_bytes: false,
+                    truncated_lines: true,
+                });
+            }
+            other => panic!("selected text file needs preview state, got {other:?}"),
+        }
+
+        let rows = render_rows(&app_with_fm(fm), 80, 6);
+        assert!(rows.iter().any(|row| row.contains("bounded line")));
+        assert!(rows.iter().any(|row| row.contains("(preview truncated)")));
+    }
+
+    // TP-B1.5-COLUMN-BOUND: Paragraph clipping keeps an adversarial one-line
+    // preview inside its Miller column; it does not wrap into extra rows or
+    // write beyond the frame width.
+    #[test]
+    fn long_text_preview_line_is_clipped_to_column_width() {
+        let td = TempDir::new("file-preview-long-line");
+        fs::write(td.root.join("selected.txt"), "x".repeat(512)).expect("write long-line fixture");
+        let app = app_with_fm(FmState::new(&td.root));
+
+        let rows = render_rows(&app, 30, 5);
+        assert!(rows.iter().all(|row| row.chars().count() <= 30));
+        assert_eq!(
+            rows.iter().filter(|row| row.contains("xxxxxxxx")).count(),
+            1,
+            "one logical preview line must not wrap: {rows:?}"
         );
     }
 
