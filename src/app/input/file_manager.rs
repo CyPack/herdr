@@ -414,4 +414,30 @@ mod tests {
             Some("alpha-dir")
         );
     }
+
+    // TP-A3.4-SCOPE: v1 mouse and keyboard navigation move one cursor-owned
+    // visual selection. Closing and reopening starts a fresh cursor at row 0;
+    // no multi-select collection survives or is speculatively introduced.
+    #[test]
+    fn cursor_only_selection_follows_mouse_keyboard_and_reopen() {
+        let td = TempDir::new("cursor-only-scope");
+        for index in 0..3 {
+            td.file(&format!("{index:02}.txt"));
+        }
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 27, 4));
+        assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 2);
+
+        handle_file_manager_key(&mut app.state, key(KeyCode::Up));
+        assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 1);
+
+        handle_file_manager_key(&mut app.state, key(KeyCode::Esc));
+        assert!(app.state.file_manager.is_none());
+        app.state.file_manager = Some(FmState::new(&td.root));
+        assert_eq!(
+            app.state.file_manager.as_ref().expect("reopened fm").cursor,
+            0
+        );
+    }
 }

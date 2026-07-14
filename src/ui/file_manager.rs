@@ -991,6 +991,25 @@ mod tests {
         );
     }
 
+    // TP-A3.4-SCOPE: CURRENT paints exactly one cursor-owned selection. Bulk
+    // selection visuals remain deferred with N4/C2 semantics.
+    #[test]
+    fn current_panel_has_exactly_one_visual_selection() {
+        let td = TempDir::new("single-visual-selection");
+        td.file("a.txt");
+        td.file("b.txt");
+        td.file("c.txt");
+        let mut fm = FmState::new(&td.root);
+        fm.cursor = 1;
+        let app = app_with_fm(fm);
+        let buffer = render_buffer(&app, 20, 5);
+
+        let selected_rows = (2..5)
+            .filter(|&row| buffer[(2, row)].bg == app.palette.surface0)
+            .count();
+        assert_eq!(selected_rows, 1);
+    }
+
     // TP-A2.4: an empty (or unreadable) directory renders a placeholder without
     // panicking.
     #[test]

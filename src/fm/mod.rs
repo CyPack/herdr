@@ -129,8 +129,10 @@ fn sort_entries(entries: &mut [FileEntry]) {
 }
 
 /// Pure, TUI-only browsing state for one directory pane: the current directory,
-/// its ordered entries, the cursor row, and hidden-file visibility. No PTY, no
-/// runtime, no async — constructible and assertable without a terminal.
+/// its ordered entries, the cursor row, and hidden-file visibility. In v1 the
+/// cursor is the only visual selection; multi-select state and bulk semantics
+/// are intentionally deferred to N4/C2. No PTY, no runtime, no async —
+/// constructible and assertable without a terminal.
 #[derive(Debug, Clone)]
 pub struct FmState {
     /// The directory currently being browsed.
