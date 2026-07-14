@@ -15,6 +15,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
+use std::collections::BTreeSet;
 
 use super::text::truncate_end;
 use crate::app::state::AppState;
@@ -198,28 +199,13 @@ pub(crate) fn compute_file_manager_action_bar_model(
     clipboard: &[std::path::PathBuf],
     operation_in_flight: bool,
 ) -> FileManagerActionBarModel {
-    let selected = file_manager.selected();
-    let selection = selected.map(|entry| FileManagerActionBarSelection {
-        path: entry.path.clone(),
-        label: entry.name.clone(),
-        kind: if entry.is_dir {
-            FileManagerActionBarSelectionKind::Directory
-        } else {
-            FileManagerActionBarSelectionKind::File
-        },
-    });
+    let prepared_selection = prepare_file_manager_action_bar_selection(file_manager);
     let actions = FileManagerHeaderAction::ALL.map(|action| {
         let disabled_reason = if operation_in_flight {
             Some(FileManagerActionDisabledReason::OperationInFlight)
         } else {
             match action {
-                FileManagerHeaderAction::Copy => match selected {
-                    None => Some(FileManagerActionDisabledReason::NoSelection),
-                    Some(entry) if !entry.operation_supported => {
-                        Some(FileManagerActionDisabledReason::UnsupportedSelection)
-                    }
-                    Some(_) => None,
-                },
+                FileManagerHeaderAction::Copy => prepared_selection.disabled_reason,
                 FileManagerHeaderAction::Paste => {
                     if clipboard.is_empty() {
                         Some(FileManagerActionDisabledReason::EmptyClipboard)
@@ -231,16 +217,12 @@ pub(crate) fn compute_file_manager_action_bar_model(
                 }
                 FileManagerHeaderAction::NewFolder => (!file_manager.cwd_writable)
                     .then_some(FileManagerActionDisabledReason::ReadOnlyTarget),
-                FileManagerHeaderAction::Delete => match selected {
-                    None => Some(FileManagerActionDisabledReason::NoSelection),
-                    Some(entry) if !entry.operation_supported => {
-                        Some(FileManagerActionDisabledReason::UnsupportedSelection)
-                    }
-                    Some(_) if !file_manager.cwd_writable => {
-                        Some(FileManagerActionDisabledReason::ReadOnlyTarget)
-                    }
-                    Some(_) => None,
-                },
+                FileManagerHeaderAction::Delete => {
+                    prepared_selection.disabled_reason.or_else(|| {
+                        (!file_manager.cwd_writable)
+                            .then_some(FileManagerActionDisabledReason::ReadOnlyTarget)
+                    })
+                }
             }
         };
         FileManagerActionState {
@@ -250,9 +232,100 @@ pub(crate) fn compute_file_manager_action_bar_model(
         }
     });
     FileManagerActionBarModel {
-        selection,
+        selection: prepared_selection.selection,
         clipboard_count: clipboard.len(),
         actions,
+    }
+}
+
+struct PreparedFileManagerActionBarSelection {
+    selection: Option<FileManagerActionBarSelection>,
+    disabled_reason: Option<FileManagerActionDisabledReason>,
+}
+
+/// Resolve explicit path identities against the already-refreshed directory
+/// snapshot. Visible entries retain Miller-list order; missing or ambiguous
+/// identities stay visible in the prepared model but disable bulk operations.
+fn prepare_file_manager_action_bar_selection(
+    file_manager: &FmState,
+) -> PreparedFileManagerActionBarSelection {
+    let selected_paths = file_manager.multi_selection_paths();
+    if selected_paths.is_empty() {
+        return PreparedFileManagerActionBarSelection {
+            selection: None,
+            disabled_reason: Some(FileManagerActionDisabledReason::NoSelection),
+        };
+    }
+
+    let mut seen_paths = BTreeSet::new();
+    let mut live_entries = Vec::new();
+    let mut ambiguous = false;
+    for entry in &file_manager.entries {
+        if selected_paths.contains(&entry.path) {
+            if seen_paths.insert(entry.path.as_path()) {
+                live_entries.push(entry);
+            } else {
+                ambiguous = true;
+            }
+        }
+    }
+
+    let mut ordered_paths = live_entries
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect::<Vec<_>>();
+    ordered_paths.extend(
+        selected_paths
+            .iter()
+            .filter(|path| !seen_paths.contains(path.as_path()))
+            .cloned(),
+    );
+
+    let stale = ambiguous || live_entries.len() != selected_paths.len();
+    let unsupported = live_entries.iter().any(|entry| !entry.operation_supported);
+    let disabled_reason = if stale {
+        Some(FileManagerActionDisabledReason::StaleSelection)
+    } else if unsupported {
+        Some(FileManagerActionDisabledReason::UnsupportedSelection)
+    } else {
+        None
+    };
+
+    let (label, kind) = if selected_paths.len() > 1 {
+        (
+            format!("{} selected", selected_paths.len()),
+            FileManagerActionBarSelectionKind::Multiple,
+        )
+    } else if stale {
+        let label = selected_paths
+            .first()
+            .and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| String::from("unavailable selection"));
+        (label, FileManagerActionBarSelectionKind::Unavailable)
+    } else if let Some(entry) = live_entries.first() {
+        let kind = if entry.is_dir {
+            FileManagerActionBarSelectionKind::Directory
+        } else {
+            FileManagerActionBarSelectionKind::File
+        };
+        (entry.name.clone(), kind)
+    } else {
+        // Defensive fallback for a future projection change that violates the
+        // live-count invariant; operation authority already fails closed.
+        (
+            String::from("unavailable selection"),
+            FileManagerActionBarSelectionKind::Unavailable,
+        )
+    };
+
+    PreparedFileManagerActionBarSelection {
+        selection: Some(FileManagerActionBarSelection {
+            paths: ordered_paths,
+            label,
+            kind,
+        }),
+        disabled_reason,
     }
 }
 
@@ -263,7 +336,7 @@ fn file_manager_action_bar_identity(cwd: &str, action_bar: &FileManagerActionBar
             identity.push_str(" — ");
             identity.push_str(&selection.label);
         }
-        None => identity.push_str(" — empty"),
+        None => identity.push_str(" — no selection"),
     }
     if action_bar.clipboard_count > 0 {
         identity.push_str(" · clipboard: ");

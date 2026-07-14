@@ -699,12 +699,14 @@ pub struct FileManagerHeaderActionArea {
 pub enum FileManagerActionBarSelectionKind {
     File,
     Directory,
+    Multiple,
+    Unavailable,
 }
 
 /// Prepared client-local identity for the current native-FM selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileManagerActionBarSelection {
-    pub path: PathBuf,
+    pub paths: Vec<PathBuf>,
     pub label: String,
     pub kind: FileManagerActionBarSelectionKind,
 }
@@ -714,6 +716,7 @@ pub enum FileManagerActionDisabledReason {
     NoSelection,
     EmptyClipboard,
     ReadOnlyTarget,
+    StaleSelection,
     UnsupportedSelection,
     OperationInFlight,
 }
