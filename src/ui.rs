@@ -7,6 +7,7 @@ use ratatui::{
 
 mod compose;
 mod dialogs;
+mod file_manager;
 mod keybind_help;
 mod menus;
 mod mobile;
@@ -27,6 +28,7 @@ use self::dialogs::{
     render_confirm_close_overlay, render_new_linked_worktree_overlay,
     render_open_existing_worktree_overlay, render_remove_worktree_overlay, render_rename_overlay,
 };
+use self::file_manager::render_file_manager;
 use self::keybind_help::render_keybind_help_overlay;
 use self::menus::{
     render_context_menu, render_copy_mode_overlay, render_global_launcher_menu,
@@ -491,9 +493,17 @@ impl compose::Component for BaseLayer {
         if app.view.layout != ViewLayout::Mobile {
             render_tab_bar(app, frame, tab_bar_area);
         }
-        render_panes(app, terminal_runtimes, frame, terminal_area);
+        // CenterContent hosts either the terminal panes (default) or, when the
+        // native file manager is open, its directory list — the first
+        // non-terminal content swapped into a named region.
+        if app.file_manager.is_some() {
+            render_file_manager(app, frame, terminal_area);
+        } else {
+            render_panes(app, terminal_runtimes, frame, terminal_area);
+        }
 
-        // Ambient notifications sit above panes, but below interactive overlays.
+        // Ambient notifications sit above the center content, but below
+        // interactive overlays.
         render_notifications(app, frame, terminal_area);
     }
 }
@@ -722,6 +732,46 @@ mod tests {
             app.view.regions.get(RegionId::CenterContent),
             Rect::default()
         );
+    }
+
+    // A2 integration: when the file manager is open, the base layer renders the
+    // directory list in the center (CenterContent) instead of the terminal panes.
+    #[test]
+    fn open_file_manager_renders_directory_list_in_center() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "herdr-ui-fm-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).expect("create temp root");
+        std::fs::write(root.join("MARKER_FILE.txt"), b"x").expect("write marker");
+
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.file_manager = Some(crate::fm::FmState::new(&root));
+
+        compute_view(&mut app, Rect::new(0, 0, 100, 30));
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| render(&app, frame)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+
+        let mut text = String::new();
+        for y in 0..30 {
+            for x in 0..100 {
+                text.push(buffer[(x, y)].symbol().chars().next().unwrap_or(' '));
+            }
+        }
+        assert!(
+            text.contains("MARKER_FILE.txt"),
+            "open file manager shows its entries in the center"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

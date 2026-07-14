@@ -1475,6 +1475,11 @@ pub struct AppState {
     pub(crate) previous_pane_focus: Option<PaneFocusTarget>,
     pub selected: usize,
     pub mode: Mode,
+    /// When `Some`, the native file manager is open and its directory list
+    /// replaces the terminal panes in the center area. `None` = closed (the
+    /// panes render as usual). Client-side presentation state (v1 TUI-only,
+    /// per the runtime/client boundary), swapped in like `SidebarTab` content.
+    pub file_manager: Option<crate::fm::FmState>,
     pub should_quit: bool,
     /// In monolithic --no-session mode, detach exits the app because there is no server to detach from.
     pub detach_exits: bool,
@@ -1921,6 +1926,7 @@ impl AppState {
             previous_pane_focus: None,
             selected: 0,
             mode: Mode::Navigate,
+            file_manager: None,
             should_quit: false,
             detach_exits: false,
             detach_requested: false,

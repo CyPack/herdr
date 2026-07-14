@@ -67,9 +67,10 @@ mod config;
 mod detect;
 mod events;
 // The native file manager domain model is built bottom-up (natsort -> directory
-// reader -> state). Its public surface is consumed once the Navigator-mode view
-// (A2) and navigation input (A3) land; until then it is reachable only from its
-// own tests, so silence dead_code module-wide. Remove this allow at A2.
+// reader -> state). A2 (file-list render) consumes the data model, but the
+// FmState navigation methods (move_up/move_down/reload/toggle_hidden/selected)
+// are not wired until navigation input (A3), so keep silencing dead_code
+// module-wide until then. Remove this allow at A3.
 #[allow(dead_code)]
 mod fm;
 mod ghostty;
