@@ -4,9 +4,10 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Active N4.2 product checkpoint: `cb5a43e`
-  (`fix: preserve file manager range state at bulk limit`).
-- The N4.2 publication unit is the seven-commit test/product sequence and the
+- Active C3.1 product checkpoint: `0832ccc`
+  (`fix: enforce file context menu authority precedence`).
+- The C3.1 publication unit is the four-commit test/product sequence, its
+  preceding test-point plan commit, and the
   continuity/graph commit containing this file. At publication, CyPack
   `feat/native-fm` and fork `master` are verified at that same fast-forward
   branch tip.
@@ -205,6 +206,31 @@
   `-D warnings`, Bun 17/17, Python 64/64, fmt/diff clean. Fast graph reindex is
   fresh at 18,091 nodes / 84,102 edges and returns current `select_all`,
   `MAX_MULTI_SELECTION_PATHS`, action builder, and keyboard route source.
+
+## Verified Checkpoint — C3.1 File Context-Menu Model
+
+- C3.1 begins with durable test-point plan `d56e3db`, then model RED/GREEN
+  `5d6fc1d`/`02c60e7` and adversarial in-flight precedence RED/GREEN
+  `d9f28b5`/`0832ccc`. No RED checkpoint was pushed alone.
+- `ContextMenuKind::File` reuses the established global popup state. Its pure
+  `FileManagerContextMenuModel` derives only from the prepared N4.2 action-bar
+  snapshot and carries exact ordered paths plus six typed items: Open, Copy,
+  Rename, Delete, Compress, and Send to Agent.
+- Cursor-only/no explicit selection produces no model. Single file/directory
+  permits supported actions; read-only disables Rename/Delete/Compress only.
+  Multiple permits Copy/Delete/Compress and disables single-target actions.
+  Unavailable, stale, ambiguous, or unsupported authority fails closed.
+- Explicit disabled precedence is OperationInFlight > StaleSelection >
+  UnsupportedSelection; malformed/missing action state maps to stale rather
+  than granting authority. C3.1 performs no popup opening or action execution.
+- Existing workspace/tab/pane/project menu item behavior and static-label API
+  remain unchanged. Temporary, commented dead-code allowances have the exact
+  C3.2 routing removal condition and preserve crate-wide `-D warnings`.
+- Fresh gates: C3.1 5/5, combined existing/new menu models 7/7, full nextest
+  3025/3025 with only the named B0 host probe ignored, Linux all-target and
+  Windows MSVC bin clippy clean, Bun 17/17, Python 64/64, fmt/diff clean. Fast
+  graph reindex is fresh at 18,115 nodes / 84,003 edges and returns current
+  model constructor and File kind source.
 
 ## Completed Checkpoint — B2 Native Image Preview
 

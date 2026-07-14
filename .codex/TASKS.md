@@ -295,10 +295,14 @@ owns filesystem mutation and C5 owns agent delivery.
 | TP-C3.3-PLUGIN-SURFACE | Manifest `contexts=["file"]`, wrong/unknown contexts, disabled plugin, one/many paths, ordering, duplicate action IDs, and invocation context serialization | Valid enabled file actions append deterministically with exact path context; invalid/disabled/duplicate declarations fail closed; shared plugin/runtime facts use neutral API names rather than TUI-only socket fields | Plugin extension is part of the C3 promise and must not deepen the private TUI client boundary or fabricate unsafe filesystem authority |
 | TP-C3-GATES | Focused model/geometry/input/render/plugin tests, existing context-menu regressions, FM/watcher regressions, full nextest, Linux/Windows clippy, Bun/Python maintenance, graph freshness, and diff cleanliness | Every applicable gate passes; the named B0 host probe is the only skip; no stable Herdr/socket or user process is touched | C3 crosses a mature global modal path, so isolated happy-path tests cannot establish production safety |
 
-- [ ] C3.1a add `ContextMenuKind::File` and a deterministic six-item model from
+- [x] C3.1a add `ContextMenuKind::File` and a deterministic six-item model from
   prepared N4.2 selection authority; add no popup opening or real action.
-- [ ] C3.1b preserve all existing workspace/tab/pane/project menu item and
+- [x] C3.1b preserve all existing workspace/tab/pane/project menu item and
   invariant behavior while adding exact disabled reasons for file items.
+- C3.1 plan `d56e3db`, model RED/GREEN `5d6fc1d`/`02c60e7`, precedence
+  RED/GREEN `d9f28b5`/`0832ccc`; focused 5/5, menu-model 7/7, full nextest
+  3025/3025 plus one named B0 skip, Linux/Windows clippy, Bun 17/17, Python
+  64/64, fmt/diff, and graph freshness clean.
 - [ ] C3.2a route exact right-click current-row identity into the existing
   popup lifecycle with bounded placement and selection policy.
 - [ ] C3.2b render enabled/disabled file items and prove keyboard/mouse close,

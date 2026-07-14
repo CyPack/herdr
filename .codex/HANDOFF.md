@@ -2,11 +2,11 @@
 
 ## 1. SONRAKI ADIM
 
-Make TP-C3.1-CONTEXT-MODEL RED before adding context-menu production code.
-Define deterministic file/directory/mixed/empty menu items and ordering from
-prepared selection authority, including unsupported, stale, read-only, and
-operation-in-flight states. C3 must add no filesystem mutation; C4 still owns
-operation-time TOCTOU, partial failures, progress, cancellation, and rollback.
+Make TP-C3.2-POPUP-GEOMETRY RED before adding file-manager right-click routing.
+Prove exact live current-row path identity at all Miller breakpoints, bounded
+screen-edge placement, stale reorder/delete rejection, and non-target regions.
+Then make popup lifecycle/disabled dispatch RED. C3 emits intent only; C4/C5
+still own filesystem and agent side effects.
 
 ## 2. AKTİF PROJE
 
@@ -183,6 +183,17 @@ operation-time TOCTOU, partial failures, progress, cancellation, and rollback.
   clippy, Bun 17/17, Python 64/64, fmt/diff clean. Fast graph reindex is fresh
   at 18,091 nodes / 84,102 edges and returned current selection, builder, and
   keyboard source rather than relying on `ready`.
+- Defined the complete C3 test-point contract in `d56e3db`, then completed
+  C3.1 model RED/GREEN `5d6fc1d`/`02c60e7` and adversarial in-flight
+  precedence RED/GREEN `d9f28b5`/`0832ccc`.
+- Added the existing-stack `ContextMenuKind::File` model with deterministic
+  Open/Copy/Rename/Delete/Compress/Send-to-Agent order, exact prepared paths,
+  file/directory/multiple/unavailable kinds, and explicit item authority.
+  No explicit selection produces no menu; mixed invalid selection fails closed.
+- C3.1 gates: focused 5/5, combined menu models 7/7, full nextest 3025/3025
+  plus one named B0 skip, Linux/Windows clippy, Bun 17/17, Python 64/64,
+  fmt/diff clean. Fast graph reindex is fresh at 18,115 nodes / 84,003 edges
+  and returned current constructor/variant source rather than relying on ready.
 
 ## 6. KOD DURUMU
 
@@ -369,6 +380,9 @@ graph commit completes the N4.1 publication unit.
   prepared path vector and action states are client-local presentation/input
   authority only; C3 may consume them for menu modeling, while C4 must still
   revalidate every target at execution time.
+- C3.1 is implementation-complete, fully verified, and graph-indexed. It
+  models context intent only and deliberately leaves popup routing/render/
+  disabled dispatch to C3.2 and plugin extension to C3.3.
 - B1 uses minimal pure-Rust syntect outside input/render in a dedicated bounded
   worker. Plain prepared content remains availability authority; highlighting
   is optional enhancement and stale generations never mutate current state.
@@ -391,7 +405,7 @@ graph commit completes the N4.1 publication unit.
 See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2/N4 contracts and the
 complete C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1, N3,
 C2, and N4 are closed. The immediate product task is
-TP-C3.1-CONTEXT-MODEL RED; then follow C3 → C4 → C5 → C6 without skipping
+TP-C3.2-POPUP-GEOMETRY RED; then follow C3 → C4 → C5 → C6 without skipping
 modules.
 
 ## 11. ORTAM
@@ -426,6 +440,10 @@ modules.
   `MAX_MULTI_SELECTION_PATHS`, `compute_file_manager_action_bar_model`, and
   `handle_file_manager_key`, including the 4,096 ceiling and atomic Shift
   routing. Freshness was not inferred from `ready` alone.
+- Fast post-C3.1 graph reindex completed at 18,115 nodes / 84,003 edges.
+  Freshness queries and source snippets returned current
+  `FileManagerContextMenuModel::from_action_bar` precedence/item mapping and
+  `ContextMenuKind::File`. Freshness was not inferred from `ready` alone.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.
