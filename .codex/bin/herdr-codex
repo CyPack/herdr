@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo=/home/ayaz/projects/herdr
+cd "$repo"
+
+# The Codex skill trigger must remain literal; it is not a shell variable.
+# shellcheck disable=SC2016
+exec codex -C "$repo" 'Use $herdr-native-fm. Read AGENTS.md and CLAUDE.md completely, then follow .codex/BOOTSTRAP.md and continue from .codex/CURRENT.md. Verify Git and codebase-memory state before changing anything.'

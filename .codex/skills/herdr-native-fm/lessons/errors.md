@@ -1,0 +1,9 @@
+# Herdr Native-FM Errors
+
+| Error | Cause | Fix | Date |
+|-------|-------|-----|------|
+| `codex mcp list` can expose credentials embedded in command arguments during an MCP audit | Codex masks values in the Env column but prints the Args column verbatim | Prefer structured TOML/plugin parsing that emits only server names, transports, enabled state, env key names, and path health; never surface raw `codex mcp list` output | 2026-07-14 |
+| A narrow line-range read around an MCP section can still expose credentials | The requested range can spill into the adjacent `[mcp_servers.<name>.env]` table | Never use raw line windows for MCP config; parse TOML and emit a strict allowlist of safe fields | 2026-07-14 |
+| `apply_patch` rejects a Herdr module edit with `Invalid Context` | The patch assumed a stale or reconstructed file header instead of the exact current worktree context | Inspect the narrow target region first, then reapply against the exact adjacent line; verify status to prove the rejected patch made no partial edit | 2026-07-14 |
+| codebase-memory tools are listed but every call fails and port 9100 has no listener | The 26-server proxy cold start takes about 54 seconds, but readiness killed it after 45 seconds; cached tool schemas hid the dead transport | Without killing/restarting user processes, start a failed inactive backend if required, measure cold start on an isolated port, set readiness to a bounded 120 seconds inside a 150-second systemd budget, require exact 26/26 status plus real initialize/tools, then run the built-in MCP call and full reindex | 2026-07-14 |
+| ShellCheck SC2016 flags the launcher prompt containing `$herdr-native-fm` | The skill trigger is intentionally literal inside single quotes and must not be expanded as a shell variable | Keep single quotes, add an adjacent explanation and a narrowly scoped `shellcheck disable=SC2016`, then rerun ShellCheck | 2026-07-14 |

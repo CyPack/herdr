@@ -1,0 +1,4 @@
+interface:
+  display_name: "Herdr Native FM"
+  short_description: "Continue Herdr native file-manager work safely"
+  default_prompt: "Use $herdr-native-fm to resume the current Herdr native file-manager work from its verified handoff."

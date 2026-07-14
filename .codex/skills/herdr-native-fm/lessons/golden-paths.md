@@ -1,0 +1,7 @@
+# Herdr Native-FM Golden Paths
+
+| Scenario | Steps | Precondition | Date |
+|----------|-------|--------------|------|
+| Audit noisy Codex startup without exposing secrets | Load continuity and common lessons; map warnings to agent, hook, plugin, and MCP declarations; parse only selected safe fields; check named listeners; run `agent-parity-status`; classify baseline-required versus profile-only capabilities | Repository handoff and user-level Codex config are readable | 2026-07-14 |
+| Send a native-FM handoff file to the user's Mac over Tailscale | Verify source metadata and SHA-256; identify the single online macOS peer from structured Tailscale status; confirm it is a Taildrop target; ping it; run `tailscale file cp --verbose --update-interval=0 <file> <peer>:`; require the explicit `sent` result | Exactly one intended online Mac peer is identifiable | 2026-07-14 |
+| Restore the shared MCP proxy after server-count growth breaks readiness | Verify cached MCP calls fail and 9100 has no listener; inspect only allowlisted service metadata; start the inactive knowledge backend without restarting live processes; measure the same config on an isolated port; raise bounded readiness from 30/45 seconds to 120/150 seconds; daemon-reload and start; require exact configured-set equality, critical initialize/tools, a real built-in MCP call, and full graph reindex | The proxy is failed/inactive, the config has 26 enabled servers, and isolated cold-start proof exceeds the old timeout | 2026-07-14 |
