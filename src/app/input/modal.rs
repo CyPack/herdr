@@ -670,7 +670,9 @@ fn validated_file_context_action(
         &state.file_manager_clipboard,
         state.file_manager_operation_in_flight,
     );
-    let current = FileManagerContextMenuModel::from_action_bar(&action_bar)?;
+    let plugin_actions = crate::app::api::plugins::file_manifest_actions(&state.installed_plugins);
+    let current =
+        FileManagerContextMenuModel::from_action_bar_with_plugins(&action_bar, &plugin_actions)?;
     let current_item = current.items.get(idx)?;
     if current.paths != snapshot.paths
         || current.target_kind != snapshot.target_kind
@@ -679,10 +681,18 @@ fn validated_file_context_action(
     {
         return None;
     }
-    Some(FileManagerContextActionIntent {
-        action: snapshot_item.action,
+    let intent = FileManagerContextActionIntent {
+        action: snapshot_item.action.clone(),
         paths: snapshot.paths.clone(),
-    })
+    };
+    if matches!(
+        &intent.action,
+        crate::app::state::FileManagerContextMenuAction::Plugin { .. }
+    ) && intent.plugin_invocation_params().is_none()
+    {
+        return None;
+    }
+    Some(intent)
 }
 
 #[cfg(test)]
@@ -701,12 +711,12 @@ pub(super) fn apply_context_menu_action(
     menu: ContextMenuState,
     idx: usize,
 ) {
-    let item = menu.items().get(idx).copied();
+    let item = menu.items().get(idx).map(|item| (*item).to_string());
     let file_intent = match &menu.kind {
         ContextMenuKind::File { model } => validated_file_context_action(state, model, idx),
         _ => None,
     };
-    match (menu.kind, item) {
+    match (menu.kind, item.as_deref()) {
         (ContextMenuKind::File { .. }, _) => {
             state.request_file_manager_context_action = file_intent;
             leave_modal(state);
@@ -1171,14 +1181,14 @@ impl App {
     }
 
     pub(crate) fn apply_context_menu_action_via_api(&mut self, menu: ContextMenuState, idx: usize) {
-        let item = menu.items().get(idx).copied();
+        let item = menu.items().get(idx).map(|item| (*item).to_string());
         let file_intent = match &menu.kind {
             ContextMenuKind::File { model } => {
                 validated_file_context_action(&self.state, model, idx)
             }
             _ => None,
         };
-        match (menu.kind, item) {
+        match (menu.kind, item.as_deref()) {
             (ContextMenuKind::File { .. }, _) => {
                 self.state.request_file_manager_context_action = file_intent;
                 leave_modal(&mut self.state);

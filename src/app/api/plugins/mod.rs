@@ -655,6 +655,38 @@ fn manifest_actions(
         })
 }
 
+/// Enabled manifest actions that are safe to expose on a file-oriented client
+/// surface. The public action/context types remain runtime-neutral; this
+/// selector performs no UI mutation and starts no plugin command.
+pub(crate) fn file_manifest_actions(
+    plugins: &crate::app::state::InstalledPluginRegistry,
+) -> Vec<PluginActionInfo> {
+    let mut by_qualified_id = std::collections::BTreeMap::new();
+    for plugin in plugins
+        .values()
+        .filter(|plugin| plugin.enabled && plugin_manifest_available(plugin))
+    {
+        for action in plugin.actions.iter().filter(|action| {
+            action
+                .contexts
+                .contains(&crate::api::schema::PluginActionContext::File)
+                && ensure_platform_supported(
+                    effective_platforms(&action.platforms, &plugin.platforms),
+                    "file action",
+                )
+                .is_ok()
+        }) {
+            let action = manifest_action_info(&plugin.plugin_id, &plugin.platforms, action);
+            let qualified_id = action.qualified_id();
+            by_qualified_id
+                .entry(qualified_id)
+                .and_modify(|existing| *existing = None)
+                .or_insert(Some(action));
+        }
+    }
+    by_qualified_id.into_values().flatten().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1641,6 +1673,7 @@ command = ["sh", "-c", "sleep 1"]
                     correlation_id: Some("external-correlation".into()),
                     clicked_url: None,
                     link_handler_id: None,
+                    file_paths: Vec::new(),
                 }),
             }),
         });
@@ -2473,6 +2506,30 @@ command = ["show-ctx"]
         let _ = std::fs::remove_dir_all(root);
     }
 
+    // TP-C3.3-PLUGIN-SURFACE: the server-side context merge must retain the
+    // exact file snapshot supplied through the neutral invocation API. This
+    // exercises no plugin command or filesystem action.
+    #[test]
+    fn plugin_context_merge_preserves_exact_file_paths() {
+        let app = test_app();
+        let provided = PluginInvocationContext {
+            file_paths: vec!["/prepared/one.txt".into(), "/prepared/two words.txt".into()],
+            invocation_source: Some("file_manager".into()),
+            ..Default::default()
+        };
+
+        let merged = app.merge_plugin_context(Some(provided), "file-action-correlation");
+        assert_eq!(
+            merged.file_paths,
+            vec!["/prepared/one.txt", "/prepared/two words.txt"]
+        );
+        assert_eq!(merged.invocation_source.as_deref(), Some("file_manager"));
+        assert_eq!(
+            merged.correlation_id.as_deref(),
+            Some("file-action-correlation")
+        );
+    }
+
     // TP-C3.3-PLUGIN-SURFACE: only enabled, available file-context actions
     // reach the native FM surface, in qualified-id order independent of link
     // order. Workspace-only actions and disabled plugins fail closed.
@@ -2491,6 +2548,7 @@ command = ["show-ctx"]
 id = "zeta.files"
 name = "Zeta Files"
 version = "0.1.0"
+min_herdr_version = "0.6.10"
 
 [[actions]]
 id = "inspect"
@@ -2512,6 +2570,7 @@ command = ["workspace-only"]
 id = "disabled.files"
 name = "Disabled Files"
 version = "0.1.0"
+min_herdr_version = "0.6.10"
 
 [[actions]]
 id = "inspect"
@@ -2527,12 +2586,19 @@ command = ["inspect-disabled"]
 id = "alpha.files"
 name = "Alpha Files"
 version = "0.1.0"
+min_herdr_version = "0.6.10"
 
 [[actions]]
 id = "inspect"
 title = "Inspect with Alpha"
 contexts = ["file"]
 command = ["inspect-alpha"]
+
+[[actions]]
+id = "unsupported"
+title = "Unsupported on this host"
+contexts = ["file"]
+command = ["unsupported"]
 "#,
                 true,
             ),
@@ -2550,6 +2616,23 @@ command = ["inspect-alpha"]
             });
             assert!(response.contains("plugin_linked"), "{response}");
         }
+
+        let unsupported_platform = if cfg!(windows) {
+            crate::api::schema::PluginPlatform::Linux
+        } else {
+            crate::api::schema::PluginPlatform::Windows
+        };
+        let alpha = app
+            .state
+            .installed_plugins
+            .get_mut("alpha.files")
+            .expect("alpha plugin");
+        alpha
+            .actions
+            .iter_mut()
+            .find(|action| action.id == "unsupported")
+            .expect("unsupported action")
+            .platforms = Some(vec![unsupported_platform]);
 
         let actions = file_manifest_actions(&app.state.installed_plugins);
         assert_eq!(
@@ -2581,6 +2664,7 @@ command = ["inspect-alpha"]
 id = "example.unknown-context"
 name = "Unknown Context"
 version = "0.1.0"
+min_herdr_version = "0.6.10"
 
 [[actions]]
 id = "inspect"

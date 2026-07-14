@@ -1311,7 +1311,7 @@ impl AppState {
         let max_item_w = menu
             .items()
             .iter()
-            .map(|item| item.len() as u16)
+            .map(|item| crate::ui::display_width_u16(item))
             .max()
             .unwrap_or(0);
         let menu_w = (max_item_w + 4).max(14).min(screen.width.max(1));
@@ -2470,6 +2470,38 @@ mod tests {
         app.handle_mouse(mouse(MouseEventKind::Moved, menu.x + 2, menu.y + 2));
 
         assert_eq!(app.state.context_menu.unwrap().list.highlighted, 1);
+    }
+
+    // TP-C3.3-PLUGIN-SURFACE: dynamic plugin titles size the shared popup by
+    // terminal display cells, not UTF-8 byte length.
+    #[test]
+    fn plugin_file_context_menu_uses_display_width_for_unicode_title() {
+        let mut app = app_for_mouse_test();
+        app.state.view.sidebar_rect = Rect::new(0, 0, 1, 20);
+        app.state.view.terminal_area = Rect::new(1, 0, 79, 20);
+        let label = "界".repeat(8);
+        app.state.context_menu = Some(ContextMenuState {
+            kind: ContextMenuKind::File {
+                model: crate::app::state::FileManagerContextMenuModel {
+                    target_kind: crate::app::state::FileManagerContextMenuTargetKind::File,
+                    paths: vec![std::path::PathBuf::from("/prepared/file.txt")],
+                    items: vec![crate::app::state::FileManagerContextMenuItem {
+                        action: crate::app::state::FileManagerContextMenuAction::Plugin {
+                            plugin_id: "example.files".into(),
+                            action_id: "inspect".into(),
+                        },
+                        label,
+                        enabled: true,
+                        disabled_reason: None,
+                    }],
+                },
+            },
+            x: 2,
+            y: 2,
+            list: MenuListState::new(0),
+        });
+
+        assert_eq!(app.state.context_menu_rect().expect("menu rect").width, 20);
     }
 
     #[test]

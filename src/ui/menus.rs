@@ -310,7 +310,7 @@ pub(super) fn render_context_menu(app: &AppState, frame: &mut Frame) {
                     } else {
                         p.text
                     };
-                    ListItem::new(Line::from(item.label)).style(Style::default().fg(fg))
+                    ListItem::new(Line::from(item.label.as_str())).style(Style::default().fg(fg))
                 })
                 .collect();
             (
@@ -354,14 +354,15 @@ mod tests {
         app.view.terminal_area = Rect::new(1, 0, 39, 12);
         let items = FileManagerContextMenuAction::ALL.map(|action| {
             let disabled = matches!(
-                action,
+                &action,
                 FileManagerContextMenuAction::Open
                     | FileManagerContextMenuAction::Rename
                     | FileManagerContextMenuAction::SendAgent
             );
+            let label = action.label().to_string();
             FileManagerContextMenuItem {
                 action,
-                label: action.label(),
+                label,
                 enabled: !disabled,
                 disabled_reason: disabled
                     .then_some(FileManagerActionDisabledReason::MultipleSelection),
@@ -372,7 +373,7 @@ mod tests {
                 model: FileManagerContextMenuModel {
                     target_kind: FileManagerContextMenuTargetKind::Multiple,
                     paths: vec![PathBuf::from("a.txt"), PathBuf::from("b.txt")],
-                    items,
+                    items: items.to_vec(),
                 },
             },
             x: 2,

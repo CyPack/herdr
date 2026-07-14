@@ -238,9 +238,15 @@ impl App {
                                 self.state.file_manager_operation_in_flight,
                             )
                         });
+                        let plugin_actions = crate::app::api::plugins::file_manifest_actions(
+                            &self.state.installed_plugins,
+                        );
                         if let Some((action_bar, model)) = action_bar.and_then(|action_bar| {
-                            FileManagerContextMenuModel::from_action_bar(&action_bar)
-                                .map(|model| (action_bar, model))
+                            FileManagerContextMenuModel::from_action_bar_with_plugins(
+                                &action_bar,
+                                &plugin_actions,
+                            )
+                            .map(|model| (action_bar, model))
                         }) {
                             self.state.view.file_manager_action_bar = Some(action_bar);
                             self.state.context_menu = Some(ContextMenuState {
@@ -1628,6 +1634,89 @@ mod tests {
             before_entries,
             "C3 intent dispatch performs no filesystem mutation"
         );
+    }
+
+    // TP-C3.3-PLUGIN-SURFACE: the actual right-click/input pipeline appends an
+    // enabled file action, emits only typed public invocation parameters, and
+    // revalidates plugin enabled state before activation.
+    #[test]
+    fn file_context_menu_plugin_action_is_typed_and_disable_race_fails_closed() {
+        let td = TempDir::new("file-context-plugin-intent");
+        td.file("00.txt");
+        let plugin_td = TempDir::new("file-context-plugin-manifest");
+        let manifest = plugin_td.root.join("herdr-plugin.toml");
+        fs::write(
+            &manifest,
+            r#"
+id = "example.files"
+name = "Example Files"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+
+[[actions]]
+id = "inspect"
+title = "Inspect file"
+contexts = ["file"]
+command = ["inspect"]
+"#,
+        )
+        .expect("write plugin manifest");
+        let plugin =
+            crate::app::api::plugins::load_plugin_manifest(&manifest.display().to_string(), true)
+                .expect("valid plugin manifest");
+
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        app.state
+            .installed_plugins
+            .insert(plugin.plugin_id.clone(), plugin);
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 2));
+        let menu = app.state.context_menu.as_ref().expect("plugin file menu");
+        let ContextMenuKind::File { model } = &menu.kind else {
+            panic!("expected file menu")
+        };
+        assert_eq!(model.items.len(), 7);
+        assert_eq!(model.items[6].label, "Inspect file");
+        assert_eq!(
+            model.items[6].action,
+            FileManagerContextMenuAction::Plugin {
+                plugin_id: "example.files".into(),
+                action_id: "inspect".into(),
+            }
+        );
+
+        for _ in 0..6 {
+            app.route_client_input(b"\x1b[B".to_vec());
+        }
+        app.route_client_input(b"\r".to_vec());
+        let intent = app
+            .state
+            .request_file_manager_context_action
+            .as_ref()
+            .expect("typed plugin file intent");
+        let params = intent
+            .plugin_invocation_params()
+            .expect("public plugin invocation params");
+        assert_eq!(params.plugin_id.as_deref(), Some("example.files"));
+        assert_eq!(params.action_id, "inspect");
+        assert_eq!(
+            params.context.expect("file context").file_paths,
+            vec![td.root.join("00.txt").display().to_string()]
+        );
+        assert!(app.state.plugin_command_logs.is_empty());
+
+        app.state.request_file_manager_context_action = None;
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 2));
+        app.state
+            .installed_plugins
+            .get_mut("example.files")
+            .expect("installed plugin")
+            .enabled = false;
+        for _ in 0..6 {
+            app.route_client_input(b"\x1b[B".to_vec());
+        }
+        app.route_client_input(b"\r".to_vec());
+        assert!(app.state.request_file_manager_context_action.is_none());
+        assert!(app.state.plugin_command_logs.is_empty());
     }
 
     // TP-C3.2-POPUP-LIFECYCLE: disabled activation stays open and emits

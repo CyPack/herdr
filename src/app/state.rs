@@ -751,7 +751,7 @@ pub enum FileManagerContextMenuTargetKind {
     Unavailable,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileManagerContextMenuAction {
     Open,
     Copy,
@@ -759,6 +759,10 @@ pub enum FileManagerContextMenuAction {
     Delete,
     Compress,
     SendAgent,
+    Plugin {
+        plugin_id: String,
+        action_id: String,
+    },
 }
 
 impl FileManagerContextMenuAction {
@@ -771,7 +775,7 @@ impl FileManagerContextMenuAction {
         Self::SendAgent,
     ];
 
-    pub const fn label(self) -> &'static str {
+    pub fn label(&self) -> &str {
         match self {
             Self::Open => "Open",
             Self::Copy => "Copy",
@@ -779,23 +783,15 @@ impl FileManagerContextMenuAction {
             Self::Delete => "Delete",
             Self::Compress => "Compress",
             Self::SendAgent => "Send to Agent",
+            Self::Plugin { action_id, .. } => action_id,
         }
     }
 }
 
-const FILE_MANAGER_CONTEXT_MENU_LABELS: &[&str] = &[
-    "Open",
-    "Copy",
-    "Rename",
-    "Delete",
-    "Compress",
-    "Send to Agent",
-];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileManagerContextMenuItem {
     pub action: FileManagerContextMenuAction,
-    pub label: &'static str,
+    pub label: String,
     pub enabled: bool,
     pub disabled_reason: Option<FileManagerActionDisabledReason>,
 }
@@ -804,7 +800,7 @@ pub struct FileManagerContextMenuItem {
 pub struct FileManagerContextMenuModel {
     pub target_kind: FileManagerContextMenuTargetKind,
     pub paths: Vec<PathBuf>,
-    pub items: [FileManagerContextMenuItem; 6],
+    pub items: Vec<FileManagerContextMenuItem>,
 }
 
 /// Client-local file action intent emitted by C3 after current-state
@@ -818,7 +814,18 @@ pub struct FileManagerContextActionIntent {
 impl FileManagerContextMenuModel {
     /// Derive file-menu presentation authority only from the already-prepared
     /// N4.2 action-bar snapshot. This performs no cursor or filesystem reads.
+    #[cfg(test)]
     pub fn from_action_bar(action_bar: &FileManagerActionBarModel) -> Option<Self> {
+        Self::from_action_bar_with_plugins(action_bar, &[])
+    }
+
+    /// Append neutral, already-discovered plugin actions after the built-ins.
+    /// The caller may pass an untrusted superset; context and exact path
+    /// representability are checked again here before anything is exposed.
+    pub fn from_action_bar_with_plugins(
+        action_bar: &FileManagerActionBarModel,
+        plugin_actions: &[crate::api::schema::PluginActionInfo],
+    ) -> Option<Self> {
         let selection = action_bar.selection.as_ref()?;
         if selection.paths.is_empty() {
             return None;
@@ -854,40 +861,100 @@ impl FileManagerContextMenuModel {
                 .then_some(FileManagerActionDisabledReason::StaleSelection)
         });
 
-        let items = FileManagerContextMenuAction::ALL.map(|action| {
-            let disabled_reason = if let Some(reason) = selection_failure {
-                Some(reason)
-            } else if matches!(target_kind, FileManagerContextMenuTargetKind::Multiple)
-                && matches!(
+        let mut items = FileManagerContextMenuAction::ALL
+            .into_iter()
+            .map(|action| {
+                let disabled_reason = if let Some(reason) = selection_failure {
+                    Some(reason)
+                } else if matches!(target_kind, FileManagerContextMenuTargetKind::Multiple)
+                    && matches!(
+                        &action,
+                        FileManagerContextMenuAction::Open
+                            | FileManagerContextMenuAction::Rename
+                            | FileManagerContextMenuAction::SendAgent
+                    )
+                {
+                    Some(FileManagerActionDisabledReason::MultipleSelection)
+                } else {
+                    match &action {
+                        FileManagerContextMenuAction::Open
+                        | FileManagerContextMenuAction::Copy
+                        | FileManagerContextMenuAction::SendAgent => copy_reason,
+                        FileManagerContextMenuAction::Rename
+                        | FileManagerContextMenuAction::Delete
+                        | FileManagerContextMenuAction::Compress => write_reason,
+                        FileManagerContextMenuAction::Plugin { .. } => {
+                            Some(FileManagerActionDisabledReason::UnsupportedSelection)
+                        }
+                    }
+                };
+                let label = action.label().to_string();
+                FileManagerContextMenuItem {
                     action,
-                    FileManagerContextMenuAction::Open
-                        | FileManagerContextMenuAction::Rename
-                        | FileManagerContextMenuAction::SendAgent
-                )
-            {
-                Some(FileManagerActionDisabledReason::MultipleSelection)
-            } else {
-                match action {
-                    FileManagerContextMenuAction::Open
-                    | FileManagerContextMenuAction::Copy
-                    | FileManagerContextMenuAction::SendAgent => copy_reason,
-                    FileManagerContextMenuAction::Rename
-                    | FileManagerContextMenuAction::Delete
-                    | FileManagerContextMenuAction::Compress => write_reason,
+                    label,
+                    enabled: disabled_reason.is_none(),
+                    disabled_reason,
                 }
-            };
-            FileManagerContextMenuItem {
-                action,
-                label: action.label(),
-                enabled: disabled_reason.is_none(),
-                disabled_reason,
-            }
-        });
+            })
+            .collect::<Vec<_>>();
+
+        if selection.paths.iter().all(|path| path.to_str().is_some()) {
+            let mut plugin_actions = plugin_actions
+                .iter()
+                .filter(|action| {
+                    action
+                        .contexts
+                        .contains(&crate::api::schema::PluginActionContext::File)
+                })
+                .collect::<Vec<_>>();
+            plugin_actions.sort_by_key(|action| action.qualified_id());
+            plugin_actions.dedup_by(|left, right| left.qualified_id() == right.qualified_id());
+            items.extend(plugin_actions.into_iter().map(|action| {
+                let disabled_reason = selection_failure;
+                FileManagerContextMenuItem {
+                    action: FileManagerContextMenuAction::Plugin {
+                        plugin_id: action.plugin_id.clone(),
+                        action_id: action.action_id.clone(),
+                    },
+                    label: action.title.clone(),
+                    enabled: disabled_reason.is_none(),
+                    disabled_reason,
+                }
+            }));
+        }
 
         Some(Self {
             target_kind,
             paths: selection.paths.clone(),
             items,
+        })
+    }
+}
+
+impl FileManagerContextActionIntent {
+    /// Convert a client-local plugin file intent into the existing public API
+    /// request model without running the plugin command.
+    pub fn plugin_invocation_params(&self) -> Option<crate::api::schema::PluginActionInvokeParams> {
+        let FileManagerContextMenuAction::Plugin {
+            plugin_id,
+            action_id,
+        } = &self.action
+        else {
+            return None;
+        };
+        let file_paths = self
+            .paths
+            .iter()
+            .map(|path| path.to_str().map(str::to_owned))
+            .collect::<Option<Vec<_>>>()?;
+        Some(crate::api::schema::PluginActionInvokeParams {
+            plugin_id: Some(plugin_id.clone()),
+            action_id: action_id.clone(),
+            context: Some(crate::api::schema::PluginInvocationContext {
+                file_paths,
+                invocation_source: Some("file_manager".into()),
+                ..Default::default()
+            }),
         })
     }
 }
@@ -1581,24 +1648,24 @@ pub struct ContextMenuState {
 }
 
 impl ContextMenuState {
-    pub fn items(&self) -> &'static [&'static str] {
-        match self.kind {
-            ContextMenuKind::Workspace { .. } => &["Rename", "Close"],
+    pub fn items(&self) -> Vec<&str> {
+        match &self.kind {
+            ContextMenuKind::Workspace { .. } => vec!["Rename", "Close"],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: false,
                 has_worktree_children: false,
                 ..
-            } => &["Rename", "Close", "New worktree", "Open worktree..."],
+            } => vec!["Rename", "Close", "New worktree", "Open worktree..."],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: true,
                 ..
-            } => &["Rename", "Close", "Delete worktree checkout..."],
+            } => vec!["Rename", "Close", "Delete worktree checkout..."],
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: false,
                 has_worktree_children: true,
                 collapsed: true,
                 ..
-            } => &[
+            } => vec![
                 "Rename",
                 "Close group",
                 "New worktree",
@@ -1610,28 +1677,30 @@ impl ContextMenuState {
                 has_worktree_children: true,
                 collapsed: false,
                 ..
-            } => &[
+            } => vec![
                 "Rename",
                 "Close group",
                 "New worktree",
                 "Open worktree...",
                 "Collapse",
             ],
-            ContextMenuKind::Tab { .. } => &["New tab", "Rename", "Close"],
+            ContextMenuKind::Tab { .. } => vec!["New tab", "Rename", "Close"],
             ContextMenuKind::ProjectNewChat {
                 has_workspace: false,
                 ..
-            } => crate::app::projects::CHAT_AGENTS,
+            } => crate::app::projects::CHAT_AGENTS.to_vec(),
             ContextMenuKind::ProjectNewChat {
                 has_workspace: true,
                 ..
-            } => crate::app::projects::PROJECT_CHAT_MENU_WITH_WORKTREES,
-            ContextMenuKind::File { .. } => FILE_MANAGER_CONTEXT_MENU_LABELS,
+            } => crate::app::projects::PROJECT_CHAT_MENU_WITH_WORKTREES.to_vec(),
+            ContextMenuKind::File { model } => {
+                model.items.iter().map(|item| item.label.as_str()).collect()
+            }
             ContextMenuKind::Pane {
                 has_manual_label: true,
                 source_pane_id: Some(_),
                 ..
-            } => &[
+            } => vec![
                 "Rename pane",
                 "Clear pane name",
                 "Swap with focused pane",
@@ -1644,7 +1713,7 @@ impl ContextMenuState {
                 has_manual_label: false,
                 source_pane_id: Some(_),
                 ..
-            } => &[
+            } => vec![
                 "Rename pane",
                 "Swap with focused pane",
                 "Split right",
@@ -1656,7 +1725,7 @@ impl ContextMenuState {
                 has_manual_label: true,
                 source_pane_id: None,
                 ..
-            } => &[
+            } => vec![
                 "Rename pane",
                 "Clear pane name",
                 "Split right",
@@ -1668,7 +1737,7 @@ impl ContextMenuState {
                 has_manual_label: false,
                 source_pane_id: None,
                 ..
-            } => &[
+            } => vec![
                 "Rename pane",
                 "Split right",
                 "Split down",
@@ -3148,7 +3217,7 @@ mod tests {
             model
                 .items
                 .iter()
-                .map(|item| item.action)
+                .map(|item| item.action.clone())
                 .collect::<Vec<_>>(),
             vec![
                 FileManagerContextMenuAction::Open,
@@ -3163,7 +3232,7 @@ mod tests {
             model
                 .items
                 .iter()
-                .map(|item| item.label)
+                .map(|item| item.label.clone())
                 .collect::<Vec<_>>(),
             vec![
                 "Open",

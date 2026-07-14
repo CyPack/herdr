@@ -2717,6 +2717,13 @@
                 "null"
               ]
             },
+            "file_paths": {
+              "description": "Exact file paths prepared by a file-oriented client surface. Empty for\nnon-file invocations. Paths that cannot be represented losslessly in\nJSON must not be placed here.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
             "focused_pane_agent": {
               "type": [
                 "string",
@@ -7052,7 +7059,8 @@
             "workspace",
             "tab",
             "pane",
-            "selection"
+            "selection",
+            "file"
           ],
           "type": "string"
         },
@@ -7201,6 +7209,13 @@
                 "string",
                 "null"
               ]
+            },
+            "file_paths": {
+              "description": "Exact file paths prepared by a file-oriented client surface. Empty for\nnon-file invocations. Paths that cannot be represented losslessly in\nJSON must not be placed here.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             },
             "focused_pane_agent": {
               "type": [

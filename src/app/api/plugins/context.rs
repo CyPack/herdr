@@ -25,6 +25,9 @@ impl App {
             context.correlation_id = provided.correlation_id.or(context.correlation_id);
             context.clicked_url = provided.clicked_url.or(context.clicked_url);
             context.link_handler_id = provided.link_handler_id.or(context.link_handler_id);
+            if !provided.file_paths.is_empty() {
+                context.file_paths = provided.file_paths;
+            }
         }
         context
     }
@@ -370,6 +373,7 @@ impl App {
             correlation_id: Some(correlation_id.to_string()),
             clicked_url: None,
             link_handler_id: None,
+            file_paths: Vec::new(),
         }
     }
 
@@ -417,5 +421,6 @@ fn empty_plugin_context(correlation_id: &str) -> PluginInvocationContext {
         correlation_id: Some(correlation_id.to_string()),
         clicked_url: None,
         link_handler_id: None,
+        file_paths: Vec::new(),
     }
 }
