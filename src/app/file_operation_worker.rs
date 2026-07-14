@@ -392,8 +392,7 @@ impl crate::app::App {
                 return changed;
             };
             if operation.is_running() {
-                operation.status = crate::app::state::FileManagerOperationStatus::Failed;
-                operation.failed_items = operation.total_items;
+                mark_operation_worker_failure(operation);
                 tracing::warn!("fm: file operation worker stopped before completion");
                 return true;
             }
@@ -418,8 +417,7 @@ impl crate::app::App {
                 apply_delete_execution_result(operation, &result)
             }
             Err(FileOperationWorkerError::Panicked) => {
-                operation.status = crate::app::state::FileManagerOperationStatus::Failed;
-                operation.failed_items = operation.total_items;
+                mark_operation_worker_failure(operation);
                 tracing::error!(
                     generation = completion.generation,
                     "fm: file operation worker converted panic to terminal failure"
@@ -648,6 +646,15 @@ fn apply_execution_result(
         }
         FileOperationExecutionStatus::Failed => FileManagerOperationStatus::Failed,
     };
+}
+
+fn mark_operation_worker_failure(operation: &mut crate::app::state::FileManagerOperationState) {
+    operation.status = crate::app::state::FileManagerOperationStatus::Failed;
+    operation.completed_items = 0;
+    operation.failed_items = operation.total_items;
+    for item in &mut operation.items {
+        item.status = crate::app::state::FileManagerOperationItemStatus::Failed;
+    }
 }
 
 fn apply_delete_execution_result(
