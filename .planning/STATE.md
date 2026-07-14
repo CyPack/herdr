@@ -18,11 +18,11 @@
     graph-indexed, and published to CyPack feature/master)
   - `de1eff5..2989434` B2 dependency decision, bounded decoder, client-local
     placement, generation-safe worker, cached Kitty paint/cleanup, and
-    width-safe non-Kitty fallback (fully verified; publication gate in progress)
+    width-safe non-Kitty fallback (fully verified, graph-indexed, and published
+    to CyPack feature/master)
 - Continuity/tooling is versioned by the separate commit containing this state
   file.
-- Active increment: close B2 graph/publication evidence, then begin C1.1 named
-  header-button geometry test-first.
+- Active increment: begin C1.1 named header-button geometry test-first.
 - Canonical current state: `/home/ayaz/projects/herdr/.codex/CURRENT.md`
 - Durable tasks: `/home/ayaz/projects/herdr/.codex/TASKS.md`
 - Full handoff: `/home/ayaz/projects/herdr/.codex/HANDOFF.md`

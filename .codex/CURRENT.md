@@ -7,8 +7,9 @@
 - B2 product/test checkpoint: `2989434`
   (`fix: keep image preview fallback visible`).
 - The B2 publication unit is the RED/GREEN product/test range plus the
-  continuity commit containing this file. CyPack `feat/native-fm` and fork
-  `master` must resolve to that same fast-forward tip after publication.
+  continuity/graph commits containing this file. At publication, CyPack
+  `feat/native-fm` and fork `master` are verified at that same fast-forward
+  branch tip.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
 
 ## Completed Checkpoint
@@ -138,9 +139,14 @@
   `handle_file_manager_mouse` were found as current production graph symbols
   with their call/test connections; freshness was not inferred from `ready`
   alone.
-- The B2 publication gate requires a fresh full reindex, current-symbol query,
-  sequential fast-forward pushes to both CyPack heads, and exact remote-SHA
-  equality. `upstream` is never pushed.
+- Full post-B2 graph reindex completed at 17,974 nodes / 84,035 edges.
+  `collect_file_manager_image_placement` is connected to
+  `encode_local_pane_graphics` and its cleanup/dedup test;
+  `sync_image_preview_worker` is present as the current `App` method; and
+  `miller_layout` retains its production/test connections. Freshness was not
+  inferred from `ready` alone.
+- Publication uses sequential fast-forward pushes to both CyPack heads and
+  exact remote-SHA equality. `upstream` is never pushed.
 
 ## Standing Git Authorization
 
@@ -152,10 +158,7 @@
 
 ## Exact Next Action
 
-1. Close the B2 publication gate: targeted-stage continuity/tooling only,
-   commit, full-reindex, verify current B2 symbols, then fast-forward push only
-   the CyPack feature branch and fork master with exact SHA verification.
-2. Begin C1.1 with named header-button geometry test points RED before adding
+1. Begin C1.1 with named header-button geometry test points RED before adding
    production header/action code. Continue C1 → C2 → C3 → C4 → C5 → C6 in
    `.codex/TASKS.md` order.
 

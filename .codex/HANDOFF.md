@@ -2,10 +2,8 @@
 
 ## 1. SONRAKI ADIM
 
-Publish the completed B2 unit through the continuity commit containing this
-handoff: full-reindex, verify current B2 graph symbols, fast-forward only the
-CyPack feature branch and fork master, and require exact remote SHA equality.
-Then make C1.1 header-button geometry RED before production action code.
+Make C1.1 named header-button geometry RED before production action code.
+Then continue C1 → C2 → C3 → C4 → C5 → C6 in `.codex/TASKS.md` order.
 
 ## 2. AKTİF PROJE
 
@@ -134,9 +132,9 @@ B2 product/test history is an auditable sequence:
 - `5c51f1a` / `c6b4762`: cached paint/cleanup RED/GREEN.
 - `2989434`: width-safe fallback characterization and fix.
 
-The range is fully green. The continuity commit containing this handoff is
-part of the publication unit; both CyPack heads must equal its tip. Upstream is
-not pushed.
+The range is fully green. The continuity/graph commits containing this handoff
+are part of the publication unit; both CyPack heads are verified at that same
+fast-forward branch tip. Upstream is not pushed.
 
 ## 7. TEST KANITI
 
@@ -174,9 +172,8 @@ not pushed.
 - Native watching is primary; startup/runtime errors enter explicit polling
   fallback, and all active watchers reconcile every 2 seconds to cover silent
   FUSE/NFS/exFAT-class delivery failures.
-- A4, B0, B1, A3, and B2 are implementation-complete and fully verified.
-  A4/B0/B1/A3 are already graph-indexed and published; B2 publication closes
-  only after the continuity tip is full-reindexed and both CyPack heads match.
+- A4, B0, B1, A3, and B2 are implementation-complete, fully verified,
+  graph-indexed, and published to the CyPack fork.
 - B1 uses minimal pure-Rust syntect outside input/render in a dedicated bounded
   worker. Plain prepared content remains availability authority; highlighting
   is optional enhancement and stale generations never mutate current state.
@@ -205,11 +202,10 @@ RED; follow C1 → C2 → C3 → C4 → C5 → C6 without skipping modules.
 
 - `codex-cli 0.144.1` is installed.
 - `just` is absent; direct recipe execution is required unless installed later.
-- Full post-A3 graph reindex completed at 17,818 nodes / 83,121 edges and
-  returned `sync_viewport`, `compute_file_manager_row_areas`, and
-  `handle_file_manager_mouse` with current connections; B2 requires a fresh
-  full reindex and current-symbol proof before publication. Freshness is never
-  inferred from `ready` alone.
+- Full post-B2 graph reindex completed at 17,974 nodes / 84,035 edges and
+  returned current `sync_image_preview_worker`,
+  `collect_file_manager_image_placement`, and `miller_layout` symbols with
+  production/test connections. Freshness was not inferred from `ready` alone.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.
