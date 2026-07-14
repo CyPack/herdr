@@ -4,10 +4,13 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- B2 product/test checkpoint: `2989434`
-  (`fix: keep image preview fallback visible`).
-- The B2 publication unit is the RED/GREEN product/test range plus the
-  continuity/graph commits containing this file. At publication, CyPack
+- Active C1.1 product checkpoint: `c9bfbf9`
+  (`feat: add file manager header action geometry`).
+- Independent full-suite stability fix: `9aa1e59`
+  (`test: make process-generation suppression deterministic`).
+- The C1.1 publication unit is the RED/GREEN product/test pair, the independent
+  test-stability fix, and the continuity/graph commit containing this file. At
+  publication, CyPack
   `feat/native-fm` and fork `master` are verified at that same fast-forward
   branch tip.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
@@ -16,6 +19,31 @@
 
 - A2.2 responsive Miller columns were committed as `6c7c58f`, full graph-indexed,
   and fast-forward pushed to the CyPack feature branch and fork master only.
+
+## Verified Checkpoint — C1.1 Header Action Geometry
+
+- RED contract commit: `0ed5e51` (`test: define file manager header action
+  geometry`). GREEN product commit: `c9bfbf9` (`feat: add file manager header
+  action geometry`). Intermediate compile-failing RED was never pushed alone.
+- `FileManagerHeaderAction` names Copy, Paste, NewFolder, and Delete as
+  client-local presentation/input tags; no server or wire-protocol state was
+  added.
+- One pure geometry seam produces complete, disjoint, priority-ordered,
+  right-aligned button rectangles while reserving a readable cwd identity
+  width. Narrow layouts progressively hide whole lower-priority actions;
+  zero/degenerate areas fail closed.
+- Desktop/mobile `compute_view` snapshot the same rectangles into `ViewState`;
+  render reads that snapshot and uses the same pure fallback for isolated
+  component tests. Closing FM clears the areas. Render performs no mutation or
+  filesystem work.
+- Full nextest exposed a pre-existing 1–4 ms synthetic/real clock race in the
+  multiple-process-generation suppression fixture. Root cause was proven and
+  the test-only base clock was moved one second ahead in separate commit
+  `9aa1e59`; the exact test and 27-test lifecycle family passed before the full
+  suite.
+- Fresh gates: C1 geometry/render/ViewState 4/4; full nextest 2986/2986 with
+  one named B0 host probe skipped; Linux all-target and canonical Windows bin
+  clippy clean with `-D warnings`; Bun 17/17; Python 64/64; fmt/diff clean.
 
 ## Completed Checkpoint — B2 Native Image Preview
 
@@ -139,11 +167,12 @@
   `handle_file_manager_mouse` were found as current production graph symbols
   with their call/test connections; freshness was not inferred from `ready`
   alone.
-- Full post-B2 graph reindex completed at 17,974 nodes / 84,035 edges.
-  `collect_file_manager_image_placement` is connected to
-  `encode_local_pane_graphics` and its cleanup/dedup test;
-  `sync_image_preview_worker` is present as the current `App` method; and
-  `miller_layout` retains its production/test connections. Freshness was not
+- Full post-C1.1 graph reindex completed at 17,986 nodes / 83,818 edges.
+  `compute_file_manager_header_action_areas` is connected to desktop/mobile
+  view computation, render, and both geometry tests; `FileManagerHeaderAction`
+  and `FileManagerHeaderActionArea` are current graph types. The first query's
+  invalid file-pattern filter returned zero and was rejected as evidence; the
+  corrected symbol query returned five current nodes. Freshness was not
   inferred from `ready` alone.
 - Publication uses sequential fast-forward pushes to both CyPack heads and
   exact remote-SHA equality. `upstream` is never pushed.
@@ -158,9 +187,11 @@
 
 ## Exact Next Action
 
-1. Begin C1.1 with named header-button geometry test points RED before adding
-   production header/action code. Continue C1 → C2 → C3 → C4 → C5 → C6 in
-   `.codex/TASKS.md` order.
+1. Begin TP-C1.2-DISPATCH RED: prove exact left-click mapping for current
+   visible header rectangles and fail-closed behavior for gaps, cwd identity,
+   outside-header, hidden/narrow, zero-area, stale-frame, and non-left events.
+   Do not execute filesystem operations in C1.2; N3 owns explicit authority
+   state, then continue C2 → C3 → C4 → C5 → C6 in `.codex/TASKS.md` order.
 
 ## Verified B2.0 Dependency Decision
 

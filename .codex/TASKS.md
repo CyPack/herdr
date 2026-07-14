@@ -179,7 +179,25 @@ Path Beta feasibility, not unbounded image decoding or lifecycle safety.
 
 ## P3 — C1 Header Actions + N3 Action Bar
 
-- [ ] C1.1 named header-button rectangles and action tag enum.
+Production code begins only after the matching test point is RED. Header
+geometry is client-local presentation/input state; it must not enter the
+server protocol, and render must remain pure.
+
+### C1/N3 Test-Point Contract
+
+| Test point | What is tested | Expected result | Why it is required |
+|------------|----------------|-----------------|--------------------|
+| TP-C1.1-GEOMETRY | Copy, paste, new-folder, and delete buttons at normal, narrow, zero-height, and degenerate coordinates | Named rectangles are ordered, disjoint, right-aligned, and complete; narrow layouts retain only whole higher-priority buttons; degenerate layouts expose no action | Render and future input must share one fail-closed geometry seam so clipped labels never leave phantom click targets |
+| TP-C1.1-VIEW | Open/closed FM in desktop/mobile `compute_view`, plus component render with and without a preceding full-frame compute | `ViewState` snapshots current header rectangles only while FM is open; render consumes the same geometry and clears stale areas on close | Independent render/input arithmetic would drift after responsive layout changes |
+| TP-C1.2-DISPATCH | Left click inside every action rectangle, gaps, cwd identity, outside header, narrow hidden actions, zero area, stale frame, and non-left mouse buttons | Only a current visible rectangle resolves to its exact action tag; every gap/stale/hidden/degenerate/non-left event is consumed or ignored according to an explicit contract without triggering a file operation | Geometry alone does not prove safe routing, and destructive tags must never be inferred from coordinates |
+| TP-N3.1-CONTENT | Directory/file/empty selection, writable/read-only/error state, clipboard empty/populated, watcher refresh, navigation, and close/reopen | Persistent action content reflects the current selection and prepared state without filesystem I/O during render; stale selection state is cleared | An action bar that lags selection can advertise operations for the wrong path |
+| TP-N3.2-AUTHORITY | Enabled and disabled copy/paste/new-folder/delete states, including missing path, unsupported target, read-only destination, and in-flight operation | Disabled actions are visibly distinct and dispatch no side effect; enablement comes from explicit state, never label presence or paint output | Hidden or implicit authority is unsafe for destructive and filesystem-mutating actions |
+| TP-C1-GATES | Targeted geometry/input/render tests, full nextest, Linux/Windows clippy, Bun/Python maintenance, isolated mouse cross-check when dispatch lands, graph freshness, and diff cleanliness | All applicable gates pass without retry-only green; the one intentional B0 host probe remains named; no stable Herdr/socket or temp artifact is touched | Header actions cross rendering, input, and future filesystem authority, so narrow unit success is insufficient |
+
+- [x] C1.1 named header-button rectangles and action tag enum. RED commit
+  `0ed5e51`; GREEN commit `c9bfbf9`. Geometry/render/ViewState targeted 4/4;
+  full nextest 2986/2986 with one named B0 host probe skipped; Linux/Windows
+  clippy, Bun 17/17, Python 64/64, fmt, and diff-check clean.
 - [ ] C1.2 hit-test dispatch with disjoint geometry and narrow/zero-area cases.
 - [ ] N3.1 selection-sensitive persistent action-bar content.
 - [ ] N3.2 explicit enabled/disabled states with no hidden side effects.
@@ -242,7 +260,8 @@ Path Beta feasibility, not unbounded image decoding or lifecycle safety.
 
 ## Ordering Resolution
 
-A4, B0, B1, the A3 remainder, and B2 are complete through B2 product/test head
-`2989434`. The next execution order is C1 → C2 → C3 → C4 → C5 → C6. S5–S7
-and N2 remain evidence-gated deferred architecture, while M1–M3 remain
-inactive north-star work.
+A4, B0, B1, the A3 remainder, B2, and C1.1 are complete through C1.1 product
+head `c9bfbf9` (with independent deterministic-test fix `9aa1e59`). The next
+execution order is C1.2 → N3 → C2 → C3 → C4 → C5 → C6. S5–S7 and N2 remain
+evidence-gated deferred architecture, while M1–M3 remain inactive north-star
+work.

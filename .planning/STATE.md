@@ -2,8 +2,9 @@
 
 - Updated: 2026-07-14
 - Branch: `feat/native-fm`
-- B2 product/test checkpoint: `2989434`; the continuity commit containing this
-  state file is part of the CyPack publication unit.
+- C1.1 product checkpoint: `c9bfbf9`; independent deterministic-test fix:
+  `9aa1e59`. The continuity commit containing this state file is part of the
+  CyPack publication unit.
 - Completed local commits:
   - `6c7c58f` A2.2 responsive Miller columns (already pushed)
   - `01ba91d` A4 live filesystem watching (pushed to CyPack feature/master)
@@ -20,9 +21,13 @@
     placement, generation-safe worker, cached Kitty paint/cleanup, and
     width-safe non-Kitty fallback (fully verified, graph-indexed, and published
     to CyPack feature/master)
+  - `0ed5e51` / `c9bfbf9` C1.1 header-action geometry RED/GREEN plus
+    independent test-stability fix `9aa1e59` (fully verified and graph-indexed;
+    publication completes with this continuity commit)
 - Continuity/tooling is versioned by the separate commit containing this state
   file.
-- Active increment: begin C1.1 named header-button geometry test-first.
+- Active increment: begin TP-C1.2-DISPATCH test-first; map current visible
+  header rectangles to tags without executing filesystem operations.
 - Canonical current state: `/home/ayaz/projects/herdr/.codex/CURRENT.md`
 - Durable tasks: `/home/ayaz/projects/herdr/.codex/TASKS.md`
 - Full handoff: `/home/ayaz/projects/herdr/.codex/HANDOFF.md`
@@ -38,7 +43,11 @@
   interactive probe skip; Linux/Windows clippy; Bun 17/17; Python 64/64;
   source-to-host image comparison 0/271425 pixel difference; host cleanup and
   semantic exit with zero process/socket/temp residue.
-- First next code action: make C1.1 named header-button geometry RED before
-  production header/action code.
-- Next code order: C1 through C6. Deferred
+- C1.1 final gates: geometry/render/ViewState 4/4; lifecycle family 27/27;
+  full nextest 2986/2986 plus one named B0 host-probe skip; Linux/Windows
+  clippy; Bun 17/17; Python 64/64; fmt/diff clean. Full graph: 17,986 nodes /
+  83,818 edges with the header action types and geometry seam verified.
+- First next code action: make TP-C1.2-DISPATCH RED for left-click action-tag
+  routing and gap/cwd/outside/narrow/zero/stale/non-left fail-closed cases.
+- Next code order: C1.2, N3, then C2 through C6. Deferred
   architecture and north-star missions remain recorded in `.codex/TASKS.md`.
