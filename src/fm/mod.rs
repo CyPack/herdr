@@ -17,6 +17,7 @@ pub(crate) mod watcher;
 use std::path::{Path, PathBuf};
 
 use text_preview::{read_text_preview, TextPreviewLimits};
+pub use text_preview::{TextPreview, TextPreviewError};
 
 /// One entry in a browsed directory. Pure, cloneable data for rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,10 +46,19 @@ pub struct FmParent {
 pub enum FmPreview {
     /// The current directory has no selected entry.
     None,
-    /// The selected entry is a file; text preview lands in B1.
-    File,
+    /// The selected entry is a file and its bounded preview preparation result.
+    File(FmFilePreview),
     /// The selected entry is a directory and these are its ordered children.
     Directory(Vec<FileEntry>),
+}
+
+/// Prepared selected-file state for the right Miller column.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FmFilePreview {
+    /// Valid bounded UTF-8 content, prepared outside render.
+    Text(TextPreview),
+    /// Stable preparation failure; TP-B1.2 defines the complete UI mapping.
+    Unavailable(TextPreviewError),
 }
 
 /// Read the immediate children of `dir`: directories first, then files, each
@@ -273,12 +283,16 @@ impl FmState {
     }
 
     fn refresh_preview(&mut self) {
-        self.preview = match self.selected() {
+        let selected = self
+            .selected()
+            .map(|entry| (entry.path.clone(), entry.is_dir));
+        self.preview = match selected {
             None => FmPreview::None,
-            Some(entry) if entry.is_dir => {
-                FmPreview::Directory(read_dir_entries(&entry.path, self.show_hidden))
-            }
-            Some(_) => FmPreview::File,
+            Some((path, true)) => FmPreview::Directory(read_dir_entries(&path, self.show_hidden)),
+            Some((path, false)) => match read_text_preview(&path, TextPreviewLimits::default()) {
+                Ok(preview) => FmPreview::File(FmFilePreview::Text(preview)),
+                Err(error) => FmPreview::File(FmFilePreview::Unavailable(error)),
+            },
         };
     }
 }
@@ -547,7 +561,7 @@ mod tests {
         let td = TempDir::new("file-context");
         td.file("only.txt");
         let st = FmState::new(&td.root);
-        assert!(matches!(st.preview, FmPreview::File));
+        assert!(matches!(st.preview, FmPreview::File(_)));
     }
 
     // TP-B1.1-BOUNDED-READ: selected-file content is prepared in FmState,
@@ -648,7 +662,7 @@ mod tests {
             state.selected().map(|entry| entry.name.as_str()),
             Some("c.txt")
         );
-        assert!(matches!(state.preview, FmPreview::File));
+        assert!(matches!(state.preview, FmPreview::File(_)));
 
         fs::remove_file(td.root.join("a.txt")).expect("remove first file");
         fs::remove_file(td.root.join("c.txt")).expect("remove last file");

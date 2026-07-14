@@ -22,16 +22,22 @@ impl TextPreviewLimits {
     }
 }
 
+impl Default for TextPreviewLimits {
+    fn default() -> Self {
+        Self::new(MAX_TEXT_PREVIEW_BYTES)
+    }
+}
+
 /// Prepared UTF-8 file content consumed by later state/render stages.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct TextPreview {
-    pub(super) content: String,
-    pub(super) truncated: bool,
+pub struct TextPreview {
+    pub content: String,
+    pub truncated: bool,
 }
 
 /// Stable domain failures from bounded text preparation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum TextPreviewError {
+pub enum TextPreviewError {
     Io(io::ErrorKind),
     InvalidUtf8 { valid_up_to: usize },
 }

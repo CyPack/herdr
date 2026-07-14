@@ -146,7 +146,7 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
                 None,
                 "(nothing selected)",
             ),
-            FmPreview::File => render_panel(
+            FmPreview::File(_) => render_panel(
                 app,
                 frame,
                 preview_area,
