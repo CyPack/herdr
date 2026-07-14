@@ -18,6 +18,11 @@ pub(crate) mod watcher;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+/// Hard client-side ceiling for one explicit bulk-selection operation. Bulk
+/// commands reject larger sets atomically rather than silently selecting a
+/// misleading subset.
+pub(crate) const MAX_MULTI_SELECTION_PATHS: usize = 4_096;
+
 pub use image_preview::{ImagePreviewError, ImagePreviewTarget, PreparedImagePreview};
 pub(crate) use text_preview::highlight_text_preview;
 use text_preview::{read_text_preview, TextPreviewLimits};
@@ -365,27 +370,55 @@ impl FmState {
     }
 
     /// Replace the explicit set with the inclusive current-list range from the
-    /// anchor to `index`. A missing anchor falls back to a one-entry selection;
-    /// duplicate visible identities are naturally deduplicated by the set.
+    /// anchor to `index`. No anchor falls back to a one-entry selection. A
+    /// stale/ambiguous anchor, ambiguous selected identity, or oversized range
+    /// is rejected before cursor or selection state changes.
     pub fn extend_selection(&mut self, index: usize) -> bool {
         let Some(target_path) = self.entries.get(index).map(|entry| entry.path.clone()) else {
             return false;
         };
-        let anchor_index = self
-            .multi_selection
-            .anchor
-            .as_ref()
-            .and_then(|anchor| self.entries.iter().position(|entry| &entry.path == anchor));
+
+        let anchor_index = match self.multi_selection.anchor.as_ref() {
+            None => None,
+            Some(anchor) => {
+                let mut matches = self
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, entry)| &entry.path == anchor);
+                let Some((anchor_index, _)) = matches.next() else {
+                    return false;
+                };
+                if matches.next().is_some() {
+                    return false;
+                }
+                Some(anchor_index)
+            }
+        };
         let paths = if let Some(anchor_index) = anchor_index {
             let start = anchor_index.min(index);
             let end = anchor_index.max(index);
-            self.entries[start..=end]
+            let range_len = end.saturating_sub(start).saturating_add(1);
+            if range_len > MAX_MULTI_SELECTION_PATHS {
+                return false;
+            }
+            let paths = self.entries[start..=end]
                 .iter()
                 .map(|entry| entry.path.clone())
-                .collect()
+                .collect::<BTreeSet<_>>();
+            if paths.len() != range_len {
+                return false;
+            }
+            paths
         } else {
             BTreeSet::from([target_path.clone()])
         };
+        let mut identified_paths = BTreeSet::new();
+        for entry in &self.entries {
+            if paths.contains(&entry.path) && !identified_paths.insert(entry.path.as_path()) {
+                return false;
+            }
+        }
         if !self.select(index) {
             return false;
         }
@@ -394,6 +427,36 @@ impl FmState {
         if anchor_index.is_none() {
             self.multi_selection.anchor = Some(target_path);
         }
+        true
+    }
+
+    /// Select every current visible entry when the complete set fits the bulk
+    /// ceiling and each path identity is unique. Failure is atomic; empty state
+    /// clears any stale explicit selection.
+    pub fn select_all(&mut self) -> bool {
+        if self.entries.len() > MAX_MULTI_SELECTION_PATHS {
+            return false;
+        }
+        let paths = self
+            .entries
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect::<BTreeSet<_>>();
+        if paths.len() != self.entries.len() {
+            return false;
+        }
+        if paths.is_empty() {
+            self.clear_multi_selection();
+            return true;
+        }
+
+        let anchor = self
+            .entries
+            .get(self.cursor)
+            .or_else(|| self.entries.first())
+            .map(|entry| entry.path.clone());
+        self.multi_selection.paths = paths;
+        self.multi_selection.anchor = anchor;
         true
     }
 

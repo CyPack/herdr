@@ -23,11 +23,24 @@ pub(super) enum FileManagerMouseDispatch {
 
 /// Handle one key while the file manager is open. `Esc`/`q` close it; the arrow
 /// keys and `hjkl` move the cursor or navigate directories; `.` toggles hidden
-/// files. Any other key is a no-op (swallowed).
+/// files; Ctrl+A selects all; Ctrl+Shift+A clears the explicit selection. Any
+/// other key is a no-op (swallowed).
 pub(super) fn handle_file_manager_key(state: &mut AppState, key: KeyEvent) {
     match (key.code, key.modifiers) {
         (KeyCode::Esc | KeyCode::Char('q'), _) => {
             state.file_manager = None;
+        }
+        (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
+            if let Some(fm) = state.file_manager.as_mut() {
+                fm.select_all();
+            }
+        }
+        (KeyCode::Char('a') | KeyCode::Char('A'), modifiers)
+            if modifiers == KeyModifiers::CONTROL | KeyModifiers::SHIFT =>
+        {
+            if let Some(fm) = state.file_manager.as_mut() {
+                fm.clear_multi_selection();
+            }
         }
         (KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J'), KeyModifiers::SHIFT) => {
             if let Some(fm) = state.file_manager.as_mut() {
