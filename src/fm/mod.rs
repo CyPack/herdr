@@ -327,6 +327,7 @@ impl FmState {
     }
 
     /// Stable path identity used as the origin for the next range selection.
+    #[cfg(test)]
     pub fn multi_selection_anchor(&self) -> Option<&Path> {
         self.multi_selection.anchor.as_deref()
     }

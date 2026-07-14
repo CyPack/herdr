@@ -625,10 +625,11 @@ pub struct ProjectRowArea {
 /// One visible CURRENT row in the native file manager. `compute_view` stores
 /// these shared render/input coordinates so mouse hit-testing never recreates
 /// responsive Miller geometry independently.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileManagerRowArea {
     pub rect: Rect,
     pub entry_idx: usize,
+    pub entry_path: PathBuf,
 }
 
 /// Client-local actions exposed at the right edge of a native file-manager

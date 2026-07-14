@@ -5,7 +5,7 @@
 //! navigation on `AppState.file_manager`. Client-side presentation input; keys
 //! that it does not use are swallowed so they never reach the hidden terminal.
 
-use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::app::state::{AppState, FileManagerHeaderAction, FileManagerRowAction};
 use crate::app::{App, FileManagerClickState};
@@ -25,31 +25,51 @@ pub(super) enum FileManagerMouseDispatch {
 /// keys and `hjkl` move the cursor or navigate directories; `.` toggles hidden
 /// files. Any other key is a no-op (swallowed).
 pub(super) fn handle_file_manager_key(state: &mut AppState, key: KeyEvent) {
-    match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => {
+    match (key.code, key.modifiers) {
+        (KeyCode::Esc | KeyCode::Char('q'), _) => {
             state.file_manager = None;
         }
-        KeyCode::Down | KeyCode::Char('j') => {
+        (KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J'), KeyModifiers::SHIFT) => {
+            if let Some(fm) = state.file_manager.as_mut() {
+                fm.move_down();
+                let cursor = fm.cursor;
+                fm.extend_selection(cursor);
+            }
+        }
+        (KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K'), KeyModifiers::SHIFT) => {
+            if let Some(fm) = state.file_manager.as_mut() {
+                fm.move_up();
+                let cursor = fm.cursor;
+                fm.extend_selection(cursor);
+            }
+        }
+        (KeyCode::Char(' '), KeyModifiers::NONE) => {
+            if let Some(fm) = state.file_manager.as_mut() {
+                let cursor = fm.cursor;
+                fm.toggle_selection(cursor);
+            }
+        }
+        (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
             if let Some(fm) = state.file_manager.as_mut() {
                 fm.move_down();
             }
         }
-        KeyCode::Up | KeyCode::Char('k') => {
+        (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) => {
             if let Some(fm) = state.file_manager.as_mut() {
                 fm.move_up();
             }
         }
-        KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
+        (KeyCode::Enter | KeyCode::Right | KeyCode::Char('l'), KeyModifiers::NONE) => {
             if let Some(fm) = state.file_manager.as_mut() {
                 fm.enter();
             }
         }
-        KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h') => {
+        (KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h'), KeyModifiers::NONE) => {
             if let Some(fm) = state.file_manager.as_mut() {
                 fm.leave();
             }
         }
-        KeyCode::Char('.') => {
+        (KeyCode::Char('.'), KeyModifiers::NONE) => {
             if let Some(fm) = state.file_manager.as_mut() {
                 fm.toggle_hidden();
             }
@@ -92,13 +112,21 @@ impl App {
                     .map(|area| area.action)
             });
 
-        let entry_idx = self
+        let entry_target = self
             .state
             .view
             .file_manager_row_areas
             .iter()
             .find(|row| rect_contains(row.rect, mouse.column, mouse.row))
-            .map(|row| row.entry_idx);
+            .and_then(|row| {
+                let entry = self
+                    .state
+                    .file_manager
+                    .as_ref()
+                    .and_then(|file_manager| file_manager.entries.get(row.entry_idx))?;
+                (entry.path == row.entry_path).then(|| (row.entry_idx, row.entry_path.clone()))
+            });
+        let entry_idx = entry_target.as_ref().map(|(entry_idx, _)| *entry_idx);
 
         let row_action = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
             .then_some(())
@@ -149,18 +177,24 @@ impl App {
         }
 
         match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) if mouse.modifiers == KeyModifiers::CONTROL => {
+                self.last_file_manager_click = None;
+                if let (Some(file_manager), Some(entry_idx)) =
+                    (self.state.file_manager.as_mut(), entry_idx)
+                {
+                    file_manager.toggle_selection(entry_idx);
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) if mouse.modifiers == KeyModifiers::SHIFT => {
+                self.last_file_manager_click = None;
+                if let (Some(file_manager), Some(entry_idx)) =
+                    (self.state.file_manager.as_mut(), entry_idx)
+                {
+                    file_manager.extend_selection(entry_idx);
+                }
+            }
             MouseEventKind::Down(MouseButton::Left) if mouse.modifiers.is_empty() => {
-                let Some(entry_idx) = entry_idx else {
-                    self.last_file_manager_click = None;
-                    return FileManagerMouseDispatch::Consumed;
-                };
-                let entry_path = self
-                    .state
-                    .file_manager
-                    .as_ref()
-                    .and_then(|file_manager| file_manager.entries.get(entry_idx))
-                    .map(|entry| entry.path.clone());
-                let Some(entry_path) = entry_path else {
+                let Some((entry_idx, entry_path)) = entry_target else {
                     self.last_file_manager_click = None;
                     return FileManagerMouseDispatch::Consumed;
                 };
@@ -176,7 +210,7 @@ impl App {
                 self.last_file_manager_click = if is_double_click { None } else { Some(click) };
 
                 if let Some(file_manager) = self.state.file_manager.as_mut() {
-                    if file_manager.select(entry_idx) && is_double_click {
+                    if file_manager.replace_selection(entry_idx) && is_double_click {
                         file_manager.enter();
                     }
                 }
@@ -277,15 +311,26 @@ mod tests {
         let mut app = super::super::app_for_mouse_test();
         app.state.file_manager = Some(fm);
         app.state.view.terminal_area = Rect::new(26, 0, 20, 6);
-        let entry_count = app
+        let entry_paths = app
             .state
             .file_manager
             .as_ref()
-            .map_or(0, |file_manager| file_manager.entries.len());
-        app.state.view.file_manager_row_areas = (0..entry_count.min(4))
-            .map(|entry_idx| FileManagerRowArea {
+            .map(|file_manager| {
+                file_manager
+                    .entries
+                    .iter()
+                    .take(4)
+                    .map(|entry| entry.path.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        app.state.view.file_manager_row_areas = entry_paths
+            .into_iter()
+            .enumerate()
+            .map(|(entry_idx, entry_path)| FileManagerRowArea {
                 rect: Rect::new(26, 2 + entry_idx as u16, 20, 1),
                 entry_idx,
+                entry_path,
             })
             .collect();
         app
@@ -769,12 +814,37 @@ mod tests {
         let td = TempDir::new("multi-selection-row-identity");
         td.file("00.txt");
         td.file("01.txt");
-        let app = runtime_app_with_fm(FmState::new(&td.root));
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
         let expected = td.root.join("00.txt");
 
         assert_eq!(
             app.state.view.file_manager_row_areas[0].entry_path,
             expected
+        );
+
+        let preserved = td.root.join("01.txt");
+        assert!(app
+            .state
+            .file_manager
+            .as_mut()
+            .expect("open fm")
+            .replace_selection(1));
+        app.state
+            .file_manager
+            .as_mut()
+            .expect("open fm")
+            .entries
+            .swap(0, 1);
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 27, 2,)),
+            FileManagerMouseDispatch::Consumed
+        );
+        let fm = app.state.file_manager.as_ref().expect("open fm");
+        assert_eq!(fm.cursor, 1);
+        assert_eq!(
+            fm.multi_selection_paths().iter().collect::<Vec<_>>(),
+            vec![&preserved]
         );
     }
 

@@ -164,6 +164,7 @@ pub(crate) fn compute_file_manager_row_geometry(
         rows.push(FileManagerRowArea {
             rect: name_rect,
             entry_idx,
+            entry_path: entries[entry_idx].path.clone(),
         });
         for (action_idx, action) in FileManagerRowAction::ALL
             .iter()
@@ -418,9 +419,20 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
                 parent.cursor,
                 "(empty)",
                 None,
+                None,
             );
         } else {
-            render_panel(app, frame, parent_area, "PARENT", &[], None, "(root)", None);
+            render_panel(
+                app,
+                frame,
+                parent_area,
+                "PARENT",
+                &[],
+                None,
+                "(root)",
+                None,
+                None,
+            );
         }
     }
 
@@ -433,10 +445,17 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         (!fm.entries.is_empty()).then_some(fm.cursor),
         "(empty)",
         Some(current_rows),
+        Some(fm.multi_selection_paths()),
     );
     for action_area in current_actions {
-        if fm.entries.get(action_area.entry_idx).is_some() {
-            render_row_action(app, frame, action_area, fm.cursor == action_area.entry_idx);
+        if let Some(entry) = fm.entries.get(action_area.entry_idx) {
+            render_row_action(
+                app,
+                frame,
+                action_area,
+                fm.cursor == action_area.entry_idx,
+                fm.multi_selection_paths().contains(&entry.path),
+            );
         }
     }
 
@@ -451,6 +470,7 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
                 None,
                 "(nothing selected)",
                 None,
+                None,
             ),
             FmPreview::File(preview) => {
                 render_file_preview(app, frame, preview_area, preview);
@@ -463,6 +483,7 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
                 entries,
                 None,
                 "(empty)",
+                None,
                 None,
             ),
         }
@@ -668,6 +689,7 @@ fn render_panel(
     selected: Option<usize>,
     empty_label: &str,
     row_areas: Option<&[FileManagerRowArea]>,
+    multi_selected_paths: Option<&std::collections::BTreeSet<std::path::PathBuf>>,
 ) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -701,6 +723,7 @@ fn render_panel(
                     row_area.rect,
                     entry,
                     selected == Some(row_area.entry_idx),
+                    multi_selected_paths.is_some_and(|paths| paths.contains(&entry.path)),
                 );
             }
         }
@@ -716,7 +739,14 @@ fn render_panel(
     for (offset, entry) in entries.iter().skip(first).take(rows).enumerate() {
         let idx = first + offset;
         let row = Rect::new(list_area.x, list_area.y + offset as u16, list_area.width, 1);
-        render_entry_row(app, frame, row, entry, selected == Some(idx));
+        render_entry_row(
+            app,
+            frame,
+            row,
+            entry,
+            selected == Some(idx),
+            multi_selected_paths.is_some_and(|paths| paths.contains(&entry.path)),
+        );
     }
 }
 
@@ -725,14 +755,20 @@ fn render_entry_row(
     frame: &mut Frame,
     row: Rect,
     entry: &FileEntry,
-    selected: bool,
+    cursor_focused: bool,
+    multi_selected: bool,
 ) {
     let p = &app.palette;
     let suffix = if entry.is_dir { "/" } else { "" };
     let label = truncate_end(&format!("  {}{}", entry.name, suffix), row.width as usize);
-    let style = if selected {
+    let style = if cursor_focused {
         Style::default()
             .bg(p.surface0)
+            .fg(p.text)
+            .add_modifier(Modifier::BOLD)
+    } else if multi_selected {
+        Style::default()
+            .bg(p.surface1)
             .fg(p.text)
             .add_modifier(Modifier::BOLD)
     } else if entry.is_dir {
@@ -747,11 +783,14 @@ fn render_row_action(
     app: &AppState,
     frame: &mut Frame,
     action_area: &FileManagerRowActionArea,
-    selected: bool,
+    cursor_focused: bool,
+    multi_selected: bool,
 ) {
     let p = &app.palette;
-    let style = if selected {
+    let style = if cursor_focused {
         Style::default().bg(p.surface0).fg(p.overlay1)
+    } else if multi_selected {
+        Style::default().bg(p.surface1).fg(p.overlay1)
     } else {
         Style::default().fg(p.overlay1)
     };
