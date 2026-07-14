@@ -617,6 +617,20 @@ mod tests {
         entries.iter().map(|e| e.name.as_str()).collect()
     }
 
+    fn synthetic_state(entry_count: usize) -> FmState {
+        let mut state = FmState::test_empty("/virtual");
+        state.cwd_writable = true;
+        state.entries = (0..entry_count)
+            .map(|index| FileEntry {
+                name: format!("{index:05}.txt"),
+                path: PathBuf::from(format!("/virtual/{index:05}.txt")),
+                is_dir: false,
+                operation_supported: true,
+            })
+            .collect();
+        state
+    }
+
     // T-A1.2a: directories first, each group in natural order. Cross-check
     // reference: `ls --group-directories-first -v` yields the same order.
     #[test]
@@ -872,12 +886,17 @@ mod tests {
         state.entries.remove(2);
         state.entries.insert(1, state.entries[1].clone());
 
-        assert!(state.extend_selection(0));
+        let stale_paths = state.multi_selection_paths().clone();
+        let stale_anchor = state.multi_selection_anchor().map(Path::to_path_buf);
+        let stale_cursor = state.cursor;
+        assert!(!state.extend_selection(0));
         assert_eq!(
-            state.multi_selection_paths().iter().collect::<Vec<_>>(),
-            vec![&first]
+            state.multi_selection_paths(),
+            &stale_paths,
+            "stale anchor is rejected atomically"
         );
-        assert_eq!(state.multi_selection_anchor(), Some(first.as_path()));
+        assert_eq!(state.multi_selection_anchor(), stale_anchor.as_deref());
+        assert_eq!(state.cursor, stale_cursor);
 
         let before_paths = state.multi_selection_paths().clone();
         let before_anchor = state.multi_selection_anchor().map(Path::to_path_buf);
@@ -886,10 +905,85 @@ mod tests {
         assert_eq!(state.multi_selection_anchor(), before_anchor.as_deref());
 
         assert!(state.replace_selection(0));
-        assert!(state.extend_selection(2));
-        assert_eq!(state.multi_selection_paths().len(), 2);
+        let duplicate_paths = state.multi_selection_paths().clone();
+        let duplicate_anchor = state.multi_selection_anchor().map(Path::to_path_buf);
+        let duplicate_cursor = state.cursor;
+        assert!(!state.extend_selection(2));
+        assert_eq!(state.multi_selection_paths(), &duplicate_paths);
+        assert_eq!(state.multi_selection_anchor(), duplicate_anchor.as_deref());
+        assert_eq!(state.cursor, duplicate_cursor);
         assert!(state.multi_selection_paths().contains(&first));
-        assert!(state.multi_selection_paths().contains(&second));
+        assert!(!state.multi_selection_paths().contains(&second));
+    }
+
+    // TP-N4.2-BULK-AUTHORITY: select-all is atomic. Exact-limit unique state
+    // succeeds, while overflow and duplicate identities preserve prior state.
+    #[test]
+    fn select_all_is_atomic_bounded_and_deterministic() {
+        let mut exact = synthetic_state(MAX_MULTI_SELECTION_PATHS);
+        exact.cursor = MAX_MULTI_SELECTION_PATHS - 1;
+        let cursor_path = exact.entries[exact.cursor].path.clone();
+
+        assert!(exact.select_all());
+        assert_eq!(
+            exact.multi_selection_paths().len(),
+            MAX_MULTI_SELECTION_PATHS
+        );
+        assert_eq!(exact.multi_selection_anchor(), Some(cursor_path.as_path()));
+        assert_eq!(exact.cursor, MAX_MULTI_SELECTION_PATHS - 1);
+
+        exact.clear_multi_selection();
+        assert!(exact.multi_selection_paths().is_empty());
+        assert!(exact.multi_selection_anchor().is_none());
+
+        let mut overflow = synthetic_state(MAX_MULTI_SELECTION_PATHS + 1);
+        assert!(overflow.replace_selection(7));
+        let overflow_paths = overflow.multi_selection_paths().clone();
+        let overflow_anchor = overflow.multi_selection_anchor().map(Path::to_path_buf);
+        let overflow_cursor = overflow.cursor;
+        assert!(!overflow.select_all());
+        assert_eq!(overflow.multi_selection_paths(), &overflow_paths);
+        assert_eq!(
+            overflow.multi_selection_anchor(),
+            overflow_anchor.as_deref()
+        );
+        assert_eq!(overflow.cursor, overflow_cursor);
+
+        let mut duplicate = synthetic_state(2);
+        duplicate.entries[1].path = duplicate.entries[0].path.clone();
+        assert!(duplicate.replace_selection(0));
+        let duplicate_paths = duplicate.multi_selection_paths().clone();
+        assert!(!duplicate.select_all());
+        assert_eq!(duplicate.multi_selection_paths(), &duplicate_paths);
+
+        duplicate.entries.clear();
+        assert!(duplicate.select_all());
+        assert!(duplicate.multi_selection_paths().is_empty());
+        assert!(duplicate.multi_selection_anchor().is_none());
+    }
+
+    // TP-N4.2-BULK-AUTHORITY: inclusive ranges accept the exact bound but
+    // reject overflow atomically instead of silently selecting a partial set.
+    #[test]
+    fn range_selection_is_atomic_at_the_bulk_limit() {
+        let mut exact = synthetic_state(MAX_MULTI_SELECTION_PATHS);
+        assert!(exact.replace_selection(0));
+        assert!(exact.extend_selection(MAX_MULTI_SELECTION_PATHS - 1));
+        assert_eq!(
+            exact.multi_selection_paths().len(),
+            MAX_MULTI_SELECTION_PATHS
+        );
+        assert_eq!(exact.cursor, MAX_MULTI_SELECTION_PATHS - 1);
+
+        let mut overflow = synthetic_state(MAX_MULTI_SELECTION_PATHS + 1);
+        assert!(overflow.replace_selection(0));
+        let before_paths = overflow.multi_selection_paths().clone();
+        let before_anchor = overflow.multi_selection_anchor().map(Path::to_path_buf);
+        let before_cursor = overflow.cursor;
+        assert!(!overflow.extend_selection(MAX_MULTI_SELECTION_PATHS));
+        assert_eq!(overflow.multi_selection_paths(), &before_paths);
+        assert_eq!(overflow.multi_selection_anchor(), before_anchor.as_deref());
+        assert_eq!(overflow.cursor, before_cursor);
     }
 
     // TP-N4.1-SELECTION-STATE: watcher-style reload follows live path identity

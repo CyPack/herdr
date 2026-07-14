@@ -252,7 +252,8 @@ mod tests {
         FileManagerHeaderAction, FileManagerHeaderActionArea, FileManagerRowAction,
         FileManagerRowActionArea, FileManagerRowArea,
     };
-    use crate::fm::FmState;
+    use crate::fm::{FmState, MAX_MULTI_SELECTION_PATHS};
+    use crate::ui::compute_view;
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::layout::Rect;
     use std::fs;
@@ -759,6 +760,115 @@ mod tests {
         assert_eq!(fm.multi_selection_paths().len(), 3);
         assert!(fm.multi_selection_paths().contains(&path(2)));
         assert_eq!(fm.multi_selection_anchor(), Some(path(2).as_path()));
+    }
+
+    // TP-N4.2-BULK-AUTHORITY: exact Ctrl+A/Ctrl+Shift+A gestures select all
+    // and clear explicitly, refresh prepared authority, and reject extra mods.
+    #[test]
+    fn keyboard_select_all_and_clear_are_exact_and_refresh_bulk_authority() {
+        let td = TempDir::new("multi-selection-keyboard-bulk");
+        for index in 0..3 {
+            td.file(&format!("{index:02}.txt"));
+        }
+        let mut app = app_with_fm(FmState::new(&td.root));
+
+        handle_file_manager_key(
+            &mut app,
+            key_with_modifiers(KeyCode::Char('a'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(
+            app.file_manager
+                .as_ref()
+                .expect("open fm")
+                .multi_selection_paths()
+                .len(),
+            3
+        );
+        compute_view(&mut app, Rect::new(0, 0, 100, 6));
+        let selected_model = app
+            .view
+            .file_manager_action_bar
+            .as_ref()
+            .expect("selected action bar");
+        assert_eq!(
+            selected_model
+                .selection
+                .as_ref()
+                .map(|selection| selection.label.as_str()),
+            Some("3 selected")
+        );
+
+        handle_file_manager_key(
+            &mut app,
+            key_with_modifiers(
+                KeyCode::Char('a'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+        );
+        let fm = app.file_manager.as_ref().expect("open fm");
+        assert!(fm.multi_selection_paths().is_empty());
+        assert!(fm.multi_selection_anchor().is_none());
+        compute_view(&mut app, Rect::new(0, 0, 100, 6));
+        let cleared_model = app
+            .view
+            .file_manager_action_bar
+            .as_ref()
+            .expect("cleared action bar");
+        assert!(cleared_model.selection.is_none());
+        assert_eq!(
+            cleared_model
+                .action_state(FileManagerHeaderAction::Copy)
+                .expect("copy state")
+                .disabled_reason,
+            Some(FileManagerActionDisabledReason::NoSelection)
+        );
+
+        assert!(app
+            .file_manager
+            .as_mut()
+            .expect("open fm")
+            .replace_selection(1));
+        let before_paths = app
+            .file_manager
+            .as_ref()
+            .expect("open fm")
+            .multi_selection_paths()
+            .clone();
+        handle_file_manager_key(
+            &mut app,
+            key_with_modifiers(
+                KeyCode::Char('a'),
+                KeyModifiers::CONTROL | KeyModifiers::ALT,
+            ),
+        );
+        assert_eq!(
+            app.file_manager
+                .as_ref()
+                .expect("open fm")
+                .multi_selection_paths(),
+            &before_paths
+        );
+
+        let mut oversized = FmState::test_empty("/virtual");
+        oversized.entries = (0..=MAX_MULTI_SELECTION_PATHS)
+            .map(|index| crate::fm::FileEntry {
+                name: format!("{index:05}.txt"),
+                path: PathBuf::from(format!("/virtual/{index:05}.txt")),
+                is_dir: false,
+                operation_supported: true,
+            })
+            .collect();
+        let mut oversized_app = app_with_fm(oversized);
+        handle_file_manager_key(
+            &mut oversized_app,
+            key_with_modifiers(KeyCode::Char('a'), KeyModifiers::CONTROL),
+        );
+        assert!(oversized_app
+            .file_manager
+            .as_ref()
+            .expect("open oversized fm")
+            .multi_selection_paths()
+            .is_empty());
     }
 
     // TP-N4.1-SELECTION-STATE: a stale row snapshot and unrecognized modifier
