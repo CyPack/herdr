@@ -765,6 +765,72 @@ mod tests {
         assert!(rows.contains("05.txt"), "viewport last row: {rows:?}");
     }
 
+    // TP-A3.3-HIT-GEOMETRY: at each responsive breakpoint, CURRENT row hit
+    // rects occupy exactly the same list geometry that the pure renderer uses.
+    #[test]
+    fn current_row_areas_follow_miller_geometry_at_all_breakpoints() {
+        for width in [20, 30, 40] {
+            let area = Rect::new(5, 7, width, 6);
+            let body = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
+            let current_list = panel_areas(miller_layout(body).current)[1];
+
+            let rows = compute_file_manager_row_areas(area, 3, 0);
+            assert_eq!(rows.len(), 3, "width {width}");
+            for (index, row) in rows.iter().enumerate() {
+                assert_eq!(row.entry_idx, index, "width {width}");
+                assert_eq!(
+                    row.rect,
+                    Rect::new(
+                        current_list.x,
+                        current_list.y + index as u16,
+                        current_list.width,
+                        1,
+                    ),
+                    "width {width}",
+                );
+            }
+        }
+    }
+
+    // TP-A3.3-HIT-GEOMETRY: viewport offsets map screen rows to absolute entry
+    // indices, and adversarial offsets clamp to the last full visible window.
+    #[test]
+    fn current_row_areas_apply_viewport_and_clamp_to_list_end() {
+        let area = Rect::new(10, 20, 20, 5); // three CURRENT list rows
+
+        let rows = compute_file_manager_row_areas(area, 10, 6);
+        assert_eq!(
+            rows.iter().map(|row| row.entry_idx).collect::<Vec<_>>(),
+            vec![6, 7, 8]
+        );
+        assert_eq!(rows[0].rect, Rect::new(10, 22, 20, 1));
+        assert_eq!(rows[2].rect, Rect::new(10, 24, 20, 1));
+
+        let clamped = compute_file_manager_row_areas(area, 10, usize::MAX);
+        assert_eq!(
+            clamped
+                .iter()
+                .map(|row| row.entry_idx)
+                .collect::<Vec<_>>(),
+            vec![7, 8, 9]
+        );
+    }
+
+    // TP-A3.3-HIT-GEOMETRY: no content cells means no clickable rows. All
+    // degenerate rectangles and an empty directory remain panic-free.
+    #[test]
+    fn current_row_areas_are_empty_for_degenerate_geometry_or_list() {
+        for area in [
+            Rect::new(0, 0, 0, 6),
+            Rect::new(0, 0, 20, 0),
+            Rect::new(0, 0, 20, 1),
+            Rect::new(0, 0, 20, 2),
+        ] {
+            assert!(compute_file_manager_row_areas(area, 10, 0).is_empty());
+        }
+        assert!(compute_file_manager_row_areas(Rect::new(0, 0, 20, 6), 0, usize::MAX).is_empty());
+    }
+
     // TP-A2.2.5: the filesystem root has no parent but still renders a stable,
     // explicit parent-column state without panicking.
     #[test]

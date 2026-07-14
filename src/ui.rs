@@ -794,6 +794,54 @@ mod tests {
         std::fs::remove_dir_all(root).expect("remove temp root");
     }
 
+    // TP-A3.3-HIT-GEOMETRY: compute_view snapshots CURRENT row rects for input
+    // using the same pure layout function as render, then clears them when FM
+    // closes so stale terminal coordinates can never remain clickable.
+    #[test]
+    fn compute_view_snapshots_and_clears_file_manager_row_areas() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "herdr-ui-fm-hit-geometry-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).expect("create temp root");
+        for index in 0..6 {
+            std::fs::write(root.join(format!("{index:02}.txt")), b"x")
+                .expect("write hit geometry fixture");
+        }
+
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.file_manager = Some(crate::fm::FmState::new(&root));
+        app.file_manager.as_mut().expect("open fm").cursor = 4;
+
+        compute_view(&mut app, Rect::new(0, 0, 100, 6));
+        assert_eq!(
+            app.view
+                .file_manager_row_areas
+                .iter()
+                .map(|row| row.entry_idx)
+                .collect::<Vec<_>>(),
+            vec![2, 3, 4]
+        );
+        assert!(app
+            .view
+            .file_manager_row_areas
+            .iter()
+            .all(|row| row.rect.width > 0 && row.rect.height == 1));
+
+        app.file_manager = None;
+        compute_view(&mut app, Rect::new(0, 0, 100, 6));
+        assert!(app.view.file_manager_row_areas.is_empty());
+
+        std::fs::remove_dir_all(root).expect("remove temp root");
+    }
+
     // A2 integration: when the file manager is open, the base layer renders the
     // directory list in the center (CenterContent) instead of the terminal panes.
     #[test]
