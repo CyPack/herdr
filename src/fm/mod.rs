@@ -621,6 +621,145 @@ mod tests {
         assert_eq!(st.selected().map(|e| e.name.as_str()), Some("d"));
     }
 
+    // TP-N4.1-SELECTION-STATE: cursor focus remains independent from the
+    // explicit path-identity set that will later authorize bulk operations.
+    #[test]
+    fn multi_selection_starts_empty_and_cursor_moves_independently() {
+        let td = TempDir::new("multi-selection-cursor-independent");
+        td.file("00.txt");
+        td.file("01.txt");
+        let mut state = FmState::new(&td.root);
+
+        assert!(state.multi_selection_paths().is_empty());
+        assert!(state.multi_selection_anchor().is_none());
+
+        state.move_down();
+
+        assert_eq!(state.cursor, 1);
+        assert!(state.multi_selection_paths().is_empty());
+        assert!(state.multi_selection_anchor().is_none());
+    }
+
+    // TP-N4.1-SELECTION-STATE: an unmodified selection replaces any previous
+    // set with exactly the live target and establishes a deterministic anchor.
+    #[test]
+    fn plain_selection_replaces_paths_and_establishes_anchor() {
+        let td = TempDir::new("multi-selection-plain");
+        td.file("00.txt");
+        td.file("01.txt");
+        td.file("02.txt");
+        let mut state = FmState::new(&td.root);
+        let first = td.root.join("00.txt");
+        let last = td.root.join("02.txt");
+
+        assert!(state.replace_selection(0));
+        assert!(state.toggle_selection(1));
+        assert!(state.replace_selection(2));
+
+        assert_eq!(state.cursor, 2);
+        assert_eq!(
+            state.multi_selection_paths().iter().collect::<Vec<_>>(),
+            vec![&last]
+        );
+        assert_eq!(state.multi_selection_anchor(), Some(last.as_path()));
+        assert!(!state.multi_selection_paths().contains(&first));
+    }
+
+    // TP-N4.1-SELECTION-STATE: Ctrl-style toggle is path-deduplicated, removes
+    // an already selected path, and leaves the last live target as the anchor.
+    #[test]
+    fn toggle_selection_deduplicates_removes_and_updates_anchor() {
+        let td = TempDir::new("multi-selection-toggle");
+        td.file("00.txt");
+        td.file("01.txt");
+        let mut state = FmState::new(&td.root);
+        let first = td.root.join("00.txt");
+        let second = td.root.join("01.txt");
+
+        assert!(state.toggle_selection(0));
+        assert!(state.toggle_selection(1));
+        assert_eq!(state.multi_selection_paths().len(), 2);
+
+        assert!(state.toggle_selection(0));
+
+        assert_eq!(state.cursor, 0);
+        assert_eq!(
+            state.multi_selection_paths().iter().collect::<Vec<_>>(),
+            vec![&second]
+        );
+        assert_eq!(state.multi_selection_anchor(), Some(first.as_path()));
+    }
+
+    // TP-N4.1-SELECTION-STATE: Shift-style range is inclusive and derives its
+    // order from the current visible list, not from stale stored row indices.
+    #[test]
+    fn range_selection_is_inclusive_and_direction_independent() {
+        let td = TempDir::new("multi-selection-range");
+        for index in 0..5 {
+            td.file(&format!("{index:02}.txt"));
+        }
+        let mut state = FmState::new(&td.root);
+        let expected = ["01.txt", "02.txt", "03.txt"]
+            .into_iter()
+            .map(|name| td.root.join(name))
+            .collect::<std::collections::BTreeSet<_>>();
+        let backward_anchor = td.root.join("03.txt");
+        let forward_anchor = td.root.join("01.txt");
+
+        assert!(state.replace_selection(3));
+        assert!(state.extend_selection(1));
+        assert_eq!(state.multi_selection_paths(), &expected);
+        assert_eq!(
+            state.multi_selection_anchor(),
+            Some(backward_anchor.as_path())
+        );
+
+        assert!(state.replace_selection(1));
+        assert!(state.extend_selection(3));
+        assert_eq!(state.multi_selection_paths(), &expected);
+        assert_eq!(
+            state.multi_selection_anchor(),
+            Some(forward_anchor.as_path())
+        );
+    }
+
+    // TP-N4.1-SELECTION-STATE: missing anchors fall back to the live target,
+    // stale targets are rejected without mutation, and duplicate visible path
+    // identities cannot inflate the selection set or panic range selection.
+    #[test]
+    fn range_selection_fails_closed_for_missing_stale_and_duplicate_identity() {
+        let td = TempDir::new("multi-selection-adversarial");
+        td.file("00.txt");
+        td.file("01.txt");
+        td.file("02.txt");
+        let mut state = FmState::new(&td.root);
+        let first = td.root.join("00.txt");
+        let second = td.root.join("01.txt");
+
+        assert!(state.replace_selection(2));
+        state.entries.remove(2);
+        state.entries.insert(1, state.entries[1].clone());
+
+        assert!(state.extend_selection(0));
+        assert_eq!(
+            state.multi_selection_paths().iter().collect::<Vec<_>>(),
+            vec![&first]
+        );
+        assert_eq!(state.multi_selection_anchor(), Some(first.as_path()));
+
+        let before_paths = state.multi_selection_paths().clone();
+        let before_anchor = state.multi_selection_anchor().map(Path::to_path_buf);
+        assert!(!state.extend_selection(usize::MAX));
+        assert_eq!(state.multi_selection_paths(), &before_paths);
+        assert_eq!(state.multi_selection_anchor(), before_anchor.as_deref());
+
+        assert!(state.replace_selection(0));
+        assert!(state.extend_selection(2));
+        assert_eq!(state.multi_selection_paths().len(), 2);
+        assert!(state.multi_selection_paths().contains(&first));
+        assert!(state.multi_selection_paths().contains(&second));
+    }
+
     // T-A1.3b: the cursor is always clamped into range (empty, end, shrink).
     #[test]
     fn cursor_stays_in_range() {
