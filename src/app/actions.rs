@@ -14,7 +14,7 @@ use crate::workspace::WorkspaceGitStatus;
 use unicode_width::UnicodeWidthChar;
 
 use super::state::{
-    text_matches_query, AgentNotificationDelivery, AppState, Mode, NavigatorRow,
+    text_matches_query, AgentNotificationDelivery, AppState, ContextMenuKind, Mode, NavigatorRow,
     NavigatorStateFilter, NavigatorTarget, PaneFocusTarget, PendingAgentNotification, ToastKind,
     ToastNotification, ToastTarget, ViewLayout,
 };
@@ -361,6 +361,17 @@ impl AppState {
     /// Close the native file manager, returning the center to the terminal panes.
     pub(crate) fn close_file_manager(&mut self) {
         self.file_manager = None;
+        if matches!(
+            self.context_menu.as_ref().map(|menu| &menu.kind),
+            Some(ContextMenuKind::File { .. })
+        ) {
+            self.context_menu = None;
+            self.mode = if self.active.is_some() {
+                Mode::Terminal
+            } else {
+                Mode::Navigate
+            };
+        }
     }
 
     /// Toggle the native file manager open/closed.

@@ -6,7 +6,8 @@ use ratatui::layout::Rect;
 use crate::{
     app::{
         state::{
-            AppState, ContextMenuKind, ContextMenuState, MenuListState, Mode, NavigatorStateFilter,
+            AppState, ContextMenuKind, ContextMenuState, FileManagerContextActionIntent,
+            FileManagerContextMenuModel, MenuListState, Mode, NavigatorStateFilter,
         },
         App,
     },
@@ -654,6 +655,36 @@ pub(super) fn confirm_close_cancel(state: &mut AppState) {
     state.mode = Mode::Navigate;
 }
 
+fn validated_file_context_action(
+    state: &AppState,
+    snapshot: &FileManagerContextMenuModel,
+    idx: usize,
+) -> Option<FileManagerContextActionIntent> {
+    let snapshot_item = snapshot.items.get(idx)?;
+    if !snapshot_item.enabled {
+        return None;
+    }
+    let file_manager = state.file_manager.as_ref()?;
+    let action_bar = crate::ui::compute_file_manager_action_bar_model(
+        file_manager,
+        &state.file_manager_clipboard,
+        state.file_manager_operation_in_flight,
+    );
+    let current = FileManagerContextMenuModel::from_action_bar(&action_bar)?;
+    let current_item = current.items.get(idx)?;
+    if current.paths != snapshot.paths
+        || current.target_kind != snapshot.target_kind
+        || current_item.action != snapshot_item.action
+        || !current_item.enabled
+    {
+        return None;
+    }
+    Some(FileManagerContextActionIntent {
+        action: snapshot_item.action,
+        paths: snapshot.paths.clone(),
+    })
+}
+
 #[cfg(test)]
 pub(crate) fn handle_confirm_close_key(state: &mut AppState, key: KeyEvent) {
     match modal_action_from_key(&key, CONFIRM_CLOSE_ACTIONS) {
@@ -671,7 +702,15 @@ pub(super) fn apply_context_menu_action(
     idx: usize,
 ) {
     let item = menu.items().get(idx).copied();
+    let file_intent = match &menu.kind {
+        ContextMenuKind::File { model } => validated_file_context_action(state, model, idx),
+        _ => None,
+    };
     match (menu.kind, item) {
+        (ContextMenuKind::File { .. }, _) => {
+            state.request_file_manager_context_action = file_intent;
+            leave_modal(state);
+        }
         // Worktree rows must match BEFORE the agent catch-all below, which
         // would otherwise persist "New worktree" as the default chat agent.
         (ContextMenuKind::ProjectNewChat { proj_idx, .. }, Some("New worktree")) => {
@@ -913,9 +952,20 @@ pub(crate) fn handle_context_menu_key(
             }
         }
         KeyCode::Enter => {
-            if let Some(menu) = state.context_menu.take() {
-                let idx = menu.list.highlighted;
-                apply_context_menu_action(state, terminal_runtimes, menu, idx);
+            let idx = state
+                .context_menu
+                .as_ref()
+                .map(|menu| menu.list.highlighted);
+            let enabled_idx = idx.filter(|idx| {
+                state
+                    .context_menu
+                    .as_ref()
+                    .is_some_and(|menu| menu.item_enabled(*idx))
+            });
+            if let Some(idx) = enabled_idx {
+                if let Some(menu) = state.context_menu.take() {
+                    apply_context_menu_action(state, terminal_runtimes, menu, idx);
+                }
             }
         }
         _ => {}
@@ -1099,9 +1149,21 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                if let Some(menu) = self.state.context_menu.take() {
-                    let idx = menu.list.highlighted;
-                    self.apply_context_menu_action_via_api(menu, idx);
+                let idx = self
+                    .state
+                    .context_menu
+                    .as_ref()
+                    .map(|menu| menu.list.highlighted);
+                let enabled_idx = idx.filter(|idx| {
+                    self.state
+                        .context_menu
+                        .as_ref()
+                        .is_some_and(|menu| menu.item_enabled(*idx))
+                });
+                if let Some(idx) = enabled_idx {
+                    if let Some(menu) = self.state.context_menu.take() {
+                        self.apply_context_menu_action_via_api(menu, idx);
+                    }
                 }
             }
             _ => {}
@@ -1110,7 +1172,17 @@ impl App {
 
     pub(crate) fn apply_context_menu_action_via_api(&mut self, menu: ContextMenuState, idx: usize) {
         let item = menu.items().get(idx).copied();
+        let file_intent = match &menu.kind {
+            ContextMenuKind::File { model } => {
+                validated_file_context_action(&self.state, model, idx)
+            }
+            _ => None,
+        };
         match (menu.kind, item) {
+            (ContextMenuKind::File { .. }, _) => {
+                self.state.request_file_manager_context_action = file_intent;
+                leave_modal(&mut self.state);
+            }
             // Worktree rows must match BEFORE the agent catch-all below, which
             // would otherwise persist "New worktree" as the default chat agent.
             (ContextMenuKind::ProjectNewChat { proj_idx, .. }, Some("New worktree")) => {

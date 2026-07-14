@@ -807,6 +807,14 @@ pub struct FileManagerContextMenuModel {
     pub items: [FileManagerContextMenuItem; 6],
 }
 
+/// Client-local file action intent emitted by C3 after current-state
+/// revalidation. C4/C5 own all eventual filesystem and agent side effects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileManagerContextActionIntent {
+    pub action: FileManagerContextMenuAction,
+    pub paths: Vec<PathBuf>,
+}
+
 impl FileManagerContextMenuModel {
     /// Derive file-menu presentation authority only from the already-prepared
     /// N4.2 action-bar snapshot. This performs no cursor or filesystem reads.
@@ -1669,6 +1677,15 @@ impl ContextMenuState {
             ],
         }
     }
+
+    pub fn item_enabled(&self, idx: usize) -> bool {
+        match &self.kind {
+            ContextMenuKind::File { model } => {
+                model.items.get(idx).is_some_and(|item| item.enabled)
+            }
+            _ => idx < self.items().len(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1780,6 +1797,9 @@ pub struct AppState {
     /// Client-local operation lifecycle authority. C4 will replace this
     /// minimal gate with bounded operation state; render/input only consume it.
     pub file_manager_operation_in_flight: bool,
+    /// Exact, revalidated client-local intent from the native-FM context menu.
+    /// C3 only emits this tag; C4/C5 will consume it to perform real work.
+    pub request_file_manager_context_action: Option<FileManagerContextActionIntent>,
     pub should_quit: bool,
     /// In monolithic --no-session mode, detach exits the app because there is no server to detach from.
     pub detach_exits: bool,
@@ -2229,6 +2249,7 @@ impl AppState {
             file_manager: None,
             file_manager_clipboard: Vec::new(),
             file_manager_operation_in_flight: false,
+            request_file_manager_context_action: None,
             should_quit: false,
             detach_exits: false,
             detach_requested: false,

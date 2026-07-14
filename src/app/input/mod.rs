@@ -79,6 +79,13 @@ impl App {
             return;
         }
 
+        // An open context menu owns keyboard focus even when its native-FM
+        // surface remains visible underneath it.
+        if self.state.mode == Mode::ContextMenu {
+            self.handle_context_menu_key_via_api(key_event);
+            return;
+        }
+
         // When the native file manager is open it captures all keyboard input,
         // ahead of the mode dispatch, so keys drive its navigation instead of
         // reaching the terminal underneath.

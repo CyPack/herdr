@@ -106,6 +106,9 @@ impl App {
             self.last_file_manager_click = None;
             return FileManagerMouseDispatch::NotHandled;
         }
+        if self.state.mode == Mode::ContextMenu {
+            return FileManagerMouseDispatch::NotHandled;
+        }
 
         let center = self.state.view.terminal_area;
         let in_center = rect_contains(center, mouse.column, mouse.row);
@@ -1291,8 +1294,8 @@ mod tests {
     }
 
     // TP-C2.2-NON-TARGETS: the name rectangle preserves selection, while
-    // gaps, hidden actions, non-left presses, modifiers, and stale closed-FM
-    // geometry cannot invent a row action.
+    // gaps, hidden actions, middle presses, modifiers, and stale closed-FM
+    // geometry cannot invent a row action. Right press is owned by C3.2.
     #[test]
     fn row_action_dispatch_preserves_names_and_fails_closed_for_non_targets() {
         let td = TempDir::new("row-action-non-targets");
@@ -1305,7 +1308,6 @@ mod tests {
         assert_eq!(app.state.file_manager.as_ref().expect("open FM").cursor, 1);
 
         for event in [
-            mouse(MouseEventKind::Down(MouseButton::Right), 43, 3),
             mouse(MouseEventKind::Down(MouseButton::Middle), 43, 3),
             mouse_with_modifiers(
                 MouseEventKind::Down(MouseButton::Left),

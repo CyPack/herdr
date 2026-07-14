@@ -409,6 +409,13 @@ impl AppState {
 
                 if self.mode == Mode::ContextMenu {
                     let item_idx = self.context_menu_item_at(mouse.column, mouse.row);
+                    if item_idx.is_some_and(|idx| {
+                        self.context_menu
+                            .as_ref()
+                            .is_some_and(|menu| !menu.item_enabled(idx))
+                    }) {
+                        return None;
+                    }
                     if let Some(menu) = self.context_menu.take() {
                         if let Some(idx) = item_idx {
                             return Some(MouseAction::ContextMenu { menu, idx });
