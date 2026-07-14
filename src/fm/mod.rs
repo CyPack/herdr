@@ -10,8 +10,10 @@
 //!
 //! Design docs: `.local/prd/native-fm/` (A1-fs-reader.md, 00-MODULE-TREE.md).
 
-#[cfg(test)]
-mod image_preview;
+// B2.1 lands the bounded decoder before B2.3 wires it into the asynchronous
+// preview lifecycle. Remove this allowance with that integration.
+#[allow(dead_code)]
+pub(crate) mod image_preview;
 mod natsort;
 mod text_preview;
 pub(crate) mod watcher;

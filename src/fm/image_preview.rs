@@ -1,3 +1,415 @@
+use image::imageops::FilterType;
+use image::metadata::Orientation;
+use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits};
+use std::fmt;
+use std::fs::{self, File};
+use std::io::{Cursor, Read};
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::path::Path;
+
+const DEFAULT_MAX_ENCODED_BYTES: usize = 64 * 1024 * 1024;
+const DEFAULT_MAX_DIMENSION: u32 = 32_768;
+const DEFAULT_MAX_PIXELS: u64 = 64 * 1024 * 1024;
+const DEFAULT_MAX_DECODED_BYTES: u64 = 256 * 1024 * 1024;
+const DEFAULT_MAX_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ImagePreviewTarget {
+    pub(crate) width_px: u32,
+    pub(crate) height_px: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ImagePreviewLimits {
+    pub(crate) max_encoded_bytes: usize,
+    pub(crate) max_width: u32,
+    pub(crate) max_height: u32,
+    pub(crate) max_pixels: u64,
+    pub(crate) max_decoded_bytes: u64,
+    pub(crate) max_output_bytes: u64,
+}
+
+impl Default for ImagePreviewLimits {
+    fn default() -> Self {
+        Self {
+            max_encoded_bytes: DEFAULT_MAX_ENCODED_BYTES,
+            max_width: DEFAULT_MAX_DIMENSION,
+            max_height: DEFAULT_MAX_DIMENSION,
+            max_pixels: DEFAULT_MAX_PIXELS,
+            max_decoded_bytes: DEFAULT_MAX_DECODED_BYTES,
+            max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PreparedImagePreview {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) rgba: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ImagePreviewError {
+    Io(std::io::ErrorKind),
+    NotRegularFile,
+    EmptyTarget,
+    EncodedTooLarge {
+        actual: u64,
+        limit: u64,
+    },
+    UnsupportedFormat,
+    DecodeFailed,
+    DecoderPanicked,
+    DimensionsTooLarge {
+        width: u32,
+        height: u32,
+        max_width: u32,
+        max_height: u32,
+    },
+    PixelCountTooLarge {
+        actual: u64,
+        limit: u64,
+    },
+    DecodedBytesTooLarge {
+        actual: u64,
+        limit: u64,
+    },
+    OutputTooLarge {
+        actual: u64,
+        limit: u64,
+    },
+    ArithmeticOverflow,
+}
+
+impl fmt::Display for ImagePreviewError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(kind) => write!(formatter, "image preview I/O failed: {kind:?}"),
+            Self::NotRegularFile => {
+                formatter.write_str("image preview source is not a regular file")
+            }
+            Self::EmptyTarget => formatter.write_str("image preview target is empty"),
+            Self::EncodedTooLarge { actual, limit } => {
+                write!(
+                    formatter,
+                    "encoded image is too large ({actual} > {limit} bytes)"
+                )
+            }
+            Self::UnsupportedFormat => formatter.write_str("image format is not supported"),
+            Self::DecodeFailed => formatter.write_str("image decoding failed"),
+            Self::DecoderPanicked => formatter.write_str("image decoder panicked"),
+            Self::DimensionsTooLarge {
+                width,
+                height,
+                max_width,
+                max_height,
+            } => write!(
+                formatter,
+                "image dimensions are too large ({width}x{height} > {max_width}x{max_height})"
+            ),
+            Self::PixelCountTooLarge { actual, limit } => {
+                write!(
+                    formatter,
+                    "image pixel count is too large ({actual} > {limit})"
+                )
+            }
+            Self::DecodedBytesTooLarge { actual, limit } => {
+                write!(
+                    formatter,
+                    "decoded image is too large ({actual} > {limit} bytes)"
+                )
+            }
+            Self::OutputTooLarge { actual, limit } => {
+                write!(
+                    formatter,
+                    "image preview output is too large ({actual} > {limit} bytes)"
+                )
+            }
+            Self::ArithmeticOverflow => {
+                formatter.write_str("image preview size arithmetic overflowed")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ImagePreviewError {}
+
+pub(crate) fn read_image_preview(
+    path: &Path,
+    target: ImagePreviewTarget,
+    limits: ImagePreviewLimits,
+) -> Result<PreparedImagePreview, ImagePreviewError> {
+    if target.width_px == 0 || target.height_px == 0 {
+        return Err(ImagePreviewError::EmptyTarget);
+    }
+
+    let metadata = fs::metadata(path).map_err(|error| ImagePreviewError::Io(error.kind()))?;
+    if !metadata.is_file() {
+        return Err(ImagePreviewError::NotRegularFile);
+    }
+
+    let encoded_limit = usize_to_u64(limits.max_encoded_bytes)?;
+    if metadata.len() > encoded_limit {
+        return Err(ImagePreviewError::EncodedTooLarge {
+            actual: metadata.len(),
+            limit: encoded_limit,
+        });
+    }
+
+    let file = File::open(path).map_err(|error| ImagePreviewError::Io(error.kind()))?;
+    let mut limited = file.take(encoded_limit);
+    let initial_capacity = limits.max_encoded_bytes.min(64 * 1024);
+    let mut encoded = Vec::with_capacity(initial_capacity);
+    limited
+        .read_to_end(&mut encoded)
+        .map_err(|error| ImagePreviewError::Io(error.kind()))?;
+
+    let mut sentinel = [0_u8; 1];
+    let extra = limited
+        .get_mut()
+        .read(&mut sentinel)
+        .map_err(|error| ImagePreviewError::Io(error.kind()))?;
+    if extra != 0 {
+        return Err(ImagePreviewError::EncodedTooLarge {
+            actual: encoded_limit
+                .checked_add(1)
+                .ok_or(ImagePreviewError::ArithmeticOverflow)?,
+            limit: encoded_limit,
+        });
+    }
+
+    prepare_image_preview_bytes(&encoded, target, limits)
+}
+
+pub(crate) fn prepare_image_preview_bytes(
+    encoded: &[u8],
+    target: ImagePreviewTarget,
+    limits: ImagePreviewLimits,
+) -> Result<PreparedImagePreview, ImagePreviewError> {
+    if target.width_px == 0 || target.height_px == 0 {
+        return Err(ImagePreviewError::EmptyTarget);
+    }
+
+    let actual = usize_to_u64(encoded.len())?;
+    let encoded_limit = usize_to_u64(limits.max_encoded_bytes)?;
+    if actual > encoded_limit {
+        return Err(ImagePreviewError::EncodedTooLarge {
+            actual,
+            limit: encoded_limit,
+        });
+    }
+
+    decode_with_panic_boundary(|| decode_image(encoded, target, limits))
+}
+
+fn decode_image(
+    encoded: &[u8],
+    target: ImagePreviewTarget,
+    limits: ImagePreviewLimits,
+) -> Result<PreparedImagePreview, ImagePreviewError> {
+    let mut reader = ImageReader::new(Cursor::new(encoded))
+        .with_guessed_format()
+        .map_err(|error| ImagePreviewError::Io(error.kind()))?;
+    let format = reader
+        .format()
+        .ok_or(ImagePreviewError::UnsupportedFormat)?;
+    if !matches!(
+        format,
+        ImageFormat::Png | ImageFormat::Jpeg | ImageFormat::Gif | ImageFormat::WebP
+    ) {
+        return Err(ImagePreviewError::UnsupportedFormat);
+    }
+
+    let mut decoder_limits = Limits::no_limits();
+    decoder_limits.max_alloc = Some(limits.max_decoded_bytes);
+    reader.limits(decoder_limits);
+    let mut decoder = reader
+        .into_decoder()
+        .map_err(|_| ImagePreviewError::DecodeFailed)?;
+    let (width, height) = decoder.dimensions();
+    validate_source_dimensions(width, height, &limits)?;
+
+    let decoded_bytes = decoder.total_bytes();
+    if decoded_bytes > limits.max_decoded_bytes {
+        return Err(ImagePreviewError::DecodedBytesTooLarge {
+            actual: decoded_bytes,
+            limit: limits.max_decoded_bytes,
+        });
+    }
+
+    let mut enforced_limits = Limits::no_limits();
+    enforced_limits.max_image_width = Some(limits.max_width);
+    enforced_limits.max_image_height = Some(limits.max_height);
+    enforced_limits.max_alloc = Some(limits.max_decoded_bytes);
+    decoder
+        .set_limits(enforced_limits)
+        .map_err(|_| ImagePreviewError::DecodeFailed)?;
+
+    let orientation = decoder
+        .orientation()
+        .map_err(|_| ImagePreviewError::DecodeFailed)?;
+    let (resize_width, resize_height) = resize_dimensions(width, height, target, orientation)?;
+    let (output_width, output_height) = if orientation_swaps_axes(orientation) {
+        (resize_height, resize_width)
+    } else {
+        (resize_width, resize_height)
+    };
+    checked_rgba_bytes(output_width, output_height, limits.max_output_bytes)?;
+
+    let mut image =
+        DynamicImage::from_decoder(decoder).map_err(|_| ImagePreviewError::DecodeFailed)?;
+    if image.width() != resize_width || image.height() != resize_height {
+        image = image.resize_exact(resize_width, resize_height, FilterType::Triangle);
+    }
+    image.apply_orientation(orientation);
+
+    let rgba = image.into_rgba8();
+    let actual_width = rgba.width();
+    let actual_height = rgba.height();
+    let expected_len = checked_rgba_bytes(actual_width, actual_height, limits.max_output_bytes)?;
+    if usize_to_u64(rgba.as_raw().len())? != expected_len {
+        return Err(ImagePreviewError::DecodeFailed);
+    }
+
+    Ok(PreparedImagePreview {
+        width: actual_width,
+        height: actual_height,
+        rgba: rgba.into_raw(),
+    })
+}
+
+fn validate_source_dimensions(
+    width: u32,
+    height: u32,
+    limits: &ImagePreviewLimits,
+) -> Result<(), ImagePreviewError> {
+    if width == 0 || height == 0 {
+        return Err(ImagePreviewError::DecodeFailed);
+    }
+    if width > limits.max_width || height > limits.max_height {
+        return Err(ImagePreviewError::DimensionsTooLarge {
+            width,
+            height,
+            max_width: limits.max_width,
+            max_height: limits.max_height,
+        });
+    }
+
+    let pixels = u64::from(width)
+        .checked_mul(u64::from(height))
+        .ok_or(ImagePreviewError::ArithmeticOverflow)?;
+    if pixels > limits.max_pixels {
+        return Err(ImagePreviewError::PixelCountTooLarge {
+            actual: pixels,
+            limit: limits.max_pixels,
+        });
+    }
+    Ok(())
+}
+
+fn resize_dimensions(
+    width: u32,
+    height: u32,
+    target: ImagePreviewTarget,
+    orientation: Orientation,
+) -> Result<(u32, u32), ImagePreviewError> {
+    let (oriented_width, oriented_height) = if orientation_swaps_axes(orientation) {
+        (height, width)
+    } else {
+        (width, height)
+    };
+    let (output_width, output_height) = aspect_fit(
+        oriented_width,
+        oriented_height,
+        target.width_px,
+        target.height_px,
+    )?;
+    if orientation_swaps_axes(orientation) {
+        Ok((output_height, output_width))
+    } else {
+        Ok((output_width, output_height))
+    }
+}
+
+fn aspect_fit(
+    width: u32,
+    height: u32,
+    target_width: u32,
+    target_height: u32,
+) -> Result<(u32, u32), ImagePreviewError> {
+    if width == 0 || height == 0 || target_width == 0 || target_height == 0 {
+        return Err(ImagePreviewError::ArithmeticOverflow);
+    }
+    if width <= target_width && height <= target_height {
+        return Ok((width, height));
+    }
+
+    let width_limited = u64::from(target_width)
+        .checked_mul(u64::from(height))
+        .ok_or(ImagePreviewError::ArithmeticOverflow)?
+        <= u64::from(target_height)
+            .checked_mul(u64::from(width))
+            .ok_or(ImagePreviewError::ArithmeticOverflow)?;
+
+    if width_limited {
+        let scaled_height = u64::from(height)
+            .checked_mul(u64::from(target_width))
+            .ok_or(ImagePreviewError::ArithmeticOverflow)?
+            / u64::from(width);
+        Ok((target_width, u64_to_nonzero_u32(scaled_height)?))
+    } else {
+        let scaled_width = u64::from(width)
+            .checked_mul(u64::from(target_height))
+            .ok_or(ImagePreviewError::ArithmeticOverflow)?
+            / u64::from(height);
+        Ok((u64_to_nonzero_u32(scaled_width)?, target_height))
+    }
+}
+
+fn orientation_swaps_axes(orientation: Orientation) -> bool {
+    matches!(
+        orientation,
+        Orientation::Rotate90
+            | Orientation::Rotate270
+            | Orientation::Rotate90FlipH
+            | Orientation::Rotate270FlipH
+    )
+}
+
+fn u64_to_nonzero_u32(value: u64) -> Result<u32, ImagePreviewError> {
+    let value = value.max(1);
+    u32::try_from(value).map_err(|_| ImagePreviewError::ArithmeticOverflow)
+}
+
+fn usize_to_u64(value: usize) -> Result<u64, ImagePreviewError> {
+    u64::try_from(value).map_err(|_| ImagePreviewError::ArithmeticOverflow)
+}
+
+pub(crate) fn checked_rgba_bytes(
+    width: u32,
+    height: u32,
+    limit: u64,
+) -> Result<u64, ImagePreviewError> {
+    let actual = u64::from(width)
+        .checked_mul(u64::from(height))
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or(ImagePreviewError::ArithmeticOverflow)?;
+    if actual > limit {
+        return Err(ImagePreviewError::OutputTooLarge { actual, limit });
+    }
+    Ok(actual)
+}
+
+pub(crate) fn decode_with_panic_boundary<F>(
+    decode: F,
+) -> Result<PreparedImagePreview, ImagePreviewError>
+where
+    F: FnOnce() -> Result<PreparedImagePreview, ImagePreviewError>,
+{
+    catch_unwind(AssertUnwindSafe(decode)).map_err(|_| ImagePreviewError::DecoderPanicked)?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,6 +628,26 @@ mod tests {
             .expect("do not upscale small source");
         assert_eq!((original.width, original.height), (4, 2));
         assert_eq!(original.rgba, fixture(4, 2).into_raw());
+    }
+
+    #[test]
+    fn orientation_aware_fit_swaps_axes_before_downscaling() {
+        assert_eq!(
+            resize_dimensions(4, 2, target(1, 2), Orientation::Rotate90),
+            Ok((2, 1))
+        );
+        assert_eq!(
+            resize_dimensions(4, 2, target(1, 2), Orientation::Rotate270FlipH),
+            Ok((2, 1))
+        );
+        assert_eq!(
+            resize_dimensions(4, 2, target(1, 2), Orientation::FlipHorizontal),
+            Ok((1, 1))
+        );
+        assert_eq!(
+            resize_dimensions(100, 1, target(1, 1), Orientation::NoTransforms),
+            Ok((1, 1))
+        );
     }
 
     #[test]

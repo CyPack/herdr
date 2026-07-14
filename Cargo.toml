@@ -43,6 +43,7 @@ unicode-width = "0.2"
 schemars = { version = "1.2.1", features = ["derive"] }
 notify-debouncer-full = "0.7.0"
 syntect = { version = "5.3.0", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 
 [patch.crates-io]
 portable-pty = { path = "vendor/portable-pty" }
