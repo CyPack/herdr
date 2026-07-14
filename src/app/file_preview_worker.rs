@@ -343,6 +343,7 @@ mod tests {
 
     fn preview(content: &str) -> TextPreview {
         TextPreview {
+            source_path: PathBuf::from("sample.rs"),
             content: content.to_owned(),
             truncated: false,
             highlighted: None,

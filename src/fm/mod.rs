@@ -287,6 +287,10 @@ impl FmState {
     }
 
     fn refresh_preview(&mut self) {
+        let previous_text = match std::mem::replace(&mut self.preview, FmPreview::None) {
+            FmPreview::File(FmFilePreview::Text(preview)) => Some(preview),
+            _ => None,
+        };
         let selected = self
             .selected()
             .map(|entry| (entry.path.clone(), entry.is_dir));
@@ -294,7 +298,16 @@ impl FmState {
             None => FmPreview::None,
             Some((path, true)) => FmPreview::Directory(read_dir_entries(&path, self.show_hidden)),
             Some((path, false)) => match read_text_preview(&path, TextPreviewLimits::default()) {
-                Ok(preview) => FmPreview::File(FmFilePreview::Text(preview)),
+                Ok(mut preview) => {
+                    if let Some(previous) = previous_text.filter(|previous| {
+                        previous.source_path == preview.source_path
+                            && previous.content == preview.content
+                            && previous.truncated == preview.truncated
+                    }) {
+                        preview.highlighted = previous.highlighted;
+                    }
+                    FmPreview::File(FmFilePreview::Text(preview))
+                }
                 Err(error) => FmPreview::File(FmFilePreview::Unavailable(error)),
             },
         };
@@ -942,6 +955,7 @@ mod tests {
     fn text_highlight_selects_rust_and_preserves_content() {
         let source = "pub fn main() { println!(\"hi\"); }\n";
         let preview = TextPreview {
+            source_path: PathBuf::from("main.rs"),
             content: source.to_owned(),
             truncated: false,
             highlighted: None,
@@ -961,6 +975,7 @@ mod tests {
     #[test]
     fn text_highlight_uses_python_shebang() {
         let preview = TextPreview {
+            source_path: PathBuf::from("script"),
             content: "#!/usr/bin/env python3\nprint('hi')\n".to_owned(),
             truncated: false,
             highlighted: None,
@@ -977,6 +992,7 @@ mod tests {
     #[test]
     fn text_highlight_unknown_extension_falls_back_to_plain_text() {
         let preview = TextPreview {
+            source_path: PathBuf::from("sample.mystery"),
             content: "unknown but readable\n".to_owned(),
             truncated: false,
             highlighted: None,
@@ -1000,6 +1016,7 @@ mod tests {
     #[test]
     fn text_highlight_caps_prepared_line_count() {
         let preview = TextPreview {
+            source_path: PathBuf::from("many.rs"),
             content: "let value = 1;\n".repeat(130),
             truncated: false,
             highlighted: None,

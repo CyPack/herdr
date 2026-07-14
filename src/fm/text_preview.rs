@@ -1,6 +1,6 @@
 use std::fmt;
 use std::io::{self, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use syntect::easy::HighlightLines;
@@ -39,6 +39,7 @@ impl Default for TextPreviewLimits {
 /// Prepared UTF-8 file content consumed by later state/render stages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextPreview {
+    pub source_path: PathBuf,
     pub content: String,
     pub truncated: bool,
     pub highlighted: Option<HighlightedTextPreview>,
@@ -153,6 +154,7 @@ pub(super) fn read_text_preview(
     };
 
     Ok(TextPreview {
+        source_path: path.to_path_buf(),
         content,
         truncated,
         highlighted: None,
