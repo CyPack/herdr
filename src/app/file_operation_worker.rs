@@ -1053,7 +1053,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::Arc;
+    use std::sync::{mpsc, Arc};
     use std::time::{Duration, Instant};
     use tokio::sync::Notify;
 
@@ -1168,6 +1168,67 @@ mod tests {
             expect_transfer_result(second.result.expect("second execution")).status(),
             FileOperationExecutionStatus::Completed
         );
+    }
+
+    // TP-C4.4-PROGRESS: rapid worker updates occupy one latest-value slot.
+    // The UI sees the newest same-generation item without an unbounded queue,
+    // and terminal completion cannot leave stale progress behind.
+    #[test]
+    fn file_operation_worker_progress_is_bounded_coalesced_and_generation_safe() {
+        let td = TempDir::new("coalesced-progress");
+        let first = td.root.join("first.txt");
+        let second = td.root.join("second.txt");
+        fs::write(&first, b"first").expect("write first progress source");
+        fs::write(&second, b"second").expect("write second progress source");
+        let destination = td.root.join("destination-progress");
+        fs::create_dir(&destination).expect("create progress destination");
+        let plan = FileOperationPlan::preflight(FileOperationRequest {
+            kind: FileOperationKind::Copy,
+            sources: vec![first, second],
+            destination_directory: destination,
+            operation_in_flight: false,
+        })
+        .expect("progress plan");
+        let (reported_tx, reported_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
+        let mut worker = FileOperationWorker::with_progress_task_executor(
+            Arc::new(Notify::new()),
+            move |task, cancellation, report_progress| {
+                report_progress(0);
+                report_progress(1);
+                reported_tx.send(()).expect("signal progress reported");
+                release_rx.recv().expect("release progress executor");
+                match task {
+                    FileOperationWorkerTask::Transfer(plan) => {
+                        FileOperationWorkerResult::Transfer(execute_file_operation(
+                            plan,
+                            cancellation,
+                        ))
+                    }
+                    _ => panic!("expected transfer progress task"),
+                }
+            },
+        );
+        let generation = worker.start(plan).expect("start progress operation");
+        reported_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("worker reported progress");
+
+        let drained = worker.drain();
+        assert_eq!(
+            drained.progress,
+            Some(super::FileOperationWorkerProgress {
+                generation,
+                active_item_index: 1,
+                started_items: 2,
+            })
+        );
+        assert!(drained.completion.is_none());
+
+        release_tx.send(()).expect("release progress operation");
+        let completion = wait_for_completion(&mut worker);
+        assert_eq!(completion.generation, generation);
+        assert!(worker.drain().progress.is_none());
     }
 
     // TP-C4.1-LIFECYCLE: cancellation is idempotent, wakes the worker, and
