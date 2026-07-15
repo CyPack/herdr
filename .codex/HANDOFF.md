@@ -2,14 +2,17 @@
 
 ## 1. SONRAKI ADIM
 
-The completion audit proves A1–C6, N1/N3/N4, N2.1, M1, and M2 are complete;
-M3 is closed implementation NO-GO. The stale ignored local PRD root, module
-checklists, and next-session prompt were synchronized so no future agent treats
-B0, A3 remainder, or B1–C6 as unfinished. Evidence is
-`.codex/evidence/native-fm-completion-audit.md`. No speculative production lane
-is active. Inspect the four recorded triggers first: S5, S6, S7, and N2.2. If
-none is satisfied, do not manufacture implementation work. Never touch stable
-Herdr/socket/processes.
+The non-product change-pipeline lane has completed T0 and T1.1-T1.7. Its exact
+program, Ratatui v2.1, and change-pipeline v1 TDD plans are linked from
+`.codex/CHANGE-PIPELINE-TASKS.md`; T1.8 detailed-plan approval is the only
+active micro action. Do not start T2 or mutate Herdr product code before that
+approval. After approval, T2.1 preserves and freshly verifies the user-owned
+Ratatui skill baseline as an isolated commit concern.
+
+The product completion audit still proves A1–C6, N1/N3/N4, N2.1, M1, and M2
+complete; M3 is closed implementation NO-GO. No speculative production lane is
+active. Inspect S5, S6, S7, and N2.2 triggers before any independent product
+work. Never touch stable Herdr/socket/processes.
 
 ## 2. AKTİF PROJE
 

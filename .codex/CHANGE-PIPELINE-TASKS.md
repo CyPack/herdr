@@ -51,19 +51,26 @@ pipeline.
   `docs/superpowers/specs/2026-07-15-ratatui-reference-intelligence-v2-1-design.md`
 - Generalized analysis and delivery design:
   `docs/superpowers/specs/2026-07-15-herdr-integration-delivery-pipeline-design.md`
+- Shared program implementation plan:
+  `docs/superpowers/plans/2026-07-15-herdr-change-pipeline-program-plan.md`
+- Ratatui v2.1 TDD implementation plan:
+  `docs/superpowers/plans/2026-07-15-ratatui-design-intelligence-v2-1-implementation.md`
+- Change-pipeline v1 TDD implementation plan:
+  `docs/superpowers/plans/2026-07-15-herdr-change-pipeline-v1-implementation.md`
 - Product queue: `.codex/TASKS.md`
 - Current continuity: `.codex/CURRENT.md`
 
 ## Status and Active Pointer
 
 Legend: `[x]` complete with evidence; `[ ]` pending; `ACTIVE` is the next
-single permitted planning action.
+single permitted action.
 
-- Active macro: **T0 — Governance and adoption**.
-- Active micro: **T0.6 — written review and approval**.
-- Next after approval: **T1.1 — freeze the implementation file tree**.
+- Active macro: **T1 — code-level TDD implementation plan**.
+- Active micro: **T1.8 — detailed implementation-plan approval**.
+- Next after approval: **T2.1 — preserve and audit the Ratatui baseline**.
 - Product-code authorization: **false**.
-- Pipeline implementation, push, and reindex: **not yet performed**.
+- Pipeline implementation, push, and reindex: **not yet performed**; T2 remains
+  gated on T1.8 approval.
 
 ## T0 — Design, Governance, and Mid-Flight Adoption
 
@@ -78,9 +85,9 @@ single permitted planning action.
 - [x] **T0.5** Define the mid-flight adoption rule: preserve valid existing
   work, inventory current diffs/tests/commits, backfill A0-A7, classify the
   current delivery phase, and enforce all remaining gates.
-- [ ] **T0.6 — ACTIVE** Obtain written review/approval for both design specs and
-  this task registry.
-- [ ] **T0.7** Freeze scope, module identities, version identities, artifact
+- [x] **T0.6** Obtain written review/approval for both design specs and this
+  task registry (user-approved 2026-07-15).
+- [x] **T0.7** Freeze scope, module identities, version identities, artifact
   names, authorization defaults, and the non-product implementation boundary.
 
 ### Immediate Mid-Flight Adoption Contract
@@ -100,21 +107,21 @@ Until the canonical skills are implemented, another Herdr session must:
 
 ## T1 — Code-Level TDD Implementation Plan
 
-- [ ] **T1.1** Freeze the exact file tree for both modules, shared schemas,
+- [x] **T1.1** Freeze the exact file tree for both modules, shared schemas,
   validators, tests, evals, lessons, and cartography outputs.
-- [ ] **T1.2** Define exact module manifests, artifact interfaces, JSON Schema
+- [x] **T1.2** Define exact module manifests, artifact interfaces, JSON Schema
   `$id` values, enums, conditional requirements, and version fields.
-- [ ] **T1.3** Map every contract test to its test file, fixture, command,
+- [x] **T1.3** Map every contract test to its test file, fixture, command,
   expected RED reason, minimal GREEN change, and regression gate.
-- [ ] **T1.4** Define the validator CLI contracts, exit codes, diagnostics,
+- [x] **T1.4** Define the validator CLI contracts, exit codes, diagnostics,
   deterministic output, and MCP-unavailable blocked behavior.
-- [ ] **T1.5** Define the implementation slice graph, dependency order,
+- [x] **T1.5** Define the implementation slice graph, dependency order,
   rollback boundary, targeted staging set, and atomic commit sequence.
-- [ ] **T1.6** Add exact verification commands and expected results for focused,
+- [x] **T1.6** Add exact verification commands and expected results for focused,
   module-wide, repository-wide, compatibility, and publication gates.
-- [ ] **T1.7** Self-review the plan for placeholders, false parallelism,
+- [x] **T1.7** Self-review the plan for placeholders, false parallelism,
   unowned artifacts, missing negative paths, and accidental product authority.
-- [ ] **T1.8** Obtain written implementation-plan approval before T2.
+- [ ] **T1.8 — ACTIVE** Obtain written implementation-plan approval before T2.
 
 ## T2 — Ratatui Design Intelligence v2.1
 

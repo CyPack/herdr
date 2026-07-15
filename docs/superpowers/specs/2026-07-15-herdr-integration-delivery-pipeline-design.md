@@ -3,7 +3,8 @@
 ## Status
 
 - Design date: 2026-07-15
-- Status: draft for written-spec review
+- Status: approved for detailed implementation planning
+- Written-spec approval: user-approved on 2026-07-15
 - User decision: generalize the post-analysis module beyond reference-project
   integration to native features, pages, layouts, designs, components,
   architecture changes, and composite analysis
@@ -887,7 +888,8 @@ Agents running this pipeline must:
 ## Git and Publication Contract
 
 1. Commit this design specification as its own documentation concern.
-2. After written approval, create a detailed TDD implementation plan.
+2. Written approval was received on 2026-07-15; the detailed TDD
+   implementation plan is now the required execution contract.
 3. Preserve the current untracked module baseline as a separately reviewable
    concern; land Ratatui v2.1 and the new `herdr-change-pipeline` v1.0 as
    separate module/version concerns.

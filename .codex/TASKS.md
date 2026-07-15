@@ -25,8 +25,9 @@ is tracked below and does not activate those product items.
   (`0ea0f77`, `600c0d6`).
 - [x] Create the durable macro/micro task registry and mid-flight adoption
   contract.
-- [ ] Review and approve the written specs plus registry.
-- [ ] Produce the exact code-level TDD implementation plan.
+- [x] Review and approve the written specs plus registry.
+- [x] Produce and self-review the exact code-level TDD implementation plan.
+- [ ] Approve the detailed TDD implementation plan and open T2 execution.
 - [ ] Implement and verify the independently versioned skills, adapters,
   validators, evals, pilots, Git publication, and graph refresh.
 

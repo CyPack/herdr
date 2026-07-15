@@ -21,8 +21,11 @@
   intelligence v2.1 plus generalized A0-A7 change intelligence and I0-I14
   delivery governance.
 - Durable human/agent task state is in
-  `.codex/CHANGE-PIPELINE-TASKS.md`; current macro is T0 and the active micro
-  action is T0.6 written review/approval.
+  `.codex/CHANGE-PIPELINE-TASKS.md`; T0 is complete, T1.1-T1.7 are complete,
+  and the active micro action is T1.8 detailed implementation-plan approval.
+- The exact approved-for-review execution contracts are the shared program
+  plan plus the separate Ratatui v2.1 and change-pipeline v1 TDD plans under
+  `docs/superpowers/plans/2026-07-15-*.md`.
 - The registry includes a mid-flight adoption path for an existing file-manager
   feature/bugfix session: inspect and preserve current work, reconstruct A0-A7,
   classify the current I-phase, then enforce the remaining gates.
@@ -949,8 +952,9 @@
 
 ## Exact Next Action
 
-1. Review and approve `.codex/CHANGE-PIPELINE-TASKS.md` plus its two linked
-   design specs; after approval, T1 produces the exact code-level TDD plan.
+1. Review and approve the three linked detailed TDD plans recorded in
+   `.codex/CHANGE-PIPELINE-TASKS.md`. On approval, close T1.8 and begin T2.1 by
+   preserving and freshly verifying the user-owned Ratatui skill baseline.
 2. The tooling lane is not product authority. No product or architecture
    publication is pending after the M3.0 evidence checkpoint `e9f2fe0`.
 3. Do not start speculative production work. Activate only a
