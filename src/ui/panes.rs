@@ -1043,6 +1043,89 @@ mod tests {
         assert_eq!(compute_agent_attachment_action_area(&modal, &infos), None);
     }
 
+    // TP-M2.1-GEOMETRY: one eligible focused agent gets a complete worktree
+    // launcher beside, never overlapping, the existing attachment action.
+    #[test]
+    fn focused_agent_worktree_action_is_capability_gated_and_disjoint() {
+        let rect = Rect::new(4, 2, 20, 6);
+        let (mut app, infos) = agent_attachment_geometry_fixture(rect, Borders::ALL, true, true);
+        app.workspaces[0].cached_git_space = Some(crate::workspace::GitSpaceMetadata {
+            key: "repo".into(),
+            checkout_key: "/repo".into(),
+            label: "repo".into(),
+            repo_root: "/repo".into(),
+            is_linked_worktree: false,
+        });
+
+        let worktree = compute_agent_worktree_action_area(&app, &infos)
+            .expect("eligible focused agent worktree action");
+        let attachment = compute_agent_attachment_action_area(&app, &infos).unwrap();
+        assert_eq!(worktree.rect, Rect::new(17, 7, 3, 1));
+        assert!(worktree.rect.intersection(attachment.rect).is_empty());
+        assert!(worktree.rect.intersection(infos[0].inner_rect).is_empty());
+
+        app.workspaces[0].cached_git_space = None;
+        assert_eq!(compute_agent_worktree_action_area(&app, &infos), None);
+
+        app.workspaces[0].cached_git_space = Some(crate::workspace::GitSpaceMetadata {
+            key: "repo".into(),
+            checkout_key: "/repo/wt".into(),
+            label: "repo".into(),
+            repo_root: "/repo".into(),
+            is_linked_worktree: true,
+        });
+        assert_eq!(compute_agent_worktree_action_area(&app, &infos), None);
+
+        let (mut narrow, narrow_infos) =
+            agent_attachment_geometry_fixture(Rect::new(4, 2, 7, 6), Borders::ALL, true, true);
+        narrow.workspaces[0].cached_git_space = app.workspaces[0].cached_git_space.clone();
+        assert_eq!(
+            compute_agent_worktree_action_area(&narrow, &narrow_infos),
+            None
+        );
+    }
+
+    // TP-M2.1-RENDER: the worktree launcher is a bounded ASCII token that
+    // remains distinct from `[+]` and preserves pane corners in no-color mode.
+    #[test]
+    fn focused_agent_worktree_action_render_is_ascii_and_no_color_safe() {
+        let rect = Rect::new(4, 2, 20, 6);
+        let (mut app, infos) = agent_attachment_geometry_fixture(rect, Borders::ALL, true, true);
+        app.workspaces[0].cached_git_space = Some(crate::workspace::GitSpaceMetadata {
+            key: "repo".into(),
+            checkout_key: "/repo".into(),
+            label: "repo".into(),
+            repo_root: "/repo".into(),
+            is_linked_worktree: false,
+        });
+        let worktree = compute_agent_worktree_action_area(&app, &infos)
+            .expect("eligible focused agent worktree action");
+        let attachment = compute_agent_attachment_action_area(&app, &infos)
+            .expect("focused agent attachment action");
+        app.view.terminal_area = Rect::new(0, 0, 28, 10);
+        app.view.pane_infos = infos;
+        app.view.agent_worktree_action_area = Some(worktree);
+        app.view.agent_attachment_action_area = Some(attachment);
+        app.palette.accent = Color::Reset;
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(28, 10)).unwrap();
+        terminal
+            .draw(|frame| render_pane_borders(&app, &app.workspaces[0], frame))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(4, 7)].symbol(), "└");
+        assert_eq!(buffer[(17, 7)].symbol(), "[");
+        assert_eq!(buffer[(18, 7)].symbol(), "w");
+        assert_eq!(buffer[(19, 7)].symbol(), "]");
+        assert_eq!(buffer[(20, 7)].symbol(), "[");
+        assert_eq!(buffer[(21, 7)].symbol(), "+");
+        assert_eq!(buffer[(22, 7)].symbol(), "]");
+        assert_eq!(buffer[(23, 7)].symbol(), "┘");
+        assert_eq!(buffer[(17, 6)].symbol(), " ");
+    }
+
     // TP-M1.1-RENDER: render consumes computed geometry only; the ASCII action
     // must preserve corners and terminal inner cells even with no-color tokens.
     #[test]

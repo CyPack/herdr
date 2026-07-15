@@ -663,6 +663,75 @@ mod tests {
         );
     }
 
+    // TP-M2.1-INPUT: frame coordinates are presentation only; the exact
+    // workspace/pane/terminal and cached Git capability are revalidated.
+    #[test]
+    fn worktree_action_click_revalidates_exact_target_before_existing_intent() {
+        let mut app = super::super::app_for_mouse_test();
+        let mut workspace = crate::workspace::Workspace::test_new("worktree-action-click");
+        workspace.cached_git_space = Some(crate::workspace::GitSpaceMetadata {
+            key: "repo".into(),
+            checkout_key: "/repo".into(),
+            label: "repo".into(),
+            repo_root: "/repo".into(),
+            is_linked_worktree: false,
+        });
+        let pane_id = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        let terminal_id = workspace.tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.ensure_test_terminals();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_agent_name("codex".into());
+        compute_view(&mut app.state, Rect::new(0, 0, 100, 24));
+        let action = app
+            .state
+            .view
+            .agent_worktree_action_area
+            .clone()
+            .expect("worktree action");
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            action.rect.x + 1,
+            action.rect.y,
+        ));
+        assert_eq!(app.state.request_open_existing_worktree, Some(0));
+        assert!(app.state.request_new_linked_worktree.is_none());
+        assert!(app.state.request_remove_linked_worktree.is_none());
+
+        app.state.request_open_existing_worktree = None;
+        app.handle_mouse(mouse_with_modifiers(
+            MouseEventKind::Down(MouseButton::Left),
+            action.rect.x + 1,
+            action.rect.y,
+            KeyModifiers::CONTROL,
+        ));
+        assert!(app.state.request_open_existing_worktree.is_none());
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            action.rect.x.saturating_sub(1),
+            action.rect.y,
+        ));
+        assert!(app.state.request_open_existing_worktree.is_none());
+
+        app.state.workspaces[0].cached_git_space = None;
+        app.state.view.agent_worktree_action_area = Some(action);
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            action.rect.x + 1,
+            action.rect.y,
+        ));
+        assert!(app.state.request_open_existing_worktree.is_none());
+    }
+
     // TP-M1.2-MOUSE: the blocking picker owns exact current-row hit targets;
     // stale paths, modifiers, and coordinates outside those targets are inert.
     #[test]
