@@ -24,11 +24,29 @@ pub(super) enum FileManagerMouseDispatch {
     },
 }
 
-/// Handle one key while the file manager is open. `Esc`/`q` close it; the arrow
-/// keys and `hjkl` move the cursor or navigate directories; `.` toggles hidden
-/// files; Ctrl+A selects all; Ctrl+Shift+A clears the explicit selection. Any
-/// other key is a no-op (swallowed).
-pub(super) fn handle_file_manager_key(state: &mut AppState, key: KeyEvent) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FileManagerKeyDispatch {
+    Consumed,
+    CancelOperation,
+}
+
+/// Handle one key while the file manager is open. `Esc` requests cancellation
+/// for a running file operation and otherwise closes the file manager; `q`
+/// always closes it. The arrow keys and `hjkl` move the cursor or navigate
+/// directories; `.` toggles hidden files; Ctrl+A selects all; Ctrl+Shift+A
+/// clears the explicit selection. Any other key is a no-op (swallowed).
+pub(super) fn handle_file_manager_key(
+    state: &mut AppState,
+    key: KeyEvent,
+) -> FileManagerKeyDispatch {
+    if key.code == KeyCode::Esc
+        && state
+            .file_manager_operation
+            .as_ref()
+            .is_some_and(crate::app::state::FileManagerOperationState::is_running)
+    {
+        return FileManagerKeyDispatch::CancelOperation;
+    }
     match (key.code, key.modifiers) {
         (KeyCode::Esc | KeyCode::Char('q'), _) => {
             state.file_manager = None;
@@ -92,6 +110,7 @@ pub(super) fn handle_file_manager_key(state: &mut AppState, key: KeyEvent) {
         }
         _ => {}
     }
+    FileManagerKeyDispatch::Consumed
 }
 
 impl App {
