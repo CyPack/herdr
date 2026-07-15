@@ -313,7 +313,12 @@ impl FileOperationWorker {
         let cancellation = {
             let (state, _) = &*self.shared;
             let state = lock_state(state);
-            if state.active_generation != Some(generation) {
+            if state.active_generation != Some(generation)
+                || state
+                    .completion
+                    .as_ref()
+                    .is_some_and(|completion| completion.generation == generation)
+            {
                 return false;
             }
             state.active_cancellation.clone()
@@ -1641,7 +1646,7 @@ mod tests {
             expect_transfer_result(completion.result.expect("completion race result")).status(),
             FileOperationExecutionStatus::Completed
         );
-        assert!(destination.join("already-completed").exists());
+        assert!(destination.join("source-already-completed.txt").exists());
         assert!(!worker.is_busy());
     }
 
