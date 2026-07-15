@@ -1,0 +1,29 @@
+{
+  "artifact_type": "stack-adaptation-map",
+  "schema_version": 1,
+  "pipeline_id": "reference-project-intelligence-v2",
+  "pipeline_version": "2.1.0",
+  "status": "queued",
+  "source_revision": null,
+  "target_revision": null,
+  "record_contract": [
+    "mapping_id",
+    "source",
+    "source_data_flow",
+    "source_behavior_trigger",
+    "normalized_behavior",
+    "semantics",
+    "target",
+    "translation_mode",
+    "functional_match",
+    "architectural_fit",
+    "diffs",
+    "capability_fallbacks",
+    "license_reuse",
+    "acceptance_tests",
+    "cross_tests",
+    "confidence",
+    "verification_evidence"
+  ],
+  "records": []
+}

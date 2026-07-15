@@ -1,0 +1,379 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://herdr.dev/schemas/ratatui-design-intelligence/2.1.0/stack-adaptation-map.schema.json",
+  "title": "Ratatui Design Intelligence Stack Adaptation Map",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "pipeline_id",
+    "pipeline_version",
+    "status",
+    "source_revision",
+    "target_revision",
+    "record_contract",
+    "records"
+  ],
+  "properties": {
+    "artifact_type": {
+      "const": "stack-adaptation-map"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "pipeline_id": {
+      "const": "reference-project-intelligence-v2"
+    },
+    "pipeline_version": {
+      "const": "2.1.0"
+    },
+    "status": {
+      "enum": [
+        "queued",
+        "running",
+        "partial",
+        "blocked",
+        "passed",
+        "failed",
+        "rejected"
+      ]
+    },
+    "source_revision": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "target_revision": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "record_contract": {
+      "type": "array",
+      "minItems": 18,
+      "maxItems": 18,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "mapping_id",
+          "source",
+          "source_data_flow",
+          "source_behavior_trigger",
+          "normalized_behavior",
+          "semantics",
+          "target",
+          "translation_mode",
+          "functional_match",
+          "architectural_fit",
+          "diffs",
+          "capability_fallbacks",
+          "license_reuse",
+          "acceptance_tests",
+          "cross_tests",
+          "confidence",
+          "verification_evidence"
+        ]
+      }
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/record"
+      }
+    }
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "location",
+        "claim",
+        "confidence"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1
+        },
+        "claim": {
+          "type": "string",
+          "minLength": 1
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "revision",
+        "file",
+        "symbol",
+        "language",
+        "ui_stack"
+      ],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "symbol": {
+          "type": "string",
+          "minLength": 1
+        },
+        "language": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ui_stack": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project",
+        "revision",
+        "file",
+        "symbol",
+        "authority"
+      ],
+      "properties": {
+        "project": {
+          "const": "herdr"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "symbol": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authority": {
+          "enum": [
+            "server_runtime",
+            "tui_client",
+            "platform_adapter",
+            "external_plugin",
+            "absent"
+          ]
+        }
+      }
+    },
+    "diffs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "semantic",
+        "failure",
+        "performance",
+        "ownership"
+      ],
+      "properties": {
+        "semantic": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "failure": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "performance": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ownership": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "license_reuse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "classification",
+        "license",
+        "copy_source"
+      ],
+      "properties": {
+        "classification": {
+          "enum": [
+            "direct_reuse",
+            "structural_reference",
+            "behavior_only",
+            "reject"
+          ]
+        },
+        "license": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "copy_source": {
+          "type": "boolean"
+        }
+      }
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mapping_id",
+        "source",
+        "source_data_flow",
+        "source_behavior_trigger",
+        "normalized_behavior",
+        "semantics",
+        "target",
+        "translation_mode",
+        "functional_match",
+        "architectural_fit",
+        "diffs",
+        "capability_fallbacks",
+        "license_reuse",
+        "acceptance_tests",
+        "cross_tests",
+        "confidence",
+        "verification_evidence"
+      ],
+      "properties": {
+        "mapping_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "source_data_flow": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "source_behavior_trigger": {
+          "type": "string",
+          "minLength": 1
+        },
+        "normalized_behavior": {
+          "type": "string",
+          "minLength": 1
+        },
+        "semantics": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "translation_mode": {
+          "enum": [
+            "direct_api",
+            "structural_adapter",
+            "behavior_reimplementation",
+            "reject"
+          ]
+        },
+        "functional_match": {
+          "enum": [
+            "exact",
+            "partial",
+            "none"
+          ]
+        },
+        "architectural_fit": {
+          "enum": [
+            "direct",
+            "conditional",
+            "incompatible"
+          ]
+        },
+        "diffs": {
+          "$ref": "#/$defs/diffs"
+        },
+        "capability_fallbacks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "license_reuse": {
+          "$ref": "#/$defs/license_reuse"
+        },
+        "acceptance_tests": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "cross_tests": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "verification_evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        }
+      }
+    }
+  }
+}

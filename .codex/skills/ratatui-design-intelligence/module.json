@@ -13,6 +13,8 @@
     "SKILL.md",
     "assets/reference-project-pipeline-v2.json",
     "assets/reference-project-run-template.json",
+    "assets/schemas/stack-adaptation-map.schema.json",
+    "assets/templates/stack-adaptation-map-template.json",
     "scripts/validate_reference_pipeline.py",
     "scripts/validate_v21_module.py"
   ],
