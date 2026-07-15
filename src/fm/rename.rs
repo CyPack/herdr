@@ -413,6 +413,12 @@ where
     if fs::symlink_metadata(&plan.destination).is_ok() {
         return retained_result(RenameOperationError::DestinationCollision);
     }
+    if cancellation.is_cancelled() {
+        return RenameOperationExecutionResult {
+            status: RenameOperationExecutionStatus::Cancelled,
+            outcome: RenameOperationOutcome::NotStarted,
+        };
+    }
 
     match host.publish_no_replace(&plan.source, &plan.destination) {
         Ok(()) => RenameOperationExecutionResult {
