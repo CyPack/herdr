@@ -2,14 +2,15 @@
 
 - Updated: 2026-07-15
 - Branch: `feat/native-fm`
-- Current Git checkpoint: `aca2243`
-  (`docs: define shell foundation v0 architecture`).
+- Published SF0 planning artifact checkpoint: `32856f7`
+  (`docs: plan shell foundation and files workspace`).
+- Exact remote SHA equality was verified for CyPack `feat/native-fm` and fork
+  `master` at the artifact checkpoint.
 - Approved product program: SF0-SF6 followed by FM1-FM5; Apps/Desktop remains
   a later independent program.
-- Current phase: SF0 documentation/continuity publication closure. The next
-  executable phase is I6/SF1 characterization; no Shell Foundation Rust
-  product code exists yet.
-- Current graph: 19,534 nodes / 91,017 edges. Freshness is proved through the
+- Current phase: SF0 closed; I6/SF1 characterization is the next executable
+  phase. No Shell Foundation Rust product code exists yet.
+- Current graph: 19,808 nodes / 91,543 edges. Freshness is proved through the
   current `miller_layout` symbol rather than `ready` alone.
 - Published CyPack M3 evidence checkpoint: `e9f2fe0`.
 - Verified M2.1 chain: RED `dab1e20`; GREEN product head `0ae6175`.
@@ -89,9 +90,6 @@
 
 ## Active Next Increment
 
-- Finish SF0 by validating, targeted-staging, committing, and publishing only
-  the approved design, three execution plans, review evidence, and continuity
-  state to the CyPack fork with fast-forward ancestry and remote-SHA proof.
 - Enter I6/SF1 and add only the test-only characterization
   `files_curtain_currently_replaces_terminal_surface` after re-querying the
   frozen baseline symbols and running the existing characterization inventory.

@@ -4,6 +4,10 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
+- Published SF0 planning artifact checkpoint: `32856f7`
+  (`docs: plan shell foundation and files workspace`).
+- The artifact checkpoint was fast-forward published to both CyPack
+  `feat/native-fm` and fork `master`; exact remote SHA equality was verified.
 - Published CyPack M3 evidence checkpoint: `e9f2fe0`
   (`docs: close general UI interface evaluation`).
 - Verified M2.1 chain: RED `dab1e20`; GREEN `0ae6175`
@@ -28,14 +32,14 @@
   `docs/superpowers/plans/2026-07-15-herdr-file-manager-post-shell-implementation.md`.
 - Plan review evidence:
   `.codex/evidence/shell-foundation-plan-review.md`.
-- A0-A7 are complete. The approved plans manually evidence I0-I5. The current
-  delivery phase is I6: run and strengthen SF1 characterization before the
-  first new SF2 behavior RED. No Shell Foundation Rust product code has been
-  written yet.
-- Fresh planning graph evidence is 19,534 nodes / 91,017 edges. Freshness was
-  proved through the current `miller_layout` symbol and exact persistence,
-  render, queue, retained-PTY, input, shell, and Files lifecycle snippets;
-  `ready` alone was not accepted.
+- SF0 is closed. A0-A7 are complete and the approved plans manually evidence
+  I0-I5. The current delivery phase is I6: run and strengthen SF1
+  characterization before the first new SF2 behavior RED. No Shell Foundation
+  Rust product code has been written yet.
+- Post-publication graph evidence is 19,808 nodes / 91,543 edges. Freshness was
+  proved again through the current `miller_layout` symbol; the earlier planning
+  queries also covered persistence, render, queue, retained-PTY, input, shell,
+  and Files lifecycle seams. `ready` alone was not accepted.
 - The prior P4.0 S6 and dynamic-N2 NO-GO decisions were correct for the then-
   available evidence. The later explicit user demand now supplies the missing
   triggers: a real AppDock/WorkspaceStage/Files consumer, resizable/collapsible
@@ -998,22 +1002,18 @@
 
 ## Exact Next Action
 
-1. Close SF0 documentation: self-review the three plans against the approved
-   design, run Markdown/diff/path/placeholder/link checks, targeted-stage only
-   the design/plans/continuity files, commit, fast-forward publish only to the
-   CyPack fork, then verify remote SHA and refresh graph evidence as applicable.
-2. Enter I6/SF1. Re-query exact current symbols, run the frozen focused
+1. Enter I6/SF1. Re-query exact current symbols, run the frozen focused
    characterization inventory, and add only the missing
    `files_curtain_currently_replaces_terminal_surface` characterization. SF1 is
    test-only; product behavior must not change.
-3. Require the focused and full baseline green before SF2. Then add the single
+2. Require the focused and full baseline green before SF2. Then add the single
    compile-valid behavior RED
    `shell_layout_places_dock_sidebar_stage_without_overlap` and observe its
    intended assertion failure before production geometry code.
-4. Execute phases sequentially through the approved child plans. Do not mix
+3. Execute phases sequentially through the approved child plans. Do not mix
    tooling T3.1, Apps/Desktop, S5 registry, S7 popup stack, or unrelated
    refactors into a product commit.
-5. Preserve targeted staging, atomic RED/GREEN/refactor commits, direct full
+4. Preserve targeted staging, atomic RED/GREEN/refactor commits, direct full
    `just check` equivalent, isolated runtime safety, CyPack-only FF writes, and
    post-publication exact-symbol graph freshness at every phase.
 

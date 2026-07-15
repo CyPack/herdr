@@ -4,7 +4,7 @@ Date: 2026-07-15
 
 ## Decision
 
-Result: **PASS for implementation planning; current delivery phase I6/SF1**.
+Result: **PASS; SF0 closed and current delivery phase I6/SF1**.
 
 The user approved the bounded direction:
 
@@ -12,7 +12,9 @@ The user approved the bounded direction:
 2. FM1-FM5 horizontal/resize/mouse/path-stable/preview decision;
 3. Apps/Desktop deferred to a later independent program.
 
-No Rust product behavior was changed by this planning checkpoint.
+No Rust product behavior was changed by this planning checkpoint. The complete
+artifact was committed as `32856f7`, fast-forward published to both CyPack
+refs, and verified by exact remote SHA equality.
 
 ## Authoritative Inputs Reviewed
 
@@ -130,10 +132,15 @@ checkpoint; SF1 begins with a fresh focused and full characterization baseline.
 
 ## Current Gate and Next Action
 
+- SF0: closed at artifact `32856f7` with targeted documentation/continuity
+  staging, CyPack-only fast-forward publication, exact remote SHA equality,
+  and a zero-error single-worker graph refresh.
 - A0-A7: complete.
 - I0-I5: complete through explicit approval, fresh cartography, semantic diff,
   test architecture, and dependency-ordered slice plans.
 - I6/SF1: next.
+- Post-publication graph: 19,808 nodes / 91,543 edges with current
+  `miller_layout` exact-symbol proof beyond `ready`.
 - Product Rust changes: none.
 - Stable process/socket contact: none.
 - Next test-only action: run the frozen SF1 inventory, then add

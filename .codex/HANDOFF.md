@@ -7,10 +7,11 @@ then FM1-FM5; Apps/Desktop remains later. The approved design and three
 implementation plans are under `docs/superpowers/specs/` and
 `docs/superpowers/plans/`; review evidence is
 `.codex/evidence/shell-foundation-plan-review.md`. A0-A7 and manual I0-I5 are
-complete; no Foundation Rust product code exists yet. The immediate action is
-to self-review and
-atomically publish SF0 documentation/continuity, then enter I6/SF1: run the
-frozen characterization inventory and add only the test
+complete. SF0 artifact commit `32856f7` is published to both CyPack refs with
+exact remote-SHA equality; the post-publication graph is 19,808 nodes / 91,543
+edges and current `miller_layout` proves freshness beyond `ready`. No
+Foundation Rust product code exists yet. The immediate action is I6/SF1: run
+the frozen characterization inventory and add only the test
 `files_curtain_currently_replaces_terminal_surface` before any SF2 behavior
 RED.
 
@@ -742,7 +743,8 @@ upstream is never pushed.
 See `.codex/TASKS.md` first for the active SF0-SF6 plus FM1-FM5 task list and
 then the completed A3/B2/C1/N3/C2/N4 contracts and historical C3–C6, S5–S7,
 N2, and M1–M3 roadmap. SF0 documentation/continuity closure is current; SF1
-characterization is the next executable phase. A4, B0, B1, A3, B2, C1, N3,
+characterization is the next executable phase. SF0 artifact `32856f7` is
+published and graph-refreshed. A4, B0, B1, A3, B2, C1, N3,
 C2, N4, C3.1, C3.2, C3.3, C4.1, C4.2, C4.3, C4.4.1 PROGRESS, C4.4.2
 CANCEL, C4.4.3 RECONCILE, C4.4.4 RECOVERY, C4.4.5 GATES, C5.1–C5.5, and
 C6.1–C6.4 are closed. C5's atomic product chain ends at `f744e4d`: exact existing-agent send

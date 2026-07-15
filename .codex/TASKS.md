@@ -54,10 +54,11 @@ Authoritative plans:
   lifecycle/persistence/FM requirements, RED validity, placeholders, links,
   whitespace, and current graph-symbol assumptions; record evidence in
   `.codex/evidence/shell-foundation-plan-review.md`.
-- [ ] Self-review the complete plan set, update continuity, targeted-stage only
+- [x] Self-review the complete plan set, update continuity, targeted-stage only
   documentation/continuity, commit and CyPack-only FF publish, verify remote
-  SHA, and close SF0 evidence. The self-review portion is complete; Git and
-  publication closure remain.
+  SHA, and close SF0 evidence. Artifact commit `32856f7` is published to both
+  CyPack refs with exact SHA equality; post-publication graph freshness is
+  19,808 nodes / 91,543 edges with current `miller_layout` proof.
 
 ### SF1 — Characterization Tests (I6, next executable phase)
 
