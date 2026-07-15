@@ -521,6 +521,18 @@ mod tests {
             ),
             Err(DeleteOperationPreflightError::OperationInFlight)
         );
+
+        let filesystem_root = PathBuf::from(std::path::MAIN_SEPARATOR.to_string());
+        assert_eq!(
+            DeleteOperationPlan::preflight(request(
+                DeleteOperationKind::Permanent,
+                vec![filesystem_root.clone()],
+                false,
+            )),
+            Err(DeleteOperationPreflightError::SourceHasNoFileName {
+                path: filesystem_root,
+            })
+        );
     }
 
     // TP-C4.2-TRASH: backend failure is per-item evidence; later exact paths
