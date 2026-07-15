@@ -1901,6 +1901,43 @@ mod tests {
         assert_eq!(app.state.sidebar_tab, SidebarTab::Spaces);
     }
 
+    // TP-C6.1-NAV: the Files row hit area carries exact path identity. Mouse
+    // input prepares one request only; it performs no directory read itself.
+    #[test]
+    fn clicking_file_sidebar_item_prepares_exact_typed_navigation_request() {
+        use crate::app::state::{
+            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
+        };
+        let mut app = app_for_mouse_test();
+        app.state.sidebar_tab = SidebarTab::Files;
+        app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+            vec![FileManagerSidebarItem {
+                label: "Home".into(),
+                path: std::path::PathBuf::from("/home/a"),
+                icon: FileManagerSidebarIcon::Home,
+                accessible: true,
+                ejectable: false,
+            }],
+            Vec::new(),
+            Vec::new(),
+        );
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let row = app.state.view.file_manager_sidebar_row_areas[0].clone();
+        let before_file_manager = app.state.file_manager.is_some();
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            row.rect.x,
+            row.rect.y,
+        ));
+
+        assert_eq!(
+            app.state.request_file_manager_sidebar_navigation,
+            Some(std::path::PathBuf::from("/home/a"))
+        );
+        assert_eq!(app.state.file_manager.is_some(), before_file_manager);
+    }
+
     #[test]
     fn clicking_sidebar_tab_does_not_start_a_workspace_press() {
         use crate::app::state::SidebarTab;

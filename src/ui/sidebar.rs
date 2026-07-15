@@ -1994,28 +1994,213 @@ mod tests {
         );
     }
 
+    fn file_sidebar_item(
+        label: &str,
+        path: &str,
+        icon: crate::app::state::FileManagerSidebarIcon,
+        accessible: bool,
+        ejectable: bool,
+    ) -> crate::app::state::FileManagerSidebarItem {
+        crate::app::state::FileManagerSidebarItem {
+            label: label.to_string(),
+            path: std::path::PathBuf::from(path),
+            icon,
+            accessible,
+            ejectable,
+        }
+    }
+
+    // TP-C6.1-MODEL: source order is stable, optional PINNED disappears when
+    // empty, and a path repeated across sections grants only the first row.
     #[test]
-    fn render_workspace_list_shows_placeholder_for_files_tab() {
+    fn file_sidebar_model_orders_sections_and_deduplicates_path_authority() {
+        use crate::app::state::{
+            FileManagerSidebarIcon, FileManagerSidebarModel, FileManagerSidebarSectionKind,
+        };
+        let model = FileManagerSidebarModel::from_sources(
+            vec![
+                file_sidebar_item("Home", "/home/a", FileManagerSidebarIcon::Home, true, false),
+                file_sidebar_item(
+                    "Downloads",
+                    "/home/a/Downloads",
+                    FileManagerSidebarIcon::Downloads,
+                    true,
+                    false,
+                ),
+            ],
+            vec![
+                file_sidebar_item(
+                    "duplicate",
+                    "/home/a",
+                    FileManagerSidebarIcon::Pin,
+                    true,
+                    false,
+                ),
+                file_sidebar_item(
+                    "Missing",
+                    "/missing",
+                    FileManagerSidebarIcon::Pin,
+                    false,
+                    false,
+                ),
+            ],
+            vec![
+                file_sidebar_item("Root", "/", FileManagerSidebarIcon::Disk, true, false),
+                file_sidebar_item(
+                    "USB",
+                    "/media/usb",
+                    FileManagerSidebarIcon::Disk,
+                    true,
+                    true,
+                ),
+            ],
+        );
+
+        assert_eq!(
+            model
+                .sections
+                .iter()
+                .map(|section| section.kind)
+                .collect::<Vec<_>>(),
+            [
+                FileManagerSidebarSectionKind::Favorites,
+                FileManagerSidebarSectionKind::Pinned,
+                FileManagerSidebarSectionKind::Locations,
+            ]
+        );
+        assert_eq!(model.sections[0].items.len(), 2);
+        assert_eq!(
+            model.sections[1]
+                .items
+                .iter()
+                .map(|item| item.path.as_path())
+                .collect::<Vec<_>>(),
+            [std::path::Path::new("/missing")]
+        );
+        assert!(!model.sections[1].items[0].accessible);
+        assert!(model.sections[2].items[1].ejectable);
+
+        let without_pins = FileManagerSidebarModel::from_sources(
+            vec![file_sidebar_item(
+                "Home",
+                "/home/a",
+                FileManagerSidebarIcon::Home,
+                true,
+                false,
+            )],
+            Vec::new(),
+            vec![file_sidebar_item(
+                "Root",
+                "/",
+                FileManagerSidebarIcon::Disk,
+                true,
+                false,
+            )],
+        );
+        assert_eq!(without_pins.sections.len(), 2);
+        assert!(without_pins
+            .sections
+            .iter()
+            .all(|section| section.kind != FileManagerSidebarSectionKind::Pinned));
+    }
+
+    // TP-C6.1-GEOMETRY: only complete visible item rows receive exact path
+    // rectangles; headers/blanks are inert and height clipping is atomic.
+    #[test]
+    fn file_sidebar_geometry_addresses_items_only_and_clips_complete_rows() {
+        use crate::app::state::{FileManagerSidebarIcon, FileManagerSidebarModel, SidebarTab};
+        let mut app = crate::app::state::AppState::test_new();
+        app.sidebar_tab = SidebarTab::Files;
+        app.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+            vec![file_sidebar_item(
+                "Home",
+                "/home/a",
+                FileManagerSidebarIcon::Home,
+                true,
+                false,
+            )],
+            vec![file_sidebar_item(
+                "Pinned",
+                "/work",
+                FileManagerSidebarIcon::Pin,
+                true,
+                false,
+            )],
+            vec![file_sidebar_item(
+                "Root",
+                "/",
+                FileManagerSidebarIcon::Disk,
+                true,
+                false,
+            )],
+        );
+        let area = Rect::new(3, 4, 20, 9);
+        let rows = compute_file_manager_sidebar_row_areas(&app, area);
+
+        assert_eq!(rows.len(), 2, "third section item is clipped as one row");
+        assert_eq!(rows[0].path, std::path::PathBuf::from("/home/a"));
+        assert_eq!(rows[1].path, std::path::PathBuf::from("/work"));
+        assert!(rows.iter().all(|row| row.rect.width == area.width));
+        assert!(rows[0].rect.y > area.y, "section header has no hit area");
+        assert!(rows[0].rect.y < rows[1].rect.y, "section gap stays inert");
+
+        app.sidebar_tab = SidebarTab::Projects;
+        assert!(compute_file_manager_sidebar_row_areas(&app, area).is_empty());
+    }
+
+    // TP-C6.1-RENDER: Files renders the prepared section model and removes the
+    // placeholder. Rendering consumes no filesystem or environment source.
+    #[test]
+    fn render_workspace_list_shows_native_file_sidebar_sections() {
+        use crate::app::state::{FileManagerSidebarIcon, FileManagerSidebarModel};
         let mut app = crate::app::state::AppState::test_new();
         app.sidebar_tab = crate::app::state::SidebarTab::Files;
         app.mouse_capture = false; // skip new/menu chrome for a focused test
-        let area = Rect::new(0, 0, 24, 12);
+        app.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+            vec![file_sidebar_item(
+                "Home",
+                "/home/a",
+                FileManagerSidebarIcon::Home,
+                true,
+                false,
+            )],
+            vec![file_sidebar_item(
+                "Herdr",
+                "/work/herdr",
+                FileManagerSidebarIcon::Pin,
+                true,
+                false,
+            )],
+            vec![file_sidebar_item(
+                "Root",
+                "/",
+                FileManagerSidebarIcon::Disk,
+                true,
+                false,
+            )],
+        );
+        let area = Rect::new(0, 0, 24, 14);
         app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
+        app.view.file_manager_sidebar_row_areas =
+            compute_file_manager_sidebar_row_areas(&app, area);
         app.view.workspace_card_areas = Vec::new();
 
         let runtimes = TerminalRuntimeRegistry::new();
-        let mut terminal = Terminal::new(TestBackend::new(24, 12)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(24, 14)).unwrap();
         terminal
             .draw(|frame| render_workspace_list(&app, &runtimes, frame, area, false))
             .unwrap();
 
-        let text: String = (0..12)
+        let text: String = (0..14)
             .flat_map(|y| (0..24).map(move |x| (x, y)))
             .map(|(x, y)| terminal.backend().buffer()[(x, y)].symbol())
             .collect();
+        for expected in ["FAVORITES", "Home", "PINNED", "Herdr", "LOCATIONS", "Root"] {
+            assert!(text.contains(expected), "missing {expected:?}: {text:?}");
+        }
         assert!(
-            text.contains("soon"),
-            "files placeholder expected: {text:?}"
+            !text.contains("soon"),
+            "placeholder must be removed: {text:?}"
         );
     }
 

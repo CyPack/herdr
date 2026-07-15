@@ -472,6 +472,86 @@ mod tests {
         )
     }
 
+    // TP-C6.1-NAV/LIFECYCLE: scheduled navigation revalidates exact current
+    // model authority and directory type, consumes once, and never replaces a
+    // live FM projection for stale/missing/file targets.
+    #[test]
+    fn sidebar_navigation_opens_exact_directory_and_rejects_stale_targets() {
+        use crate::app::state::{
+            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel,
+        };
+        let td = TempDir::new("sidebar-navigation");
+        let target = td.root.join("target");
+        std::fs::create_dir_all(&target).expect("create sidebar target");
+        std::fs::write(target.join("visible.txt"), b"visible").expect("write target entry");
+        let regular_file = td.root.join("not-a-directory.txt");
+        std::fs::write(&regular_file, b"file").expect("write non-directory target");
+        let item = |label: &str, path: PathBuf| FileManagerSidebarItem {
+            label: label.to_string(),
+            path,
+            icon: FileManagerSidebarIcon::Pin,
+            accessible: true,
+            ejectable: false,
+        };
+        let mut app = test_app();
+        app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+            Vec::new(),
+            vec![
+                item("Target", target.clone()),
+                item("File", regular_file.clone()),
+            ],
+            Vec::new(),
+        );
+        app.state.request_file_manager_sidebar_navigation = Some(target.clone());
+
+        assert!(app.sync_file_manager_sidebar_navigation());
+        let file_manager = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("opened exact FM target");
+        assert_eq!(file_manager.cwd, target);
+        assert!(file_manager
+            .entries
+            .iter()
+            .any(|entry| entry.name == "visible.txt"));
+        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+        assert!(
+            !app.sync_file_manager_sidebar_navigation(),
+            "one-shot request"
+        );
+
+        let before_cwd = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .cwd
+            .clone();
+        app.state.request_file_manager_sidebar_navigation = Some(regular_file);
+        assert!(app.sync_file_manager_sidebar_navigation());
+        assert_eq!(
+            app.state.file_manager.as_ref().expect("FM preserved").cwd,
+            before_cwd
+        );
+
+        let missing = td.root.join("missing");
+        app.state.request_file_manager_sidebar_navigation = Some(missing);
+        assert!(app.sync_file_manager_sidebar_navigation());
+        assert_eq!(
+            app.state.file_manager.as_ref().expect("FM preserved").cwd,
+            before_cwd
+        );
+
+        app.state.request_file_manager_sidebar_navigation = Some(target);
+        app.state.file_manager_sidebar = FileManagerSidebarModel::default();
+        assert!(app.sync_file_manager_sidebar_navigation());
+        assert_eq!(
+            app.state.file_manager.as_ref().expect("FM preserved").cwd,
+            before_cwd
+        );
+    }
+
     fn wait_for_file_manager_state(
         app: &mut crate::app::App,
         description: &str,
