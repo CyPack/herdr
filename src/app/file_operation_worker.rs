@@ -10,7 +10,7 @@ use crate::fm::delete::{
     DeleteOperationItemOutcome, DeleteOperationKind, DeleteOperationPlan, DeleteOperationRequest,
 };
 use crate::fm::operations::{
-    execute_file_operation, FileOperationCancellation, FileOperationExecutionResult,
+    execute_file_operation_with_observer, FileOperationCancellation, FileOperationExecutionResult,
     FileOperationExecutionStatus, FileOperationItemOutcome, FileOperationKind, FileOperationPlan,
     FileOperationRequest,
 };
@@ -121,20 +121,7 @@ pub(super) struct FileOperationWorker {
 
 impl FileOperationWorker {
     pub(super) fn new(wake: Arc<Notify>) -> Self {
-        Self::with_task_executor(wake, |task, cancellation| match task {
-            FileOperationWorkerTask::Transfer(plan) => {
-                FileOperationWorkerResult::Transfer(execute_file_operation(plan, cancellation))
-            }
-            FileOperationWorkerTask::Delete(plan) => {
-                FileOperationWorkerResult::Delete(execute_delete_operation(plan, cancellation))
-            }
-            FileOperationWorkerTask::Rename(plan) => {
-                FileOperationWorkerResult::Rename(execute_rename_operation(plan, cancellation))
-            }
-            FileOperationWorkerTask::BulkRename(plan) => FileOperationWorkerResult::BulkRename(
-                execute_bulk_rename_operation(plan, cancellation),
-            ),
-        })
+        Self::with_progress_task_executor(wake, execute_worker_task_with_progress)
     }
 
     #[cfg(test)]
@@ -160,6 +147,7 @@ impl FileOperationWorker {
         })
     }
 
+    #[cfg(test)]
     fn with_task_executor<F>(wake: Arc<Notify>, executor: F) -> Self
     where
         F: Fn(&FileOperationWorkerTask, &FileOperationCancellation) -> FileOperationWorkerResult
@@ -335,6 +323,29 @@ impl FileOperationWorker {
             progress,
             disconnected: !state.alive && completion.is_none(),
             completion,
+        }
+    }
+}
+
+fn execute_worker_task_with_progress(
+    task: &FileOperationWorkerTask,
+    cancellation: &FileOperationCancellation,
+    report_progress: &mut dyn FnMut(usize),
+) -> FileOperationWorkerResult {
+    match task {
+        FileOperationWorkerTask::Transfer(plan) => FileOperationWorkerResult::Transfer(
+            execute_file_operation_with_observer(plan, cancellation, |event| {
+                report_progress(event.item_index());
+            }),
+        ),
+        FileOperationWorkerTask::Delete(plan) => {
+            FileOperationWorkerResult::Delete(execute_delete_operation(plan, cancellation))
+        }
+        FileOperationWorkerTask::Rename(plan) => {
+            FileOperationWorkerResult::Rename(execute_rename_operation(plan, cancellation))
+        }
+        FileOperationWorkerTask::BulkRename(plan) => {
+            FileOperationWorkerResult::BulkRename(execute_bulk_rename_operation(plan, cancellation))
         }
     }
 }
@@ -1440,6 +1451,7 @@ mod tests {
         );
 
         assert!(matches!(result, FileOperationWorkerResult::Transfer(_)));
+        reported.sort_unstable();
         reported.dedup();
         assert_eq!(reported, vec![0, 1]);
     }

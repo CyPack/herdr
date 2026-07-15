@@ -525,12 +525,17 @@ pub(crate) enum FileOperationPhase {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FileOperationProgressEvent {
+    item_index: usize,
     phase: FileOperationPhase,
     source: PathBuf,
     destination: PathBuf,
 }
 
 impl FileOperationProgressEvent {
+    pub(crate) fn item_index(&self) -> usize {
+        self.item_index
+    }
+
     #[cfg(test)]
     pub(crate) fn phase(&self) -> FileOperationPhase {
         self.phase
@@ -571,6 +576,7 @@ impl FileOperationHost for RealFileOperationHost {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn execute_file_operation(
     plan: &FileOperationPlan,
     cancellation: &FileOperationCancellation,
@@ -579,7 +585,6 @@ pub(crate) fn execute_file_operation(
     execute_file_operation_with_host(plan, cancellation, &mut host, |_| {})
 }
 
-#[cfg(test)]
 pub(crate) fn execute_file_operation_with_observer<F>(
     plan: &FileOperationPlan,
     cancellation: &FileOperationCancellation,
@@ -676,6 +681,7 @@ where
             return result;
         };
         observer(&FileOperationProgressEvent {
+            item_index,
             phase: FileOperationPhase::Committing,
             source: item.source.clone(),
             destination: item.destination.clone(),
@@ -728,6 +734,7 @@ where
             return result;
         }
         observer(&FileOperationProgressEvent {
+            item_index,
             phase: FileOperationPhase::Committing,
             source: transfer.source.clone(),
             destination: transfer.destination.clone(),
@@ -773,6 +780,7 @@ where
                     return result;
                 }
                 observer(&FileOperationProgressEvent {
+                    item_index,
                     phase: FileOperationPhase::Committing,
                     source: transfer.source.clone(),
                     destination: transfer.destination.clone(),
@@ -799,6 +807,7 @@ where
                 cleanup_path(&staged_transfer.container);
 
                 observer(&FileOperationProgressEvent {
+                    item_index,
                     phase: FileOperationPhase::RemovingSource,
                     source: transfer.source.clone(),
                     destination: transfer.destination.clone(),
@@ -890,7 +899,13 @@ where
         });
     }
     let payload = container.join("payload");
-    match copy_path_bounded(&transfer.source, &payload, cancellation, observer) {
+    match copy_path_bounded(
+        &transfer.source,
+        &payload,
+        item_index,
+        cancellation,
+        observer,
+    ) {
         Ok(()) => Ok(StagedTransfer {
             item_index,
             container,
@@ -909,6 +924,7 @@ enum CopyFailure {
 fn copy_path_bounded<F>(
     source: &Path,
     destination: &Path,
+    item_index: usize,
     cancellation: &FileOperationCancellation,
     observer: &mut F,
 ) -> Result<(), CopyFailure>
@@ -940,6 +956,7 @@ where
                 destination,
             } => {
                 observer(&FileOperationProgressEvent {
+                    item_index,
                     phase: FileOperationPhase::StagingEntry,
                     source: source.clone(),
                     destination: destination.clone(),
