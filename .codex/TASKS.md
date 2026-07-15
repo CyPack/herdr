@@ -27,9 +27,11 @@ is tracked below and does not activate those product items.
   contract.
 - [x] Review and approve the written specs plus registry.
 - [x] Produce and self-review the exact code-level TDD implementation plan.
-- [ ] Approve the detailed TDD implementation plan and open T2 execution.
-- [ ] Implement and verify the independently versioned skills, adapters,
-  validators, evals, pilots, Git publication, and graph refresh.
+- [x] Approve the detailed TDD implementation plan and open T2 execution.
+- [x] Implement and verify Ratatui Design Intelligence v2.1 with atomic
+  baseline/RED/GREEN/governance commits and fresh module gates.
+- [ ] Implement and verify `herdr-change-pipeline`, adapters, pilots, Git
+  publication, and graph refresh; next exact action is T3.1.
 
 Full non-product macro/micro registry:
 `.codex/CHANGE-PIPELINE-TASKS.md`.

@@ -21,17 +21,24 @@
   intelligence v2.1 plus generalized A0-A7 change intelligence and I0-I14
   delivery governance.
 - Durable human/agent task state is in
-  `.codex/CHANGE-PIPELINE-TASKS.md`; T0 is complete, T1.1-T1.7 are complete,
-  and the active micro action is T1.8 detailed implementation-plan approval.
-- The exact approved-for-review execution contracts are the shared program
+  `.codex/CHANGE-PIPELINE-TASKS.md`; T0, T1, and T2 are complete. The active
+  micro action is T3.1: write the RED identity/version/authority contracts for
+  the sibling `herdr-change-pipeline` module.
+- The user-approved execution contracts are the shared program
   plan plus the separate Ratatui v2.1 and change-pipeline v1 TDD plans under
   `docs/superpowers/plans/2026-07-15-*.md`.
 - The registry includes a mid-flight adoption path for an existing file-manager
   feature/bugfix session: inspect and preserve current work, reconstruct A0-A7,
   classify the current I-phase, then enforce the remaining gates.
-- The new `herdr-change-pipeline` skill and Ratatui v2.1 implementation are not
-  yet built. Product-code authorization remains false; no push or reindex has
-  been performed for this planning lane.
+- Ratatui Design Intelligence v2.1 is locally implemented as the atomic chain
+  `7622dde` through `2517353`: preserved baseline, observed identity/stack/
+  phase/governance RED tests, GREEN manifest/schema/template/validator/phase
+  bindings, and human/agent governance. Fresh closure is 59/59 tests, 15
+  phases/101 jobs, both validators PASS, JSON parse PASS, skill validation
+  PASS, and product isolation PASS.
+- The new `herdr-change-pipeline` skill is not yet built. Product-code
+  authorization remains false; no push or graph refresh has been performed for
+  this tooling lane.
 - This lane does not activate S5, S6, S7, or N2.2 and never authorizes touching
   stable Herdr or inherited stable sockets.
 
@@ -952,9 +959,10 @@
 
 ## Exact Next Action
 
-1. Review and approve the three linked detailed TDD plans recorded in
-   `.codex/CHANGE-PIPELINE-TASKS.md`. On approval, close T1.8 and begin T2.1 by
-   preserving and freshly verifying the user-owned Ratatui skill baseline.
+1. Execute T3.1 from `.codex/CHANGE-PIPELINE-TASKS.md`: write and observe the
+   RED `TP-CHG-MODULE` tests for sibling-module identity, version, required
+   directories/documents, and default authorization=false. Do not implement
+   T3.2 before the RED reason is proven.
 2. The tooling lane is not product authority. No product or architecture
    publication is pending after the M3.0 evidence checkpoint `e9f2fe0`.
 3. Do not start speculative production work. Activate only a

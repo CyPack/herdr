@@ -2,12 +2,14 @@
 
 ## 1. SONRAKI ADIM
 
-The non-product change-pipeline lane has completed T0 and T1.1-T1.7. Its exact
-program, Ratatui v2.1, and change-pipeline v1 TDD plans are linked from
-`.codex/CHANGE-PIPELINE-TASKS.md`; T1.8 detailed-plan approval is the only
-active micro action. Do not start T2 or mutate Herdr product code before that
-approval. After approval, T2.1 preserves and freshly verifies the user-owned
-Ratatui skill baseline as an isolated commit concern.
+The non-product change-pipeline lane has completed T0, T1, and T2. Ratatui
+Design Intelligence v2.1 is locally committed from baseline `7622dde` through
+governance `2517353`; fresh closure is 59/59 tests, 15 phases/101 jobs, both
+validators PASS, JSON parse PASS, skill validation PASS, and product isolation
+PASS. The only active micro action is T3.1: write and observe RED
+`TP-CHG-MODULE` contracts for the sibling `herdr-change-pipeline` module.
+Product authorization remains false; no tooling-lane push or graph refresh has
+occurred.
 
 The product completion audit still proves A1–C6, N1/N3/N4, N2.1, M1, and M2
 complete; M3 is closed implementation NO-GO. No speculative production lane is
@@ -41,6 +43,11 @@ work. Never touch stable Herdr/socket/processes.
 
 ## 5. BU CODEX OTURUMUNDA TAMAMLANANLAR
 
+- User approved the detailed T1 plans and opened T2 execution.
+- Preserved the 28-file Ratatui intelligence baseline, then implemented v2.1
+  through separate identity, cross-stack, phase/run, and governance RED/GREEN
+  commits. Added fail-closed MCP/product isolation, eval, cartography, lessons,
+  and human/agent governance without touching Rust or stable runtime state.
 - Recovered and verified the Claude transcript directly from local storage.
 - Implemented A2.2 responsive Miller columns with cached parent/preview state.
 - Added RED tests first, then achieved full GREEN verification.

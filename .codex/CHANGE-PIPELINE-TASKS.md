@@ -65,12 +65,14 @@ pipeline.
 Legend: `[x]` complete with evidence; `[ ]` pending; `ACTIVE` is the next
 single permitted action.
 
-- Active macro: **T1 — code-level TDD implementation plan**.
-- Active micro: **T1.8 — detailed implementation-plan approval**.
-- Next after approval: **T2.1 — preserve and audit the Ratatui baseline**.
+- Active macro: **T3 — `herdr-change-pipeline` module scaffold**.
+- Active micro: **T3.1 — RED module identity and authority contracts**.
+- Completed: **T2 — Ratatui Design Intelligence v2.1**, with 59/59 tests,
+  15 phases/101 jobs, both validators, JSON parse, and skill validation green.
 - Product-code authorization: **false**.
-- Pipeline implementation, push, and reindex: **not yet performed**; T2 remains
-  gated on T1.8 approval.
+- Ratatui module implementation is local and committed. Sibling-module
+  implementation, push, and graph refresh remain pending; no product code or
+  stable runtime was touched.
 
 ## T0 — Design, Governance, and Mid-Flight Adoption
 
@@ -121,29 +123,32 @@ Until the canonical skills are implemented, another Herdr session must:
   module-wide, repository-wide, compatibility, and publication gates.
 - [x] **T1.7** Self-review the plan for placeholders, false parallelism,
   unowned artifacts, missing negative paths, and accidental product authority.
-- [ ] **T1.8 — ACTIVE** Obtain written implementation-plan approval before T2.
+- [x] **T1.8** Obtain written implementation-plan approval before T2
+  (user-approved 2026-07-15).
 
 ## T2 — Ratatui Design Intelligence v2.1
 
-- [ ] **T2.1** Preserve and audit the current untracked
+- [x] **T2.1** Preserve and audit the current untracked
   `.codex/skills/ratatui-design-intelligence/` baseline as an isolated concern.
-- [ ] **T2.2** Write and observe RED tests for module identity/version and
+- [x] **T2.2** Write and observe RED tests for module identity/version and
   legacy P0-P14 compatibility.
-- [ ] **T2.3** Write RED tests for stack profiles, language/framework mapping,
+- [x] **T2.3** Write RED tests for stack profiles, language/framework mapping,
   architecture/behavior diffs, and reference-versus-native modes.
-- [ ] **T2.4** Write RED tests for phase bindings at P2, P5, P9, and P14 plus
+- [x] **T2.4** Write RED tests for phase bindings at P2, P5, P9, and P14 plus
   run-state/resume semantics.
-- [ ] **T2.5** Write RED tests for README, AGENTS, SKILL, governance, schema,
+- [x] **T2.5** Write RED tests for README, AGENTS, SKILL, governance, schema,
   validator, eval, and cartography consistency.
-- [ ] **T2.6** Write negative tests for MCP absence, source/license uncertainty,
+- [x] **T2.6** Write negative tests for MCP absence, source/license uncertainty,
   missing evidence, artifact leakage, and product-code isolation.
-- [ ] **T2.7** Implement the minimum module manifest, stack artifact/schema,
+- [x] **T2.7** Implement the minimum module manifest, stack artifact/schema,
   validator, phase bindings, and run template needed for GREEN.
-- [ ] **T2.8** Update human/agent guidance, lessons, examples, eval fixtures,
+- [x] **T2.8** Update human/agent guidance, lessons, examples, eval fixtures,
   and compatibility documentation.
-- [ ] **T2.9** Run focused and complete module gates; record exact evidence.
-- [ ] **T2.10** Commit baseline, RED, GREEN, and governance as separate atomic
-  concerns.
+- [x] **T2.9** Run focused and complete module gates; record exact evidence:
+  59/59 tests, 15 phases/101 jobs, v2.1 validator PASS, all JSON parse, skill
+  validation PASS, and product isolation PASS.
+- [x] **T2.10** Commit baseline, RED, GREEN, and governance as separate atomic
+  concerns (`7622dde` through `2517353`).
 
 ## T3 — `herdr-change-pipeline` Module Scaffold
 

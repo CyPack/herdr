@@ -81,6 +81,12 @@
 No speculative production increment is active. Activate future work only when
 one recorded independent trigger is satisfied by concrete product demand.
 
+The separate non-product change-pipeline lane has completed T0-T2. Ratatui
+Design Intelligence v2.1 is locally committed (`7622dde` through `2517353`)
+and freshly verified at 59/59 tests plus 15 phases/101 jobs. Its next exact
+micro action is T3.1 RED module-contract tests for `herdr-change-pipeline`.
+This does not authorize product code, stable runtime access, push, or reindex.
+
 ## Ordered Roadmap
 
 1. S5 only after a second independently owned page/component repeats render,
