@@ -68,6 +68,7 @@ pub(super) struct FileOperationWorkerDrain {
     pub(super) progress: Option<FileOperationWorkerProgress>,
     pub(super) completion: Option<FileOperationWorkerCompletion>,
     pub(super) disconnected: bool,
+    pub(super) generation_floor: u64,
 }
 
 struct FileOperationWorkerRequest {
@@ -132,6 +133,13 @@ pub(super) struct FileOperationWorker {
 impl FileOperationWorker {
     pub(super) fn new(wake: Arc<Notify>) -> Self {
         Self::with_progress_task_executor(wake, execute_worker_task_with_progress)
+    }
+
+    fn new_after_generation(wake: Arc<Notify>, generation_floor: u64) -> Self {
+        let worker = Self::new(wake);
+        let (state, _) = &*worker.shared;
+        lock_state(state).next_generation = generation_floor;
+        worker
     }
 
     #[cfg(test)]
@@ -319,6 +327,7 @@ impl FileOperationWorker {
     ) -> Self {
         let mut state = FileOperationWorkerState::default();
         state.alive = false;
+        state.next_generation = generation;
         state.active_generation = Some(generation);
         state.active_cancellation = Some(FileOperationCancellation::default());
         state.progress = Some(FileOperationWorkerProgress {
@@ -382,6 +391,7 @@ impl FileOperationWorker {
             progress,
             disconnected: !state.alive && completion.is_none(),
             completion,
+            generation_floor: state.next_generation,
         }
     }
 }
@@ -582,11 +592,23 @@ impl crate::app::App {
             }
         }
         if drained.disconnected {
-            let Some(operation) = self.state.file_manager_operation.as_mut() else {
-                return changed;
-            };
-            if operation.is_running() {
-                mark_operation_worker_failure(operation);
+            let operation_failed =
+                self.state
+                    .file_manager_operation
+                    .as_mut()
+                    .is_some_and(|operation| {
+                        if !operation.is_running() {
+                            return false;
+                        }
+                        mark_operation_worker_failure(operation);
+                        true
+                    });
+            self.file_operation_reconcile_baseline = None;
+            self.file_operation_worker = FileOperationWorker::new_after_generation(
+                self.render_notify.clone(),
+                drained.generation_floor,
+            );
+            if operation_failed {
                 tracing::warn!("fm: file operation worker stopped before completion");
                 return true;
             }
