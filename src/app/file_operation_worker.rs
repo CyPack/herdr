@@ -593,6 +593,7 @@ impl crate::app::App {
         let mut changed = self.consume_file_manager_delete_request();
         changed |= self.consume_file_manager_rename_request();
         changed |= self.consume_file_manager_bulk_rename_request();
+        changed |= self.consume_file_manager_context_open();
         changed |= self.consume_file_manager_context_rename();
         changed |= self.consume_file_manager_context_delete();
         changed |= self.consume_file_manager_context_copy();
@@ -980,6 +981,50 @@ impl crate::app::App {
             status: FileManagerOperationStatus::Running,
             items,
         });
+        true
+    }
+
+    fn consume_file_manager_context_open(&mut self) -> bool {
+        use crate::app::state::FileManagerContextMenuAction;
+
+        let is_open = self
+            .state
+            .request_file_manager_context_action
+            .as_ref()
+            .is_some_and(|intent| intent.action == FileManagerContextMenuAction::Open);
+        if !is_open {
+            return false;
+        }
+        let Some(intent) = self.state.request_file_manager_context_action.take() else {
+            return false;
+        };
+        let Some(file_manager) = self.state.file_manager.as_ref() else {
+            return true;
+        };
+        let action_bar = crate::ui::compute_file_manager_action_bar_model(
+            file_manager,
+            &self.state.file_manager_clipboard,
+            self.state
+                .file_manager_operation
+                .as_ref()
+                .is_some_and(crate::app::state::FileManagerOperationState::is_running),
+        );
+        let is_current =
+            crate::app::state::FileManagerContextMenuModel::from_action_bar_with_plugins(
+                &action_bar,
+                &[],
+            )
+            .is_some_and(|model| {
+                model.paths == intent.paths
+                    && model.items.iter().any(|item| {
+                        item.action == FileManagerContextMenuAction::Open && item.enabled
+                    })
+            });
+        if is_current {
+            if let Some(file_manager) = self.state.file_manager.as_mut() {
+                file_manager.enter();
+            }
+        }
         true
     }
 

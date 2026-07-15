@@ -155,34 +155,8 @@ impl App {
         id: String,
         params: PluginActionInvokeParams,
     ) -> String {
-        let (plugin, action) =
-            match self.find_plugin_action(params.plugin_id.as_deref(), &params.action_id) {
-                Ok(pair) => pair,
-                Err((code, message)) => return encode_error(id, code, message),
-            };
-        if !plugin.enabled {
-            return encode_error(
-                id,
-                "plugin_disabled",
-                format!("plugin {} is disabled", plugin.plugin_id),
-            );
-        }
-        if let Err((code, message)) = ensure_platform_supported(
-            effective_platforms(&action.platforms, &plugin.platforms),
-            &format!("action '{}'", action.qualified_id()),
-        ) {
-            return encode_error(id, code, message);
-        }
-        let context = self.merge_plugin_context(params.context, &id);
-        let log = match self.start_plugin_command(
-            &plugin,
-            Some(action.action_id.clone()),
-            None,
-            action.command.clone(),
-            &context,
-            None,
-        ) {
-            Ok(log) => log,
+        let (action, context, log) = match self.start_plugin_action(params, &id) {
+            Ok(result) => result,
             Err((code, message)) => return encode_error(id, code, message),
         };
         encode_success(
@@ -193,6 +167,99 @@ impl App {
                 log,
             },
         )
+    }
+
+    fn start_plugin_action(
+        &mut self,
+        params: PluginActionInvokeParams,
+        correlation_id: &str,
+    ) -> Result<
+        (
+            PluginActionInfo,
+            crate::api::schema::PluginInvocationContext,
+            crate::api::schema::PluginCommandLogInfo,
+        ),
+        (&'static str, String),
+    > {
+        let (plugin, action) =
+            self.find_plugin_action(params.plugin_id.as_deref(), &params.action_id)?;
+        if !plugin.enabled {
+            return Err((
+                "plugin_disabled",
+                format!("plugin {} is disabled", plugin.plugin_id),
+            ));
+        }
+        if let Err((code, message)) = ensure_platform_supported(
+            effective_platforms(&action.platforms, &plugin.platforms),
+            &format!("action '{}'", action.qualified_id()),
+        ) {
+            return Err((code, message));
+        }
+        let context = self.merge_plugin_context(params.context, correlation_id);
+        let log = self.start_plugin_command(
+            &plugin,
+            Some(action.action_id.clone()),
+            None,
+            action.command.clone(),
+            &context,
+            None,
+        )?;
+        Ok((action, context, log))
+    }
+
+    pub(in crate::app) fn sync_file_manager_plugin_action(&mut self) -> bool {
+        let is_plugin = self
+            .state
+            .request_file_manager_context_action
+            .as_ref()
+            .is_some_and(|intent| {
+                matches!(
+                    intent.action,
+                    crate::app::state::FileManagerContextMenuAction::Plugin { .. }
+                )
+            });
+        if !is_plugin {
+            return false;
+        }
+        let Some(intent) = self.state.request_file_manager_context_action.take() else {
+            return false;
+        };
+        let current = self.state.file_manager.as_ref().and_then(|file_manager| {
+            let action_bar = crate::ui::compute_file_manager_action_bar_model(
+                file_manager,
+                &self.state.file_manager_clipboard,
+                self.state
+                    .file_manager_operation
+                    .as_ref()
+                    .is_some_and(crate::app::state::FileManagerOperationState::is_running),
+            );
+            let plugin_actions = file_manifest_actions(&self.state.installed_plugins);
+            crate::app::state::FileManagerContextMenuModel::from_action_bar_with_plugins(
+                &action_bar,
+                &plugin_actions,
+            )
+        });
+        let is_current = current.is_some_and(|model| {
+            model.paths == intent.paths
+                && model
+                    .items
+                    .iter()
+                    .any(|item| item.action == intent.action && item.enabled)
+        });
+        if !is_current {
+            return true;
+        }
+        let Some(params) = intent.plugin_invocation_params() else {
+            return true;
+        };
+        if let Err((code, message)) = self.start_plugin_action(params, "file-manager") {
+            tracing::warn!(
+                code,
+                message,
+                "fm: plugin action rejected at scheduled boundary"
+            );
+        }
+        true
     }
 
     pub(crate) fn invoke_plugin_action_from_keybind(
