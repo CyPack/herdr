@@ -1484,6 +1484,31 @@ mod tests {
         assert_eq!(reported, vec![0, 1]);
     }
 
+    // TP-C4.4-PROGRESS: single Rename reports its exact item before the
+    // no-replace commit and still uses the same bounded worker slot.
+    #[test]
+    fn default_worker_task_executor_reports_single_rename_item() {
+        let td = TempDir::new("default-single-rename-progress");
+        let source = td.root.join("source.txt");
+        fs::write(&source, b"source").expect("write rename progress source");
+        let plan = RenameOperationPlan::preflight(RenameOperationRequest {
+            source_path: source,
+            new_name: "renamed.txt".into(),
+            operation_in_flight: false,
+        })
+        .expect("default single rename progress plan");
+        let mut reported = Vec::new();
+
+        let result = super::execute_worker_task_with_progress(
+            &FileOperationWorkerTask::Rename(plan),
+            &FileOperationCancellation::default(),
+            &mut |item_index| reported.push(item_index),
+        );
+
+        assert!(matches!(result, FileOperationWorkerResult::Rename(_)));
+        assert_eq!(reported, vec![0]);
+    }
+
     // TP-C4.1-LIFECYCLE: cancellation is idempotent, wakes the worker, and
     // produces a single Cancelled terminal result without filesystem output.
     #[test]
