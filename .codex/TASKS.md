@@ -519,6 +519,13 @@ owns filesystem mutation and C5 owns agent delivery.
   and LOCATIONS outside render; derive exact item hit areas in `compute_view`;
   route clicks as typed path requests consumed by an App-owned refresh boundary.
 - [ ] C6.2 pill highlight and current-location marker.
+- [ ] C6.2a derive one exact current-location visual authority from the open
+  `FmState.cwd` and the prepared accessible sidebar item; add no cached
+  highlight state and no render-time filesystem work.
+- [ ] C6.2b render a complete responsive pill plus right-aligned warning/eject
+  marker with display-width truncation and explicit narrow/zero-area behavior.
+- [ ] C6.2c prove navigation/watcher cwd changes, close/reopen, tab switching,
+  stale model paths, and the complete C6.2 gate before publication.
 - [ ] C6.3 integrate header/row/context actions consistently.
 - [ ] C6.4 theme, spacing, empty/error states, and visual Finder-parity review.
 
@@ -530,6 +537,11 @@ owns filesystem mutation and C5 owns agent delivery.
 | TP-C6.1-NAV | Exact item click, missing/file/unsupported/stale path, request replacement, scheduled consumption | Input prepares one typed exact path only; App refresh revalidates and opens that directory once, while every invalid case is a no-op | Filesystem work belongs in refresh paths, not mouse/render |
 | TP-C6.1-LIFECYCLE | FM cwd changes, close/reopen, watcher reconciliation, tab switching | Sidebar current-location authority and Miller cwd cannot diverge; no stale request survives a lifecycle change | Two independently stale directory projections would misroute navigation |
 | TP-C6.1-GATES | Focused model/geometry/render/navigation failures, sidebar/FM regressions, full platform and maintenance gates | All applicable checks pass with only the named B0 probe skipped and no stale hit area or filesystem artifact | Finder polish cannot regress core workspace/sidebar or FM safety |
+| TP-C6.2-CURRENT | Exact accessible cwd, model-missing path, inaccessible item, closed FM, cwd change, and non-Files tab | Exactly one prepared accessible item whose exact path equals the open `FmState.cwd` receives current-location authority; every stale, missing, inaccessible, closed, or hidden case has no pill | A cached or label-derived highlight could advertise navigation authority for the wrong directory |
+| TP-C6.2-PILL | Normal, Unicode, narrow, marker-reserved, and zero-width item rows | Both pill caps remain complete, label truncation uses display-cell width, trailing markers never overlap the pill, and insufficient space omits the whole pill instead of painting a clipped current signal | Private-use icons and responsive sidebar widths make byte-count or partial-decoration rendering unsafe |
+| TP-C6.2-MARKER | Accessible, inaccessible, ejectable, and inaccessible-plus-ejectable rows at normal and narrow widths | Inaccessible rows show a right-aligned warning; accessible ejectable rows show eject; warning takes precedence when both flags are present; every marker stays inside the row | Access failure is stronger safety information than a removable-media affordance and must not be hidden by it |
+| TP-C6.2-LIFECYCLE | Sidebar navigation, watcher-driven cwd transition, FM close/reopen, model refresh, and tab switch | The next frame derives styling from current FM/model state with no stale highlight cache; render performs no filesystem or runtime mutation | Cwd and sidebar projection change independently, so visual authority must converge without another lifecycle owner |
+| TP-C6.2-GATES | Focused authority/layout/render/lifecycle failures, broad sidebar/FM regressions, full platform and maintenance gates, graph and artifact checks | Every applicable gate passes with only the named B0 probe skipped; no production `unwrap()`, temp residue, stable Herdr/socket access, or user-process change occurs | Finder styling crosses state projection, Unicode geometry, rendering, and existing click authority despite having no filesystem side effect |
 
 - C6.1 is complete as test-point plan `6464668`, RED contracts `4a65c15`,
   `4836b32`, and `1236f57`, then GREEN product `2bcdf14`. The prepared model
