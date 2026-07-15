@@ -112,3 +112,21 @@ RED.
 - no path-string identity or private TUI socket authority;
 - no new default keybinding until a separate conflict/accessibility decision;
 - no generic frame-action registry or popup stack; M3 remains evidence-gated.
+
+## M2.1 Closure — 2026-07-15
+
+- Atomic chain: RED `dab1e20`, GREEN `0ae6175`.
+- Five frozen M2.1 tests pass: capability/disjoint geometry, bounded ASCII/no-
+  color render, exact workspace/pane/terminal input revalidation, routing into
+  the existing open dialog, and list-error resource preservation.
+- Combined worktree/attachment regression is 131/131. Full nextest is
+  3202/3202 with only the named `path_beta_real_host_probe` skipped.
+- Linux all-target and Windows MSVC bin clippy are clean with `-D warnings`;
+  Bun is 17/17; Python maintenance is 64/64; fmt and diff checks are clean.
+- Full graph refresh is 19,534 nodes / 91,017 edges and returns current
+  `miller_layout`, `compute_agent_worktree_action_area`, and
+  `can_open_existing_worktree_from_cache` symbols.
+- M2.2 Create and M2.3 Remove remain implementation NO-GO because their mature
+  API/dialog/deferred-operation owners already cover the requested behavior.
+  M2.4 introduces no new reconciliation path: the launcher is client-local and
+  emits only the existing open intent.

@@ -2,9 +2,9 @@
 
 - Updated: 2026-07-15
 - Branch: `feat/native-fm`
-- Published CyPack base: `633dfa6`.
-- Verified M1 product head: `7d3144e`; closure/published tip: `633dfa6`.
-- Current publication unit: M2.0 evidence/continuity only. Push
+- Published CyPack base: `918f4fc`.
+- Verified M2.1 chain: RED `dab1e20`; GREEN product head `0ae6175`.
+- Current publication unit: M2.1 closure/continuity. Push
   only CyPack `feat/native-fm` and fork `master` after targeted staging,
   fast-forward ancestry, and exact remote-SHA verification.
 
@@ -66,37 +66,35 @@
 - M1.1–M1.4 add the pure focused-agent `[+]` action, `prefix+a`, Clear-first
   private picker, exact workspace/`PaneId`/`TerminalId` authority, path-stable
   mouse/keyboard input, and one-shot literal path-plus-CR delivery.
+- M2.0–M2.4 are closed: `[w]` uses pure cached capability and exact identity
+  to enter the existing open dialog; duplicate Create/Remove/List/Switch
+  implementations remain NO-GO.
 
 ## Active Next Increment
 
-M2.1 pure focused-agent `[w]` launcher into the existing open-worktree dialog.
-Production begins only after the exact geometry/render/identity/routing tests in
-`.codex/evidence/m2-worktree-management-actions.md` are observed RED.
-
-M2.0 closed four independent management buttons NO-GO: List/Open/Switch/Create/
-Remove already have neutral API/CLI and mature TUI owners. The only narrow GO
-is visible agent-frame access to the existing non-destructive open dialog.
+M3.0 read-only architecture evidence gate. M1 `[+]` and M2 `[w]` now provide
+two concrete frame-action consumers, but production refactoring remains NO-GO
+unless measured duplication proves a smaller shared ownership contract.
 
 ## Ordered Roadmap
 
-1. M2.1 `[w]` action geometry/render/identity/routing RED then GREEN; reuse the
-   existing open dialog and server authority without new mutation paths.
-2. M3.0 only after M1/M2 creates a second concrete independently owned
-   component/page/action family.
+1. M3.0 inventory M1/M2 frame-action duplication and rerun the P4 decision
+   matrix; conclude GO/NO-GO before production edits.
+2. If and only if M3.0 is GO, freeze characterization tests before M3.1.
 3. N2.2 and S5–S7 remain independently evidence-gated.
 
-## Fresh M1 Closure Evidence
+## Fresh M2 Closure Evidence
 
-- Exact attachment family 20/20.
-- Full nextest 3197/3197; only `path_beta_real_host_probe` ignored.
+- Exact M2.1 5/5; worktree/attachment regression 131/131.
+- Full nextest 3202/3202; only `path_beta_real_host_probe` ignored.
 - Linux all-target and canonical Windows MSVC clippy clean with `-D warnings`.
 - Bun 17/17; Python maintenance 64/64; fmt, diff, production-unwrap,
   debug-marker, and ignored-inventory checks clean.
-- Graph refresh: 19,113 nodes / 91,118 edges. Current snippets for
-  `miller_layout`, `sync_agent_attachment_delivery`, and picker row geometry
+- Graph refresh: 19,534 nodes / 91,017 edges. Current symbols for
+  `miller_layout`, `compute_agent_worktree_action_area`, and cached capability
   proved freshness beyond `ready`.
-- No dependency, protocol, persisted runtime state, process, socket, watcher,
-  worker, pane, new agent, or stable Herdr resource changed.
+- No dependency, protocol, persisted runtime state, Git/filesystem mutation,
+  process, socket, watcher, worker, pane, or stable Herdr resource changed.
 
 ## Non-Negotiable Boundaries
 

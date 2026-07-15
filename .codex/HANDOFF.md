@@ -6,12 +6,13 @@ M1.0–M1.4 are complete through product head `7d3144e`: the focused agent stays
 visible, `[+]`/`prefix+a` opens a Clear-first single-file picker, and the
 scheduled boundary sends one literal UTF-8 path plus CR after exact workspace/
 `PaneId`/`TerminalId`, selection, metadata, payload, and runtime revalidation.
-The M1 chain is published exactly to both CyPack refs. M2.0 is complete in
-`.codex/evidence/m2-worktree-management-actions.md`: four duplicate management
-implementations are NO-GO; one focused-agent `[w]` launcher into the existing
-open-worktree dialog is the narrow GO. Start its named RED tests before Rust.
-M3 requires a second real consumer, and N2.2/S5–S7 remain independent. Never
-touch stable Herdr/socket/processes.
+The M1 chain is published exactly to both CyPack refs. M2 is complete through
+RED `dab1e20` and GREEN `0ae6175`: `[w]` revalidates exact focused-agent and
+cached root-worktree authority, then enters the existing open dialog. Duplicate
+List/Create/Remove/Switch implementations remain NO-GO. M3.0 read-only evidence
+is next now that `[+]` and `[w]` are two concrete consumers; production
+abstraction still requires a measured GO. Never touch stable Herdr/socket/
+processes.
 
 ## 2. AKTİF PROJE
 
@@ -736,10 +737,11 @@ state machine and N2.1 closes as RED `e433a2f` → GREEN `c530836` with complete
 gates. M1–M3 have durable macro/micro and failure-path test contracts.
 M1.0–M1.4 are closed through `7d3144e`, exact attachment 20/20, full nextest
 3197/3197 plus the named B0 skip, Linux/Windows clippy, Bun 17/17, Python
-64/64, and fresh graph 19,113 / 91,118. M2.0 then closes with four duplicate
-management implementations NO-GO and one `[w]` launcher narrow GO. M2.1 RED is
-next, while M3.0 requires a real second consumer. N2.2 and S5–S7 remain
-independently deferred.
+64/64, and fresh graph 19,113 / 91,118. M2 then closes as RED `dab1e20` →
+GREEN `0ae6175`: exact M2.1 5/5, worktree/attachment 131/131, full 3202/3202
+plus the named skip, Linux/Windows clippy, Bun 17/17, Python 64/64, and fresh
+graph 19,534 / 91,017. Duplicate management implementations remain NO-GO.
+M3.0 read-only evidence is next; N2.2 and S5–S7 remain independently deferred.
 
 ## 11. ORTAM
 

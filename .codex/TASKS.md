@@ -890,20 +890,20 @@ evidence contract proves non-duplicate user value and freezes RED test points.
   owned; button geometry, focus, selection, and confirmation are client-only.
 - [x] M2.0b freeze exact repo-root, checkout-path, branch, open-workspace,
   dirty-state, linked-worktree, concurrent-operation, and Windows path cases.
-- [ ] M2.1 RED/GREEN: add one pure focused-agent `[w]` launcher that routes to
+- [x] M2.1 RED/GREEN: add one pure focused-agent `[w]` launcher that routes to
   the existing `OpenExistingWorktree` list/search/open flow. Reuse current
   workspace IDs and canonical open behavior; add no panel, worker, Git command,
   filesystem write, create/remove shortcut, or generic action registry. Exact
   tests are frozen in `.codex/evidence/m2-worktree-management-actions.md`.
-- [ ] M2.2 add Create only through existing API validation/deferred operation;
-  relative/escaping/colliding paths, duplicate branches, linked-child sources,
-  and create/remove concurrency fail closed before Git mutation.
-- [ ] M2.3 add Remove with the existing typed confirmation sequence. Dirty or
-  active worktrees never become implicit force; force requires a separate
-  explicit stage and branch deletion remains out of scope.
-- [ ] M2.4 reconcile success/partial/error with current server snapshot, preserve
-  unrelated workspaces/checkouts, prove restart/disconnect recovery, then run
-  full Linux/Windows/API/runtime/graph/publication gates.
+- [x] M2.2 implementation NO-GO at M2.0: Create already has existing API
+  validation, deferred operation, dialog, context action, and keybind owners;
+  M2.1 adds no duplicate mutation path.
+- [x] M2.3 implementation NO-GO at M2.0: Remove remains linked-worktree-only
+  behind the existing typed confirmation/force sequence; the agent frame gets
+  no destructive shortcut and branch deletion remains out of scope.
+- [x] M2.4 covered by existing server/API recovery owners plus the M2.1
+  fail-closed client lifecycle tests; M2.1 creates no operation to reconcile.
+  Complete Linux/Windows/API/runtime/graph/publication gates close M2.
 
 | Test point | What is tested | Expected result | Reason |
 |---|---|---|---|
@@ -913,6 +913,23 @@ evidence contract proves non-duplicate user value and freezes RED test points.
 | TP-M2-REMOVE | Clean/dirty checkout, open workspace, force stage, missing/replaced path, unrelated directory, branch preservation | Default remove is conservative; force is explicit; unrelated/replacement paths and branches survive | Removal is destructive and TOCTOU-sensitive |
 | TP-M2-RECOVERY | API disconnect, deferred worker panic/cancel, app close/reopen, server restart, partial Git artifacts | Final snapshot is truthful and retry/recovery never duplicates or deletes unrelated state | Client completion is not authority for server-owned worktree state |
 | TP-M2-PLATFORM | Unix/Windows separators, drive roots, reserved components, symlinks, non-UTF-8 display limits | Shared policy is platform-neutral and OS behavior remains compile-gated/tested | Worktree paths are a known cross-platform boundary |
+
+### M2 Closure Evidence
+
+- Evidence/decision publication: `918f4fc`. RED `dab1e20`; GREEN `0ae6175`.
+- `[w]` is pure client-local geometry/render state carrying exact workspace ID,
+  `PaneId`, and `TerminalId`; activation revalidates current cached root Git/
+  worktree capability and emits only the existing open-dialog intent.
+- Exact M2.1 5/5; combined worktree/attachment regression 131/131; full
+  nextest 3202/3202 with only `path_beta_real_host_probe` skipped.
+- Linux all-target and Windows MSVC bin clippy pass with `-D warnings`; Bun
+  17/17; Python maintenance 64/64; fmt and diff checks clean.
+- Full graph refresh: 19,534 nodes / 91,017 edges. Current `miller_layout`,
+  `compute_agent_worktree_action_area`, and cached capability symbols prove
+  freshness beyond `ready`.
+- No dependency, protocol, persisted state, worker, watcher, Git command,
+  filesystem write, pane/process, create/remove/force path, or generic frame-
+  action registry was added.
 
 ### M3 — General Panel/Page/Button Interface Evaluation
 
@@ -945,11 +962,12 @@ evidence contract proves non-duplicate user value and freezes RED test points.
 
 1. M1.0–M1.4 are complete through the atomic RED/GREEN chain and full closure
    gates above. The exact single-file existing-agent scope remains frozen.
-2. M2.0 is complete: duplicate management implementations are NO-GO and one
-   focused-agent launcher into the existing open dialog is the narrow GO.
-   M2.1 must begin with the frozen RED tests and cannot introduce a private
-   TUI-only runtime path.
-3. M3.0 follows only after M1/M2 evidence proves a second real consumer. S5–S7
+2. M2 is complete: duplicate management implementations remain NO-GO and the
+   focused-agent launcher reuses the existing open dialog without a private
+   TUI runtime or mutation path.
+3. M3.0 is next because M1 `[+]` and M2 `[w]` now provide two concrete frame-
+   action consumers. It must still return NO-GO unless measured duplicated
+   lifecycle/ownership justifies an abstraction. S5–S7
    remain NO-GO until their existing concrete triggers are independently met.
 4. N2.2 remains separate from M1–M3 and inactive until cursor-history demand and
    finite eviction/restore semantics are proven.
@@ -962,6 +980,7 @@ reconciliation, C4.4.4 recovery, C4.4.5 gates, and C5.1–C5.5 are complete.
 C6.1–C6.4, P4.0, N2.0, and N2.1 are complete through product commit `c530836`
 plus the continuity commit containing this closure. S5–S7 and the original
 dynamic/unbounded N2 state machine remain evidence-gated implementation NO-GO.
-M1.0–M1.4 are complete for the narrow existing-agent, single-file picker.
-M2.1 focused-agent launcher RED is next, while M3.0 requires a real second consumer from M1/M2. N2.2 and
+M1.0–M1.4 and M2.0–M2.4 are complete. M3.0 evidence evaluation is next now
+that `[+]` and `[w]` are two concrete consumers; production refactoring remains
+NO-GO until that evidence proves a smaller shared contract. N2.2 and
 S5–S7 remain independently gated.

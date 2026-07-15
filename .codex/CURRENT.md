@@ -4,13 +4,13 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Published CyPack checkpoint before this continuity publication: `5e67099`
-  (`docs: define focused-agent attachment picker`).
-- Verified M1 product head: `7d3144e` (`feat: deliver files to focused agents`)
-  and published closure tip: `633dfa6`.
+- Published CyPack checkpoint before this continuity publication: `918f4fc`
+  (`docs: define focused-agent worktree launcher`).
+- Verified M2.1 chain: RED `dab1e20`; GREEN `0ae6175`
+  (`feat: add focused-agent worktree launcher`).
 - Verified C6.4 product/test head: `f52cb85`
   (`test: align image resize target with status geometry`).
-- The pending publication unit is M2.0 evidence/continuity only. At publication,
+- The pending publication unit is M2.1 closure/continuity only. At publication,
   CyPack `feat/native-fm` and fork `master` must be verified at the same
   fast-forward branch tip.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
@@ -19,6 +19,19 @@
 
 - A2.2 responsive Miller columns were committed as `6c7c58f`, full graph-indexed,
   and fast-forward pushed to the CyPack feature branch and fork master only.
+
+## Verified Checkpoint — M2 Focused-Agent Worktree Launcher
+
+- M2.0 rejected duplicate List/Create/Remove/Switch implementations and froze
+  five M2.1 failure-aware test points before Rust production work.
+- RED `dab1e20`; GREEN `0ae6175`. Pure `[w]` geometry sits beside M1 `[+]` and
+  carries exact workspace ID, `PaneId`, and `TerminalId`.
+- Input revalidates current focused agent plus cached non-linked root Git/
+  worktree capability, then emits only the existing open-dialog intent.
+- Exact 5/5; worktree/attachment 131/131; full nextest 3202/3202 plus one named
+  B0 skip; Linux/Windows clippy; Bun 17/17; Python 64/64; fmt/diff clean.
+- Fresh graph is 19,534 nodes / 91,017 edges and returns current
+  `miller_layout`, action geometry, and cached-capability symbols.
 
 ## Verified Checkpoint — C5 Agent Handoff
 
@@ -879,16 +892,13 @@
 
 ## Exact Next Action
 
-1. Commit and publish the M2.0 evidence/continuity unit to CyPack
+1. Commit and publish the M2.1 closure/continuity unit to CyPack
    `feat/native-fm` and fork `master` only after exact FF ancestry checks.
-2. M2.0 is complete in `.codex/evidence/m2-worktree-management-actions.md`.
-   Begin M2.1 with its exact focused-agent `[w]` geometry/render/identity/
-   routing tests RED before production Rust. Reuse the existing open dialog.
-3. Preserve M1's frozen scope: one existing agent, one regular UTF-8 path, one
-   CR, one pending request, one explicit send attempt, zero new resources.
-4. New List/Create/Remove/Switch implementations remain NO-GO. M3.0 remains
-   gated on a second concrete consumer; N2.2 and S5–S7 remain
-   independently deferred.
+2. Begin M3.0 as read-only evidence: quantify whether M1 `[+]` and M2 `[w]`
+   genuinely duplicate ownership/lifecycle. No production abstraction first.
+3. If the trigger is not proven, close M3 implementation NO-GO. New List/
+   Create/Remove/Switch implementations remain NO-GO.
+4. N2.2 and S5–S7 remain independently deferred.
 
 ## Verified B2.0 Dependency Decision
 
