@@ -6,15 +6,13 @@
 - Branch: `feat/native-fm`
 - Published CyPack checkpoint before this continuity publication: `5e67099`
   (`docs: define focused-agent attachment picker`).
-- Verified local M1 product head: `7d3144e` (`feat: deliver files to focused
-  agents`); the atomic M1 RED/GREEN chain and this continuity closure are the
-  pending fork-only publication unit.
+- Verified M1 product head: `7d3144e` (`feat: deliver files to focused agents`)
+  and published closure tip: `633dfa6`.
 - Verified C6.4 product/test head: `f52cb85`
   (`test: align image resize target with status geometry`).
-- The pending publication unit is C6.4 plan/RED/GREEN/test coverage `5b8f327`
-  through `f52cb85` plus the continuity/graph commit containing this file. At publication, CyPack
-  `feat/native-fm` and fork `master` must be verified at that same fast-forward
-  branch tip.
+- The pending publication unit is M2.0 evidence/continuity only. At publication,
+  CyPack `feat/native-fm` and fork `master` must be verified at the same
+  fast-forward branch tip.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
 
 ## Completed Checkpoint
@@ -881,14 +879,15 @@
 
 ## Exact Next Action
 
-1. Publish the verified M1 RED/GREEN chain and continuity closure to CyPack
+1. Commit and publish the M2.0 evidence/continuity unit to CyPack
    `feat/native-fm` and fork `master` only after exact FF ancestry checks.
-2. Begin M2.0 as evidence-only work: compare every proposed FM worktree action
-   against existing dialogs, neutral API, CLI, and keybind surfaces. Produce the
-   action-by-action GO/NO-GO matrix before any Rust production edit.
+2. M2.0 is complete in `.codex/evidence/m2-worktree-management-actions.md`.
+   Begin M2.1 with its exact focused-agent `[w]` geometry/render/identity/
+   routing tests RED before production Rust. Reuse the existing open dialog.
 3. Preserve M1's frozen scope: one existing agent, one regular UTF-8 path, one
    CR, one pending request, one explicit send attempt, zero new resources.
-4. M3.0 remains gated on a second concrete consumer; N2.2 and S5–S7 remain
+4. New List/Create/Remove/Switch implementations remain NO-GO. M3.0 remains
+   gated on a second concrete consumer; N2.2 and S5–S7 remain
    independently deferred.
 
 ## Verified B2.0 Dependency Decision

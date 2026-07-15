@@ -2,9 +2,9 @@
 
 - Updated: 2026-07-15
 - Branch: `feat/native-fm`
-- Published CyPack base: `5e67099`.
-- Verified M1 product head: `7d3144e`; continuity closure is pending commit.
-- Current publication unit: M1.1–M1.4 atomic RED/GREEN chain plus closure. Push
+- Published CyPack base: `633dfa6`.
+- Verified M1 product head: `7d3144e`; closure/published tip: `633dfa6`.
+- Current publication unit: M2.0 evidence/continuity only. Push
   only CyPack `feat/native-fm` and fork `master` after targeted staging,
   fast-forward ancestry, and exact remote-SHA verification.
 
@@ -69,18 +69,18 @@
 
 ## Active Next Increment
 
-M2.0 evidence matrix for Git worktree management actions. No product mutation
-is permitted until existing dialogs/API/CLI/keybinds are compared action by
-action and each candidate terminates GO or NO-GO.
+M2.1 pure focused-agent `[w]` launcher into the existing open-worktree dialog.
+Production begins only after the exact geometry/render/identity/routing tests in
+`.codex/evidence/m2-worktree-management-actions.md` are observed RED.
 
-Test points are the TP-M2-DELTA/IDENTITY/CREATE/REMOVE/RECOVERY/PLATFORM matrix
-in `.codex/TASKS.md`. Expected result: duplicate controls terminate NO-GO;
-only a proven missing lower-friction action may activate a RED production lane.
+M2.0 closed four independent management buttons NO-GO: List/Open/Switch/Create/
+Remove already have neutral API/CLI and mature TUI owners. The only narrow GO
+is visible agent-frame access to the existing non-destructive open dialog.
 
 ## Ordered Roadmap
 
-1. M2.0 evidence matrix for missing Git worktree management actions; no product
-   mutation until action-by-action GO/NO-GO terminates.
+1. M2.1 `[w]` action geometry/render/identity/routing RED then GREEN; reuse the
+   existing open dialog and server authority without new mutation paths.
 2. M3.0 only after M1/M2 creates a second concrete independently owned
    component/page/action family.
 3. N2.2 and S5–S7 remain independently evidence-gated.

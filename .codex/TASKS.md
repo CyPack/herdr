@@ -883,15 +883,18 @@ evidence contract proves non-duplicate user value and freezes RED test points.
 
 ### M2 — Git Worktree Management Actions
 
-- [ ] M2.0 compare the requested FM buttons with existing TUI worktree dialogs,
+- [x] M2.0 compare the requested FM buttons with existing TUI worktree dialogs,
   API `worktree list/open/create/remove`, CLI commands, and keybinds. Publish an
   action-by-action reuse matrix and final GO/NO-GO before adding FM controls.
-- [ ] M2.0a classify every fact: repository/worktree/operation state is server-
+- [x] M2.0a classify every fact: repository/worktree/operation state is server-
   owned; button geometry, focus, selection, and confirmation are client-only.
-- [ ] M2.0b freeze exact repo-root, checkout-path, branch, open-workspace,
+- [x] M2.0b freeze exact repo-root, checkout-path, branch, open-workspace,
   dirty-state, linked-worktree, concurrent-operation, and Windows path cases.
-- [ ] M2.1 add read-only List/Open presentation first if missing, reusing public
-  worktree IDs and existing open-workspace behavior without filesystem writes.
+- [ ] M2.1 RED/GREEN: add one pure focused-agent `[w]` launcher that routes to
+  the existing `OpenExistingWorktree` list/search/open flow. Reuse current
+  workspace IDs and canonical open behavior; add no panel, worker, Git command,
+  filesystem write, create/remove shortcut, or generic action registry. Exact
+  tests are frozen in `.codex/evidence/m2-worktree-management-actions.md`.
 - [ ] M2.2 add Create only through existing API validation/deferred operation;
   relative/escaping/colliding paths, duplicate branches, linked-child sources,
   and create/remove concurrency fail closed before Git mutation.
@@ -942,9 +945,10 @@ evidence contract proves non-duplicate user value and freezes RED test points.
 
 1. M1.0–M1.4 are complete through the atomic RED/GREEN chain and full closure
    gates above. The exact single-file existing-agent scope remains frozen.
-2. M2.0 is the next active evidence lane. It may reuse existing worktree APIs
-   but cannot add product controls until the action-by-action matrix terminates
-   GO/NO-GO or introduce a private TUI-only runtime path.
+2. M2.0 is complete: duplicate management implementations are NO-GO and one
+   focused-agent launcher into the existing open dialog is the narrow GO.
+   M2.1 must begin with the frozen RED tests and cannot introduce a private
+   TUI-only runtime path.
 3. M3.0 follows only after M1/M2 evidence proves a second real consumer. S5–S7
    remain NO-GO until their existing concrete triggers are independently met.
 4. N2.2 remains separate from M1–M3 and inactive until cursor-history demand and
@@ -959,5 +963,5 @@ C6.1–C6.4, P4.0, N2.0, and N2.1 are complete through product commit `c530836`
 plus the continuity commit containing this closure. S5–S7 and the original
 dynamic/unbounded N2 state machine remain evidence-gated implementation NO-GO.
 M1.0–M1.4 are complete for the narrow existing-agent, single-file picker.
-M2.0 evidence is next, while M3.0 requires a real second consumer from M1/M2. N2.2 and
+M2.1 focused-agent launcher RED is next, while M3.0 requires a real second consumer from M1/M2. N2.2 and
 S5–S7 remain independently gated.
