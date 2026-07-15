@@ -12,10 +12,31 @@
 - [x] Keep ignored local continuity repair, tracked documentation, and product
   code as separate concerns; no product code changed in this audit.
 
-The queue is intentionally not filled with speculative implementation. The
-only unchecked boxes in this file are the four future trigger-gated items;
-their absence of activation is a verified architecture decision, not missing
-task decomposition.
+The product queue is intentionally not filled with speculative implementation.
+The only unchecked product boxes in this file are the four future
+trigger-gated items; their absence of activation is a verified architecture
+decision, not missing task decomposition. A separate non-product tooling lane
+is tracked below and does not activate those product items.
+
+## Active Non-Product Tooling Lane — Change Pipeline
+
+- [x] Define Ratatui/reference intelligence v2.1 (`86a25e8`).
+- [x] Define and generalize Herdr change intelligence plus delivery
+  (`0ea0f77`, `600c0d6`).
+- [x] Create the durable macro/micro task registry and mid-flight adoption
+  contract.
+- [ ] Review and approve the written specs plus registry.
+- [ ] Produce the exact code-level TDD implementation plan.
+- [ ] Implement and verify the independently versioned skills, adapters,
+  validators, evals, pilots, Git publication, and graph refresh.
+
+Full non-product macro/micro registry:
+`.codex/CHANGE-PIPELINE-TASKS.md`.
+
+This lane does not authorize Rust product changes and does not activate S5,
+S6, S7, or N2.2. A parallel feature/bugfix session may use the registry's
+mid-flight adoption contract only after it inventories and preserves the live
+work state.
 
 ## P0 — Close the Current Increment
 

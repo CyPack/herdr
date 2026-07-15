@@ -15,6 +15,23 @@
   publication or implementation task remains pending.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
 
+## Active Non-Product Tooling Lane — Change Pipeline
+
+- Design commits `86a25e8`, `0ea0f77`, and `600c0d6` define Ratatui reference
+  intelligence v2.1 plus generalized A0-A7 change intelligence and I0-I14
+  delivery governance.
+- Durable human/agent task state is in
+  `.codex/CHANGE-PIPELINE-TASKS.md`; current macro is T0 and the active micro
+  action is T0.6 written review/approval.
+- The registry includes a mid-flight adoption path for an existing file-manager
+  feature/bugfix session: inspect and preserve current work, reconstruct A0-A7,
+  classify the current I-phase, then enforce the remaining gates.
+- The new `herdr-change-pipeline` skill and Ratatui v2.1 implementation are not
+  yet built. Product-code authorization remains false; no push or reindex has
+  been performed for this planning lane.
+- This lane does not activate S5, S6, S7, or N2.2 and never authorizes touching
+  stable Herdr or inherited stable sockets.
+
 ## Verified Checkpoint — Native-FM Completion Audit
 
 - `.codex/evidence/native-fm-completion-audit.md` reconciles the complete
@@ -932,14 +949,16 @@
 
 ## Exact Next Action
 
-1. No product or architecture publication is pending after the M3.0 evidence
-   checkpoint `e9f2fe0`.
-2. Do not start speculative production work. Activate only a
+1. Review and approve `.codex/CHANGE-PIPELINE-TASKS.md` plus its two linked
+   design specs; after approval, T1 produces the exact code-level TDD plan.
+2. The tooling lane is not product authority. No product or architecture
+   publication is pending after the M3.0 evidence checkpoint `e9f2fe0`.
+3. Do not start speculative production work. Activate only a
    task whose recorded trigger is independently satisfied by real product
    demand.
-3. S5–S7 and N2.2 remain the durable future task list with explicit trigger,
+4. S5–S7 and N2.2 remain the durable future product list with explicit trigger,
    characterization, migration, and rollback requirements in `TASKS.md`.
-4. Any third frame action first evaluates a private pure geometry/render helper;
+5. Any third frame action first evaluates a private pure geometry/render helper;
    it does not automatically authorize a registry or general page interface.
 
 ## Verified B2.0 Dependency Decision
