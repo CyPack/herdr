@@ -15,6 +15,22 @@
   publication or implementation task remains pending.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
 
+## Verified Checkpoint — Native-FM Completion Audit
+
+- `.codex/evidence/native-fm-completion-audit.md` reconciles the complete
+  A1–C6/N1/N3/N4/N2.1/M1/M2 scope, M3 NO-GO, gate evidence, graph state, and
+  fork-only Git baseline.
+- The apparent empty/incorrect queue was continuity drift in ignored local PRD
+  files: B0, A3 remainder, and B1–C6 were still marked pending despite their
+  published closure. The root tree, module checklists, and local next-session
+  prompt now match tracked truth.
+- No Rust, dependency, protocol, persisted state, filesystem operation,
+  process, pane, socket, or stable Herdr resource changed during the audit.
+- Fresh exact-head characterization is 16/16, zero retry, nextest run
+  `c3e40137-6400-4547-9eb8-729f29fd6583`.
+- No speculative production increment is active. S5, S6, S7, and N2.2 remain
+  the only unchecked tasks and require their recorded independent triggers.
+
 ## Completed Checkpoint
 
 - A2.2 responsive Miller columns were committed as `6c7c58f`, full graph-indexed,

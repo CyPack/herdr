@@ -2,20 +2,14 @@
 
 ## 1. SONRAKI ADIM
 
-M1.0–M1.4 are complete through product head `7d3144e`: the focused agent stays
-visible, `[+]`/`prefix+a` opens a Clear-first single-file picker, and the
-scheduled boundary sends one literal UTF-8 path plus CR after exact workspace/
-`PaneId`/`TerminalId`, selection, metadata, payload, and runtime revalidation.
-The M1 chain is published exactly to both CyPack refs. M2 is complete through
-RED `dab1e20` and GREEN `0ae6175`: `[w]` revalidates exact focused-agent and
-cached root-worktree authority, then enters the existing open dialog. Duplicate
-List/Create/Remove/Switch implementations remain NO-GO. M3.0–M3.3 are now
-closed implementation NO-GO: `[+]` and `[w]` repeat only small pure geometry/
-render mechanics, while lifecycle, authority, focus, and cleanup owners differ.
-No Rust production code changed. Future work remains S5–S7 and N2.2 only when
-their explicit independent triggers are satisfied. M3 evidence commit
-`e9f2fe0` is published with exact SHA equality to both CyPack refs. Never touch
-stable Herdr/socket/processes.
+The completion audit proves A1–C6, N1/N3/N4, N2.1, M1, and M2 are complete;
+M3 is closed implementation NO-GO. The stale ignored local PRD root, module
+checklists, and next-session prompt were synchronized so no future agent treats
+B0, A3 remainder, or B1–C6 as unfinished. Evidence is
+`.codex/evidence/native-fm-completion-audit.md`. No speculative production lane
+is active. Inspect the four recorded triggers first: S5, S6, S7, and N2.2. If
+none is satisfied, do not manufacture implementation work. Never touch stable
+Herdr/socket/processes.
 
 ## 2. AKTİF PROJE
 

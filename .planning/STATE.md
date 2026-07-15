@@ -6,6 +6,9 @@
 - Verified M2.1 chain: RED `dab1e20`; GREEN product head `0ae6175`.
 - M3.0 evidence is published with exact SHA equality to CyPack
   `feat/native-fm` and fork `master`. No product publication is pending.
+- Completion audit: all approved native-FM core/post-core scope is reconciled
+  in `.codex/evidence/native-fm-completion-audit.md`; ignored local PRD drift
+  was repaired without product changes. Only S5/S6/S7/N2.2 remain trigger-gated.
 
 ## Completed
 

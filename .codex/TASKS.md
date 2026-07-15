@@ -1,5 +1,22 @@
 # Durable Tasks — Herdr Native FM
 
+## P0 — Completion Audit (2026-07-15)
+
+- [x] Reconcile the ignored local `00-MODULE-TREE.md` and all A1–C6 module
+  checklists against tracked commits and gate evidence.
+- [x] Prove all thirteen core modules plus N1/N3/N4, N2.1, M1, and M2 are
+  closed; prove M3 is an evidence-backed implementation NO-GO.
+- [x] Preserve exactly four evidence-gated future items: S5, S6, S7, and N2.2.
+- [x] Record module-by-module commit, regression, graph, and Git evidence in
+  `.codex/evidence/native-fm-completion-audit.md`.
+- [x] Keep ignored local continuity repair, tracked documentation, and product
+  code as separate concerns; no product code changed in this audit.
+
+The queue is intentionally not filled with speculative implementation. The
+only unchecked boxes in this file are the four future trigger-gated items;
+their absence of activation is a verified architecture decision, not missing
+task decomposition.
+
 ## P0 — Close the Current Increment
 
 - [x] Recover and audit Claude session `f53c720f-f795-4778-970b-d227714ffb1a`.
