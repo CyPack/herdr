@@ -302,25 +302,27 @@ It never re-derives geometry from coordinates and never reads the filesystem.
 **Files:** `src/ui/shell.rs`, `src/ui.rs`, `src/persist/snapshot.rs`,
 `src/server/headless.rs`, `src/server/client_transport.rs` tests only.
 
-- [ ] Run Codebase Memory `search_graph` and `get_code_snippet` for every test
+- [x] Run Codebase Memory `search_graph` and `get_code_snippet` for every test
   and production symbol named above; record graph counts and current SHA.
-- [ ] Run the existing focused baseline:
+- [x] Run the existing focused baseline:
 
   ```bash
   cargo nextest run --locked -E 'test(/(default_matches_legacy_outer_split_exactly|desktop_shell_regions_match_computed_geometry|mobile_view_leaves_shell_regions_empty|open_file_manager_renders_directory_list_in_center|native_fm_composes_sidebar_breakpoints_and_status_across_full_frames|old_snapshot_defaults_sidebar_fields|capture_contract_tracks_sidebar_state|render_and_stream_skips_identical_frame_sends|retained_pty_update_streams_dirty_row_from_last_frame|client_writer_queue_keeps_render_slot_bounded)/)' --status-level fail --final-status-level fail --failure-output final --success-output never
   ```
 
   Expected: all selected tests pass; zero tests selected is failure.
-- [ ] Add missing assertions only where the current test does not prove the
+- [x] Add missing assertions only where the current test does not prove the
   named behavior. Do not change production behavior.
-- [ ] Add characterization `files_curtain_currently_replaces_terminal_surface`
+- [x] Add characterization `files_curtain_currently_replaces_terminal_surface`
   that proves the current state: FM content occupies `terminal_area`, terminal
   pane content is absent, and the terminal runtime registry is unchanged.
-- [ ] Run the characterization and require GREEN because SF1 freezes existing
+- [x] Run the characterization and require GREEN because SF1 freezes existing
   behavior rather than introducing target behavior.
-- [ ] Run full baseline nextest and direct maintenance gates.
-- [ ] Targeted-stage test files only and commit:
+- [x] Run full baseline nextest and direct maintenance gates.
+- [x] Targeted-stage test files only and commit:
   `test: characterize shell foundation baseline`.
+
+Closure evidence: `.codex/evidence/shell-foundation-sf1-characterization.md`.
 
 ## SF2 — Shell Geometry Foundation
 

@@ -6,6 +6,8 @@
 - Branch: `feat/native-fm`
 - Published SF0 planning artifact checkpoint: `32856f7`
   (`docs: plan shell foundation and files workspace`).
+- Published SF1 characterization checkpoint: `7b9b626d`
+  (`test: characterize shell foundation baseline`).
 - The artifact checkpoint was fast-forward published to both CyPack
   `feat/native-fm` and fork `master`; exact remote SHA equality was verified.
 - Published CyPack M3 evidence checkpoint: `e9f2fe0`
@@ -32,14 +34,20 @@
   `docs/superpowers/plans/2026-07-15-herdr-file-manager-post-shell-implementation.md`.
 - Plan review evidence:
   `.codex/evidence/shell-foundation-plan-review.md`.
-- SF0 is closed. A0-A7 are complete and the approved plans manually evidence
-  I0-I5. The current delivery phase is I6: run and strengthen SF1
-  characterization before the first new SF2 behavior RED. No Shell Foundation
-  Rust product code has been written yet.
-- Post-publication graph evidence is 19,808 nodes / 91,543 edges. Freshness was
-  proved again through the current `miller_layout` symbol; the earlier planning
-  queries also covered persistence, render, queue, retained-PTY, input, shell,
-  and Files lifecycle seams. `ready` alone was not accepted.
+- SF0 and SF1 are closed. A0-A7 and I0-I6 are complete. SF1 added only the
+  current-curtain characterization; no Shell Foundation production behavior
+  changed. The current delivery phase is I7/SF2: observe the first genuine,
+  compile-valid geometry RED.
+- SF1 commit `7b9b626d` is fast-forward published to both CyPack refs. Exact
+  SHA equality at its product/test checkpoint was
+  `7b9b626d3e84b4ba03856a8f54b81196985d3f48`. Focused characterization is
+  11/11; full nextest is 3203/3203 plus only the named B0 real-host probe skip;
+  Linux/Windows Clippy, Bun 17/17, Python 64/64, fmt, diff, and temp-residue
+  gates are clean.
+- Post-publication graph evidence is 19,809 nodes / 91,610 edges. Freshness is
+  proved through exact snippets for both
+  `files_curtain_currently_replaces_terminal_surface` and `miller_layout`;
+  `ready` alone was not accepted.
 - The prior P4.0 S6 and dynamic-N2 NO-GO decisions were correct for the then-
   available evidence. The later explicit user demand now supplies the missing
   triggers: a real AppDock/WorkspaceStage/Files consumer, resizable/collapsible
@@ -1002,14 +1010,13 @@
 
 ## Exact Next Action
 
-1. Enter I6/SF1. Re-query exact current symbols, run the frozen focused
-   characterization inventory, and add only the missing
-   `files_curtain_currently_replaces_terminal_surface` characterization. SF1 is
-   test-only; product behavior must not change.
-2. Require the focused and full baseline green before SF2. Then add the single
-   compile-valid behavior RED
+1. Enter I7/SF2. Add only the single compile-valid behavior RED
    `shell_layout_places_dock_sidebar_stage_without_overlap` and observe its
-   intended assertion failure before production geometry code.
+   intended geometry/deserialize assertion failure before production code.
+   Compile, setup, filter, fixture, or unrelated failures do not count as RED.
+2. After recording exact RED evidence, implement only the bounded named-region
+   model and typed-template GREEN specified by SF2.2; keep legacy projection
+   unchanged and rerun the SF1 11-test baseline after every slice.
 3. Execute phases sequentially through the approved child plans. Do not mix
    tooling T3.1, Apps/Desktop, S5 registry, S7 popup stack, or unrelated
    refactors into a product commit.

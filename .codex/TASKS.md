@@ -60,19 +60,23 @@ Authoritative plans:
   CyPack refs with exact SHA equality; post-publication graph freshness is
   19,808 nodes / 91,543 edges with current `miller_layout` proof.
 
-### SF1 — Characterization Tests (I6, next executable phase)
+### SF1 — Characterization Tests (I6 closed)
 
-- [ ] Re-query every named baseline symbol and detect drift from the plans.
-- [ ] Run the exact legacy desktop/mobile shell, Files composition, v3
+- [x] Re-query every named baseline symbol and detect drift from the plans.
+- [x] Run the exact legacy desktop/mobile shell, Files composition, v3
   persistence, identical-frame, retained dirty-row, and bounded-render-queue
   characterization inventory.
-- [ ] Add test-only
+- [x] Add test-only
   `files_curtain_currently_replaces_terminal_surface`; prove current Files
   replacement behavior and unchanged terminal runtime registry.
-- [ ] Run the focused set plus fresh full nextest/direct maintenance baseline.
-- [ ] Commit tests only as `test: characterize shell foundation baseline`.
+- [x] Run the focused set plus fresh full nextest/direct maintenance baseline.
+- [x] Commit tests only as `test: characterize shell foundation baseline`.
+  Commit `7b9b626d` is fast-forward published to both CyPack refs; focused
+  characterization is 11/11, full nextest is 3203/3203 plus the named B0 host
+  probe skip, Linux/Windows Clippy is clean, Bun is 17/17, Python is 64/64,
+  and the refreshed graph is 19,809 nodes / 91,610 edges.
 
-### SF2 — Shell Geometry Foundation
+### SF2 — Shell Geometry Foundation (I7, next executable phase)
 
 - [ ] RED `shell_layout_places_dock_sidebar_stage_without_overlap` with a
   compile-valid behavior assertion.

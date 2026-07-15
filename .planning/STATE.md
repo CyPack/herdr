@@ -4,14 +4,16 @@
 - Branch: `feat/native-fm`
 - Published SF0 planning artifact checkpoint: `32856f7`
   (`docs: plan shell foundation and files workspace`).
+- Published SF1 characterization checkpoint: `7b9b626d`
+  (`test: characterize shell foundation baseline`).
 - Exact remote SHA equality was verified for CyPack `feat/native-fm` and fork
   `master` at the artifact checkpoint.
 - Approved product program: SF0-SF6 followed by FM1-FM5; Apps/Desktop remains
   a later independent program.
-- Current phase: SF0 closed; I6/SF1 characterization is the next executable
-  phase. No Shell Foundation Rust product code exists yet.
-- Current graph: 19,808 nodes / 91,543 edges. Freshness is proved through the
-  current `miller_layout` symbol rather than `ready` alone.
+- Current phase: SF0-SF1 closed; I7/SF2 geometry RED is the next executable
+  phase. No Shell Foundation Rust production code exists yet.
+- Current graph: 19,809 nodes / 91,610 edges. Freshness is proved through the
+  new SF1 characterization and current `miller_layout`, not `ready` alone.
 - Published CyPack M3 evidence checkpoint: `e9f2fe0`.
 - Verified M2.1 chain: RED `dab1e20`; GREEN product head `0ae6175`.
 - M3.0 evidence is published with exact SHA equality to CyPack
@@ -90,13 +92,13 @@
 
 ## Active Next Increment
 
-- Enter I6/SF1 and add only the test-only characterization
-  `files_curtain_currently_replaces_terminal_surface` after re-querying the
-  frozen baseline symbols and running the existing characterization inventory.
-- Require the focused and full baseline green before SF2. The first new
-  behavior RED is
+- Enter I7/SF2. The first new behavior RED is
   `shell_layout_places_dock_sidebar_stage_without_overlap`; compile/setup or
-  filter failures do not count as RED.
+  filter/fixture failures do not count as RED. Require the failure to be the
+  intended named-region geometry/deserialize assertion.
+- Preserve the published SF1 11-test characterization baseline while adding
+  the bounded named-region model and typed templates in atomic RED/GREEN
+  slices.
 - Execute SF2-SF6 and then FM1-FM5 sequentially through the approved child
   plans. Product, continuity, and tooling concerns remain separate.
 
