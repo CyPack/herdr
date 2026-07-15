@@ -404,6 +404,12 @@ where
         };
     }
     observer(0);
+    if cancellation.is_cancelled() {
+        return RenameOperationExecutionResult {
+            status: RenameOperationExecutionStatus::Cancelled,
+            outcome: RenameOperationOutcome::NotStarted,
+        };
+    }
     if let Err(error) = host.before_revalidation() {
         return retained_result(RenameOperationError::Io(error.kind()));
     }
