@@ -597,6 +597,7 @@ impl crate::app::App {
         changed |= self.consume_file_manager_context_rename();
         changed |= self.consume_file_manager_context_delete();
         changed |= self.consume_file_manager_context_copy();
+        changed |= self.consume_unsupported_file_manager_context_action();
         let drained = self.file_operation_worker.drain();
         if let Some(progress) = drained.progress {
             if let Some(operation) = self.state.file_manager_operation.as_mut() {
@@ -1025,6 +1026,21 @@ impl crate::app::App {
                 file_manager.enter();
             }
         }
+        true
+    }
+
+    fn consume_unsupported_file_manager_context_action(&mut self) -> bool {
+        use crate::app::state::FileManagerContextMenuAction;
+
+        let is_unsupported = self
+            .state
+            .request_file_manager_context_action
+            .as_ref()
+            .is_some_and(|intent| intent.action == FileManagerContextMenuAction::Compress);
+        if !is_unsupported {
+            return false;
+        }
+        self.state.request_file_manager_context_action = None;
         true
     }
 

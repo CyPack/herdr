@@ -49,7 +49,7 @@ pub(super) fn handle_file_manager_key(
     }
     match (key.code, key.modifiers) {
         (KeyCode::Esc | KeyCode::Char('q'), _) => {
-            state.file_manager = None;
+            state.close_file_manager();
         }
         (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
             if let Some(fm) = state.file_manager.as_mut() {
