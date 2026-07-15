@@ -330,6 +330,81 @@ mod tests {
     #[test]
     fn shell_rejects_collapsed_or_missing_stage() {
         assert_serialized_shell_rejected(serialized_slot("LeftPanel"), "MissingWorkspaceStage");
+
+        assert_serialized_shell_document_rejected(
+            serde_json::json!({
+                "root": serialized_slot("WorkspaceStage"),
+                "tracks": {
+                    "WorkspaceStage": { "Collapsed": { "restore": 20 } }
+                }
+            }),
+            "CollapsedWorkspaceStage",
+        );
+    }
+
+    #[test]
+    fn shell_rejects_more_than_thirty_two_stack_children() {
+        assert_serialized_shell_document_rejected(
+            serde_json::json!({
+                "root": serialized_slot("WorkspaceStage"),
+                "stacks": [{
+                    "children": vec!["AppDock"; 33],
+                    "selected": 0,
+                }]
+            }),
+            "StackChildrenExceeded",
+        );
+    }
+
+    #[test]
+    fn shell_rejects_more_than_sixty_four_component_placements() {
+        let placements = vec![
+            serde_json::json!({
+                "component": "AppDock",
+                "region": "AppDock",
+            });
+            65
+        ];
+        assert_serialized_shell_document_rejected(
+            serde_json::json!({
+                "root": serialized_slot("WorkspaceStage"),
+                "component_placements": placements,
+            }),
+            "ComponentPlacementsExceeded",
+        );
+    }
+
+    #[test]
+    fn shell_rejects_duplicate_component_placement() {
+        let placement = serde_json::json!({
+            "component": "AppDock",
+            "region": "AppDock",
+        });
+        assert_serialized_shell_document_rejected(
+            serde_json::json!({
+                "root": serialized_slot("WorkspaceStage"),
+                "component_placements": [placement.clone(), placement],
+            }),
+            "DuplicateComponentPlacement",
+        );
+    }
+
+    #[test]
+    fn typed_templates_validate_without_runtime_registry() {
+        for template in [
+            "StageOnly",
+            "DockStage",
+            "DockSidebarStage",
+            "DesktopWorkspace",
+            "InspectorWorkspace",
+        ] {
+            let serialized = serde_json::json!({ "template": template }).to_string();
+            let layout = serde_json::from_str::<ShellLayout>(&serialized);
+            assert!(
+                layout.is_ok(),
+                "typed template {template} should validate without a runtime registry: {layout:?}"
+            );
+        }
     }
 
     fn serialized_slot(region: &str) -> serde_json::Value {
@@ -350,7 +425,11 @@ mod tests {
     }
 
     fn assert_serialized_shell_rejected(root: serde_json::Value, expected: &str) {
-        let serialized = serde_json::json!({ "root": root }).to_string();
+        assert_serialized_shell_document_rejected(serde_json::json!({ "root": root }), expected);
+    }
+
+    fn assert_serialized_shell_document_rejected(document: serde_json::Value, expected: &str) {
+        let serialized = document.to_string();
         let result = serde_json::from_str::<ShellLayout>(&serialized);
         assert!(
             result.is_err(),
