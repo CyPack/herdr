@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
 
 EXPECTED_PHASE_IDS = [f"P{index}" for index in range(15)]
 EXPECTED_PIPELINE_ID = "reference-project-intelligence-v2"
+EXPECTED_PIPELINE_VERSION = "2.1.0"
 EXPECTED_SCOPE = "research-corpus-and-integration-intelligence-only"
 REQUIRED_STATUSES = {
     "queued",
@@ -39,6 +41,7 @@ REQUIRED_ARTIFACTS = {
     "component-integration-map.json",
     "implementation-plan.json",
     "integration-verification.json",
+    "stack-adaptation-map.json",
 }
 INTEGRATION_ARTIFACTS = {
     "herdr-system-map.json",
@@ -48,6 +51,14 @@ INTEGRATION_ARTIFACTS = {
     "component-integration-map.json",
     "implementation-plan.json",
     "integration-verification.json",
+    "stack-adaptation-map.json",
+}
+STACK_ARTIFACT = "stack-adaptation-map.json"
+STACK_PHASE_BINDINGS = {
+    "P2": "create_stack_adaptation_source_semantics",
+    "P5": "classify_stack_translation_mode_and_license_boundary",
+    "P9": "finalize_stack_target_binding_and_semantic_diff",
+    "P14": "audit_stack_adaptation_traceability_and_isolation",
 }
 REQUIRED_INTEGRATION_ROLES = {
     "herdr_cartographer",
@@ -117,6 +128,8 @@ def validate_pipeline(manifest: Any) -> list[str]:
         errors.append("schema_version must equal 2")
     if manifest.get("pipeline_id") != EXPECTED_PIPELINE_ID:
         errors.append(f"pipeline_id must equal {EXPECTED_PIPELINE_ID}")
+    if manifest.get("pipeline_version") != EXPECTED_PIPELINE_VERSION:
+        errors.append(f"pipeline_version must equal {EXPECTED_PIPELINE_VERSION}")
     if manifest.get("scope") != EXPECTED_SCOPE:
         errors.append(f"scope must equal {EXPECTED_SCOPE}")
 
@@ -188,6 +201,17 @@ def validate_pipeline(manifest: Any) -> list[str]:
         gate = phase.get("gate")
         if not isinstance(gate, str) or not gate.strip():
             errors.append(f"phase {phase_id} needs a non-empty gate")
+
+        stack_job = STACK_PHASE_BINDINGS.get(phase_id)
+        if stack_job is not None:
+            if not isinstance(jobs, list) or stack_job not in jobs:
+                errors.append(f"phase {phase_id} must bind stack job {stack_job}")
+            if not isinstance(outputs, list) or STACK_ARTIFACT not in outputs:
+                errors.append(
+                    f"phase {phase_id} must output stack-adaptation-map.json"
+                )
+            if not isinstance(gate, str) or "stack" not in gate.lower():
+                errors.append(f"phase {phase_id} gate must audit stack adaptation")
 
     cycle = _dependency_cycle(dependency_graph)
     if cycle is not None:
@@ -263,12 +287,40 @@ def validate_run_template(pipeline: Any, run_template: Any) -> list[str]:
         errors.append("run template schema_version must match the pipeline")
     if run_template.get("pipeline_id") != pipeline.get("pipeline_id"):
         errors.append("run template pipeline_id must match the pipeline")
+    if run_template.get("module_version") != EXPECTED_PIPELINE_VERSION:
+        errors.append("run template module_version must equal 2.1.0")
+    if run_template.get("pipeline_version") != pipeline.get("pipeline_version"):
+        errors.append("run template pipeline_version must match the pipeline")
 
     target = run_template.get("target")
     if not isinstance(target, dict) or target.get("project") != "herdr":
         errors.append("run template target project must be herdr")
-    elif target.get("product_code_changes_authorized") is not False:
-        errors.append("run template must not authorize product code changes")
+    else:
+        if target.get("product_code_changes_authorized") is not False:
+            errors.append("run template must not authorize product code changes")
+        if target.get("stable_runtime_operations_authorized") is not False:
+            errors.append("run template must not authorize stable runtime operations")
+
+    stack = run_template.get("stack_adaptation")
+    if not isinstance(stack, dict):
+        errors.append("run stack_adaptation must be an object")
+    else:
+        if stack.get("artifact") != STACK_ARTIFACT:
+            errors.append("run stack_adaptation artifact must match the pipeline")
+        if stack.get("schema_version") != 1:
+            errors.append("run stack_adaptation schema_version must equal 1")
+        if stack.get("status") not in pipeline.get("statuses", []):
+            errors.append("run stack_adaptation status is unknown")
+        sha256 = stack.get("sha256")
+        if sha256 is not None and not (
+            isinstance(sha256, str) and re.fullmatch(r"[0-9a-f]{64}", sha256)
+        ):
+            errors.append("run stack_adaptation sha256 must be null or lowercase hex")
+        if not isinstance(stack.get("pending_fields"), list):
+            errors.append("run stack_adaptation pending_fields must be an array")
+        blocker = stack.get("blocker")
+        if blocker is not None and not isinstance(blocker, str):
+            errors.append("run stack_adaptation blocker must be null or a string")
 
     fidelity = run_template.get("fidelity")
     pipeline_fidelity = pipeline.get("fidelity_contract", {})
@@ -314,6 +366,17 @@ def validate_run_template(pipeline: Any, run_template: Any) -> list[str]:
             errors.append(f"run template phase {phase_id} attempts must be an array")
         if not isinstance(phase_state.get("artifacts"), list):
             errors.append(f"run template phase {phase_id} artifacts must be an array")
+
+    verification = run_template.get("verification")
+    for key in (
+        "stack_schema",
+        "stack_traceability",
+        "stack_product_isolation",
+    ):
+        if not isinstance(verification, dict) or key not in verification:
+            errors.append(f"run verification {key} must be present and null")
+        elif verification.get(key) is not None:
+            errors.append(f"run verification {key} must be present and null")
 
     return errors
 

@@ -1,6 +1,7 @@
 {
   "schema_version": 2,
   "pipeline_id": "reference-project-intelligence-v2",
+  "pipeline_version": "2.1.0",
   "scope": "research-corpus-and-integration-intelligence-only",
   "statuses": ["queued", "running", "passed", "partial", "blocked", "failed", "skipped"],
   "input_contract": {
@@ -48,9 +49,9 @@
       "name": "architecture_runtime_and_data_flow",
       "owner": "runtime_analyst",
       "depends_on": ["P1"],
-      "jobs": ["map_entrypoints_and_configuration", "map_modules_services_and_ownership", "trace_primary_call_paths", "trace_end_to_end_data_flows", "map_persistence_failures_and_hotspots"],
-      "outputs": ["data-flow.json", "evidence.jsonl", "ANALYSIS.md"],
-      "gate": "claim-bound edges and flows with source, transforms, destination, fallback and failure paths"
+      "jobs": ["map_entrypoints_and_configuration", "map_modules_services_and_ownership", "trace_primary_call_paths", "trace_end_to_end_data_flows", "map_persistence_failures_and_hotspots", "create_stack_adaptation_source_semantics"],
+      "outputs": ["data-flow.json", "evidence.jsonl", "ANALYSIS.md", "stack-adaptation-map.json"],
+      "gate": "claim-bound edges and flows with source, transforms, destination, fallback and failure paths; stack source semantics and trigger/data-flow evidence are complete"
     },
     {
       "id": "P3",
@@ -75,9 +76,9 @@
       "name": "classification_and_herdr_extraction",
       "owner": "classifier_extractor",
       "depends_on": ["P2", "P3", "P4"],
-      "jobs": ["classify_project_form_and_compatibility", "create_taxonomy_bound_claims", "separate_reuse_and_caution_buckets", "define_herdr_ownership_purity_and_adaptation", "apply_license_constraints_and_prioritize_extractions"],
-      "outputs": ["classification.json"],
-      "gate": "taxonomy-valid evidence claims with confidence, reuse mode, adaptation cost and cautions"
+      "jobs": ["classify_project_form_and_compatibility", "create_taxonomy_bound_claims", "separate_reuse_and_caution_buckets", "define_herdr_ownership_purity_and_adaptation", "apply_license_constraints_and_prioritize_extractions", "classify_stack_translation_mode_and_license_boundary"],
+      "outputs": ["classification.json", "stack-adaptation-map.json"],
+      "gate": "taxonomy-valid evidence claims with confidence, reuse mode, adaptation cost and cautions; stack translation mode and license boundary are explicit"
     },
     {
       "id": "P6",
@@ -111,9 +112,9 @@
       "name": "behavior_gap_and_coverage_analysis",
       "owner": "behavior_gap_analyst",
       "depends_on": ["P5", "P8"],
-      "jobs": ["enumerate_reference_behaviors_and_visible_states", "map_triggers_preconditions_transitions_and_results", "match_each_behavior_to_existing_herdr_capability", "classify_coverage_exact_partial_absent_conflicting_or_out_of_scope", "identify_keyboard_mouse_focus_and_failure_gaps", "define_target_behavior_contracts_and_acceptance_tests", "rank_gaps_by_user_value_dependency_risk_and_reuse"],
-      "outputs": ["behavior-gap-matrix.json"],
-      "gate": "every source behavior has evidence, current Herdr coverage, target decision, state owner, dependencies and acceptance tests; no visual inference is counted as behavior coverage"
+      "jobs": ["enumerate_reference_behaviors_and_visible_states", "map_triggers_preconditions_transitions_and_results", "match_each_behavior_to_existing_herdr_capability", "classify_coverage_exact_partial_absent_conflicting_or_out_of_scope", "identify_keyboard_mouse_focus_and_failure_gaps", "define_target_behavior_contracts_and_acceptance_tests", "rank_gaps_by_user_value_dependency_risk_and_reuse", "finalize_stack_target_binding_and_semantic_diff"],
+      "outputs": ["behavior-gap-matrix.json", "stack-adaptation-map.json"],
+      "gate": "every source behavior has evidence, current Herdr coverage, target decision, state owner, dependencies and acceptance tests; no visual inference is counted as behavior coverage; stack target binding and semantic, failure, performance and ownership diffs are complete"
     },
     {
       "id": "P10",
@@ -156,9 +157,9 @@
       "name": "integration_readiness_audit",
       "owner": "evidence_auditor",
       "depends_on": ["P7", "P10", "P11", "P12", "P13"],
-      "jobs": ["validate_all_integration_artifact_schemas_and_references", "audit_requirement_to_behavior_data_component_and_test_traceability", "audit_target_graph_freshness_and_exact_symbol_evidence", "audit_zero_undeclared_fidelity_diff_contract", "audit_runtime_client_purity_license_and_product_isolation", "audit_failure_reconnect_capability_and_boundedness_coverage", "compute_integration_v_and_terminal_status", "publish_implementation_ready_handoff_or_explicit_blockers"],
-      "outputs": ["run.json", "integration-validation-records", "integration-readiness-handoff"],
-      "gate": "all schemas and references validate, integration V=0, no undeclared fidelity gaps remain, authority and test coverage are complete, and no product code changed"
+      "jobs": ["validate_all_integration_artifact_schemas_and_references", "audit_requirement_to_behavior_data_component_and_test_traceability", "audit_target_graph_freshness_and_exact_symbol_evidence", "audit_zero_undeclared_fidelity_diff_contract", "audit_runtime_client_purity_license_and_product_isolation", "audit_failure_reconnect_capability_and_boundedness_coverage", "compute_integration_v_and_terminal_status", "publish_implementation_ready_handoff_or_explicit_blockers", "audit_stack_adaptation_traceability_and_isolation"],
+      "outputs": ["run.json", "integration-validation-records", "integration-readiness-handoff", "stack-adaptation-map.json"],
+      "gate": "all schemas and references validate, integration V=0, no undeclared fidelity gaps remain, authority and test coverage are complete, stack adaptation traceability and isolation pass, and no product code changed"
     }
   ],
   "parallel_groups": [
@@ -184,7 +185,8 @@
     "layout-fidelity-spec.json",
     "component-integration-map.json",
     "implementation-plan.json",
-    "integration-verification.json"
+    "integration-verification.json",
+    "stack-adaptation-map.json"
   ],
   "artifact_templates": {
     "herdr-system-map.json": "assets/templates/herdr-system-map-template.json",
@@ -193,7 +195,8 @@
     "layout-fidelity-spec.json": "assets/templates/layout-fidelity-spec-template.json",
     "component-integration-map.json": "assets/templates/component-integration-map-template.json",
     "implementation-plan.json": "assets/templates/implementation-plan-template.json",
-    "integration-verification.json": "assets/templates/integration-verification-template.json"
+    "integration-verification.json": "assets/templates/integration-verification-template.json",
+    "stack-adaptation-map.json": "assets/templates/stack-adaptation-map-template.json"
   },
   "authority_contract": {
     "allowed_values": ["server", "api_transport", "client_presentation", "absent", "out_of_scope"],
@@ -216,7 +219,7 @@
     "fresh_evidence_before_completion": true
   },
   "completion_contract": {
-    "passed_requires": ["immutable_source", "ready_fresh_source_and_target_graphs", "evidence_backed_source_maps", "truthful_source_verification", "complete_classification", "complete_behavior_data_layout_component_and_test_traceability", "zero_undeclared_fidelity_diffs", "registry_map_and_schema_validation", "source_and_integration_V_zero", "source_and_product_isolation"],
+    "passed_requires": ["immutable_source", "ready_fresh_source_and_target_graphs", "evidence_backed_source_maps", "truthful_source_verification", "complete_classification", "complete_behavior_data_layout_component_and_test_traceability", "complete_stack_adaptation_traceability", "zero_undeclared_fidelity_diffs", "registry_map_and_schema_validation", "source_and_integration_V_zero", "source_and_product_isolation"],
     "mcp_unavailable": "blocked",
     "unresolved_claims": "partial",
     "source_copy_default": "forbidden_until_license_and_reuse_review",

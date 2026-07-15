@@ -1,6 +1,8 @@
 {
   "schema_version": 2,
   "pipeline_id": "reference-project-intelligence-v2",
+  "module_version": "2.1.0",
+  "pipeline_version": "2.1.0",
   "run_id": null,
   "status": "queued",
   "input": {
@@ -36,6 +38,14 @@
     "profiles": ["truecolor_unicode", "ansi256_unicode", "ansi16_unicode", "no_color_ascii"],
     "exceptions": []
   },
+  "stack_adaptation": {
+    "artifact": "stack-adaptation-map.json",
+    "schema_version": 1,
+    "status": "queued",
+    "sha256": null,
+    "pending_fields": [],
+    "blocker": null
+  },
   "phases": {
     "P0": {"status": "queued", "owner": "intake_agent", "attempts": [], "artifacts": [], "blocker": null},
     "P1": {"status": "queued", "owner": "graph_cartographer", "attempts": [], "artifacts": [], "blocker": null},
@@ -63,6 +73,9 @@
     "artifact_schemas": null,
     "traceability": null,
     "fidelity": null,
+    "stack_schema": null,
+    "stack_traceability": null,
+    "stack_product_isolation": null,
     "source_clean": null,
     "product_isolation": null
   },
