@@ -1456,6 +1456,33 @@ mod tests {
         assert_eq!(reported, vec![0, 1]);
     }
 
+    // TP-C4.4-PROGRESS: delete reports each exact temporary item through the
+    // same bounded slot; this test never touches the platform Trash backend.
+    #[test]
+    fn default_worker_task_executor_reports_delete_item_indices() {
+        let td = TempDir::new("default-delete-progress");
+        let first = td.root.join("first.txt");
+        let second = td.root.join("second.txt");
+        fs::write(&first, b"first").expect("write first delete progress source");
+        fs::write(&second, b"second").expect("write second delete progress source");
+        let plan = DeleteOperationPlan::preflight(DeleteOperationRequest {
+            kind: DeleteOperationKind::Permanent,
+            paths: vec![first, second],
+            operation_in_flight: false,
+        })
+        .expect("default delete progress plan");
+        let mut reported = Vec::new();
+
+        let result = super::execute_worker_task_with_progress(
+            &FileOperationWorkerTask::Delete(plan),
+            &FileOperationCancellation::default(),
+            &mut |item_index| reported.push(item_index),
+        );
+
+        assert!(matches!(result, FileOperationWorkerResult::Delete(_)));
+        assert_eq!(reported, vec![0, 1]);
+    }
+
     // TP-C4.1-LIFECYCLE: cancellation is idempotent, wakes the worker, and
     // produces a single Cancelled terminal result without filesystem output.
     #[test]
