@@ -493,6 +493,12 @@ mod tests {
                     })
                 );
                 assert_eq!(
+                    serialized_layout["tracks"]["LeftPanel"],
+                    serde_json::json!({
+                        "Resizable": { "min": 4, "preferred": 26, "max": 40 }
+                    })
+                );
+                assert_eq!(
                     serialized_layout["tracks"]["WorkspaceStage"],
                     serde_json::json!({ "Fill": { "weight": 1 } })
                 );
@@ -506,6 +512,309 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn fixed_track_uses_exact_cells_or_available_space() {
+        let layout = tracked_horizontal_layout(
+            vec![
+                serialized_sized_child("Dynamic", serialized_slot("AppDock")),
+                serialized_child(serialized_slot("WorkspaceStage")),
+            ],
+            serde_json::json!({
+                "AppDock": { "Fixed": { "cells": 5 } },
+                "WorkspaceStage": { "Fill": { "weight": 1 } },
+            }),
+        );
+
+        let roomy = layout.compute_regions(Rect::new(0, 0, 12, 3), |_| 9);
+        assert_eq!(roomy.get(RegionId::AppDock), Rect::new(0, 0, 5, 3));
+        assert_eq!(roomy.get(RegionId::WorkspaceStage), Rect::new(5, 0, 7, 3));
+
+        let constrained = layout.compute_regions(Rect::new(0, 0, 3, 3), |_| 9);
+        assert_eq!(constrained.get(RegionId::AppDock), Rect::new(0, 0, 3, 3));
+        assert!(constrained.get(RegionId::WorkspaceStage).is_empty());
+    }
+
+    #[test]
+    fn content_bounded_clamps_measurement() {
+        let layout = tracked_horizontal_layout(
+            vec![
+                serialized_sized_child("Dynamic", serialized_slot("AppDock")),
+                serialized_child(serialized_slot("WorkspaceStage")),
+            ],
+            serde_json::json!({
+                "AppDock": { "ContentBounded": { "min": 3, "max": 8 } },
+                "WorkspaceStage": { "Fill": { "weight": 1 } },
+            }),
+        );
+
+        let below_min = layout.compute_regions(Rect::new(0, 0, 20, 2), |_| 1);
+        assert_eq!(below_min.get(RegionId::AppDock).width, 3);
+
+        let above_max = layout.compute_regions(Rect::new(0, 0, 20, 2), |_| 12);
+        assert_eq!(above_max.get(RegionId::AppDock).width, 8);
+    }
+
+    #[test]
+    fn resizable_track_clamps_preferred() {
+        let layout = tracked_horizontal_layout(
+            vec![
+                serialized_sized_child("Dynamic", serialized_slot("AppDock")),
+                serialized_child(serialized_slot("WorkspaceStage")),
+            ],
+            serde_json::json!({
+                "AppDock": {
+                    "Resizable": { "min": 3, "preferred": 5, "max": 9 }
+                },
+                "WorkspaceStage": { "Fill": { "weight": 1 } },
+            }),
+        );
+
+        let regions = layout.compute_regions(Rect::new(0, 0, 20, 2), |_| 99);
+        assert_eq!(regions.get(RegionId::AppDock).width, 5);
+        assert_eq!(regions.get(RegionId::WorkspaceStage).width, 15);
+    }
+
+    #[test]
+    fn fill_weights_split_only_remaining_cells() {
+        let layout = tracked_horizontal_layout(
+            vec![
+                serialized_sized_child("Dynamic", serialized_slot("AppDock")),
+                serialized_child(serialized_slot("LeftPanel")),
+                serialized_child(serialized_slot("WorkspaceStage")),
+            ],
+            serde_json::json!({
+                "AppDock": { "Fixed": { "cells": 10 } },
+                "LeftPanel": { "Fill": { "weight": 1 } },
+                "WorkspaceStage": { "Fill": { "weight": 2 } },
+            }),
+        );
+
+        let regions = layout.compute_regions(Rect::new(0, 0, 100, 2), |_| 40);
+        assert_eq!(regions.get(RegionId::AppDock).width, 10);
+        assert_eq!(regions.get(RegionId::LeftPanel).width, 30);
+        assert_eq!(regions.get(RegionId::WorkspaceStage).width, 60);
+    }
+
+    #[test]
+    fn collapsed_track_is_zero_and_keeps_restore_width() {
+        let layout = tracked_horizontal_layout(
+            vec![
+                serialized_sized_child("Dynamic", serialized_slot("AppDock")),
+                serialized_child(serialized_slot("WorkspaceStage")),
+            ],
+            serde_json::json!({
+                "AppDock": { "Collapsed": { "restore": 7 } },
+                "WorkspaceStage": { "Fill": { "weight": 1 } },
+            }),
+        );
+
+        let regions = layout.compute_regions(Rect::new(0, 0, 20, 2), |_| 7);
+        assert!(regions.get(RegionId::AppDock).is_empty());
+        assert_eq!(
+            regions.get(RegionId::WorkspaceStage),
+            Rect::new(0, 0, 20, 2)
+        );
+        let serialized = serde_json::to_value(layout).expect("serialize collapsed track");
+        assert_eq!(
+            serialized["tracks"]["AppDock"],
+            serde_json::json!({ "Collapsed": { "restore": 7 } })
+        );
+    }
+
+    #[test]
+    fn zero_area_never_underflows() {
+        let layout = tracked_horizontal_layout(
+            vec![
+                serialized_sized_child("Dynamic", serialized_slot("AppDock")),
+                serialized_child(serialized_slot("WorkspaceStage")),
+            ],
+            serde_json::json!({
+                "AppDock": { "Fixed": { "cells": 5 } },
+                "WorkspaceStage": { "Fill": { "weight": 1 } },
+            }),
+        );
+
+        let regions = layout.compute_regions(Rect::new(u16::MAX, u16::MAX, 0, 0), |_| 5);
+        assert!(regions.get(RegionId::AppDock).is_empty());
+        assert!(regions.get(RegionId::WorkspaceStage).is_empty());
+    }
+
+    #[test]
+    fn allocation_remainder_is_deterministic() {
+        let layout = tracked_horizontal_layout(
+            vec![
+                serialized_child(serialized_slot("AppDock")),
+                serialized_child(serialized_slot("WorkspaceStage")),
+            ],
+            serde_json::json!({
+                "AppDock": { "Fill": { "weight": 1 } },
+                "WorkspaceStage": { "Fill": { "weight": 2 } },
+            }),
+        );
+
+        for _ in 0..16 {
+            let regions = layout.compute_regions(Rect::new(0, 0, 5, 1), |_| 0);
+            assert_eq!(regions.get(RegionId::AppDock), Rect::new(0, 0, 2, 1));
+            assert_eq!(regions.get(RegionId::WorkspaceStage), Rect::new(2, 0, 3, 1));
+        }
+    }
+
+    #[test]
+    fn all_rects_are_inside_parent_without_overlap() {
+        let layout = tracked_horizontal_layout(
+            vec![
+                serialized_sized_child("Dynamic", serialized_slot("AppDock")),
+                serialized_sized_child("Dynamic", serialized_slot("LeftPanel")),
+                serialized_child(serialized_slot("WorkspaceStage")),
+                serialized_sized_child("Dynamic", serialized_slot("RightPanel")),
+            ],
+            serde_json::json!({
+                "AppDock": { "Fixed": { "cells": 80 } },
+                "LeftPanel": {
+                    "ContentBounded": { "min": 4, "max": 40 }
+                },
+                "WorkspaceStage": { "Fill": { "weight": 1 } },
+                "RightPanel": {
+                    "Resizable": { "min": 20, "preferred": 32, "max": 60 }
+                },
+            }),
+        );
+        let area = Rect::new(u16::MAX - 10, u16::MAX - 2, 10, 2);
+        let regions = layout.compute_regions(area, |_| u16::MAX);
+        let rects = [
+            regions.get(RegionId::AppDock),
+            regions.get(RegionId::LeftPanel),
+            regions.get(RegionId::WorkspaceStage),
+            regions.get(RegionId::RightPanel),
+        ];
+
+        for rect in rects {
+            assert_eq!(rect.intersection(area), rect);
+        }
+        for left in 0..rects.len() {
+            for right in (left + 1)..rects.len() {
+                assert!(rects[left].intersection(rects[right]).is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn shell_degrades_in_frozen_priority_order() {
+        let layout = tracked_horizontal_layout(
+            vec![
+                serialized_sized_child("Dynamic", serialized_slot("AppDock")),
+                serialized_sized_child("Dynamic", serialized_slot("LeftPanel")),
+                serialized_child(serialized_slot("WorkspaceStage")),
+                serialized_sized_child("Dynamic", serialized_slot("RightPanel")),
+            ],
+            serde_json::json!({
+                "AppDock": {
+                    "Resizable": { "min": 3, "preferred": 5, "max": 9 }
+                },
+                "LeftPanel": {
+                    "Resizable": { "min": 4, "preferred": 26, "max": 40 }
+                },
+                "WorkspaceStage": { "Fill": { "weight": 1 } },
+                "RightPanel": {
+                    "Resizable": { "min": 20, "preferred": 32, "max": 60 }
+                },
+            }),
+        );
+        let preferred = |region| match region {
+            RegionId::AppDock => 5,
+            RegionId::LeftPanel => 26,
+            RegionId::RightPanel => 32,
+            _ => 0,
+        };
+
+        let workspace = layout.compute_regions(Rect::new(0, 0, 64, 2), preferred);
+        assert_eq!(workspace.get(RegionId::AppDock).width, 5);
+        assert_eq!(workspace.get(RegionId::LeftPanel).width, 26);
+        assert_eq!(workspace.get(RegionId::WorkspaceStage).width, 1);
+        assert_eq!(workspace.get(RegionId::RightPanel).width, 32);
+
+        let minimums = layout.compute_regions(Rect::new(0, 0, 28, 2), preferred);
+        assert_eq!(minimums.get(RegionId::AppDock).width, 3);
+        assert_eq!(minimums.get(RegionId::LeftPanel).width, 4);
+        assert_eq!(minimums.get(RegionId::WorkspaceStage).width, 1);
+        assert_eq!(minimums.get(RegionId::RightPanel).width, 20);
+
+        let without_inspector = layout.compute_regions(Rect::new(0, 0, 27, 2), preferred);
+        assert!(without_inspector.get(RegionId::RightPanel).is_empty());
+        assert!(!without_inspector.get(RegionId::AppDock).is_empty());
+        assert!(!without_inspector.get(RegionId::LeftPanel).is_empty());
+        assert!(!without_inspector.get(RegionId::WorkspaceStage).is_empty());
+
+        let compact = layout.compute_regions(Rect::new(0, 0, 8, 2), preferred);
+        assert_eq!(compact.get(RegionId::AppDock).width, 3);
+        assert_eq!(compact.get(RegionId::LeftPanel).width, 4);
+        assert_eq!(compact.get(RegionId::WorkspaceStage).width, 1);
+        assert!(compact.get(RegionId::RightPanel).is_empty());
+
+        let without_dock = layout.compute_regions(Rect::new(0, 0, 7, 2), preferred);
+        assert!(without_dock.get(RegionId::AppDock).is_empty());
+        assert_eq!(without_dock.get(RegionId::LeftPanel).width, 4);
+        assert_eq!(without_dock.get(RegionId::WorkspaceStage).width, 3);
+
+        let too_small = layout.compute_regions(Rect::new(0, 0, 4, 2), preferred);
+        assert!(too_small.get(RegionId::AppDock).is_empty());
+        assert!(too_small.get(RegionId::LeftPanel).is_empty());
+        assert!(too_small.get(RegionId::WorkspaceStage).is_empty());
+        assert!(too_small.get(RegionId::RightPanel).is_empty());
+    }
+
+    #[test]
+    fn shell_solver_visits_each_node_at_most_twice() {
+        let layout = tracked_horizontal_layout(
+            vec![
+                serialized_sized_child("Dynamic", serialized_slot("AppDock")),
+                serialized_child(serialized_slot("LeftPanel")),
+                serialized_child(serialized_slot("WorkspaceStage")),
+            ],
+            serde_json::json!({
+                "AppDock": { "Fixed": { "cells": 5 } },
+                "LeftPanel": { "Fill": { "weight": 1 } },
+                "WorkspaceStage": { "Fill": { "weight": 2 } },
+            }),
+        );
+
+        let (regions, visits) = compute_regions_with_visit_count(&layout, Rect::new(0, 0, 80, 24));
+        assert_eq!(regions.get(RegionId::AppDock).width, 5);
+        assert!(
+            visits <= 8,
+            "four serialized nodes should require at most two visits each, got {visits}"
+        );
+    }
+
+    #[test]
+    fn shell_reports_explicit_too_small_degradation() {
+        let layout = tracked_horizontal_layout(
+            vec![
+                serialized_sized_child("Dynamic", serialized_slot("AppDock")),
+                serialized_sized_child("Dynamic", serialized_slot("LeftPanel")),
+                serialized_child(serialized_slot("WorkspaceStage")),
+                serialized_sized_child("Dynamic", serialized_slot("RightPanel")),
+            ],
+            serde_json::json!({
+                "AppDock": {
+                    "Resizable": { "min": 3, "preferred": 5, "max": 9 }
+                },
+                "LeftPanel": {
+                    "Resizable": { "min": 4, "preferred": 26, "max": 40 }
+                },
+                "WorkspaceStage": { "Fill": { "weight": 1 } },
+                "RightPanel": {
+                    "Resizable": { "min": 20, "preferred": 32, "max": 60 }
+                },
+            }),
+        );
+
+        assert_eq!(
+            degradation_for_test(&layout, Rect::new(0, 0, 4, 2)),
+            "TooSmall"
+        );
     }
 
     fn collect_serialized_regions(value: &serde_json::Value, out: &mut Vec<String>) {
@@ -535,6 +844,33 @@ mod tests {
 
     fn serialized_child(node: serde_json::Value) -> serde_json::Value {
         serde_json::json!({ "size": "Fill", "node": node })
+    }
+
+    fn serialized_sized_child(size: &str, node: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({ "size": size, "node": node })
+    }
+
+    fn tracked_horizontal_layout(
+        children: Vec<serde_json::Value>,
+        tracks: serde_json::Value,
+    ) -> ShellLayout {
+        serde_json::from_value(serde_json::json!({
+            "root": serialized_split(children),
+            "tracks": tracks,
+        }))
+        .expect("tracked shell fixture should validate")
+    }
+
+    fn compute_regions_with_visit_count(layout: &ShellLayout, area: Rect) -> (RegionRects, usize) {
+        // RED-only test seam. SF2.3 replaces this sentinel with the solver's
+        // internal bounded visit counter without changing the assertion.
+        (layout.compute_regions(area, |_| 5), usize::MAX)
+    }
+
+    fn degradation_for_test(_layout: &ShellLayout, _area: Rect) -> &'static str {
+        // RED-only test seam. SF2.3 replaces this sentinel with the solver's
+        // explicit responsive-degradation result.
+        "Workspace"
     }
 
     fn serialized_split(children: Vec<serde_json::Value>) -> serde_json::Value {
