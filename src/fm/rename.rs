@@ -1061,6 +1061,66 @@ mod tests {
             .all(|item| matches!(item.outcome(), BulkRenameItemOutcome::Restored(_))));
     }
 
+    // TP-C4.3-BULK: if rollback itself fails, the result must be explicitly
+    // uncertain and identify the exact surviving path so lifecycle/recovery UI
+    // never hides a committed output or leaked private staging artifact.
+    #[test]
+    fn bulk_rename_recovery_failure_reports_exact_surviving_path() {
+        struct RecoveryFailingHost {
+            calls: usize,
+        }
+
+        impl RenameOperationHost for RecoveryFailingHost {
+            fn before_revalidation(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+
+            fn publish_no_replace(&mut self, source: &Path, destination: &Path) -> io::Result<()> {
+                self.calls += 1;
+                if matches!(self.calls, 4 | 5) {
+                    Err(io::Error::other("injected publish and rollback failure"))
+                } else {
+                    crate::platform::publish_staged_path_no_replace(source, destination)
+                }
+            }
+        }
+
+        let td = TempDir::new("bulk-recovery-failure");
+        let alpha = td.root.join("alpha.txt");
+        let beta = td.root.join("beta.txt");
+        let renamed_alpha = td.root.join("renamed-alpha.txt");
+        fs::write(&alpha, b"alpha").expect("write recovery alpha");
+        fs::write(&beta, b"beta").expect("write recovery beta");
+        let plan = BulkRenameOperationPlan::preflight(bulk_request(vec![
+            (alpha.clone(), "renamed-alpha.txt"),
+            (beta.clone(), "renamed-beta.txt"),
+        ]))
+        .expect("recovery failure plan");
+        let result = execute_bulk_rename_operation_with_host(
+            &plan,
+            &FileOperationCancellation::default(),
+            &mut RecoveryFailingHost { calls: 0 },
+        );
+
+        assert_eq!(
+            result.status(),
+            BulkRenameOperationExecutionStatus::RecoveryFailed
+        );
+        let uncertain = result
+            .items()
+            .iter()
+            .find(|item| matches!(item.outcome(), BulkRenameItemOutcome::Uncertain(_)))
+            .expect("one item must expose uncertain recovery");
+        assert_eq!(uncertain.source(), alpha);
+        assert_eq!(uncertain.destination(), renamed_alpha);
+        assert_eq!(uncertain.recovery_path(), Some(renamed_alpha.as_path()));
+        assert_eq!(
+            fs::read(&renamed_alpha).expect("uncertain payload remains reported"),
+            b"alpha"
+        );
+        assert_eq!(fs::read(beta).expect("other source restored"), b"beta");
+    }
+
     // TP-C4.3-COLLISION: preflight snapshots the exact source object and one
     // same-parent destination while rejecting stale, unsupported, root,
     // unchanged, malformed, in-flight, and already-colliding intents before
