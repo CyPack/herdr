@@ -880,11 +880,13 @@
 
 1. N2.1 is complete; preserve its RED `e433a2f` → GREEN `c530836` chain and
    exact verification evidence during fork publication.
-2. Keep N2.2, S5–S7, and M1–M3 deferred until one named evidence gate is selected;
-   do not manufacture a new implementation solely to keep the queue moving.
-3. When a future lane is activated, expand its macro/micro tasks and exact
-   test-point table before the first production edit, then follow the same
-   targeted commit and CyPack fork-only FF workflow.
+2. Start M1.0 as discovery/specification only. Compare C5 native handoff,
+   `agent_attach`, `agent_send`, pane focus, and plugin file-context actions;
+   terminate with a user-visible delta or explicit NO-GO before UI/runtime code.
+3. Follow the expanded M1 → M2 → M3 macro/micro roadmap and exact
+   expected-result/reason test tables in `.codex/TASKS.md`. N2.2 and S5–S7
+   remain independently deferred. Use the same targeted commit and CyPack
+   fork-only FF workflow for every activated lane.
 
 ## Verified B2.0 Dependency Decision
 

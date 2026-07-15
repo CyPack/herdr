@@ -818,12 +818,114 @@ covered by deterministic alternate-palette and breakpoint buffer tests.
   renderer, input mapping, worker, or release-doc surface changed. N2.2 remains
   a separately evidence-gated future feature.
 
-## Future Mission — Recorded, Not Active
+## Future Mission Roadmap
 
-- [ ] M1 FM-interactive CLI attachment buttons.
-- [ ] M2 git-worktree management buttons.
-- [ ] M3 general panel/page/button super-interface evaluation.
-- These remain north-star items and must not preempt active C4–C6 work.
+The north-star queue is ordered M1 → M2 → M3. Only the named `.0` evidence
+lane may activate first; every production module remains NO-GO until its
+evidence contract proves non-duplicate user value and freezes RED test points.
+
+### M1 — FM-Interactive CLI Attachment Actions
+
+- [ ] M1.0 define the product delta before UI or runtime code. Compare native
+  FM `SendAgent`/C5 handoff, CLI `agent_attach`, CLI `agent_send`, pane focus,
+  and plugin file-context actions; terminate with one explicit GO/NO-GO.
+- [ ] M1.0a name the user story precisely: attach the TUI to an existing agent,
+  deliver selected file identities to an existing agent, or create/focus a new
+  agent. Reject a label that silently combines those different authorities.
+- [ ] M1.0b trace server/client ownership, exact public IDs, path encoding,
+  target availability, agent-state races, and current rollback behavior through
+  `src/cli/agent.rs`, `src/app/file_agent_handoff.rs`, and the neutral API.
+- [ ] M1.0c define finite selection/message/queue bounds, cross-platform literal
+  path behavior, close/reopen semantics, and exact RED-capable test names.
+- [ ] M1.1 add a pure action model and responsive complete-button geometry only
+  if M1.0 proves a missing action; hidden/narrow/disabled buttons expose no stale
+  hit target and render remains read-only.
+- [ ] M1.2 route exact mouse/keyboard activation to a typed client-local intent;
+  revalidate current file paths, target agent identity, operation state, and
+  modifiers before any delivery request.
+- [ ] M1.3 execute through the existing neutral agent/API seam with literal argv
+  or request fields, never shell interpolation. Existing-agent delivery must not
+  create a pane; new-agent flow must own exact-resource rollback at every stage.
+- [ ] M1.4 reconcile completion/cancel/error against current FM and agent
+  generations, prove close/reopen and target-exit races, run full gates, refresh
+  graph, then publish atomically. If M1.0 finds no delta, close M1 as NO-GO.
+
+| Test point | What is tested | Expected result | Reason |
+|---|---|---|---|
+| TP-M1-DELTA | C5 native file handoff versus CLI attach/send and plugin file actions | One user-visible action absent from all existing surfaces is named, or M1 terminates NO-GO | A second button for an existing behavior adds ambiguity rather than capability |
+| TP-M1-IDENTITY | Stable selected paths, workspace/tab/pane/agent IDs, reorder/delete, target exit/replacement | Activation uses exact live identities and stale snapshots emit no request | Files and agents can both change between render and click |
+| TP-M1-AUTHORITY | Empty/multiple/unsupported selection, non-agent target, busy operation, disabled plugin, modified input | Every unavailable case has one reason and fails closed before side effects | UI enabled state is advisory unless execution revalidates authority |
+| TP-M1-DELIVERY | Spaces, quotes, Unicode, non-UTF-8 paths, Windows separators, one/many files, message bounds | Paths remain literal structured values; no shell parsing, truncation, or partial silent delivery | File attachment is security-sensitive data transport |
+| TP-M1-ROLLBACK | Pane/agent creation, first-send failure, cancellation, disconnect, panic, close/reopen | Existing resources are never removed; only exactly created resources roll back; terminal state is explicit | Multi-stage handoff must not leak panes or destroy unrelated work |
+| TP-M1-BUDGET | Maximum selected paths, request bytes, pending work, retries, generations, cleanup | All bounds are finite; at most the approved worker/request lane is active; stale results are rejected | Agent delivery can otherwise become an unbounded queue or memory surface |
+
+### M2 — Git Worktree Management Actions
+
+- [ ] M2.0 compare the requested FM buttons with existing TUI worktree dialogs,
+  API `worktree list/open/create/remove`, CLI commands, and keybinds. Publish an
+  action-by-action reuse matrix and final GO/NO-GO before adding FM controls.
+- [ ] M2.0a classify every fact: repository/worktree/operation state is server-
+  owned; button geometry, focus, selection, and confirmation are client-only.
+- [ ] M2.0b freeze exact repo-root, checkout-path, branch, open-workspace,
+  dirty-state, linked-worktree, concurrent-operation, and Windows path cases.
+- [ ] M2.1 add read-only List/Open presentation first if missing, reusing public
+  worktree IDs and existing open-workspace behavior without filesystem writes.
+- [ ] M2.2 add Create only through existing API validation/deferred operation;
+  relative/escaping/colliding paths, duplicate branches, linked-child sources,
+  and create/remove concurrency fail closed before Git mutation.
+- [ ] M2.3 add Remove with the existing typed confirmation sequence. Dirty or
+  active worktrees never become implicit force; force requires a separate
+  explicit stage and branch deletion remains out of scope.
+- [ ] M2.4 reconcile success/partial/error with current server snapshot, preserve
+  unrelated workspaces/checkouts, prove restart/disconnect recovery, then run
+  full Linux/Windows/API/runtime/graph/publication gates.
+
+| Test point | What is tested | Expected result | Reason |
+|---|---|---|---|
+| TP-M2-DELTA | Existing worktree dialogs/API/CLI versus proposed FM actions | Only missing lower-friction behavior survives; duplicate controls close NO-GO | The backend and much of the TUI workflow already exist |
+| TP-M2-IDENTITY | Repo root, linked checkout, branch, canonical path, open workspace IDs, stale list row | Every action targets one current server-owned identity; stale/reordered UI emits nothing | Path strings alone are unsafe identity under concurrent Git changes |
+| TP-M2-CREATE | Existing/new branch, path collision, invalid/relative path, linked source, concurrent remove, Git failure | Validation fails before mutation; success creates exactly one checkout and reports its identity | Create is a multi-resource operation with collision risk |
+| TP-M2-REMOVE | Clean/dirty checkout, open workspace, force stage, missing/replaced path, unrelated directory, branch preservation | Default remove is conservative; force is explicit; unrelated/replacement paths and branches survive | Removal is destructive and TOCTOU-sensitive |
+| TP-M2-RECOVERY | API disconnect, deferred worker panic/cancel, app close/reopen, server restart, partial Git artifacts | Final snapshot is truthful and retry/recovery never duplicates or deletes unrelated state | Client completion is not authority for server-owned worktree state |
+| TP-M2-PLATFORM | Unix/Windows separators, drive roots, reserved components, symlinks, non-UTF-8 display limits | Shared policy is platform-neutral and OS behavior remains compile-gated/tested | Worktree paths are a known cross-platform boundary |
+
+### M3 — General Panel/Page/Button Interface Evaluation
+
+- [ ] M3.0 rerun the P4 architecture evidence matrix only after M1 or M2 creates
+  a second real independently owned page/component/action family. Otherwise
+  close M3 NO-GO without production refactoring.
+- [ ] M3.0a inventory duplicated lifecycle, render, input, focus, hit-geometry,
+  persistence, protocol, and cleanup seams; quantify duplication by concrete
+  consumers rather than source size or naming preference.
+- [ ] M3.0b name characterization tests for current BaseLayer terminal/FM swap,
+  modal/context ownership, responsive shell regions, and any new M1/M2 consumer.
+- [ ] M3.1 define the smallest trait/interface contract only if two consumers
+  share behavior and retain independent identities. Keep runtime facts out of a
+  TUI-named abstraction and add no dynamic registry without lifecycle demand.
+- [ ] M3.2 migrate one consumer per atomic commit behind characterization tests;
+  preserve exact event priority, focus/close order, render purity, and snapshot
+  compatibility. Revert the candidate if complexity or coupling increases.
+- [ ] M3.3 run adversarial identity/width/restore/nested-popup tests, full gates,
+  graph impact comparison, and a final keep/revert ADR-style decision.
+
+| Test point | What is tested | Expected result | Reason |
+|---|---|---|---|
+| TP-M3-TRIGGER | Number of real consumers and duplicated ownership/lifecycle seams | At least two concrete consumers need the same contract; otherwise implementation NO-GO | Interfaces should be earned by repeated behavior |
+| TP-M3-CHARACTERIZE | Base/content swap, event priority, hit areas, modal focus/close, widths, restore identity | Pre-refactor behavior is captured by RED-capable invariants before moving code | Broad UI refactors often preserve happy paths while breaking ownership |
+| TP-M3-BOUNDARY | Server facts versus client presentation, platform gates, persistence and protocol | The interface contains only shared client behavior and requires no accidental wire/state migration | A UI abstraction must not deepen server/TUI coupling |
+| TP-M3-MIGRATION | One-consumer-at-a-time conversion and rollback | Every atomic step stays green and independently reversible; mixed partial ownership is forbidden | Sequential Git discipline reduces refactor blast radius |
+| TP-M3-DECISION | Complexity, duplication, coupling, binary/test cost, graph impact | Keep only measured improvement; otherwise revert and record the missing trigger | Passing tests alone do not prove an abstraction is beneficial |
+
+### Future Ordering and Activation
+
+1. M1.0 is the next discovery-only lane; M1 production stays NO-GO until its
+   delta/identity/delivery/rollback/budget contract terminates.
+2. M2.0 follows the M1 decision. It may reuse existing worktree APIs but cannot
+   preempt the M1 lane or introduce a private TUI-only runtime path.
+3. M3.0 follows only after M1/M2 evidence proves a second real consumer. S5–S7
+   remain NO-GO until their existing concrete triggers are independently met.
+4. N2.2 remains separate from M1–M3 and inactive until cursor-history demand and
+   finite eviction/restore semantics are proven.
 
 ## Ordering Resolution
 
@@ -833,5 +935,6 @@ reconciliation, C4.4.4 recovery, C4.4.5 gates, and C5.1–C5.5 are complete.
 C6.1–C6.4, P4.0, N2.0, and N2.1 are complete through product commit `c530836`
 plus the continuity commit containing this closure. S5–S7 and the original
 dynamic/unbounded N2 state machine remain evidence-gated implementation NO-GO.
-N2.2 and M1–M3 remain inactive future work and require their named evidence
-gates before production code.
+M1.0 is the next discovery-only lane; M1 production remains NO-GO until that
+contract terminates. M2.0 follows the M1 decision, while M3.0 requires a real
+second consumer from M1/M2. N2.2 and S5–S7 remain independently gated.

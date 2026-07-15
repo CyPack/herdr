@@ -3,11 +3,12 @@
 ## 1. SONRAKI ADIM
 
 N2.1 is complete through RED `e433a2f` and GREEN `c530836`; preserve its exact
-path-focus contract and verified fork publication. The next implementation lane
-is intentionally unselected: N2.2, S5–S7, and M1–M3 remain evidence-gated.
-Before activating one, expand its macro/micro tasks plus expected-result/reason
-test points, then work test-first and sequentially. Never touch stable
-Herdr/socket/processes.
+path-focus contract and verified fork publication. Start M1.0 discovery only:
+compare C5 native handoff, CLI attach/send, pane focus, and plugin file actions,
+then publish a terminating delta or NO-GO before UI/runtime code. The complete
+M1 → M2 → M3 macro/micro roadmap and expected-result/reason test tables are in
+`.codex/TASKS.md`; N2.2 and S5–S7 remain independently gated. Never touch
+stable Herdr/socket/processes.
 
 ## 2. AKTİF PROJE
 
@@ -729,8 +730,9 @@ graph 18,922 / 89,277. C6.4 closes at test/product head `f52cb85`, full Rust
 18,974 / 89,775. P4.0 closes as a documentation-only evidence matrix with
 S5–S7 implementation NO-GO. N2.0 then rejects the original dynamic/unbounded
 state machine and N2.1 closes as RED `e433a2f` → GREEN `c530836` with complete
-gates. No implementation lane is automatically active: N2.2 and M1–M3 remain
-future backlog and must first receive expanded macro/micro test-point contracts.
+gates. M1–M3 now have durable macro/micro and failure-path test contracts; M1.0
+is the next discovery-only lane, followed by M2.0, while M3.0 requires a real
+second consumer. N2.2 and S5–S7 remain independently deferred.
 
 ## 11. ORTAM
 
