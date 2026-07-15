@@ -2503,6 +2503,129 @@ mod tests {
         );
     }
 
+    // TP-C4.4-RECOVERY: progress followed by a caught worker panic must
+    // terminalize every item, release reconciliation ownership, and leave the
+    // same single lane reusable at a strictly newer generation.
+    #[test]
+    fn app_recovers_from_progress_then_panic_and_reuses_lane() {
+        let td = TempDir::new("progress-panic-recovery");
+        let source_dir = td.root.join("source");
+        let destination = td.root.join("destination");
+        fs::create_dir(&source_dir).expect("create panic recovery source directory");
+        fs::create_dir(&destination).expect("create panic recovery destination");
+        let first = source_dir.join("first.txt");
+        let second = source_dir.join("second.txt");
+        let next = source_dir.join("next.txt");
+        fs::write(&first, b"first").expect("write first panic recovery source");
+        fs::write(&second, b"second").expect("write second panic recovery source");
+        fs::write(&next, b"next").expect("write next panic recovery source");
+
+        let calls = Arc::new(AtomicU64::new(0));
+        let executor_calls = calls.clone();
+        let worker = FileOperationWorker::with_progress_task_executor(
+            Arc::new(Notify::new()),
+            move |task, cancellation, report_progress| {
+                if executor_calls.fetch_add(1, Ordering::Relaxed) == 0 {
+                    report_progress(0);
+                    panic!("injected panic after progress");
+                }
+                match task {
+                    FileOperationWorkerTask::Transfer(plan) => FileOperationWorkerResult::Transfer(
+                        execute_file_operation(plan, cancellation),
+                    ),
+                    _ => panic!("expected transfer recovery task"),
+                }
+            },
+        );
+        let mut app = test_app();
+        app.file_operation_worker = worker;
+        app.state.file_manager = Some(crate::fm::FmState::new(&destination));
+        app.state.file_manager_clipboard = vec![first.clone(), second.clone()];
+
+        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
+        let failed_generation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("panic operation running")
+            .generation;
+        app.file_operation_reconcile_baseline = Some(super::FileOperationReconcileBaseline {
+            operation_generation: failed_generation,
+            destination_directory: destination.clone(),
+            watcher_generation: 7,
+            watcher_revision: 11,
+            affected_paths: [
+                destination.join("first.txt"),
+                destination.join("second.txt"),
+            ]
+            .into_iter()
+            .collect(),
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .is_some_and(FileManagerOperationState::is_running)
+        {
+            let _ = app.sync_file_operation_worker();
+            assert!(
+                Instant::now() < deadline,
+                "progress panic recovery timed out"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let failed = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("panic operation terminal");
+        assert_eq!(failed.status, FileManagerOperationStatus::Failed);
+        assert_eq!(failed.completed_items, 0);
+        assert_eq!(failed.failed_items, 2);
+        assert!(failed
+            .items
+            .iter()
+            .all(|item| item.status == FileManagerOperationItemStatus::Failed));
+        assert!(app.file_operation_reconcile_baseline.is_none());
+        assert!(!app.file_operation_worker.is_busy());
+
+        app.state.file_manager_clipboard = vec![next];
+        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
+        let next_generation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("next panic recovery operation running")
+            .generation;
+        assert!(next_generation > failed_generation);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .is_some_and(FileManagerOperationState::is_running)
+        {
+            let _ = app.sync_file_operation_worker();
+            assert!(Instant::now() < deadline, "reused panic lane timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            app.state
+                .file_manager_operation
+                .as_ref()
+                .expect("next panic recovery operation terminal")
+                .status,
+            FileManagerOperationStatus::Completed
+        );
+        assert_eq!(
+            fs::read(destination.join("next.txt")).expect("read copied recovery file"),
+            b"next"
+        );
+    }
+
     // TP-C4.4-RECOVERY: a dead worker observed after bounded progress must
     // terminalize every item, discard stale reconciliation ownership, and
     // reopen the same single lane at a strictly newer generation.
