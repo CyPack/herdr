@@ -581,6 +581,41 @@ mod tests {
         assert!(app.file_manager.is_none(), "q closes the file manager");
     }
 
+    // TP-C4.4-CANCEL: Esc is the user cancellation route while an operation
+    // is running. It must emit a typed, repeatable intent without closing the
+    // file manager; the App/worker boundary owns the cancellation side effect.
+    #[test]
+    fn esc_emits_repeatable_operation_cancel_intent_while_running() {
+        let td = TempDir::new("cancel-running-operation");
+        td.file("source.txt");
+        let source = td.root.join("source.txt");
+        let mut app = app_with_fm(FmState::new(&td.root));
+        app.file_manager_operation = Some(crate::app::state::FileManagerOperationState {
+            generation: 7,
+            kind: crate::app::state::FileManagerOperationKind::Copy,
+            destination_directory: td.root.clone(),
+            total_items: 1,
+            completed_items: 0,
+            failed_items: 0,
+            status: crate::app::state::FileManagerOperationStatus::Running,
+            items: vec![crate::app::state::FileManagerOperationItemState {
+                path: source,
+                recovery_path: None,
+                status: crate::app::state::FileManagerOperationItemStatus::Running,
+            }],
+        });
+
+        assert_eq!(
+            handle_file_manager_key(&mut app, key(KeyCode::Esc)),
+            FileManagerKeyDispatch::CancelOperation
+        );
+        assert_eq!(
+            handle_file_manager_key(&mut app, key(KeyCode::Esc)),
+            FileManagerKeyDispatch::CancelOperation
+        );
+        assert!(app.file_manager.is_some());
+    }
+
     // TP-A3.3-DISPATCH: one left press on a visible CURRENT row selects its
     // absolute entry and refreshes the preview cache for that selection.
     #[test]
