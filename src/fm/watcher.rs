@@ -4,6 +4,7 @@
 //! before they can affect [`super::FmState`]. Keeping this seam filesystem-free
 //! makes event relevance and burst coalescing deterministic in unit tests.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use notify_debouncer_full::{
@@ -109,6 +110,7 @@ pub(crate) fn watch_message_from_result(
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct FmWatchDrain {
     pub(crate) refresh: bool,
+    pub(crate) paths: BTreeSet<PathBuf>,
     pub(crate) accepted_messages: usize,
     pub(crate) stale_messages: usize,
     pub(crate) errors: Vec<String>,
@@ -130,6 +132,19 @@ pub(crate) fn drain_watch_messages<B>(
         if let Some(watched_dir) = slot.watched_dir() {
             drained.refresh |= normalize_watch_events(watched_dir, &message.events)
                 == Some(FmWatchIntent::Refresh);
+            drained
+                .paths
+                .extend(message.events.iter().flat_map(|event| {
+                    event
+                        .paths
+                        .iter()
+                        .filter(|path| {
+                            event.kind != FmWatchEventKind::Other
+                                && (path.as_path() == watched_dir
+                                    || path.parent().is_some_and(|parent| parent == watched_dir))
+                        })
+                        .cloned()
+                }));
         }
         drained.errors.extend(message.errors);
     }

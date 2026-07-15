@@ -123,7 +123,6 @@ impl PlannedFileTransfer {
         &self.source
     }
 
-    #[cfg(test)]
     pub(crate) fn destination(&self) -> &Path {
         &self.destination
     }

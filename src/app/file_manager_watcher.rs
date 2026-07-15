@@ -1,6 +1,7 @@
 //! Runtime ownership for native file-manager filesystem watching.
 
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
 use std::sync::Arc;
@@ -22,6 +23,12 @@ const WATCH_DEBOUNCE: Duration = Duration::from_millis(250);
 const WATCH_CHANNEL_CAPACITY: usize = 64;
 pub(super) const WATCH_DRAIN_LIMIT: usize = 32;
 const WATCH_RECONCILE_INTERVAL: Duration = Duration::from_secs(2);
+
+struct OwnedOperationBurst {
+    watcher_generation: u64,
+    paths: BTreeSet<PathBuf>,
+    expires_at: std::time::Instant,
+}
 
 type NativeDebouncer = Debouncer<RecommendedWatcher, RecommendedCache>;
 
@@ -127,6 +134,7 @@ pub(super) struct NativeFileManagerWatcher {
     next_reconcile_at: Option<std::time::Instant>,
     requested_reconcile_generation: Option<u64>,
     reconcile_revision: u64,
+    owned_operation_burst: Option<OwnedOperationBurst>,
 }
 
 impl NativeFileManagerWatcher {
@@ -141,6 +149,7 @@ impl NativeFileManagerWatcher {
             next_reconcile_at: None,
             requested_reconcile_generation: None,
             reconcile_revision: 0,
+            owned_operation_burst: None,
         }
     }
 
@@ -186,6 +195,7 @@ impl NativeFileManagerWatcher {
                 self.last_native_error = next_native_error;
                 self.next_reconcile_at = Some(now + WATCH_RECONCILE_INTERVAL);
                 self.requested_reconcile_generation = None;
+                self.owned_operation_burst = None;
             }
             FmWatcherSync::Stopped => {
                 self.receiver = None;
@@ -194,6 +204,7 @@ impl NativeFileManagerWatcher {
                 self.last_native_error = None;
                 self.next_reconcile_at = None;
                 self.requested_reconcile_generation = None;
+                self.owned_operation_burst = None;
             }
         }
         result
@@ -244,6 +255,52 @@ impl NativeFileManagerWatcher {
         }
         self.requested_reconcile_generation = Some(self.slot.generation());
         true
+    }
+
+    pub(super) fn own_operation_reconcile(
+        &mut self,
+        directory: &Path,
+        watcher_generation: u64,
+        paths: BTreeSet<PathBuf>,
+        request_reconcile: bool,
+    ) -> bool {
+        if self.slot.watched_dir() != Some(directory)
+            || !self.slot.accepts_generation(watcher_generation)
+            || paths.is_empty()
+        {
+            return false;
+        }
+        self.owned_operation_burst = Some(OwnedOperationBurst {
+            watcher_generation,
+            paths,
+            expires_at: std::time::Instant::now() + WATCH_RECONCILE_INTERVAL,
+        });
+        if request_reconcile {
+            self.requested_reconcile_generation = Some(watcher_generation);
+        }
+        true
+    }
+
+    fn owns_drained_operation_burst(
+        &mut self,
+        paths: &BTreeSet<PathBuf>,
+        now: std::time::Instant,
+    ) -> bool {
+        let Some(owned) = self.owned_operation_burst.as_ref() else {
+            return false;
+        };
+        if now > owned.expires_at || !self.slot.accepts_generation(owned.watcher_generation) {
+            self.owned_operation_burst = None;
+            return false;
+        }
+        if paths.is_empty() {
+            return false;
+        }
+        let owned_only = paths.iter().all(|path| owned.paths.contains(path));
+        if !owned_only {
+            self.owned_operation_burst = None;
+        }
+        owned_only
     }
 
     fn take_requested_reconcile(&mut self) -> bool {
@@ -329,7 +386,13 @@ impl super::App {
 
         let reconcile_due = self.file_manager_watcher.take_reconcile_due(now);
         let requested_reconcile = self.file_manager_watcher.take_requested_reconcile();
-        if !drained.events.refresh && !reconcile_due && !requested_reconcile {
+        let owned_operation_burst = self
+            .file_manager_watcher
+            .owns_drained_operation_burst(&drained.events.paths, now);
+        if (!drained.events.refresh || owned_operation_burst)
+            && !reconcile_due
+            && !requested_reconcile
+        {
             return false;
         }
 
@@ -564,6 +627,22 @@ mod tests {
                 .count(),
             1
         );
+
+        let external = destination.join("external.txt");
+        std::fs::write(&external, b"external").expect("write external change");
+        watch_tx
+            .send(message(
+                watcher_generation,
+                external.to_str().expect("UTF-8 external temp path"),
+            ))
+            .expect("queue external watcher event");
+        assert!(app.sync_file_manager_watcher_at(now));
+        let file_manager = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(file_manager.preview_generation, before_generation + 2);
+        assert!(file_manager
+            .entries
+            .iter()
+            .any(|entry| entry.path == external));
     }
 
     // TP-C4.4-RECONCILE: when the watcher has already reconciled the exact

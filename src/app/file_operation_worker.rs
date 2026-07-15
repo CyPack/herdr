@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -44,6 +45,7 @@ pub(super) struct FileOperationReconcileBaseline {
     destination_directory: std::path::PathBuf,
     watcher_generation: u64,
     watcher_revision: u64,
+    affected_paths: BTreeSet<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -503,6 +505,11 @@ impl crate::app::App {
         };
         let operation_kind = file_manager_operation_kind(plan.kind());
         let destination_directory = plan.destination_directory().to_path_buf();
+        let affected_paths = plan
+            .transfers()
+            .iter()
+            .map(|transfer| transfer.destination().to_path_buf())
+            .collect();
         let total_items = plan.transfers().len();
         let items = plan
             .transfers()
@@ -519,7 +526,11 @@ impl crate::app::App {
             Ok(generation) => generation,
             Err(FileOperationStartError::Busy) => return false,
         };
-        self.record_file_operation_reconcile_baseline(generation, &destination_directory);
+        self.record_file_operation_reconcile_baseline(
+            generation,
+            &destination_directory,
+            affected_paths,
+        );
         self.state.file_manager_operation = Some(FileManagerOperationState {
             generation,
             kind: operation_kind,
@@ -606,7 +617,15 @@ impl crate::app::App {
                 baseline.watcher_revision,
             )
         });
-        let reconcile_with_watcher = watcher_already_reconciled
+        let owned_by_watcher = reconcile_baseline.as_ref().is_some_and(|baseline| {
+            self.file_manager_watcher.own_operation_reconcile(
+                &destination_directory,
+                baseline.watcher_generation,
+                baseline.affected_paths.clone(),
+                !watcher_already_reconciled,
+            )
+        });
+        let reconcile_with_watcher = owned_by_watcher
             || self
                 .state
                 .file_manager
@@ -630,6 +649,7 @@ impl crate::app::App {
         &mut self,
         operation_generation: u64,
         destination_directory: &Path,
+        affected_paths: BTreeSet<std::path::PathBuf>,
     ) {
         self.file_operation_reconcile_baseline = self
             .file_manager_watcher
@@ -640,6 +660,7 @@ impl crate::app::App {
                     destination_directory: destination_directory.to_path_buf(),
                     watcher_generation,
                     watcher_revision,
+                    affected_paths,
                 },
             );
     }
@@ -707,11 +728,18 @@ impl crate::app::App {
             }
         };
         let source = plan.source().to_path_buf();
+        let affected_paths = [source.clone(), plan.destination().to_path_buf()]
+            .into_iter()
+            .collect();
         let generation = match self.file_operation_worker.start_rename(plan) {
             Ok(generation) => generation,
             Err(FileOperationStartError::Busy) => return false,
         };
-        self.record_file_operation_reconcile_baseline(generation, &affected_directory);
+        self.record_file_operation_reconcile_baseline(
+            generation,
+            &affected_directory,
+            affected_paths,
+        );
         self.state.file_manager_operation = Some(FileManagerOperationState {
             generation,
             kind: FileManagerOperationKind::Rename,
@@ -786,12 +814,21 @@ impl crate::app::App {
                 status: FileManagerOperationItemStatus::Pending,
             })
             .collect::<Vec<_>>();
+        let affected_paths = plan
+            .mappings()
+            .iter()
+            .flat_map(|(source, destination)| [source.clone(), destination.clone()])
+            .collect();
         let total_items = items.len();
         let generation = match self.file_operation_worker.start_bulk_rename(plan) {
             Ok(generation) => generation,
             Err(FileOperationStartError::Busy) => return false,
         };
-        self.record_file_operation_reconcile_baseline(generation, &affected_directory);
+        self.record_file_operation_reconcile_baseline(
+            generation,
+            &affected_directory,
+            affected_paths,
+        );
         self.state.file_manager_operation = Some(FileManagerOperationState {
             generation,
             kind: FileManagerOperationKind::BulkRename,
@@ -854,6 +891,11 @@ impl crate::app::App {
             }
         };
         let total_items = plan.items().len();
+        let affected_paths = plan
+            .items()
+            .iter()
+            .map(|item| item.path().to_path_buf())
+            .collect();
         let items = plan
             .items()
             .iter()
@@ -867,7 +909,11 @@ impl crate::app::App {
             Ok(generation) => generation,
             Err(FileOperationStartError::Busy) => return false,
         };
-        self.record_file_operation_reconcile_baseline(generation, &affected_directory);
+        self.record_file_operation_reconcile_baseline(
+            generation,
+            &affected_directory,
+            affected_paths,
+        );
         self.state.file_manager_operation = Some(FileManagerOperationState {
             generation,
             kind: operation_kind,
