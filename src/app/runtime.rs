@@ -201,6 +201,7 @@ impl App {
 
         changed |= self.sync_file_operation_worker();
         changed |= self.sync_file_manager_agent_handoff();
+        changed |= self.sync_file_manager_agent_handoff_send();
         changed |= self.sync_file_manager_watcher_at(now);
         changed |= self.sync_file_preview_worker();
         changed |= self.sync_image_preview_worker();

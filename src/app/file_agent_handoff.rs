@@ -1,6 +1,12 @@
 use crate::app::state::{
     FileManagerAgentHandoffRequest, FileManagerContextMenuAction, FileManagerOperationState,
 };
+use bytes::Bytes;
+
+pub(super) enum TerminalInputSendError {
+    RuntimeUnavailable,
+    SendFailed { message: String, busy: bool },
+}
 
 impl crate::app::App {
     pub(super) fn open_file_manager_row_agent_handoff(&mut self, path: std::path::PathBuf) -> bool {
@@ -96,6 +102,119 @@ impl crate::app::App {
         let _ = self.open_file_manager_context_agent_handoff(intent.paths);
         true
     }
+
+    pub(super) fn try_send_terminal_input(
+        &self,
+        terminal_id: &crate::terminal::TerminalId,
+        bytes: Bytes,
+    ) -> Result<(), TerminalInputSendError> {
+        let runtime = self
+            .terminal_runtimes
+            .get(terminal_id)
+            .ok_or(TerminalInputSendError::RuntimeUnavailable)?;
+        runtime.try_send_bytes(bytes).map_err(|error| {
+            let busy = matches!(error, tokio::sync::mpsc::error::TrySendError::Full(_));
+            TerminalInputSendError::SendFailed {
+                message: error.to_string(),
+                busy,
+            }
+        })
+    }
+
+    pub(super) fn sync_file_manager_agent_handoff_send(&mut self) -> bool {
+        let Some(request) = self.state.request_file_manager_agent_handoff.take() else {
+            return false;
+        };
+        if !self.file_manager_agent_handoff_is_current(&request) {
+            self.show_file_manager_agent_handoff_failure("agent handoff authority changed");
+            return true;
+        }
+        let Some(path) = request.path.to_str() else {
+            self.show_file_manager_agent_handoff_failure("agent handoff authority changed");
+            return true;
+        };
+        let mut payload = Vec::with_capacity(path.len() + 1);
+        payload.extend_from_slice(path.as_bytes());
+        payload.push(b'\r');
+
+        match self.try_send_terminal_input(&request.terminal_id, Bytes::from(payload)) {
+            Ok(()) => {}
+            Err(TerminalInputSendError::RuntimeUnavailable) => {
+                self.show_file_manager_agent_handoff_failure("agent runtime is unavailable");
+            }
+            Err(TerminalInputSendError::SendFailed { busy, .. }) => {
+                let context = if busy {
+                    "agent input is busy"
+                } else {
+                    "agent runtime is unavailable"
+                };
+                self.show_file_manager_agent_handoff_failure(context);
+            }
+        }
+        true
+    }
+
+    fn file_manager_agent_handoff_is_current(
+        &self,
+        request: &FileManagerAgentHandoffRequest,
+    ) -> bool {
+        if self.file_operation_worker.is_busy()
+            || self
+                .state
+                .file_manager_operation
+                .as_ref()
+                .is_some_and(FileManagerOperationState::is_running)
+            || request.path.to_str().is_none()
+            || !self
+                .state
+                .file_manager
+                .as_ref()
+                .is_some_and(|file_manager| {
+                    file_manager
+                        .entries
+                        .iter()
+                        .any(|entry| entry.operation_supported && entry.path == request.path)
+                })
+        {
+            return false;
+        }
+
+        let Some(workspace_idx) = self.state.active else {
+            return false;
+        };
+        let Some(pane_id) = self
+            .state
+            .workspaces
+            .get(workspace_idx)
+            .and_then(crate::workspace::Workspace::focused_pane_id)
+        else {
+            return false;
+        };
+        if self
+            .state
+            .terminal_id_for_pane(workspace_idx, pane_id)
+            .as_ref()
+            != Some(&request.terminal_id)
+        {
+            return false;
+        }
+        self.state
+            .terminals
+            .get(&request.terminal_id)
+            .is_some_and(crate::terminal::TerminalState::is_agent_terminal)
+    }
+
+    fn show_file_manager_agent_handoff_failure(&mut self, context: &str) {
+        let previous_toast = self.state.toast.clone();
+        self.state.toast = Some(crate::app::state::ToastNotification {
+            kind: crate::app::state::ToastKind::NeedsAttention,
+            title: "send to agent failed".to_string(),
+            context: context.to_string(),
+            position: None,
+            target: None,
+        });
+        self.sync_toast_deadline(previous_toast);
+    }
 }
 
 #[cfg(test)]
@@ -172,8 +291,8 @@ mod tests {
 
     // TP-C5-SEND: the handoff is one literal UTF-8 path followed by exactly
     // one terminal Enter. Shell metacharacters are data, never command syntax.
-    #[test]
-    fn existing_agent_receives_one_literal_path_and_enter_exactly_once() {
+    #[tokio::test]
+    async fn existing_agent_receives_one_literal_path_and_enter_exactly_once() {
         let fixture = HandoffFixture::new("literal");
         let path = fixture.file("space 'quote' $(touch nope) `echo` ünicode.txt");
         let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 4);
@@ -201,8 +320,8 @@ mod tests {
 
     // TP-C5-SEND: authority is revalidated at send time. Lost agent identity
     // consumes the stale request without writing any bytes.
-    #[test]
-    fn existing_agent_handoff_fails_closed_after_agent_identity_is_lost() {
+    #[tokio::test]
+    async fn existing_agent_handoff_fails_closed_after_agent_identity_is_lost() {
         let fixture = HandoffFixture::new("lost-agent");
         let path = fixture.file("selected.txt");
         let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 2);
@@ -227,8 +346,8 @@ mod tests {
 
     // TP-C5-SEND: a watcher-reconciled stale entry and a vanished runtime are
     // independently fail-closed and visible; neither can route to another pane.
-    #[test]
-    fn existing_agent_handoff_rejects_stale_path_and_missing_runtime() {
+    #[tokio::test]
+    async fn existing_agent_handoff_rejects_stale_path_and_missing_runtime() {
         let fixture = HandoffFixture::new("stale-path");
         let path = fixture.file("selected.txt");
         let (mut stale, terminal_id, mut stale_receiver) = app_with_agent_handoff(&fixture.root, 2);
@@ -281,8 +400,8 @@ mod tests {
 
     // TP-C5-SEND: a full terminal input lane is a terminal failure for this
     // one-shot request. It is not retried on later frame ticks.
-    #[test]
-    fn existing_agent_handoff_backpressure_is_consumed_without_hot_retry() {
+    #[tokio::test]
+    async fn existing_agent_handoff_backpressure_is_consumed_without_hot_retry() {
         let fixture = HandoffFixture::new("backpressure");
         let path = fixture.file("selected.txt");
         let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 1);

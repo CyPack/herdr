@@ -4,6 +4,7 @@ use crate::api::schema::{
     AgentRenameParams, AgentSendParams, AgentStartParams, AgentTarget, PaneReadResult, ReadFormat,
     ReadSource, ResponseResult,
 };
+use crate::app::file_agent_handoff::TerminalInputSendError;
 use crate::app::App;
 
 use super::responses::{encode_error, encode_error_body, encode_success};
@@ -184,11 +185,20 @@ impl App {
             Ok(resolved) => resolved,
             Err(err) => return encode_error_body(id, self.agent_target_error_body(err)),
         };
-        let Some(runtime) = self.lookup_runtime_sender(resolved.ws_idx, resolved.pane_id) else {
+        let Some(terminal_id) = self
+            .state
+            .terminal_id_for_pane(resolved.ws_idx, resolved.pane_id)
+        else {
             return agent_not_found(id, &params.target);
         };
-        if let Err(err) = runtime.try_send_bytes(Bytes::from(params.text)) {
-            return encode_error(id, "agent_send_failed", err.to_string());
+        match self.try_send_terminal_input(&terminal_id, Bytes::from(params.text)) {
+            Ok(()) => {}
+            Err(TerminalInputSendError::RuntimeUnavailable) => {
+                return agent_not_found(id, &params.target);
+            }
+            Err(TerminalInputSendError::SendFailed { message, .. }) => {
+                return encode_error(id, "agent_send_failed", message);
+            }
         }
 
         encode_success(id, ResponseResult::Ok {})
@@ -268,8 +278,8 @@ mod tests {
 
     // TP-C5-SEND-API: extracting a shared terminal-input seam must preserve
     // agent.send's success envelope and byte-for-byte text behavior.
-    #[test]
-    fn agent_send_preserves_exact_text_and_success_contract() {
+    #[tokio::test]
+    async fn agent_send_preserves_exact_text_and_success_contract() {
         let mut app = app_with_agent();
         let pane_id = app.state.workspaces[0].tabs[0].root_pane;
         let terminal_id = app.state.workspaces[0]
