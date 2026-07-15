@@ -1966,23 +1966,29 @@ mod tests {
     // generation, remain idempotent, keep the FM open, and terminalize the
     // operation without publishing a destination entry.
     #[tokio::test]
-    async fn app_esc_cancels_matching_file_operation_generation() {
+    async fn app_esc_cancellation_is_generation_safe_and_lane_reusable() {
         let td = TempDir::new("app-esc-cancel");
         let source_root = td.root.join("sources");
         let destination = td.root.join("destination");
         fs::create_dir(&source_root).expect("create cancellable source root");
         fs::create_dir(&destination).expect("create cancellable destination");
         let source = source_root.join("payload.txt");
+        let next_source = source_root.join("next.txt");
         fs::write(&source, b"payload").expect("write cancellable source");
+        fs::write(&next_source, b"next").expect("write next-generation source");
         let (started_tx, started_rx) = mpsc::channel();
+        let calls = Arc::new(AtomicU64::new(0));
+        let executor_calls = calls.clone();
         let worker = FileOperationWorker::with_executor(
             Arc::new(Notify::new()),
             move |plan, cancellation| {
-                started_tx
-                    .send(())
-                    .expect("signal cancellable worker started");
-                while !cancellation.is_cancelled() {
-                    std::thread::yield_now();
+                if executor_calls.fetch_add(1, Ordering::Relaxed) == 0 {
+                    started_tx
+                        .send(())
+                        .expect("signal cancellable worker started");
+                    while !cancellation.is_cancelled() {
+                        std::thread::yield_now();
+                    }
                 }
                 execute_file_operation(plan, cancellation)
             },
@@ -2064,6 +2070,43 @@ mod tests {
         assert!(!destination.join("payload.txt").exists());
         assert!(!app.file_operation_worker.is_busy());
         assert!(!app.file_operation_worker.cancel());
+
+        app.state.file_manager_clipboard = vec![next_source];
+        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
+        let next_generation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("next operation running")
+            .generation;
+        assert!(next_generation > generation);
+        assert!(
+            !app.file_operation_worker.cancel_generation(generation),
+            "stale generation cannot cancel the reused lane"
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .is_some_and(FileManagerOperationState::is_running)
+        {
+            let _ = app.sync_file_operation_worker();
+            assert!(Instant::now() < deadline, "next generation timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let next_operation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("next operation terminal");
+        assert_eq!(next_operation.generation, next_generation);
+        assert_eq!(next_operation.status, FileManagerOperationStatus::Completed);
+        assert_eq!(
+            fs::read(destination.join("next.txt")).expect("read next-generation output"),
+            b"next"
+        );
     }
 
     // TP-C4.1-LIFECYCLE: a completion for the prior destination may finish
