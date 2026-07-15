@@ -1,16 +1,20 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
 use ratatui::layout::Rect;
 use serde::{de, Deserialize, Deserializer, Serialize};
 
+use super::template::ShellTemplateId;
+
 pub(super) const MAX_NESTED_SPLIT_DEPTH: usize = 4;
 pub(super) const MAX_SPLIT_CHILDREN: usize = 8;
 pub(super) const MAX_VISIBLE_LEAVES: usize = 64;
 pub(super) const MAX_SERIALIZED_NODES: usize = 128;
+pub(super) const MAX_STACK_CHILDREN: usize = 32;
+pub(super) const MAX_COMPONENT_PLACEMENTS: usize = 64;
 
 /// Stable identities for the finite outer shell owned by the TUI client.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub(crate) enum RegionId {
     TopBar,
     AppDock,
@@ -21,6 +25,39 @@ pub(crate) enum RegionId {
     WorkspaceStage,
     RightPanel,
     BottomBar,
+}
+
+/// Bounded sizing policy consumed by the SF2.3 solver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum TrackPolicy {
+    Fixed { cells: u16 },
+    ContentBounded { min: u16, max: u16 },
+    Resizable { min: u16, preferred: u16, max: u16 },
+    Fill { weight: u16 },
+    Collapsed { restore: u16 },
+}
+
+/// Closed v0 identities for components placed into shell regions or stacks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub(crate) enum ShellComponentId {
+    AppDock,
+    AgentSidebar,
+    WorkspaceStage,
+    Inspector,
+    TopBar,
+    BottomBar,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ComponentPlacement {
+    pub component: ShellComponentId,
+    pub region: RegionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct StackContainer {
+    pub children: Vec<ShellComponentId>,
+    pub selected: usize,
 }
 
 /// Legacy sizing policy retained until the bounded solver lands in SF2.3.
@@ -60,6 +97,9 @@ pub(crate) enum ShellDirection {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct ShellLayout {
     pub(super) root: ShellNode,
+    pub(super) tracks: BTreeMap<RegionId, TrackPolicy>,
+    pub(super) stacks: Vec<StackContainer>,
+    pub(super) component_placements: Vec<ComponentPlacement>,
 }
 
 /// Proof that a shell tree satisfies the finite composition invariants.
@@ -80,8 +120,14 @@ pub(crate) enum ShellValidationError {
     ChildrenExceeded,
     VisibleLeavesExceeded,
     SerializedNodesExceeded,
+    StackChildrenExceeded,
+    ComponentPlacementsExceeded,
+    DuplicateComponentPlacement,
     DuplicateRegion(RegionId),
+    InvalidTrackBounds,
     MissingWorkspaceStage,
+    CollapsedWorkspaceStage,
+    InvalidStackSelection,
 }
 
 impl fmt::Display for ShellValidationError {
@@ -93,6 +139,29 @@ impl fmt::Display for ShellValidationError {
 impl std::error::Error for ShellValidationError {}
 
 impl ShellLayout {
+    pub(super) fn from_legacy_root(root: ShellNode) -> Self {
+        Self {
+            root,
+            tracks: BTreeMap::new(),
+            stacks: Vec::new(),
+            component_placements: Vec::new(),
+        }
+    }
+
+    pub(super) fn from_parts(
+        root: ShellNode,
+        tracks: BTreeMap<RegionId, TrackPolicy>,
+        stacks: Vec<StackContainer>,
+        component_placements: Vec<ComponentPlacement>,
+    ) -> Self {
+        Self {
+            root,
+            tracks,
+            stacks,
+            component_placements,
+        }
+    }
+
     /// Validate with one iterative traversal bounded by serialized node count.
     pub(crate) fn validate(self) -> Result<ValidatedShellLayout, ShellValidationError> {
         let mut stack = vec![(&self.root, 0usize)];
@@ -142,6 +211,46 @@ impl ShellLayout {
             }
         }
 
+        if self.component_placements.len() > MAX_COMPONENT_PLACEMENTS {
+            return Err(ShellValidationError::ComponentPlacementsExceeded);
+        }
+        for stack in &self.stacks {
+            if stack.children.len() > MAX_STACK_CHILDREN {
+                return Err(ShellValidationError::StackChildrenExceeded);
+            }
+            if (stack.children.is_empty() && stack.selected != 0)
+                || (!stack.children.is_empty() && stack.selected >= stack.children.len())
+            {
+                return Err(ShellValidationError::InvalidStackSelection);
+            }
+        }
+        for track in self.tracks.values() {
+            let valid = match *track {
+                TrackPolicy::Fixed { .. } | TrackPolicy::Collapsed { .. } => true,
+                TrackPolicy::ContentBounded { min, max } => min <= max,
+                TrackPolicy::Resizable {
+                    min,
+                    preferred,
+                    max,
+                } => min <= preferred && preferred <= max,
+                TrackPolicy::Fill { weight } => weight > 0,
+            };
+            if !valid {
+                return Err(ShellValidationError::InvalidTrackBounds);
+            }
+        }
+        if matches!(
+            self.tracks.get(&RegionId::WorkspaceStage),
+            Some(TrackPolicy::Collapsed { .. })
+        ) {
+            return Err(ShellValidationError::CollapsedWorkspaceStage);
+        }
+        let mut placed_components = HashSet::new();
+        for placement in &self.component_placements {
+            if !placed_components.insert(placement.component) {
+                return Err(ShellValidationError::DuplicateComponentPlacement);
+            }
+        }
         if let Some(region) = duplicate_region {
             return Err(ShellValidationError::DuplicateRegion(region));
         }
@@ -154,8 +263,28 @@ impl ShellLayout {
 }
 
 #[derive(Deserialize)]
-struct SerializedShellLayout {
+#[serde(deny_unknown_fields)]
+struct SerializedShellTree {
     root: ShellNode,
+    #[serde(default)]
+    tracks: BTreeMap<RegionId, TrackPolicy>,
+    #[serde(default)]
+    stacks: Vec<StackContainer>,
+    #[serde(default)]
+    component_placements: Vec<ComponentPlacement>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SerializedShellTemplate {
+    template: ShellTemplateId,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SerializedShellLayout {
+    Tree(SerializedShellTree),
+    Template(SerializedShellTemplate),
 }
 
 impl<'de> Deserialize<'de> for ShellLayout {
@@ -164,12 +293,19 @@ impl<'de> Deserialize<'de> for ShellLayout {
         D: Deserializer<'de>,
     {
         let serialized = SerializedShellLayout::deserialize(deserializer)?;
-        ShellLayout {
-            root: serialized.root,
-        }
-        .validate()
-        .map(ValidatedShellLayout::into_inner)
-        .map_err(de::Error::custom)
+        let validated = match serialized {
+            SerializedShellLayout::Tree(tree) => ShellLayout::from_parts(
+                tree.root,
+                tree.tracks,
+                tree.stacks,
+                tree.component_placements,
+            )
+            .validate(),
+            SerializedShellLayout::Template(template) => template.template.validated_layout(),
+        };
+        validated
+            .map(ValidatedShellLayout::into_inner)
+            .map_err(de::Error::custom)
     }
 }
 

@@ -18,6 +18,7 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 
 mod model;
+mod template;
 
 pub(crate) use model::{
     RegionId, RegionRects, RegionSize, ShellChild, ShellDirection, ShellLayout, ShellNode,
@@ -28,25 +29,23 @@ impl Default for ShellLayout {
     /// sidebar (dynamic width) and the center content (remaining space) — i.e.
     /// exactly `Layout::horizontal([Length(sidebar_w), Min(1)])`.
     fn default() -> Self {
-        Self {
-            root: ShellNode::Split {
-                direction: ShellDirection::Horizontal,
-                children: vec![
-                    ShellChild {
-                        size: RegionSize::Dynamic,
-                        node: ShellNode::Slot {
-                            region: RegionId::LeftPanel,
-                        },
+        Self::from_legacy_root(ShellNode::Split {
+            direction: ShellDirection::Horizontal,
+            children: vec![
+                ShellChild {
+                    size: RegionSize::Dynamic,
+                    node: ShellNode::Slot {
+                        region: RegionId::LeftPanel,
                     },
-                    ShellChild {
-                        size: RegionSize::Fill,
-                        node: ShellNode::Slot {
-                            region: RegionId::WorkspaceStage,
-                        },
+                },
+                ShellChild {
+                    size: RegionSize::Fill,
+                    node: ShellNode::Slot {
+                        region: RegionId::WorkspaceStage,
                     },
-                ],
-            },
-        }
+                },
+            ],
+        })
     }
 }
 
@@ -601,38 +600,36 @@ mod tests {
     /// sidebar | (center / bottom bar) | right rail — exercises horizontal and
     /// vertical splits, a nested split, and a dynamic size on a Split child.
     fn nested_fixture() -> ShellLayout {
-        ShellLayout {
-            root: ShellNode::Split {
-                direction: ShellDirection::Horizontal,
-                children: vec![
-                    ShellChild {
-                        size: RegionSize::Dynamic,
-                        node: ShellNode::Slot {
-                            region: RegionId::LeftPanel,
-                        },
+        ShellLayout::from_legacy_root(ShellNode::Split {
+            direction: ShellDirection::Horizontal,
+            children: vec![
+                ShellChild {
+                    size: RegionSize::Dynamic,
+                    node: ShellNode::Slot {
+                        region: RegionId::LeftPanel,
                     },
-                    ShellChild {
-                        size: RegionSize::Fill,
-                        node: ShellNode::Split {
-                            direction: ShellDirection::Vertical,
-                            children: vec![
-                                ShellChild {
-                                    size: RegionSize::Fill,
-                                    node: ShellNode::Slot {
-                                        region: RegionId::CenterContent,
-                                    },
+                },
+                ShellChild {
+                    size: RegionSize::Fill,
+                    node: ShellNode::Split {
+                        direction: ShellDirection::Vertical,
+                        children: vec![
+                            ShellChild {
+                                size: RegionSize::Fill,
+                                node: ShellNode::Slot {
+                                    region: RegionId::CenterContent,
                                 },
-                                ShellChild {
-                                    size: RegionSize::Dynamic,
-                                    node: ShellNode::Slot {
-                                        region: RegionId::BottomBar,
-                                    },
+                            },
+                            ShellChild {
+                                size: RegionSize::Dynamic,
+                                node: ShellNode::Slot {
+                                    region: RegionId::BottomBar,
                                 },
-                            ],
-                        },
+                            },
+                        ],
                     },
-                ],
-            },
-        }
+                },
+            ],
+        })
     }
 }
