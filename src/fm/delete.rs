@@ -31,6 +31,7 @@ pub(crate) enum DeleteOperationPreflightError {
     SourceMissing { path: PathBuf },
     SourceUnavailable { path: PathBuf, kind: io::ErrorKind },
     SourceUnsupported { path: PathBuf },
+    SourceHasNoFileName { path: PathBuf },
     FileIdentityUnavailable { path: PathBuf, kind: io::ErrorKind },
 }
 
@@ -97,6 +98,9 @@ impl DeleteOperationPlan {
             }
             if !exact_paths.insert(path.clone()) {
                 return Err(DeleteOperationPreflightError::DuplicatePath { path });
+            }
+            if path.file_name().is_none() {
+                return Err(DeleteOperationPreflightError::SourceHasNoFileName { path });
             }
             items.push(PlannedDeleteItem {
                 snapshot: snapshot_delete_source(&path)?,
