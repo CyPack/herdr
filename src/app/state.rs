@@ -682,6 +682,8 @@ pub enum FileManagerOperationKind {
     Move,
     Trash,
     PermanentDelete,
+    Rename,
+    BulkRename,
 }
 
 /// One explicit lifecycle state for a bounded native-FM operation.
@@ -705,6 +707,9 @@ pub enum FileManagerOperationItemStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileManagerOperationItemState {
     pub path: PathBuf,
+    /// Exact surviving path when rollback cannot prove restoration. Normal
+    /// terminal states leave this empty.
+    pub recovery_path: Option<PathBuf>,
     pub status: FileManagerOperationItemStatus,
 }
 
@@ -780,6 +785,14 @@ impl FileManagerRenameValidationError {
 pub struct FileManagerRenameRequest {
     pub source_path: PathBuf,
     pub new_name: String,
+}
+
+/// Fully edited bulk mapping awaiting operation-time revalidation. The
+/// current single-name modal does not synthesize this request; it is a typed
+/// worker boundary for the bulk editor surface.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileManagerBulkRenameRequest {
+    pub mappings: Vec<(PathBuf, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2003,6 +2016,8 @@ pub struct AppState {
     pub file_manager_rename: Option<FileManagerRenameState>,
     /// One validated rename request awaiting C4's operation-time preflight.
     pub request_file_manager_rename: Option<FileManagerRenameRequest>,
+    /// One complete bulk mapping awaiting C4's all-or-nothing preflight.
+    pub request_file_manager_bulk_rename: Option<FileManagerBulkRenameRequest>,
     /// One confirmed, revalidated delete request for the App-owned worker.
     pub request_file_manager_delete: Option<FileManagerDeleteRequest>,
     /// Exact, revalidated client-local intent from the native-FM context menu.
@@ -2460,6 +2475,7 @@ impl AppState {
             file_manager_delete_confirmation: None,
             file_manager_rename: None,
             request_file_manager_rename: None,
+            request_file_manager_bulk_rename: None,
             request_file_manager_delete: None,
             request_file_manager_context_action: None,
             should_quit: false,

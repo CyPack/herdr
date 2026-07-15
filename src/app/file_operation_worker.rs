@@ -1,4 +1,5 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 
@@ -12,6 +13,13 @@ use crate::fm::operations::{
     execute_file_operation, FileOperationCancellation, FileOperationExecutionResult,
     FileOperationExecutionStatus, FileOperationItemOutcome, FileOperationKind, FileOperationPlan,
     FileOperationRequest,
+};
+use crate::fm::rename::{
+    execute_bulk_rename_operation, execute_rename_operation, BulkRenameItemOutcome,
+    BulkRenameOperationExecutionResult, BulkRenameOperationExecutionStatus,
+    BulkRenameOperationPlan, BulkRenameOperationRequest, RenameOperationExecutionResult,
+    RenameOperationExecutionStatus, RenameOperationOutcome, RenameOperationPlan,
+    RenameOperationRequest,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +42,8 @@ pub(super) struct FileOperationWorkerCompletion {
 pub(super) enum FileOperationWorkerResult {
     Transfer(FileOperationExecutionResult),
     Delete(DeleteOperationExecutionResult),
+    Rename(RenameOperationExecutionResult),
+    BulkRename(BulkRenameOperationExecutionResult),
 }
 
 #[derive(Debug, Default)]
@@ -51,6 +61,8 @@ struct FileOperationWorkerRequest {
 enum FileOperationWorkerTask {
     Transfer(FileOperationPlan),
     Delete(DeleteOperationPlan),
+    Rename(RenameOperationPlan),
+    BulkRename(BulkRenameOperationPlan),
 }
 
 struct FileOperationWorkerState {
@@ -106,6 +118,12 @@ impl FileOperationWorker {
             FileOperationWorkerTask::Delete(plan) => {
                 FileOperationWorkerResult::Delete(execute_delete_operation(plan, cancellation))
             }
+            FileOperationWorkerTask::Rename(plan) => {
+                FileOperationWorkerResult::Rename(execute_rename_operation(plan, cancellation))
+            }
+            FileOperationWorkerTask::BulkRename(plan) => FileOperationWorkerResult::BulkRename(
+                execute_bulk_rename_operation(plan, cancellation),
+            ),
         })
     }
 
@@ -123,6 +141,12 @@ impl FileOperationWorker {
             FileOperationWorkerTask::Delete(plan) => {
                 FileOperationWorkerResult::Delete(execute_delete_operation(plan, cancellation))
             }
+            FileOperationWorkerTask::Rename(plan) => {
+                FileOperationWorkerResult::Rename(execute_rename_operation(plan, cancellation))
+            }
+            FileOperationWorkerTask::BulkRename(plan) => FileOperationWorkerResult::BulkRename(
+                execute_bulk_rename_operation(plan, cancellation),
+            ),
         })
     }
 
@@ -182,6 +206,20 @@ impl FileOperationWorker {
         plan: DeleteOperationPlan,
     ) -> Result<u64, FileOperationStartError> {
         self.start_task(FileOperationWorkerTask::Delete(plan))
+    }
+
+    pub(super) fn start_rename(
+        &mut self,
+        plan: RenameOperationPlan,
+    ) -> Result<u64, FileOperationStartError> {
+        self.start_task(FileOperationWorkerTask::Rename(plan))
+    }
+
+    pub(super) fn start_bulk_rename(
+        &mut self,
+        plan: BulkRenameOperationPlan,
+    ) -> Result<u64, FileOperationStartError> {
+        self.start_task(FileOperationWorkerTask::BulkRename(plan))
     }
 
     fn start_task(
@@ -358,6 +396,7 @@ impl crate::app::App {
             .map(
                 |transfer| crate::app::state::FileManagerOperationItemState {
                     path: transfer.source().to_path_buf(),
+                    recovery_path: None,
                     status: crate::app::state::FileManagerOperationItemStatus::Pending,
                 },
             )
@@ -384,6 +423,7 @@ impl crate::app::App {
     /// instead of being silently discarded.
     pub(super) fn sync_file_operation_worker(&mut self) -> bool {
         let mut changed = self.consume_file_manager_delete_request();
+        changed |= self.consume_file_manager_rename_request();
         changed |= self.consume_file_manager_context_rename();
         changed |= self.consume_file_manager_context_delete();
         changed |= self.consume_file_manager_context_copy();
@@ -417,6 +457,12 @@ impl crate::app::App {
             Ok(FileOperationWorkerResult::Delete(result)) => {
                 apply_delete_execution_result(operation, &result)
             }
+            Ok(FileOperationWorkerResult::Rename(result)) => {
+                apply_rename_execution_result(operation, &result)
+            }
+            Ok(FileOperationWorkerResult::BulkRename(result)) => {
+                apply_bulk_rename_execution_result(operation, &result)
+            }
             Err(FileOperationWorkerError::Panicked) => {
                 mark_operation_worker_failure(operation);
                 tracing::error!(
@@ -439,6 +485,157 @@ impl crate::app::App {
             return false;
         };
         let _ = self.start_file_manager_delete(request);
+        true
+    }
+
+    fn consume_file_manager_rename_request(&mut self) -> bool {
+        let Some(request) = self.state.request_file_manager_rename.take() else {
+            return false;
+        };
+        let _ = self.start_file_manager_rename(request);
+        true
+    }
+
+    fn consume_file_manager_bulk_rename_request(&mut self) -> bool {
+        let Some(request) = self.state.request_file_manager_bulk_rename.take() else {
+            return false;
+        };
+        let _ = self.start_file_manager_bulk_rename(request);
+        true
+    }
+
+    fn start_file_manager_rename(
+        &mut self,
+        request: crate::app::state::FileManagerRenameRequest,
+    ) -> bool {
+        use crate::app::state::{
+            FileManagerOperationItemState, FileManagerOperationItemStatus,
+            FileManagerOperationKind, FileManagerOperationState, FileManagerOperationStatus,
+        };
+
+        let Some(file_manager) = self.state.file_manager.as_ref() else {
+            return false;
+        };
+        let affected_directory = file_manager.cwd.clone();
+        if request.source_path.parent() != Some(affected_directory.as_path())
+            || !file_manager
+                .entries
+                .iter()
+                .any(|entry| entry.operation_supported && entry.path == request.source_path)
+        {
+            return false;
+        }
+        let operation_in_flight = self.file_operation_worker.is_busy()
+            || self
+                .state
+                .file_manager_operation
+                .as_ref()
+                .is_some_and(FileManagerOperationState::is_running);
+        let plan = match RenameOperationPlan::preflight(RenameOperationRequest {
+            source_path: request.source_path,
+            new_name: request.new_name,
+            operation_in_flight,
+        }) {
+            Ok(plan) => plan,
+            Err(error) => {
+                tracing::warn!(?error, "fm: rename operation preflight rejected request");
+                return false;
+            }
+        };
+        let source = plan.source().to_path_buf();
+        let generation = match self.file_operation_worker.start_rename(plan) {
+            Ok(generation) => generation,
+            Err(FileOperationStartError::Busy) => return false,
+        };
+        self.state.file_manager_operation = Some(FileManagerOperationState {
+            generation,
+            kind: FileManagerOperationKind::Rename,
+            destination_directory: affected_directory,
+            total_items: 1,
+            completed_items: 0,
+            failed_items: 0,
+            status: FileManagerOperationStatus::Running,
+            items: vec![FileManagerOperationItemState {
+                path: source,
+                recovery_path: None,
+                status: FileManagerOperationItemStatus::Pending,
+            }],
+        });
+        true
+    }
+
+    fn start_file_manager_bulk_rename(
+        &mut self,
+        request: crate::app::state::FileManagerBulkRenameRequest,
+    ) -> bool {
+        use crate::app::state::{
+            FileManagerOperationItemState, FileManagerOperationItemStatus,
+            FileManagerOperationKind, FileManagerOperationState, FileManagerOperationStatus,
+        };
+
+        let Some(file_manager) = self.state.file_manager.as_ref() else {
+            return false;
+        };
+        let affected_directory = file_manager.cwd.clone();
+        let requested_sources = request
+            .mappings
+            .iter()
+            .map(|(source, _)| source.clone())
+            .collect::<Vec<_>>();
+        let current_sources = file_manager
+            .entries
+            .iter()
+            .filter(|entry| file_manager.multi_selection_paths().contains(&entry.path))
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>();
+        if current_sources != requested_sources
+            || file_manager.entries.iter().any(|entry| {
+                file_manager.multi_selection_paths().contains(&entry.path)
+                    && !entry.operation_supported
+            })
+        {
+            return false;
+        }
+        let operation_in_flight = self.file_operation_worker.is_busy()
+            || self
+                .state
+                .file_manager_operation
+                .as_ref()
+                .is_some_and(FileManagerOperationState::is_running);
+        let plan = match BulkRenameOperationPlan::preflight(BulkRenameOperationRequest {
+            mappings: request.mappings,
+            operation_in_flight,
+        }) {
+            Ok(plan) => plan,
+            Err(error) => {
+                tracing::warn!(?error, "fm: bulk rename preflight rejected request");
+                return false;
+            }
+        };
+        let items = plan
+            .mappings()
+            .iter()
+            .map(|(source, _)| FileManagerOperationItemState {
+                path: source.clone(),
+                recovery_path: None,
+                status: FileManagerOperationItemStatus::Pending,
+            })
+            .collect::<Vec<_>>();
+        let total_items = items.len();
+        let generation = match self.file_operation_worker.start_bulk_rename(plan) {
+            Ok(generation) => generation,
+            Err(FileOperationStartError::Busy) => return false,
+        };
+        self.state.file_manager_operation = Some(FileManagerOperationState {
+            generation,
+            kind: FileManagerOperationKind::BulkRename,
+            destination_directory: affected_directory,
+            total_items,
+            completed_items: 0,
+            failed_items: 0,
+            status: FileManagerOperationStatus::Running,
+            items,
+        });
         true
     }
 
@@ -496,6 +693,7 @@ impl crate::app::App {
             .iter()
             .map(|item| crate::app::state::FileManagerOperationItemState {
                 path: item.path().to_path_buf(),
+                recovery_path: None,
                 status: crate::app::state::FileManagerOperationItemStatus::Pending,
             })
             .collect();
@@ -641,6 +839,7 @@ fn apply_execution_result(
         .iter()
         .map(|item| crate::app::state::FileManagerOperationItemState {
             path: item.source().to_path_buf(),
+            recovery_path: None,
             status: match item.outcome() {
                 FileOperationItemOutcome::NotStarted => {
                     crate::app::state::FileManagerOperationItemStatus::Pending
@@ -697,6 +896,7 @@ fn apply_delete_execution_result(
         .iter()
         .map(|item| crate::app::state::FileManagerOperationItemState {
             path: item.path().to_path_buf(),
+            recovery_path: None,
             status: match item.outcome() {
                 DeleteOperationItemOutcome::NotStarted => {
                     crate::app::state::FileManagerOperationItemStatus::Pending
@@ -720,6 +920,108 @@ fn apply_delete_execution_result(
         DeleteOperationExecutionStatus::Cancelled => FileManagerOperationStatus::Cancelled,
         DeleteOperationExecutionStatus::Partial => FileManagerOperationStatus::Partial,
         DeleteOperationExecutionStatus::Failed => FileManagerOperationStatus::Failed,
+    };
+}
+
+fn apply_rename_execution_result(
+    operation: &mut crate::app::state::FileManagerOperationState,
+    result: &RenameOperationExecutionResult,
+) {
+    use crate::app::state::{
+        FileManagerOperationItemState, FileManagerOperationItemStatus, FileManagerOperationStatus,
+    };
+
+    let Some(source) = operation.items.first().map(|item| item.path.clone()) else {
+        mark_operation_worker_failure(operation);
+        return;
+    };
+    let (completed_items, failed_items, item_status) = match result.outcome() {
+        RenameOperationOutcome::NotStarted => (0, 0, FileManagerOperationItemStatus::Pending),
+        RenameOperationOutcome::Renamed => (1, 0, FileManagerOperationItemStatus::Completed),
+        RenameOperationOutcome::Retained(error) => {
+            tracing::warn!(path = %source.display(), ?error, "fm: rename source retained");
+            (0, 1, FileManagerOperationItemStatus::Retained)
+        }
+    };
+    operation.completed_items = completed_items;
+    operation.failed_items = failed_items;
+    operation.items = vec![FileManagerOperationItemState {
+        path: source,
+        recovery_path: None,
+        status: item_status,
+    }];
+    operation.status = match result.status() {
+        RenameOperationExecutionStatus::Completed => FileManagerOperationStatus::Completed,
+        RenameOperationExecutionStatus::Cancelled => FileManagerOperationStatus::Cancelled,
+        RenameOperationExecutionStatus::Failed => FileManagerOperationStatus::Failed,
+    };
+}
+
+fn apply_bulk_rename_execution_result(
+    operation: &mut crate::app::state::FileManagerOperationState,
+    result: &BulkRenameOperationExecutionResult,
+) {
+    use crate::app::state::{
+        FileManagerOperationItemState, FileManagerOperationItemStatus, FileManagerOperationStatus,
+    };
+
+    operation.completed_items = result
+        .items()
+        .iter()
+        .filter(|item| {
+            matches!(
+                item.outcome(),
+                BulkRenameItemOutcome::Renamed | BulkRenameItemOutcome::Unchanged
+            )
+        })
+        .count();
+    operation.failed_items = result
+        .items()
+        .iter()
+        .filter(|item| {
+            matches!(
+                item.outcome(),
+                BulkRenameItemOutcome::Restored(_)
+                    | BulkRenameItemOutcome::Retained(_)
+                    | BulkRenameItemOutcome::Uncertain(_)
+            )
+        })
+        .count();
+    operation.items = result
+        .items()
+        .iter()
+        .map(|item| FileManagerOperationItemState {
+            path: item.source().to_path_buf(),
+            recovery_path: item.recovery_path().map(Path::to_path_buf),
+            status: match item.outcome() {
+                BulkRenameItemOutcome::NotStarted => FileManagerOperationItemStatus::Pending,
+                BulkRenameItemOutcome::Renamed | BulkRenameItemOutcome::Unchanged => {
+                    FileManagerOperationItemStatus::Completed
+                }
+                BulkRenameItemOutcome::Restored(_) | BulkRenameItemOutcome::Retained(_) => {
+                    FileManagerOperationItemStatus::Retained
+                }
+                BulkRenameItemOutcome::Uncertain(_) => FileManagerOperationItemStatus::Failed,
+            },
+        })
+        .collect();
+    for item in result.items() {
+        if let BulkRenameItemOutcome::Uncertain(error) = item.outcome() {
+            tracing::error!(
+                source = %item.source().display(),
+                destination = %item.destination().display(),
+                recovery_path = ?item.recovery_path(),
+                ?error,
+                "fm: bulk rename recovery is uncertain"
+            );
+        }
+    }
+    operation.status = match result.status() {
+        BulkRenameOperationExecutionStatus::Completed => FileManagerOperationStatus::Completed,
+        BulkRenameOperationExecutionStatus::Cancelled => FileManagerOperationStatus::Cancelled,
+        BulkRenameOperationExecutionStatus::RolledBack
+        | BulkRenameOperationExecutionStatus::Failed => FileManagerOperationStatus::Failed,
+        BulkRenameOperationExecutionStatus::RecoveryFailed => FileManagerOperationStatus::Partial,
     };
 }
 
@@ -819,7 +1121,7 @@ mod tests {
     ) -> crate::fm::operations::FileOperationExecutionResult {
         match result {
             FileOperationWorkerResult::Transfer(result) => result,
-            FileOperationWorkerResult::Delete(_) => panic!("expected transfer worker result"),
+            _ => panic!("expected transfer worker result"),
         }
     }
 
@@ -1396,7 +1698,7 @@ mod tests {
                     cancellation.cancel();
                     FileOperationWorkerResult::Delete(execute_delete_operation(plan, cancellation))
                 }
-                FileOperationWorkerTask::Transfer(_) => panic!("expected trash delete task"),
+                _ => panic!("expected trash delete task"),
             },
         );
         let mut app = test_app();

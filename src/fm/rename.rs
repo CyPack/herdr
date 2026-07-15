@@ -96,10 +96,12 @@ impl RenameOperationPlan {
         &self.source
     }
 
+    #[cfg(test)]
     pub(crate) fn destination(&self) -> &Path {
         &self.destination
     }
 
+    #[cfg(test)]
     pub(crate) fn path_kind(&self) -> PlannedRenamePathKind {
         self.snapshot.path_kind
     }
@@ -419,7 +421,6 @@ impl BulkRenameOperationPlan {
         })
     }
 
-    #[cfg(test)]
     pub(crate) fn mappings(&self) -> &[(PathBuf, PathBuf)] {
         &self.mappings
     }

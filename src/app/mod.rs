@@ -601,6 +601,7 @@ impl App {
             file_manager_delete_confirmation: None,
             file_manager_rename: None,
             request_file_manager_rename: None,
+            request_file_manager_bulk_rename: None,
             request_file_manager_delete: None,
             request_file_manager_context_action: None,
             should_quit: false,
