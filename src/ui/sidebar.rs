@@ -10,7 +10,10 @@ use super::scrollbar::{render_scrollbar, should_show_scrollbar};
 use super::status::{agent_icon, state_dot, state_label, state_label_color};
 use super::text::{display_width, display_width_u16, truncate_end};
 use super::widgets::panel_contrast_fg;
-use crate::app::state::{AgentPanelSort, Palette, ProjectRowArea, ProjectRowKind};
+use crate::app::state::{
+    AgentPanelSort, FileManagerSidebarItem, FileManagerSidebarRowArea, Palette, ProjectRowArea,
+    ProjectRowKind,
+};
 use crate::app::{AppState, Mode};
 use crate::detect::AgentState;
 use crate::terminal::TerminalRuntimeRegistry;
@@ -481,6 +484,102 @@ pub(crate) fn workspace_list_body_rect(area: Rect, has_scrollbar: bool) -> Rect 
     Rect::new(area.x, body_y, body_width, body_height)
 }
 
+enum FileManagerSidebarLine<'a> {
+    Header(&'a str),
+    Blank,
+    Item(&'a FileManagerSidebarItem),
+}
+
+fn file_manager_sidebar_lines(app: &AppState) -> Vec<FileManagerSidebarLine<'_>> {
+    let mut lines = Vec::new();
+    for (section_idx, section) in app.file_manager_sidebar.sections.iter().enumerate() {
+        if section_idx > 0 {
+            lines.push(FileManagerSidebarLine::Blank);
+        }
+        lines.push(FileManagerSidebarLine::Header(section.kind.label()));
+        lines.extend(section.items.iter().map(FileManagerSidebarLine::Item));
+    }
+    lines
+}
+
+/// Lay out only complete, clickable Files-sidebar item rows. Headers and blank
+/// separators consume vertical space but intentionally carry no path identity.
+pub(crate) fn compute_file_manager_sidebar_row_areas(
+    app: &AppState,
+    area: Rect,
+) -> Vec<FileManagerSidebarRowArea> {
+    if app.sidebar_tab != crate::app::state::SidebarTab::Files {
+        return Vec::new();
+    }
+    let body = workspace_list_body_rect(area, false);
+    if body.width == 0 || body.height == 0 {
+        return Vec::new();
+    }
+    let bottom = body.y.saturating_add(body.height);
+    let mut rows = Vec::new();
+    for (line_idx, line) in file_manager_sidebar_lines(app).into_iter().enumerate() {
+        let y = body
+            .y
+            .saturating_add(u16::try_from(line_idx).unwrap_or(u16::MAX));
+        if y >= bottom {
+            break;
+        }
+        if let FileManagerSidebarLine::Item(item) = line {
+            rows.push(FileManagerSidebarRowArea {
+                rect: Rect::new(body.x, y, body.width, 1),
+                path: item.path.clone(),
+            });
+        }
+    }
+    rows
+}
+
+fn render_file_manager_sidebar(app: &AppState, frame: &mut Frame, area: Rect) {
+    let body = workspace_list_body_rect(area, false);
+    if body.width == 0 || body.height == 0 {
+        return;
+    }
+    let bottom = body.y.saturating_add(body.height);
+    for (line_idx, line) in file_manager_sidebar_lines(app).into_iter().enumerate() {
+        let y = body
+            .y
+            .saturating_add(u16::try_from(line_idx).unwrap_or(u16::MAX));
+        if y >= bottom {
+            break;
+        }
+        let row = Rect::new(body.x, y, body.width, 1);
+        match line {
+            FileManagerSidebarLine::Header(label) => frame.render_widget(
+                Paragraph::new(Span::styled(
+                    format!(" {label}"),
+                    Style::default()
+                        .fg(app.palette.overlay0)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                row,
+            ),
+            FileManagerSidebarLine::Blank => {}
+            FileManagerSidebarLine::Item(item) => {
+                let style = if item.accessible {
+                    Style::default().fg(app.palette.subtext0)
+                } else {
+                    Style::default().fg(app.palette.overlay0)
+                };
+                let label = truncate_end(&item.label, (row.width as usize).saturating_sub(4));
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled("  ", Style::default()),
+                        Span::styled(item.icon.glyph(), Style::default().fg(app.palette.overlay1)),
+                        Span::styled(" ", Style::default()),
+                        Span::styled(label, style),
+                    ])),
+                    row,
+                );
+            }
+        }
+    }
+}
+
 fn workspace_list_visible_count(app: &AppState, area: Rect, scroll: usize) -> usize {
     let body = workspace_list_body_rect(area, false);
     if body.width == 0 || body.height == 0 {
@@ -928,17 +1027,7 @@ fn render_workspace_list(
             return;
         }
         crate::app::state::SidebarTab::Files => {
-            // The Files tab lands in Task #7; show a placeholder until then.
-            let body = workspace_list_body_rect(area, false);
-            if body.width > 0 && body.height > 0 {
-                frame.render_widget(
-                    Paragraph::new(Span::styled(
-                        "  (files — soon)",
-                        Style::default().fg(p.overlay0),
-                    )),
-                    Rect::new(body.x, body.y, body.width, 1),
-                );
-            }
+            render_file_manager_sidebar(app, frame, area);
             return;
         }
     }
@@ -2146,6 +2235,12 @@ mod tests {
 
         app.sidebar_tab = SidebarTab::Projects;
         assert!(compute_file_manager_sidebar_row_areas(&app, area).is_empty());
+
+        app.sidebar_tab = SidebarTab::Files;
+        assert!(compute_file_manager_sidebar_row_areas(&app, Rect::new(0, 0, 0, 2)).is_empty());
+        app.sidebar_collapsed = true;
+        crate::ui::compute_view(&mut app, Rect::new(0, 0, 106, 20));
+        assert!(app.view.file_manager_sidebar_row_areas.is_empty());
     }
 
     // TP-C6.1-RENDER: Files renders the prepared section model and removes the

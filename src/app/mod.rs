@@ -13,6 +13,7 @@ mod config_io;
 mod creation;
 mod file_agent_handoff;
 mod file_delete_confirmation;
+mod file_manager_sidebar;
 mod file_manager_watcher;
 mod file_operation_worker;
 mod file_preview_worker;
@@ -552,6 +553,10 @@ impl App {
             .iter()
             .map(|entry| crate::worktree::expand_tilde_absolute_path(entry))
             .collect();
+        let file_manager_sidebar = state::FileManagerSidebarModel::from_home_and_pins(
+            &crate::worktree::expand_tilde_absolute_path("~"),
+            &projects_pinned,
+        );
         let default_chat_agent = config
             .projects
             .default_chat_agent
@@ -609,6 +614,8 @@ impl App {
             request_file_manager_context_action: None,
             request_file_manager_agent_handoff: None,
             request_file_manager_claude_split: None,
+            file_manager_sidebar,
+            request_file_manager_sidebar_navigation: None,
             should_quit: false,
             detach_exits: no_session,
             detach_requested: false,
@@ -674,6 +681,7 @@ impl App {
                 workspace_card_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
+                file_manager_sidebar_row_areas: Vec::new(),
                 file_manager_row_areas: Vec::new(),
                 file_manager_row_action_areas: Vec::new(),
                 file_manager_header_action_areas: Vec::new(),

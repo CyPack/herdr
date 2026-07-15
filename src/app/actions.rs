@@ -348,6 +348,7 @@ impl AppState {
     /// Open the native file manager at the active workspace's directory (or the
     /// process working directory when there is no active workspace).
     pub(crate) fn open_file_manager(&mut self) {
+        self.request_file_manager_sidebar_navigation = None;
         let cwd = self
             .active
             .and_then(|i| self.workspaces.get(i))
@@ -360,6 +361,7 @@ impl AppState {
 
     /// Close the native file manager, returning the center to the terminal panes.
     pub(crate) fn close_file_manager(&mut self) {
+        self.request_file_manager_sidebar_navigation = None;
         self.file_manager = None;
         if matches!(
             self.context_menu.as_ref().map(|menu| &menu.kind),

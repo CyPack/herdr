@@ -321,6 +321,15 @@ fn compute_view_internal(
                 sidebar::normalized_projects_scroll(app, list_rect, app.projects_scroll);
             sidebar::compute_project_row_areas(app, list_rect)
         };
+    let file_manager_sidebar_row_areas =
+        if app.sidebar_collapsed || app.sidebar_tab != crate::app::state::SidebarTab::Files {
+            Vec::new()
+        } else {
+            sidebar::compute_file_manager_sidebar_row_areas(
+                app,
+                sidebar::workspace_list_rect(sidebar_area, app.sidebar_section_split),
+            )
+        };
 
     let tab_bar_view = app
         .active
@@ -380,6 +389,7 @@ fn compute_view_internal(
         workspace_card_areas,
         sidebar_tab_hit_areas,
         project_row_areas,
+        file_manager_sidebar_row_areas,
         file_manager_row_areas,
         file_manager_row_action_areas,
         file_manager_header_action_areas,
@@ -478,6 +488,7 @@ fn compute_mobile_view(
         workspace_card_areas: Vec::new(),
         sidebar_tab_hit_areas: Vec::new(),
         project_row_areas: Vec::new(),
+        file_manager_sidebar_row_areas: Vec::new(),
         file_manager_row_areas,
         file_manager_row_action_areas,
         file_manager_header_action_areas,

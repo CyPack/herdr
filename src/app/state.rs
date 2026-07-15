@@ -1323,6 +1323,14 @@ impl SidebarTab {
     }
 }
 
+#[cfg(test)]
+pub use super::file_manager_sidebar::{
+    FileManagerSidebarIcon, FileManagerSidebarSectionKind, FILE_MANAGER_SIDEBAR_MAX_ITEMS,
+};
+pub use super::file_manager_sidebar::{
+    FileManagerSidebarItem, FileManagerSidebarModel, FileManagerSidebarRowArea,
+};
+
 pub struct ViewState {
     pub layout: ViewLayout,
     /// Resolved rects of the named outer-shell regions for this frame (from
@@ -1340,6 +1348,9 @@ pub struct ViewState {
     /// Laid-out rows for the Projects tab (project headers + chat sessions).
     /// Empty on every non-Projects tab and when the sidebar is collapsed.
     pub project_row_areas: Vec<ProjectRowArea>,
+    /// Exact clickable item rows for the prepared Files sidebar. Empty on
+    /// every non-Files tab and when the sidebar is collapsed.
+    pub file_manager_sidebar_row_areas: Vec<FileManagerSidebarRowArea>,
     /// Visible CURRENT rows for the native file manager. Empty while FM is
     /// closed or when its content area has no drawable rows.
     pub file_manager_row_areas: Vec<FileManagerRowArea>,
@@ -2051,6 +2062,12 @@ pub struct AppState {
     /// One exact current path plus non-agent source pane identity awaiting the
     /// App-owned C5 split-and-launch boundary. Preparing it is side-effect free.
     pub request_file_manager_claude_split: Option<FileManagerClaudeSplitRequest>,
+    /// Prepared, bounded Files-sidebar data. Filesystem/environment discovery
+    /// happens only when this projection is refreshed, never during render.
+    pub file_manager_sidebar: FileManagerSidebarModel,
+    /// Exact row path prepared by input and consumed once by the App-owned
+    /// scheduled navigation boundary.
+    pub request_file_manager_sidebar_navigation: Option<PathBuf>,
     pub should_quit: bool,
     /// In monolithic --no-session mode, detach exits the app because there is no server to detach from.
     pub detach_exits: bool,
@@ -2508,6 +2525,8 @@ impl AppState {
             request_file_manager_context_action: None,
             request_file_manager_agent_handoff: None,
             request_file_manager_claude_split: None,
+            file_manager_sidebar: FileManagerSidebarModel::default(),
+            request_file_manager_sidebar_navigation: None,
             should_quit: false,
             detach_exits: false,
             detach_requested: false,
@@ -2567,6 +2586,7 @@ impl AppState {
                 workspace_card_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
+                file_manager_sidebar_row_areas: Vec::new(),
                 file_manager_row_areas: Vec::new(),
                 file_manager_row_action_areas: Vec::new(),
                 file_manager_header_action_areas: Vec::new(),
@@ -3042,20 +3062,27 @@ mod tests {
     fn file_sidebar_preparation_uses_live_home_and_pin_state() {
         use std::sync::atomic::{AtomicU64, Ordering};
 
+        struct TempHome(PathBuf);
+        impl Drop for TempHome {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
         static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let home = std::env::temp_dir().join(format!(
+        let home = TempHome(std::env::temp_dir().join(format!(
             "herdr-sidebar-model-{}-{}",
             std::process::id(),
             COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(home.join("Downloads")).expect("create Downloads");
-        std::fs::create_dir_all(home.join("Documents")).expect("create Documents");
-        std::fs::write(home.join("Desktop"), b"not a directory").expect("create non-dir Desktop");
-        let missing_pin = home.join("missing-pin");
+        )));
+        std::fs::create_dir_all(home.0.join("Downloads")).expect("create Downloads");
+        std::fs::create_dir_all(home.0.join("Documents")).expect("create Documents");
+        std::fs::write(home.0.join("Desktop"), b"not a directory").expect("create non-dir Desktop");
+        let missing_pin = home.0.join("missing-pin");
 
         let model = FileManagerSidebarModel::from_home_and_pins(
-            &home,
-            &[home.clone(), missing_pin.clone()],
+            &home.0,
+            &[home.0.clone(), missing_pin.clone()],
         );
 
         let favorites = model
@@ -3083,8 +3110,6 @@ mod tests {
             .expect("root location");
         assert_eq!(locations.items[0].label, "Root");
         assert!(locations.items[0].path.is_absolute());
-
-        std::fs::remove_dir_all(home).expect("remove sidebar model fixture");
     }
 
     // TP-C6.1-MODEL: adversarial configuration cannot create an unbounded

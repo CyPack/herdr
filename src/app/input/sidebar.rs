@@ -294,6 +294,32 @@ impl AppState {
             .map(|area| area.kind)
     }
 
+    /// Exact prepared Files-sidebar path under `(col, row)`. Geometry alone is
+    /// insufficient authority: revalidate it against the current model so a
+    /// refresh cannot leave a stale clickable path behind.
+    pub(super) fn file_manager_sidebar_path_at(
+        &self,
+        col: u16,
+        row: u16,
+    ) -> Option<std::path::PathBuf> {
+        let path = self
+            .view
+            .file_manager_sidebar_row_areas
+            .iter()
+            .find(|area| {
+                row >= area.rect.y
+                    && row < area.rect.y.saturating_add(area.rect.height)
+                    && col >= area.rect.x
+                    && col < area.rect.x.saturating_add(area.rect.width)
+            })?
+            .path
+            .clone();
+        self.file_manager_sidebar
+            .item_for_path(&path)
+            .filter(|item| item.accessible)
+            .map(|_| path)
+    }
+
     /// The workspace whose identity cwd matches the project's directory —
     /// worktree actions launched from the Projects tab act on that workspace,
     /// mirroring the Spaces context menu.
@@ -1911,13 +1937,22 @@ mod tests {
         let mut app = app_for_mouse_test();
         app.state.sidebar_tab = SidebarTab::Files;
         app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
-            vec![FileManagerSidebarItem {
-                label: "Home".into(),
-                path: std::path::PathBuf::from("/home/a"),
-                icon: FileManagerSidebarIcon::Home,
-                accessible: true,
-                ejectable: false,
-            }],
+            vec![
+                FileManagerSidebarItem {
+                    label: "Home".into(),
+                    path: std::path::PathBuf::from("/home/a"),
+                    icon: FileManagerSidebarIcon::Home,
+                    accessible: true,
+                    ejectable: false,
+                },
+                FileManagerSidebarItem {
+                    label: "Downloads".into(),
+                    path: std::path::PathBuf::from("/home/a/Downloads"),
+                    icon: FileManagerSidebarIcon::Downloads,
+                    accessible: true,
+                    ejectable: false,
+                },
+            ],
             Vec::new(),
             Vec::new(),
         );
@@ -1936,6 +1971,18 @@ mod tests {
             Some(std::path::PathBuf::from("/home/a"))
         );
         assert_eq!(app.state.file_manager.is_some(), before_file_manager);
+
+        let replacement = app.state.view.file_manager_sidebar_row_areas[1].clone();
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            replacement.rect.x,
+            replacement.rect.y,
+        ));
+        assert_eq!(
+            app.state.request_file_manager_sidebar_navigation,
+            Some(std::path::PathBuf::from("/home/a/Downloads")),
+            "latest exact click replaces the prior unconsumed intent"
+        );
     }
 
     // TP-C6.1-GEOMETRY/NAV: cached geometry cannot authorize a path after the
@@ -1977,6 +2024,11 @@ mod tests {
     fn file_sidebar_wheel_does_not_move_hidden_spaces_state() {
         use crate::app::state::SidebarTab;
         let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![
+            crate::workspace::Workspace::test_new("one"),
+            crate::workspace::Workspace::test_new("two"),
+        ];
+        app.state.active = Some(0);
         app.state.sidebar_tab = SidebarTab::Files;
         app.state.workspace_scroll = 0;
         app.state.selected = 0;

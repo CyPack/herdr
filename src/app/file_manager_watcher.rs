@@ -342,6 +342,37 @@ impl NativeFileManagerWatcher {
 }
 
 impl super::App {
+    /// Consume one Files-sidebar navigation intent at the App-owned filesystem
+    /// boundary. Both model authority and live directory type are revalidated;
+    /// invalid or stale requests preserve the currently open FM projection.
+    pub(super) fn sync_file_manager_sidebar_navigation(&mut self) -> bool {
+        let Some(path) = self.state.request_file_manager_sidebar_navigation.take() else {
+            return false;
+        };
+
+        if self.state.sidebar_tab != crate::app::state::SidebarTab::Files {
+            return true;
+        }
+        let authorized = self
+            .state
+            .file_manager_sidebar
+            .item_for_path(&path)
+            .is_some_and(|item| item.accessible);
+        if !authorized || !std::fs::metadata(&path).is_ok_and(|metadata| metadata.is_dir()) {
+            return true;
+        }
+
+        let next = crate::fm::FmState::new(&path);
+        // Close the inexpensive metadata/read race as far as a path-based API
+        // can: if the target disappeared or changed type during preparation,
+        // keep the prior projection instead of opening an invalid cwd.
+        if !std::fs::metadata(&path).is_ok_and(|metadata| metadata.is_dir()) {
+            return true;
+        }
+        self.state.file_manager = Some(next);
+        true
+    }
+
     #[cfg(test)]
     pub(super) fn sync_file_manager_watcher(&mut self) -> bool {
         self.sync_file_manager_watcher_at(std::time::Instant::now())
@@ -494,6 +525,7 @@ mod tests {
             ejectable: false,
         };
         let mut app = test_app();
+        app.state.sidebar_tab = crate::app::state::SidebarTab::Files;
         app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
             Vec::new(),
             vec![
@@ -520,6 +552,18 @@ mod tests {
             !app.sync_file_manager_sidebar_navigation(),
             "one-shot request"
         );
+        let _ = app.sync_file_manager_watcher();
+        assert_eq!(
+            app.file_manager_watcher.watched_dir(),
+            Some(
+                app.state
+                    .file_manager
+                    .as_ref()
+                    .expect("open FM")
+                    .cwd
+                    .as_path()
+            )
+        );
 
         let before_cwd = app
             .state
@@ -543,13 +587,37 @@ mod tests {
             before_cwd
         );
 
-        app.state.request_file_manager_sidebar_navigation = Some(target);
+        app.state.request_file_manager_sidebar_navigation = Some(target.clone());
         app.state.file_manager_sidebar = FileManagerSidebarModel::default();
         assert!(app.sync_file_manager_sidebar_navigation());
         assert_eq!(
             app.state.file_manager.as_ref().expect("FM preserved").cwd,
             before_cwd
         );
+
+        let other = td.root.join("other");
+        std::fs::create_dir_all(&other).expect("create alternate sidebar target");
+        app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+            Vec::new(),
+            vec![item("Other", other.clone())],
+            Vec::new(),
+        );
+        app.state.request_file_manager_sidebar_navigation = Some(other);
+        app.state.sidebar_tab = crate::app::state::SidebarTab::Projects;
+        assert!(app.sync_file_manager_sidebar_navigation());
+        assert_eq!(
+            app.state.file_manager.as_ref().expect("FM preserved").cwd,
+            before_cwd,
+            "leaving Files invalidates the queued navigation"
+        );
+
+        app.state.sidebar_tab = crate::app::state::SidebarTab::Files;
+        app.state.request_file_manager_sidebar_navigation = Some(target.clone());
+        app.state.close_file_manager();
+        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+        app.state.request_file_manager_sidebar_navigation = Some(target);
+        app.state.open_file_manager();
+        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
     }
 
     fn wait_for_file_manager_state(
