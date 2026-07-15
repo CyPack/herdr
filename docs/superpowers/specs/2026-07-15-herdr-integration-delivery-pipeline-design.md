@@ -1,64 +1,227 @@
-# Herdr Integration Delivery Pipeline Design
+# Herdr Change Intelligence and Delivery Pipeline Design
 
 ## Status
 
 - Design date: 2026-07-15
 - Status: draft for written-spec review
-- User decision: separate post-analysis delivery pipeline approved; architecture
-  constitution and placement update requested
-- Owning module: `.codex/skills/ratatui-design-intelligence/`
-- Target module version after implementation: `2.2.0`
-- Stable pipeline identity: `herdr-integration-delivery-v1`
-- Pipeline version: `1.0.0`
-- Input: immutable, validated P14 artifact set from
-  `reference-project-intelligence-v2`
+- User decision: generalize the post-analysis module beyond reference-project
+  integration to native features, pages, layouts, designs, components,
+  architecture changes, and composite analysis
+- Owning module: `.codex/skills/herdr-change-pipeline/`
+- Initial module version after implementation: `1.0.0`
+- Reference/design adapter: `.codex/skills/ratatui-design-intelligence/` v2.1
+- Stable analysis pipeline identity: `herdr-change-intelligence-v1`
+- Stable delivery pipeline identity: `herdr-change-delivery-v1`
+- Analysis and delivery pipeline version: `1.0.0`
+- Delivery input: immutable, validated `change-intent-package.json`
+- Reference-project P14 input: optional adapter, not the only entry path
 - Product-code authorization by default: false
 
 ## Purpose
 
-Convert evidence-backed reference intelligence into a production-grade Herdr
-feature without allowing visual similarity, source-language convenience, or an
+Turn an idea, native feature request, page, layout, design system, component,
+interaction flow, architecture change, runtime capability, reference-project
+finding, or composite concept/pattern analysis into a production-grade Herdr
+change without allowing visual similarity, source-language convenience, or an
 agent's token budget to bypass Herdr's runtime/client architecture, TDD gates,
 failure-path coverage, performance evidence, or Git discipline.
 
-This is a separate pipeline from P0-P14. Research completion is an input
-contract, never implicit permission to change product code. Every delivery run
-must declare its target behavior, current Herdr behavior, semantic diff,
-authority boundary, implementation slices, tests, performance budgets,
-rollback, and publication evidence.
+The new sibling module contains an analysis graph and a delivery graph. The
+analysis graph can start without a reference repository. It explores goals,
+behaviors, layouts, data flow, ownership, failure semantics, alternatives, and
+current Herdr fit, then emits one normalized change-intent package. The
+delivery graph accepts only that package plus explicit product authorization.
+
+Ratatui reference intelligence P0-P14 remains the deep reference-project path.
+Its completion is one possible analysis input, never implicit permission to
+change product code.
+Every delivery run must declare its target behavior, current Herdr behavior,
+semantic diff, authority boundary, implementation slices, tests, performance
+budgets, rollback, and publication evidence.
 
 ## Why a Separate Pipeline
 
 Appending implementation phases to P0-P14 would mix immutable research with
-mutable product work and would let corpus publication accidentally authorize
-Rust changes. A generic execution workflow alone would not enforce Ratatui,
-PTY, plugin, event, persistence, protocol, and terminal-capability obligations.
+mutable product work and would make reference intake a false prerequisite for
+native Herdr product design. Merely making P14 optional would be too weak: it
+would not define how native features, pages, layouts, or multi-concept
+brainstorms obtain equivalent evidence and readiness. Separate pipelines per
+change type would duplicate authority, testing, and delivery contracts.
+
+The selected design uses one generalized analysis graph with typed intake
+modes, then one delivery graph. A generic execution workflow alone would not
+enforce Ratatui, PTY, plugin, event, persistence, protocol, and terminal-
+capability obligations.
+
+## Module Boundary
+
+The generalized graph belongs in the new repo-local sibling module
+`.codex/skills/herdr-change-pipeline/`, not inside
+`ratatui-design-intelligence`. The latter remains responsible for Ratatui
+design queries, reference-project corpus intake, source mapping, and P0-P14
+adaptation intelligence. Expanding it to every server, persistence, protocol,
+or platform feature would create a god module and would fail to route native
+non-TUI changes reliably.
+
+`herdr-change-pipeline` owns typed change intake, fractal/dimensional analysis,
+target synthesis, normalized handoff, and production delivery governance. It
+depends on Herdr project rules and may consume Ratatui/reference artifacts, but
+the two modules remain independently versioned, testable, replaceable, and
+documented.
 
 The chosen model is therefore:
 
 ```text
-reference-project-intelligence-v2 (P0-P14, research authority)
-  -> frozen artifact hashes and integration-verification.json
-  -> explicit product_code_changes_authorized decision
-  -> herdr-integration-delivery-v1 (I0-I14, product authority)
+reference project P0-P14 ----> reference adapter ----\
+native feature/page/layout --------------------------+-> A0-A7 change intelligence
+design/component/interaction ------------------------+      -> change-intent-package.json
+architecture/runtime capability ---------------------+      -> explicit approval/authorization
+composite concept and pattern inputs ----------------/      -> I0-I14 change delivery
 ```
 
 ## Scale and Decomposition
 
-The canonical model has:
+The canonical model has two linked graphs:
 
-- 15 macro phases, I0-I14;
+- 8 analysis phases, A0-A7;
+- 15 delivery phases, I0-I14;
 - 8 mandatory architecture-risk domains;
 - feature-specific micro slices generated from the requirements and authority
   graph rather than a fixed arbitrary count;
 - 5 test layers;
 - 9 cross-test families;
-- one traceability chain from P14 evidence to requirement, test point, slice,
-  commit, verification result, and publication record.
+- one traceability chain from input evidence and analysis nodes to requirement,
+  test point, slice, commit, verification result, and publication record.
 
 Micro slices must be independently testable and reversible. A slice may cross
 files but must not cross unrelated authority domains merely to reduce commit or
 agent count.
+
+## Typed Analysis Intake
+
+Every analysis run declares one primary mode and may declare supporting modes:
+
+- `reference_project_adaptation`;
+- `native_feature`;
+- `page`;
+- `layout`;
+- `design_system`;
+- `component`;
+- `interaction_flow`;
+- `behavior_correction`;
+- `architecture_refactor`;
+- `runtime_capability`;
+- `composite`.
+
+A mode changes the required evidence, not the architecture constitution. A
+native page does not need a source repository or license record. A reference
+adaptation does. A layout analysis requires breakpoints, region ownership, and
+terminal capability fallbacks. A runtime capability requires server/client,
+protocol, lifecycle, and performance analysis. A composite run names every
+input and proves how conflicts were resolved.
+
+Small changes may use a proportionally shallow analysis tree, but they may not
+skip authority, current behavior, expected behavior, failure semantics, tests,
+or explicit scope merely to save tokens.
+
+## Fractal Analysis Model
+
+Analysis is fractal: the same evidence schema is reusable at different levels
+without forcing every change into one giant document. Allowed node levels are:
+
+```text
+initiative
+  -> experience or workflow
+    -> page
+      -> region or layout
+        -> component
+          -> interaction or behavior
+            -> state transition
+              -> failure and recovery path
+```
+
+Every node records:
+
+- stable node ID, parent, children, and analysis mode;
+- goal, actor, trigger, inputs, outputs, and observable behavior;
+- current evidence, desired outcome, and semantic diff;
+- state/data owner and side-effect owner;
+- terminal geometry/capability constraints when applicable;
+- normal, empty, loading, unavailable, error, cancellation, and recovery states;
+- dependencies, risks, non-goals, acceptance criteria, and confidence;
+- concept/pattern matches with provenance;
+- unresolved conflicts and the decision required to close them.
+
+The root may be ready only when every required descendant is `complete`,
+explicitly `not_applicable`, `rejected`, or `blocked`. Silent omission is
+invalid.
+
+## Parallel Dimensional Analysis
+
+Each applicable node is evaluated across these dimensions:
+
+1. product goal, actor, scenario, and user value;
+2. behavior, state transitions, interaction, and lifecycle;
+3. page hierarchy, navigation, overlay, focus, and input ownership;
+4. responsive layout, geometry, terminal cells, and capability fallback;
+5. component contract, variants, theme tokens, and design consistency;
+6. data provenance, transformation, caching, and authority;
+7. runtime, server/client, API, event, PTY, and concurrency boundaries;
+8. failure, recovery, security, trust, and resource bounds;
+9. persistence, migration, compatibility, and rollback;
+10. platform, accessibility, Unicode, color, and degraded behavior;
+11. performance, allocation, latency, throughput, and soak risk;
+12. integration tier, dependency, license, reuse mode, and maintenance cost.
+
+Independent read-only dimensions may run in parallel. Each job has exclusive
+artifact ownership, immutable input hashes, evidence provenance, and a bounded
+output schema. Parallel jobs do not edit product code. One synthesis owner
+merges them, records agreement and conflict, rejects unsupported conclusions,
+and preserves minority/caution findings rather than averaging them away.
+
+`not_applicable` requires a reason and evidence. `blocked` preserves the
+missing input or decision. No dimension is considered complete merely because
+another dimension mentioned the same topic.
+
+## Brainstorming and Synthesis Contract
+
+Before choosing a target, the analysis graph produces two or three viable
+approaches when more than one architecture or experience is plausible. Each
+option states user value, behavior, authority, data flow, layout/component
+impact, failure modes, platform/capability limits, implementation cost,
+reversibility, and test burden.
+
+The synthesis decision may be:
+
+- `go` with one approved target;
+- `conditional_go` with explicit preconditions;
+- `no_go` because current Herdr already satisfies the behavior or the proposed
+  abstraction lacks real pressure;
+- `blocked` pending a user, evidence, capability, or authority decision.
+
+Brainstorming is not implementation authority. The selected option is frozen
+in the normalized handoff and must pass the delivery authorization gate.
+
+## Normalized Change-Intent Handoff
+
+Every analysis path converges on `change-intent-package.json`. It contains:
+
+- package identity, schema version, analysis mode, source hashes, and status;
+- approved goals, actors, scenarios, non-goals, and target experience;
+- fractal analysis tree and dimensional coverage summary;
+- current Herdr evidence and graph freshness;
+- behavior, architecture, data-flow, failure, capability, and performance diff;
+- authority and side-effect ownership decisions;
+- page/layout/component contracts when applicable;
+- selected option, rejected alternatives, and decision provenance;
+- concept/pattern/reference matches and license boundaries when applicable;
+- requirements, acceptance criteria, initial test obligations, risks, and
+  open decisions;
+- delivery readiness and explicit user approval evidence.
+
+The P14 reference-project adapter maps source and stack-adaptation artifacts
+into this schema. It does not receive a privileged delivery path. Native and
+design modes create the same schema directly from their own evidence.
 
 ## Architecture Constitution
 
@@ -88,18 +251,23 @@ must not contain presentation terms such as `sidebar`, `row`, `card`, or
 `widget` unless the data is genuinely client-local and never enters the shared
 runtime protocol.
 
-### 2. Small Core and Extension Ladder
+### 2. Small Core and Change Placement
 
-An integration must use the least coupled viable tier:
+Every native feature first chooses its correct runtime/client, page, component,
+or platform owner. An external integration must additionally use the least
+coupled viable tier:
 
 1. manifest-based detection, action, hook, link handler, or pane;
 2. external process plugin using a versioned CLI/socket API;
 3. built-in adapter only when ubiquity, latency, security, or terminal
    lifecycle evidence proves the first two tiers insufficient.
 
-Popularity or visual fit is not evidence for core inclusion. The decision must
-record dependency cost, release coupling, platform matrix, failure isolation,
-and removal path.
+Popularity, novelty, or visual fit is not evidence for core inclusion or for a
+generic UI abstraction. The decision must record dependency cost, release
+coupling, platform matrix, failure isolation, abstraction trigger, and removal
+path. A new page or layout may justify a private concrete seam without
+automatically authorizing a registry, plugin surface, protocol field, or core
+dependency.
 
 ### 3. Single PTY and Terminal Authority
 
@@ -232,17 +400,35 @@ drift, not an excuse to preserve a stale design.
 ## Required Artifacts
 
 Every run uses a run directory with machine-readable status and immutable
-evidence references. Required artifacts are:
+evidence references. Analysis artifacts are:
+
+| Artifact | Purpose |
+|---|---|
+| `analysis-run.json` | Mode, pipeline/module/schema versions, phase state, source hashes and status |
+| `analysis-inputs.json` | User intent, reference inputs, constraints, approvals and provenance |
+| `fractal-analysis-tree.json` | Initiative-to-recovery nodes with stable identity and parent/child traceability |
+| `analysis-dimension-matrix.json` | Twelve-dimension applicability, owner, evidence, conflict and status |
+| `concept-pattern-match.json` | Source-backed or Herdr-native concepts, patterns, cautions and confidence |
+| `option-set.json` | Viable approaches and tradeoffs, or evidence that only one option is legitimate |
+| `synthesis-decision.json` | Selected target, decision status, conflicts, conditions and approval evidence |
+| `change-intent-package.json` | Validated normalized handoff consumed by delivery I0 |
+
+Reference-project artifacts, stack-adaptation maps, license records, layout
+maps, design-token inventories, or capability probes are conditionally required
+by analysis mode and dimension applicability. They are never fabricated for a
+native mode and never omitted for a reference mode.
+
+Delivery artifacts are:
 
 | Artifact | Purpose |
 |---|---|
 | `delivery-run.json` | Pipeline/module/schema versions, status, target ref, artifact hashes, phase state |
 | `authorization.json` | Product-code scope, allowed paths, runtime/socket prohibitions, Git/push authority |
-| `integration-prd.md` | Actor, scenario, behavior, non-goals, functional and non-functional requirements |
+| `change-prd.md` | Actor, scenario, behavior, non-goals, functional and non-functional requirements |
 | `architecture-decision-record.json` | Authority, ownership, extension tier, compatibility, alternatives and tradeoffs |
 | `feature-architecture-checklist.json` | The mandatory 15-question feature review with evidence and owner |
 | `architecture-risk-register.json` | Eight risk domains, triggers, invariants, failure modes and required gates |
-| `requirements-traceability.json` | P14 evidence to requirement, test, slice, commit and verification chain |
+| `requirements-traceability.json` | Analysis evidence/node to requirement, test, slice, commit and verification chain |
 | `current-target-diff.json` | Current behavior, expected behavior, semantic/ownership/failure/performance diff |
 | `test-point-catalog.json` | Pre-code named tests with explicit current/expected/diff/result/reason contracts |
 | `test-strategy.json` | Five layers, fakes/fixtures, platforms, cadence, commands and stop rules |
@@ -303,11 +489,103 @@ invariant, hot-path classification, failure modes, required test points,
 performance/capability budget, rollout, rollback, and status. Non-applicable
 domains require evidence, not omission.
 
+## A0-A7 Change-Intelligence Phase Contract
+
+### A0 - Intake, Mode and Evidence Boundary
+
+- capture the user's goal, constraints, supplied references, target surface,
+  current decision authority, and explicit non-goals;
+- select one primary analysis mode and supporting modes;
+- hash inputs, freeze source/target Git boundaries, and keep product-code
+  authorization false;
+- determine required dimensions and conditional artifacts by mode.
+
+Exit: validated analysis run and no ambiguous change identity.
+
+### A1 - Goals, Actors, Scenarios and Success
+
+- define user value, actors, triggers, workflows, observable behavior, and
+  normal/empty/loading/unavailable/error/recovery outcomes;
+- distinguish requested appearance from requested capability;
+- define measurable success, rejection, and no-go criteria;
+- preserve unresolved user decisions explicitly.
+
+Exit: goal and scenario contract sufficient to judge alternatives.
+
+### A2 - Fractal Decomposition
+
+- decompose the change into initiative, experience, page, region/layout,
+  component, interaction, transition, and failure/recovery nodes as applicable;
+- assign stable identities, dependencies, evidence needs, and analysis owners;
+- stop decomposition when a node has one coherent behavior and authority owner;
+- reject giant nodes and speculative empty abstraction layers.
+
+Exit: complete fractal tree with no orphan requirement or hidden descendant.
+
+### A3 - Parallel Dimensional Investigation
+
+- run independent applicable dimensions in parallel with immutable inputs and
+  exclusive artifact ownership;
+- map behavior, UX, layout, component, data, runtime, failure, persistence,
+  platform, performance, and integration concerns;
+- for reference mode, trace source symbols/data flow and license/reuse limits;
+- for native modes, use current Herdr evidence and product goals without
+  inventing an external source requirement.
+
+Exit: every dimension is complete, evidenced not-applicable, or blocked.
+
+### A4 - Concept, Pattern and Option Brainstorm
+
+- match corpus patterns, existing Herdr seams, native design alternatives, and
+  caution/negative references by behavior rather than name or appearance;
+- produce two or three viable options when the decision is non-trivial;
+- record tradeoffs, authority, data flow, lifecycle, failure, performance,
+  terminal fallback, cost, reversibility, and test burden;
+- keep source inspiration separate from target architecture.
+
+Exit: decision-ready option set with explicit rejection reasons.
+
+### A5 - Fresh Herdr Cartography and Fit
+
+- refresh Codebase Memory and map exact runtime, API, event, state, page,
+  layout, component, render, input, persistence, platform, and test seams;
+- trace current behavior and identify reuse, extension, replacement, or absence;
+- compare proposed abstractions against real consumer pressure;
+- permit an evidence-backed no-go when Herdr already satisfies the behavior or
+  a general interface is not yet earned.
+
+Exit: source-backed current-state and fit map with fresh graph evidence.
+
+### A6 - Cross-Dimension Synthesis and Target Contract
+
+- merge parallel findings under one synthesis owner;
+- resolve or preserve conflicts; do not average incompatible claims;
+- select `go`, `conditional_go`, `no_go`, or `blocked`;
+- freeze target behavior, page/layout/component contracts, authority, data
+  flow, architecture diff, failure semantics, budgets, risks, and acceptance;
+- obtain explicit user approval for the selected target.
+
+Exit: coherent approved target or honest no-go/blocked result.
+
+### A7 - Normalized Handoff and Readiness Audit
+
+- generate and validate `change-intent-package.json`;
+- prove every goal, fractal node, dimension, option, decision, requirement,
+  risk, and initial test obligation is traceable;
+- hash the complete analysis input set and record graph freshness;
+- keep product-code authorization false and classify readiness as `ready`,
+  `partial`, `blocked`, `no_go`, or `rejected`.
+
+Exit: immutable normalized handoff accepted by delivery I0, or no delivery run.
+
 ## I0-I14 Phase Contract
 
 ### I0 - Authorization and Immutable Handoff
 
-- validate P14 readiness and hash every consumed artifact;
+- validate `change-intent-package.json`, its A7 readiness, user-approved target,
+  source hashes, and conditional mode artifacts;
+- when the package came from a reference project, validate the P14 adapter and
+  stack-adaptation trace; do not require those artifacts for native modes;
 - require explicit `product_code_changes_authorized: true` before product edits;
 - freeze allowed paths, target branch/ref, dirty-worktree boundary, Git remote,
   stable-runtime/socket prohibitions, and push authority;
@@ -317,10 +595,13 @@ Exit: validated `authorization.json` and immutable input manifest.
 
 ### I1 - PRD, Scenarios, Authority and Non-Goals
 
-- write user-visible scenarios, behavior templates, actors, data inputs and
-  outputs, error/loading/empty states, non-goals, NFRs, and acceptance criteria;
+- materialize `change-prd.md` from the approved handoff and confirm user-visible
+  scenarios, behavior templates, actors, data inputs and outputs,
+  error/loading/empty states, non-goals, NFRs, and acceptance criteria;
+- preserve analysis node IDs and do not silently reinterpret the approved target;
 - classify every proposed state/data field by authority;
-- choose manifest, process plugin, built-in adapter, or client-only tier;
+- choose server/runtime, TUI/client, platform adapter, manifest, process plugin,
+  or built-in integration placement as applicable;
 - create the 15-question checklist, ADR, and initial risk register.
 
 Exit: no unresolved requirement, authority, extension-tier, or scope decision.
@@ -329,8 +610,10 @@ Exit: no unresolved requirement, authority, extension-tier, or scope decision.
 
 - refresh Codebase Memory and map current runtime, PTY, terminal, API, event,
   plugin, persistence, page, input, render, platform, tests, and protocol seams;
-- trace source-to-target behavior and data flow through exact symbols;
-- compare current graph to P14 bindings and record drift or absence;
+- trace intent-to-target behavior and data flow through exact symbols;
+- compare the current graph to A5 bindings and record drift or absence;
+- for a reference-derived package, retain source-to-target traceability; for a
+  native package, retain goal/scenario/fractal-node-to-target traceability;
 - use file search only for non-code/literal evidence after graph discovery.
 
 Exit: evidence-backed target map with no invented MCP data.
@@ -344,7 +627,10 @@ For each behavior, record:
 - expected behavior and authority owner;
 - exact functional, architectural, data-flow, failure, compatibility,
   capability, performance, and lifecycle diff;
-- chosen translation mode from the P14 stack-adaptation record;
+- chosen delivery strategy: `direct_reuse`, `structural_adapter`,
+  `behavior_reimplementation`, `herdr_native`, or `reject`;
+- chosen P14 source translation mode when and only when the package is
+  reference-derived;
 - why the change belongs in Herdr and what remains out of scope.
 
 Exit: every requirement has a declared diff or an explicit no-change/reject decision.
@@ -532,12 +818,41 @@ Long-running output, repeated lifecycle, disconnect/reconnect, disk/network
 failure, plugin crash, resize storms, client termination, and leak/zombie
 observability at declared PR/nightly/release/manual cadence.
 
+## Pipeline Contract Test Points
+
+Before implementing module manifests, validators, templates, or scripts, add
+failing tests for these contracts:
+
+| Test point | Expected result | Reason |
+|---|---|---|
+| TP-CHG-MODULE | Missing/wrong module identity, version, pipeline ID, or independent schema version fails | The sibling module and its two graphs need one machine-enforced identity |
+| TP-CHG-MODES | Every canonical intake mode validates; unknown mode fails; mode-conditional artifacts are required without being fabricated | Native and reference work must share governance without sharing false prerequisites |
+| TP-CHG-FRACTAL | Orphan nodes, invalid parent/level transitions, silent descendants, or missing node contracts fail | Fractal analysis needs complete traceability rather than nested prose |
+| TP-CHG-DIMENSIONS | Missing dimension status/evidence and unsupported `not_applicable` fail | Parallel dimensional analysis cannot silently omit risk surfaces |
+| TP-CHG-PARALLEL | Duplicate artifact ownership, mutable input drift, unmerged conflicts, or absent synthesis owner fails | Parallel analysis must remain deterministic and accountable |
+| TP-CHG-OPTIONS | Non-trivial decisions without alternatives/tradeoffs fail; single-option runs require explicit necessity evidence | Brainstorming must expose real choices without manufacturing fake alternatives |
+| TP-CHG-HANDOFF | Incomplete goals, diffs, ownership, risks, tests, approval, or readiness fails the normalized package | Delivery must receive equivalent evidence from every analysis mode |
+| TP-CHG-REFERENCE-ADAPTER | P14 maps losslessly into the common package while native modes remain valid without P14/license/source artifacts | Reference intelligence is one adapter, not privileged architecture |
+| TP-CHG-NO-GO | `no_go`, `blocked`, and `rejected` terminate without product authorization or delivery tasks | Analysis must be able to prevent speculative implementation |
+| TP-CHG-DELIVERY-AUTH | I0 rejects absent/invalid handoff, missing user target approval, or false product authorization | Analysis and brainstorming never imply mutation permission |
+| TP-CHG-TRACE | Analysis input/node/dimension/decision to requirement/test/slice/commit/evidence links are complete and acyclic | Cross-session and agentic execution needs durable provenance |
+| TP-CHG-COMPAT | Ratatui v2.1 P0-P14 behavior and artifacts remain backward compatible | The generalized module must not destabilize the corpus pipeline |
+
+Execution order is RED, minimal GREEN, refactor, focused module tests, complete
+validators, skill validation, JSON/schema checks, eval fixtures for every
+analysis mode, cartography audit, and Git diff/isolation gates.
+
 ## Agent Execution Contract
 
 Agents running this pipeline must:
 
 - use Codebase Memory graph tools before file search for code discovery;
 - stop MCP-dependent claims when MCP tools are unavailable;
+- select a typed analysis mode instead of assuming a reference project exists;
+- apply the same fractal node schema from initiative through failure/recovery;
+- parallelize only independent read-only analysis jobs with exclusive artifact
+  ownership, then merge through one accountable synthesis owner;
+- preserve conflicting/caution findings until explicitly resolved;
 - work phase-by-phase and slice-by-slice with durable artifact updates;
 - create the test-point catalog before product code;
 - use RED, GREEN, refactor with fresh command evidence;
@@ -555,7 +870,11 @@ Agents running this pipeline must:
 
 - Missing explicit product authorization: `blocked` before product edits.
 - Missing required MCP evidence: dependent claims and phases are `blocked`.
-- P14 drift without refreshed target evidence: `partial` or `blocked`.
+- Missing or invalid change-intent package: delivery is `blocked`.
+- Analysis dimension omitted without evidence: A7 cannot become `ready`.
+- P14 drift for a reference-derived package, or A5 drift for any package,
+  without refreshed target evidence: `partial` or `blocked`.
+- Unresolved cross-dimension conflict: `blocked`, not averaged into consensus.
 - False RED, unexplained failure, or flaky retry-only green: stop the slice.
 - Architecture checklist ambiguity that changes authority or extension tier:
   stop for decision; do not infer.
@@ -570,7 +889,8 @@ Agents running this pipeline must:
 1. Commit this design specification as its own documentation concern.
 2. After written approval, create a detailed TDD implementation plan.
 3. Preserve the current untracked module baseline as a separately reviewable
-   concern before mixing v2.1/v2.2 changes.
+   concern; land Ratatui v2.1 and the new `herdr-change-pipeline` v1.0 as
+   separate module/version concerns.
 4. Commit executable contract tests and implementation in the approved atomic
    sequence; do not publish a failing RED tip as completed work.
 5. Use lowercase conventional commits, no emoji, no AI co-author lines.
@@ -583,20 +903,28 @@ Agents running this pipeline must:
 
 The design is implemented only when:
 
-1. module `2.2.0` exposes the stable `herdr-integration-delivery-v1` pipeline;
-2. I0-I14, all required artifacts, statuses, dependencies, and exit gates are
-   schema- and validator-enforced;
+1. sibling module `herdr-change-pipeline` version `1.0.0` exposes stable
+   `herdr-change-intelligence-v1` and `herdr-change-delivery-v1` pipelines;
+2. A0-A7 and I0-I14, all required and mode-conditional artifacts, statuses,
+   dependencies, and exit gates are schema- and validator-enforced;
 3. the nine architecture-constitution rules and eight risk domains are present
    in human, agent, template, validator, and eval contracts;
-4. the 15-question checklist is created at I1, test-bound at I4, and audited at I14;
-5. every implementation test point records what/current/expected/diff/result/reason;
-6. all five test layers and nine cross-test families are classified and
+4. every supported intake mode can produce the same validated
+   `change-intent-package.json` without fabricated reference artifacts;
+5. fractal nodes, twelve analysis dimensions, parallel ownership, conflict
+   synthesis, option decisions, and no-go outcomes are validator-enforced;
+6. the 15-question checklist is created at I1, test-bound at I4, and audited at I14;
+7. every implementation test point records what/current/expected/diff/result/reason;
+8. all five test layers and nine cross-test families are classified and
    required where applicable;
-7. candidate performance budgets require calibrated workload/environment evidence;
-8. no token-saving, hidden waiver, unexplained failure, stale graph, or missing
+9. candidate performance budgets require calibrated workload/environment evidence;
+10. no token-saving, hidden waiver, unexplained failure, stale graph, or missing
    traceability can pass completion validation;
-9. the v2.1 P0-P14 research pipeline remains backward compatible and does not
-   acquire product-code authority;
-10. every new or changed executable behavior contract is observed RED before
+11. `ratatui-design-intelligence` v2.1 P0-P14 remains backward compatible,
+    acts only as one optional handoff adapter, and does not acquire product-code
+    authority or generic Herdr-change ownership;
+12. native feature, page, layout, design, component, behavior, architecture,
+    runtime-capability, reference, and composite fixture runs are eval-covered;
+13. every new or changed executable behavior contract is observed RED before
     GREEN and passes fresh full verification without touching stable Herdr,
     inherited sockets, upstream, or unrelated user changes.

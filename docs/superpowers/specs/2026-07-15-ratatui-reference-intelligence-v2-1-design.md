@@ -229,12 +229,16 @@ Do not publish a failing RED tip by itself.
 ## Post-Analysis Handoff
 
 P14 may emit `integration-verification.json` with `ready`, `partial`, or
-`blocked` evidence. A separate canonical integration pipeline must require an
-explicit product-change authorization and consume the immutable P14 artifact
-set. It must create its own PRD, expected/current/diff contracts, test phases,
+`blocked` evidence. The separate sibling `herdr-change-pipeline` module maps the
+immutable P14 set through its reference adapter into the same
+`change-intent-package.json` accepted from native feature, page, layout,
+design, component, architecture, runtime-capability, and composite analysis.
+Its delivery graph must require explicit product-change authorization and
+create its own PRD, expected/current/diff contracts, test phases,
 implementation slices, cross tests, performance budgets, rollback plan, and
-fresh completion evidence. It must never infer implementation permission from
-research completion alone.
+fresh completion evidence. Reference research is one input mode; it must never
+infer implementation permission or become a prerequisite for native Herdr
+changes.
 
 ## Acceptance Criteria
 
