@@ -16,8 +16,8 @@ use crate::fm::operations::{
     FileOperationRequest,
 };
 use crate::fm::rename::{
-    execute_bulk_rename_operation, execute_rename_operation_with_observer, BulkRenameItemOutcome,
-    BulkRenameOperationExecutionResult, BulkRenameOperationExecutionStatus,
+    execute_bulk_rename_operation_with_observer, execute_rename_operation_with_observer,
+    BulkRenameItemOutcome, BulkRenameOperationExecutionResult, BulkRenameOperationExecutionStatus,
     BulkRenameOperationPlan, BulkRenameOperationRequest, RenameOperationExecutionResult,
     RenameOperationExecutionStatus, RenameOperationOutcome, RenameOperationPlan,
     RenameOperationRequest,
@@ -143,7 +143,7 @@ impl FileOperationWorker {
                 crate::fm::rename::execute_rename_operation(plan, cancellation),
             ),
             FileOperationWorkerTask::BulkRename(plan) => FileOperationWorkerResult::BulkRename(
-                execute_bulk_rename_operation(plan, cancellation),
+                crate::fm::rename::execute_bulk_rename_operation(plan, cancellation),
             ),
         })
     }
@@ -345,9 +345,9 @@ fn execute_worker_task_with_progress(
         FileOperationWorkerTask::Rename(plan) => FileOperationWorkerResult::Rename(
             execute_rename_operation_with_observer(plan, cancellation, report_progress),
         ),
-        FileOperationWorkerTask::BulkRename(plan) => {
-            FileOperationWorkerResult::BulkRename(execute_bulk_rename_operation(plan, cancellation))
-        }
+        FileOperationWorkerTask::BulkRename(plan) => FileOperationWorkerResult::BulkRename(
+            execute_bulk_rename_operation_with_observer(plan, cancellation, report_progress),
+        ),
     }
 }
 

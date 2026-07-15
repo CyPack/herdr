@@ -680,18 +680,54 @@ impl BulkRenameOperationExecutionResult {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn execute_bulk_rename_operation(
     plan: &BulkRenameOperationPlan,
     cancellation: &FileOperationCancellation,
 ) -> BulkRenameOperationExecutionResult {
-    execute_bulk_rename_operation_with_host(plan, cancellation, &mut RealRenameOperationHost)
+    execute_bulk_rename_operation_with_host_and_observer(
+        plan,
+        cancellation,
+        &mut RealRenameOperationHost,
+        |_| {},
+    )
 }
 
+pub(crate) fn execute_bulk_rename_operation_with_observer<F>(
+    plan: &BulkRenameOperationPlan,
+    cancellation: &FileOperationCancellation,
+    observer: F,
+) -> BulkRenameOperationExecutionResult
+where
+    F: FnMut(usize),
+{
+    execute_bulk_rename_operation_with_host_and_observer(
+        plan,
+        cancellation,
+        &mut RealRenameOperationHost,
+        observer,
+    )
+}
+
+#[cfg(test)]
 pub(crate) fn execute_bulk_rename_operation_with_host<H: RenameOperationHost>(
     plan: &BulkRenameOperationPlan,
     cancellation: &FileOperationCancellation,
     host: &mut H,
 ) -> BulkRenameOperationExecutionResult {
+    execute_bulk_rename_operation_with_host_and_observer(plan, cancellation, host, |_| {})
+}
+
+fn execute_bulk_rename_operation_with_host_and_observer<H, F>(
+    plan: &BulkRenameOperationPlan,
+    cancellation: &FileOperationCancellation,
+    host: &mut H,
+    mut observer: F,
+) -> BulkRenameOperationExecutionResult
+where
+    H: RenameOperationHost,
+    F: FnMut(usize),
+{
     let mut result = bulk_initial_result(plan);
     if cancellation.is_cancelled() {
         result.status = BulkRenameOperationExecutionStatus::Cancelled;
@@ -736,6 +772,7 @@ pub(crate) fn execute_bulk_rename_operation_with_host<H: RenameOperationHost>(
 
     let mut staged = vec![false; plan.mappings.len()];
     for index in 0..plan.mappings.len() {
+        observer(index);
         let (source, destination) = &plan.mappings[index];
         if source == destination {
             continue;
