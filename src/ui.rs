@@ -1096,6 +1096,208 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    fn native_fm_visual_composition_app(root: &std::path::Path) -> AppState {
+        use crate::app::state::{
+            FileManagerOperationKind, FileManagerOperationState, FileManagerOperationStatus,
+            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
+        };
+
+        let mut file_manager = crate::fm::FmState::new(root);
+        assert!(file_manager.replace_selection(0));
+        let mut app = AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.palette = crate::app::state::Palette::catppuccin_latte();
+        app.sidebar_tab = SidebarTab::Files;
+        app.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+            vec![FileManagerSidebarItem {
+                label: "Visual fixture".into(),
+                path: root.to_path_buf(),
+                icon: FileManagerSidebarIcon::Home,
+                accessible: true,
+                ejectable: false,
+            }],
+            Vec::new(),
+            Vec::new(),
+        );
+        app.file_manager = Some(file_manager);
+        app.file_manager_operation = Some(FileManagerOperationState {
+            generation: 1,
+            kind: FileManagerOperationKind::Copy,
+            destination_directory: root.to_path_buf(),
+            total_items: 1,
+            completed_items: 0,
+            failed_items: 0,
+            status: FileManagerOperationStatus::Running,
+            items: Vec::new(),
+        });
+        app
+    }
+
+    fn render_full_frame_for_test(app: &AppState, area: Rect) -> ratatui::buffer::Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height))
+            .expect("visual composition test terminal");
+        terminal
+            .draw(|frame| render(app, frame))
+            .expect("visual composition should render");
+        terminal.backend().buffer().clone()
+    }
+
+    fn buffer_rect_text(buffer: &ratatui::buffer::Buffer, area: Rect) -> String {
+        (area.y..area.bottom())
+            .flat_map(|y| (area.x..area.right()).map(move |x| (x, y)))
+            .map(|(x, y)| buffer[(x, y)].symbol())
+            .collect()
+    }
+
+    // TP-C6.4-VISUAL: expanded/collapsed desktop and responsive mobile layouts
+    // compose the same exact FM state without stale sidebar or row authority.
+    #[test]
+    fn native_fm_composes_sidebar_breakpoints_and_status_across_full_frames() {
+        use crate::app::state::ViewLayout;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "herdr-ui-fm-visual-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(root.join("child")).expect("create visual child");
+        std::fs::write(root.join("child").join("preview.txt"), b"preview")
+            .expect("write visual preview");
+        std::fs::write(root.join("peer.txt"), b"peer").expect("write visual peer");
+        let mut app = native_fm_visual_composition_app(&root);
+
+        let desktop = Rect::new(0, 0, 120, 24);
+        compute_view(&mut app, desktop);
+        assert_eq!(app.view.layout, ViewLayout::Desktop);
+        let expanded_sidebar_width = app.view.sidebar_rect.width;
+        let expanded = render_full_frame_for_test(&app, desktop);
+        let center = buffer_rect_text(&expanded, app.view.terminal_area);
+        for label in ["PARENT", "CURRENT", "PREVIEW", "copy 0/1", "Esc cancel"] {
+            assert!(center.contains(label), "expanded center missing {label:?}");
+        }
+        let current_row = app
+            .view
+            .file_manager_sidebar_row_areas
+            .first()
+            .expect("expanded Files sidebar row")
+            .rect;
+        assert!((current_row.x..current_row.right())
+            .any(|x| { expanded[(x, current_row.y)].bg == app.palette.accent }));
+        let status_y = app.view.terminal_area.bottom() - 1;
+        let status_x = (app.view.terminal_area.x..app.view.terminal_area.right())
+            .find(|&x| expanded[(x, status_y)].symbol() == "c")
+            .expect("running copy status");
+        assert_eq!(expanded[(status_x, status_y)].fg, app.palette.yellow);
+
+        app.sidebar_collapsed = true;
+        compute_view(&mut app, desktop);
+        assert_eq!(app.view.layout, ViewLayout::Desktop);
+        assert!(app.view.sidebar_rect.width < expanded_sidebar_width);
+        assert!(app.view.file_manager_sidebar_row_areas.is_empty());
+        let collapsed = render_full_frame_for_test(&app, desktop);
+        assert!(buffer_rect_text(&collapsed, app.view.terminal_area).contains("copy 0/1"));
+
+        app.sidebar_collapsed = false;
+        let mobile_two = Rect::new(0, 0, 30, 15);
+        compute_view(&mut app, mobile_two);
+        assert_eq!(app.view.layout, ViewLayout::Mobile);
+        assert!(app.view.file_manager_sidebar_row_areas.is_empty());
+        let two = buffer_rect_text(
+            &render_full_frame_for_test(&app, mobile_two),
+            app.view.terminal_area,
+        );
+        assert!(!two.contains("PARENT"));
+        assert!(two.contains("CURRENT"));
+        assert!(two.contains("PREVIEW"));
+        assert!(two.contains("copy 0/1"));
+
+        let mobile_one = Rect::new(0, 0, 20, 15);
+        compute_view(&mut app, mobile_one);
+        assert_eq!(app.view.layout, ViewLayout::Mobile);
+        let one = buffer_rect_text(
+            &render_full_frame_for_test(&app, mobile_one),
+            app.view.terminal_area,
+        );
+        assert!(one.contains("CURRENT"));
+        assert!(!one.contains("PARENT"));
+        assert!(!one.contains("PREVIEW"));
+        assert!(one.contains("copy 0/1"));
+
+        std::fs::remove_dir_all(root).expect("remove visual composition fixture");
+    }
+
+    // TP-C6.4-VISUAL: context and destructive-modal overlays remain bounded and
+    // paint above the composed FM without changing its prepared operation state.
+    #[test]
+    fn native_fm_context_and_delete_modal_compose_above_status_surface() {
+        use crate::app::state::{
+            ContextMenuKind, ContextMenuState, FileManagerContextMenuModel,
+            FileManagerDeleteConfirmation, FileManagerDeleteConfirmationStage, MenuListState,
+        };
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "herdr-ui-fm-overlay-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).expect("create overlay fixture");
+        std::fs::write(root.join("selected.txt"), b"selected").expect("write overlay fixture");
+        let mut app = native_fm_visual_composition_app(&root);
+        let area = Rect::new(0, 0, 100, 24);
+        compute_view(&mut app, area);
+        let model = FileManagerContextMenuModel::from_action_bar(
+            app.view
+                .file_manager_action_bar
+                .as_ref()
+                .expect("prepared action bar"),
+        )
+        .expect("single-selection context model");
+        app.context_menu = Some(ContextMenuState {
+            kind: ContextMenuKind::File { model },
+            x: app.view.terminal_area.x + 2,
+            y: app.view.terminal_area.y + 2,
+            list: MenuListState::new(0),
+        });
+        app.mode = Mode::ContextMenu;
+        let context_rect = app.context_menu_rect().expect("bounded context rect");
+        assert!(app.view.terminal_area.contains(context_rect.as_position()));
+        let context = render_full_frame_for_test(&app, area);
+        let context_text = buffer_rect_text(&context, context_rect);
+        for label in ["Open", "Copy", "Rename", "Delete", "Send to Agent"] {
+            assert!(context_text.contains(label), "context missing {label:?}");
+        }
+        assert_eq!(
+            app.file_manager_operation
+                .as_ref()
+                .expect("running operation preserved")
+                .status,
+            crate::app::state::FileManagerOperationStatus::Running
+        );
+
+        app.mode = Mode::ConfirmFileDelete;
+        app.file_manager_delete_confirmation = Some(FileManagerDeleteConfirmation {
+            paths: vec![root.join("selected.txt")],
+            stage: FileManagerDeleteConfirmationStage::ChooseAction,
+        });
+        let modal = render_full_frame_for_test(&app, area);
+        let modal_text = buffer_rect_text(&modal, app.view.terminal_area);
+        for label in [
+            "Delete 1 selected item?",
+            "move to trash",
+            "delete permanently",
+            "cancel",
+        ] {
+            assert!(modal_text.contains(label), "delete modal missing {label:?}");
+        }
+
+        std::fs::remove_dir_all(root).expect("remove overlay composition fixture");
+    }
+
     #[test]
     fn copy_feedback_offset_only_increases_when_toast_rect_overlaps() {
         let area = Rect::new(0, 0, 80, 24);
