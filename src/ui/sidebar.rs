@@ -2299,6 +2299,222 @@ mod tests {
         );
     }
 
+    fn render_file_sidebar_for_test(
+        app: &crate::app::state::AppState,
+        width: u16,
+        height: u16,
+    ) -> Terminal<TestBackend> {
+        let mut terminal = Terminal::new(TestBackend::new(width.max(1), height.max(1)))
+            .expect("file sidebar test terminal should initialize");
+        terminal
+            .draw(|frame| {
+                render_file_manager_sidebar(app, frame, Rect::new(0, 0, width, height));
+            })
+            .expect("file sidebar should render");
+        terminal
+    }
+
+    // TP-C6.2-CURRENT/LIFECYCLE: exact prepared path identity is the only
+    // current-location authority. Cwd transitions move the pill immediately;
+    // inaccessible, absent, and closed-FM states cannot retain it.
+    #[test]
+    fn file_sidebar_current_pill_tracks_exact_accessible_open_cwd() {
+        use crate::app::state::{FileManagerSidebarIcon, FileManagerSidebarModel, SidebarTab};
+        let mut app = crate::app::state::AppState::test_new();
+        app.sidebar_tab = SidebarTab::Files;
+        app.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+            vec![
+                file_sidebar_item(
+                    "Home",
+                    "/virtual/home",
+                    FileManagerSidebarIcon::Home,
+                    true,
+                    false,
+                ),
+                file_sidebar_item(
+                    "Downloads",
+                    "/virtual/downloads",
+                    FileManagerSidebarIcon::Downloads,
+                    true,
+                    false,
+                ),
+                file_sidebar_item(
+                    "Missing",
+                    "/virtual/missing",
+                    FileManagerSidebarIcon::Pin,
+                    false,
+                    false,
+                ),
+            ],
+            Vec::new(),
+            Vec::new(),
+        );
+        let area = Rect::new(0, 0, 24, 8);
+        let rows: Vec<_> = compute_file_manager_sidebar_row_areas(&app, area)
+            .into_iter()
+            .map(|row| row.rect)
+            .collect();
+        assert_eq!(rows.len(), 3);
+
+        let row_has_accent = |terminal: &Terminal<TestBackend>, rect: Rect| {
+            (rect.x..rect.x.saturating_add(rect.width)).any(|x| {
+                terminal.backend().buffer()[(x, rect.y)].style().bg == Some(app.palette.accent)
+            })
+        };
+        let row_symbols = |terminal: &Terminal<TestBackend>, rect: Rect| -> String {
+            (rect.x..rect.x.saturating_add(rect.width))
+                .map(|x| terminal.backend().buffer()[(x, rect.y)].symbol())
+                .collect()
+        };
+
+        app.file_manager = Some(crate::fm::FmState::new("/virtual/home"));
+        let home = render_file_sidebar_for_test(&app, area.width, area.height);
+        assert!(row_has_accent(&home, rows[0]));
+        assert!(row_symbols(&home, rows[0]).contains(''));
+        assert!(row_symbols(&home, rows[0]).contains(''));
+        assert!(!row_has_accent(&home, rows[1]));
+        assert!(!row_has_accent(&home, rows[2]));
+
+        app.file_manager = Some(crate::fm::FmState::new("/virtual/downloads"));
+        let downloads = render_file_sidebar_for_test(&app, area.width, area.height);
+        assert!(!row_has_accent(&downloads, rows[0]));
+        assert!(row_has_accent(&downloads, rows[1]));
+        assert!(!row_has_accent(&downloads, rows[2]));
+
+        app.file_manager = Some(crate::fm::FmState::new("/virtual/missing"));
+        let inaccessible = render_file_sidebar_for_test(&app, area.width, area.height);
+        assert!(rows.iter().all(|row| !row_has_accent(&inaccessible, *row)));
+
+        app.file_manager = Some(crate::fm::FmState::new("/virtual/not-in-model"));
+        let absent = render_file_sidebar_for_test(&app, area.width, area.height);
+        assert!(rows.iter().all(|row| !row_has_accent(&absent, *row)));
+
+        app.file_manager = None;
+        let closed = render_file_sidebar_for_test(&app, area.width, area.height);
+        assert!(rows.iter().all(|row| !row_has_accent(&closed, *row)));
+    }
+
+    // TP-C6.2-MARKER: warning is stronger than eject, markers are pinned to
+    // the final drawable cell, and a plain item cannot invent an affordance.
+    #[test]
+    fn file_sidebar_markers_are_right_aligned_and_warning_precedes_eject() {
+        use crate::app::state::{FileManagerSidebarIcon, FileManagerSidebarModel, SidebarTab};
+        let mut app = crate::app::state::AppState::test_new();
+        app.sidebar_tab = SidebarTab::Files;
+        app.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+            Vec::new(),
+            Vec::new(),
+            vec![
+                file_sidebar_item(
+                    "Unavailable disk",
+                    "/media/broken",
+                    FileManagerSidebarIcon::Disk,
+                    false,
+                    true,
+                ),
+                file_sidebar_item(
+                    "USB",
+                    "/media/usb",
+                    FileManagerSidebarIcon::Disk,
+                    true,
+                    true,
+                ),
+                file_sidebar_item("Root", "/", FileManagerSidebarIcon::Disk, true, false),
+            ],
+        );
+        let area = Rect::new(0, 0, 20, 8);
+        let rows: Vec<_> = compute_file_manager_sidebar_row_areas(&app, area)
+            .into_iter()
+            .map(|row| row.rect)
+            .collect();
+        assert_eq!(rows.len(), 3);
+        let terminal = render_file_sidebar_for_test(&app, area.width, area.height);
+        let buffer = terminal.backend().buffer();
+
+        let last_cell =
+            |rect: Rect| &buffer[(rect.x.saturating_add(rect.width).saturating_sub(1), rect.y)];
+        assert_eq!(last_cell(rows[0]).symbol(), "⚠");
+        assert_eq!(last_cell(rows[0]).style().fg, Some(app.palette.yellow));
+        assert_eq!(last_cell(rows[1]).symbol(), "⏏");
+        assert_eq!(last_cell(rows[1]).style().fg, Some(app.palette.blue));
+        assert_eq!(last_cell(rows[2]).symbol(), " ");
+
+        let narrow = render_file_sidebar_for_test(&app, 1, area.height);
+        let narrow_rows = compute_file_manager_sidebar_row_areas(&app, Rect::new(0, 0, 1, 8));
+        assert_eq!(
+            narrow.backend().buffer()[(0, narrow_rows[0].rect.y)].symbol(),
+            "⚠"
+        );
+        assert_eq!(
+            narrow.backend().buffer()[(0, narrow_rows[1].rect.y)].symbol(),
+            "⏏"
+        );
+
+        let _zero = render_file_sidebar_for_test(&app, 0, area.height);
+    }
+
+    // TP-C6.2-PILL: Unicode labels use cell-width truncation, a reserved
+    // trailing marker never overlaps the current pill, and narrow rows omit
+    // both caps together instead of exposing a clipped current indicator.
+    #[test]
+    fn file_sidebar_current_pill_is_complete_unicode_and_width_safe() {
+        use crate::app::state::{FileManagerSidebarIcon, FileManagerSidebarModel, SidebarTab};
+        let mut app = crate::app::state::AppState::test_new();
+        app.sidebar_tab = SidebarTab::Files;
+        app.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+            Vec::new(),
+            Vec::new(),
+            vec![file_sidebar_item(
+                "資料Downloads",
+                "/media/usb",
+                FileManagerSidebarIcon::Disk,
+                true,
+                true,
+            )],
+        );
+        app.file_manager = Some(crate::fm::FmState::new("/media/usb"));
+
+        let area = Rect::new(0, 0, 14, 5);
+        let row = compute_file_manager_sidebar_row_areas(&app, area)[0].rect;
+        let terminal = render_file_sidebar_for_test(&app, area.width, area.height);
+        let symbols: Vec<_> = (row.x..row.x.saturating_add(row.width))
+            .map(|x| terminal.backend().buffer()[(x, row.y)].symbol())
+            .collect();
+        let left_cap = symbols
+            .iter()
+            .position(|symbol| *symbol == "")
+            .expect("left cap");
+        let right_cap = symbols
+            .iter()
+            .position(|symbol| *symbol == "")
+            .expect("right cap");
+        let marker = symbols
+            .iter()
+            .position(|symbol| *symbol == "⏏")
+            .expect("eject marker");
+        assert!(
+            left_cap < right_cap && right_cap < marker,
+            "symbols: {symbols:?}"
+        );
+        assert_eq!(marker, usize::from(row.width) - 1);
+        assert!((left_cap + 1..right_cap).all(|index| {
+            terminal.backend().buffer()[(row.x + index as u16, row.y)]
+                .style()
+                .bg
+                == Some(app.palette.accent)
+        }));
+
+        let narrow = render_file_sidebar_for_test(&app, 3, area.height);
+        let narrow_row =
+            compute_file_manager_sidebar_row_areas(&app, Rect::new(0, 0, 3, 5))[0].rect;
+        let narrow_symbols: Vec<_> = (narrow_row.x..narrow_row.x.saturating_add(narrow_row.width))
+            .map(|x| narrow.backend().buffer()[(x, narrow_row.y)].symbol())
+            .collect();
+        assert!(!narrow_symbols.contains(&""));
+        assert!(!narrow_symbols.contains(&""));
+        assert_eq!(narrow_symbols.last(), Some(&"⏏"));
+    }
+
     // ---- Projects tab render + layout helpers --------------------------------
 
     fn test_chat(id: &str, title: &str, msg_count: usize) -> crate::claude_sessions::ClaudeSession {
