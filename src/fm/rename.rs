@@ -1157,6 +1157,68 @@ mod tests {
         assert_eq!(fs::read(occupied).expect("occupied retained"), b"occupied");
     }
 
+    // TP-C4.4-CANCEL: cancellation before bulk revalidation wins over a
+    // concurrent source replacement. No staging or publish call may begin and
+    // the external replacement remains visible for recovery inspection.
+    #[test]
+    fn bulk_rename_cancel_precedes_revalidation_failure() {
+        struct CancelBeforeRevalidationHost {
+            cancellation: FileOperationCancellation,
+            source: PathBuf,
+            publishes: usize,
+        }
+
+        impl RenameOperationHost for CancelBeforeRevalidationHost {
+            fn before_revalidation(&mut self) -> io::Result<()> {
+                self.cancellation.cancel();
+                fs::remove_file(&self.source)?;
+                fs::write(&self.source, b"replacement")
+            }
+
+            fn publish_no_replace(
+                &mut self,
+                _source: &Path,
+                _destination: &Path,
+            ) -> io::Result<()> {
+                self.publishes += 1;
+                Ok(())
+            }
+        }
+
+        let td = TempDir::new("bulk-cancel-revalidation-race");
+        let source = td.root.join("source.txt");
+        let destination = td.root.join("renamed.txt");
+        fs::write(&source, b"original").expect("write bulk cancellable source");
+        let plan =
+            BulkRenameOperationPlan::preflight(bulk_request(vec![(source.clone(), "renamed.txt")]))
+                .expect("bulk cancellable plan");
+        let cancellation = FileOperationCancellation::default();
+        let staging_paths = plan.staging_paths().to_vec();
+        let mut host = CancelBeforeRevalidationHost {
+            cancellation: cancellation.clone(),
+            source: source.clone(),
+            publishes: 0,
+        };
+
+        let result = execute_bulk_rename_operation_with_host(&plan, &cancellation, &mut host);
+
+        assert_eq!(
+            result.status(),
+            BulkRenameOperationExecutionStatus::Cancelled
+        );
+        assert!(result
+            .items()
+            .iter()
+            .all(|item| item.outcome() == &BulkRenameItemOutcome::NotStarted));
+        assert_eq!(host.publishes, 0);
+        assert_eq!(
+            fs::read(&source).expect("bulk cancellation replacement visible"),
+            b"replacement"
+        );
+        assert!(!destination.exists());
+        assert!(staging_paths.iter().all(|path| !path.exists()));
+    }
+
     // TP-C4.3-BULK: staging every source before publishing outputs must make
     // chains, swaps, and cycles independent from input order while preserving
     // the payload associated with each original source.
