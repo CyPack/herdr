@@ -689,6 +689,7 @@ impl App {
                 file_manager_header_action_areas: Vec::new(),
                 file_manager_action_bar: None,
                 agent_attachment_action_area: None,
+                agent_worktree_action_area: None,
                 agent_attachment_picker_row_areas: Vec::new(),
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),

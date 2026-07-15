@@ -369,6 +369,7 @@ fn compute_view_internal(
     );
     let agent_attachment_action_area =
         panes::compute_agent_attachment_action_area(app, &pane_infos);
+    let agent_worktree_action_area = panes::compute_agent_worktree_action_area(app, &pane_infos);
     let agent_attachment_picker_row_areas = sync_agent_attachment_picker_view(app, terminal_area);
     if resize_panes {
         resize_background_tab_panes_for_desktop(app, terminal_runtimes, main_area, cell_size);
@@ -400,6 +401,7 @@ fn compute_view_internal(
         file_manager_header_action_areas,
         file_manager_action_bar,
         agent_attachment_action_area,
+        agent_worktree_action_area,
         agent_attachment_picker_row_areas,
         tab_bar_rect,
         tab_hit_areas: tab_bar_view.tab_hit_areas,
@@ -502,6 +504,7 @@ fn compute_mobile_view(
         file_manager_header_action_areas,
         file_manager_action_bar,
         agent_attachment_action_area: None,
+        agent_worktree_action_area: None,
         agent_attachment_picker_row_areas,
         tab_bar_rect: Rect::default(),
         tab_hit_areas: Vec::new(),

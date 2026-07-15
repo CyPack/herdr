@@ -1344,6 +1344,17 @@ pub struct AgentAttachmentActionArea {
     pub terminal_id: crate::terminal::TerminalId,
 }
 
+/// Client-local, computed hit geometry for the focused agent's existing-
+/// worktree launcher. Stable identities travel with the rect so input can
+/// reject stale frame snapshots before emitting the existing intent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentWorktreeActionArea {
+    pub rect: Rect,
+    pub workspace_id: String,
+    pub pane_id: PaneId,
+    pub terminal_id: crate::terminal::TerminalId,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentAttachmentTarget {
     pub workspace_id: String,
@@ -1405,6 +1416,9 @@ pub struct ViewState {
     /// non-agent, non-terminal, file-manager, mobile, borderless, or too-small
     /// layouts.
     pub agent_attachment_action_area: Option<AgentAttachmentActionArea>,
+    /// Exact complete `[w]` target beside `[+]` for an eligible focused agent.
+    /// `None` when cached Git/worktree capability is absent or linked-child.
+    pub agent_worktree_action_area: Option<AgentWorktreeActionArea>,
     /// Exact visible CURRENT rows inside the blocking attachment picker. The
     /// render and mouse paths share this snapshot so responsive geometry is
     /// never reconstructed from coordinates during input handling.
@@ -2647,6 +2661,7 @@ impl AppState {
                 file_manager_header_action_areas: Vec::new(),
                 file_manager_action_bar: None,
                 agent_attachment_action_area: None,
+                agent_worktree_action_area: None,
                 agent_attachment_picker_row_areas: Vec::new(),
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),

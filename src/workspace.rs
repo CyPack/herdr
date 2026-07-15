@@ -1085,6 +1085,19 @@ impl Workspace {
         self.worktree_space.as_ref()
     }
 
+    /// Whether cached workspace metadata authorizes opening the existing
+    /// worktree picker from a client-local affordance. This intentionally does
+    /// no filesystem discovery so view computation and render remain pure.
+    pub(crate) fn can_open_existing_worktree_from_cache(&self) -> bool {
+        self.worktree_space().map_or_else(
+            || {
+                self.git_space()
+                    .is_some_and(|space| !space.is_linked_worktree)
+            },
+            |space| !space.is_linked_worktree,
+        )
+    }
+
     #[cfg(test)]
     pub fn refresh_git_ahead_behind(&mut self) {
         let cwd = self.resolved_identity_cwd();

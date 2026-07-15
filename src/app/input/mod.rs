@@ -286,10 +286,49 @@ impl App {
     }
 
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent) {
-        if self.state.mode == Mode::Terminal
-            && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-            && mouse.modifiers.is_empty()
-        {
+        if self.state.mode == Mode::Terminal {
+            let action = self.state.view.agent_worktree_action_area.clone();
+            if let Some(action) = action.filter(|action| {
+                mouse.column >= action.rect.x
+                    && mouse.column < action.rect.right()
+                    && mouse.row >= action.rect.y
+                    && mouse.row < action.rect.bottom()
+            }) {
+                if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                    || !mouse.modifiers.is_empty()
+                {
+                    return;
+                }
+                let current = self.state.active.and_then(|workspace_idx| {
+                    let workspace = self.state.workspaces.get(workspace_idx)?;
+                    if self.state.file_manager.is_some()
+                        || workspace.id != action.workspace_id
+                        || !workspace.can_open_existing_worktree_from_cache()
+                    {
+                        return None;
+                    }
+                    let pane_id = workspace.focused_pane_id()?;
+                    let terminal_id = self.state.terminal_id_for_pane(workspace_idx, pane_id)?;
+                    self.state
+                        .terminals
+                        .get(&terminal_id)
+                        .is_some_and(crate::terminal::TerminalState::is_agent_terminal)
+                        .then_some((workspace_idx, pane_id, terminal_id))
+                });
+                if current.as_ref().is_some_and(|(_, pane_id, terminal_id)| {
+                    *pane_id == action.pane_id && *terminal_id == action.terminal_id
+                }) {
+                    self.state.request_open_existing_worktree =
+                        current.map(|(workspace_idx, _, _)| workspace_idx);
+                }
+                return;
+            }
+
+            if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                || !mouse.modifiers.is_empty()
+            {
+                return self.handle_mouse_without_agent_frame_action(mouse);
+            }
             let action = self.state.view.agent_attachment_action_area.clone();
             if let Some(action) = action.filter(|action| {
                 mouse.column >= action.rect.x
@@ -313,6 +352,10 @@ impl App {
             }
         }
 
+        self.handle_mouse_without_agent_frame_action(mouse);
+    }
+
+    fn handle_mouse_without_agent_frame_action(&mut self, mouse: MouseEvent) {
         if self.handle_overlay_mouse(mouse) {
             return;
         }

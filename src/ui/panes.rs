@@ -11,7 +11,7 @@ use super::scrollbar::{render_pane_scrollbar, should_show_scrollbar};
 use super::text::display_width;
 use super::text::truncate_end;
 use super::widgets::panel_contrast_fg;
-use crate::app::state::{AgentAttachmentActionArea, Palette};
+use crate::app::state::{AgentAttachmentActionArea, AgentWorktreeActionArea, Palette};
 use crate::app::{AppState, Mode};
 use crate::layout::PaneInfo;
 use crate::terminal::{TerminalRuntime, TerminalRuntimeRegistry};
@@ -31,6 +31,8 @@ fn pane_border_title(label: &str, pane_width: u16, _focused: bool) -> Option<Str
 }
 
 const AGENT_ATTACHMENT_ACTION_WIDTH: u16 = 3;
+const AGENT_WORKTREE_ACTION_WIDTH: u16 = 3;
+const AGENT_FRAME_ACTIONS_MIN_WIDTH: u16 = 8;
 
 /// Compute one complete bottom-border `[+]` action for the exact focused agent
 /// pane. Capability failures return no rect; render and input consume only this
@@ -73,6 +75,58 @@ pub(super) fn compute_agent_attachment_action_area(
     );
     Some(AgentAttachmentActionArea {
         rect,
+        pane_id: info.id,
+        terminal_id,
+    })
+}
+
+/// Compute one complete bottom-border `[w]` launcher beside `[+]` for the
+/// exact focused agent. Only cached root-worktree capability is consulted;
+/// filesystem and Git discovery remain outside view computation and render.
+pub(super) fn compute_agent_worktree_action_area(
+    app: &AppState,
+    pane_infos: &[PaneInfo],
+) -> Option<AgentWorktreeActionArea> {
+    if app.mode != Mode::Terminal || app.file_manager.is_some() {
+        return None;
+    }
+    let info = pane_infos.iter().find(|info| info.is_focused)?;
+    if !info.borders.contains(Borders::BOTTOM)
+        || info.rect.width < AGENT_FRAME_ACTIONS_MIN_WIDTH
+        || info.rect.height < 2
+    {
+        return None;
+    }
+    let workspace_idx = app.active?;
+    let workspace = app.workspaces.get(workspace_idx)?;
+    if !workspace.can_open_existing_worktree_from_cache() {
+        return None;
+    }
+    let terminal_id = app.terminal_id_for_pane(workspace_idx, info.id)?;
+    if !app
+        .terminals
+        .get(&terminal_id)
+        .is_some_and(crate::terminal::TerminalState::is_agent_terminal)
+    {
+        return None;
+    }
+
+    let rect = Rect::new(
+        info.rect.x.saturating_add(info.rect.width).saturating_sub(
+            AGENT_ATTACHMENT_ACTION_WIDTH
+                .saturating_add(AGENT_WORKTREE_ACTION_WIDTH)
+                .saturating_add(1),
+        ),
+        info.rect
+            .y
+            .saturating_add(info.rect.height)
+            .saturating_sub(1),
+        AGENT_WORKTREE_ACTION_WIDTH,
+        1,
+    );
+    Some(AgentWorktreeActionArea {
+        rect,
+        workspace_id: workspace.id.clone(),
         pane_id: info.id,
         terminal_id,
     })
@@ -470,7 +524,30 @@ fn render_pane_borders(app: &AppState, ws: &crate::workspace::Workspace, frame: 
     }
 
     render_pane_border_titles(app, ws, frame);
+    render_agent_worktree_action(app, frame);
     render_agent_attachment_action(app, frame);
+}
+
+fn render_agent_worktree_action(app: &AppState, frame: &mut Frame) {
+    let Some(action) = app.view.agent_worktree_action_area.as_ref() else {
+        return;
+    };
+    let buf = frame.buffer_mut();
+    if action.rect.width != AGENT_WORKTREE_ACTION_WIDTH
+        || action.rect.height != 1
+        || action.rect.intersection(buf.area) != action.rect
+    {
+        return;
+    }
+    buf.set_stringn(
+        action.rect.x,
+        action.rect.y,
+        "[w]",
+        AGENT_WORKTREE_ACTION_WIDTH as usize,
+        Style::default()
+            .fg(app.palette.accent)
+            .add_modifier(Modifier::BOLD),
+    );
 }
 
 fn render_agent_attachment_action(app: &AppState, frame: &mut Frame) {
@@ -1060,12 +1137,24 @@ mod tests {
         let worktree = compute_agent_worktree_action_area(&app, &infos)
             .expect("eligible focused agent worktree action");
         let attachment = compute_agent_attachment_action_area(&app, &infos).unwrap();
+        assert_eq!(worktree.workspace_id, app.workspaces[0].id);
+        assert_eq!(worktree.pane_id, infos[0].id);
+        assert_eq!(worktree.terminal_id, attachment.terminal_id);
         assert_eq!(worktree.rect, Rect::new(17, 7, 3, 1));
         assert!(worktree.rect.intersection(attachment.rect).is_empty());
         assert!(worktree.rect.intersection(infos[0].inner_rect).is_empty());
 
         app.workspaces[0].cached_git_space = None;
         assert_eq!(compute_agent_worktree_action_area(&app, &infos), None);
+
+        app.workspaces[0].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo".into(),
+            label: "repo".into(),
+            repo_root: "/repo".into(),
+            checkout_path: "/repo".into(),
+            is_linked_worktree: false,
+        });
+        assert!(compute_agent_worktree_action_area(&app, &infos).is_some());
 
         app.workspaces[0].cached_git_space = Some(crate::workspace::GitSpaceMetadata {
             key: "repo".into(),
@@ -1074,11 +1163,48 @@ mod tests {
             repo_root: "/repo".into(),
             is_linked_worktree: true,
         });
+        app.workspaces[0].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo".into(),
+            label: "repo".into(),
+            repo_root: "/repo".into(),
+            checkout_path: "/repo/wt".into(),
+            is_linked_worktree: true,
+        });
         assert_eq!(compute_agent_worktree_action_area(&app, &infos), None);
+
+        let (non_agent, non_agent_infos) =
+            agent_attachment_geometry_fixture(rect, Borders::ALL, true, false);
+        assert_eq!(
+            compute_agent_worktree_action_area(&non_agent, &non_agent_infos),
+            None
+        );
+
+        let (mut borderless, borderless_infos) =
+            agent_attachment_geometry_fixture(rect, Borders::NONE, true, true);
+        borderless.workspaces[0].cached_git_space = Some(crate::workspace::GitSpaceMetadata {
+            key: "repo".into(),
+            checkout_key: "/repo".into(),
+            label: "repo".into(),
+            repo_root: "/repo".into(),
+            is_linked_worktree: false,
+        });
+        assert_eq!(
+            compute_agent_worktree_action_area(&borderless, &borderless_infos),
+            None
+        );
+
+        let (mut modal, modal_infos) =
+            agent_attachment_geometry_fixture(rect, Borders::ALL, true, true);
+        modal.workspaces[0].cached_git_space = borderless.workspaces[0].cached_git_space.clone();
+        modal.mode = Mode::Navigate;
+        assert_eq!(
+            compute_agent_worktree_action_area(&modal, &modal_infos),
+            None
+        );
 
         let (mut narrow, narrow_infos) =
             agent_attachment_geometry_fixture(Rect::new(4, 2, 7, 6), Borders::ALL, true, true);
-        narrow.workspaces[0].cached_git_space = app.workspaces[0].cached_git_space.clone();
+        narrow.workspaces[0].cached_git_space = borderless.workspaces[0].cached_git_space.clone();
         assert_eq!(
             compute_agent_worktree_action_area(&narrow, &narrow_infos),
             None

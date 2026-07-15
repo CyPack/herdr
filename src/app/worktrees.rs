@@ -1082,6 +1082,32 @@ mod tests {
         )
     }
 
+    fn install_focused_agent_worktree_launcher(
+        app: &mut App,
+        repo: &std::path::Path,
+    ) -> (crate::layout::PaneId, crate::terminal::TerminalId) {
+        let mut workspace = crate::workspace::Workspace::test_new("worktree-launcher");
+        workspace.identity_cwd = repo.to_path_buf();
+        workspace.refresh_git_ahead_behind();
+        let pane_id = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        let terminal_id = workspace
+            .terminal_id(pane_id)
+            .expect("focused agent terminal")
+            .clone();
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.ensure_test_terminals();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .expect("focused agent state")
+            .set_agent_name("codex".into());
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 100, 24));
+        (pane_id, terminal_id)
+    }
+
     fn event_kinds(event_hub: &crate::api::EventHub) -> Vec<crate::api::schema::EventKind> {
         event_hub
             .events_after(0)
@@ -1094,6 +1120,106 @@ mod tests {
         for (_, runtime) in app.terminal_runtimes.drain() {
             runtime.shutdown();
         }
+    }
+
+    // TP-M2.1-ROUTE: the frame action emits only the existing open intent,
+    // which enters the established searchable dialog without new authority.
+    #[test]
+    fn focused_agent_worktree_action_routes_to_existing_open_dialog_without_new_authority() {
+        let repo = create_committed_repo("focused-agent-worktree-route");
+        let mut app = app_for_worktree_tests();
+        let (pane_id, terminal_id) = install_focused_agent_worktree_launcher(&mut app, &repo);
+        let action = app
+            .state
+            .view
+            .agent_worktree_action_area
+            .clone()
+            .expect("eligible worktree action");
+        let pane_count = app.state.workspaces[0].tabs[0].panes.len();
+        let terminal_count = app.state.terminals.len();
+
+        app.handle_mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: action.rect.x + 1,
+            row: action.rect.y,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+
+        assert_eq!(app.state.request_open_existing_worktree, Some(0));
+        assert!(app.state.request_new_linked_worktree.is_none());
+        assert!(app.state.request_remove_linked_worktree.is_none());
+        let workspace_idx = app
+            .state
+            .request_open_existing_worktree
+            .take()
+            .expect("existing open intent");
+        app.open_existing_worktree_dialog(workspace_idx);
+
+        assert_eq!(app.state.mode, Mode::OpenExistingWorktree);
+        assert!(app
+            .state
+            .worktree_open
+            .as_ref()
+            .is_some_and(|open| !open.entries.is_empty()));
+        assert_eq!(app.state.workspaces[0].focused_pane_id(), Some(pane_id));
+        assert_eq!(
+            app.state.workspaces[0].terminal_id(pane_id),
+            Some(&terminal_id)
+        );
+        assert_eq!(app.state.workspaces[0].tabs[0].panes.len(), pane_count);
+        assert_eq!(app.state.terminals.len(), terminal_count);
+        assert!(app.state.worktree_create.is_none());
+        assert!(app.state.worktree_remove.is_none());
+
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    // TP-M2.1-FAILURE: a source that disappears after frame computation fails
+    // closed in the existing dialog owner and preserves every agent resource.
+    #[test]
+    fn worktree_action_list_error_preserves_agent_resources_and_clears_only_request() {
+        let repo = create_committed_repo("focused-agent-worktree-list-error");
+        let mut app = app_for_worktree_tests();
+        let (pane_id, terminal_id) = install_focused_agent_worktree_launcher(&mut app, &repo);
+        let action = app
+            .state
+            .view
+            .agent_worktree_action_area
+            .clone()
+            .expect("eligible worktree action");
+        let workspace_id = app.state.workspaces[0].id.clone();
+        let pane_count = app.state.workspaces[0].tabs[0].panes.len();
+        let terminal_count = app.state.terminals.len();
+
+        app.handle_mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: action.rect.x + 1,
+            row: action.rect.y,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+        let workspace_idx = app
+            .state
+            .request_open_existing_worktree
+            .take()
+            .expect("existing open intent");
+        std::fs::remove_dir_all(&repo).expect("remove source repo before list");
+
+        app.open_existing_worktree_dialog(workspace_idx);
+
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.worktree_open.is_none());
+        assert!(app.state.config_diagnostic.is_some());
+        assert!(app.state.request_open_existing_worktree.is_none());
+        assert_eq!(app.state.workspaces[0].id, workspace_id);
+        assert_eq!(app.state.workspaces[0].focused_pane_id(), Some(pane_id));
+        assert_eq!(
+            app.state.workspaces[0].terminal_id(pane_id),
+            Some(&terminal_id)
+        );
+        assert_eq!(app.state.workspaces[0].tabs[0].panes.len(), pane_count);
+        assert_eq!(app.state.terminals.len(), terminal_count);
+        assert!(app.state.worktree_create.is_none());
+        assert!(app.state.worktree_remove.is_none());
     }
 
     #[tokio::test]

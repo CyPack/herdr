@@ -666,7 +666,7 @@ mod tests {
     // TP-M2.1-INPUT: frame coordinates are presentation only; the exact
     // workspace/pane/terminal and cached Git capability are revalidated.
     #[test]
-    fn worktree_action_click_revalidates_exact_target_before_existing_intent() {
+    fn worktree_action_click_revalidates_exact_workspace_pane_and_terminal() {
         let mut app = super::super::app_for_mouse_test();
         let mut workspace = crate::workspace::Workspace::test_new("worktree-action-click");
         workspace.cached_git_space = Some(crate::workspace::GitSpaceMetadata {
@@ -722,8 +722,48 @@ mod tests {
         ));
         assert!(app.state.request_open_existing_worktree.is_none());
 
+        let original_workspace_id = app.state.workspaces[0].id.clone();
+        app.state.workspaces[0].id = "replacement-workspace".into();
+        app.state.view.agent_worktree_action_area = Some(action.clone());
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            action.rect.x + 1,
+            action.rect.y,
+        ));
+        assert!(app.state.request_open_existing_worktree.is_none());
+
+        app.state.workspaces[0].id = original_workspace_id;
+        let root_pane = app.state.workspaces[0].tabs[0].root_pane;
+        app.state.workspaces[0].tabs[0].layout.focus_pane(root_pane);
+        app.state.view.agent_worktree_action_area = Some(action.clone());
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            action.rect.x + 1,
+            action.rect.y,
+        ));
+        assert!(app.state.request_open_existing_worktree.is_none());
+
+        app.state.workspaces[0].tabs[0].layout.focus_pane(pane_id);
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_agent_name(String::new());
+        app.state.view.agent_worktree_action_area = Some(action.clone());
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            action.rect.x + 1,
+            action.rect.y,
+        ));
+        assert!(app.state.request_open_existing_worktree.is_none());
+
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_agent_name("codex".into());
         app.state.workspaces[0].cached_git_space = None;
-        app.state.view.agent_worktree_action_area = Some(action);
+        app.state.view.agent_worktree_action_area = Some(action.clone());
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             action.rect.x + 1,
