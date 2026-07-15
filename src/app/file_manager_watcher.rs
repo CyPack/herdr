@@ -862,6 +862,100 @@ mod tests {
         assert!(destination.join("payload.txt").exists());
     }
 
+    // TP-C4.4-RECONCILE: degraded polling mode uses the same immediate
+    // completion ownership instead of waiting for the periodic safety net or
+    // starting a second scheduler.
+    #[test]
+    fn polling_fallback_completion_reconciles_once_without_early_retry() {
+        let td = TempDir::new("operation-polling-fallback");
+        let source_dir = td.root.join("source");
+        let destination = td.root.join("destination");
+        std::fs::create_dir(&source_dir).expect("create source directory");
+        std::fs::create_dir(&destination).expect("create destination directory");
+        let source = source_dir.join("payload.txt");
+        std::fs::write(&source, b"payload").expect("write source");
+
+        let mut app = test_app();
+        app.state.file_manager = Some(crate::fm::FmState::new(&destination));
+        let now = Instant::now();
+        assert!(!app.sync_file_manager_watcher_at(now));
+        app.file_manager_watcher.mode = FileManagerWatcherMode::PollingFallback;
+        let before_generation = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("file manager open")
+            .preview_generation;
+        app.state.file_manager_clipboard = vec![source];
+        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !app.file_operation_worker.has_buffered_completion() {
+            assert!(Instant::now() < deadline, "polling completion timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_manager_watcher_at(now));
+        assert!(!app.sync_file_manager_watcher_at(now));
+        let file_manager = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(file_manager.preview_generation, before_generation + 1);
+        assert!(file_manager
+            .entries
+            .iter()
+            .any(|entry| entry.name == "payload.txt"));
+        assert_eq!(
+            app.file_manager_watcher.mode(),
+            FileManagerWatcherMode::PollingFallback
+        );
+    }
+
+    // TP-C4.4-RECONCILE: watcher-driven rename removes the exact selected path
+    // from both cursor and multi-selection authority, then falls back to the
+    // old safe row without retaining a stale anchor.
+    #[test]
+    fn watcher_rename_prunes_selected_path_and_keeps_cursor_safe() {
+        let td = TempDir::new("watcher-selection-rename");
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            std::fs::write(td.root.join(name), name).expect("write selection fixture");
+        }
+        let old_path = td.root.join("b.txt");
+        let new_path = td.root.join("z.txt");
+        let mut file_manager = crate::fm::FmState::new(&td.root);
+        let old_index = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == old_path)
+            .expect("selected path index");
+        assert!(file_manager.select(old_index));
+        assert!(file_manager.replace_selection(old_index));
+
+        let mut app = test_app();
+        app.state.file_manager = Some(file_manager);
+        let now = Instant::now();
+        assert!(!app.sync_file_manager_watcher_at(now));
+        let watcher_generation = app.file_manager_watcher.generation();
+        std::fs::rename(&old_path, &new_path).expect("rename selected path");
+        let (watch_tx, watch_rx) = sync_channel(1);
+        watch_tx
+            .send(message(
+                watcher_generation,
+                new_path.to_str().expect("UTF-8 renamed temp path"),
+            ))
+            .expect("queue rename watcher event");
+        app.file_manager_watcher.receiver = Some(watch_rx);
+
+        assert!(app.sync_file_manager_watcher_at(now));
+        let file_manager = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(file_manager.cursor, old_index);
+        assert_eq!(
+            file_manager.selected().map(|entry| entry.name.as_str()),
+            Some("c.txt")
+        );
+        assert!(!file_manager.multi_selection_paths().contains(&old_path));
+        assert!(file_manager.multi_selection_paths().is_empty());
+        assert!(file_manager.multi_selection_anchor().is_none());
+    }
+
     #[test]
     fn app_sync_binds_once_rebinds_on_cwd_change_and_stops_on_close() {
         let first = TempDir::new("first");
