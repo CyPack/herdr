@@ -344,6 +344,10 @@ where
             return result;
         }
         observer(index);
+        if cancellation.is_cancelled() {
+            result.status = DeleteOperationExecutionStatus::Cancelled;
+            return result;
+        }
         if snapshot_for_revalidation(&item.path).as_ref() != Some(&item.snapshot) {
             result.items[index].outcome =
                 DeleteOperationItemOutcome::Retained(DeleteBackendError::SourceChanged);
