@@ -311,6 +311,27 @@ impl FileOperationWorker {
         lock_state(state).completion.is_some()
     }
 
+    #[cfg(test)]
+    fn disconnected_after_progress_for_test(
+        generation: u64,
+        active_item_index: usize,
+        started_items: usize,
+    ) -> Self {
+        let mut state = FileOperationWorkerState::default();
+        state.alive = false;
+        state.active_generation = Some(generation);
+        state.active_cancellation = Some(FileOperationCancellation::default());
+        state.progress = Some(FileOperationWorkerProgress {
+            generation,
+            active_item_index,
+            started_items,
+        });
+        Self {
+            shared: Arc::new((Mutex::new(state), Condvar::new())),
+            handle: None,
+        }
+    }
+
     pub(super) fn cancel(&self) -> bool {
         let cancellation = {
             let (state, _) = &*self.shared;
@@ -2457,6 +2478,95 @@ mod tests {
         assert_eq!(
             fs::read(&operation.items[0].path).expect("panic source retained"),
             b"selected"
+        );
+    }
+
+    // TP-C4.4-RECOVERY: a dead worker observed after bounded progress must
+    // terminalize every item, discard stale reconciliation ownership, and
+    // reopen the same single lane at a strictly newer generation.
+    #[test]
+    fn app_recovers_disconnected_worker_after_progress_and_reuses_lane() {
+        let td = TempDir::new("disconnect-recovery");
+        let destination = td.root.join("destination");
+        let source_dir = td.root.join("source");
+        fs::create_dir(&destination).expect("create recovery destination");
+        fs::create_dir(&source_dir).expect("create recovery source directory");
+        let failed_first = destination.join("failed-first.txt");
+        let failed_second = destination.join("failed-second.txt");
+        fs::write(&failed_first, b"first").expect("write first failed fixture");
+        fs::write(&failed_second, b"second").expect("write second failed fixture");
+        let next_source = source_dir.join("next.txt");
+        fs::write(&next_source, b"next").expect("write next generation source");
+        let failed_generation = 41;
+
+        let mut app = test_app();
+        app.file_operation_worker =
+            FileOperationWorker::disconnected_after_progress_for_test(failed_generation, 0, 1);
+        app.state.file_manager = Some(crate::fm::FmState::new(&destination));
+        app.state.file_manager_operation = Some(FileManagerOperationState {
+            generation: failed_generation,
+            kind: FileManagerOperationKind::Copy,
+            destination_directory: destination.clone(),
+            total_items: 2,
+            completed_items: 0,
+            failed_items: 0,
+            status: FileManagerOperationStatus::Running,
+            items: vec![
+                crate::app::state::FileManagerOperationItemState {
+                    path: failed_first,
+                    recovery_path: None,
+                    status: FileManagerOperationItemStatus::Pending,
+                },
+                crate::app::state::FileManagerOperationItemState {
+                    path: failed_second,
+                    recovery_path: None,
+                    status: FileManagerOperationItemStatus::Pending,
+                },
+            ],
+        });
+
+        assert!(app.sync_file_operation_worker());
+        let failed = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("failed operation retained");
+        assert_eq!(failed.status, FileManagerOperationStatus::Failed);
+        assert_eq!(failed.completed_items, 0);
+        assert_eq!(failed.failed_items, 2);
+        assert!(failed
+            .items
+            .iter()
+            .all(|item| item.status == FileManagerOperationItemStatus::Failed));
+        assert!(app.file_operation_reconcile_baseline.is_none());
+        assert!(!app.file_operation_worker.is_busy());
+
+        app.state.file_manager_clipboard = vec![next_source];
+        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
+        let next_generation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("next operation running")
+            .generation;
+        assert!(next_generation > failed_generation);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !app.file_operation_worker.has_buffered_completion() {
+            assert!(Instant::now() < deadline, "recovered lane timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(app.sync_file_operation_worker());
+        assert_eq!(
+            app.state
+                .file_manager_operation
+                .as_ref()
+                .expect("next operation terminal")
+                .status,
+            FileManagerOperationStatus::Completed
+        );
+        assert_eq!(
+            fs::read(destination.join("next.txt")).expect("read recovered copy"),
+            b"next"
         );
     }
 
