@@ -1938,6 +1938,61 @@ mod tests {
         assert_eq!(app.state.file_manager.is_some(), before_file_manager);
     }
 
+    // TP-C6.1-GEOMETRY/NAV: cached geometry cannot authorize a path after the
+    // prepared model changes underneath it.
+    #[test]
+    fn stale_file_sidebar_hit_area_is_inert_after_model_refresh() {
+        use crate::app::state::{
+            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
+        };
+        let mut app = app_for_mouse_test();
+        app.state.sidebar_tab = SidebarTab::Files;
+        app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+            vec![FileManagerSidebarItem {
+                label: "Home".into(),
+                path: std::path::PathBuf::from("/home/a"),
+                icon: FileManagerSidebarIcon::Home,
+                accessible: true,
+                ejectable: false,
+            }],
+            Vec::new(),
+            Vec::new(),
+        );
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let stale_row = app.state.view.file_manager_sidebar_row_areas[0].clone();
+        app.state.file_manager_sidebar = FileManagerSidebarModel::default();
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            stale_row.rect.x,
+            stale_row.rect.y,
+        ));
+
+        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+    }
+
+    // TP-C6.1-LIFECYCLE: the Files top section owns its wheel events even
+    // before scrolling lands; hidden Spaces state must stay untouched.
+    #[test]
+    fn file_sidebar_wheel_does_not_move_hidden_spaces_state() {
+        use crate::app::state::SidebarTab;
+        let mut app = app_for_mouse_test();
+        app.state.sidebar_tab = SidebarTab::Files;
+        app.state.workspace_scroll = 0;
+        app.state.selected = 0;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let list = app.state.workspace_list_rect();
+
+        app.handle_mouse(mouse(
+            MouseEventKind::ScrollDown,
+            list.x,
+            list.y.saturating_add(2),
+        ));
+
+        assert_eq!(app.state.workspace_scroll, 0);
+        assert_eq!(app.state.selected, 0);
+    }
+
     #[test]
     fn clicking_sidebar_tab_does_not_start_a_workspace_press() {
         use crate::app::state::SidebarTab;
