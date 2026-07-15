@@ -743,6 +743,10 @@ mod tests {
         execute_file_operation, FileOperationCancellation, FileOperationExecutionStatus,
         FileOperationKind, FileOperationPlan, FileOperationRequest,
     };
+    use crate::fm::rename::{
+        BulkRenameOperationExecutionStatus, BulkRenameOperationPlan, BulkRenameOperationRequest,
+        RenameOperationExecutionStatus, RenameOperationPlan, RenameOperationRequest,
+    };
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1492,5 +1496,272 @@ mod tests {
             fs::read(&operation.items[0].path).expect("panic source retained"),
             b"selected"
         );
+    }
+
+    // TP-C4.3-LIFECYCLE: one valid immutable single-rename request enters the
+    // existing operation lane, reaches an exact terminal projection, and
+    // reloads only the matching current directory after the worker commits.
+    #[test]
+    fn app_file_rename_runs_in_existing_lane_and_reloads_matching_directory() {
+        let td = TempDir::new("app-rename-lifecycle");
+        let source = td.root.join("selected.txt");
+        let destination = td.root.join("renamed.txt");
+        fs::write(&source, b"selected").expect("write rename lifecycle source");
+        let mut app = test_app();
+        let mut file_manager = crate::fm::FmState::new(&td.root);
+        assert!(file_manager.replace_selection(0));
+        app.state.file_manager = Some(file_manager);
+        app.state.request_file_manager_rename = Some(crate::app::state::FileManagerRenameRequest {
+            source_path: source.clone(),
+            new_name: "renamed.txt".to_string(),
+        });
+
+        assert!(app.sync_file_operation_worker());
+        assert!(app.state.request_file_manager_rename.is_none());
+        let generation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("rename operation state")
+            .generation;
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let _ = app.sync_file_operation_worker();
+            if app
+                .state
+                .file_manager_operation
+                .as_ref()
+                .is_some_and(|operation| !operation.is_running())
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "rename completion timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let operation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("terminal rename operation");
+        assert_eq!(operation.generation, generation);
+        assert_eq!(operation.kind, FileManagerOperationKind::Rename);
+        assert_eq!(operation.status, FileManagerOperationStatus::Completed);
+        assert_eq!(operation.completed_items, 1);
+        assert_eq!(operation.failed_items, 0);
+        assert_eq!(operation.items[0].path, source);
+        assert_eq!(
+            operation.items[0].status,
+            FileManagerOperationItemStatus::Completed
+        );
+        assert!(!source.exists());
+        assert_eq!(
+            fs::read(&destination).expect("renamed payload"),
+            b"selected"
+        );
+        let file_manager = app.state.file_manager.as_ref().expect("matching FM open");
+        assert!(file_manager
+            .entries
+            .iter()
+            .any(|entry| entry.path == destination));
+        assert!(file_manager
+            .entries
+            .iter()
+            .all(|entry| entry.path != source));
+    }
+
+    // TP-C4.3-LIFECYCLE: stale, closed, or busy App authority is consumed but
+    // cannot replace the active operation generation or mutate either path.
+    #[test]
+    fn app_file_rename_request_fails_closed_when_stale_closed_or_busy() {
+        let td = TempDir::new("app-rename-fail-closed");
+        let source = td.root.join("selected.txt");
+        fs::write(&source, b"selected").expect("write fail-closed source");
+        let mut app = test_app();
+        app.state.file_manager = Some(crate::fm::FmState::new(&td.root));
+
+        app.state.file_manager_operation = Some(FileManagerOperationState {
+            generation: 91,
+            kind: FileManagerOperationKind::Copy,
+            destination_directory: td.root.clone(),
+            total_items: 1,
+            completed_items: 0,
+            failed_items: 0,
+            status: FileManagerOperationStatus::Running,
+            items: Vec::new(),
+        });
+        app.state.request_file_manager_rename = Some(crate::app::state::FileManagerRenameRequest {
+            source_path: source.clone(),
+            new_name: "busy.txt".to_string(),
+        });
+        assert!(app.sync_file_operation_worker());
+        assert_eq!(
+            app.state
+                .file_manager_operation
+                .as_ref()
+                .expect("busy generation retained")
+                .generation,
+            91
+        );
+        assert!(source.exists());
+        assert!(!td.root.join("busy.txt").exists());
+
+        app.state.file_manager_operation = None;
+        app.state.request_file_manager_rename = Some(crate::app::state::FileManagerRenameRequest {
+            source_path: td.root.join("stale.txt"),
+            new_name: "ignored.txt".to_string(),
+        });
+        assert!(app.sync_file_operation_worker());
+        assert!(app.state.file_manager_operation.is_none());
+
+        app.state.file_manager = None;
+        app.state.request_file_manager_rename = Some(crate::app::state::FileManagerRenameRequest {
+            source_path: source.clone(),
+            new_name: "closed.txt".to_string(),
+        });
+        assert!(app.sync_file_operation_worker());
+        assert!(app.state.file_manager_operation.is_none());
+        assert_eq!(
+            fs::read(source).expect("closed source retained"),
+            b"selected"
+        );
+    }
+
+    // TP-C4.3-LIFECYCLE: a rename may finish after FM close/reopen, but its
+    // completion cannot project the old directory into the new file-manager
+    // generation even though the exact filesystem operation itself completes.
+    #[test]
+    fn app_file_rename_completion_rejects_reopened_directory_projection() {
+        let td = TempDir::new("app-rename-reopen");
+        let old_directory = td.root.join("old");
+        let reopened_directory = td.root.join("reopened");
+        fs::create_dir(&old_directory).expect("create old rename directory");
+        fs::create_dir(&reopened_directory).expect("create reopened rename directory");
+        let source = old_directory.join("selected.txt");
+        fs::write(&source, b"selected").expect("write reopened rename source");
+        fs::write(reopened_directory.join("current.txt"), b"current")
+            .expect("write reopened current fixture");
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let worker = FileOperationWorker::with_task_executor(
+            Arc::new(Notify::new()),
+            move |task, cancellation| match task {
+                FileOperationWorkerTask::Rename(plan) => {
+                    started_tx.send(()).expect("signal rename started");
+                    release_rx.recv().expect("release rename");
+                    FileOperationWorkerResult::Rename(crate::fm::rename::execute_rename_operation(
+                        plan,
+                        cancellation,
+                    ))
+                }
+                _ => panic!("expected rename worker task"),
+            },
+        );
+        let mut app = test_app();
+        app.file_operation_worker = worker;
+        app.state.file_manager = Some(crate::fm::FmState::new(&old_directory));
+        app.state.request_file_manager_rename = Some(crate::app::state::FileManagerRenameRequest {
+            source_path: source.clone(),
+            new_name: "renamed.txt".to_string(),
+        });
+        assert!(app.sync_file_operation_worker());
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("rename worker started");
+
+        app.state.file_manager = None;
+        app.state.file_manager = Some(crate::fm::FmState::new(&reopened_directory));
+        release_tx.send(()).expect("release rename worker");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .is_some_and(FileManagerOperationState::is_running)
+        {
+            let _ = app.sync_file_operation_worker();
+            assert!(Instant::now() < deadline, "reopened rename timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let reopened = app.state.file_manager.as_ref().expect("reopened FM");
+        assert_eq!(reopened.cwd, reopened_directory);
+        assert_eq!(reopened.entries.len(), 1);
+        assert_eq!(
+            reopened.entries[0].path,
+            reopened_directory.join("current.txt")
+        );
+        assert!(old_directory.join("renamed.txt").exists());
+    }
+
+    // TP-C4.3-BULK/LIFECYCLE: bulk plans use the same bounded generation lane
+    // and cancellation token; they do not create a second scheduler.
+    #[test]
+    fn bulk_rename_plan_uses_existing_worker_lane_and_cancellation() {
+        let td = TempDir::new("bulk-rename-worker");
+        let alpha = td.root.join("alpha.txt");
+        let beta = td.root.join("beta.txt");
+        fs::write(&alpha, b"alpha").expect("write worker alpha");
+        fs::write(&beta, b"beta").expect("write worker beta");
+        let plan = BulkRenameOperationPlan::preflight(BulkRenameOperationRequest {
+            mappings: vec![
+                (alpha.clone(), "beta.txt".to_string()),
+                (beta.clone(), "alpha.txt".to_string()),
+            ],
+            operation_in_flight: false,
+        })
+        .expect("worker bulk plan");
+        let wake = Arc::new(Notify::new());
+        let mut worker =
+            FileOperationWorker::with_task_executor(wake, |task, cancellation| match task {
+                FileOperationWorkerTask::BulkRename(plan) => {
+                    cancellation.cancel();
+                    FileOperationWorkerResult::BulkRename(
+                        crate::fm::rename::execute_bulk_rename_operation(plan, cancellation),
+                    )
+                }
+                _ => panic!("expected bulk rename task"),
+            });
+
+        let generation = worker
+            .start_bulk_rename(plan)
+            .expect("start bulk rename lane");
+        assert_eq!(
+            worker.start(td.copy_plan("busy")),
+            Err(FileOperationStartError::Busy)
+        );
+        let completion = wait_for_completion(&mut worker);
+        assert_eq!(completion.generation, generation);
+        let result = match completion.result.expect("bulk worker result") {
+            FileOperationWorkerResult::BulkRename(result) => result,
+            _ => panic!("expected bulk rename result"),
+        };
+        assert_eq!(
+            result.status(),
+            BulkRenameOperationExecutionStatus::Cancelled
+        );
+        assert_eq!(fs::read(alpha).expect("cancelled alpha retained"), b"alpha");
+        assert_eq!(fs::read(beta).expect("cancelled beta retained"), b"beta");
+    }
+
+    // Keep the single-rename core status imports exercised at the worker
+    // boundary so accidental result-type drift is a compile-time failure.
+    #[test]
+    fn rename_worker_result_status_contract_is_typed() {
+        let td = TempDir::new("rename-worker-result-type");
+        let source = td.root.join("source.txt");
+        fs::write(&source, b"source").expect("write typed rename source");
+        let plan = RenameOperationPlan::preflight(RenameOperationRequest {
+            source_path: source,
+            new_name: "renamed.txt".to_string(),
+            operation_in_flight: false,
+        })
+        .expect("typed rename plan");
+        let result = crate::fm::rename::execute_rename_operation(
+            &plan,
+            &FileOperationCancellation::default(),
+        );
+        assert_eq!(result.status(), RenameOperationExecutionStatus::Completed);
     }
 }
