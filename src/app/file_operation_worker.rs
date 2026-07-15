@@ -309,6 +309,23 @@ impl FileOperationWorker {
         }
     }
 
+    fn cancel_generation(&self, generation: u64) -> bool {
+        let cancellation = {
+            let (state, _) = &*self.shared;
+            let state = lock_state(state);
+            if state.active_generation != Some(generation) {
+                return false;
+            }
+            state.active_cancellation.clone()
+        };
+        if let Some(cancellation) = cancellation {
+            cancellation.cancel();
+            true
+        } else {
+            false
+        }
+    }
+
     pub(super) fn drain(&mut self) -> FileOperationWorkerDrain {
         let (state, _) = &*self.shared;
         let mut state = lock_state(state);
@@ -392,6 +409,19 @@ fn lock_state(state: &Mutex<FileOperationWorkerState>) -> MutexGuard<'_, FileOpe
 }
 
 impl crate::app::App {
+    pub(super) fn cancel_file_manager_operation(&self) -> bool {
+        let Some(generation) = self
+            .state
+            .file_manager_operation
+            .as_ref()
+            .filter(|operation| operation.is_running())
+            .map(|operation| operation.generation)
+        else {
+            return false;
+        };
+        self.file_operation_worker.cancel_generation(generation)
+    }
+
     /// Dispatch one currently enabled native-FM header action. Copy only
     /// prepares exact path identities; Paste performs immutable preflight and
     /// hands the plan to the bounded worker before returning to the UI loop.
@@ -1771,6 +1801,24 @@ mod tests {
             .as_ref()
             .expect("running cancellable operation")
             .generation;
+
+        app.state
+            .file_manager_operation
+            .as_mut()
+            .expect("stale cancellation fixture")
+            .generation = generation.saturating_add(1);
+        app.handle_key(TerminalKey::new(KeyCode::Esc, KeyModifiers::NONE))
+            .await;
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(
+            app.file_operation_worker.is_busy(),
+            "stale App generation cannot cancel the active worker"
+        );
+        app.state
+            .file_manager_operation
+            .as_mut()
+            .expect("restore cancellation fixture")
+            .generation = generation;
 
         app.handle_key(TerminalKey::new(KeyCode::Esc, KeyModifiers::NONE))
             .await;
