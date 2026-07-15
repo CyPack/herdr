@@ -114,6 +114,72 @@ pub(super) fn handle_file_manager_key(
 }
 
 impl App {
+    /// Convert one stable row hit target into the same typed intent consumed by
+    /// header/context actions. A cloned projection proves the anchored row is
+    /// currently eligible before the real selection changes, so rejected
+    /// stale, bulk, read-only, or in-flight actions cannot corrupt focus.
+    pub(super) fn dispatch_file_manager_row_action(
+        &mut self,
+        action: FileManagerRowAction,
+        entry_path: std::path::PathBuf,
+    ) -> bool {
+        let context_action = match action {
+            FileManagerRowAction::SendAgent => {
+                crate::app::state::FileManagerContextMenuAction::SendAgent
+            }
+            FileManagerRowAction::Rename => crate::app::state::FileManagerContextMenuAction::Rename,
+            FileManagerRowAction::Delete => crate::app::state::FileManagerContextMenuAction::Delete,
+        };
+        let Some((entry_idx, mut projected)) = self.state.file_manager.as_ref().and_then(|fm| {
+            (fm.multi_selection_paths().len() <= 1).then_some(())?;
+            let entry_idx = fm
+                .entries
+                .iter()
+                .position(|entry| entry.operation_supported && entry.path == entry_path)?;
+            Some((entry_idx, fm.clone()))
+        }) else {
+            return false;
+        };
+        if !projected.replace_selection(entry_idx) {
+            return false;
+        }
+        let action_bar = crate::ui::compute_file_manager_action_bar_model(
+            &projected,
+            &self.state.file_manager_clipboard,
+            self.state
+                .file_manager_operation
+                .as_ref()
+                .is_some_and(crate::app::state::FileManagerOperationState::is_running),
+        );
+        let Some(model) =
+            FileManagerContextMenuModel::from_action_bar_with_plugins(&action_bar, &[])
+        else {
+            return false;
+        };
+        if model.paths != [entry_path.clone()]
+            || !model
+                .items
+                .iter()
+                .any(|item| item.action == context_action && item.enabled)
+        {
+            return false;
+        }
+        if !self
+            .state
+            .file_manager
+            .as_mut()
+            .is_some_and(|fm| fm.replace_selection(entry_idx))
+        {
+            return false;
+        }
+        self.state.request_file_manager_context_action =
+            Some(crate::app::state::FileManagerContextActionIntent {
+                action: context_action,
+                paths: vec![entry_path],
+            });
+        true
+    }
+
     /// Route native-FM center-content mouse input before the hidden terminal
     /// pane path. Row actions carry stable path identity but remain side-effect
     /// free until their operation modules provide explicit execution authority.
@@ -1213,6 +1279,15 @@ mod tests {
 
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 50, 0));
 
+        assert!(app.state.file_manager_clipboard.is_empty());
+        assert_eq!(
+            app.state.request_file_manager_context_action,
+            Some(crate::app::state::FileManagerContextActionIntent {
+                action: FileManagerContextMenuAction::Copy,
+                paths: vec![selected.clone()],
+            })
+        );
+        assert!(app.sync_file_operation_worker());
         assert_eq!(app.state.file_manager_clipboard, vec![selected]);
         assert_eq!(
             fs::read(td.root.join("selected.txt")).expect("copy action preserves source"),
@@ -1490,6 +1565,7 @@ mod tests {
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 3));
 
         assert!(app.state.request_file_manager_agent_handoff.is_none());
+        assert!(app.sync_file_manager_agent_handoff());
         assert_eq!(
             app.state.request_file_manager_claude_split,
             Some(crate::app::state::FileManagerClaudeSplitRequest {

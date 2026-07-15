@@ -21,6 +21,7 @@ pub(super) enum TerminalInputSendError {
 }
 
 impl crate::app::App {
+    #[cfg(test)]
     pub(super) fn open_file_manager_row_agent_handoff(&mut self, path: std::path::PathBuf) -> bool {
         let selection_is_bulk = self
             .state

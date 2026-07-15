@@ -489,7 +489,11 @@ impl crate::app::App {
                 let Some(paths) = current_action_paths(&self.state, action) else {
                     return false;
                 };
-                self.state.file_manager_clipboard = paths;
+                self.state.request_file_manager_context_action =
+                    Some(crate::app::state::FileManagerContextActionIntent {
+                        action: crate::app::state::FileManagerContextMenuAction::Copy,
+                        paths,
+                    });
                 true
             }
             FileManagerHeaderAction::Paste => self.start_file_manager_paste(),
@@ -497,7 +501,12 @@ impl crate::app::App {
                 let Some(paths) = current_action_paths(&self.state, action) else {
                     return false;
                 };
-                self.open_file_manager_delete_confirmation(paths)
+                self.state.request_file_manager_context_action =
+                    Some(crate::app::state::FileManagerContextActionIntent {
+                        action: crate::app::state::FileManagerContextMenuAction::Delete,
+                        paths,
+                    });
+                true
             }
             FileManagerHeaderAction::NewFolder => false,
         }
