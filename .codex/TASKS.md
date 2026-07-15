@@ -933,22 +933,25 @@ evidence contract proves non-duplicate user value and freezes RED test points.
 
 ### M3 — General Panel/Page/Button Interface Evaluation
 
-- [ ] M3.0 rerun the P4 architecture evidence matrix only after M1 or M2 creates
-  a second real independently owned page/component/action family. Otherwise
-  close M3 NO-GO without production refactoring.
-- [ ] M3.0a inventory duplicated lifecycle, render, input, focus, hit-geometry,
-  persistence, protocol, and cleanup seams; quantify duplication by concrete
-  consumers rather than source size or naming preference.
-- [ ] M3.0b name characterization tests for current BaseLayer terminal/FM swap,
-  modal/context ownership, responsive shell regions, and any new M1/M2 consumer.
-- [ ] M3.1 define the smallest trait/interface contract only if two consumers
-  share behavior and retain independent identities. Keep runtime facts out of a
-  TUI-named abstraction and add no dynamic registry without lifecycle demand.
-- [ ] M3.2 migrate one consumer per atomic commit behind characterization tests;
-  preserve exact event priority, focus/close order, render purity, and snapshot
-  compatibility. Revert the candidate if complexity or coupling increases.
-- [ ] M3.3 run adversarial identity/width/restore/nested-popup tests, full gates,
-  graph impact comparison, and a final keep/revert ADR-style decision.
+- [x] M3.0 rerun the P4 architecture evidence matrix after M1 `[+]` and M2
+  `[w]` created two real frame-action consumers. The measured trigger failed,
+  so M3 is closed implementation NO-GO without production refactoring.
+- [x] M3.0a inventory duplicated lifecycle, render, input, focus, hit-geometry,
+  persistence, protocol, and cleanup seams. Only small pure geometry/render
+  mechanics repeat; lifecycle, authority, focus, and cleanup owners differ.
+- [x] M3.0b name characterization tests for current BaseLayer terminal/FM swap,
+  modal/context ownership, responsive shell regions, M1/M2 identity, and
+  snapshot compatibility. The fresh combined set is 16/16.
+- [x] M3.1 interface definition implementation NO-GO: two consumers do not
+  share one independently owned lifecycle/event contract, so no trait,
+  component registry, action registry, or generic panel/page API is defined.
+- [x] M3.2 migration implementation NO-GO: no consumer is moved and no mixed
+  ownership state is created. Existing typed seams remain independently
+  reversible.
+- [x] M3.3 final keep/revert decision: keep the concrete M1/M2 owners. The
+  graph remains current at 19,534 nodes / 91,017 edges; targeted
+  characterization is 16/16 and there is no product diff requiring full build
+  gates or reversion.
 
 | Test point | What is tested | Expected result | Reason |
 |---|---|---|---|
@@ -958,6 +961,23 @@ evidence contract proves non-duplicate user value and freezes RED test points.
 | TP-M3-MIGRATION | One-consumer-at-a-time conversion and rollback | Every atomic step stays green and independently reversible; mixed partial ownership is forbidden | Sequential Git discipline reduces refactor blast radius |
 | TP-M3-DECISION | Complexity, duplication, coupling, binary/test cost, graph impact | Keep only measured improvement; otherwise revert and record the missing trigger | Passing tests alone do not prove an abstraction is beneficial |
 
+### M3.0 Final Decision
+
+- Evidence: `.codex/evidence/m3-general-ui-interface.md`.
+- The two compute functions share focused-agent/border geometry, and the two
+  21-line render functions share a bounded ASCII draw template. M2 separately
+  owns workspace/Git capability and an existing-dialog intent; M1 owns a
+  private picker overlay and one-shot delivery lifecycle.
+- `BaseLayer` remains one terminal/FM content swap, `OverlayLayer` remains one
+  `Mode`-selected owner, and `ShellLayout` gains no new persisted region.
+- Action-area/request symbols do not cross into persistence or wire protocol.
+  Mobile clears both derived targets every frame; desktop recomputes them.
+- Fresh characterization: 16/16, nextest run
+  `32ca7f37-b65c-45ef-9dbf-548e8263d383`. No retry and no production edit.
+- Final decision: general interface/registry implementation NO-GO. A third
+  exact frame action may earn a private pure draw helper, but a registry still
+  requires duplicated lifecycle, focus/close ownership, and event routing.
+
 ### Future Ordering and Activation
 
 1. M1.0–M1.4 are complete through the atomic RED/GREEN chain and full closure
@@ -965,10 +985,9 @@ evidence contract proves non-duplicate user value and freezes RED test points.
 2. M2 is complete: duplicate management implementations remain NO-GO and the
    focused-agent launcher reuses the existing open dialog without a private
    TUI runtime or mutation path.
-3. M3.0 is next because M1 `[+]` and M2 `[w]` now provide two concrete frame-
-   action consumers. It must still return NO-GO unless measured duplicated
-   lifecycle/ownership justifies an abstraction. S5–S7
-   remain NO-GO until their existing concrete triggers are independently met.
+3. M3.0 is closed implementation NO-GO: M1 `[+]` and M2 `[w]` duplicate only
+   small geometry/render mechanics, not lifecycle/ownership. S5–S7 remain
+   NO-GO until their existing concrete triggers are independently met.
 4. N2.2 remains separate from M1–M3 and inactive until cursor-history demand and
    finite eviction/restore semantics are proven.
 
@@ -980,7 +999,8 @@ reconciliation, C4.4.4 recovery, C4.4.5 gates, and C5.1–C5.5 are complete.
 C6.1–C6.4, P4.0, N2.0, and N2.1 are complete through product commit `c530836`
 plus the continuity commit containing this closure. S5–S7 and the original
 dynamic/unbounded N2 state machine remain evidence-gated implementation NO-GO.
-M1.0–M1.4 and M2.0–M2.4 are complete. M3.0 evidence evaluation is next now
-that `[+]` and `[w]` are two concrete consumers; production refactoring remains
-NO-GO until that evidence proves a smaller shared contract. N2.2 and
-S5–S7 remain independently gated.
+M1.0–M1.4 and M2.0–M2.4 are complete. M3.0–M3.3 are closed implementation
+NO-GO by `.codex/evidence/m3-general-ui-interface.md`: `[+]` and `[w]` share
+only small pure geometry/render mechanics, not lifecycle/ownership. N2.2 and
+S5–S7 remain independently gated future work with explicit activation
+criteria; no speculative production lane is active.

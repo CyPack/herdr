@@ -4,13 +4,13 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Published CyPack checkpoint before this continuity publication: `918f4fc`
-  (`docs: define focused-agent worktree launcher`).
+- Published CyPack checkpoint before this continuity publication: `a61cfb6`
+  (`docs: close focused-agent worktree launcher`).
 - Verified M2.1 chain: RED `dab1e20`; GREEN `0ae6175`
   (`feat: add focused-agent worktree launcher`).
 - Verified C6.4 product/test head: `f52cb85`
   (`test: align image resize target with status geometry`).
-- The pending publication unit is M2.1 closure/continuity only. At publication,
+- The pending publication unit is M3.0 evidence/continuity only. At publication,
   CyPack `feat/native-fm` and fork `master` must be verified at the same
   fast-forward branch tip.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
@@ -32,6 +32,30 @@
   B0 skip; Linux/Windows clippy; Bun 17/17; Python 64/64; fmt/diff clean.
 - Fresh graph is 19,534 nodes / 91,017 edges and returns current
   `miller_layout`, action geometry, and cached-capability symbols.
+
+## Verified Checkpoint — M3 General UI Interface Evaluation
+
+- M3.0–M3.3 are closed implementation NO-GO by
+  `.codex/evidence/m3-general-ui-interface.md`; no Rust production code was
+  edited.
+- M1 `[+]` and M2 `[w]` are two real action consumers, but the common part is
+  limited to focused-agent/border geometry and two 21-line bounded ASCII render
+  templates. M1 owns a private attachment-picker lifecycle; M2 owns cached
+  workspace/Git authority and routes into an existing dialog.
+- `BaseLayer` remains one terminal/FM content swap, `OverlayLayer` remains one
+  active `Mode` owner, and `ShellLayout` has no additional persisted region.
+  The action areas and transient request do not enter persistence or protocol.
+- Fresh characterization is 16/16 with zero retry, nextest run
+  `32ca7f37-b65c-45ef-9dbf-548e8263d383`. It protects Base/content swap,
+  desktop/mobile shell geometry, M1/M2 disjoint geometry/render, exact stale-
+  identity input, dialog/picker cleanup, context focus/close, and old snapshot
+  compatibility.
+- The already-current graph is 19,534 nodes / 91,017 edges and was verified
+  with `miller_layout` plus current M1/M2 compute/render/input symbols; `ready`
+  alone was not accepted.
+- Future triggers remain explicit: S5 needs a second independently owned page/
+  component lifecycle, S6 a real persisted resizable region, S7 a nested popup
+  retaining parent ownership, and N2.2 independent finite history demand.
 
 ## Verified Checkpoint — C5 Agent Handoff
 
@@ -892,13 +916,15 @@
 
 ## Exact Next Action
 
-1. Commit and publish the M2.1 closure/continuity unit to CyPack
+1. Commit and publish the M3.0 evidence/continuity unit to CyPack
    `feat/native-fm` and fork `master` only after exact FF ancestry checks.
-2. Begin M3.0 as read-only evidence: quantify whether M1 `[+]` and M2 `[w]`
-   genuinely duplicate ownership/lifecycle. No production abstraction first.
-3. If the trigger is not proven, close M3 implementation NO-GO. New List/
-   Create/Remove/Switch implementations remain NO-GO.
-4. N2.2 and S5–S7 remain independently deferred.
+2. Do not start speculative production work after publication. Activate only a
+   task whose recorded trigger is independently satisfied by real product
+   demand.
+3. S5–S7 and N2.2 remain the durable future task list with explicit trigger,
+   characterization, migration, and rollback requirements in `TASKS.md`.
+4. Any third frame action first evaluates a private pure geometry/render helper;
+   it does not automatically authorize a registry or general page interface.
 
 ## Verified B2.0 Dependency Decision
 

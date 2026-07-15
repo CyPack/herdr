@@ -2,9 +2,9 @@
 
 - Updated: 2026-07-15
 - Branch: `feat/native-fm`
-- Published CyPack base: `918f4fc`.
+- Published CyPack base: `a61cfb6`.
 - Verified M2.1 chain: RED `dab1e20`; GREEN product head `0ae6175`.
-- Current publication unit: M2.1 closure/continuity. Push
+- Current publication unit: M3.0 evidence/continuity. Push
   only CyPack `feat/native-fm` and fork `master` after targeted staging,
   fast-forward ancestry, and exact remote-SHA verification.
 
@@ -69,19 +69,28 @@
 - M2.0–M2.4 are closed: `[w]` uses pure cached capability and exact identity
   to enter the existing open dialog; duplicate Create/Remove/List/Switch
   implementations remain NO-GO.
+- M3.0–M3.3 are closed implementation NO-GO: M1/M2 repeat only small pure
+  geometry/render mechanics, not lifecycle, authority, focus, event, or
+  cleanup ownership. No trait, registry, migration, or Rust product diff was
+  created. Evidence: `.codex/evidence/m3-general-ui-interface.md`.
 
 ## Active Next Increment
 
-M3.0 read-only architecture evidence gate. M1 `[+]` and M2 `[w]` now provide
-two concrete frame-action consumers, but production refactoring remains NO-GO
-unless measured duplication proves a smaller shared ownership contract.
+No speculative production increment is active. Publish the documentation-only
+M3 closure, then activate future work only when one recorded independent
+trigger is satisfied by concrete product demand.
 
 ## Ordered Roadmap
 
-1. M3.0 inventory M1/M2 frame-action duplication and rerun the P4 decision
-   matrix; conclude GO/NO-GO before production edits.
-2. If and only if M3.0 is GO, freeze characterization tests before M3.1.
-3. N2.2 and S5–S7 remain independently evidence-gated.
+1. S5 only after a second independently owned page/component repeats render,
+   hit geometry, lifecycle, focus/close ownership, and event routing.
+2. S6 only after a real additional resizable region requires persisted identity,
+   migration, restore, and adversarial-width behavior.
+3. S7 only after a real nested popup must retain and restore parent ownership.
+4. N2.2 only after independent retained-history demand plus finite eviction and
+   restore semantics.
+5. A third frame action may first justify a private pure draw/geometry helper;
+   it does not automatically authorize a registry.
 
 ## Fresh M2 Closure Evidence
 
@@ -95,6 +104,19 @@ unless measured duplication proves a smaller shared ownership contract.
   proved freshness beyond `ready`.
 - No dependency, protocol, persisted runtime state, Git/filesystem mutation,
   process, socket, watcher, worker, pane, or stable Herdr resource changed.
+
+## Fresh M3 Evidence
+
+- Graph-first inventory at 19,534 nodes / 91,017 edges returned current
+  `miller_layout`, M1/M2 compute/render areas, and input ownership; `ready`
+  alone was not accepted.
+- Characterization set: 16/16, zero retry, run
+  `32ca7f37-b65c-45ef-9dbf-548e8263d383`.
+- Protected Base terminal/FM swap, desktop/mobile shell regions, responsive and
+  disjoint M1/M2 geometry/render, exact stale-identity dispatch, picker/dialog
+  cleanup, modal/context focus/close, and old snapshot compatibility.
+- Documentation/continuity only: no Rust, dependency, protocol, persistence,
+  worker, watcher, filesystem/Git operation, process, pane, or socket change.
 
 ## Non-Negotiable Boundaries
 

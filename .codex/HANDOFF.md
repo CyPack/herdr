@@ -9,10 +9,12 @@ scheduled boundary sends one literal UTF-8 path plus CR after exact workspace/
 The M1 chain is published exactly to both CyPack refs. M2 is complete through
 RED `dab1e20` and GREEN `0ae6175`: `[w]` revalidates exact focused-agent and
 cached root-worktree authority, then enters the existing open dialog. Duplicate
-List/Create/Remove/Switch implementations remain NO-GO. M3.0 read-only evidence
-is next now that `[+]` and `[w]` are two concrete consumers; production
-abstraction still requires a measured GO. Never touch stable Herdr/socket/
-processes.
+List/Create/Remove/Switch implementations remain NO-GO. M3.0–M3.3 are now
+closed implementation NO-GO: `[+]` and `[w]` repeat only small pure geometry/
+render mechanics, while lifecycle, authority, focus, and cleanup owners differ.
+No Rust production code changed. Future work remains S5–S7 and N2.2 only when
+their explicit independent triggers are satisfied. Never touch stable Herdr/
+socket/processes.
 
 ## 2. AKTİF PROJE
 
@@ -702,6 +704,13 @@ upstream is never pushed.
   Linux/Windows clippy, Bun 17/17, Python 64/64, and fresh graph 18,997 / 89,826
   are clean. Ordinary reload behavior is preserved through the shared helper;
   leave holds only one local departed path and performs no additional read.
+- M3.0–M3.3 are documentation-only implementation NO-GO. Graph-first evidence
+  found two real action consumers but no shared page/component lifecycle:
+  M1 owns `AttachFile` picker state and delivery cleanup; M2 owns cached Git/
+  workspace authority and an existing-dialog request. Fresh characterization
+  is 16/16, run `32ca7f37-b65c-45ef-9dbf-548e8263d383`; graph remains current
+  at 19,534 / 91,017. Full evidence is
+  `.codex/evidence/m3-general-ui-interface.md`.
 
 ## 9. GÜVENLİK
 
@@ -741,7 +750,9 @@ M1.0–M1.4 are closed through `7d3144e`, exact attachment 20/20, full nextest
 GREEN `0ae6175`: exact M2.1 5/5, worktree/attachment 131/131, full 3202/3202
 plus the named skip, Linux/Windows clippy, Bun 17/17, Python 64/64, and fresh
 graph 19,534 / 91,017. Duplicate management implementations remain NO-GO.
-M3.0 read-only evidence is next; N2.2 and S5–S7 remain independently deferred.
+M3.0–M3.3 close implementation NO-GO with a fresh 16/16 characterization set
+and no product diff. N2.2 and S5–S7 remain independently deferred future tasks
+with explicit activation criteria; there is no speculative active code lane.
 
 ## 11. ORTAM
 
