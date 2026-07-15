@@ -2,12 +2,12 @@
 
 ## 1. SONRAKI ADIM
 
-Start P4.0 as a read-only architecture evidence gate from `.codex/TASKS.md`.
-Trace concrete component/page, `ShellLayout`, popup ownership, and Miller-v2
-pressure; define protected characterization tests and publish one GO/NO-GO
-matrix. Activate at most one of S5/S6/S7/N2 only when its trigger is proven.
-Do not manufacture a registry/refactor merely because C6.4 closed, and never
-touch stable Herdr, its socket, or user processes.
+Start N2.0 specification/reference work from the durable delta/transition/
+budget/decision test points in `.codex/TASKS.md`. Compare at least two
+independent dynamic-Miller behaviors against current `FmState` refresh and
+responsive layout, then publish a bounded client-local state-machine contract
+and terminating implementation GO/NO-GO. Do not write Rust before that contract
+proves non-duplicate user value; never touch stable Herdr/socket/processes.
 
 ## 2. AKTİF PROJE
 
@@ -687,6 +687,11 @@ upstream is never pushed.
   and graph-indexed. P4.0 is read-only evidence gathering; it may activate at
   most one deferred architecture candidate and cannot itself justify product
   refactoring.
+- P4.0 is complete. S5/S6/S7 are implementation NO-GO because their required
+  second consumer, resizable-region, and nested-popup triggers are absent. N2
+  receives discovery-only GO; production remains NO-GO until N2.0 proves an
+  observable delta beyond current cached parent/current/preview refresh and
+  defines bounded transition/failure behavior.
 
 ## 9. GÜVENLİK
 
@@ -716,9 +721,10 @@ and fresh graph 18,909 / 90,194. C6.3 closes at product head `8b21442` plus
 test closure `2d974da`, full Rust 3160/3160 plus one named skip, and fresh
 graph 18,922 / 89,277. C6.4 closes at test/product head `f52cb85`, full Rust
 3171/3171 plus one named skip, isolated API/PTY residue zero, and fresh graph
-18,974 / 89,775. The immediate ordered task is P4.0 read-only architecture
-evidence/characterization/decision. S5–S7/N2 remain candidates until that gate
-selects at most one; M1–M3 remain north-star backlog.
+18,974 / 89,775. P4.0 then closes as a documentation-only evidence matrix:
+S5–S7 implementation NO-GO, N2 discovery-only GO. The immediate ordered task
+is N2.0 bounded product/reference specification; N2 production remains NO-GO
+until a terminating decision. M1–M3 remain north-star backlog.
 
 ## 11. ORTAM
 

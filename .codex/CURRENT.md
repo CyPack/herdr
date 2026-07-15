@@ -159,8 +159,33 @@
 - Fresh graph is 18,974 nodes / 89,775 edges. `ready` was cross-checked with
   current source snippets for `miller_layout`, `FmDirectoryStatus`,
   `file_manager_visual_styles`, and `file_manager_status_line`.
-- Next module: P4.0 read-only architecture evidence gate; activate at most one
-  of S5/S6/S7/N2 only if its durable trigger is proven.
+- P4.0 evidence gate is closed below; N2.0 is the only active discovery lane.
+
+## Verified Checkpoint — P4.0 Architecture Evidence Gate
+
+- Live graph/source evidence compared four alternatives per the system-design
+  decision process. No production code, dependency, persisted state, protocol,
+  runtime, or stable Herdr resource changed.
+- S5 is implementation NO-GO: `Compositor` has two fixed layers and `BaseLayer`
+  has one explicit terminal/FM swap, but no second dynamic component/page owns
+  duplicated event and lifecycle seams.
+- S6 is implementation NO-GO: `ShellLayout` already has nested/serde fixtures,
+  yet production computes only LeftPanel/CenterContent and `SessionSnapshot`
+  persists the concrete sidebar fields. No RightPanel/BottomBar consumer or
+  general restore/migration pressure exists.
+- S7 is implementation NO-GO: one `Mode` selects one `OverlayLayer`, while
+  `render_modal_shell` and `modal_stack_areas` already serve eight and ten
+  callers respectively. Existing context-to-confirmation tests cover staged
+  focus/close behavior; no simultaneous nested popup requires ownership stack.
+- N2 receives discovery-only GO because v1 A-C is closed and the roadmap names
+  ranger-style auto-split/auto-prune, but production remains NO-GO: current
+  `FmState` refresh already updates parent/current/preview and no N2 spec file
+  defines the remaining observable delta or state-machine budget.
+- Durable N2.0 microtasks and test points now require two independent behavior
+  references, exact transition/failure/bounds design, explicit comparison with
+  current behavior, and a terminating implementation GO/NO-GO.
+- Next module: N2.0 bounded product/reference specification; no Rust edit until
+  its test contract proves non-duplicate user value.
 
 ## Verified Checkpoint — C1.1 Header Action Geometry
 
@@ -815,14 +840,13 @@
 
 ## Exact Next Action
 
-1. Start P4.0 as a read-only architecture evidence gate from the durable
-   evidence/characterization/decision test points in `.codex/TASKS.md`.
-2. Trace concrete component/page, `ShellLayout`, popup ownership, and Miller v2
-   pressure. Name protected behavior before any refactor and record an explicit
-   GO/NO-GO matrix.
-3. Activate at most one of S5/S6/S7/N2 test-point-first. If no trigger is
-   proven, keep all candidates deferred and record the missing evidence rather
-   than adding speculative production abstraction.
+1. Start N2.0 from the durable delta/transition/budget/decision test points in
+   `.codex/TASKS.md`; this is specification and reference comparison only.
+2. Compare at least two independent dynamic-Miller behaviors with current
+   `FmState::enter/leave/reload` and responsive `miller_layout`. Define only the
+   observable delta, never copy a foreign architecture blindly.
+3. Publish a bounded client-local state-machine contract and one final N2
+   implementation GO/NO-GO before any Rust production or RED test commit.
 
 ## Verified B2.0 Dependency Decision
 

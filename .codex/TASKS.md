@@ -715,15 +715,15 @@ covered by deterministic alternate-palette and breakpoint buffer tests.
 
 ## P4 — Deferred UI Architecture
 
-- [ ] P4.0 run the post-v1 architecture evidence gate before selecting any
+- [x] P4.0 run the post-v1 architecture evidence gate before selecting any
   deferred implementation module.
-- [ ] P4.0a trace current component/page, `ShellLayout`, modal/context popup,
+- [x] P4.0a trace current component/page, `ShellLayout`, modal/context popup,
   and Miller navigation ownership; inventory concrete duplication, coupling,
   persistence, migration, focus, and nested-popup pressure.
-- [ ] P4.0b name characterization tests for every behavior a candidate refactor
+- [x] P4.0b name characterization tests for every behavior a candidate refactor
   would protect, including adversarial identity/width/restore and popup close
   ordering; do not edit production code during the evidence pass.
-- [ ] P4.0c publish one explicit GO/NO-GO matrix and activate at most one of
+- [x] P4.0c publish one explicit GO/NO-GO matrix and activate at most one of
   S5, S6, S7, or N2. A NO-GO leaves the candidate deferred with the missing
   trigger recorded instead of manufacturing abstraction work.
 - [ ] S5 ComponentRegistry only when a second real component/page proves the
@@ -733,12 +733,42 @@ covered by deterministic alternate-palette and breakpoint buffer tests.
 - [ ] S7 popup stack with ownership, focus, close ordering, and nested popup
   tests.
 - [ ] N2 dynamic Miller auto-navigation is v2-only after v1 A–C completion.
+- [ ] N2.0 define an implementation-ready dynamic Miller product contract
+  before production code; this is the only active post-P4.0 discovery lane.
+- [ ] N2.0a compare at least two independent ranger/Joshuto/Yazi-class
+  navigation references against Herdr's current cached parent/current/preview
+  behavior; name the user-visible delta instead of copying an architecture.
+- [ ] N2.0b specify the bounded client-local transition model for enter, leave,
+  cursor movement, watcher refresh, path disappearance, root, narrow width,
+  selection, preview generation, and close/reopen; add no server/protocol state.
+- [ ] N2.0c write exact RED-capable characterization/test points, complexity and
+  cleanup budgets, accepted static behavior, and a final implementation GO/NO-GO.
+- [ ] N2.1 implement only after N2.0 proves behavior not already supplied by
+  current `FmState` refresh plus responsive `miller_layout`.
 
 | Test point | What is tested | Expected result | Reason |
 |---|---|---|---|
 | TP-P4-EVIDENCE | Live graph ownership, duplicate geometry/input/render paths, persisted-state pressure, popup nesting, and v2 navigation demand | Every candidate has concrete source/test evidence and a named unmet or satisfied trigger; repository size or aesthetic preference alone cannot produce a GO | Deferred architecture must emerge from real pressure instead of replacing working concrete seams speculatively |
 | TP-P4-CHARACTERIZE | Current layout identity, restore/migration, modal focus/close order, and Miller navigation invariants at normal/adversarial widths | The selected candidate has red-capable characterization points before refactor production code; unrelated candidates remain untouched | Broad UI refactors can preserve green unit tests while corrupting identity or lifecycle behavior |
 | TP-P4-DECISION | S5/S6/S7/N2 benefit, blast radius, dependency order, reversibility, and complete gate cost | Exactly one candidate becomes active only when its trigger is proven; otherwise all remain deferred with a precise evidence gap | Sequential Git discipline requires one auditable architecture concern, not a mixed speculative rewrite |
+
+### P4.0 Evidence and Decision Matrix
+
+| Candidate | Current evidence | Missing trigger / protected behavior | Decision |
+|---|---|---|---|
+| S5 ComponentRegistry | `Compositor` contains two fixed `Component` layers; `BaseLayer` performs one explicit terminal/FM content swap; no dynamic registration, per-component event ownership, or second page lifecycle exists | A second real independently owned component/page that duplicates render, hit-area, lifecycle, and event routing | Implementation NO-GO; keep the concrete content-swap pattern |
+| S6 resizable persisted shell | `ShellLayout::default()` computes only LeftPanel/CenterContent; nested and serde fixtures exist; `SessionSnapshot` already persists the concrete sidebar width/split but no shell tree | A real RightPanel/BottomBar consumer or user-resizable region whose identity, migration, and restore cannot be represented by existing sidebar fields | Implementation NO-GO; preserve current snapshot compatibility |
+| S7 popup ownership stack | One `Mode` selects one `OverlayLayer`; `render_modal_shell` has eight callers, `modal_stack_areas` ten, and context/modal transition tests already protect focus/close order | A real simultaneously nested popup that must retain parent ownership while a child opens and closes | Implementation NO-GO; reuse existing modal/context seams |
+| N2 dynamic Miller | V1 A-C is closed; current `FmState::enter/leave/reload` already refresh cached parent/current/preview; `miller_layout` owns bounded 1/2/3-column projection | Exact user-visible meaning of ranger-style auto-split/auto-prune beyond today's refresh, plus transition/failure budgets and independent reference comparison | Discovery GO only for N2.0; production remains NO-GO until its contract proves non-duplicate value |
+
+### N2.0 Test-Point Contract
+
+| Test point | What is tested | Expected result | Reason |
+|---|---|---|---|
+| TP-N2-DELTA | Current enter/leave/reload behavior versus two independent dynamic-Miller references | The spec names only observable behavior absent from current Herdr; reference architecture and already-working parent/preview refresh are rejected as scope | N2 must add user value rather than replace a green state model with a fashionable one |
+| TP-N2-TRANSITIONS | Root, file/directory cursor, enter/leave, watcher reorder/delete, hidden toggle, selection, preview generation, narrow columns, close/reopen | Every event has one bounded client-local transition, stale async work cannot retarget a new cwd, and no server/protocol/filesystem work enters render | Dynamic navigation crosses independently changing path, selection, viewport, and preview authority |
+| TP-N2-BUDGET | Maximum retained path/column state, per-event work, refresh frequency, rollback/cleanup, cross-platform filesystem semantics | Explicit finite bounds and recovery outcomes exist before RED tests; no unbounded directory chain, hot retry, or hidden process/runtime owner is introduced | A new state machine is production-safe only when memory, latency, and failure behavior are designed first |
+| TP-N2-GO | User-visible delta, implementation size, protected tests, reversibility, and complete gate cost | Exactly one implementation plan is approved or N2 returns to deferred with the missing evidence recorded | Discovery must terminate in a falsifiable decision rather than becoming permanent speculative design work |
 
 ## Future Mission — Recorded, Not Active
 
@@ -752,8 +782,9 @@ covered by deterministic alternate-palette and breakpoint buffer tests.
 A4, B0, B1, the A3 remainder, B2, C1, N3, C2, N4.2, C3.1, C3.2, C3.3,
 C4.1, C4.2, C4.3, C4.4.1 progress, C4.4.2 cancellation, C4.4.3
 reconciliation, C4.4.4 recovery, C4.4.5 gates, and C5.1–C5.5 are complete.
-C6.1, C6.2, C6.3, and C6.4 are complete through C6.4 test closure `f52cb85`.
-The next execution order is P4.0, a read-only architecture evidence gate that
-must select at most one candidate before any production refactor. S5–S7 and N2
-remain evidence-gated deferred architecture until that decision, while M1–M3
-remain inactive north-star work.
+C6.1–C6.4 and the P4.0 evidence gate are complete through C6.4 test closure
+`f52cb85` plus the continuity commit containing this decision. S5–S7 remain
+evidence-gated implementation NO-GO. The next execution order is N2.0 bounded
+product/reference specification; N2 production remains NO-GO until N2.0 proves
+a user-visible delta and exact test contract. M1–M3 remain inactive north-star
+work.
