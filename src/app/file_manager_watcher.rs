@@ -125,6 +125,7 @@ pub(super) struct NativeFileManagerWatcher {
     mode: FileManagerWatcherMode,
     last_native_error: Option<String>,
     next_reconcile_at: Option<std::time::Instant>,
+    requested_reconcile_generation: Option<u64>,
 }
 
 impl NativeFileManagerWatcher {
@@ -137,6 +138,7 @@ impl NativeFileManagerWatcher {
             mode: FileManagerWatcherMode::Inactive,
             last_native_error: None,
             next_reconcile_at: None,
+            requested_reconcile_generation: None,
         }
     }
 
@@ -181,6 +183,7 @@ impl NativeFileManagerWatcher {
                 self.mode = next_mode;
                 self.last_native_error = next_native_error;
                 self.next_reconcile_at = Some(now + WATCH_RECONCILE_INTERVAL);
+                self.requested_reconcile_generation = None;
             }
             FmWatcherSync::Stopped => {
                 self.receiver = None;
@@ -188,6 +191,7 @@ impl NativeFileManagerWatcher {
                 self.mode = FileManagerWatcherMode::Inactive;
                 self.last_native_error = None;
                 self.next_reconcile_at = None;
+                self.requested_reconcile_generation = None;
             }
         }
         result
@@ -230,6 +234,20 @@ impl NativeFileManagerWatcher {
         }
         self.next_reconcile_at = Some(now + WATCH_RECONCILE_INTERVAL);
         true
+    }
+
+    pub(super) fn request_reconcile(&mut self, directory: &Path) -> bool {
+        if self.slot.watched_dir() != Some(directory) || !self.slot.has_backend() {
+            return false;
+        }
+        self.requested_reconcile_generation = Some(self.slot.generation());
+        true
+    }
+
+    fn take_requested_reconcile(&mut self) -> bool {
+        self.requested_reconcile_generation
+            .take()
+            .is_some_and(|generation| self.slot.accepts_generation(generation))
     }
 
     #[cfg(test)]
@@ -292,7 +310,8 @@ impl super::App {
         }
 
         let reconcile_due = self.file_manager_watcher.take_reconcile_due(now);
-        if !drained.events.refresh && !reconcile_due {
+        let requested_reconcile = self.file_manager_watcher.take_requested_reconcile();
+        if !drained.events.refresh && !reconcile_due && !requested_reconcile {
             return false;
         }
 

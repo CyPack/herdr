@@ -584,9 +584,19 @@ impl crate::app::App {
                 );
             }
         }
-        if let Some(file_manager) = self.state.file_manager.as_mut() {
-            if file_manager.cwd == destination_directory {
-                file_manager.reload();
+        let reconcile_with_watcher = self
+            .state
+            .file_manager
+            .as_ref()
+            .is_some_and(|file_manager| file_manager.cwd == destination_directory)
+            && self
+                .file_manager_watcher
+                .request_reconcile(&destination_directory);
+        if !reconcile_with_watcher {
+            if let Some(file_manager) = self.state.file_manager.as_mut() {
+                if file_manager.cwd == destination_directory {
+                    file_manager.reload();
+                }
             }
         }
         changed = true;

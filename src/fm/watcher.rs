@@ -188,7 +188,6 @@ impl<B> FmWatcherSlot<B> {
         self.watched_dir.as_deref()
     }
 
-    #[cfg(test)]
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
