@@ -2,10 +2,10 @@
 
 - Updated: 2026-07-15
 - Branch: `feat/native-fm`
-- Published CyPack base: `fb43091`
-- Verified C4.4 reconciliation product head: `d1a2d2e`
-- Publication unit: C4.4.3 nine-commit test/product chain through `d1a2d2e`,
-  plus the continuity/graph commit
+- Published CyPack base: `821506e`
+- Verified C4.4 terminal-recovery product head: `c674296`
+- Publication unit: C4.4.4 seven-commit test/product chain from `0881976`
+  through `c674296`, plus the continuity/graph commit
   containing this file. Push only CyPack `feat/native-fm` and fork `master`
   after fast-forward ancestry and exact remote-SHA verification.
 
@@ -45,43 +45,55 @@
 - C4.4.3 deterministic worker/watcher reconciliation for queued,
   watcher-first, delayed, polling-fallback, selection-pruning, cwd/rebind, and
   same-cwd close/reopen races.
+- C4.4.4 terminal recovery for disconnect-after-progress, caught panic,
+  cancel-to-next-generation, uncertain private bulk-recovery paths, generation
+  floor preservation, lane reuse, baseline cleanup, and no-hot-retry sync.
+- C4.4.5 complete closure gate across focused recovery, broad C4/FM, full Rust,
+  Linux/Windows lint, Bun/Python maintenance, ignored inventory, graph
+  freshness, and artifact/diff cleanliness.
 
 ## Active Next Increment
 
-TP-C4.4-RECOVERY must be RED before production changes.
+C5.1 graph-first pane/agent runtime-boundary verification, followed by
+TP-C5-AUTHORITY RED before production changes.
 
 Test points:
 
-- Panic/disconnect/cancel recovery must leave the existing lane reusable,
-  preserve uncertain recovery paths, and never orphan in-flight state.
-- Run focused progress/cancel/reconcile/recovery tests, all C4 regressions, the
-  full cross-platform gate, graph freshness, and artifact/diff checks before
-  publication.
+- Current exact path and uniquely resolved current terminal/agent identity are
+  mandatory; stale selection, reordered rows, closed FM, unsupported path,
+  missing/duplicate target, or in-flight conflict fails closed.
+- Literal handoff preserves spaces, quotes, metacharacters, Unicode, and exact
+  target identity without shell interpolation, duplicate sends, or wrong-pane
+  delivery.
+- Split-and-Claude launch either owns one new pane/process or removes only its
+  newly created resources on split/spawn/early-exit/cancel/stale failure.
+- Runtime proof uses `.local/ISOLATED-DEV-TEST.md`; stable Herdr, inherited
+  stable sockets, existing panes, and user processes remain untouched.
+- Complete C5 gates precede C6; exact expected results and reasons are in
+  `.codex/TASKS.md` TP-C5-AUTHORITY/SEND/SPLIT/ISOLATION/GATES.
 
 ## Ordered Roadmap
 
-1. C4.4 bounded progress/cancel, watcher reconciliation, terminal recovery,
-   lane reuse, and the complete C4 closure gate.
-2. C5 exact pane/agent handoff, quoting/identity, split-and-launch failure
+1. C5 exact pane/agent handoff, quoting/identity, split-and-launch failure
    cleanup, and isolated-session safety.
-3. C6 Finder-fidelity sidebar, highlight/location marker, integrated actions,
+2. C6 Finder-fidelity sidebar, highlight/location marker, integrated actions,
    theme/spacing/empty/error states, and visual review.
-4. Deferred evidence-gated architecture: S5 ComponentRegistry, S6 persisted
+3. Deferred evidence-gated architecture: S5 ComponentRegistry, S6 persisted
    resizable shell, S7 popup stack, N2 dynamic Miller navigation.
-5. North-star backlog: M1 interactive CLI attachments, M2 git-worktree
+4. North-star backlog: M1 interactive CLI attachments, M2 git-worktree
    controls, M3 general panel/page/button interface evaluation.
 
-## Fresh C4.4.3 Evidence
+## Fresh C4.4 Closure Evidence
 
-- Broad C4/FM regression 126/126.
-- Full nextest 3128/3128; only `path_beta_real_host_probe` ignored. A separate
-  ignored-only inventory listed that exact test without executing it.
+- Focused recovery 46/46; C4 core 67/67; broad C4/FM 218/218.
+- Final full nextest 3131/3131; only `path_beta_real_host_probe` ignored. A
+  separate ignored-only inventory listed that exact test without executing it.
 - Linux all-target and canonical Windows MSVC bin clippy clean with
   `-D warnings`.
 - Bun 17/17; Python maintenance 64/64; fmt and diff-check clean.
 - No `.herdr-operation-*` or `.herdr-rename-stage-*` artifact remains.
-- Graph refresh: 18,786 nodes / 87,697 edges. Freshness queries returned
-  `own_operation_reconcile`, delayed and same-cwd lifecycle tests, and
+- Graph refresh: 18,793 nodes / 87,788 edges. Freshness queries returned
+  `new_after_generation`, disconnect/panic/private-recovery tests, and
   `miller_layout` after proving the prior `ready` graph was stale.
 
 ## Non-Negotiable Boundaries

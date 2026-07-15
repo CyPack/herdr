@@ -4,12 +4,13 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Active C4.4 reconciliation product checkpoint: `d1a2d2e`
-  (`test: cover fallback and selection reconciliation`).
-- The pending C4.4 reconciliation publication unit is nine atomic test/product
-  commits from `0b04e73` through `d1a2d2e`, plus the continuity/graph commit
-  containing this file. At
-  publication, CyPack
+- Published CyPack checkpoint: `821506e`
+  (`docs: record deterministic operation reconciliation`).
+- Verified C4.4 recovery product head: `c674296`
+  (`test: satisfy recovery fixture lint`).
+- The pending C4.4 recovery publication unit is seven atomic test/product
+  commits from `0881976` through `c674296`, plus the continuity/graph commit
+  containing this file. At publication, CyPack
   `feat/native-fm` and fork `master` are verified at that same fast-forward
   branch tip.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
@@ -479,6 +480,39 @@
   edges and returned the production ownership seam, delayed and same-cwd
   lifecycle tests, and existing `miller_layout`.
 
+## Verified Increment — C4.4 Terminal Recovery And Closure Gates
+
+- TP-C4.4-RECOVERY is an auditable seven-commit chain: disconnected-worker
+  RED/GREEN `0881976`/`7847a6c`, progress-then-panic coverage `8974f4c`,
+  cancellation-to-next-generation coverage `bcc9ef5`, uncertain private bulk
+  recovery evidence `7e2af79`, disconnect cleanup idempotence `03b9395`, and
+  fixture lint closure `c674296`.
+- A worker channel disconnect after bounded progress now terminalizes every
+  remaining item, clears runtime-only reconciliation ownership, and replaces
+  the dead worker at the prior generation floor. The next operation therefore
+  receives a strictly newer generation and the second sync is a no-op rather
+  than a hot retry.
+- Caught worker panic and generation-safe cancellation already preserved the
+  single lane; new App-level tests now prove progress cleanup, exact terminal
+  item state, stale-cancel rejection, and successful next-generation reuse.
+- Injected bulk staging plus rollback failure leaves one private
+  `.herdr-rename-stage-*` artifact during the test. Its exact surviving path and
+  payload remain visible in `FileManagerOperationItemState::recovery_path`, the
+  operation is `Partial`, and the same lane remains reusable. Test teardown and
+  the post-gate scan leave no private artifact behind.
+- No second worker field, scheduler, thread name, render-time filesystem work,
+  `AppState` runtime authority, or wire-protocol surface was added.
+- Fresh evidence: focused recovery 46/46; C4 core 67/67; broad C4/FM 218/218;
+  final full nextest 3131/3131 with only `path_beta_real_host_probe` skipped;
+  Linux all-target and canonical `LIBGHOSTTY_VT_SIMD=false` Windows MSVC bin
+  clippy clean with `-D warnings`; Bun 17/17; Python 64/64; fmt/diff and
+  operation/staging artifact checks clean. Ignored-only inventory listed the
+  single B0 probe without executing it.
+- The pre-refresh graph reported `ready` at 18,786 / 87,697 but returned only
+  `miller_layout`, not the new recovery symbols. Fast reindex completed at
+  18,793 nodes / 87,788 edges and returned `new_after_generation`, the
+  disconnect/panic/private-recovery tests, and `miller_layout`.
+
 ## Completed Checkpoint — B2 Native Image Preview
 
 - B2 is an auditable dependency decision plus four RED/GREEN increments and a
@@ -639,16 +673,17 @@
 
 ## Exact Next Action
 
-1. Make TP-C4.4-RECOVERY RED before production changes. Prove worker panic or
-   disconnect after progress cannot orphan Running state or a reconciliation
-   baseline, and that the existing lane becomes reusable.
-2. Prove cancellation followed by a new generation, uncertain bulk-rename
-   recovery evidence, and failure cleanup retain exact paths without a second
-   scheduler, hot retry, or private staging artifact.
-3. Continue with the
-   complete TP-C4.4-GATES. Every production increment follows its own observed
-   failing test; no compile-failing RED is pushed alone. After C4.4, continue
-   C5 then C6 without skipping modules.
+1. Start C5.1 graph-first. Verify the existing neutral pane/agent send, split,
+   start, identity, and failure-cleanup surfaces before choosing a production
+   seam; do not deepen the private TUI socket coupling.
+2. Write TP-C5-AUTHORITY test points before production code. Current exact path
+   plus uniquely resolved current terminal/agent identity must be required;
+   stale, reordered, closed, unsupported, or ambiguous authority fails closed.
+3. Continue sequentially through typed handoff intent, existing-agent literal
+   send, split-and-Claude launch rollback, and the complete C5 gate. Use
+   `.local/ISOLATED-DEV-TEST.md` for any runtime proof and never touch stable
+   Herdr, its socket, or user processes. After C5, continue C6 without skipping
+   modules.
 
 ## Verified B2.0 Dependency Decision
 

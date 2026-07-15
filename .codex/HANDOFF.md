@@ -2,10 +2,11 @@
 
 ## 1. SONRAKI ADIM
 
-Make TP-C4.4-RECOVERY RED before production changes. Prove panic/disconnect
-after progress cannot orphan Running state or reconciliation ownership, then
-prove cancel-to-next-generation lane reuse and uncertain rename recovery path
-visibility without a second scheduler, hot retry, or private artifact.
+Start C5.1 graph-first. Verify the existing neutral pane/agent send, split,
+start, identity, and failure-cleanup surfaces, then make TP-C5-AUTHORITY RED
+before production code. Current exact path plus uniquely resolved current
+terminal/agent identity must be required; stale or ambiguous authority fails
+closed without touching stable Herdr, its socket, or user processes.
 
 ## 2. AKTİF PROJE
 
@@ -306,6 +307,19 @@ visibility without a second scheduler, hot retry, or private artifact.
   17/17, Python 64/64, fmt/diff and operation/staging artifact checks clean.
   Fresh graph: 18,786 / 87,697 with the production ownership seam, delayed and
   same-cwd lifecycle tests, and `miller_layout` after stale `ready` proof.
+- Completed TP-C4.4-RECOVERY as seven atomic commits from `0881976` through
+  `c674296`. Disconnect-after-progress was observed RED before
+  `new_after_generation` recovery: every remaining item terminalizes, runtime
+  reconciliation ownership clears, the dead channel is replaced at its prior
+  generation floor, and the next sync does not hot retry. Progress-then-panic,
+  cancel-to-next-generation, stale cancel rejection, uncertain private staging
+  evidence, and lane reuse are covered at App level without a second scheduler.
+- C4.4 closure gates: focused recovery 46/46, C4 core 67/67, broad C4/FM
+  218/218, final full nextest 3131/3131 plus only
+  `path_beta_real_host_probe` skipped, Linux/canonical Windows clippy, Bun
+  17/17, Python 64/64, fmt/diff and operation/staging artifact checks clean.
+  Fresh graph: 18,793 / 87,788 with `new_after_generation`, exact recovery
+  tests, and `miller_layout` after stale `ready` proof.
 
 ## 6. KOD DURUMU
 
@@ -425,6 +439,23 @@ C3.2 is an auditable six-commit sequence:
 No RED checkpoint is published alone. This continuity/graph commit completes
 the C4.1 publication unit before both CyPack heads are fast-forwarded.
 
+C4.4 terminal recovery is an auditable seven-commit sequence:
+
+- `0881976` / `7847a6c`: disconnected worker lane RED/GREEN.
+- `8974f4c`: progress-then-panic terminalization and lane reuse coverage.
+- `bcc9ef5`: cancellation-to-next-generation and stale-cancel coverage.
+- `7e2af79`: uncertain private bulk-recovery path evidence and lane reuse.
+- `03b9395`: real baseline cleanup plus no-hot-retry idempotence coverage.
+- `c674296`: test-fixture Clippy closure after the warning-as-error gate found
+  `field_reassign_with_default`.
+
+The only production change is in `src/app/file_operation_worker.rs`: a dead
+channel is replaced through the existing single worker constructor while
+preserving the generation floor. No second scheduler, server field, protocol,
+render mutation, dependency, or public docs surface was added. This continuity
+commit closes the C4.4 publication unit before both CyPack heads are
+fast-forwarded; no RED checkpoint is pushed alone.
+
 ## 7. TEST KANITI
 
 - B1/FM targeted: 64/64.
@@ -500,6 +531,13 @@ the C4.1 publication unit before both CyPack heads are fast-forwarded.
   Linux/Windows clippy, Bun 17/17, Python 64/64, real temporary-filesystem
   rename/recovery coverage, fmt/diff/temp checks, and graph freshness are
   clean.
+- C4.4 terminal recovery focused 46/46, C4 core 67/67, broad C4/FM 218/218;
+  final full nextest 3131/3131 plus only `path_beta_real_host_probe` skipped.
+  Linux all-target and canonical Windows MSVC bin clippy passed with
+  `-D warnings`; Bun 17/17; Python 64/64; ignored-only inventory, fmt, diff,
+  operation/staging artifact scan, and graph freshness are clean. The final
+  graph is 18,793 nodes / 87,788 edges and returns the production recovery
+  seam, exact failure tests, and `miller_layout`.
 
 ## 8. KRİTİK KARARLAR
 
@@ -554,9 +592,12 @@ the C4.1 publication unit before both CyPack heads are fast-forwarded.
 See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2/N4 contracts and the
 complete C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1, N3,
 C2, N4, C3.1, C3.2, C3.3, C4.1, C4.2, C4.3, C4.4.1 PROGRESS, C4.4.2
-CANCEL, and C4.4.3 RECONCILE are closed. The immediate product task is
-TP-C4.4-RECOVERY RED, followed by the complete C4.4 gate. Then continue C5 →
-C6 without skipping modules.
+CANCEL, C4.4.3 RECONCILE, C4.4.4 RECOVERY, and C4.4.5 GATES are closed.
+The immediate ordered task list is C5.1 graph/runtime-boundary verification →
+C5.2 typed exact authority → C5.3 literal existing-agent send → C5.4
+split-and-Claude rollback/cleanup → C5.5 complete gates → C6. Exact expected
+results and reasons for TP-C5-AUTHORITY, SEND, SPLIT, ISOLATION, and GATES are
+durable in `.codex/TASKS.md`.
 S5–S7/N2 remain evidence-gated; M1–M3 remain north-star backlog.
 
 ## 11. ORTAM
@@ -623,6 +664,10 @@ S5–S7/N2 remain evidence-gated; M1–M3 remain north-star backlog.
   graph said `ready` but lacked `own_operation_reconcile`; after indexing it
   returned the exact ownership seam, delayed/same-cwd lifecycle tests, and
   `miller_layout`.
+- Post-C4.4.4 fast refresh completed at 18,793 nodes / 87,788 edges. The stale
+  graph said `ready` but returned only `miller_layout`, not the new recovery
+  symbols; after indexing it returned `new_after_generation`, the disconnect,
+  panic, and private-recovery tests, plus `miller_layout`.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.

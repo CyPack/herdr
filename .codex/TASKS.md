@@ -436,20 +436,53 @@ owns filesystem mutation and C5 owns agent delivery.
   operation/staging artifact checks clean. Fresh graph: 18,786 / 87,697 with
   `own_operation_reconcile`, exact lifecycle tests, and `miller_layout` after
   stale `ready` proof.
-- [ ] C4.4.4 make TP-C4.4-RECOVERY RED and prove lane reuse after cancel,
+- [x] C4.4.4 make TP-C4.4-RECOVERY RED and prove lane reuse after cancel,
   panic, disconnect, and uncertain bulk recovery without orphan state.
-- [ ] C4.4.5 run TP-C4.4-GATES and the complete C4 gate before publication.
+- C4.4.4 atomic chain: disconnected lane RED/GREEN `0881976`/`7847a6c`,
+  progress-panic coverage `8974f4c`, cancellation-to-next-generation coverage
+  `bcc9ef5`, exact private bulk-recovery evidence `7e2af79`, disconnect cleanup
+  idempotence `03b9395`, and test-fixture lint closure `c674296`. A dead worker
+  terminalizes every remaining item, clears reconciliation ownership, and is
+  replaced at the prior generation floor; caught panic and cancellation reuse
+  the existing lane; uncertain staging paths remain exact App evidence; a
+  second sync is a no-op rather than a hot retry.
+- [x] C4.4.5 run TP-C4.4-GATES and the complete C4 gate before publication.
+- C4.4.5 gates: focused recovery 46/46, C4 core 67/67, broad C4/FM 218/218,
+  final full nextest 3131/3131 plus only the named B0 host probe skipped,
+  Linux/canonical Windows clippy, Bun 17/17, Python 64/64, fmt/diff and
+  operation/staging artifact checks clean. The stale graph was disproved and
+  refreshed to 18,793 nodes / 87,788 edges with the production recovery seam,
+  exact recovery tests, and `miller_layout`.
 - [x] C4.3 real temporary-filesystem tests cover file, directory, symlink,
   collision, replacement race, cycles, swaps, injected rollback failure, and
   exact recovery paths; no `.herdr-rename-stage-*` artifact remains.
 
 ## P3 — C5 Agent Handoff
 
-- [ ] C5.1 graph-first verification of the pane/agent API surface.
-- [ ] C5.2 send the selected path to the intended agent pane with identity and
-  quoting tests.
-- [ ] C5.3 terminal split then Claude launch, with failure cleanup and no stable
-  session/socket interference.
+- [ ] C5.1 graph-first verification and runtime/client classification of the
+  existing pane/agent send, split, start, identity, and cleanup surfaces.
+- [ ] C5.2 define one typed current-authority handoff intent carrying exact
+  path identity and intended terminal/agent identity; stale selection, closed
+  FM, unsupported/non-UTF-8 path, reordered rows, and missing target fail
+  closed before side effects.
+- [ ] C5.3 send the selected literal path to an existing intended agent through
+  the neutral server/runtime API with quoting, whitespace, metacharacter,
+  Unicode, duplicate-name, stale-terminal, and send-failure coverage.
+- [ ] C5.4 split one terminal and launch Claude through the existing pane
+  lifecycle; split failure, spawn failure, early exit, cancellation, and stale
+  completion clean up only the newly created resources and never touch the
+  stable Herdr/socket or an existing pane.
+- [ ] C5.5 run focused handoff/failure tests, pane/agent/API regressions, full
+  nextest, Linux/Windows clippy, Bun/Python maintenance, isolated runtime proof
+  where required, graph freshness, and artifact/diff cleanliness.
+
+| Test point | What is tested | Expected result | Reason |
+|---|---|---|---|
+| TP-C5-AUTHORITY | Selection, target identity, row reorder, FM close/reopen, unsupported path, operation in flight | Only current exact path and uniquely resolved current terminal/agent produce a typed intent; stale or ambiguous authority is consumed without side effect | Display labels and old coordinates must never become agent-input authority |
+| TP-C5-SEND | Literal file/directory paths with spaces, quotes, shell metacharacters, Unicode, duplicate agent names, stale terminal, backpressure/send failure | The intended terminal receives one exact literal handoff payload; no shell interpolation, wrong-pane delivery, duplicate send, or silent success | Paths are untrusted text and agent identity can change concurrently |
+| TP-C5-SPLIT | Split placement, Claude argv/env, spawn failure, early exit, cancellation, partial setup, retry | Success owns one new pane/process; every failure removes only newly created state and leaves the original layout/session usable | Split-and-launch crosses layout, PTY, process, and agent identity boundaries |
+| TP-C5-ISOLATION | Existing stable Herdr/socket, inherited socket variables, throwaway XDG runtime, stale callbacks | Tests use only isolated runtime state; stable processes and sockets are untouched; stale completion cannot attach to a new pane generation | Manual/runtime verification must not corrupt the user's active Herdr session |
+| TP-C5-GATES | Focused failure families, API/pane regressions, full platform and maintenance gates, graph/artifact checks | Every applicable gate passes with only the named B0 probe skipped and no leaked pane/process/temp artifact | Handoff is not complete until failure cleanup and cross-platform behavior share fresh evidence |
 
 ## P3 — C6 Finder-Fidelity Polish
 
@@ -478,8 +511,10 @@ owns filesystem mutation and C5 owns agent delivery.
 ## Ordering Resolution
 
 A4, B0, B1, the A3 remainder, B2, C1, N3, C2, N4.2, C3.1, C3.2, C3.3,
-C4.1, C4.2, C4.3, C4.4.1 progress, C4.4.2 cancellation, and C4.4.3
-reconciliation are complete through product head `d1a2d2e`. The next execution
-order is C4.4.4 RECOVERY → C4.4.5 GATES → C5 → C6.
+C4.1, C4.2, C4.3, C4.4.1 progress, C4.4.2 cancellation, C4.4.3
+reconciliation, C4.4.4 recovery, and C4.4.5 gates are complete through product
+head `c674296`. The next execution order is C5.1 graph/authority → C5.2 typed
+intent → C5.3 existing-agent send → C5.4 split-and-launch cleanup → C5.5 gates
+→ C6.
 S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3 remain
 inactive north-star work.
