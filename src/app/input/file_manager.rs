@@ -1417,6 +1417,15 @@ mod tests {
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 3));
 
         assert_eq!(
+            app.state.request_file_manager_context_action,
+            Some(crate::app::state::FileManagerContextActionIntent {
+                action: FileManagerContextMenuAction::SendAgent,
+                paths: vec![entry_path.clone()],
+            })
+        );
+        assert!(app.state.request_file_manager_agent_handoff.is_none());
+        assert!(app.sync_file_manager_agent_handoff());
+        assert_eq!(
             app.state.request_file_manager_agent_handoff,
             Some(FileManagerAgentHandoffRequest {
                 path: entry_path.clone(),
@@ -1549,6 +1558,15 @@ mod tests {
 
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 44, 3));
 
+        assert_eq!(
+            app.state.request_file_manager_context_action,
+            Some(crate::app::state::FileManagerContextActionIntent {
+                action: FileManagerContextMenuAction::Rename,
+                paths: vec![entry_path.clone()],
+            })
+        );
+        assert_ne!(app.state.mode, Mode::RenameFile);
+        assert!(app.sync_file_operation_worker());
         assert_eq!(app.state.mode, Mode::RenameFile);
         assert_eq!(
             app.state
@@ -1563,6 +1581,43 @@ mod tests {
         assert!(app.state.file_manager_operation.is_none());
         assert_eq!(
             fs::read(&entry_path).expect("row rename target remains untouched"),
+            before
+        );
+    }
+
+    // TP-C6.3-AUTHORITY: the row Delete tag selects its exact anchored row,
+    // emits the same typed C3 intent as context/header Delete, and reaches the
+    // existing confirmation owner only at the scheduled boundary.
+    #[test]
+    fn row_delete_converges_on_shared_typed_confirmation_authority() {
+        let td = TempDir::new("row-delete-authority");
+        td.file("alpha.txt");
+        td.file("beta.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let entry_path = install_row_actions(&mut app, 1);
+        let before = fs::read(&entry_path).expect("read row delete fixture");
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 45, 3));
+
+        assert_eq!(
+            app.state.request_file_manager_context_action,
+            Some(crate::app::state::FileManagerContextActionIntent {
+                action: FileManagerContextMenuAction::Delete,
+                paths: vec![entry_path.clone()],
+            })
+        );
+        assert!(app.state.file_manager_delete_confirmation.is_none());
+        assert!(app.sync_file_operation_worker());
+        assert_eq!(
+            app.state
+                .file_manager_delete_confirmation
+                .as_ref()
+                .expect("shared delete confirmation")
+                .paths,
+            vec![entry_path.clone()]
+        );
+        assert_eq!(
+            fs::read(entry_path).expect("row delete remains confirmation-only"),
             before
         );
     }

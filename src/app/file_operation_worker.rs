@@ -1863,10 +1863,22 @@ mod tests {
 
         assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Copy));
 
+        assert!(app.state.file_manager_clipboard.is_empty());
+        assert_eq!(
+            app.state.request_file_manager_context_action,
+            Some(FileManagerContextActionIntent {
+                action: FileManagerContextMenuAction::Copy,
+                paths: vec![first.clone(), second.clone()],
+            })
+        );
+        assert!(app.sync_file_operation_worker());
+
         assert_eq!(
             app.state.file_manager_clipboard,
             vec![first.clone(), second.clone()]
         );
+        assert!(app.state.request_file_manager_context_action.is_none());
+        assert!(!app.sync_file_operation_worker());
         assert!(app.state.file_manager_operation.is_none());
         assert_eq!(
             fs::read(first).expect("read first after copy action"),
