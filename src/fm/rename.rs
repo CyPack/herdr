@@ -785,12 +785,12 @@ fn recover_staged<H: RenameOperationHost>(
 mod tests {
     use super::{
         execute_bulk_rename_operation, execute_bulk_rename_operation_with_host,
-        execute_rename_operation, execute_rename_operation_with_host, BulkRenameItemOutcome,
-        BulkRenameOperationExecutionStatus, BulkRenameOperationPlan,
-        BulkRenameOperationPreflightError, BulkRenameOperationRequest, PlannedRenamePathKind,
-        RenameOperationError, RenameOperationExecutionStatus, RenameOperationHost,
-        RenameOperationOutcome, RenameOperationPlan, RenameOperationPreflightError,
-        RenameOperationRequest,
+        execute_rename_operation, execute_rename_operation_with_host,
+        validate_rename_name_component, BulkRenameItemOutcome, BulkRenameOperationExecutionStatus,
+        BulkRenameOperationPlan, BulkRenameOperationPreflightError, BulkRenameOperationRequest,
+        PlannedRenamePathKind, RenameNameIssue, RenameNamePlatform, RenameOperationError,
+        RenameOperationExecutionStatus, RenameOperationHost, RenameOperationOutcome,
+        RenameOperationPlan, RenameOperationPreflightError, RenameOperationRequest,
     };
     use crate::fm::operations::FileOperationCancellation;
     use std::fs;
@@ -842,6 +842,58 @@ mod tests {
                 .collect(),
             operation_in_flight: false,
         }
+    }
+
+    // TP-C4.3-NAME: operation-time validation is the shared final authority;
+    // direct typed requests cannot bypass Unix byte limits or Windows reserved
+    // name, character, trailing-component, and UTF-16 limits enforced by UI.
+    #[test]
+    fn rename_operation_name_validation_is_platform_explicit_and_shared() {
+        use RenameNameIssue as Issue;
+
+        for (input, expected) in [
+            ("", Issue::Empty),
+            (".", Issue::CurrentDirectory),
+            ("..", Issue::ParentDirectory),
+            ("/tmp", Issue::Absolute),
+            ("dir/name", Issue::Separator),
+            ("nul\0byte", Issue::ContainsNul),
+        ] {
+            assert_eq!(
+                validate_rename_name_component(input, RenameNamePlatform::Unix),
+                Err(expected),
+                "Unix operation input {input:?}"
+            );
+        }
+        assert_eq!(
+            validate_rename_name_component(&"é".repeat(128), RenameNamePlatform::Unix),
+            Err(Issue::NameTooLong)
+        );
+
+        for (input, expected) in [
+            ("C:\\temp", Issue::Absolute),
+            ("dir\\name", Issue::Separator),
+            ("CON", Issue::WindowsReservedName),
+            ("con.txt", Issue::WindowsReservedName),
+            ("LPT9.log", Issue::WindowsReservedName),
+            ("bad:name", Issue::WindowsReservedCharacter),
+            ("trailing.", Issue::WindowsTrailingDotOrSpace),
+            ("trailing ", Issue::WindowsTrailingDotOrSpace),
+        ] {
+            assert_eq!(
+                validate_rename_name_component(input, RenameNamePlatform::Windows),
+                Err(expected),
+                "Windows operation input {input:?}"
+            );
+        }
+        assert_eq!(
+            validate_rename_name_component(&"😀".repeat(128), RenameNamePlatform::Windows),
+            Err(Issue::NameTooLong)
+        );
+        assert_eq!(
+            validate_rename_name_component("LPT10.txt", RenameNamePlatform::Windows),
+            Ok(())
+        );
     }
 
     // TP-C4.3-BULK: the complete ordered mapping validates before mutation.
