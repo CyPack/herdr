@@ -3141,6 +3141,29 @@ mod tests {
         });
     }
 
+    // TP-C6.3-LIFECYCLE: closing the FM invalidates every pending action
+    // authority immediately, before a same-cwd reopen could make stale paths
+    // look current again at the scheduled boundary.
+    #[test]
+    fn close_file_manager_clears_pending_action_authority() {
+        let mut state = AppState::test_new();
+        state.file_manager = Some(crate::fm::FmState::new(std::path::PathBuf::from(
+            "/herdr-test-missing-fm-root",
+        )));
+        state.request_file_manager_context_action =
+            Some(crate::app::state::FileManagerContextActionIntent {
+                action: crate::app::state::FileManagerContextMenuAction::Open,
+                paths: vec![std::path::PathBuf::from(
+                    "/herdr-test-missing-fm-root/stale",
+                )],
+            });
+
+        state.close_file_manager();
+
+        assert!(state.file_manager.is_none());
+        assert!(state.request_file_manager_context_action.is_none());
+    }
+
     #[test]
     fn notification_context_formats_resolved_workspace_label() {
         let state = app_with_workspaces(&["stale"]);

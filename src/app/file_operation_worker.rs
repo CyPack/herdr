@@ -1976,6 +1976,33 @@ mod tests {
         assert!(!app.sync_file_operation_worker());
     }
 
+    // TP-C6.3-AUTHORITY/LIFECYCLE: an unsupported action cannot remain queued
+    // forever or reach a filesystem owner even when injected outside the UI.
+    #[test]
+    fn unsupported_context_action_is_consumed_without_side_effects() {
+        let td = TempDir::new("unsupported-context-action");
+        let selected = td.root.join("selected.txt");
+        fs::write(&selected, b"selected").expect("write unsupported-action fixture");
+        let before = fs::read(&selected).expect("read unsupported-action fixture");
+        let mut file_manager = crate::fm::FmState::new(&td.root);
+        assert!(file_manager.replace_selection(0));
+        let mut app = test_app();
+        app.state.file_manager = Some(file_manager);
+        app.state.request_file_manager_context_action = Some(FileManagerContextActionIntent {
+            action: FileManagerContextMenuAction::Compress,
+            paths: vec![selected.clone()],
+        });
+
+        assert!(app.sync_file_operation_worker());
+        assert!(app.state.request_file_manager_context_action.is_none());
+        assert!(app.state.file_manager_operation.is_none());
+        assert!(app.state.file_manager_delete_confirmation.is_none());
+        assert_eq!(
+            fs::read(selected).expect("unsupported action preserves fixture"),
+            before
+        );
+    }
+
     // TP-C4.1-LIFECYCLE/WATCHER: Paste starts one background generation,
     // rejects concurrent work, publishes the copy, reaches one terminal state,
     // and explicitly reloads only the destination currently shown by the FM.
