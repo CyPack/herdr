@@ -2,12 +2,12 @@
 
 ## 1. SONRAKI ADIM
 
-Start N2.1 with the exact RED tests frozen in
-`.codex/evidence/n2-path-stable-miller-navigation.md`. Prove current
-`FmState::leave()` incorrectly selects cursor zero when the departed child is a
-nonzero sibling, then implement only exact-path child focus after the existing
-reload. Run focused, FM-wide, full direct `just check`, graph freshness, and
-CyPack fork-only FF publication gates. Never touch stable Herdr/socket/processes.
+N2.1 is complete through RED `e433a2f` and GREEN `c530836`; preserve its exact
+path-focus contract and verified fork publication. The next implementation lane
+is intentionally unselected: N2.2, S5–S7, and M1–M3 remain evidence-gated.
+Before activating one, expand its macro/micro tasks plus expected-result/reason
+test points, then work test-first and sequentially. Never touch stable
+Herdr/socket/processes.
 
 ## 2. AKTİF PROJE
 
@@ -692,6 +692,11 @@ upstream is never pushed.
   narrow missing behavior: leave should focus the exact child just exited.
   N2.1 receives implementation GO under zero-new-state/no-extra-read budgets;
   N2.2 retained history and parent-column sibling navigation remain deferred.
+- N2.1 is implementation-complete as RED `e433a2f` and GREEN `c530836`.
+  Exact 6/6, FM 65/65, full nextest 3177/3177 plus one named ignored host probe,
+  Linux/Windows clippy, Bun 17/17, Python 64/64, and fresh graph 18,997 / 89,826
+  are clean. Ordinary reload behavior is preserved through the shared helper;
+  leave holds only one local departed path and performs no additional read.
 
 ## 9. GÜVENLİK
 
@@ -723,9 +728,9 @@ graph 18,922 / 89,277. C6.4 closes at test/product head `f52cb85`, full Rust
 3171/3171 plus one named skip, isolated API/PTY residue zero, and fresh graph
 18,974 / 89,775. P4.0 closes as a documentation-only evidence matrix with
 S5–S7 implementation NO-GO. N2.0 then rejects the original dynamic/unbounded
-state machine but proves N2.1 path-stable parent return as a bounded GO with
-exact RED tests. The immediate ordered task is N2.1 RED/GREEN/gates; N2.2 and
-M1–M3 remain deferred backlog.
+state machine and N2.1 closes as RED `e433a2f` → GREEN `c530836` with complete
+gates. No implementation lane is automatically active: N2.2 and M1–M3 remain
+future backlog and must first receive expanded macro/micro test-point contracts.
 
 ## 11. ORTAM
 

@@ -745,15 +745,15 @@ covered by deterministic alternate-palette and breakpoint buffer tests.
   selection, preview generation, and close/reopen; add no server/protocol state.
 - [x] N2.0c write exact RED-capable characterization/test points, complexity and
   cleanup budgets, accepted static behavior, and a final implementation GO/NO-GO.
-- [ ] N2.1 implement only the proven path-stable parent-return delta from
+- [x] N2.1 implement only the proven path-stable parent-return delta from
   `.codex/evidence/n2-path-stable-miller-navigation.md`.
-- [ ] N2.1a RED: add exact departed-path focus, preview/selection, reorder/delete,
+- [x] N2.1a RED: add exact departed-path focus, preview/selection, reorder/delete,
   viewport, missing/hidden, and root-no-op tests in `src/fm/mod.rs`; run and
   record the expected current cursor-zero failures before production edits.
-- [ ] N2.1b GREEN: make `FmState::leave()` focus the exact departed visible child
+- [x] N2.1b GREEN: make `FmState::leave()` focus the exact departed visible child
   after the existing reload, with deterministic top/clamp fallback and no new
   retained state, I/O pass, dependency, runtime owner, or render mutation.
-- [ ] N2.1c REFACTOR/GATES: run exact tests, all FM tests, full direct `just
+- [x] N2.1c REFACTOR/GATES: run exact tests, all FM tests, full direct `just
   check` equivalent, production-unwrap/diff/artifact scans, then refresh the
   graph and publish only through the CyPack fork FF workflow.
 - [ ] N2.2 retained per-directory cursor/back-forward history remains deferred;
@@ -799,6 +799,25 @@ covered by deterministic alternate-palette and breakpoint buffer tests.
 - Exact RED tests and failure-path expectations are frozen in the evidence file
   before any Rust edit.
 
+### N2.1 Closure Evidence
+
+- RED `e433a2f` produced the four expected departed-path failures and two
+  passing failure-path characterizations, run
+  `eeef105d-a35a-4e68-92f6-885a80c3cee1`. GREEN `c530836` routes ordinary
+  reload and parent return through one exact-path-aware refresh seam.
+- Exact N2.1 is 6/6 and all `fm::tests` are 65/65. Full nextest is 3177/3177
+  with only `path_beta_real_host_probe` ignored, run
+  `ac096bcc-80aa-45bb-9a78-954c73543cbe`.
+- Linux all-target and canonical Windows MSVC clippy pass with `-D warnings`;
+  Bun is 17/17; Python maintenance is 64/64; fmt, diff, added-production-
+  unwrap/debug-marker, and ignored inventory checks are clean.
+- Fresh graph is 18,997 nodes / 89,826 edges and returns current source for
+  `FmState::reload_focusing_path` and `FmState::leave`; freshness is not inferred
+  from `ready` alone.
+- No stable process/socket, runtime protocol, persisted state, dependency,
+  renderer, input mapping, worker, or release-doc surface changed. N2.2 remains
+  a separately evidence-gated future feature.
+
 ## Future Mission — Recorded, Not Active
 
 - [ ] M1 FM-interactive CLI attachment buttons.
@@ -811,9 +830,8 @@ covered by deterministic alternate-palette and breakpoint buffer tests.
 A4, B0, B1, the A3 remainder, B2, C1, N3, C2, N4.2, C3.1, C3.2, C3.3,
 C4.1, C4.2, C4.3, C4.4.1 progress, C4.4.2 cancellation, C4.4.3
 reconciliation, C4.4.4 recovery, C4.4.5 gates, and C5.1–C5.5 are complete.
-C6.1–C6.4, P4.0, and N2.0 are complete through C6.4 test closure `f52cb85`
-plus their continuity commits. S5–S7 and the original dynamic/unbounded N2
-state machine remain evidence-gated implementation NO-GO. N2.0 proved one
-bounded delta, so the next execution order is N2.1 path-stable parent return
-under the exact RED/GREEN/gate contract above. N2.2 and M1–M3 remain inactive
-future work.
+C6.1–C6.4, P4.0, N2.0, and N2.1 are complete through product commit `c530836`
+plus the continuity commit containing this closure. S5–S7 and the original
+dynamic/unbounded N2 state machine remain evidence-gated implementation NO-GO.
+N2.2 and M1–M3 remain inactive future work and require their named evidence
+gates before production code.

@@ -159,8 +159,8 @@
 - Fresh graph is 18,974 nodes / 89,775 edges. `ready` was cross-checked with
   current source snippets for `miller_layout`, `FmDirectoryStatus`,
   `file_manager_visual_styles`, and `file_manager_status_line`.
-- P4.0 and N2.0 evidence gates are closed below; N2.1 is the only active
-  implementation lane.
+- P4.0, N2.0, and N2.1 are closed below; no future implementation lane is
+  automatically active.
 
 ## Verified Checkpoint — P4.0 Architecture Evidence Gate
 
@@ -194,8 +194,36 @@
   back/forward, and parent-column sibling controls remain deferred as N2.2.
 - Exact RED tests, transition/failure behavior, resource budgets, and complete
   gates are frozen in the evidence file and `.codex/TASKS.md` before Rust work.
-- Next module: N2.1 RED tests in `src/fm/mod.rs`, then the smallest GREEN
-  path-focus change and complete verification.
+- This decision activated N2.1; its completed RED/GREEN/gate checkpoint follows.
+
+## Verified Checkpoint — N2.1 Path-Stable Parent Return
+
+- N2.1 follows the precommitted contract in
+  `.codex/evidence/n2-path-stable-miller-navigation.md`. RED `e433a2f` failed
+  exactly four path-focus cases because `leave()` selected `alpha` at cursor
+  zero instead of departed `target`; two missing/hidden/root characterizations
+  passed. RED run: `eeef105d-a35a-4e68-92f6-885a80c3cee1`.
+- GREEN `c530836` introduces one private `reload_focusing_path` seam. Ordinary
+  reload preserves its existing selected-path/nearest-row behavior; leave
+  passes one local departed `PathBuf` as preferred focus and retains zero new
+  state/history. The directory snapshot and context refresh still execute once.
+- Exact tests are 6/6 and all FM model tests are 65/65. Reorder preserves exact
+  path, delete/missing/hidden use bounded fallback, root is a complete no-op,
+  selection clears, preview generation converges on the departed child, and
+  viewport normalization contains the restored cursor.
+- Fresh full nextest is 3177/3177 with only the named real-host probe ignored,
+  run `ac096bcc-80aa-45bb-9a78-954c73543cbe`. Linux all-target and canonical
+  Windows MSVC clippy pass with `-D warnings`; Bun 17/17; Python 64/64; fmt,
+  diff, added-production-unwrap/debug-marker, and ignored inventory clean.
+- Fresh graph is 18,997 nodes / 89,826 edges. Direct graph search/snippets return
+  current `FmState::reload_focusing_path` and `FmState::leave`; `ready` alone was
+  not used as freshness evidence.
+- No input/render/protocol/server/persistence/dependency/worker surface changed,
+  so a stable runtime was neither touched nor required. Unreleased release docs
+  need no new command documentation because keys and visible controls are
+  unchanged.
+- N2.1 is closed. N2.2 retained cursor/back-forward history remains deferred
+  behind independent demand and a finite-eviction contract.
 
 ## Verified Checkpoint — C1.1 Header Action Geometry
 
@@ -850,14 +878,13 @@
 
 ## Exact Next Action
 
-1. Start N2.1 by adding the exact RED-capable tests frozen in
-   `.codex/evidence/n2-path-stable-miller-navigation.md` to `src/fm/mod.rs`.
-2. Run the focused test set and record that current `leave()` selects cursor
-   zero instead of the departed nonzero child; do not edit production first.
-3. Implement only path-stable departed-child focus after the existing reload,
-   then run exact, FM-wide, complete direct `just check`, graph-freshness, and
-   fork-only FF publication gates. Leave N2.2 and other deferred architecture
-   untouched.
+1. N2.1 is complete; preserve its RED `e433a2f` → GREEN `c530836` chain and
+   exact verification evidence during fork publication.
+2. Keep N2.2, S5–S7, and M1–M3 deferred until one named evidence gate is selected;
+   do not manufacture a new implementation solely to keep the queue moving.
+3. When a future lane is activated, expand its macro/micro tasks and exact
+   test-point table before the first production edit, then follow the same
+   targeted commit and CyPack fork-only FF workflow.
 
 ## Verified B2.0 Dependency Decision
 
