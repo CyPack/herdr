@@ -2,12 +2,12 @@
 
 ## 1. SONRAKI ADIM
 
-Start C6.4a test-point-first from the durable theme/empty-error/visual/gate
-matrix in `.codex/TASKS.md`. Inventory existing palette roles and spacing
-authority, then make the first buffer-level breakpoint/theme assertion RED
-before production code. Keep render pure; stale, clipped, disabled, empty,
-error, recovery, mobile, or closed-FM state must remain bounded and truthful
-without touching stable Herdr, its socket, or user processes.
+Start P4.0 as a read-only architecture evidence gate from `.codex/TASKS.md`.
+Trace concrete component/page, `ShellLayout`, popup ownership, and Miller-v2
+pressure; define protected characterization tests and publish one GO/NO-GO
+matrix. Activate at most one of S5/S6/S7/N2 only when its trigger is proven.
+Do not manufacture a registry/refactor merely because C6.4 closed, and never
+touch stable Herdr, its socket, or user processes.
 
 ## 2. AKTİF PROJE
 
@@ -525,6 +525,20 @@ desktop/mobile view computation, and pure sidebar render. This continuity/
 graph commit closes C6.2 before both CyPack heads are fast-forwarded; upstream
 is never pushed.
 
+C6.4 is an auditable plan/RED/GREEN sequence:
+
+- `5b8f327`: durable semantic roles, state precedence, and visual gate plan.
+- `2362751` / `3e73351`: semantic palette and canvas RED/GREEN.
+- `4ed210e` / `37f760d`: typed cwd availability RED/GREEN.
+- `04b8070` / `792c4d8`: operation/recovery status RED/GREEN.
+- `3f9a0cd` / `101809c`: preview warning/error RED/GREEN.
+- `03aeb6d` / `f52cb85`: full-frame composition and image-target closure.
+
+No RED checkpoint is published alone. Render remains pure; filesystem-derived
+status is prepared only during FM refresh. This continuity/graph commit closes
+C6.4 and the v1 A-C visual gate before both CyPack heads are fast-forwarded;
+upstream is never pushed.
+
 ## 7. TEST KANITI
 
 - B1/FM targeted: 64/64.
@@ -548,6 +562,17 @@ is never pushed.
 - C6.2 exact-head Linux all-target and canonical Windows MSVC bin clippy,
   Bun 17/17, Python 64/64, fmt/diff/production-unwrap/artifact checks are clean.
   `just` remains absent; the complete recipe was executed directly.
+- C6.3 focused 118/118; full nextest 3160/3160 plus one named B0 probe skip;
+  Linux/Windows clippy, Bun 17/17, Python 64/64, fmt/diff/production-unwrap/
+  artifact checks clean.
+- C6.4 focused semantic/directory/status/preview/composition sets passed;
+  broad FM/Kitty and UI composition sets passed. Final full nextest 3171/3171
+  plus only `path_beta_real_host_probe` skipped, run
+  `339242c5-a4d2-4989-9583-8e904c6d7b1e`; no retry-only closure.
+- C6.4 Linux all-target and canonical Windows MSVC bin clippy, Bun 17/17,
+  Python 64/64, fmt/diff/production-unwrap/artifact checks are clean. Isolated
+  headless API and 120x30 real PTY checks used throwaway XDG/socket state,
+  exited semantically, and left zero process/socket/temp residue.
 - Actual B1 lock delta is five packages with no existing-version upgrade.
   Exact OSV batch returned only severity-less `RUSTSEC-2025-0141` for
   unmaintained `bincode 1.3.3`; no security-severity advisory.
@@ -658,6 +683,10 @@ is never pushed.
 - The user granted standing authorization for autonomous atomic commits and
   CyPack fork-only fast-forward pushes. Do not repeatedly ask for alignment;
   never relax targeted staging, verification, ancestry, or remote-SHA checks.
+- C6.4 and the v1 A-C visual gate are implementation-complete, fully verified,
+  and graph-indexed. P4.0 is read-only evidence gathering; it may activate at
+  most one deferred architecture candidate and cannot itself justify product
+  refactoring.
 
 ## 9. GÜVENLİK
 
@@ -675,8 +704,8 @@ is never pushed.
 See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2/N4 contracts and the
 complete C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1, N3,
 C2, N4, C3.1, C3.2, C3.3, C4.1, C4.2, C4.3, C4.4.1 PROGRESS, C4.4.2
-CANCEL, C4.4.3 RECONCILE, C4.4.4 RECOVERY, C4.4.5 GATES, C5.1–C5.5, C6.1, and
-C6.2, and C6.3 are closed. C5's atomic product chain ends at `f744e4d`: exact existing-agent send
+CANCEL, C4.4.3 RECONCILE, C4.4.4 RECOVERY, C4.4.5 GATES, C5.1–C5.5, and
+C6.1–C6.4 are closed. C5's atomic product chain ends at `f744e4d`: exact existing-agent send
 and non-agent `Down` split → direct `claude` argv → first literal path send,
 with exact new-resource rollback on every failure path. The complete gate is
 3143/3143 Rust, Bun 17/17, Python 64/64, Linux/Windows clippy, and fresh graph
@@ -685,10 +714,11 @@ with exact new-resource rollback on every failure path. The complete gate is
 `b88fc12` plus test closure `a078d98`, full Rust 3154/3154 plus one named skip,
 and fresh graph 18,909 / 90,194. C6.3 closes at product head `8b21442` plus
 test closure `2d974da`, full Rust 3160/3160 plus one named skip, and fresh
-graph 18,922 / 89,277. The immediate ordered task list is C6.4
-theme/spacing/empty-error/Finder-parity review. Exact
-expected results and reasons remain durable in `.codex/TASKS.md`.
-S5–S7/N2 remain evidence-gated; M1–M3 remain north-star backlog.
+graph 18,922 / 89,277. C6.4 closes at test/product head `f52cb85`, full Rust
+3171/3171 plus one named skip, isolated API/PTY residue zero, and fresh graph
+18,974 / 89,775. The immediate ordered task is P4.0 read-only architecture
+evidence/characterization/decision. S5–S7/N2 remain candidates until that gate
+selects at most one; M1–M3 remain north-star backlog.
 
 ## 11. ORTAM
 
@@ -767,6 +797,10 @@ S5–S7/N2 remain evidence-gated; M1–M3 remain north-star backlog.
   was cross-checked with `miller_layout`, `FileManagerSidebarModel`,
   `compute_file_manager_sidebar_row_areas`, `file_manager_sidebar_path_at`,
   and `sync_file_manager_sidebar_navigation`; `ready` alone was not accepted.
+- Post-C6.4 moderate refresh completed at 18,974 nodes / 89,775 edges. Status
+  was cross-checked with current `miller_layout`, `FmDirectoryStatus`,
+  `file_manager_visual_styles`, and `file_manager_status_line` source snippets;
+  `ready` alone was not accepted.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.

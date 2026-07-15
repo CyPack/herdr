@@ -535,14 +535,14 @@ owns filesystem mutation and C5 owns agent delivery.
   existing C3/C4 intent path without a second filesystem owner.
 - [x] C6.3c prove stale/reordered selection, operation-in-flight, unsupported,
   narrow/mobile, popup close, FM close/reopen, and complete publication gates.
-- [ ] C6.4 theme, spacing, empty/error states, and visual Finder-parity review.
-- [ ] C6.4a define palette-role, spacing, separator, focus, disabled, warning,
+- [x] C6.4 theme, spacing, empty/error states, and visual Finder-parity review.
+- [x] C6.4a define palette-role, spacing, separator, focus, disabled, warning,
   and current-location visual tokens across all native FM surfaces.
-- [ ] C6.4b make empty directory, unavailable path, permission/read-only,
+- [x] C6.4b make empty directory, unavailable path, permission/read-only,
   preview failure, operation failure/recovery, and no-selection states explicit
   without render-time I/O or layout drift.
-- [ ] C6.4c run buffer-level breakpoint/theme/accessibility assertions plus an
-  isolated manual Finder-parity review; record accepted differences and close
+- [x] C6.4c run buffer-level breakpoint/theme/accessibility assertions plus an
+  isolated real-host Finder-parity review; record accepted differences and close
   the v1 A–C visual gate before any deferred architecture work.
 
 | Test point | What is tested | Expected result | Reason |
@@ -700,8 +700,32 @@ content. Geometry precedence remains modal/context popup > visible FM controls
    production-unwrap, diff, and artifact gates; publish only fast-forward to
    CyPack feature/master.
 
+C6.4 is complete through plan `5b8f327`, semantic RED/GREEN
+`2362751`/`3e73351`, directory-state RED/GREEN `4ed210e`/`37f760d`, status
+RED/GREEN `04b8070`/`792c4d8`, preview RED/GREEN `3f9a0cd`/`101809c`, and
+composition/test closure `03aeb6d` plus `f52cb85`. Final nextest is 3171/3171
+with only the named B0 real-host probe skipped; Linux/Windows clippy, Bun
+17/17, Python 64/64, fmt/diff/production-unwrap/artifact checks are clean.
+The isolated headless API and 120x30 real PTY both used cleared Herdr identity
+and socket variables plus throwaway XDG roots, exited semantically, and left
+zero process/socket/temp residue. The PTY capture proved the complete sidebar,
+header, PARENT/CURRENT/PREVIEW, selection copy, and row-action composition;
+pixel/font differences remain host-owned, while exact colors and geometry are
+covered by deterministic alternate-palette and breakpoint buffer tests.
+
 ## P4 — Deferred UI Architecture
 
+- [ ] P4.0 run the post-v1 architecture evidence gate before selecting any
+  deferred implementation module.
+- [ ] P4.0a trace current component/page, `ShellLayout`, modal/context popup,
+  and Miller navigation ownership; inventory concrete duplication, coupling,
+  persistence, migration, focus, and nested-popup pressure.
+- [ ] P4.0b name characterization tests for every behavior a candidate refactor
+  would protect, including adversarial identity/width/restore and popup close
+  ordering; do not edit production code during the evidence pass.
+- [ ] P4.0c publish one explicit GO/NO-GO matrix and activate at most one of
+  S5, S6, S7, or N2. A NO-GO leaves the candidate deferred with the missing
+  trigger recorded instead of manufacturing abstraction work.
 - [ ] S5 ComponentRegistry only when a second real component/page proves the
   abstraction; do not build a speculative registry.
 - [ ] S6 resizable shell regions plus deferred `ShellLayout` persistence,
@@ -709,6 +733,12 @@ content. Geometry precedence remains modal/context popup > visible FM controls
 - [ ] S7 popup stack with ownership, focus, close ordering, and nested popup
   tests.
 - [ ] N2 dynamic Miller auto-navigation is v2-only after v1 A–C completion.
+
+| Test point | What is tested | Expected result | Reason |
+|---|---|---|---|
+| TP-P4-EVIDENCE | Live graph ownership, duplicate geometry/input/render paths, persisted-state pressure, popup nesting, and v2 navigation demand | Every candidate has concrete source/test evidence and a named unmet or satisfied trigger; repository size or aesthetic preference alone cannot produce a GO | Deferred architecture must emerge from real pressure instead of replacing working concrete seams speculatively |
+| TP-P4-CHARACTERIZE | Current layout identity, restore/migration, modal focus/close order, and Miller navigation invariants at normal/adversarial widths | The selected candidate has red-capable characterization points before refactor production code; unrelated candidates remain untouched | Broad UI refactors can preserve green unit tests while corrupting identity or lifecycle behavior |
+| TP-P4-DECISION | S5/S6/S7/N2 benefit, blast radius, dependency order, reversibility, and complete gate cost | Exactly one candidate becomes active only when its trigger is proven; otherwise all remain deferred with a precise evidence gap | Sequential Git discipline requires one auditable architecture concern, not a mixed speculative rewrite |
 
 ## Future Mission — Recorded, Not Active
 
@@ -722,8 +752,8 @@ content. Geometry precedence remains modal/context popup > visible FM controls
 A4, B0, B1, the A3 remainder, B2, C1, N3, C2, N4.2, C3.1, C3.2, C3.3,
 C4.1, C4.2, C4.3, C4.4.1 progress, C4.4.2 cancellation, C4.4.3
 reconciliation, C4.4.4 recovery, C4.4.5 gates, and C5.1–C5.5 are complete.
-C6.1, C6.2, and C6.3 are complete through product head `8b21442` plus test
-closure `2d974da`. The next execution order is C6.4 theme/spacing/empty-error/
-Finder-parity review.
-S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3 remain
-inactive north-star work.
+C6.1, C6.2, C6.3, and C6.4 are complete through C6.4 test closure `f52cb85`.
+The next execution order is P4.0, a read-only architecture evidence gate that
+must select at most one candidate before any production refactor. S5–S7 and N2
+remain evidence-gated deferred architecture until that decision, while M1–M3
+remain inactive north-star work.

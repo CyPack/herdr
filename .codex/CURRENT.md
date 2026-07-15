@@ -4,12 +4,12 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Published CyPack checkpoint before this continuity publication: `fcddbfa`
-  (`docs: close current-location sidebar styling`).
-- Verified C6.3 product head: `8b21442`
-  (`fix: clear stale file action authority`) plus test closure `2d974da`.
-- The pending publication unit is C6.3 matrix/RED/GREEN/test coverage `2648a08`
-  through `2d974da` plus the continuity/graph commit containing this file. At publication, CyPack
+- Published CyPack checkpoint before this continuity publication: `a04d55a`
+  (`docs: close integrated file manager actions`).
+- Verified C6.4 product/test head: `f52cb85`
+  (`test: align image resize target with status geometry`).
+- The pending publication unit is C6.4 plan/RED/GREEN/test coverage `5b8f327`
+  through `f52cb85` plus the continuity/graph commit containing this file. At publication, CyPack
   `feat/native-fm` and fork `master` must be verified at that same fast-forward
   branch tip.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
@@ -127,7 +127,40 @@
   `miller_layout`, `dispatch_file_manager_row_action`,
   `consume_file_manager_context_open`, and
   `sync_file_manager_plugin_action` prove freshness beyond `ready`.
-- Next product module: C6.4 theme/spacing/empty-error/Finder-parity review.
+- Historical next module C6.4 is now complete at the checkpoint below.
+
+## Verified Checkpoint — C6.4 Visual Polish and Failure Truthfulness
+
+- Durable semantic-role plan `5b8f327` precedes semantic RED/GREEN
+  `2362751`/`3e73351`, directory-state RED/GREEN `4ed210e`/`37f760d`, operation
+  status RED/GREEN `04b8070`/`792c4d8`, preview-state RED/GREEN
+  `3f9a0cd`/`101809c`, and full-frame composition/test closure `03aeb6d` plus
+  `f52cb85`. No RED checkpoint is published alone.
+- Existing palette roles now provide one pure FM visual seam for canvas,
+  identity, headings, dividers, focus, explicit selection, disabled actions,
+  warning/error, and terminal operation states. No literal color or render-time
+  filesystem/runtime work was added.
+- `FmState` prepares typed Available/Missing/PermissionDenied/Unavailable cwd
+  state during construction/reload. Empty, missing, denied, unavailable,
+  read-only, preview warning/error, running/completed/cancelled/partial/failed,
+  and first recovery-path evidence have distinct stable bounded presentation.
+- One status row is included in the shared FM geometry used by compute, render,
+  and Kitty preview preparation. One/two/three-column layouts, expanded and
+  collapsed sidebar, desktop/mobile, alternate palette, context menu, delete
+  modal, progress, and image resize targets are covered by exact buffers.
+- Fresh gates: full nextest 3171/3171 with only the named B0 real-host probe
+  skipped, run `339242c5-a4d2-4989-9583-8e904c6d7b1e`; Linux all-target and
+  canonical Windows MSVC clippy; Bun 17/17; Python 64/64; fmt/diff/production-
+  unwrap/artifact checks clean.
+- Throwaway-XDG headless API smoke proved protocol 16 and typed empty tab JSON.
+  A separate 120x30 real PTY capture proved sidebar/header plus
+  PARENT/CURRENT/PREVIEW and row-action composition. Both exited semantically
+  with zero test process/socket/temp residue; stable Herdr was untouched.
+- Fresh graph is 18,974 nodes / 89,775 edges. `ready` was cross-checked with
+  current source snippets for `miller_layout`, `FmDirectoryStatus`,
+  `file_manager_visual_styles`, and `file_manager_status_line`.
+- Next module: P4.0 read-only architecture evidence gate; activate at most one
+  of S5/S6/S7/N2 only if its durable trigger is proven.
 
 ## Verified Checkpoint — C1.1 Header Action Geometry
 
@@ -782,15 +815,14 @@
 
 ## Exact Next Action
 
-1. Start C6.4a test-point-first from the durable C6.4 theme/empty-error/visual/
-   gate matrix in `.codex/TASKS.md`; inventory existing palette and spacing
-   roles before writing the first failing buffer-level assertion.
-2. Keep render pure and derive focus, selection, current, disabled, warning,
-   error, and progress presentation only from current prepared state. Do not
-   add literal one-off colors, cached authority, or render-time filesystem I/O.
-3. Complete C6.4b explicit empty/error/recovery states, then C6.4c breakpoint,
-   theme, accessibility, isolated Finder-parity, full direct `just check`,
-   graph, artifact, and stable-process/socket isolation gates before closing v1.
+1. Start P4.0 as a read-only architecture evidence gate from the durable
+   evidence/characterization/decision test points in `.codex/TASKS.md`.
+2. Trace concrete component/page, `ShellLayout`, popup ownership, and Miller v2
+   pressure. Name protected behavior before any refactor and record an explicit
+   GO/NO-GO matrix.
+3. Activate at most one of S5/S6/S7/N2 test-point-first. If no trigger is
+   proven, keep all candidates deferred and record the missing evidence rather
+   than adding speculative production abstraction.
 
 ## Verified B2.0 Dependency Decision
 

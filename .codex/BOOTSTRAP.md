@@ -15,7 +15,7 @@ Follow this sequence before changing code.
    ```
 
 6. Treat every completed checkpoint recorded in `.codex/CURRENT.md` and
-   `.codex/TASKS.md`, including C6.1, as published product history. Do not
+   `.codex/TASKS.md`, including C6.4, as published product history. Do not
    discard, reset, or reimplement that chain when starting the next module.
 7. State test points before implementation. Use TDD, pure render, no production `unwrap()`, and evidence before completion claims.
 8. Never touch the installed stable Herdr or inherited stable socket. Manual tests use `.local/ISOLATED-DEV-TEST.md` exactly.
