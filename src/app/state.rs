@@ -743,6 +743,15 @@ pub struct FileManagerDeleteRequest {
     pub paths: Vec<PathBuf>,
 }
 
+/// Exact client-local authority prepared for a native-FM handoff. C5.2 only
+/// binds one current path to one focused agent terminal; sending remains an
+/// App-owned runtime action in the next stage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileManagerAgentHandoffRequest {
+    pub path: PathBuf,
+    pub terminal_id: crate::terminal::TerminalId,
+}
+
 /// Exact client-local native-FM identities owned by the Rename text modal.
 /// Opening or rendering this state performs no filesystem work.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2024,6 +2033,9 @@ pub struct AppState {
     /// Exact, revalidated client-local intent from the native-FM context menu.
     /// C3 only emits this tag; C4/C5 will consume it to perform real work.
     pub request_file_manager_context_action: Option<FileManagerContextActionIntent>,
+    /// One exact current path and focused agent terminal identity awaiting the
+    /// App-owned C5 send boundary. Preparing it performs no runtime side effect.
+    pub request_file_manager_agent_handoff: Option<FileManagerAgentHandoffRequest>,
     pub should_quit: bool,
     /// In monolithic --no-session mode, detach exits the app because there is no server to detach from.
     pub detach_exits: bool,
@@ -2479,6 +2491,7 @@ impl AppState {
             request_file_manager_bulk_rename: None,
             request_file_manager_delete: None,
             request_file_manager_context_action: None,
+            request_file_manager_agent_handoff: None,
             should_quit: false,
             detach_exits: false,
             detach_requested: false,

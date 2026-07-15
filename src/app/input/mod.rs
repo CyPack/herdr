@@ -293,6 +293,13 @@ impl App {
                 let _ = self.open_file_manager_row_rename(entry_path);
                 return;
             }
+            file_manager::FileManagerMouseDispatch::RowAction {
+                action: crate::app::state::FileManagerRowAction::SendAgent,
+                entry_path,
+            } => {
+                let _ = self.open_file_manager_row_agent_handoff(entry_path);
+                return;
+            }
             file_manager::FileManagerMouseDispatch::RowAction { .. } => return,
             file_manager::FileManagerMouseDispatch::HeaderAction(action) => {
                 let _ = self.dispatch_file_manager_header_action(action);
