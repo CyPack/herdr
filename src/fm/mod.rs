@@ -48,6 +48,22 @@ pub struct FileEntry {
     pub operation_supported: bool,
 }
 
+/// Prepared availability of the exact current directory. Keeping the read
+/// result beside the entry snapshot lets pure render distinguish a valid empty
+/// directory from a path that disappeared or could not be read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FmDirectoryStatus {
+    Available,
+    Missing,
+    PermissionDenied,
+    Unavailable,
+}
+
+struct FmDirectorySnapshot {
+    entries: Vec<FileEntry>,
+    status: FmDirectoryStatus,
+}
+
 /// Parent-directory context for the left Miller column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FmParent {
@@ -113,6 +129,10 @@ pub enum FmImagePreviewState {
 /// Never panics. A missing or unreadable directory yields an empty `Vec`, and
 /// individually unreadable entries (or non-UTF-8 names) are skipped.
 pub fn read_dir_entries(dir: &Path, show_hidden: bool) -> Vec<FileEntry> {
+    read_directory_snapshot(dir, show_hidden).entries
+}
+
+fn read_directory_snapshot(dir: &Path, show_hidden: bool) -> FmDirectorySnapshot {
     let read = match std::fs::read_dir(dir) {
         Ok(read) => read,
         Err(err) => {
@@ -121,7 +141,10 @@ pub fn read_dir_entries(dir: &Path, show_hidden: bool) -> Vec<FileEntry> {
             if err.kind() != std::io::ErrorKind::NotFound {
                 tracing::debug!(?dir, %err, "fm: read_dir failed");
             }
-            return Vec::new();
+            return FmDirectorySnapshot {
+                entries: Vec::new(),
+                status: classify_directory_error(err.kind()),
+            };
         }
     };
 
@@ -144,7 +167,18 @@ pub fn read_dir_entries(dir: &Path, show_hidden: bool) -> Vec<FileEntry> {
         .collect();
 
     sort_entries(&mut entries);
-    entries
+    FmDirectorySnapshot {
+        entries,
+        status: FmDirectoryStatus::Available,
+    }
+}
+
+fn classify_directory_error(kind: std::io::ErrorKind) -> FmDirectoryStatus {
+    match kind {
+        std::io::ErrorKind::NotFound => FmDirectoryStatus::Missing,
+        std::io::ErrorKind::PermissionDenied => FmDirectoryStatus::PermissionDenied,
+        _ => FmDirectoryStatus::Unavailable,
+    }
 }
 
 /// Decide whether a directory entry counts as a directory for the file list.
@@ -214,6 +248,8 @@ pub struct FmState {
     /// Prepared conservative writability hint for cwd. Actual C4 operations
     /// must still handle TOCTOU and platform permission failures.
     pub cwd_writable: bool,
+    /// Prepared result of reading cwd; render must not repeat this I/O.
+    pub cwd_status: FmDirectoryStatus,
     /// Cached parent-directory context for the left Miller column.
     pub parent: Option<FmParent>,
     /// Cached selected-entry context for the right Miller column.
@@ -235,15 +271,17 @@ impl FmState {
     /// Open `cwd` with an explicit hidden-file setting.
     pub fn with_hidden(cwd: impl Into<PathBuf>, show_hidden: bool) -> Self {
         let cwd = cwd.into();
-        let entries = read_dir_entries(&cwd, show_hidden);
-        let cwd_writable = directory_is_writable(&cwd);
+        let snapshot = read_directory_snapshot(&cwd, show_hidden);
+        let cwd_writable =
+            snapshot.status == FmDirectoryStatus::Available && directory_is_writable(&cwd);
         let mut state = Self {
             cwd,
-            entries,
+            entries: snapshot.entries,
             cursor: 0,
             viewport_start: 0,
             show_hidden,
             cwd_writable,
+            cwd_status: snapshot.status,
             parent: None,
             preview: FmPreview::None,
             preview_generation: 0,
@@ -263,6 +301,7 @@ impl FmState {
             viewport_start: 0,
             show_hidden: false,
             cwd_writable: false,
+            cwd_status: FmDirectoryStatus::Available,
             parent: None,
             preview: FmPreview::None,
             preview_generation: 0,
@@ -276,8 +315,11 @@ impl FmState {
     pub fn reload(&mut self) {
         let selected_path = self.selected().map(|entry| entry.path.clone());
         let previous_cursor = self.cursor;
-        self.entries = read_dir_entries(&self.cwd, self.show_hidden);
-        self.cwd_writable = directory_is_writable(&self.cwd);
+        let snapshot = read_directory_snapshot(&self.cwd, self.show_hidden);
+        self.entries = snapshot.entries;
+        self.cwd_status = snapshot.status;
+        self.cwd_writable =
+            self.cwd_status == FmDirectoryStatus::Available && directory_is_writable(&self.cwd);
         self.reconcile_multi_selection();
         self.cursor = selected_path
             .as_ref()
