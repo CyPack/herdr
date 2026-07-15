@@ -925,8 +925,9 @@ mod tests {
     use super::*;
     use crate::app::state::FileManagerActionBarSelectionKind;
     use crate::fm::{
-        FmFilePreview, FmImagePreviewState, FmState, HighlightedTextPreview, ImagePreviewTarget,
-        PreparedImagePreview, PreviewTextLine, PreviewTextSpan, PreviewTextStyle, TextPreviewError,
+        FmDirectoryStatus, FmFilePreview, FmImagePreviewState, FmState, HighlightedTextPreview,
+        ImagePreviewTarget, PreparedImagePreview, PreviewTextLine, PreviewTextSpan,
+        PreviewTextStyle, TextPreviewError,
     };
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
@@ -2175,6 +2176,148 @@ mod tests {
             empty_buffer[(empty_x, empty_y)].fg,
             empty_app.palette.overlay0
         );
+    }
+
+    // TP-C6.4-EMPTY-ERROR: an empty readable directory is not conflated with
+    // missing, permission-denied, or otherwise unavailable cwd snapshots.
+    #[test]
+    fn current_directory_empty_and_failure_states_render_distinct_semantics() {
+        let td = TempDir::new("empty-directory-semantics");
+        let empty_app = app_with_fm(FmState::new(&td.root));
+        let empty_buffer = render_buffer(&empty_app, 80, 6);
+        let (x, y) = find_rendered_text(&empty_buffer, 80, 6, "(empty directory)");
+        assert_eq!(empty_buffer[(x, y)].fg, empty_app.palette.overlay0);
+
+        let cases = [
+            (
+                FmDirectoryStatus::Missing,
+                "(directory missing)",
+                "/virtual/missing",
+            ),
+            (
+                FmDirectoryStatus::PermissionDenied,
+                "(permission denied)",
+                "/virtual/denied",
+            ),
+            (
+                FmDirectoryStatus::Unavailable,
+                "(directory unavailable)",
+                "/virtual/unavailable",
+            ),
+        ];
+        for (status, label, path) in cases {
+            let mut fm = FmState::test_empty(path);
+            fm.cwd_status = status;
+            let app = app_with_fm(fm);
+            let buffer = render_buffer(&app, 80, 6);
+            let (x, y) = find_rendered_text(&buffer, 80, 6, label);
+            assert_eq!(buffer[(x, y)].fg, app.palette.red, "status: {status:?}");
+        }
+    }
+
+    // TP-C6.4-EMPTY-ERROR: read-only is prepared independently from directory
+    // availability and remains visible without turning cursor focus into write
+    // authority.
+    #[test]
+    fn read_only_current_directory_renders_warning_status_line() {
+        let mut fm = FmState::test_empty("/virtual/locked");
+        fm.cwd_writable = false;
+        fm.cwd_status = FmDirectoryStatus::Available;
+        let app = app_with_fm(fm);
+        let buffer = render_buffer(&app, 80, 6);
+        let (x, y) = find_rendered_text(&buffer, 80, 6, "cwd is read-only");
+
+        assert_eq!(y, 5, "status owns the final FM row");
+        assert_eq!(buffer[(x, y)].fg, app.palette.yellow);
+    }
+
+    fn operation_state(
+        status: crate::app::state::FileManagerOperationStatus,
+    ) -> crate::app::state::FileManagerOperationState {
+        use crate::app::state::{
+            FileManagerOperationItemState, FileManagerOperationItemStatus,
+            FileManagerOperationKind, FileManagerOperationState,
+        };
+
+        FileManagerOperationState {
+            generation: 7,
+            kind: FileManagerOperationKind::Copy,
+            destination_directory: PathBuf::from("/destination"),
+            total_items: 4,
+            completed_items: 2,
+            failed_items: usize::from(matches!(
+                status,
+                crate::app::state::FileManagerOperationStatus::Partial
+                    | crate::app::state::FileManagerOperationStatus::Failed
+            )),
+            status,
+            items: vec![FileManagerOperationItemState {
+                path: PathBuf::from("/source/alpha.txt"),
+                recovery_path: matches!(
+                    status,
+                    crate::app::state::FileManagerOperationStatus::Partial
+                        | crate::app::state::FileManagerOperationStatus::Failed
+                )
+                .then(|| PathBuf::from("/exact/recovery/alpha.txt")),
+                status: FileManagerOperationItemStatus::Retained,
+            }],
+        }
+    }
+
+    // TP-C6.4-EMPTY-ERROR: operation lifecycle and recovery evidence map to
+    // stable semantic colors and bounded copy on the dedicated status row.
+    #[test]
+    fn operation_status_line_renders_lifecycle_counts_and_exact_recovery_path() {
+        use crate::app::state::FileManagerOperationStatus;
+
+        let cases = [
+            (
+                FileManagerOperationStatus::Running,
+                "copy 2/4",
+                "Esc cancel",
+            ),
+            (
+                FileManagerOperationStatus::Completed,
+                "copy completed 2/4",
+                "copy completed",
+            ),
+            (
+                FileManagerOperationStatus::Cancelled,
+                "copy cancelled 2/4",
+                "copy cancelled",
+            ),
+            (
+                FileManagerOperationStatus::Partial,
+                "copy partial 2/4 · 1 failed",
+                "recovery: /exact/recovery/alpha.txt",
+            ),
+            (
+                FileManagerOperationStatus::Failed,
+                "copy failed 2/4 · 1 failed",
+                "recovery: /exact/recovery/alpha.txt",
+            ),
+        ];
+
+        for (status, summary, evidence) in cases {
+            let mut fm = FmState::test_empty("/virtual/operation");
+            fm.cwd_writable = true;
+            let mut app = app_with_fm(fm);
+            app.file_manager_operation = Some(operation_state(status));
+            let buffer = render_buffer(&app, 180, 7);
+            let (x, y) = find_rendered_text(&buffer, 180, 7, summary);
+            let expected_color = match status {
+                FileManagerOperationStatus::Running => app.palette.yellow,
+                FileManagerOperationStatus::Completed => app.palette.green,
+                FileManagerOperationStatus::Cancelled => app.palette.peach,
+                FileManagerOperationStatus::Partial | FileManagerOperationStatus::Failed => {
+                    app.palette.red
+                }
+            };
+
+            assert_eq!(y, 6, "operation status owns the final FM row");
+            assert_eq!(buffer[(x, y)].fg, expected_color, "status: {status:?}");
+            find_rendered_text(&buffer, 180, 7, evidence);
+        }
     }
 
     // TP-N4.1-SELECTION-STATE: CURRENT paints exactly one cursor-focus style,
