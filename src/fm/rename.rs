@@ -1,12 +1,124 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use crate::fm::operations::FileOperationCancellation;
 use crate::platform::FileIdentity;
+
+const MAX_RENAME_NAME_UNITS: usize = 255;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RenameNamePlatform {
+    Unix,
+    Windows,
+}
+
+impl RenameNamePlatform {
+    pub(crate) const fn current() -> Self {
+        if std::path::MAIN_SEPARATOR == '\\' {
+            Self::Windows
+        } else {
+            Self::Unix
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RenameNameIssue {
+    Empty,
+    CurrentDirectory,
+    ParentDirectory,
+    Absolute,
+    Separator,
+    ContainsNul,
+    NameTooLong,
+    WindowsReservedName,
+    WindowsReservedCharacter,
+    WindowsTrailingDotOrSpace,
+}
+
+pub(crate) fn validate_rename_name_component(
+    input: &str,
+    platform: RenameNamePlatform,
+) -> Result<(), RenameNameIssue> {
+    use RenameNameIssue as Issue;
+
+    if input.is_empty() {
+        return Err(Issue::Empty);
+    }
+    if input == "." {
+        return Err(Issue::CurrentDirectory);
+    }
+    if input == ".." {
+        return Err(Issue::ParentDirectory);
+    }
+    if input.contains('\0') {
+        return Err(Issue::ContainsNul);
+    }
+
+    let is_absolute = match platform {
+        RenameNamePlatform::Unix => input.starts_with('/'),
+        RenameNamePlatform::Windows => {
+            input.starts_with(['/', '\\'])
+                || input
+                    .as_bytes()
+                    .get(1)
+                    .is_some_and(|separator| *separator == b':')
+        }
+    };
+    if is_absolute {
+        return Err(Issue::Absolute);
+    }
+    let has_separator = match platform {
+        RenameNamePlatform::Unix => input.contains('/'),
+        RenameNamePlatform::Windows => input.contains(['/', '\\']),
+    };
+    if has_separator {
+        return Err(Issue::Separator);
+    }
+
+    let name_units = match platform {
+        RenameNamePlatform::Unix => input.len(),
+        RenameNamePlatform::Windows => input.encode_utf16().count(),
+    };
+    if name_units > MAX_RENAME_NAME_UNITS {
+        return Err(Issue::NameTooLong);
+    }
+
+    if platform == RenameNamePlatform::Windows {
+        if input
+            .chars()
+            .any(|ch| ch <= '\u{1f}' || matches!(ch, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
+        {
+            return Err(Issue::WindowsReservedCharacter);
+        }
+        if input.ends_with(['.', ' ']) {
+            return Err(Issue::WindowsTrailingDotOrSpace);
+        }
+        let base = input.split('.').next().unwrap_or_default().to_uppercase();
+        let numbered_device = |prefix: &str| {
+            base.strip_prefix(prefix).is_some_and(|suffix| {
+                matches!(
+                    suffix,
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                )
+            })
+        };
+        if matches!(
+            base.as_str(),
+            "CON" | "PRN" | "AUX" | "NUL" | "CLOCK$" | "CONIN$" | "CONOUT$"
+        ) || numbered_device("COM")
+            || numbered_device("LPT")
+        {
+            return Err(Issue::WindowsReservedName);
+        }
+    }
+
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RenameOperationRequest {
@@ -64,7 +176,8 @@ impl RenameOperationPlan {
                 path: request.source_path,
             });
         }
-        if !is_single_file_name(&request.new_name) {
+        if validate_rename_name_component(&request.new_name, RenameNamePlatform::current()).is_err()
+        {
             return Err(RenameOperationPreflightError::InvalidNewName);
         }
         let Some(source_name) = request.source_path.file_name() else {
@@ -105,14 +218,6 @@ impl RenameOperationPlan {
     pub(crate) fn path_kind(&self) -> PlannedRenamePathKind {
         self.snapshot.path_kind
     }
-}
-
-fn is_single_file_name(name: &str) -> bool {
-    if name.is_empty() || name.contains('\0') {
-        return false;
-    }
-    let mut components = Path::new(name).components();
-    matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
 }
 
 fn reject_destination_collision(path: &Path) -> Result<(), RenameOperationPreflightError> {
@@ -353,7 +458,7 @@ impl BulkRenameOperationPlan {
             if source.to_str().is_none() {
                 return Err(BulkRenameOperationPreflightError::NonUtf8Path { path: source });
             }
-            if !is_single_file_name(&new_name) {
+            if validate_rename_name_component(&new_name, RenameNamePlatform::current()).is_err() {
                 return Err(BulkRenameOperationPreflightError::InvalidNewName { source });
             }
             if !source_paths.insert(source.clone()) {
