@@ -4,6 +4,21 @@ use crate::app::state::{
 };
 use bytes::Bytes;
 
+const MAX_AGENT_ATTACHMENT_PAYLOAD_BYTES: usize = 1024 * 1024;
+
+fn agent_attachment_payload(path: &std::path::Path) -> Result<Vec<u8>, &'static str> {
+    let path = path.to_str().ok_or("attachment path is not valid UTF-8")?;
+    let payload_len = path
+        .len()
+        .checked_add(1)
+        .filter(|len| *len <= MAX_AGENT_ATTACHMENT_PAYLOAD_BYTES)
+        .ok_or("attachment path exceeds 1 MiB")?;
+    let mut payload = Vec::with_capacity(payload_len);
+    payload.extend_from_slice(path.as_bytes());
+    payload.push(b'\r');
+    Ok(payload)
+}
+
 #[derive(Debug)]
 struct OwnedFileManagerClaudeSplit {
     workspace_id: String,
@@ -168,6 +183,58 @@ impl crate::app::App {
                     "agent runtime is unavailable"
                 };
                 self.show_file_manager_agent_handoff_failure(context);
+            }
+        }
+        true
+    }
+
+    pub(super) fn sync_agent_attachment_delivery(&mut self) -> bool {
+        let Some(request) = self.state.request_agent_attachment_delivery.take() else {
+            return false;
+        };
+        let picker_matches = self
+            .state
+            .agent_attachment_picker
+            .as_ref()
+            .is_some_and(|picker| picker.target == request.target);
+        if !picker_matches
+            || !self
+                .state
+                .agent_attachment_target_is_current(&request.target)
+        {
+            self.show_agent_attachment_delivery_failure("attachment target changed");
+            return true;
+        }
+        if self.state.agent_attachment_selected_file().as_ref() != Some(&request.path) {
+            self.show_agent_attachment_delivery_failure("attachment selection changed");
+            return true;
+        }
+        let payload = match agent_attachment_payload(&request.path) {
+            Ok(payload) => payload,
+            Err(context) => {
+                self.show_agent_attachment_delivery_failure(context);
+                return true;
+            }
+        };
+        if !std::fs::metadata(&request.path).is_ok_and(|metadata| metadata.is_file()) {
+            self.show_agent_attachment_delivery_failure(
+                "selected attachment is no longer a regular file",
+            );
+            return true;
+        }
+
+        match self.try_send_terminal_input(&request.target.terminal_id, Bytes::from(payload)) {
+            Ok(()) => self.state.close_agent_attachment_picker(),
+            Err(TerminalInputSendError::RuntimeUnavailable) => {
+                self.show_agent_attachment_delivery_failure("agent runtime is unavailable");
+            }
+            Err(TerminalInputSendError::SendFailed { busy, .. }) => {
+                let context = if busy {
+                    "agent input is busy"
+                } else {
+                    "agent runtime is unavailable"
+                };
+                self.show_agent_attachment_delivery_failure(context);
             }
         }
         true
@@ -503,6 +570,18 @@ impl crate::app::App {
         self.state.toast = Some(crate::app::state::ToastNotification {
             kind: crate::app::state::ToastKind::NeedsAttention,
             title: "send to agent failed".to_string(),
+            context: context.to_string(),
+            position: None,
+            target: None,
+        });
+        self.sync_toast_deadline(previous_toast);
+    }
+
+    fn show_agent_attachment_delivery_failure(&mut self, context: &str) {
+        let previous_toast = self.state.toast.clone();
+        self.state.toast = Some(crate::app::state::ToastNotification {
+            kind: crate::app::state::ToastKind::NeedsAttention,
+            title: "attach file failed".to_string(),
             context: context.to_string(),
             position: None,
             target: None,
@@ -1147,6 +1226,57 @@ mod tests {
             .shutdown();
     }
 
+    // TP-M1.3-IDENTITY: moving focus to another pane or losing the exact
+    // runtime registry entry consumes the request without cross-routing bytes.
+    #[tokio::test]
+    async fn attachment_delivery_rejects_changed_focus_and_missing_runtime() {
+        let fixture = HandoffFixture::new("attachment-identity");
+        let path = fixture.file("selected.txt");
+        let (mut moved, _, terminal_id, mut moved_receiver) =
+            app_with_attachment_picker(&fixture.root, 2);
+        prepare_attachment_request(&mut moved, &path);
+        moved.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
+        moved.state.ensure_test_terminals();
+
+        assert!(moved.sync_agent_attachment_delivery());
+        assert!(moved_receiver.try_recv().is_err());
+        assert!(moved.state.agent_attachment_picker.is_some());
+        assert_eq!(
+            moved
+                .state
+                .toast
+                .as_ref()
+                .map(|toast| toast.context.as_str()),
+            Some("attachment target changed")
+        );
+        moved
+            .terminal_runtimes
+            .remove(&terminal_id)
+            .unwrap()
+            .shutdown();
+
+        let (mut missing, _, terminal_id, mut missing_receiver) =
+            app_with_attachment_picker(&fixture.root, 2);
+        prepare_attachment_request(&mut missing, &path);
+        let runtime = missing
+            .terminal_runtimes
+            .remove(&terminal_id)
+            .expect("remove exact attachment runtime");
+
+        assert!(missing.sync_agent_attachment_delivery());
+        assert!(missing_receiver.try_recv().is_err());
+        assert!(missing.state.agent_attachment_picker.is_some());
+        assert_eq!(
+            missing
+                .state
+                .toast
+                .as_ref()
+                .map(|toast| toast.context.as_str()),
+            Some("agent runtime is unavailable")
+        );
+        runtime.shutdown();
+    }
+
     // TP-M1.3-BUSY: a full input lane consumes the one-shot request, keeps the
     // picker available for an explicit retry, and never retries on later ticks.
     #[tokio::test]
@@ -1195,6 +1325,18 @@ mod tests {
         assert_eq!(
             super::agent_attachment_payload(&too_large),
             Err("attachment path exceeds 1 MiB")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn attachment_payload_rejects_non_utf8_path() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let path = std::path::PathBuf::from(std::ffi::OsString::from_vec(vec![0xff]));
+        assert_eq!(
+            super::agent_attachment_payload(&path),
+            Err("attachment path is not valid UTF-8")
         );
     }
 }

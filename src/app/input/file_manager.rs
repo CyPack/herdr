@@ -126,7 +126,21 @@ pub(crate) fn handle_agent_attachment_picker_key(state: &mut AppState, key: KeyE
                 picker.file_manager.move_up();
             }
         }
-        (KeyCode::Enter | KeyCode::Right | KeyCode::Char('l'), KeyModifiers::NONE) => {
+        (KeyCode::Enter, KeyModifiers::NONE) => {
+            if let Some(path) = state.agent_attachment_selected_file() {
+                if let Some(target) = state
+                    .agent_attachment_picker
+                    .as_ref()
+                    .map(|picker| picker.target.clone())
+                {
+                    state.request_agent_attachment_delivery =
+                        Some(crate::app::state::AgentAttachmentDeliveryRequest { path, target });
+                }
+            } else if let Some(picker) = state.agent_attachment_picker.as_mut() {
+                picker.file_manager.enter();
+            }
+        }
+        (KeyCode::Right | KeyCode::Char('l'), KeyModifiers::NONE) => {
             if state.agent_attachment_selected_file().is_none() {
                 if let Some(picker) = state.agent_attachment_picker.as_mut() {
                     picker.file_manager.enter();
