@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "module_id": "ratatui-design-intelligence",
+  "module_version": "2.1.0",
+  "pipeline_id": "reference-project-intelligence-v2",
+  "pipeline_version": "2.1.0",
+  "pipeline_schema_version": 2,
+  "compatibility_family": "reference-project-intelligence-v2",
+  "scope": "research-corpus-and-integration-intelligence-only",
+  "product_code_changes_authorized": false,
+  "stable_runtime_operations_authorized": false,
+  "required_files": [
+    "SKILL.md",
+    "assets/reference-project-pipeline-v2.json",
+    "assets/reference-project-run-template.json",
+    "scripts/validate_reference_pipeline.py",
+    "scripts/validate_v21_module.py"
+  ],
+  "required_output_artifacts": [
+    "stack-adaptation-map.json"
+  ],
+  "handoff": {
+    "type": "p14_reference_adapter_input",
+    "target_module": "herdr-change-pipeline",
+    "grants_product_authority": false
+  }
+}
