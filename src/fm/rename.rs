@@ -749,6 +749,10 @@ where
         mark_all_retained(&mut result, BulkRenameOperationError::Io(error.kind()));
         return result;
     }
+    if cancellation.is_cancelled() {
+        result.status = BulkRenameOperationExecutionStatus::Cancelled;
+        return result;
+    }
     for (index, ((source, destination), snapshot)) in
         plan.mappings.iter().zip(&plan.snapshots).enumerate()
     {
