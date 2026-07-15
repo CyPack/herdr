@@ -379,11 +379,12 @@ impl crate::app::App {
         true
     }
 
-    /// Consume C3's revalidated Copy intent and reconcile one worker terminal
-    /// result. Other context actions remain queued for their owning C4/C5
-    /// modules instead of being silently discarded.
+    /// Consume C3's revalidated C4 intents and reconcile one worker terminal
+    /// result. C5 context actions remain queued for their owning module
+    /// instead of being silently discarded.
     pub(super) fn sync_file_operation_worker(&mut self) -> bool {
         let mut changed = self.consume_file_manager_delete_request();
+        changed |= self.consume_file_manager_context_rename();
         changed |= self.consume_file_manager_context_delete();
         changed |= self.consume_file_manager_context_copy();
         let drained = self.file_operation_worker.drain();
@@ -552,6 +553,24 @@ impl crate::app::App {
             return false;
         };
         let _ = self.open_file_manager_delete_confirmation(intent.paths);
+        true
+    }
+
+    fn consume_file_manager_context_rename(&mut self) -> bool {
+        use crate::app::state::FileManagerContextMenuAction;
+
+        let is_rename = self
+            .state
+            .request_file_manager_context_action
+            .as_ref()
+            .is_some_and(|intent| intent.action == FileManagerContextMenuAction::Rename);
+        if !is_rename {
+            return false;
+        }
+        let Some(intent) = self.state.request_file_manager_context_action.take() else {
+            return false;
+        };
+        let _ = self.open_file_manager_context_rename(intent.paths);
         true
     }
 }

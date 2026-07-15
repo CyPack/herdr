@@ -489,6 +489,7 @@ pub(super) fn apply_rename_action(state: &mut AppState, action: ModalAction) {
             }
             state.creating_new_tab = false;
             state.rename_pane_target = None;
+            state.file_manager_rename = None;
             state.name_input.clear();
             state.name_input_replace_on_type = false;
             leave_modal(state);
@@ -501,6 +502,7 @@ pub(super) fn apply_rename_action(state: &mut AppState, action: ModalAction) {
             state.creating_new_tab = false;
             state.requested_new_tab_name = None;
             state.rename_pane_target = None;
+            state.file_manager_rename = None;
             state.name_input.clear();
             state.name_input_replace_on_type = false;
             leave_modal(state);
@@ -1394,6 +1396,7 @@ fn cancel_rename_modal(state: &mut AppState) {
     state.creating_new_tab = false;
     state.requested_new_tab_name = None;
     state.rename_pane_target = None;
+    state.file_manager_rename = None;
     state.name_input.clear();
     state.name_input_replace_on_type = false;
     leave_modal(state);

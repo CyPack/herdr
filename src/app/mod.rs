@@ -15,6 +15,7 @@ mod file_delete_confirmation;
 mod file_manager_watcher;
 mod file_operation_worker;
 mod file_preview_worker;
+mod file_rename;
 mod ids;
 mod image_preview_worker;
 mod input;
@@ -598,6 +599,7 @@ impl App {
             file_manager_clipboard: Vec::new(),
             file_manager_operation: None,
             file_manager_delete_confirmation: None,
+            file_manager_rename: None,
             request_file_manager_delete: None,
             request_file_manager_context_action: None,
             should_quit: false,
@@ -1794,7 +1796,7 @@ impl App {
             Mode::Copy => {
                 self.handle_copy_mode_key(key);
             }
-            Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane => {
+            Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane | Mode::RenameFile => {
                 self.handle_rename_key_via_api(key_event);
             }
             Mode::NewLinkedWorktree => {

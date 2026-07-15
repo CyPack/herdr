@@ -737,6 +737,13 @@ pub struct FileManagerDeleteRequest {
     pub paths: Vec<PathBuf>,
 }
 
+/// Exact client-local native-FM identities owned by the Rename text modal.
+/// Opening or rendering this state performs no filesystem work.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileManagerRenameState {
+    pub paths: Vec<PathBuf>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileManagerOperationState {
     pub generation: u64,
@@ -1297,6 +1304,7 @@ pub enum Mode {
     RenameWorkspace,
     RenameTab,
     RenamePane,
+    RenameFile,
     NewLinkedWorktree,
     OpenExistingWorktree,
     ConfirmRemoveWorktree,
@@ -1953,6 +1961,8 @@ pub struct AppState {
     /// Exact native-FM identities awaiting an explicit destructive choice.
     /// Opening or rendering this modal never performs filesystem work.
     pub file_manager_delete_confirmation: Option<FileManagerDeleteConfirmation>,
+    /// Exact native-FM identities owned by the file Rename text modal.
+    pub file_manager_rename: Option<FileManagerRenameState>,
     /// One confirmed, revalidated delete request for the App-owned worker.
     pub request_file_manager_delete: Option<FileManagerDeleteRequest>,
     /// Exact, revalidated client-local intent from the native-FM context menu.
@@ -2408,6 +2418,7 @@ impl AppState {
             file_manager_clipboard: Vec::new(),
             file_manager_operation: None,
             file_manager_delete_confirmation: None,
+            file_manager_rename: None,
             request_file_manager_delete: None,
             request_file_manager_context_action: None,
             should_quit: false,
