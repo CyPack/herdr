@@ -424,6 +424,7 @@ impl crate::app::App {
     pub(super) fn sync_file_operation_worker(&mut self) -> bool {
         let mut changed = self.consume_file_manager_delete_request();
         changed |= self.consume_file_manager_rename_request();
+        changed |= self.consume_file_manager_bulk_rename_request();
         changed |= self.consume_file_manager_context_rename();
         changed |= self.consume_file_manager_context_delete();
         changed |= self.consume_file_manager_context_copy();
