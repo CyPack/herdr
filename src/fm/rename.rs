@@ -499,6 +499,7 @@ pub(crate) enum BulkRenameItemOutcome {
 pub(crate) struct BulkRenameOperationItemResult {
     source: PathBuf,
     destination: PathBuf,
+    recovery_path: Option<PathBuf>,
     outcome: BulkRenameItemOutcome,
 }
 
@@ -513,6 +514,10 @@ impl BulkRenameOperationItemResult {
 
     pub(crate) fn outcome(&self) -> &BulkRenameItemOutcome {
         &self.outcome
+    }
+
+    pub(crate) fn recovery_path(&self) -> Option<&Path> {
+        self.recovery_path.as_deref()
     }
 }
 
@@ -672,6 +677,7 @@ fn bulk_initial_result(plan: &BulkRenameOperationPlan) -> BulkRenameOperationExe
             .map(|(source, destination)| BulkRenameOperationItemResult {
                 source: source.clone(),
                 destination: destination.clone(),
+                recovery_path: None,
                 outcome: BulkRenameItemOutcome::NotStarted,
             })
             .collect(),
@@ -719,6 +725,7 @@ fn recover_committed_and_staged<H: RenameOperationHost>(
             }
             Err(_) => {
                 recovery_failed = true;
+                result.items[index].recovery_path = Some(destination.clone());
                 result.items[index].outcome = BulkRenameItemOutcome::Uncertain(error.clone());
             }
         }
@@ -760,6 +767,7 @@ fn recover_staged<H: RenameOperationHost>(
             }
             Err(_) => {
                 recovery_failed = true;
+                result.items[index].recovery_path = Some(plan.staging_paths[index].clone());
                 result.items[index].outcome = BulkRenameItemOutcome::Uncertain(error.clone());
             }
         }
