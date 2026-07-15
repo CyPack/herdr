@@ -3034,6 +3034,78 @@ mod tests {
     use super::*;
     use crossterm::event::KeyEvent;
 
+    // TP-C6.1-MODEL/LIFECYCLE: filesystem discovery happens before render.
+    // Existing well-known directories are kept in Finder order, missing
+    // favorites are omitted, configured pins remain visible but marked
+    // inaccessible, and duplicate path authority stays with the first section.
+    #[test]
+    fn file_sidebar_preparation_uses_live_home_and_pin_state() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let home = std::env::temp_dir().join(format!(
+            "herdr-sidebar-model-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(home.join("Downloads")).expect("create Downloads");
+        std::fs::create_dir_all(home.join("Documents")).expect("create Documents");
+        std::fs::write(home.join("Desktop"), b"not a directory").expect("create non-dir Desktop");
+        let missing_pin = home.join("missing-pin");
+
+        let model = FileManagerSidebarModel::from_home_and_pins(
+            &home,
+            &[home.clone(), missing_pin.clone()],
+        );
+
+        let favorites = model
+            .section(FileManagerSidebarSectionKind::Favorites)
+            .expect("favorites section");
+        assert_eq!(
+            favorites
+                .items
+                .iter()
+                .map(|item| item.label.as_str())
+                .collect::<Vec<_>>(),
+            ["Home", "Downloads", "Documents"]
+        );
+        assert!(favorites.items.iter().all(|item| item.accessible));
+
+        let pinned = model
+            .section(FileManagerSidebarSectionKind::Pinned)
+            .expect("inaccessible configured pin remains visible");
+        assert_eq!(pinned.items.len(), 1, "Home duplicate is removed");
+        assert_eq!(pinned.items[0].path, missing_pin);
+        assert!(!pinned.items[0].accessible);
+
+        let locations = model
+            .section(FileManagerSidebarSectionKind::Locations)
+            .expect("root location");
+        assert_eq!(locations.items[0].label, "Root");
+        assert!(locations.items[0].path.is_absolute());
+
+        std::fs::remove_dir_all(home).expect("remove sidebar model fixture");
+    }
+
+    // TP-C6.1-MODEL: adversarial configuration cannot create an unbounded
+    // client-side sidebar model or move later duplicates ahead of first use.
+    #[test]
+    fn file_sidebar_model_is_bounded_across_all_sections() {
+        let items = (0..FILE_MANAGER_SIDEBAR_MAX_ITEMS + 32)
+            .map(|index| FileManagerSidebarItem {
+                label: format!("item-{index}"),
+                path: PathBuf::from(format!("/virtual/{index}")),
+                icon: FileManagerSidebarIcon::Pin,
+                accessible: true,
+                ejectable: false,
+            })
+            .collect();
+        let model = FileManagerSidebarModel::from_sources(Vec::new(), items, Vec::new());
+
+        assert_eq!(model.item_count(), FILE_MANAGER_SIDEBAR_MAX_ITEMS);
+        assert_eq!(model.sections[0].items[0].path, PathBuf::from("/virtual/0"));
+    }
+
     #[test]
     fn agent_terminal_keeps_final_child_cursor_exposed() {
         let mut state = AppState::test_new();
