@@ -18,7 +18,7 @@ use ratatui::Frame;
 use std::collections::BTreeSet;
 
 use super::text::truncate_end;
-use crate::app::state::AppState;
+use crate::app::state::{AppState, Palette};
 use crate::app::state::{
     FileManagerActionBarModel, FileManagerActionBarSelection, FileManagerActionBarSelectionKind,
     FileManagerActionDisabledReason, FileManagerActionState, FileManagerHeaderAction,
@@ -39,6 +39,59 @@ const MAX_RENDERED_PREVIEW_LINES: usize = 128;
 const HEADER_MIN_IDENTITY_WIDTH: u16 = 12;
 const HEADER_ACTION_GAP: u16 = 1;
 const ROW_ACTION_WIDTH: u16 = 1;
+
+#[derive(Debug, Clone, Copy)]
+struct FileManagerVisualStyles {
+    canvas: Style,
+    identity: Style,
+    panel_title: Style,
+    divider: Style,
+    enabled_action: Style,
+    disabled_action: Style,
+    empty: Style,
+    cursor: Style,
+    multi_selection: Style,
+    directory: Style,
+    file: Style,
+}
+
+/// Project theme roles into native-FM styles without embedding theme-specific
+/// colors or deriving semantic state from painted glyphs.
+fn file_manager_visual_styles(palette: &Palette) -> FileManagerVisualStyles {
+    FileManagerVisualStyles {
+        canvas: Style::default().fg(palette.text).bg(palette.panel_bg),
+        identity: Style::default()
+            .fg(palette.subtext0)
+            .bg(palette.panel_bg)
+            .add_modifier(Modifier::BOLD),
+        panel_title: Style::default()
+            .fg(palette.overlay1)
+            .bg(palette.panel_bg)
+            .add_modifier(Modifier::BOLD),
+        divider: Style::default()
+            .fg(palette.surface_dim)
+            .bg(palette.panel_bg),
+        enabled_action: Style::default().fg(palette.overlay1).bg(palette.panel_bg),
+        disabled_action: Style::default()
+            .fg(palette.overlay0)
+            .bg(palette.panel_bg)
+            .add_modifier(Modifier::DIM),
+        empty: Style::default().fg(palette.overlay0).bg(palette.panel_bg),
+        cursor: Style::default()
+            .bg(palette.surface0)
+            .fg(palette.text)
+            .add_modifier(Modifier::BOLD),
+        multi_selection: Style::default()
+            .bg(palette.surface1)
+            .fg(palette.text)
+            .add_modifier(Modifier::BOLD),
+        directory: Style::default()
+            .fg(palette.blue)
+            .bg(palette.panel_bg)
+            .add_modifier(Modifier::BOLD),
+        file: Style::default().fg(palette.subtext0).bg(palette.panel_bg),
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 struct MillerLayout {
@@ -400,6 +453,12 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         return;
     };
     let p = &app.palette;
+    let styles = file_manager_visual_styles(p);
+
+    // Own the exact FM canvas so stale terminal cells cannot show through.
+    // Block is paint-only; all layout and input authority stays in the pure
+    // geometry helpers shared with compute_view.
+    frame.render_widget(Block::default().style(styles.canvas), area);
 
     let fallback_action_bar;
     let action_bar = if area == app.view.terminal_area {
@@ -436,18 +495,15 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         .unwrap_or(areas.header.width);
     let identity_area = Rect::new(areas.header.x, areas.header.y, identity_width, 1);
     let header = truncate_end(&action_bar_identity, identity_area.width as usize);
-    frame.render_widget(
-        Paragraph::new(header).style(Style::default().fg(p.subtext0).add_modifier(Modifier::BOLD)),
-        identity_area,
-    );
+    frame.render_widget(Paragraph::new(header).style(styles.identity), identity_area);
     for action in header_actions {
         let enabled = action_bar
             .and_then(|model| model.action_state(action.action))
             .is_some_and(|state| state.enabled);
         let style = if enabled {
-            Style::default().fg(p.overlay1)
+            styles.enabled_action
         } else {
-            Style::default().fg(p.overlay0).add_modifier(Modifier::DIM)
+            styles.disabled_action
         };
         frame.render_widget(
             Paragraph::new(action.action.label()).style(style),
@@ -479,7 +535,7 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         frame.render_widget(
             Block::default()
                 .borders(Borders::LEFT)
-                .border_style(Style::default().fg(p.surface1)),
+                .border_style(styles.divider),
             divider,
         );
     }
@@ -571,13 +627,11 @@ fn render_file_preview(app: &AppState, frame: &mut Frame, area: Rect, preview: &
         return;
     }
     let p = &app.palette;
+    let styles = file_manager_visual_styles(p);
     let [title_area, content_area] =
         Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
     let title = truncate_end(" PREVIEW", title_area.width as usize);
-    frame.render_widget(
-        Paragraph::new(title).style(Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD)),
-        title_area,
-    );
+    frame.render_widget(Paragraph::new(title).style(styles.panel_title), title_area);
     if content_area.height == 0 {
         return;
     }
@@ -771,22 +825,17 @@ fn render_panel(
         return;
     }
     let p = &app.palette;
+    let styles = file_manager_visual_styles(p);
     let [title_area, list_area] = panel_areas(area);
     let title = truncate_end(&format!(" {title}"), title_area.width as usize);
-    frame.render_widget(
-        Paragraph::new(title).style(Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD)),
-        title_area,
-    );
+    frame.render_widget(Paragraph::new(title).style(styles.panel_title), title_area);
 
     if list_area.height == 0 {
         return;
     }
     if entries.is_empty() {
         let label = truncate_end(&format!("  {empty_label}"), list_area.width as usize);
-        frame.render_widget(
-            Paragraph::new(label).style(Style::default().fg(p.overlay1)),
-            list_area,
-        );
+        frame.render_widget(Paragraph::new(label).style(styles.empty), list_area);
         return;
     }
 
@@ -835,22 +884,17 @@ fn render_entry_row(
     multi_selected: bool,
 ) {
     let p = &app.palette;
+    let styles = file_manager_visual_styles(p);
     let suffix = if entry.is_dir { "/" } else { "" };
     let label = truncate_end(&format!("  {}{}", entry.name, suffix), row.width as usize);
     let style = if cursor_focused {
-        Style::default()
-            .bg(p.surface0)
-            .fg(p.text)
-            .add_modifier(Modifier::BOLD)
+        styles.cursor
     } else if multi_selected {
-        Style::default()
-            .bg(p.surface1)
-            .fg(p.text)
-            .add_modifier(Modifier::BOLD)
+        styles.multi_selection
     } else if entry.is_dir {
-        Style::default().fg(p.blue).add_modifier(Modifier::BOLD)
+        styles.directory
     } else {
-        Style::default().fg(p.subtext0)
+        styles.file
     };
     frame.render_widget(Paragraph::new(label).style(style), row);
 }
@@ -2058,10 +2102,15 @@ mod tests {
 
         for y in area.y..area.bottom() {
             for x in area.x..area.right() {
-                assert_eq!(
-                    buffer[(x, y)].bg,
-                    app.palette.panel_bg,
-                    "FM canvas cell ({x}, {y}) uses panel background"
+                assert!(
+                    [
+                        app.palette.panel_bg,
+                        app.palette.surface0,
+                        app.palette.surface1,
+                    ]
+                    .contains(&buffer[(x, y)].bg),
+                    "FM canvas cell ({x}, {y}) has an owned semantic background, got {:?}",
+                    buffer[(x, y)].bg
                 );
             }
         }
