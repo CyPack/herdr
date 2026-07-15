@@ -824,40 +824,47 @@ The north-star queue is ordered M1 → M2 → M3. Only the named `.0` evidence
 lane may activate first; every production module remains NO-GO until its
 evidence contract proves non-duplicate user value and freezes RED test points.
 
-### M1 — FM-Interactive CLI Attachment Actions
+### M1 — Focused-Agent Attachment Picker
 
-- [ ] M1.0 define the product delta before UI or runtime code. Compare native
+- [x] M1.0 define the product delta before UI or runtime code. Compare native
   FM `SendAgent`/C5 handoff, CLI `agent_attach`, CLI `agent_send`, pane focus,
-  and plugin file-context actions; terminate with one explicit GO/NO-GO.
-- [ ] M1.0a name the user story precisely: attach the TUI to an existing agent,
+  plugin file-context actions, and remote image-drop transport. Decision:
+  narrow GO for an existing-agent, single-file overlay picker; evidence is in
+  `.codex/evidence/m1-agent-attachment-picker.md`.
+- [x] M1.0a name the user story precisely: attach the TUI to an existing agent,
   deliver selected file identities to an existing agent, or create/focus a new
-  agent. Reject a label that silently combines those different authorities.
-- [ ] M1.0b trace server/client ownership, exact public IDs, path encoding,
+  agent. M1 means only the second case and does not create/focus an agent.
+- [x] M1.0b trace server/client ownership, exact public IDs, path encoding,
   target availability, agent-state races, and current rollback behavior through
-  `src/cli/agent.rs`, `src/app/file_agent_handoff.rs`, and the neutral API.
-- [ ] M1.0c define finite selection/message/queue bounds, cross-platform literal
+  `src/cli/agent.rs`, `src/app/file_agent_handoff.rs`, the neutral API, pane
+  render/input, and `src/client/mod.rs`.
+- [x] M1.0c define exactly one file, 1 MiB including CR, one pending request,
+  one explicit send attempt, zero new workers/watchers/resources, literal UTF-8
   path behavior, close/reopen semantics, and exact RED-capable test names.
-- [ ] M1.1 add a pure action model and responsive complete-button geometry only
-  if M1.0 proves a missing action; hidden/narrow/disabled buttons expose no stale
-  hit target and render remains read-only.
-- [ ] M1.2 route exact mouse/keyboard activation to a typed client-local intent;
-  revalidate current file paths, target agent identity, operation state, and
-  modifiers before any delivery request.
-- [ ] M1.3 execute through the existing neutral agent/API seam with literal argv
-  or request fields, never shell interpolation. Existing-agent delivery must not
-  create a pane; new-agent flow must own exact-resource rollback at every stage.
+- [ ] M1.1 RED/GREEN: add an agent-only pure `[+]` action model, responsive
+  bottom-border geometry, no-color/ASCII render, and configurable `prefix+a`.
+  Borderless/narrow/hidden/disabled actions expose no mouse target and render
+  never covers `PaneInfo::inner_rect`.
+- [ ] M1.2 RED/GREEN: add one client-local `Mode::AttachFile` picker with a
+  private `FmState` and exact workspace/tab/pane/terminal target snapshot. Use
+  Clear-first bounded overlay rendering; route mouse/keyboard before background
+  terminal/FM input; accept exactly one current regular UTF-8 file.
+- [ ] M1.3 RED/GREEN: prepare one typed request in input, then execute at the
+  scheduled App boundary through a shared C5 literal terminal-send seam. Never
+  shell-interpolate, upload bytes, create an agent/pane, or hot-retry.
 - [ ] M1.4 reconcile completion/cancel/error against current FM and agent
-  generations, prove close/reopen and target-exit races, run full gates, refresh
-  graph, then publish atomically. If M1.0 finds no delta, close M1 as NO-GO.
+  identities, prove close/reopen, target-exit/replacement, stale-file, busy,
+  oversized/non-UTF-8 and zero-resource-rollback cases, run full gates, refresh
+  graph, then publish atomically.
 
 | Test point | What is tested | Expected result | Reason |
 |---|---|---|---|
 | TP-M1-DELTA | C5 native file handoff versus CLI attach/send and plugin file actions | One user-visible action absent from all existing surfaces is named, or M1 terminates NO-GO | A second button for an existing behavior adds ambiguity rather than capability |
 | TP-M1-IDENTITY | Stable selected paths, workspace/tab/pane/agent IDs, reorder/delete, target exit/replacement | Activation uses exact live identities and stale snapshots emit no request | Files and agents can both change between render and click |
 | TP-M1-AUTHORITY | Empty/multiple/unsupported selection, non-agent target, busy operation, disabled plugin, modified input | Every unavailable case has one reason and fails closed before side effects | UI enabled state is advisory unless execution revalidates authority |
-| TP-M1-DELIVERY | Spaces, quotes, Unicode, non-UTF-8 paths, Windows separators, one/many files, message bounds | Paths remain literal structured values; no shell parsing, truncation, or partial silent delivery | File attachment is security-sensitive data transport |
-| TP-M1-ROLLBACK | Pane/agent creation, first-send failure, cancellation, disconnect, panic, close/reopen | Existing resources are never removed; only exactly created resources roll back; terminal state is explicit | Multi-stage handoff must not leak panes or destroy unrelated work |
-| TP-M1-BUDGET | Maximum selected paths, request bytes, pending work, retries, generations, cleanup | All bounds are finite; at most the approved worker/request lane is active; stale results are rejected | Agent delivery can otherwise become an unbounded queue or memory surface |
+| TP-M1-DELIVERY | Spaces, quotes, Unicode, non-UTF-8 paths, Windows separators, missing/directory target, exact size boundary | One regular UTF-8 path remains literal and gets one CR; unsupported paths fail visibly with no shell parsing, loss, truncation, upload, or partial delivery | File attachment is security-sensitive data transport |
+| TP-M1-ROLLBACK | First-send failure, cancellation, target exit/replacement, close/reopen | Existing panes/agents/processes are never removed; M1 creates no runtime resource; pending client state and hit geometry clear exactly | Even a client-only multi-stage handoff must not retarget or damage unrelated work |
+| TP-M1-BUDGET | One selected path, 1 MiB payload including CR, one pending request, one explicit attempt, zero new workers/watchers | Bounds are enforced before send; busy never hot-retries; stale requests are consumed once | Agent delivery can otherwise become an unbounded queue or memory surface |
 
 ### M2 — Git Worktree Management Actions
 
@@ -918,8 +925,9 @@ evidence contract proves non-duplicate user value and freezes RED test points.
 
 ### Future Ordering and Activation
 
-1. M1.0 is the next discovery-only lane; M1 production stays NO-GO until its
-   delta/identity/delivery/rollback/budget contract terminates.
+1. M1.0 is complete with a narrow GO. M1.1 is the next lane and must begin with
+   the exact pure geometry/keybinding RED tests in the evidence file; M1.2–M1.4
+   remain production NO-GO until each preceding RED/GREEN lane closes.
 2. M2.0 follows the M1 decision. It may reuse existing worktree APIs but cannot
    preempt the M1 lane or introduce a private TUI-only runtime path.
 3. M3.0 follows only after M1/M2 evidence proves a second real consumer. S5–S7
@@ -935,6 +943,7 @@ reconciliation, C4.4.4 recovery, C4.4.5 gates, and C5.1–C5.5 are complete.
 C6.1–C6.4, P4.0, N2.0, and N2.1 are complete through product commit `c530836`
 plus the continuity commit containing this closure. S5–S7 and the original
 dynamic/unbounded N2 state machine remain evidence-gated implementation NO-GO.
-M1.0 is the next discovery-only lane; M1 production remains NO-GO until that
-contract terminates. M2.0 follows the M1 decision, while M3.0 requires a real
-second consumer from M1/M2. N2.2 and S5–S7 remain independently gated.
+M1.0 is complete with a narrow existing-agent, single-file picker GO. M1.1 pure
+action/geometry RED is next; M1.2–M1.4 remain sequentially gated. M2.0 follows
+M1 closure, while M3.0 requires a real second consumer from M1/M2. N2.2 and
+S5–S7 remain independently gated.

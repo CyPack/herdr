@@ -2,12 +2,11 @@
 
 - Updated: 2026-07-15
 - Branch: `feat/native-fm`
-- Published CyPack base: `821506e`
-- Verified C4.4 terminal-recovery product head: `c674296`
-- Publication unit: C4.4.4 seven-commit test/product chain from `0881976`
-  through `c674296`, plus the continuity/graph commit
-  containing this file. Push only CyPack `feat/native-fm` and fork `master`
-  after fast-forward ancestry and exact remote-SHA verification.
+- Published CyPack base: `8bab9de`
+- Verified N2.1 product head: `c530836`; closure evidence: `9af11a4`.
+- Current publication unit: M1.0 discovery/evidence and continuity only. Push
+  only CyPack `feat/native-fm` and fork `master` after targeted staging,
+  fast-forward ancestry, and exact remote-SHA verification.
 
 ## Completed
 
@@ -51,50 +50,64 @@
 - C4.4.5 complete closure gate across focused recovery, broad C4/FM, full Rust,
   Linux/Windows lint, Bun/Python maintenance, ignored inventory, graph
   freshness, and artifact/diff cleanliness.
+- C5 exact existing-agent literal path handoff and non-agent Claude split with
+  exact new-resource rollback.
+- C6 Finder-fidelity sidebar, integrated action authority, visual polish,
+  explicit directory/preview/operation failure truth, and isolated runtime
+  composition proof.
+- P4.0 architecture evidence gate: S5 component registry, S6 persisted shell,
+  and S7 popup stack remain implementation NO-GO without concrete consumers.
+- N2.0 rejected an arbitrary/unbounded Miller history state machine; N2.1
+  preserves the exact departed child on parent navigation through a bounded
+  path-focus refresh seam.
+- M1.0 proved a genuine product delta and selected the narrow existing-agent,
+  single-file attachment overlay described in
+  `.codex/evidence/m1-agent-attachment-picker.md`.
 
 ## Active Next Increment
 
-C5.1 graph-first pane/agent runtime-boundary verification, followed by
-TP-C5-AUTHORITY RED before production changes.
+M1.1 pure focused-agent attachment action/geometry and configurable keybinding.
+Production Rust begins only after each named test is observed RED for the
+intended missing behavior.
 
 Test points:
 
-- Current exact path and uniquely resolved current terminal/agent identity are
-  mandatory; stale selection, reordered rows, closed FM, unsupported path,
-  missing/duplicate target, or in-flight conflict fails closed.
-- Literal handoff preserves spaces, quotes, metacharacters, Unicode, and exact
-  target identity without shell interpolation, duplicate sends, or wrong-pane
-  delivery.
-- Split-and-Claude launch either owns one new pane/process or removes only its
-  newly created resources on split/spawn/early-exit/cancel/stale failure.
-- Runtime proof uses `.local/ISOLATED-DEV-TEST.md`; stable Herdr, inherited
-  stable sockets, existing panes, and user processes remain untouched.
-- Complete C5 gates precede C6; exact expected results and reasons are in
-  `.codex/TASKS.md` TP-C5-AUTHORITY/SEND/SPLIT/ISOLATION/GATES.
+- `focused_agent_attachment_action_is_exact_agent_only_and_responsive`: exactly
+  one focused agent receives a complete `[+]` bottom-border target; non-agent,
+  unfocused, borderless, narrow, mobile-zero, and stale cases expose none; the
+  target never covers terminal `inner_rect`.
+- `default_binds_prefix_a_to_agent_attachment_picker_without_conflict`:
+  `prefix+a` resolves only to M1 and existing user-binding conflict policy is
+  preserved.
+- `agent_attachment_action_render_is_bounded_ascii_and_no_color_safe`: the
+  semantic action stays within its exact hit area and never overwrites corners,
+  terminal cells, scrollbar, split border, or adjacent border content.
+- M1.2–M1.4 remain gated behind M1.1 GREEN. Their exact identity, authority,
+  literal delivery, rollback, and finite-budget tests are frozen in
+  `.codex/evidence/m1-agent-attachment-picker.md` and `.codex/TASKS.md`.
 
 ## Ordered Roadmap
 
-1. C5 exact pane/agent handoff, quoting/identity, split-and-launch failure
-   cleanup, and isolated-session safety.
-2. C6 Finder-fidelity sidebar, highlight/location marker, integrated actions,
-   theme/spacing/empty/error states, and visual review.
-3. Deferred evidence-gated architecture: S5 ComponentRegistry, S6 persisted
-   resizable shell, S7 popup stack, N2 dynamic Miller navigation.
-4. North-star backlog: M1 interactive CLI attachments, M2 git-worktree
-   controls, M3 general panel/page/button interface evaluation.
+1. M1.1 pure agent-frame action geometry/keybinding, then M1.2 picker ownership,
+   M1.3 scheduled literal delivery, and M1.4 lifecycle/full closure gates.
+2. M2.0 evidence matrix for missing Git worktree management actions; no product
+   mutation until action-by-action GO/NO-GO terminates.
+3. M3.0 only after M1/M2 creates a second concrete independently owned
+   component/page/action family.
+4. N2.2 and S5–S7 remain independently evidence-gated.
 
-## Fresh C4.4 Closure Evidence
+## Fresh N2.1 Closure Evidence
 
-- Focused recovery 46/46; C4 core 67/67; broad C4/FM 218/218.
-- Final full nextest 3131/3131; only `path_beta_real_host_probe` ignored. A
-  separate ignored-only inventory listed that exact test without executing it.
-- Linux all-target and canonical Windows MSVC bin clippy clean with
-  `-D warnings`.
-- Bun 17/17; Python maintenance 64/64; fmt and diff-check clean.
-- No `.herdr-operation-*` or `.herdr-rename-stage-*` artifact remains.
-- Graph refresh: 18,793 nodes / 87,788 edges. Freshness queries returned
-  `new_after_generation`, disconnect/panic/private-recovery tests, and
-  `miller_layout` after proving the prior `ready` graph was stale.
+- Exact path-stable navigation 6/6; all FM tests 65/65.
+- Full nextest 3177/3177; only `path_beta_real_host_probe` ignored.
+- Linux all-target and canonical Windows MSVC clippy clean with `-D warnings`.
+- Bun 17/17; Python maintenance 64/64; fmt, diff, production-unwrap,
+  debug-marker, and ignored-inventory checks clean.
+- Graph refresh: 18,997 nodes / 89,826 edges. Current snippets for
+  `FmState::reload_focusing_path` and `FmState::leave` proved freshness beyond
+  `ready`.
+- M1.0 is docs-only: no Rust, dependency, protocol, persisted runtime state,
+  process, socket, watcher, worker, pane, agent, or stable Herdr resource changed.
 
 ## Non-Negotiable Boundaries
 

@@ -880,10 +880,17 @@
 
 1. N2.1 is complete; preserve its RED `e433a2f` → GREEN `c530836` chain and
    exact verification evidence during fork publication.
-2. Start M1.0 as discovery/specification only. Compare C5 native handoff,
-   `agent_attach`, `agent_send`, pane focus, and plugin file-context actions;
-   terminate with a user-visible delta or explicit NO-GO before UI/runtime code.
-3. Follow the expanded M1 → M2 → M3 macro/micro roadmap and exact
+2. M1.0 is complete with a narrow GO documented in
+   `.codex/evidence/m1-agent-attachment-picker.md`: an existing-agent,
+   single-file Clear-first overlay picker, one literal UTF-8 path plus CR, one
+   pending/one explicit send attempt, and zero new worker/watcher/runtime
+   resources. `agent attach`, new-agent creation, multi-file, byte upload,
+   drag/drop, protocol work, and generic component/overlay registries are out.
+3. Start M1.1 with the named pure geometry/keybinding RED tests before Rust
+   production code. Target one exact focused-agent `[+]` bottom-border action
+   plus configurable `prefix+a`; hidden/borderless/narrow geometry must expose
+   no stale hit area and must never cover the terminal inner rect.
+4. Follow the expanded M1 → M2 → M3 macro/micro roadmap and exact
    expected-result/reason test tables in `.codex/TASKS.md`. N2.2 and S5–S7
    remain independently deferred. Use the same targeted commit and CyPack
    fork-only FF workflow for every activated lane.
