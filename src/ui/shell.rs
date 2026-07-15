@@ -337,6 +337,114 @@ mod tests {
         assert_eq!(dock.union(sidebar).union(stage), area);
     }
 
+    #[test]
+    fn shell_rejects_depth_above_four() {
+        let mut node = serialized_slot("WorkspaceStage");
+        for _ in 0..5 {
+            node = serialized_split(vec![serialized_child(node)]);
+        }
+
+        assert_serialized_shell_rejected(node, "DepthExceeded");
+    }
+
+    #[test]
+    fn shell_rejects_more_than_eight_split_children() {
+        let children = (0..9)
+            .map(|_| serialized_child(serialized_slot("WorkspaceStage")))
+            .collect();
+
+        assert_serialized_shell_rejected(serialized_split(children), "ChildrenExceeded");
+    }
+
+    #[test]
+    fn shell_rejects_more_than_sixty_four_visible_leaves() {
+        let sixty_four = serialized_split(
+            (0..8)
+                .map(|_| {
+                    serialized_child(serialized_split(
+                        (0..8)
+                            .map(|_| serialized_child(serialized_slot("WorkspaceStage")))
+                            .collect(),
+                    ))
+                })
+                .collect(),
+        );
+        let root = serialized_split(vec![
+            serialized_child(sixty_four),
+            serialized_child(serialized_slot("WorkspaceStage")),
+        ]);
+
+        assert_serialized_shell_rejected(root, "VisibleLeavesExceeded");
+    }
+
+    #[test]
+    fn shell_rejects_more_than_one_hundred_twenty_eight_serialized_nodes() {
+        let root = serialized_split(
+            (0..8)
+                .map(|_| {
+                    serialized_child(serialized_split(
+                        (0..8)
+                            .map(|_| {
+                                serialized_child(serialized_split(vec![serialized_child(
+                                    serialized_slot("WorkspaceStage"),
+                                )]))
+                            })
+                            .collect(),
+                    ))
+                })
+                .collect(),
+        );
+
+        assert_serialized_shell_rejected(root, "SerializedNodesExceeded");
+    }
+
+    #[test]
+    fn shell_rejects_duplicate_outer_region() {
+        let root = serialized_split(vec![
+            serialized_child(serialized_slot("LeftPanel")),
+            serialized_child(serialized_slot("LeftPanel")),
+            serialized_child(serialized_slot("WorkspaceStage")),
+        ]);
+
+        assert_serialized_shell_rejected(root, "DuplicateRegion");
+    }
+
+    #[test]
+    fn shell_rejects_collapsed_or_missing_stage() {
+        assert_serialized_shell_rejected(serialized_slot("LeftPanel"), "MissingWorkspaceStage");
+    }
+
+    fn serialized_slot(region: &str) -> serde_json::Value {
+        serde_json::json!({ "Slot": { "region": region } })
+    }
+
+    fn serialized_child(node: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({ "size": "Fill", "node": node })
+    }
+
+    fn serialized_split(children: Vec<serde_json::Value>) -> serde_json::Value {
+        serde_json::json!({
+            "Split": {
+                "direction": "Horizontal",
+                "children": children,
+            }
+        })
+    }
+
+    fn assert_serialized_shell_rejected(root: serde_json::Value, expected: &str) {
+        let serialized = serde_json::json!({ "root": root }).to_string();
+        let result = serde_json::from_str::<ShellLayout>(&serialized);
+        assert!(
+            result.is_err(),
+            "shell should reject {expected}, but accepted {result:?}"
+        );
+        let error = result.expect_err("checked invalid shell").to_string();
+        assert!(
+            error.contains(expected),
+            "shell rejected the fixture for the wrong reason: expected {expected}, got {error}"
+        );
+    }
+
     /// The tree walker generalizes beyond the 2-slot default: a nested tree
     /// (sidebar | (center over bottom bar)) lays out every region correctly and
     /// a degenerate zero area does not panic.
