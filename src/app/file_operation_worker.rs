@@ -1148,6 +1148,8 @@ mod tests {
         BulkRenameOperationExecutionStatus, BulkRenameOperationPlan, BulkRenameOperationRequest,
         RenameOperationExecutionStatus, RenameOperationPlan, RenameOperationRequest,
     };
+    use crate::input::TerminalKey;
+    use crossterm::event::{KeyCode, KeyModifiers};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1727,6 +1729,92 @@ mod tests {
             .entries
             .iter()
             .any(|entry| entry.path == destination.join("payload.txt")));
+    }
+
+    // TP-C4.4-CANCEL: the typed Esc intent must reach the exact active worker
+    // generation, remain idempotent, keep the FM open, and terminalize the
+    // operation without publishing a destination entry.
+    #[tokio::test]
+    async fn app_esc_cancels_matching_file_operation_generation() {
+        let td = TempDir::new("app-esc-cancel");
+        let source_root = td.root.join("sources");
+        let destination = td.root.join("destination");
+        fs::create_dir(&source_root).expect("create cancellable source root");
+        fs::create_dir(&destination).expect("create cancellable destination");
+        let source = source_root.join("payload.txt");
+        fs::write(&source, b"payload").expect("write cancellable source");
+        let (started_tx, started_rx) = mpsc::channel();
+        let worker = FileOperationWorker::with_executor(
+            Arc::new(Notify::new()),
+            move |plan, cancellation| {
+                started_tx
+                    .send(())
+                    .expect("signal cancellable worker started");
+                while !cancellation.is_cancelled() {
+                    std::thread::yield_now();
+                }
+                execute_file_operation(plan, cancellation)
+            },
+        );
+        let mut app = test_app();
+        app.file_operation_worker = worker;
+        app.state.file_manager = Some(crate::fm::FmState::new(&destination));
+        app.state.file_manager_clipboard = vec![source.clone()];
+
+        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("cancellable worker started");
+        let generation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("running cancellable operation")
+            .generation;
+
+        app.handle_key(TerminalKey::new(KeyCode::Esc, KeyModifiers::NONE))
+            .await;
+        app.handle_key(TerminalKey::new(KeyCode::Esc, KeyModifiers::NONE))
+            .await;
+        assert!(app.state.file_manager.is_some());
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if app.sync_file_operation_worker()
+                && app
+                    .state
+                    .file_manager_operation
+                    .as_ref()
+                    .is_some_and(|operation| {
+                        operation.status == FileManagerOperationStatus::Cancelled
+                    })
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "Esc cancellation timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let operation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("cancelled operation state");
+        assert_eq!(operation.generation, generation);
+        assert_eq!(operation.status, FileManagerOperationStatus::Cancelled);
+        assert_eq!(operation.completed_items, 0);
+        assert_eq!(operation.failed_items, 0);
+        assert!(operation
+            .items
+            .iter()
+            .all(|item| item.status == FileManagerOperationItemStatus::Pending));
+        assert_eq!(
+            fs::read(source).expect("cancelled source retained"),
+            b"payload"
+        );
+        assert!(!destination.join("payload.txt").exists());
+        assert!(!app.file_operation_worker.is_busy());
+        assert!(!app.file_operation_worker.cancel());
     }
 
     // TP-C4.1-LIFECYCLE: a completion for the prior destination may finish
