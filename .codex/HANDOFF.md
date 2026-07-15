@@ -2,11 +2,11 @@
 
 ## 1. SONRAKI ADIM
 
-Make TP-C4.4-PROGRESS RED before production changes. Graph-first inspect the
-existing worker task/result channel, cancellation token, aggregate/per-item
-projection, scheduled sync, A4 watcher generation, polling fallback, and
-close/reopen ownership. Prove one bounded monotonic progress contract across
-transfer, delete, single rename, and bulk rename before implementation.
+Make TP-C4.4-CANCEL RED before production changes. Graph-first inspect every
+operation's reversible staging/copy and irreversible publish/delete boundary,
+the cancellation token, and terminal result projection. Prove idempotent
+cancel-before-start, mid-work, post-commit, repeated-cancel, and
+cancel/completion-race behavior before implementation.
 
 ## 2. AKTİF PROJE
 
@@ -273,6 +273,20 @@ transfer, delete, single rename, and bulk rename before implementation.
   cover file/directory/symlink, races, cycles, swaps, and rollback failure.
   Fresh graph: 18,722 / 88,526 with `miller_layout` and current single, bulk,
   shared-validator, and App-consumer symbols.
+- Completed TP-C4.4-PROGRESS as ten atomic RED/GREEN commits from `aa9c894`
+  through `cd4368a`: worker/App, transfer, delete, single rename, and bulk
+  rename each have an observed RED then minimal GREEN. One latest-value
+  same-generation worker slot coalesces updates; started count is monotonic and
+  bounded; App projects Pending items to Running before exact completion.
+- The first full suite exposed an unrelated OMP fixture mixing real and
+  synthetic `Instant` values. Separate test-only `30d99bd` moved its complete
+  lifecycle to one explicit monotonic clock; exact and 33-test family probes
+  plus the second full suite passed.
+- C4.4 progress gates: focused C4 operations 57/57, full nextest 3115/3115 plus
+  only `path_beta_real_host_probe` ignored, Linux/Windows clippy, Bun 17/17,
+  Python 64/64, fmt/diff/temp clean. Fresh graph: 18,745 / 87,178 with the
+  progress type, common worker seam, four observer adapters, and
+  `miller_layout` after the stale `ready` graph was disproven.
 
 ## 6. KOD DURUMU
 
@@ -520,9 +534,10 @@ the C4.1 publication unit before both CyPack heads are fast-forwarded.
 
 See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2/N4 contracts and the
 complete C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1, N3,
-C2, N4, C3.1, C3.2, C3.3, C4.1, C4.2, and C4.3 are closed. The immediate
-product task is TP-C4.4-PROGRESS RED, followed by CANCEL, RECONCILE, RECOVERY,
-and the complete C4.4 gate. Then continue C5 → C6 without skipping modules.
+C2, N4, C3.1, C3.2, C3.3, C4.1, C4.2, C4.3, and C4.4.1 PROGRESS are closed.
+The immediate product task is TP-C4.4-CANCEL RED, followed by RECONCILE,
+RECOVERY, and the complete C4.4 gate. Then continue C5 → C6 without skipping
+modules.
 S5–S7/N2 remain evidence-gated; M1–M3 remain north-star backlog.
 
 ## 11. ORTAM
@@ -576,6 +591,11 @@ S5–S7/N2 remain evidence-gated; M1–M3 remain north-star backlog.
   after indexing, searches returned `miller_layout`, `RenameOperationPlan`,
   `BulkRenameOperationPlan`, `validate_rename_name_component`, and
   `consume_file_manager_bulk_rename_request` from current source.
+- Post-C4.4.1 fast refresh completed at 18,745 nodes / 87,178 edges. The stale
+  pre-refresh graph said `ready` but returned no `FileOperationWorkerProgress`;
+  after indexing it returned the progress type,
+  `execute_worker_task_with_progress`, all four operation observer adapters,
+  and the prior `miller_layout` symbol.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.

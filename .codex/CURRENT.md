@@ -4,11 +4,13 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Active C4.3 product checkpoint: `c7043e2`
-  (`feat: share file rename name validation authority`).
-- The C4.3 publication unit is eighteen atomic test/product commits from
-  `2028bce` through `c7043e2`, plus the continuity/graph commit containing this
-  file. At publication, CyPack
+- Active C4.4 progress product checkpoint: `cd4368a`
+  (`feat: report bulk rename progress`). Separate test-stability head:
+  `30d99bd` (`test: make OMP lifecycle clock deterministic`).
+- The pending C4.4 progress publication unit is ten atomic RED/GREEN commits
+  from `aa9c894` through `cd4368a`, the separate test-stability commit
+  `30d99bd`, and the continuity/graph commit containing this file. At
+  publication, CyPack
   `feat/native-fm` and fork `master` are verified at that same fast-forward
   branch tip.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
@@ -377,6 +379,38 @@
   `validate_rename_name_component`, and
   `consume_file_manager_bulk_rename_request` from current source.
 
+## Verified Increment — C4.4 Bounded Operation Progress
+
+- TP-C4.4-PROGRESS is an auditable ten-commit RED/GREEN chain from worker/App
+  contract RED `aa9c894` through bulk-rename adapter GREEN `cd4368a`; no
+  compile-failing RED checkpoint is published alone.
+- `FileOperationWorkerProgress` is a latest-value, same-generation worker slot,
+  not an event queue. Repeated updates coalesce, `started_items` remains
+  monotonic and bounded, completion clears progress, and stale/closed/
+  completed generations fail closed.
+- Transfer, delete, single rename, and bulk rename report the item entering
+  execution through one production `execute_worker_task_with_progress` seam.
+  App applies matching-generation progress before completion and projects only
+  the bounded started prefix from Pending to Running; render performs no
+  filesystem or worker mutation.
+- The complete progress chain is worker/App `aa9c894`/`da46bfb`, transfer
+  `84db86a`/`2141593`, delete `edc1588`/`d0a0c8a`, single rename
+  `3469883`/`94465e2`, and bulk rename `f5ea272`/`cd4368a`.
+- The first full-suite run exposed an unrelated OMP lifecycle fixture that
+  mixed real and synthetic `Instant` values. Root-cause analysis moved the
+  whole fixture onto one explicit monotonic clock in separate test-only commit
+  `30d99bd`; the exact test, 33-test lifecycle family, and second full suite
+  all passed.
+- Fresh evidence: C4 progress/operation regression 57/57; full nextest
+  3115/3115 with only `path_beta_real_host_probe` ignored; Linux all-target and
+  canonical Windows MSVC bin clippy clean with `-D warnings`; Bun 17/17;
+  Python 64/64; fmt/diff/temp-artifact checks clean. The ignored B0 probe was
+  separately proven as `1 ignored / 0 failed` without execution.
+- The stale pre-refresh graph reported `ready` but had no
+  `FileOperationWorkerProgress`. Fast reindex completed at 18,745 nodes /
+  87,178 edges and returned the progress type, common worker seam, all four
+  observer adapters, and the existing `miller_layout` symbol.
+
 ## Completed Checkpoint — B2 Native Image Preview
 
 - B2 is an auditable dependency decision plus four RED/GREEN increments and a
@@ -537,13 +571,13 @@
 
 ## Exact Next Action
 
-1. Begin C4.4 test-point-first. Graph-first inspect the existing worker task,
-   cancellation token, aggregate/per-item result projection, scheduled sync,
-   A4 watcher generation, polling fallback, and close/reopen ownership.
-2. Make TP-C4.4-PROGRESS RED first: transfer, delete, single rename, and bulk
-   rename must expose one bounded monotonic progress model without an
-   unbounded event queue or render mutation.
-3. Continue in strict order: TP-C4.4-CANCEL, RECONCILE, RECOVERY, then the
+1. Make TP-C4.4-CANCEL RED before production changes. Graph-first inspect each
+   operation's reversible staging/copy and irreversible publish/delete
+   boundary plus the existing cancellation token and terminal result mapping.
+2. Prove cancel-before-start, mid-reversible-work, post-commit, repeated cancel,
+   and cancel/completion races. Cancellation must be idempotent; committed work
+   stays committed and every remaining item reaches an exact terminal state.
+3. Continue in strict order: TP-C4.4-RECONCILE, RECOVERY, then the
    complete TP-C4.4-GATES. Every production increment follows its own observed
    failing test; no compile-failing RED is pushed alone. After C4.4, continue
    C5 then C6 without skipping modules.

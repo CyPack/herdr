@@ -2,9 +2,11 @@
 
 - Updated: 2026-07-15
 - Branch: `feat/native-fm`
-- Published CyPack base: `ed47da8`
-- Verified C4.3 product head: `c7043e2`
-- Publication unit: C4.3 eighteen-commit test/product chain through `c7043e2`, plus the continuity/graph commit
+- Published CyPack base: `23adffc`
+- Verified C4.4 progress product head: `cd4368a`
+- Separate test-stability head: `30d99bd`
+- Publication unit: C4.4.1 ten-commit RED/GREEN chain through `cd4368a`,
+  separate test-only `30d99bd`, plus the continuity/graph commit
   containing this file. Push only CyPack `feat/native-fm` and fork `master`
   after fast-forward ancestry and exact remote-SHA verification.
 
@@ -35,15 +37,16 @@
   validation, immutable identity revalidation, no-replace file/directory/
   symlink commit, bounded cycle-safe bulk staging, explicit recovery paths,
   shared worker lane, and matching-generation App reconciliation.
+- C4.4.1 one bounded latest-value worker progress slot, monotonic started-item
+  projection, same-generation App consumption, and production progress
+  adapters shared by transfer, delete, single rename, and bulk rename.
 
 ## Active Next Increment
 
-TP-C4.4-PROGRESS must be RED before production changes.
+TP-C4.4-CANCEL must be RED before production changes.
 
 Test points:
 
-- Transfer, delete, single rename, and bulk rename must expose one bounded,
-  monotonic aggregate/per-item progress model with coalesced worker updates.
 - Cancellation must be idempotent before work, during reversible staging/copy,
   and at irreversible publish/delete boundaries; committed work stays explicit.
 - Worker completion, watcher bursts, polling fallback, selection pruning, cwd
@@ -67,19 +70,21 @@ Test points:
 5. North-star backlog: M1 interactive CLI attachments, M2 git-worktree
    controls, M3 general panel/page/button interface evaluation.
 
-## Fresh C4.3 Evidence
+## Fresh C4.4.1 Evidence
 
-- Focused/broad rename, bulk, worker, App, and watcher regression 163/163.
-- Full nextest 3109/3109; only `path_beta_real_host_probe` ignored.
+- Focused C4 operation regression 57/57.
+- Full nextest 3115/3115; only `path_beta_real_host_probe` ignored. A separate
+  safe inventory proof reported `1 ignored / 0 failed` without executing it.
 - Linux all-target and canonical Windows MSVC bin clippy clean with
   `-D warnings`.
 - Bun 17/17; Python maintenance 64/64; fmt and diff-check clean.
-- Real temporary-filesystem tests proved file/directory/symlink rename,
-  source/destination races, cycles, swaps, injected rollback failure, and exact
-  recovery paths; no private staging artifact remains.
-- Graph refresh: 18,722 nodes / 88,526 edges. Freshness queries returned
-  `miller_layout` plus current single/bulk/name/App rename symbols after proving
-  the prior `ready` graph was stale.
+- The first full suite exposed an unrelated mixed real/synthetic-clock OMP
+  fixture; separate test-only `30d99bd` uses one explicit monotonic clock. The
+  exact test, 33-test family, and second full suite passed.
+- No `.herdr-operation-*` or `.herdr-rename-stage-*` artifact remains.
+- Graph refresh: 18,745 nodes / 87,178 edges. Freshness queries returned the
+  progress type, common worker seam, four production observer adapters, and
+  `miller_layout` after proving the prior `ready` graph was stale.
 
 ## Non-Negotiable Boundaries
 
