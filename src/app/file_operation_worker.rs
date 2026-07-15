@@ -1600,6 +1600,51 @@ mod tests {
         assert!(!worker.cancel(), "idle cancel is a no-op");
     }
 
+    // TP-C4.4-CANCEL: once the worker has buffered completion, cancellation
+    // has lost the race even before the UI drains that result. The cancel API
+    // must not claim acceptance or rewrite the sole terminal outcome.
+    #[test]
+    fn file_operation_worker_rejects_cancel_after_buffered_completion() {
+        let td = TempDir::new("cancel-after-completion");
+        let wake = Arc::new(Notify::new());
+        let mut worker = FileOperationWorker::with_executor(wake, execute_file_operation);
+        let plan = td.copy_plan("already-completed");
+        let destination = plan.destination_directory().to_path_buf();
+        let generation = worker.start(plan).expect("start completion race work");
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let completion_is_buffered = {
+                let (state, _) = &*worker.shared;
+                super::lock_state(state)
+                    .completion
+                    .as_ref()
+                    .is_some_and(|completion| completion.generation == generation)
+            };
+            if completion_is_buffered {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "worker completion was not buffered"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        assert!(
+            !worker.cancel_generation(generation),
+            "buffered terminal completion cannot accept cancellation"
+        );
+        let completion = worker.drain().completion.expect("buffered completion");
+        assert_eq!(completion.generation, generation);
+        assert_eq!(
+            expect_transfer_result(completion.result.expect("completion race result")).status(),
+            FileOperationExecutionStatus::Completed
+        );
+        assert!(destination.join("already-completed").exists());
+        assert!(!worker.is_busy());
+    }
+
     // TP-C4.1-LIFECYCLE: a panic is converted to an explicit terminal error;
     // it cannot strand the lane or poison the next generation.
     #[test]
