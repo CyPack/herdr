@@ -1459,6 +1459,34 @@ mod tests {
         assert!(!destination.exists());
     }
 
+    // TP-C4.4-CANCEL: once cancellation is observed at item start it wins over
+    // later pre-publish revalidation evidence. An external replacement remains
+    // visible, but this operation must not claim failure or attempt publish.
+    #[test]
+    fn single_rename_cancel_precedes_revalidation_failure() {
+        let td = TempDir::new("single-cancel-revalidation-race");
+        let source = td.root.join("source.txt");
+        let destination = td.root.join("renamed.txt");
+        fs::write(&source, b"original").expect("write original cancellable source");
+        let plan = RenameOperationPlan::preflight(request(source.clone(), "renamed.txt"))
+            .expect("cancellable revalidation plan");
+        let cancellation = FileOperationCancellation::default();
+
+        let result = execute_rename_operation_with_observer(&plan, &cancellation, |_| {
+            cancellation.cancel();
+            fs::remove_file(&source).expect("remove source during cancellation race");
+            fs::write(&source, b"replacement").expect("write cancellation race replacement");
+        });
+
+        assert_eq!(result.status(), RenameOperationExecutionStatus::Cancelled);
+        assert_eq!(result.outcome(), &RenameOperationOutcome::NotStarted);
+        assert_eq!(
+            fs::read(&source).expect("replacement remains visible"),
+            b"replacement"
+        );
+        assert!(!destination.exists());
+    }
+
     // TP-C4.3-ATOMIC: the final boundary revalidates both source identity and
     // destination absence. A replacement or newly occupied target must retain
     // every unrelated object and must not call the commit primitive.
