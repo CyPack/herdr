@@ -358,9 +358,9 @@ mod tests {
     use super::*;
     use crate::app::state::{
         ContextMenuKind, FileManagerActionBarModel, FileManagerActionDisabledReason,
-        FileManagerActionState, FileManagerContextMenuAction, FileManagerContextMenuTargetKind,
-        FileManagerHeaderAction, FileManagerHeaderActionArea, FileManagerRowAction,
-        FileManagerRowActionArea, FileManagerRowArea,
+        FileManagerActionState, FileManagerAgentHandoffRequest, FileManagerContextMenuAction,
+        FileManagerContextMenuTargetKind, FileManagerHeaderAction, FileManagerHeaderActionArea,
+        FileManagerRowAction, FileManagerRowActionArea, FileManagerRowArea,
     };
     use crate::app::Mode;
     use crate::fm::{FmState, MAX_MULTI_SELECTION_PATHS};
@@ -476,6 +476,25 @@ mod tests {
             })
             .collect();
         entry_path
+    }
+
+    fn install_focused_agent(app: &mut crate::app::App) -> crate::terminal::TerminalId {
+        let workspace = crate::workspace::Workspace::test_new("fm-agent-handoff");
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace
+            .terminal_id(pane_id)
+            .expect("focused agent terminal id")
+            .clone();
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .expect("focused agent terminal state")
+            .set_agent_name("fm-target".into());
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        terminal_id
     }
 
     fn mouse(kind: MouseEventKind, col: u16, row: u16) -> MouseEvent {
@@ -1380,6 +1399,102 @@ mod tests {
                 .collect::<Vec<_>>(),
             before_entries
         );
+    }
+
+    // TP-C5-AUTHORITY: the row SendAgent tag must bind one exact current path
+    // to the focused agent terminal identity without sending bytes, spawning a
+    // process, mutating the filesystem, or reconstructing authority from text.
+    #[test]
+    fn row_send_agent_prepares_exact_path_and_focused_terminal_identity() {
+        let td = TempDir::new("row-send-agent-authority");
+        td.file("alpha.txt");
+        td.file("beta.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let terminal_id = install_focused_agent(&mut app);
+        let entry_path = install_row_actions(&mut app, 1);
+        let before = fs::read(&entry_path).expect("read send-agent source before intent");
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 3));
+
+        assert_eq!(
+            app.state.request_file_manager_agent_handoff,
+            Some(FileManagerAgentHandoffRequest {
+                path: entry_path.clone(),
+                terminal_id,
+            })
+        );
+        assert_eq!(
+            fs::read(entry_path).expect("send-agent source remains unchanged"),
+            before
+        );
+    }
+
+    // TP-C5-AUTHORITY: C3's single-path context intent converges on the same
+    // typed current-agent request and is consumed exactly once.
+    #[test]
+    fn context_send_agent_converges_on_typed_current_authority() {
+        let td = TempDir::new("context-send-agent-authority");
+        td.file("selected.txt");
+        let path = td.root.join("selected.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let terminal_id = install_focused_agent(&mut app);
+        app.state.request_file_manager_context_action =
+            Some(crate::app::state::FileManagerContextActionIntent {
+                action: FileManagerContextMenuAction::SendAgent,
+                paths: vec![path.clone()],
+            });
+
+        assert!(app.sync_file_manager_agent_handoff());
+        assert!(app.state.request_file_manager_context_action.is_none());
+        assert_eq!(
+            app.state.request_file_manager_agent_handoff,
+            Some(FileManagerAgentHandoffRequest { path, terminal_id })
+        );
+        assert!(!app.sync_file_manager_agent_handoff());
+    }
+
+    // TP-C5-AUTHORITY: a terminal without agent identity, bulk row authority,
+    // or an operation-in-flight snapshot cannot create a handoff request.
+    #[test]
+    fn send_agent_authority_fails_closed_without_current_single_agent_target() {
+        let td = TempDir::new("send-agent-fail-closed");
+        td.file("alpha.txt");
+        td.file("beta.txt");
+
+        let mut non_agent = runtime_app_with_fm(FmState::new(&td.root));
+        let workspace = crate::workspace::Workspace::test_new("fm-non-agent");
+        non_agent.state.workspaces = vec![workspace];
+        non_agent.state.ensure_test_terminals();
+        non_agent.state.active = Some(0);
+        non_agent.state.selected = 0;
+        install_row_actions(&mut non_agent, 1);
+        non_agent.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 3));
+        assert!(non_agent.state.request_file_manager_agent_handoff.is_none());
+
+        let mut bulk = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut bulk);
+        install_row_actions(&mut bulk, 1);
+        let fm = bulk.state.file_manager.as_mut().expect("bulk FM open");
+        assert!(fm.replace_selection(0));
+        assert!(fm.toggle_selection(1));
+        bulk.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 3));
+        assert!(bulk.state.request_file_manager_agent_handoff.is_none());
+
+        let mut busy = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut busy);
+        install_row_actions(&mut busy, 1);
+        busy.state.file_manager_operation = Some(crate::app::state::FileManagerOperationState {
+            generation: 1,
+            kind: crate::app::state::FileManagerOperationKind::Copy,
+            destination_directory: td.root.clone(),
+            total_items: 1,
+            completed_items: 0,
+            failed_items: 0,
+            status: crate::app::state::FileManagerOperationStatus::Running,
+            items: Vec::new(),
+        });
+        busy.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 3));
+        assert!(busy.state.request_file_manager_agent_handoff.is_none());
     }
 
     // TP-C4.3-INTENT: the stable row Rename tag must converge on one typed
