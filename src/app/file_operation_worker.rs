@@ -3088,6 +3088,179 @@ mod tests {
         assert_eq!(fs::read(beta).expect("App bulk beta output"), b"alpha");
     }
 
+    // TP-C4.4-RECOVERY: if bulk staging and its rollback both fail, App must
+    // retain the exact private recovery path as terminal evidence. The worker
+    // lane still reopens for a strictly newer operation without hot retry or
+    // a second scheduler.
+    #[test]
+    fn app_bulk_rename_exposes_private_recovery_path_and_reuses_lane() {
+        struct StagingRecoveryFailingHost {
+            calls: usize,
+        }
+
+        impl crate::fm::rename::RenameOperationHost for StagingRecoveryFailingHost {
+            fn before_revalidation(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+
+            fn publish_no_replace(
+                &mut self,
+                source: &std::path::Path,
+                destination: &std::path::Path,
+            ) -> std::io::Result<()> {
+                self.calls += 1;
+                if matches!(self.calls, 2 | 3) {
+                    Err(std::io::Error::other(
+                        "injected staging and rollback failure",
+                    ))
+                } else {
+                    crate::platform::publish_staged_path_no_replace(source, destination)
+                }
+            }
+        }
+
+        let td = TempDir::new("app-bulk-private-recovery");
+        let source_dir = td.root.join("next-source");
+        fs::create_dir(&source_dir).expect("create next-operation source directory");
+        let alpha = td.root.join("alpha.txt");
+        let beta = td.root.join("beta.txt");
+        let next = source_dir.join("next.txt");
+        fs::write(&alpha, b"alpha").expect("write private recovery alpha");
+        fs::write(&beta, b"beta").expect("write private recovery beta");
+        fs::write(&next, b"next").expect("write recovery lane source");
+        let worker = FileOperationWorker::with_task_executor(
+            Arc::new(Notify::new()),
+            move |task, cancellation| match task {
+                FileOperationWorkerTask::BulkRename(plan) => FileOperationWorkerResult::BulkRename(
+                    crate::fm::rename::execute_bulk_rename_operation_with_host(
+                        plan,
+                        cancellation,
+                        &mut StagingRecoveryFailingHost { calls: 0 },
+                    ),
+                ),
+                FileOperationWorkerTask::Transfer(plan) => {
+                    FileOperationWorkerResult::Transfer(execute_file_operation(plan, cancellation))
+                }
+                _ => panic!("unexpected private recovery task"),
+            },
+        );
+        let mut file_manager = crate::fm::FmState::new(&td.root);
+        let alpha_index = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == alpha)
+            .expect("private recovery alpha row");
+        let beta_index = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == beta)
+            .expect("private recovery beta row");
+        assert!(file_manager.replace_selection(alpha_index));
+        assert!(file_manager.toggle_selection(beta_index));
+        let mut app = test_app();
+        app.file_operation_worker = worker;
+        app.state.file_manager = Some(file_manager);
+        app.state.request_file_manager_bulk_rename =
+            Some(crate::app::state::FileManagerBulkRenameRequest {
+                mappings: vec![
+                    (alpha.clone(), "renamed-alpha.txt".to_string()),
+                    (beta.clone(), "renamed-beta.txt".to_string()),
+                ],
+            });
+
+        assert!(app.sync_file_operation_worker());
+        let failed_generation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("private recovery operation running")
+            .generation;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .is_some_and(FileManagerOperationState::is_running)
+        {
+            let _ = app.sync_file_operation_worker();
+            assert!(Instant::now() < deadline, "private recovery timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let operation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("private recovery operation terminal");
+        assert_eq!(operation.status, FileManagerOperationStatus::Partial);
+        assert_eq!(operation.completed_items, 0);
+        assert_eq!(operation.failed_items, 2);
+        let uncertain = operation
+            .items
+            .iter()
+            .find(|item| item.path == alpha)
+            .expect("uncertain alpha projection");
+        assert_eq!(uncertain.status, FileManagerOperationItemStatus::Failed);
+        let recovery_path = uncertain
+            .recovery_path
+            .as_ref()
+            .expect("private recovery path remains visible");
+        assert!(recovery_path.starts_with(&td.root));
+        assert!(recovery_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(".herdr-rename-stage-")));
+        assert_eq!(
+            fs::read(recovery_path).expect("read exact private recovery artifact"),
+            b"alpha"
+        );
+        let private_artifacts = fs::read_dir(&td.root)
+            .expect("scan private recovery artifacts")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(".herdr-rename-stage-"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(private_artifacts, vec![recovery_path.clone()]);
+        assert!(!app.file_operation_worker.is_busy());
+
+        app.state.file_manager_clipboard = vec![next];
+        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
+        let next_generation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("post-recovery operation running")
+            .generation;
+        assert!(next_generation > failed_generation);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .is_some_and(FileManagerOperationState::is_running)
+        {
+            let _ = app.sync_file_operation_worker();
+            assert!(Instant::now() < deadline, "post-recovery paste timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            app.state
+                .file_manager_operation
+                .as_ref()
+                .expect("post-recovery operation terminal")
+                .status,
+            FileManagerOperationStatus::Completed
+        );
+        assert_eq!(
+            fs::read(td.root.join("next.txt")).expect("read post-recovery copy"),
+            b"next"
+        );
+    }
+
     // Keep the single-rename core status imports exercised at the worker
     // boundary so accidental result-type drift is a compile-time failure.
     #[test]
