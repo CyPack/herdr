@@ -2710,7 +2710,15 @@ mod tests {
     fn omp_reacquires_full_lifecycle_hook_after_process_exit_with_fresh_process_and_session_ref() {
         let now = Instant::now();
         let mut terminal = test_terminal();
-        terminal.set_detected_state(Some(Agent::Omp), AgentState::Idle);
+        terminal.set_detected_state_with_screen_signals_at(
+            Some(Agent::Omp),
+            AgentState::Idle,
+            false,
+            false,
+            false,
+            false,
+            now,
+        );
         terminal.set_hook_authority_with_custom_status_at(
             "herdr:omp".into(),
             "omp".into(),
@@ -2719,7 +2727,7 @@ mod tests {
             None,
             crate::agent_resume::AgentSessionRef::id("omp-old"),
             Some(1000),
-            now,
+            now + Duration::from_millis(1),
         );
         terminal.set_detected_state_with_screen_signals_at(
             Some(Agent::Omp),
@@ -2728,10 +2736,10 @@ mod tests {
             true,
             false,
             true,
-            now + Duration::from_millis(1),
+            now + Duration::from_millis(2),
         );
 
-        let stale = terminal.set_hook_authority_with_session_ref(
+        let stale = terminal.set_hook_authority_with_custom_status_at(
             "herdr:omp".into(),
             "omp".into(),
             AgentState::Working,
@@ -2739,6 +2747,7 @@ mod tests {
             None,
             crate::agent_resume::AgentSessionRef::id("omp-old"),
             Some(500),
+            now + Duration::from_millis(3),
         );
         assert!(stale.is_none());
         assert!(terminal.hook_authority.is_none());
@@ -2750,7 +2759,7 @@ mod tests {
             false,
             false,
             false,
-            now + Duration::from_millis(2),
+            now + Duration::from_millis(4),
         );
         terminal.set_detected_state_with_screen_signals_at(
             Some(Agent::Omp),
@@ -2759,9 +2768,9 @@ mod tests {
             false,
             false,
             false,
-            now + Duration::from_millis(3),
+            now + Duration::from_millis(5),
         );
-        let fresh = terminal.set_hook_authority_with_session_ref(
+        let fresh = terminal.set_hook_authority_with_custom_status_at(
             "herdr:omp".into(),
             "omp".into(),
             AgentState::Working,
@@ -2769,6 +2778,7 @@ mod tests {
             None,
             crate::agent_resume::AgentSessionRef::id("omp-new"),
             Some(500),
+            now + Duration::from_millis(6),
         );
 
         assert!(fresh.is_some());
