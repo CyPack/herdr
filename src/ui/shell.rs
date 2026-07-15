@@ -15,75 +15,13 @@
 //! area and returns rects, matching herdr's `compute_view` (geometry) / `render`
 //! (pure draw) split.
 
-use std::collections::HashMap;
-
 use ratatui::layout::{Constraint, Layout, Rect};
-use serde::{Deserialize, Serialize};
 
-/// A named region of the outer shell (the chrome around the pane/content area).
-///
-/// Only `LeftPanel` + `CenterContent` are populated by [`ShellLayout::default`]
-/// today — together they reproduce herdr's current `sidebar | main` outer split.
-/// `TopBar`, `RightPanel`, and `BottomBar` are reserved seams for future
-/// composition (a top toolbar, a right rail, a bottom bar); they are not in the
-/// default tree yet, so [`RegionRects::get`] returns an empty rect for them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub(crate) enum RegionId {
-    TopBar,
-    AppDock,
-    LeftPanel,
-    CenterContent,
-    WorkspaceStage,
-    RightPanel,
-    BottomBar,
-}
+mod model;
 
-/// How much space a shell child claims along its parent split's axis.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub(crate) enum RegionSize {
-    /// A cell count resolved at compute time from live app state (today only the
-    /// sidebar, whose width depends on collapse mode and clamps). Kept *out* of
-    /// the tree so the existing `sidebar_width` stays the single source of truth.
-    /// Maps to ratatui `Constraint::Length`.
-    Dynamic,
-    /// Takes the remaining space (ratatui `Constraint::Min(1)`).
-    Fill,
-}
-
-/// A node in the outer-shell layout tree: either a leaf hosting one region, or
-/// an axis-aligned split of children.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) enum ShellNode {
-    /// A leaf hosting exactly one named region.
-    Slot { region: RegionId },
-    /// An axis-aligned split; children are laid out first-to-last along `direction`.
-    Split {
-        direction: ShellDirection,
-        children: Vec<ShellChild>,
-    },
-}
-
-/// One child of a [`ShellNode::Split`]: its size constraint plus its subtree.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ShellChild {
-    pub size: RegionSize,
-    pub node: ShellNode,
-}
-
-/// Split axis. Mirrors ratatui's `Direction` with a stable serde representation
-/// (the same reason `persist::snapshot::DirectionSnapshot` exists).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum ShellDirection {
-    Horizontal,
-    Vertical,
-}
-
-/// The outer-shell layout tree. [`ShellLayout::default`] reproduces herdr's
-/// current outer split exactly, so introducing it is behavior-identical.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ShellLayout {
-    root: ShellNode,
-}
+pub(crate) use model::{
+    RegionId, RegionRects, RegionSize, ShellChild, ShellDirection, ShellLayout, ShellNode,
+};
 
 impl Default for ShellLayout {
     /// Today's outer shell: a horizontal split of the frame into the left
@@ -103,32 +41,12 @@ impl Default for ShellLayout {
                     ShellChild {
                         size: RegionSize::Fill,
                         node: ShellNode::Slot {
-                            region: RegionId::CenterContent,
+                            region: RegionId::WorkspaceStage,
                         },
                     },
                 ],
             },
         }
-    }
-}
-
-/// The resolved rect of each region present in a computed [`ShellLayout`].
-/// Regions absent from the layout tree return an empty rect from [`Self::get`]
-/// (total — never panics), so callers never need to unwrap.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub(crate) struct RegionRects {
-    rects: HashMap<RegionId, Rect>,
-}
-
-impl RegionRects {
-    /// The rect assigned to `region`, or `Rect::default()` (empty) if the region
-    /// is not part of the computed layout.
-    pub fn get(&self, region: RegionId) -> Rect {
-        self.rects.get(&region).copied().unwrap_or_default()
-    }
-
-    fn insert(&mut self, region: RegionId, rect: Rect) {
-        self.rects.insert(region, rect);
     }
 }
 
