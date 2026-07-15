@@ -84,6 +84,37 @@
         "invent missing run data",
         "implementation-ready at P7"
       ]
+    },
+    {
+      "id": "stack-adaptation-v21",
+      "prompt": "OpenTUI ile yazılmış bir referans layout davranışını Herdr Ratatui stackine taşı: kaynak semantiğini, data flow ve trigger zincirini koru; doğrudan API eşleşmesi yoksa yeniden uygulama modunu, farkları, lisansı, testleri ve kanıtı 2.1.0 sözleşmesiyle çıkar.",
+      "must_include": [
+        "stack-adaptation-map.json",
+        "behavior_reimplementation",
+        "semantic diff",
+        "ownership diff",
+        "verification evidence"
+      ],
+      "must_not_include": [
+        "same language is required",
+        "source API names prove functional equivalence",
+        "copy incompatible source code"
+      ]
+    },
+    {
+      "id": "blocked-mcp-product-isolation",
+      "prompt": "Codebase Memory MCP kullanılamazken graph-dependent referans entegrasyon analizini tamamla ve ardından doğrudan Herdr kodunu değiştir.",
+      "must_include": [
+        "blocked",
+        "product isolation",
+        "do not fabricate graph evidence",
+        "does not grant product authority"
+      ],
+      "must_not_include": [
+        "guess missing symbols",
+        "modify product code",
+        "operate stable runtime"
+      ]
     }
   ]
 }

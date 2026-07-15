@@ -1,5 +1,6 @@
 {
   "goal": "Upgrade the canonical reference-project pipeline from source intelligence to implementation-ready Herdr integration intelligence without changing product code",
+  "module_version": "2.1.0",
   "ontology": {
     "in_scope": ["reference source analysis", "Herdr current-state cartography", "behavior gaps", "data authority", "terminal-cell fidelity", "component ownership", "TDD and cross-test planning", "machine validation"],
     "out_of_scope": ["Herdr product implementation", "stable runtime operations", "dependency adoption", "third-party source copying", "commit or push"],
@@ -15,7 +16,8 @@
       {"id": "C5", "name": "cell-level fidelity P11", "responsibility": "specify deterministic layout, cells, hit regions, fallbacks, motion and performance baselines"},
       {"id": "C6", "name": "component integration blueprint P12", "responsibility": "bind macro, micro and overlay components to Herdr state/view/render/input/focus ownership"},
       {"id": "C7", "name": "implementation and verification plan P13", "responsibility": "derive TDD slices and local, cross, capability, benchmark and soak obligations"},
-      {"id": "C8", "name": "integration audit and skill routing P14", "responsibility": "validate traceability, fidelity, architecture, isolation and terminal status"}
+      {"id": "C8", "name": "integration audit and skill routing P14", "responsibility": "validate traceability, fidelity, architecture, isolation and terminal status"},
+      {"id": "C9", "name": "cross-stack adaptation contract P2 P5 P9 P14", "responsibility": "preserve source semantics while binding translation mode, target ownership, diffs, license, tests and evidence"}
     ],
     "dependencies": [
       {"from": "C2", "to": "C1", "kind": "consumes published source intelligence", "claim_ref": "CL1"},
@@ -27,7 +29,9 @@
       {"from": "C6", "to": "C5", "kind": "binds component geometry and visual states", "claim_ref": "CL5"},
       {"from": "C7", "to": "C6", "kind": "slices approved component ownership", "claim_ref": "CL6"},
       {"from": "C8", "to": "C1", "kind": "requires source audit closure", "claim_ref": "CL7"},
-      {"from": "C8", "to": "C7", "kind": "audits complete integration traceability", "claim_ref": "CL7"}
+      {"from": "C8", "to": "C7", "kind": "audits complete integration traceability", "claim_ref": "CL7"},
+      {"from": "C9", "to": "C1", "kind": "consumes source semantics and behavior evidence", "claim_ref": "CL9"},
+      {"from": "C8", "to": "C9", "kind": "audits stack translation and product isolation", "claim_ref": "CL9"}
     ],
     "claims": [
       {"id": "CL1", "text": "P0-P7 and P8 are separated so desired source architecture cannot overwrite current Herdr reality", "status": "verified", "sources": [{"type": "machine-manifest", "path": ".codex/skills/ratatui-design-intelligence/assets/reference-project-pipeline-v2.json", "confidence": 0.99}]},
@@ -37,7 +41,8 @@
       {"id": "CL5", "text": "Component design occurs only after behavior, data and layout contracts and records state/view/render/input/focus ownership", "status": "verified", "sources": [{"type": "artifact-template", "path": ".codex/skills/ratatui-design-intelligence/assets/templates/component-integration-map-template.json", "confidence": 0.99}]},
       {"id": "CL6", "text": "Implementation planning is RED-first and includes local and cross-layer failure verification", "status": "verified", "sources": [{"type": "machine-manifest", "path": ".codex/skills/ratatui-design-intelligence/assets/reference-project-pipeline-v2.json", "confidence": 0.99}]},
       {"id": "CL7", "text": "P14 passes only with complete references, integration V=0, zero undeclared fidelity differences and product isolation", "status": "verified", "sources": [{"type": "executable-validator", "path": ".codex/skills/ratatui-design-intelligence/scripts/validate_reference_pipeline.py", "confidence": 0.99}]},
-      {"id": "CL8", "text": "The current Herdr architecture has explicit shared event/subscription seams and pure geometry-to-render separation but no graph-proven orchestration run, todo, token usage or cost model", "status": "verified", "sources": [{"type": "codebase-memory-mcp", "path": "home-ayaz-projects-herdr exact symbol and graph-augmented source queries at a61cfb640c315cff89df772acf0b5dec4111319b", "confidence": 0.98}]}
+      {"id": "CL8", "text": "The current Herdr architecture has explicit shared event/subscription seams and pure geometry-to-render separation but no graph-proven orchestration run, todo, token usage or cost model", "status": "verified", "sources": [{"type": "codebase-memory-mcp", "path": "home-ayaz-projects-herdr exact symbol and graph-augmented source queries at a61cfb640c315cff89df772acf0b5dec4111319b", "confidence": 0.98}]},
+      {"id": "CL9", "text": "Version 2.1.0 makes cross-stack translation explicit, evidence-backed, license-aware and non-authorizing before P14 handoff", "status": "verified", "sources": [{"type": "json-schema", "path": ".codex/skills/ratatui-design-intelligence/assets/schemas/stack-adaptation-map.schema.json", "confidence": 0.99}, {"type": "executable-validator", "path": ".codex/skills/ratatui-design-intelligence/scripts/validate_v21_module.py", "confidence": 0.99}]}
     ],
     "verifications": [
       {"id": "V1", "component_ref": "C1", "oracle": "executable", "command": "validate_reference_pipeline.py pipeline-v2 run-template", "expected": "15 phases and all source contracts valid"},
@@ -47,7 +52,8 @@
       {"id": "V5", "component_ref": "C5", "oracle": "dataset", "command": "validate layout-fidelity record contract", "expected": "terminal-cell, viewport, capability and zero-diff contracts present"},
       {"id": "V6", "component_ref": "C6", "oracle": "dataset", "command": "validate component-integration record contract", "expected": "state/view/render/input/focus and failure ownership present"},
       {"id": "V7", "component_ref": "C7", "oracle": "dataset", "command": "validate implementation and integration-verification contracts", "expected": "RED-first local and cross-test obligations present"},
-      {"id": "V8", "component_ref": "C8", "oracle": "executable", "command": "unit tests, pipeline validator, JSON parse, eval coverage and system-map validator", "expected": "all green with V=0"}
+      {"id": "V8", "component_ref": "C8", "oracle": "executable", "command": "unit tests, pipeline validator, JSON parse, eval coverage and system-map validator", "expected": "all green with V=0"},
+      {"id": "V9", "component_ref": "C9", "oracle": "executable", "command": "validate_v21_module.py module-root plus v2.1 contract tests", "expected": "stack schema, template, phase bindings, governance and product isolation pass"}
     ]
   },
   "variant": {

@@ -8,6 +8,19 @@ description: Use when designing, reviewing, or implementing Herdr TUI pages, res
 Use this skill before changing Herdr TUI structure or visual behavior. It is a
 router and adaptation guide, not permission to copy third-party code.
 
+## Version 2.1.0 stack adaptation
+
+For every cross-stack source, produce `stack-adaptation-map.json` and classify
+each mapping as `direct_api`, `structural_adapter`,
+`behavior_reimplementation`, or `reject`. Bind source semantics, data flow,
+behavior trigger, target ownership, semantic/failure/performance/ownership
+diffs, license boundary, acceptance tests, cross tests, and verification
+evidence before P14 can pass.
+
+P14 hands validated reference-adapter input to the sibling module
+`herdr-change-pipeline`. This handoff does not grant product authority and does
+not authorize product code changes or stable runtime operations.
+
 ## Required workflow
 
 When the user supplies a new reference-project URL for corpus intake, read

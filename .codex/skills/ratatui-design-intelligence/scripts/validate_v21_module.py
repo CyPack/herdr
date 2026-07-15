@@ -57,6 +57,23 @@ STACK_STATUSES = {
     "rejected",
 }
 EVIDENCE_FIELDS = {"kind", "location", "claim", "confidence"}
+README_SECTIONS = [
+    "Purpose",
+    "Inputs",
+    "Versions",
+    "P0-P14",
+    "Outputs",
+    "Commands",
+    "Statuses",
+    "MCP Blocking",
+    "Product Isolation",
+    "Handoff",
+]
+GOVERNANCE_FILES = {
+    "README.md",
+    "AGENTS.md",
+    "references/module-governance.md",
+}
 
 
 def validate_module(module: Any, skill_root: Path) -> list[str]:
@@ -243,6 +260,137 @@ def load_json(path: Path) -> tuple[Any | None, list[str]]:
         return None, [f"{path}: cannot load JSON: {error}"]
 
 
+def _load_text(path: Path) -> tuple[str | None, list[str]]:
+    try:
+        return path.read_text(encoding="utf-8"), []
+    except OSError as error:
+        return None, [f"{path}: cannot load text: {error}"]
+
+
+def validate_governance_documents(skill_root: Path) -> list[str]:
+    paths = {
+        "readme": skill_root / "README.md",
+        "agents": skill_root / "AGENTS.md",
+        "governance": skill_root / "references" / "module-governance.md",
+        "skill": skill_root / "SKILL.md",
+    }
+    documents: dict[str, str] = {}
+    errors: list[str] = []
+    for name, path in paths.items():
+        content, load_errors = _load_text(path)
+        errors.extend(load_errors)
+        if content is not None:
+            documents[name] = content
+
+    module, module_errors = load_json(skill_root / "module.json")
+    evals, eval_errors = load_json(skill_root / "evals" / "evals.json")
+    system_map, map_errors = load_json(
+        skill_root / ".cartography" / "SYSTEM-MAP.json"
+    )
+    errors.extend(module_errors + eval_errors + map_errors)
+    if errors:
+        return errors
+
+    readme = documents["readme"]
+    headings = [
+        line.removeprefix("## ")
+        for line in readme.splitlines()
+        if line.startswith("## ")
+    ]
+    if headings != README_SECTIONS:
+        errors.append("README level-two sections are not canonical or ordered")
+
+    for name, content in documents.items():
+        if "2.1.0" not in content:
+            errors.append(f"{name} must declare module version 2.1.0")
+    for command in (
+        "python -m unittest discover",
+        "validate_reference_pipeline.py",
+        "validate_v21_module.py",
+    ):
+        if command not in readme:
+            errors.append(f"README is missing validation command {command}")
+
+    combined = "\n".join(
+        documents[name] for name in ("readme", "agents", "governance")
+    )
+    for term in (
+        "Codebase Memory",
+        "blocked",
+        "partial",
+        "product code",
+        "stable runtime",
+        "targeted staging",
+        "CyPack",
+        "fast-forward",
+        "TDD",
+        "herdr-change-pipeline",
+    ):
+        if term not in combined:
+            errors.append(f"governance documents are missing term {term}")
+
+    if not isinstance(module, dict):
+        errors.append("module governance requires an object manifest")
+    elif not GOVERNANCE_FILES.issubset(set(module.get("required_files", []))):
+        errors.append("module manifest does not require governance files")
+
+    skill = documents["skill"]
+    for term in (
+        "stack-adaptation-map.json",
+        "behavior_reimplementation",
+        "herdr-change-pipeline",
+        "does not grant product authority",
+    ):
+        if term not in skill:
+            errors.append(f"SKILL routing is missing term {term}")
+
+    eval_items = evals.get("evals") if isinstance(evals, dict) else None
+    if not isinstance(eval_items, list):
+        errors.append("evals must contain an evals array")
+    else:
+        eval_ids = {
+            item.get("id") for item in eval_items if isinstance(item, dict)
+        }
+        for eval_id in (
+            "stack-adaptation-v21",
+            "blocked-mcp-product-isolation",
+        ):
+            if eval_id not in eval_ids:
+                errors.append(f"eval coverage is missing {eval_id}")
+
+    if not isinstance(system_map, dict):
+        errors.append("cartography must be a JSON object")
+    else:
+        nodes = system_map.get("nodes", {})
+        components = {
+            item.get("id"): item
+            for item in nodes.get("components", [])
+            if isinstance(item, dict)
+        }
+        claims = {
+            item.get("id"): item
+            for item in nodes.get("claims", [])
+            if isinstance(item, dict)
+        }
+        verifications = {
+            item.get("id"): item
+            for item in nodes.get("verifications", [])
+            if isinstance(item, dict)
+        }
+        if system_map.get("module_version") != "2.1.0":
+            errors.append("cartography module_version must equal 2.1.0")
+        if "C9" not in components:
+            errors.append("cartography is missing stack component C9")
+        if claims.get("CL9", {}).get("status") != "verified":
+            errors.append("cartography claim CL9 must be verified")
+        if verifications.get("V9", {}).get("component_ref") != "C9":
+            errors.append("cartography verification V9 must bind C9")
+        if system_map.get("variant", {}).get("V") != 0:
+            errors.append("cartography variant must close at V=0")
+
+    return errors
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print("usage: validate_v21_module.py <module-root>")
@@ -264,6 +412,7 @@ def main(argv: list[str]) -> int:
         errors.extend(validate_stack_schema(schema))
     if template is not None:
         errors.extend(validate_stack_document(template))
+    errors.extend(validate_governance_documents(root))
     for error in errors:
         print(f"FAIL: {error}")
     if errors:

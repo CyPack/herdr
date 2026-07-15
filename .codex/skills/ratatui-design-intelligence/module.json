@@ -10,13 +10,16 @@
   "product_code_changes_authorized": false,
   "stable_runtime_operations_authorized": false,
   "required_files": [
+    "README.md",
+    "AGENTS.md",
     "SKILL.md",
     "assets/reference-project-pipeline-v2.json",
     "assets/reference-project-run-template.json",
     "assets/schemas/stack-adaptation-map.schema.json",
     "assets/templates/stack-adaptation-map-template.json",
     "scripts/validate_reference_pipeline.py",
-    "scripts/validate_v21_module.py"
+    "scripts/validate_v21_module.py",
+    "references/module-governance.md"
   ],
   "required_output_artifacts": [
     "stack-adaptation-map.json"
