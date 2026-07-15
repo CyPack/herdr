@@ -1253,15 +1253,15 @@ mod tests {
             file_manager_image_target(Rect::new(10, 5, 25, 10), cells),
             Some(ImagePreviewTarget {
                 width_px: 96,
-                height_px: 128,
+                height_px: 112,
             }),
-            "two-column preview excludes the FM header and PREVIEW title"
+            "two-column preview excludes the FM header, status, and PREVIEW title"
         );
         assert_eq!(
             file_manager_image_target(Rect::new(10, 5, 38, 10), cells),
             Some(ImagePreviewTarget {
                 width_px: 96,
-                height_px: 128,
+                height_px: 112,
             }),
             "three-column preview consumes the same named preview content seam"
         );
@@ -1304,7 +1304,7 @@ mod tests {
             .expect("valid three-column local placement");
 
         assert_eq!(placement.pane_id, PaneId::from_raw(u32::MAX));
-        assert_eq!(placement.area, Rect::new(36, 7, 12, 8));
+        assert_eq!(placement.area, Rect::new(36, 7, 12, 7));
         assert_eq!(placement.scrollback_offset, 0);
         assert_eq!(placement.placement.format, KittyImageFormat::Rgba);
         assert_eq!(
@@ -1328,14 +1328,14 @@ mod tests {
                 placement.placement.render.viewport_col,
                 placement.placement.render.viewport_row
             ),
-            (1, 2)
+            (1, 1)
         );
 
         let (clipped, format) = clipped_placement(&placement).expect("placement remains visible");
         assert_eq!(format, 32);
         assert_eq!(
             (clipped.x, clipped.y, clipped.cols, clipped.rows),
-            (37, 9, 10, 4)
+            (37, 8, 10, 4)
         );
 
         let malformed = PreparedImagePreview {
@@ -1382,7 +1382,7 @@ mod tests {
             state: FmImagePreviewState::Ready {
                 target: ImagePreviewTarget {
                     width_px: 96,
-                    height_px: 128,
+                    height_px: 112,
                 },
                 prepared: first,
             },
@@ -1401,7 +1401,7 @@ mod tests {
         assert!(first_text.contains("a=t,t=d,f=32,s=80,v=64"));
         assert!(first_text.contains("a=p"));
         assert!(first_text.contains("c=10,r=4"));
-        assert!(first_text.contains("\x1b[10;38H"));
+        assert!(first_text.contains("\x1b[9;38H"));
 
         let cached = collect_file_manager_image_placement(&app, cells, &cache.images)
             .expect("cached image placement metadata");
@@ -1426,7 +1426,7 @@ mod tests {
         preview.state = FmImagePreviewState::Ready {
             target: ImagePreviewTarget {
                 width_px: 96,
-                height_px: 128,
+                height_px: 112,
             },
             prepared: PreparedImagePreview {
                 width: 80,

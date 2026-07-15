@@ -22,13 +22,13 @@ use crate::app::state::{AppState, Palette};
 use crate::app::state::{
     FileManagerActionBarModel, FileManagerActionBarSelection, FileManagerActionBarSelectionKind,
     FileManagerActionDisabledReason, FileManagerActionState, FileManagerHeaderAction,
-    FileManagerHeaderActionArea, FileManagerRowAction, FileManagerRowActionArea,
-    FileManagerRowArea,
+    FileManagerHeaderActionArea, FileManagerOperationKind, FileManagerOperationState,
+    FileManagerOperationStatus, FileManagerRowAction, FileManagerRowActionArea, FileManagerRowArea,
 };
 use crate::fm::{
-    FileEntry, FmFilePreview, FmImagePreviewState, FmPreview, FmState, HighlightedTextPreview,
-    ImagePreviewError, PreviewTextLine, PreviewTextSpan, PreviewTextStyle, TextPreview,
-    TextPreviewError,
+    FileEntry, FmDirectoryStatus, FmFilePreview, FmImagePreviewState, FmPreview, FmState,
+    HighlightedTextPreview, ImagePreviewError, PreviewTextLine, PreviewTextSpan, PreviewTextStyle,
+    TextPreview, TextPreviewError,
 };
 
 const MIN_COLUMN_WIDTH: u16 = 12;
@@ -53,6 +53,11 @@ struct FileManagerVisualStyles {
     multi_selection: Style,
     directory: Style,
     file: Style,
+    warning: Style,
+    error: Style,
+    running: Style,
+    completed: Style,
+    cancelled: Style,
 }
 
 /// Project theme roles into native-FM styles without embedding theme-specific
@@ -90,6 +95,11 @@ fn file_manager_visual_styles(palette: &Palette) -> FileManagerVisualStyles {
             .bg(palette.panel_bg)
             .add_modifier(Modifier::BOLD),
         file: Style::default().fg(palette.subtext0).bg(palette.panel_bg),
+        warning: Style::default().fg(palette.yellow).bg(palette.panel_bg),
+        error: Style::default().fg(palette.red).bg(palette.panel_bg),
+        running: Style::default().fg(palette.yellow).bg(palette.surface0),
+        completed: Style::default().fg(palette.green).bg(palette.surface0),
+        cancelled: Style::default().fg(palette.peach).bg(palette.surface0),
     }
 }
 
@@ -105,6 +115,7 @@ struct MillerLayout {
 struct FileManagerAreas {
     header: Rect,
     columns: MillerLayout,
+    status: Rect,
 }
 
 fn miller_layout(area: Rect) -> MillerLayout {
@@ -150,10 +161,16 @@ fn file_manager_areas(area: Rect) -> Option<FileManagerAreas> {
     if area.width == 0 || area.height == 0 {
         return None;
     }
-    let [header, body] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+    let [header, body, status] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(1),
+    ])
+    .areas(area);
     Some(FileManagerAreas {
         header,
         columns: miller_layout(body),
+        status,
     })
 }
 
@@ -399,6 +416,111 @@ fn file_manager_action_bar_identity(cwd: &str, action_bar: &FileManagerActionBar
     identity
 }
 
+fn file_manager_operation_kind_label(kind: FileManagerOperationKind) -> &'static str {
+    match kind {
+        FileManagerOperationKind::Copy => "copy",
+        FileManagerOperationKind::Move => "move",
+        FileManagerOperationKind::Trash => "trash",
+        FileManagerOperationKind::PermanentDelete => "delete",
+        FileManagerOperationKind::Rename => "rename",
+        FileManagerOperationKind::BulkRename => "bulk rename",
+    }
+}
+
+fn file_manager_operation_summary(operation: &FileManagerOperationState) -> String {
+    let kind = file_manager_operation_kind_label(operation.kind);
+    let counts = format!("{}/{}", operation.completed_items, operation.total_items);
+    let mut summary = match operation.status {
+        FileManagerOperationStatus::Running => format!("{kind} {counts} · Esc cancel"),
+        FileManagerOperationStatus::Completed => format!("{kind} completed {counts}"),
+        FileManagerOperationStatus::Cancelled => format!("{kind} cancelled {counts}"),
+        FileManagerOperationStatus::Partial => format!(
+            "{kind} partial {counts} · {} failed",
+            operation.failed_items
+        ),
+        FileManagerOperationStatus::Failed => {
+            format!("{kind} failed {counts} · {} failed", operation.failed_items)
+        }
+    };
+    if matches!(
+        operation.status,
+        FileManagerOperationStatus::Partial | FileManagerOperationStatus::Failed
+    ) {
+        if let Some(recovery_path) = operation
+            .items
+            .iter()
+            .find_map(|item| item.recovery_path.as_ref())
+        {
+            summary.push_str(" · recovery: ");
+            summary.push_str(&recovery_path.to_string_lossy());
+        }
+    }
+    summary
+}
+
+fn file_manager_cwd_status_text(file_manager: &FmState) -> Option<&'static str> {
+    match file_manager.cwd_status {
+        FmDirectoryStatus::Missing => Some("cwd is missing"),
+        FmDirectoryStatus::PermissionDenied => Some("cwd permission denied"),
+        FmDirectoryStatus::Unavailable => Some("cwd is unavailable"),
+        FmDirectoryStatus::Available if !file_manager.cwd_writable => Some("cwd is read-only"),
+        FmDirectoryStatus::Available => None,
+    }
+}
+
+fn file_manager_status_line(
+    file_manager: &FmState,
+    operation: Option<&FileManagerOperationState>,
+    styles: FileManagerVisualStyles,
+) -> Option<(String, Style)> {
+    let mut text = operation.map(file_manager_operation_summary);
+    if let Some(cwd_status) = file_manager_cwd_status_text(file_manager) {
+        match text.as_mut() {
+            Some(text) => {
+                text.push_str(" · ");
+                text.push_str(cwd_status);
+            }
+            None => text = Some(cwd_status.to_owned()),
+        }
+    }
+    let style = if matches!(
+        operation.map(|operation| operation.status),
+        Some(FileManagerOperationStatus::Partial | FileManagerOperationStatus::Failed)
+    ) || matches!(
+        file_manager.cwd_status,
+        FmDirectoryStatus::Missing
+            | FmDirectoryStatus::PermissionDenied
+            | FmDirectoryStatus::Unavailable
+    ) {
+        styles.error
+    } else if !file_manager.cwd_writable {
+        styles.warning
+    } else {
+        match operation.map(|operation| operation.status) {
+            Some(FileManagerOperationStatus::Running) => styles.running,
+            Some(FileManagerOperationStatus::Completed) => styles.completed,
+            Some(FileManagerOperationStatus::Cancelled) => styles.cancelled,
+            Some(FileManagerOperationStatus::Partial | FileManagerOperationStatus::Failed) => {
+                styles.error
+            }
+            None => return None,
+        }
+    };
+    text.map(|text| (text, style))
+}
+
+fn file_manager_current_empty_state(
+    file_manager: &FmState,
+    styles: FileManagerVisualStyles,
+) -> (&'static str, Style) {
+    match file_manager.cwd_status {
+        FmDirectoryStatus::Available => ("(empty directory)", styles.empty),
+        FmDirectoryStatus::Missing => ("(directory missing)", styles.error),
+        FmDirectoryStatus::PermissionDenied => ("(permission denied)", styles.error),
+        FmDirectoryStatus::Unavailable => ("(directory unavailable)", styles.error),
+    }
+}
+
 /// Lay out complete native-FM header buttons from highest to lowest priority.
 /// The cwd identity keeps a readable minimum; actions that cannot fit in full
 /// are omitted so render/input can never expose a clipped phantom target.
@@ -552,6 +674,7 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
                 "(empty)",
                 None,
                 None,
+                None,
             );
         } else {
             render_panel(
@@ -564,10 +687,12 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
                 "(root)",
                 None,
                 None,
+                None,
             );
         }
     }
 
+    let (current_empty_label, current_empty_style) = file_manager_current_empty_state(fm, styles);
     render_panel(
         app,
         frame,
@@ -575,7 +700,8 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         "CURRENT",
         &fm.entries,
         (!fm.entries.is_empty()).then_some(fm.cursor),
-        "(empty)",
+        current_empty_label,
+        Some(current_empty_style),
         Some(current_rows),
         Some(fm.multi_selection_paths()),
     );
@@ -603,6 +729,7 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
                 "(nothing selected)",
                 None,
                 None,
+                None,
             ),
             FmPreview::File(preview) => {
                 render_file_preview(app, frame, preview_area, preview);
@@ -617,7 +744,17 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
                 "(empty)",
                 None,
                 None,
+                None,
             ),
+        }
+    }
+
+    if areas.status.width > 0 && areas.status.height > 0 {
+        if let Some((status, style)) =
+            file_manager_status_line(fm, app.file_manager_operation.as_ref(), styles)
+        {
+            let status = truncate_end(&format!(" {status}"), areas.status.width as usize);
+            frame.render_widget(Paragraph::new(status).style(style), areas.status);
         }
     }
 }
@@ -818,6 +955,7 @@ fn render_panel(
     entries: &[FileEntry],
     selected: Option<usize>,
     empty_label: &str,
+    empty_style: Option<Style>,
     row_areas: Option<&[FileManagerRowArea]>,
     multi_selected_paths: Option<&std::collections::BTreeSet<std::path::PathBuf>>,
 ) {
@@ -835,7 +973,10 @@ fn render_panel(
     }
     if entries.is_empty() {
         let label = truncate_end(&format!("  {empty_label}"), list_area.width as usize);
-        frame.render_widget(Paragraph::new(label).style(styles.empty), list_area);
+        frame.render_widget(
+            Paragraph::new(label).style(empty_style.unwrap_or(styles.empty)),
+            list_area,
+        );
         return;
     }
 
@@ -1326,7 +1467,7 @@ mod tests {
         fm.cursor = 4;
         fm.viewport_start = 3;
 
-        let rows = render_rows(&app_with_fm(fm), 20, 5).join("\n");
+        let rows = render_rows(&app_with_fm(fm), 20, 6).join("\n");
         assert!(!rows.contains("02.txt"), "stale derived window: {rows:?}");
         assert!(rows.contains("03.txt"), "viewport first row: {rows:?}");
         assert!(rows.contains("04.txt"), "cursor remains visible: {rows:?}");
@@ -1343,8 +1484,12 @@ mod tests {
 
         for width in [20, 30, 40] {
             let area = Rect::new(5, 7, width, 6);
-            let body = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
-            let current_list = panel_areas(miller_layout(body).current)[1];
+            let current_list = panel_areas(
+                file_manager_areas(area)
+                    .expect("non-empty FM geometry")
+                    .columns
+                    .current,
+            )[1];
 
             let entries = geometry_entries(3);
             let geometry = compute_file_manager_row_geometry(area, &entries, 0);
@@ -1405,7 +1550,7 @@ mod tests {
     fn current_row_actions_apply_viewport_and_clamp_to_list_end() {
         use crate::app::state::FileManagerRowAction;
 
-        let area = Rect::new(10, 20, 20, 5); // three CURRENT list rows
+        let area = Rect::new(10, 20, 20, 6); // three CURRENT list rows + status
 
         let entries = geometry_entries(10);
         let geometry = compute_file_manager_row_geometry(area, &entries, 6);
@@ -2020,13 +2165,13 @@ mod tests {
         fm.cursor = 1; // second entry (b.txt)
         let app = app_with_fm(fm);
 
-        let mut terminal = Terminal::new(TestBackend::new(20, 4)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(20, 5)).unwrap();
         terminal
-            .draw(|frame| render_file_manager(&app, frame, Rect::new(0, 0, 20, 4)))
+            .draw(|frame| render_file_manager(&app, frame, Rect::new(0, 0, 20, 5)))
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
 
-        let rows: Vec<String> = (0..4)
+        let rows: Vec<String> = (0..5)
             .map(|y| {
                 (0..20)
                     .map(|x| buffer[(x, y)].symbol().chars().next().unwrap_or(' '))
@@ -2066,8 +2211,8 @@ mod tests {
         assert!(fm.toggle_selection(2));
         assert!(fm.select(1));
         let app = app_with_fm(fm);
-        let buffer = render_buffer(&app, 20, 5);
-        let rows = (0..5)
+        let buffer = render_buffer(&app, 20, 6);
+        let rows = (0..6)
             .map(|y| {
                 (0..20)
                     .map(|x| buffer[(x, y)].symbol().chars().next().unwrap_or(' '))
@@ -2171,7 +2316,8 @@ mod tests {
         let mut empty_app = app_with_fm(FmState::new(&empty.root));
         empty_app.palette = crate::app::state::Palette::catppuccin_latte();
         let empty_buffer = render_buffer(&empty_app, width, height);
-        let (empty_x, empty_y) = find_rendered_text(&empty_buffer, width, height, "(empty)");
+        let (empty_x, empty_y) =
+            find_rendered_text(&empty_buffer, width, height, "(empty directory)");
         assert_eq!(
             empty_buffer[(empty_x, empty_y)].fg,
             empty_app.palette.overlay0
@@ -2339,8 +2485,8 @@ mod tests {
         assert_eq!(selected_rows, 1);
     }
 
-    // TP-A2.4: an empty (or unreadable) directory renders a placeholder without
-    // panicking.
+    // TP-A2.4/C6.4: a valid empty directory renders its distinct placeholder
+    // without being conflated with an unreadable cwd.
     #[test]
     fn empty_directory_renders_placeholder() {
         let td = TempDir::new("empty");
@@ -2348,7 +2494,7 @@ mod tests {
 
         let rows = render_rows(&app, 24, 5);
         assert!(
-            rows.iter().any(|r| r.contains("(empty)")),
+            rows.iter().any(|r| r.contains("(empty directory)")),
             "empty placeholder shown: {rows:?}"
         );
     }

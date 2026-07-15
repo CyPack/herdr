@@ -840,26 +840,27 @@ mod tests {
         app.file_manager = Some(crate::fm::FmState::new(&root));
         app.file_manager.as_mut().expect("open fm").cursor = 8;
 
-        // Desktop: height 7 -> tab bar 1, FM header 1, panel title 1, list 4.
+        // Desktop: height 7 -> tab bar 1, FM header 1, panel title 1,
+        // status 1, list 3.
         compute_view(&mut app, Rect::new(0, 0, 100, 7));
         assert_eq!(
             app.file_manager.as_ref().expect("open fm").viewport_start,
-            5
+            6
         );
 
-        // Expanding to nine list rows clamps the old start to max_start=1.
+        // Expanding to eight list rows clamps the old start to max_start=2.
         compute_view(&mut app, Rect::new(0, 0, 100, 12));
         assert_eq!(
             app.file_manager.as_ref().expect("open fm").viewport_start,
-            1
+            2
         );
 
         // Mobile: height 7 -> mobile header 2, FM header 1, panel title 1,
-        // leaving three visible rows and requiring start=6 for cursor 8.
+        // status 1, leaving two visible rows and requiring start=7 for cursor 8.
         compute_view(&mut app, Rect::new(0, 0, 30, 7));
         assert_eq!(
             app.file_manager.as_ref().expect("open fm").viewport_start,
-            6
+            7
         );
 
         std::fs::remove_dir_all(root).expect("remove temp root");
@@ -898,7 +899,7 @@ mod tests {
                 .iter()
                 .map(|row| row.entry_idx)
                 .collect::<Vec<_>>(),
-            vec![2, 3, 4]
+            vec![3, 4]
         );
         assert!(app
             .view
@@ -911,7 +912,7 @@ mod tests {
                 .iter()
                 .map(|area| (area.entry_idx, area.action))
                 .collect::<Vec<_>>(),
-            [2, 3, 4]
+            [3, 4]
                 .into_iter()
                 .flat_map(|entry_idx| {
                     crate::app::state::FileManagerRowAction::ALL.map(|action| (entry_idx, action))
