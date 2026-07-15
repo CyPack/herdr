@@ -126,7 +126,7 @@ impl FileOperationWorker {
     }
 
     #[cfg(test)]
-    fn with_executor<F>(wake: Arc<Notify>, executor: F) -> Self
+    pub(super) fn with_executor<F>(wake: Arc<Notify>, executor: F) -> Self
     where
         F: Fn(&FileOperationPlan, &FileOperationCancellation) -> FileOperationExecutionResult
             + Send
