@@ -1413,6 +1413,37 @@ mod tests {
         }
     }
 
+    // TP-C4.4-PROGRESS: the production task adapter forwards real transfer
+    // item indices instead of leaving the bounded worker slot test-only.
+    #[test]
+    fn default_worker_task_executor_reports_transfer_item_indices() {
+        let td = TempDir::new("default-transfer-progress");
+        let first = td.root.join("first.txt");
+        let second = td.root.join("second.txt");
+        fs::write(&first, b"first").expect("write first transfer progress source");
+        fs::write(&second, b"second").expect("write second transfer progress source");
+        let destination = td.root.join("destination-progress");
+        fs::create_dir(&destination).expect("create transfer progress destination");
+        let plan = FileOperationPlan::preflight(FileOperationRequest {
+            kind: FileOperationKind::Copy,
+            sources: vec![first, second],
+            destination_directory: destination,
+            operation_in_flight: false,
+        })
+        .expect("default transfer progress plan");
+        let mut reported = Vec::new();
+
+        let result = super::execute_worker_task_with_progress(
+            &FileOperationWorkerTask::Transfer(plan),
+            &FileOperationCancellation::default(),
+            &mut |item_index| reported.push(item_index),
+        );
+
+        assert!(matches!(result, FileOperationWorkerResult::Transfer(_)));
+        reported.dedup();
+        assert_eq!(reported, vec![0, 1]);
+    }
+
     // TP-C4.1-LIFECYCLE: cancellation is idempotent, wakes the worker, and
     // produces a single Cancelled terminal result without filesystem output.
     #[test]
