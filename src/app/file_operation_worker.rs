@@ -610,6 +610,7 @@ impl crate::app::App {
                 );
             }
         }
+        let had_reconcile_baseline = reconcile_baseline.is_some();
         let watcher_already_reconciled = reconcile_baseline.as_ref().is_some_and(|baseline| {
             self.file_manager_watcher.reconciled_since(
                 &destination_directory,
@@ -626,6 +627,7 @@ impl crate::app::App {
             )
         });
         let reconcile_with_watcher = owned_by_watcher
+            || had_reconcile_baseline
             || self
                 .state
                 .file_manager
