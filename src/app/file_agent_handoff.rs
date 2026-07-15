@@ -515,7 +515,7 @@ impl crate::app::App {
 mod tests {
     use bytes::Bytes;
 
-    use crate::app::state::{FileManagerAgentHandoffRequest, FileManagerClaudeSplitRequest};
+    use crate::app::state::{FileManagerAgentHandoffRequest, FileManagerClaudeSplitRequest, Mode};
 
     struct HandoffFixture {
         root: std::path::PathBuf,
@@ -581,6 +581,72 @@ mod tests {
             crate::terminal::TerminalRuntime::test_with_channel_capacity(80, 24, channel_capacity);
         app.terminal_runtimes.insert(terminal_id.clone(), runtime);
         (app, terminal_id, receiver)
+    }
+
+    fn app_with_attachment_picker(
+        root: &std::path::Path,
+        channel_capacity: usize,
+    ) -> (
+        crate::app::App,
+        crate::layout::PaneId,
+        crate::terminal::TerminalId,
+        tokio::sync::mpsc::Receiver<Bytes>,
+    ) {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = crate::app::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        let mut workspace = crate::workspace::Workspace::test_new("attachment-picker-send");
+        workspace.identity_cwd = root.to_path_buf();
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace
+            .terminal_id(pane_id)
+            .expect("attachment terminal id")
+            .clone();
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.ensure_test_terminals();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .expect("attachment terminal state")
+            .set_agent_name("attachment-target".into());
+        app.state.view.terminal_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+        app.state
+            .open_agent_attachment_picker()
+            .expect("open attachment picker");
+        let (runtime, receiver) =
+            crate::terminal::TerminalRuntime::test_with_channel_capacity(80, 24, channel_capacity);
+        app.terminal_runtimes.insert(terminal_id.clone(), runtime);
+        (app, pane_id, terminal_id, receiver)
+    }
+
+    fn prepare_attachment_request(app: &mut crate::app::App, path: &std::path::Path) {
+        let picker = app
+            .state
+            .agent_attachment_picker
+            .as_mut()
+            .expect("open attachment picker");
+        let entry_idx = picker
+            .file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == path)
+            .expect("attachment fixture entry");
+        picker.file_manager.select(entry_idx);
+        crate::app::input::handle_agent_attachment_picker_key(
+            &mut app.state,
+            crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Enter,
+                crossterm::event::KeyModifiers::NONE,
+            ),
+        );
     }
 
     fn app_with_non_agent_handoff(
@@ -998,5 +1064,137 @@ mod tests {
         assert_eq!(toast.kind, crate::app::state::ToastKind::NeedsAttention);
         assert_eq!(toast.title, "send to agent failed");
         assert_eq!(toast.context, "agent input is busy");
+    }
+
+    // TP-M1.3-SEND: the exact selected UTF-8 path plus one CR crosses the
+    // runtime boundary once; success closes only the client-local picker.
+    #[tokio::test]
+    async fn attachment_delivery_sends_one_literal_path_and_closes_on_success() {
+        let fixture = HandoffFixture::new("attachment-literal");
+        let path = fixture.file("space 'quote' $(touch nope) `echo` ünicode.txt");
+        let (mut app, _, terminal_id, mut receiver) = app_with_attachment_picker(&fixture.root, 4);
+        prepare_attachment_request(&mut app, &path);
+
+        assert!(app.sync_agent_attachment_delivery());
+        assert!(app.state.request_agent_attachment_delivery.is_none());
+        let mut expected = path.to_str().unwrap().as_bytes().to_vec();
+        expected.push(b'\r');
+        assert_eq!(receiver.try_recv().unwrap(), Bytes::from(expected));
+        assert!(receiver.try_recv().is_err());
+        assert!(app.state.agent_attachment_picker.is_none());
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(!app.sync_agent_attachment_delivery());
+        assert!(receiver.try_recv().is_err());
+        app.terminal_runtimes
+            .remove(&terminal_id)
+            .unwrap()
+            .shutdown();
+    }
+
+    // TP-M1.3-STALE: exact target identity and selected filesystem authority
+    // are revalidated after input and before any runtime byte is sent.
+    #[tokio::test]
+    async fn attachment_delivery_rejects_lost_agent_and_vanished_file() {
+        let fixture = HandoffFixture::new("attachment-stale");
+        let path = fixture.file("selected.txt");
+        let (mut lost_agent, _, terminal_id, mut lost_receiver) =
+            app_with_attachment_picker(&fixture.root, 2);
+        prepare_attachment_request(&mut lost_agent, &path);
+        lost_agent
+            .state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .clear_agent_name();
+
+        assert!(lost_agent.sync_agent_attachment_delivery());
+        assert!(lost_receiver.try_recv().is_err());
+        assert!(lost_agent.state.agent_attachment_picker.is_some());
+        assert_eq!(
+            lost_agent
+                .state
+                .toast
+                .as_ref()
+                .map(|toast| toast.context.as_str()),
+            Some("attachment target changed")
+        );
+        lost_agent
+            .terminal_runtimes
+            .remove(&terminal_id)
+            .unwrap()
+            .shutdown();
+
+        let (mut vanished, _, terminal_id, mut vanished_receiver) =
+            app_with_attachment_picker(&fixture.root, 2);
+        prepare_attachment_request(&mut vanished, &path);
+        std::fs::remove_file(&path).unwrap();
+
+        assert!(vanished.sync_agent_attachment_delivery());
+        assert!(vanished_receiver.try_recv().is_err());
+        assert!(vanished.state.agent_attachment_picker.is_some());
+        assert_eq!(
+            vanished
+                .state
+                .toast
+                .as_ref()
+                .map(|toast| toast.context.as_str()),
+            Some("selected attachment is no longer a regular file")
+        );
+        vanished
+            .terminal_runtimes
+            .remove(&terminal_id)
+            .unwrap()
+            .shutdown();
+    }
+
+    // TP-M1.3-BUSY: a full input lane consumes the one-shot request, keeps the
+    // picker available for an explicit retry, and never retries on later ticks.
+    #[tokio::test]
+    async fn attachment_delivery_backpressure_is_visible_without_hot_retry() {
+        let fixture = HandoffFixture::new("attachment-busy");
+        let path = fixture.file("selected.txt");
+        let (mut app, _, terminal_id, mut receiver) = app_with_attachment_picker(&fixture.root, 1);
+        app.terminal_runtimes
+            .get(&terminal_id)
+            .unwrap()
+            .try_send_bytes(Bytes::from_static(b"occupied"))
+            .unwrap();
+        prepare_attachment_request(&mut app, &path);
+
+        assert!(app.sync_agent_attachment_delivery());
+        assert!(app.state.request_agent_attachment_delivery.is_none());
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            Bytes::from_static(b"occupied")
+        );
+        assert!(receiver.try_recv().is_err());
+        assert!(app.state.agent_attachment_picker.is_some());
+        assert_eq!(
+            app.state.toast.as_ref().map(|toast| toast.context.as_str()),
+            Some("agent input is busy")
+        );
+        assert!(!app.sync_agent_attachment_delivery());
+        assert!(receiver.try_recv().is_err());
+        app.terminal_runtimes
+            .remove(&terminal_id)
+            .unwrap()
+            .shutdown();
+    }
+
+    // TP-M1.3-LIMIT: payload bounds are checked with the final CR included,
+    // independently of platform filesystem path-length limits.
+    #[test]
+    fn attachment_payload_rejects_more_than_one_mib_including_enter() {
+        let at_limit = std::path::PathBuf::from("a".repeat(1024 * 1024 - 1));
+        assert_eq!(
+            super::agent_attachment_payload(&at_limit).unwrap().len(),
+            1024 * 1024
+        );
+
+        let too_large = std::path::PathBuf::from("a".repeat(1024 * 1024));
+        assert_eq!(
+            super::agent_attachment_payload(&too_large),
+            Err("attachment path exceeds 1 MiB")
+        );
     }
 }

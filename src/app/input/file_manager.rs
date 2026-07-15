@@ -557,6 +557,53 @@ mod tests {
         assert!(state.request_agent_attachment_delivery.is_none());
     }
 
+    // TP-M1.3-PREPARE: Enter creates one typed request for the exact picker
+    // target. Input handling performs no runtime send and keeps the overlay.
+    #[test]
+    fn attachment_picker_enter_prepares_one_typed_request_without_delivery() {
+        let td = TempDir::new("attachment-enter-request");
+        let path = td.root.join("literal ünicode.txt");
+        td.file("literal ünicode.txt");
+        let mut state = AppState::test_new();
+        let mut workspace = crate::workspace::Workspace::test_new("attachment-enter-request");
+        workspace.identity_cwd = td.root.clone();
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace.tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        state.workspaces = vec![workspace];
+        state.active = Some(0);
+        state.mode = Mode::Terminal;
+        state.ensure_test_terminals();
+        state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_agent_name("codex".into());
+        state.view.terminal_area = Rect::new(0, 0, 80, 24);
+        state.open_agent_attachment_picker().unwrap();
+        let picker = state.agent_attachment_picker.as_mut().unwrap();
+        let entry_idx = picker
+            .file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == path)
+            .unwrap();
+        picker.file_manager.select(entry_idx);
+
+        handle_agent_attachment_picker_key(&mut state, key(KeyCode::Enter));
+
+        let request = state
+            .request_agent_attachment_delivery
+            .as_ref()
+            .expect("one typed delivery request");
+        assert_eq!(request.path, path);
+        assert_eq!(request.target.pane_id, pane_id);
+        assert_eq!(request.target.terminal_id, terminal_id);
+        assert_eq!(state.mode, Mode::AttachFile);
+        assert!(state.agent_attachment_picker.is_some());
+    }
+
     #[test]
     fn attachment_frame_click_revalidates_exact_target_before_opening_picker() {
         let td = TempDir::new("attachment-frame-click");
