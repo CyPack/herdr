@@ -4,14 +4,13 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Published CyPack checkpoint: `821506e`
-  (`docs: record deterministic operation reconciliation`).
-- Verified C4.4 recovery product head: `c674296`
-  (`test: satisfy recovery fixture lint`).
-- The pending C4.4 recovery publication unit is seven atomic test/product
-  commits from `0881976` through `c674296`, plus the continuity/graph commit
-  containing this file. At publication, CyPack
-  `feat/native-fm` and fork `master` are verified at that same fast-forward
+- Published CyPack checkpoint before this continuity publication: `66b00d7`
+  (`feat: send literal paths to focused agent`).
+- Verified C5 product head: `f744e4d`
+  (`feat: launch Claude from native file manager`).
+- The pending publication unit is C5.4 RED/GREEN `6c6a409`/`f744e4d` plus the
+  continuity/graph commit containing this file. At publication, CyPack
+  `feat/native-fm` and fork `master` must be verified at that same fast-forward
   branch tip.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
 
@@ -19,6 +18,32 @@
 
 - A2.2 responsive Miller columns were committed as `6c7c58f`, full graph-indexed,
   and fast-forward pushed to the CyPack feature branch and fork master only.
+
+## Verified Checkpoint — C5 Agent Handoff
+
+- C5.1 classified FM authority as TUI/client-local and reused neutral terminal,
+  pane, split, agent identity, process-exit, and runtime-cleanup seams.
+- C5.2 RED/GREEN `65c3928`/`ec7539d` prepares one exact path plus focused agent
+  terminal identity without side effects. C5.3 RED/GREEN `00664c7`/`66b00d7`
+  sends one literal UTF-8 path plus one Enter, with no shell interpolation,
+  wrong-pane fallback, duplicate send, or hot retry.
+- C5.4 RED/GREEN `6c6a409`/`f744e4d` handles the non-agent route: exact source
+  workspace/pane/terminal and FM cwd are revalidated at the scheduled boundary;
+  one direct-argv `["claude"]`, empty-extra-env `Down` split is created. The FM
+  closes and focus moves only after the first literal path send succeeds.
+- Split/spawn failure, stale/cancelled authority, first-send failure, partial
+  setup, early `PaneDied`, and retry remove only the newly owned pane/terminal/
+  runtime. Existing panes, source focus, FM state on failure, stable Herdr, and
+  stable sockets remain untouched.
+- Fresh gates: C5.4 4/4; related handoff/agent/pane-exit 17/17; full nextest
+  3143/3143 with only the named B0 host probe skipped, run
+  `418dc969-0218-42f7-8ef3-26ed6c12ec3b`; Linux all-target and canonical Windows
+  clippy; Bun 17/17; Python 64/64; fmt/diff/production-unwrap clean.
+- Fresh graph is 18,854 nodes / 88,064 edges. Queries returned both
+  `miller_layout` and the new typed request, scheduled launch, exact ownership,
+  rollback, completion, and current-authority symbols; freshness was not
+  inferred from `ready` alone.
+- Next product module: C6.1 native sectioned sidebar, then C6.2–C6.4 in order.
 
 ## Verified Checkpoint — C1.1 Header Action Geometry
 

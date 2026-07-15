@@ -459,22 +459,50 @@ owns filesystem mutation and C5 owns agent delivery.
 
 ## P3 — C5 Agent Handoff
 
-- [ ] C5.1 graph-first verification and runtime/client classification of the
+- [x] C5.1 graph-first verification and runtime/client classification of the
   existing pane/agent send, split, start, identity, and cleanup surfaces.
-- [ ] C5.2 define one typed current-authority handoff intent carrying exact
+- [x] C5.2 define one typed current-authority handoff intent carrying exact
   path identity and intended terminal/agent identity; stale selection, closed
   FM, unsupported/non-UTF-8 path, reordered rows, and missing target fail
   closed before side effects.
-- [ ] C5.3 send the selected literal path to an existing intended agent through
+- [x] C5.3 send the selected literal path to an existing intended agent through
   the neutral server/runtime API with quoting, whitespace, metacharacter,
   Unicode, duplicate-name, stale-terminal, and send-failure coverage.
-- [ ] C5.4 split one terminal and launch Claude through the existing pane
+- [x] C5.4 split one terminal and launch Claude through the existing pane
   lifecycle; split failure, spawn failure, early exit, cancellation, and stale
   completion clean up only the newly created resources and never touch the
   stable Herdr/socket or an existing pane.
-- [ ] C5.5 run focused handoff/failure tests, pane/agent/API regressions, full
+- [x] C5.5 run focused handoff/failure tests, pane/agent/API regressions, full
   nextest, Linux/Windows clippy, Bun/Python maintenance, isolated runtime proof
   where required, graph freshness, and artifact/diff cleanliness.
+
+- C5.1 verified the existing neutral runtime seams before implementation:
+  `App::try_send_terminal_input`, direct-argv `spawn_agent_split`, Workspace/
+  Tab spawn rollback, exact pane/terminal identity, `PaneDied`, and detached
+  runtime shutdown. Shared runtime facts remain on existing terminal/pane
+  state; FM request/selection/presentation remains client-local.
+- C5.2 RED/GREEN is `65c3928`/`ec7539d`. One exact current path is bound to the
+  focused agent terminal without input-time side effects; bulk, busy, stale,
+  missing, non-UTF-8, or lost-agent authority fails closed.
+- C5.3 RED/GREEN is `00664c7`/`66b00d7`. The existing intended agent receives
+  one atomic UTF-8 path plus one terminal Enter through the shared terminal
+  input seam. Shell syntax is never constructed; missing runtime and
+  backpressure are visible one-shot failures with no hot retry.
+- C5.4 RED/GREEN is `6c6a409`/`f744e4d`. A non-agent source prepares exact FM
+  cwd plus workspace/pane/terminal identities, then the scheduled App boundary
+  revalidates and creates one `Down` split with direct argv `["claude"]` and
+  empty extra env. Focus/FM transition occurs only after the first literal path
+  send succeeds. Spawn, stale/cancel, and first-send failures remove only the
+  exact newly owned pane/terminal/runtime; retry owns one new pane. Existing
+  `PaneDied` cleanup handles early exit without touching the source pane.
+- C5.5 evidence: exact C5.4 4/4, related handoff/agent-start/pane-exit 17/17,
+  full nextest 3143/3143 plus only the named B0 probe skipped (run
+  `418dc969-0218-42f7-8ef3-26ed6c12ec3b`), Linux all-target and canonical
+  Windows MSVC clippy, Bun 17/17, Python 64/64, fmt/diff/production-unwrap
+  checks clean. The only real test process was test-owned `/bin/cat` (or the
+  compile-gated Windows equivalent), shut down by its fixture; stable Herdr and
+  socket state were untouched. Fresh graph: 18,854 nodes / 88,064 edges with
+  `miller_layout` plus all new split/ownership/rollback symbols.
 
 | Test point | What is tested | Expected result | Reason |
 |---|---|---|---|
@@ -512,9 +540,9 @@ owns filesystem mutation and C5 owns agent delivery.
 
 A4, B0, B1, the A3 remainder, B2, C1, N3, C2, N4.2, C3.1, C3.2, C3.3,
 C4.1, C4.2, C4.3, C4.4.1 progress, C4.4.2 cancellation, C4.4.3
-reconciliation, C4.4.4 recovery, and C4.4.5 gates are complete through product
-head `c674296`. The next execution order is C5.1 graph/authority → C5.2 typed
-intent → C5.3 existing-agent send → C5.4 split-and-launch cleanup → C5.5 gates
-→ C6.
+reconciliation, C4.4.4 recovery, C4.4.5 gates, and C5.1–C5.5 are complete
+through product head `f744e4d`. The next execution order is C6.1 native
+sectioned sidebar → C6.2 pill/current-location styling → C6.3 integrated
+header/row/context actions → C6.4 theme/spacing/empty-error/Finder-parity review.
 S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3 remain
 inactive north-star work.

@@ -592,12 +592,15 @@ fast-forwarded; no RED checkpoint is pushed alone.
 See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2/N4 contracts and the
 complete C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1, N3,
 C2, N4, C3.1, C3.2, C3.3, C4.1, C4.2, C4.3, C4.4.1 PROGRESS, C4.4.2
-CANCEL, C4.4.3 RECONCILE, C4.4.4 RECOVERY, and C4.4.5 GATES are closed.
-The immediate ordered task list is C5.1 graph/runtime-boundary verification →
-C5.2 typed exact authority → C5.3 literal existing-agent send → C5.4
-split-and-Claude rollback/cleanup → C5.5 complete gates → C6. Exact expected
-results and reasons for TP-C5-AUTHORITY, SEND, SPLIT, ISOLATION, and GATES are
-durable in `.codex/TASKS.md`.
+CANCEL, C4.4.3 RECONCILE, C4.4.4 RECOVERY, C4.4.5 GATES, and C5.1–C5.5 are
+closed. C5's atomic product chain ends at `f744e4d`: exact existing-agent send
+and non-agent `Down` split → direct `claude` argv → first literal path send,
+with exact new-resource rollback on every failure path. The complete gate is
+3143/3143 Rust, Bun 17/17, Python 64/64, Linux/Windows clippy, and fresh graph
+18,854 / 88,064. The immediate ordered task list is C6.1 native sectioned
+sidebar → C6.2 pill/current-location styling → C6.3 integrated header/row/
+context actions → C6.4 theme/spacing/empty-error/Finder-parity review. Exact
+expected results and reasons remain durable in `.codex/TASKS.md`.
 S5–S7/N2 remain evidence-gated; M1–M3 remain north-star backlog.
 
 ## 11. ORTAM
@@ -668,6 +671,11 @@ S5–S7/N2 remain evidence-gated; M1–M3 remain north-star backlog.
   graph said `ready` but returned only `miller_layout`, not the new recovery
   symbols; after indexing it returned `new_after_generation`, the disconnect,
   panic, and private-recovery tests, plus `miller_layout`.
+- Post-C5.4 fast refresh completed at 18,854 nodes / 88,064 edges. Status was
+  cross-checked with `miller_layout` and nine current split/ownership/rollback
+  symbols including `sync_file_manager_claude_split`,
+  `launch_file_manager_claude_split`, and
+  `complete_file_manager_claude_split`; `ready` alone was not accepted.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.
