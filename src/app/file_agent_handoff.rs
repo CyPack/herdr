@@ -221,7 +221,7 @@ impl crate::app::App {
 mod tests {
     use bytes::Bytes;
 
-    use crate::app::state::FileManagerAgentHandoffRequest;
+    use crate::app::state::{FileManagerAgentHandoffRequest, FileManagerClaudeSplitRequest};
 
     struct HandoffFixture {
         root: std::path::PathBuf,
@@ -287,6 +287,282 @@ mod tests {
             crate::terminal::TerminalRuntime::test_with_channel_capacity(80, 24, channel_capacity);
         app.terminal_runtimes.insert(terminal_id.clone(), runtime);
         (app, terminal_id, receiver)
+    }
+
+    fn app_with_non_agent_handoff(
+        root: &std::path::Path,
+        with_neighbor: bool,
+    ) -> (
+        crate::app::App,
+        crate::layout::PaneId,
+        crate::terminal::TerminalId,
+    ) {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = crate::app::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        let mut workspace = crate::workspace::Workspace::test_new("fm-claude-split");
+        let source_pane_id = workspace.tabs[0].root_pane;
+        if with_neighbor {
+            workspace.test_split(ratatui::layout::Direction::Horizontal);
+            workspace.tabs[0].layout.focus_pane(source_pane_id);
+        }
+        let source_terminal_id = workspace
+            .terminal_id(source_pane_id)
+            .expect("source terminal identity")
+            .clone();
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.file_manager = Some(crate::fm::FmState::new(root));
+        (app, source_pane_id, source_terminal_id)
+    }
+
+    #[cfg(windows)]
+    fn exiting_test_command() -> &'static str {
+        "C:\\Windows\\System32\\whoami.exe"
+    }
+
+    #[cfg(not(windows))]
+    fn exiting_test_command() -> &'static str {
+        "/usr/bin/true"
+    }
+
+    fn impossible_test_command() -> String {
+        std::env::temp_dir()
+            .join(format!(
+                "herdr-command-that-does-not-exist-{}",
+                std::process::id()
+            ))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    fn prepare_claude_split(
+        app: &mut crate::app::App,
+        path: &std::path::Path,
+    ) -> FileManagerClaudeSplitRequest {
+        assert!(app.open_file_manager_row_agent_handoff(path.to_path_buf()));
+        app.state
+            .request_file_manager_claude_split
+            .clone()
+            .expect("typed Claude split authority")
+    }
+
+    fn shutdown_test_runtimes(app: &mut crate::app::App) {
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
+
+    // TP-C5-SPLIT: the production plan is one direct argv launch, never a
+    // shell command. The safe test argv still proves Down placement, FM cwd,
+    // exact launch metadata, focus transfer, and early-exit ownership cleanup.
+    #[tokio::test]
+    async fn claude_split_launches_one_owned_down_pane_and_early_exit_removes_only_it() {
+        let fixture = HandoffFixture::new("claude-split-success");
+        let path = fixture.file("selected.txt");
+        let (mut app, source_pane_id, source_terminal_id) =
+            app_with_non_agent_handoff(&fixture.root, false);
+        let before_terminal_ids = app
+            .state
+            .terminals
+            .keys()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+        prepare_claude_split(&mut app, &path);
+
+        assert_eq!(super::file_manager_claude_argv(), ["claude".to_string()]);
+        assert!(
+            app.sync_file_manager_claude_split_with_argv(&[exiting_test_command().to_string(),])
+        );
+        assert!(app.state.request_file_manager_claude_split.is_none());
+        assert_eq!(app.state.workspaces[0].tabs[0].layout.pane_count(), 2);
+        let new_pane_id = app.state.workspaces[0].tabs[0]
+            .layout
+            .pane_ids()
+            .into_iter()
+            .find(|pane_id| *pane_id != source_pane_id)
+            .expect("one newly owned pane");
+        let split = app.state.workspaces[0].tabs[0]
+            .layout
+            .splits(ratatui::layout::Rect::new(0, 0, 120, 40));
+        assert_eq!(split.len(), 1);
+        assert_eq!(split[0].direction, ratatui::layout::Direction::Vertical);
+        assert_eq!(app.state.workspaces[0].focused_pane_id(), Some(new_pane_id));
+        assert!(app.state.file_manager.is_none());
+
+        let new_terminal_id = app.state.workspaces[0]
+            .terminal_id(new_pane_id)
+            .expect("new terminal identity")
+            .clone();
+        let new_terminal = app
+            .state
+            .terminals
+            .get(&new_terminal_id)
+            .expect("new terminal state");
+        assert_eq!(new_terminal.cwd, fixture.root);
+        assert_eq!(
+            new_terminal.launch_argv,
+            Some(vec![exiting_test_command().to_string()])
+        );
+        assert!(new_terminal.is_agent_terminal());
+
+        app.handle_internal_event(crate::events::AppEvent::PaneDied {
+            pane_id: new_pane_id,
+        });
+
+        assert_eq!(app.state.workspaces[0].tabs[0].layout.pane_count(), 1);
+        assert_eq!(
+            app.state.workspaces[0].focused_pane_id(),
+            Some(source_pane_id)
+        );
+        assert_eq!(
+            app.state.terminal_id_for_pane(0, source_pane_id).as_ref(),
+            Some(&source_terminal_id)
+        );
+        assert_eq!(
+            app.state
+                .terminals
+                .keys()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>(),
+            before_terminal_ids
+        );
+        assert!(app.terminal_runtimes.get(&new_terminal_id).is_none());
+        shutdown_test_runtimes(&mut app);
+    }
+
+    // TP-C5-SPLIT: spawn failure is an exact no-op for all pre-existing pane,
+    // terminal, runtime, focus, and FM state. The consumed request may be
+    // explicitly prepared again and retried without duplicate panes.
+    #[tokio::test]
+    async fn claude_split_spawn_failure_rolls_back_exactly_and_retry_owns_one_pane() {
+        let fixture = HandoffFixture::new("claude-split-retry");
+        let path = fixture.file("selected.txt");
+        let (mut app, source_pane_id, _) = app_with_non_agent_handoff(&fixture.root, true);
+        let before_panes = app.state.workspaces[0].tabs[0].layout.pane_ids();
+        let before_terminal_ids = app
+            .state
+            .terminals
+            .keys()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+        let before_runtime_count = app.terminal_runtimes.len();
+        prepare_claude_split(&mut app, &path);
+
+        assert!(app.sync_file_manager_claude_split_with_argv(&[impossible_test_command(),]));
+
+        assert_eq!(
+            app.state.workspaces[0].tabs[0].layout.pane_ids(),
+            before_panes
+        );
+        assert_eq!(
+            app.state.workspaces[0].focused_pane_id(),
+            Some(source_pane_id)
+        );
+        assert_eq!(
+            app.state
+                .terminals
+                .keys()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>(),
+            before_terminal_ids
+        );
+        assert_eq!(app.terminal_runtimes.len(), before_runtime_count);
+        assert!(app.state.file_manager.is_some());
+        assert_eq!(
+            app.state.toast.as_ref().map(|toast| toast.title.as_str()),
+            Some("send to agent failed")
+        );
+
+        prepare_claude_split(&mut app, &path);
+        assert!(
+            app.sync_file_manager_claude_split_with_argv(&[exiting_test_command().to_string(),])
+        );
+        assert_eq!(
+            app.state.workspaces[0].tabs[0].layout.pane_count(),
+            before_panes.len() + 1
+        );
+        shutdown_test_runtimes(&mut app);
+    }
+
+    // TP-C5-SPLIT: stale or cancelled authority produces zero spawn. A
+    // post-spawn first-send failure removes only the split transaction's exact
+    // pane/terminal identities and keeps unrelated existing panes usable.
+    #[tokio::test]
+    async fn claude_split_stale_cancel_and_first_send_failure_leave_no_partial_setup() {
+        let fixture = HandoffFixture::new("claude-split-partial");
+        let path = fixture.file("selected.txt");
+        let (mut app, source_pane_id, _) = app_with_non_agent_handoff(&fixture.root, true);
+        let before_panes = app.state.workspaces[0].tabs[0].layout.pane_ids();
+        let before_terminal_ids = app
+            .state
+            .terminals
+            .keys()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+
+        prepare_claude_split(&mut app, &path);
+        app.state.request_file_manager_claude_split = None;
+        assert!(
+            !app.sync_file_manager_claude_split_with_argv(&[exiting_test_command().to_string(),])
+        );
+        assert_eq!(
+            app.state.workspaces[0].tabs[0].layout.pane_ids(),
+            before_panes
+        );
+
+        prepare_claude_split(&mut app, &path);
+        app.state
+            .file_manager
+            .as_mut()
+            .expect("open FM")
+            .entries
+            .clear();
+        assert!(
+            app.sync_file_manager_claude_split_with_argv(&[exiting_test_command().to_string(),])
+        );
+        assert_eq!(
+            app.state.workspaces[0].tabs[0].layout.pane_ids(),
+            before_panes
+        );
+
+        app.state.file_manager = Some(crate::fm::FmState::new(&fixture.root));
+        let request = prepare_claude_split(&mut app, &path);
+        let owned = app
+            .launch_file_manager_claude_split(&request, &[exiting_test_command().to_string()])
+            .expect("safe split launch");
+        let runtime = app
+            .terminal_runtimes
+            .remove(&owned.terminal_id)
+            .expect("remove new runtime to force first-send failure");
+
+        assert!(!app.complete_file_manager_claude_split(&request, owned));
+        runtime.shutdown();
+        assert_eq!(
+            app.state.workspaces[0].tabs[0].layout.pane_ids(),
+            before_panes
+        );
+        assert_eq!(
+            app.state.workspaces[0].focused_pane_id(),
+            Some(source_pane_id)
+        );
+        assert_eq!(
+            app.state
+                .terminals
+                .keys()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>(),
+            before_terminal_ids
+        );
+        assert!(app.state.file_manager.is_some());
+        shutdown_test_runtimes(&mut app);
     }
 
     // TP-C5-SEND: the handoff is one literal UTF-8 path followed by exactly

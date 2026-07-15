@@ -1453,23 +1453,59 @@ mod tests {
         assert!(!app.sync_file_manager_agent_handoff());
     }
 
-    // TP-C5-AUTHORITY: a terminal without agent identity, bulk row authority,
-    // or an operation-in-flight snapshot cannot create a handoff request.
+    // TP-C5-SPLIT: a non-agent terminal binds the exact current path, FM cwd,
+    // and source pane/terminal identities without spawning during input.
     #[test]
-    fn send_agent_authority_fails_closed_without_current_single_agent_target() {
-        let td = TempDir::new("send-agent-fail-closed");
+    fn send_agent_on_non_agent_terminal_prepares_exact_split_authority_only() {
+        let td = TempDir::new("send-agent-split-authority");
         td.file("alpha.txt");
         td.file("beta.txt");
 
-        let mut non_agent = runtime_app_with_fm(FmState::new(&td.root));
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
         let workspace = crate::workspace::Workspace::test_new("fm-non-agent");
-        non_agent.state.workspaces = vec![workspace];
-        non_agent.state.ensure_test_terminals();
-        non_agent.state.active = Some(0);
-        non_agent.state.selected = 0;
-        install_row_actions(&mut non_agent, 1);
-        non_agent.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 3));
-        assert!(non_agent.state.request_file_manager_agent_handoff.is_none());
+        let workspace_id = workspace.id.clone();
+        let source_pane_id = workspace.tabs[0].root_pane;
+        let source_terminal_id = workspace
+            .terminal_id(source_pane_id)
+            .expect("source terminal identity")
+            .clone();
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        let entry_path = install_row_actions(&mut app, 1);
+        let before_panes = app.state.workspaces[0].tabs[0].layout.pane_count();
+        let before_terminals = app.state.terminals.len();
+        let before_runtimes = app.terminal_runtimes.len();
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 3));
+
+        assert!(app.state.request_file_manager_agent_handoff.is_none());
+        assert_eq!(
+            app.state.request_file_manager_claude_split,
+            Some(crate::app::state::FileManagerClaudeSplitRequest {
+                path: entry_path,
+                cwd: td.root.clone(),
+                workspace_id,
+                source_pane_id,
+                source_terminal_id,
+            })
+        );
+        assert_eq!(
+            app.state.workspaces[0].tabs[0].layout.pane_count(),
+            before_panes
+        );
+        assert_eq!(app.state.terminals.len(), before_terminals);
+        assert_eq!(app.terminal_runtimes.len(), before_runtimes);
+    }
+
+    // TP-C5-AUTHORITY: bulk row authority or an operation-in-flight snapshot
+    // cannot create either existing-agent or split-and-launch authority.
+    #[test]
+    fn send_agent_authority_fails_closed_without_current_single_path() {
+        let td = TempDir::new("send-agent-fail-closed");
+        td.file("alpha.txt");
+        td.file("beta.txt");
 
         let mut bulk = runtime_app_with_fm(FmState::new(&td.root));
         install_focused_agent(&mut bulk);
@@ -1479,6 +1515,7 @@ mod tests {
         assert!(fm.toggle_selection(1));
         bulk.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 3));
         assert!(bulk.state.request_file_manager_agent_handoff.is_none());
+        assert!(bulk.state.request_file_manager_claude_split.is_none());
 
         let mut busy = runtime_app_with_fm(FmState::new(&td.root));
         install_focused_agent(&mut busy);
@@ -1495,6 +1532,7 @@ mod tests {
         });
         busy.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 3));
         assert!(busy.state.request_file_manager_agent_handoff.is_none());
+        assert!(busy.state.request_file_manager_claude_split.is_none());
     }
 
     // TP-C4.3-INTENT: the stable row Rename tag must converge on one typed
