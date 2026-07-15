@@ -955,6 +955,17 @@ mod tests {
         terminal.backend().buffer().clone()
     }
 
+    fn find_rendered_text(buffer: &Buffer, w: u16, h: u16, needle: &str) -> (u16, u16) {
+        for y in 0..h {
+            let row = (0..w).map(|x| buffer[(x, y)].symbol()).collect::<String>();
+            if let Some(byte_offset) = row.find(needle) {
+                let x = row[..byte_offset].chars().count() as u16;
+                return (x, y);
+            }
+        }
+        panic!("rendered text {needle:?} not found");
+    }
+
     fn geometry_entries(count: usize) -> Vec<FileEntry> {
         (0..count)
             .map(|entry_idx| FileEntry {
@@ -2028,6 +2039,93 @@ mod tests {
         assert_eq!(buffer[(2, row_for("a.txt"))].bg, app.palette.surface1);
         assert_eq!(buffer[(2, row_for("c.txt"))].bg, app.palette.surface1);
         assert_eq!(buffer[(2, row_for("b.txt"))].bg, app.palette.surface0);
+    }
+
+    // TP-C6.4-THEME: the native FM owns its complete canvas background but
+    // must not repaint cells outside the exact client rect supplied by layout.
+    #[test]
+    fn open_file_manager_fills_only_its_canvas_with_palette_background() {
+        let td = TempDir::new("canvas-background");
+        td.file("selected.txt");
+        let app = app_with_fm(FmState::new(&td.root));
+        let mut terminal = Terminal::new(TestBackend::new(26, 7)).unwrap();
+        let area = Rect::new(2, 1, 22, 5);
+
+        terminal
+            .draw(|frame| render_file_manager(&app, frame, area))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                assert_eq!(
+                    buffer[(x, y)].bg,
+                    app.palette.panel_bg,
+                    "FM canvas cell ({x}, {y}) uses panel background"
+                );
+            }
+        }
+        for (x, y) in [(0, 0), (1, 1), (24, 1), (25, 6)] {
+            assert_eq!(
+                buffer[(x, y)].bg,
+                Color::Reset,
+                "outside cell ({x}, {y}) remains untouched"
+            );
+        }
+    }
+
+    // TP-C6.4-THEME: alternate palettes map state to semantic roles. Error or
+    // selection authority is not inferred from literal RGB values or glyphs.
+    #[test]
+    fn alternate_palette_maps_file_manager_semantic_roles() {
+        let td = TempDir::new("alternate-palette");
+        td.file("a.txt");
+        td.file("b.txt");
+        td.file("c.txt");
+        let mut fm = FmState::new(&td.root);
+        assert!(fm.replace_selection(0));
+        assert!(fm.select(1));
+        let mut app = app_with_fm(fm);
+        app.palette = crate::app::state::Palette::catppuccin_latte();
+
+        let width = 80;
+        let height = 6;
+        let buffer = render_buffer(&app, width, height);
+        let (header_x, header_y) = find_rendered_text(&buffer, width, height, "herdr-fmrender");
+        assert_eq!(buffer[(header_x, header_y)].fg, app.palette.subtext0);
+
+        let layout = file_manager_areas(Rect::new(0, 0, width, height))
+            .expect("non-empty FM geometry")
+            .columns;
+        for divider in layout.dividers.into_iter().flatten() {
+            assert_eq!(
+                buffer[(divider.x, divider.y + 1)].fg,
+                app.palette.surface_dim
+            );
+        }
+
+        let (selected_x, selected_y) = find_rendered_text(&buffer, width, height, "a.txt");
+        assert_eq!(buffer[(selected_x, selected_y)].bg, app.palette.surface1);
+        let (cursor_x, cursor_y) = find_rendered_text(&buffer, width, height, "b.txt");
+        assert_eq!(buffer[(cursor_x, cursor_y)].bg, app.palette.surface0);
+
+        let new_folder = compute_file_manager_header_action_areas(Rect::new(0, 0, width, height))
+            .into_iter()
+            .find(|area| area.action == FileManagerHeaderAction::NewFolder)
+            .expect("wide layout exposes complete new-folder action");
+        let disabled_cell = &buffer[(new_folder.rect.x, new_folder.rect.y)];
+        assert_eq!(disabled_cell.fg, app.palette.overlay0);
+        assert!(disabled_cell.modifier.contains(Modifier::DIM));
+
+        let empty = TempDir::new("alternate-palette-empty");
+        let mut empty_app = app_with_fm(FmState::new(&empty.root));
+        empty_app.palette = crate::app::state::Palette::catppuccin_latte();
+        let empty_buffer = render_buffer(&empty_app, width, height);
+        let (empty_x, empty_y) = find_rendered_text(&empty_buffer, width, height, "(empty)");
+        assert_eq!(
+            empty_buffer[(empty_x, empty_y)].fg,
+            empty_app.palette.overlay0
+        );
     }
 
     // TP-N4.1-SELECTION-STATE: CURRENT paints exactly one cursor-focus style,
