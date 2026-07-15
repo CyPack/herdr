@@ -742,6 +742,44 @@ pub struct FileManagerDeleteRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileManagerRenameState {
     pub paths: Vec<PathBuf>,
+    pub validation_error: Option<FileManagerRenameValidationError>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileManagerRenameValidationError {
+    Empty,
+    CurrentDirectory,
+    ParentDirectory,
+    Absolute,
+    Separator,
+    ContainsNul,
+    NameTooLong,
+    WindowsReservedName,
+    WindowsReservedCharacter,
+    WindowsTrailingDotOrSpace,
+    SourceUnavailable,
+}
+
+impl FileManagerRenameValidationError {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Empty => "name cannot be empty",
+            Self::CurrentDirectory | Self::ParentDirectory => "name cannot be . or ..",
+            Self::Absolute | Self::Separator => "name must be one path component",
+            Self::ContainsNul => "name contains a null byte",
+            Self::NameTooLong => "name is too long",
+            Self::WindowsReservedName => "name is reserved on Windows",
+            Self::WindowsReservedCharacter => "name contains a Windows-reserved character",
+            Self::WindowsTrailingDotOrSpace => "name cannot end with dot or space on Windows",
+            Self::SourceUnavailable => "source changed; reopen Rename",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileManagerRenameRequest {
+    pub source_path: PathBuf,
+    pub new_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1963,6 +2001,8 @@ pub struct AppState {
     pub file_manager_delete_confirmation: Option<FileManagerDeleteConfirmation>,
     /// Exact native-FM identities owned by the file Rename text modal.
     pub file_manager_rename: Option<FileManagerRenameState>,
+    /// One validated rename request awaiting C4's operation-time preflight.
+    pub request_file_manager_rename: Option<FileManagerRenameRequest>,
     /// One confirmed, revalidated delete request for the App-owned worker.
     pub request_file_manager_delete: Option<FileManagerDeleteRequest>,
     /// Exact, revalidated client-local intent from the native-FM context menu.
@@ -2419,6 +2459,7 @@ impl AppState {
             file_manager_operation: None,
             file_manager_delete_confirmation: None,
             file_manager_rename: None,
+            request_file_manager_rename: None,
             request_file_manager_delete: None,
             request_file_manager_context_action: None,
             should_quit: false,

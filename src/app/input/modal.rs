@@ -514,6 +514,9 @@ pub(super) fn apply_rename_action(state: &mut AppState, action: ModalAction) {
 fn clear_rename_input(state: &mut AppState) {
     state.name_input.clear();
     state.name_input_replace_on_type = false;
+    if let Some(rename) = state.file_manager_rename.as_mut() {
+        rename.validation_error = None;
+    }
 }
 
 pub(crate) fn insert_rename_input_text(state: &mut AppState, text: &str) {
@@ -521,6 +524,9 @@ pub(crate) fn insert_rename_input_text(state: &mut AppState, text: &str) {
         clear_rename_input(state);
     }
     state.name_input.push_str(text);
+    if let Some(rename) = state.file_manager_rename.as_mut() {
+        rename.validation_error = None;
+    }
 }
 
 fn delete_rename_input_char(state: &mut AppState) {
@@ -528,6 +534,9 @@ fn delete_rename_input_char(state: &mut AppState) {
         clear_rename_input(state);
     } else {
         state.name_input.pop();
+    }
+    if let Some(rename) = state.file_manager_rename.as_mut() {
+        rename.validation_error = None;
     }
 }
 
@@ -558,6 +567,9 @@ fn delete_rename_input_word(state: &mut AppState) {
         .is_some_and(char::is_whitespace)
     {
         state.name_input.pop();
+    }
+    if let Some(rename) = state.file_manager_rename.as_mut() {
+        rename.validation_error = None;
     }
 
     let Some(class) = state
@@ -1081,10 +1093,14 @@ impl App {
 
     pub(super) fn apply_rename_mouse_action_via_api(&mut self, action: ModalAction) {
         match action {
+            ModalAction::Save if self.state.mode == Mode::RenameFile => {
+                if self.submit_file_manager_rename() {
+                    cancel_rename_modal(&mut self.state);
+                }
+            }
             ModalAction::Save => self.save_rename_modal_via_api(),
             ModalAction::Clear => {
-                self.state.name_input.clear();
-                self.state.name_input_replace_on_type = false;
+                clear_rename_input(&mut self.state);
             }
             ModalAction::Cancel => cancel_rename_modal(&mut self.state),
             _ => {}

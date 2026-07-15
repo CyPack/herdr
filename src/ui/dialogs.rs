@@ -71,6 +71,17 @@ pub(super) fn render_rename_overlay(app: &AppState, frame: &mut Frame, area: Rec
 
     render_modal_header(frame, rows[0], title, &app.palette);
 
+    if let Some(error) = app
+        .file_manager_rename
+        .as_ref()
+        .and_then(|rename| rename.validation_error)
+    {
+        frame.render_widget(
+            Paragraph::new(error.label()).style(Style::default().fg(app.palette.red)),
+            rows[1],
+        );
+    }
+
     let input_rect = Rect::new(rows[2].x, rows[2].y, rows[2].width, 1);
     frame.render_widget(Clear, input_rect);
     frame.render_widget(

@@ -1,7 +1,116 @@
 use crate::app::state::{
     FileManagerContextMenuAction, FileManagerContextMenuModel, FileManagerOperationState,
-    FileManagerRenameState, Mode,
+    FileManagerRenameRequest, FileManagerRenameState, FileManagerRenameValidationError, Mode,
 };
+
+const MAX_FILE_NAME_UNITS: usize = 255;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileManagerRenamePlatform {
+    Unix,
+    Windows,
+}
+
+impl FileManagerRenamePlatform {
+    const fn current() -> Self {
+        if std::path::MAIN_SEPARATOR == '\\' {
+            Self::Windows
+        } else {
+            Self::Unix
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FileManagerRenameName {
+    Unchanged,
+    Changed(String),
+}
+
+fn validate_file_manager_name(
+    original_name: &str,
+    input: &str,
+    platform: FileManagerRenamePlatform,
+) -> Result<FileManagerRenameName, FileManagerRenameValidationError> {
+    use FileManagerRenameValidationError as Error;
+
+    if input.is_empty() {
+        return Err(Error::Empty);
+    }
+    if input == "." {
+        return Err(Error::CurrentDirectory);
+    }
+    if input == ".." {
+        return Err(Error::ParentDirectory);
+    }
+    if input.contains('\0') {
+        return Err(Error::ContainsNul);
+    }
+
+    let is_absolute = match platform {
+        FileManagerRenamePlatform::Unix => input.starts_with('/'),
+        FileManagerRenamePlatform::Windows => {
+            input.starts_with(['/', '\\'])
+                || input
+                    .as_bytes()
+                    .get(1)
+                    .is_some_and(|separator| *separator == b':')
+        }
+    };
+    if is_absolute {
+        return Err(Error::Absolute);
+    }
+    let has_separator = match platform {
+        FileManagerRenamePlatform::Unix => input.contains('/'),
+        FileManagerRenamePlatform::Windows => input.contains(['/', '\\']),
+    };
+    if has_separator {
+        return Err(Error::Separator);
+    }
+
+    let name_units = match platform {
+        FileManagerRenamePlatform::Unix => input.len(),
+        FileManagerRenamePlatform::Windows => input.encode_utf16().count(),
+    };
+    if name_units > MAX_FILE_NAME_UNITS {
+        return Err(Error::NameTooLong);
+    }
+
+    if platform == FileManagerRenamePlatform::Windows {
+        if input
+            .chars()
+            .any(|ch| ch <= '\u{1f}' || matches!(ch, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
+        {
+            return Err(Error::WindowsReservedCharacter);
+        }
+        if input.ends_with(['.', ' ']) {
+            return Err(Error::WindowsTrailingDotOrSpace);
+        }
+        let base = input.split('.').next().unwrap_or_default().to_uppercase();
+        let numbered_device = |prefix: &str| {
+            base.strip_prefix(prefix).is_some_and(|suffix| {
+                matches!(
+                    suffix,
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                )
+            })
+        };
+        if matches!(
+            base.as_str(),
+            "CON" | "PRN" | "AUX" | "NUL" | "CLOCK$" | "CONIN$" | "CONOUT$"
+        ) || numbered_device("COM")
+            || numbered_device("LPT")
+        {
+            return Err(Error::WindowsReservedName);
+        }
+    }
+
+    if input == original_name {
+        Ok(FileManagerRenameName::Unchanged)
+    } else {
+        Ok(FileManagerRenameName::Changed(input.to_string()))
+    }
+}
 
 impl crate::app::App {
     pub(super) fn open_file_manager_row_rename(&mut self, path: std::path::PathBuf) -> bool {
@@ -82,11 +191,81 @@ impl crate::app::App {
             return false;
         };
 
-        self.state.file_manager_rename = Some(FileManagerRenameState { paths });
+        self.state.request_file_manager_rename = None;
+        self.state.file_manager_rename = Some(FileManagerRenameState {
+            paths,
+            validation_error: None,
+        });
         self.state.name_input = name;
         self.state.name_input_replace_on_type = true;
         self.state.mode = Mode::RenameFile;
         true
+    }
+
+    pub(super) fn submit_file_manager_rename(&mut self) -> bool {
+        let Some(rename) = self.state.file_manager_rename.as_ref() else {
+            return false;
+        };
+        let Some(source_path) = rename
+            .paths
+            .first()
+            .filter(|_| rename.paths.len() == 1)
+            .cloned()
+        else {
+            return self
+                .reject_file_manager_rename(FileManagerRenameValidationError::SourceUnavailable);
+        };
+        let source_is_current = !self.file_operation_worker.is_busy()
+            && !self
+                .state
+                .file_manager_operation
+                .as_ref()
+                .is_some_and(FileManagerOperationState::is_running)
+            && self
+                .state
+                .file_manager
+                .as_ref()
+                .is_some_and(|file_manager| {
+                    file_manager
+                        .entries
+                        .iter()
+                        .any(|entry| entry.operation_supported && entry.path == source_path)
+                });
+        if !source_is_current {
+            return self
+                .reject_file_manager_rename(FileManagerRenameValidationError::SourceUnavailable);
+        }
+        let Some(original_name) = source_path.file_name().and_then(|name| name.to_str()) else {
+            return self
+                .reject_file_manager_rename(FileManagerRenameValidationError::SourceUnavailable);
+        };
+
+        match validate_file_manager_name(
+            original_name,
+            &self.state.name_input,
+            FileManagerRenamePlatform::current(),
+        ) {
+            Ok(FileManagerRenameName::Unchanged) => {
+                self.state.request_file_manager_rename = None;
+                true
+            }
+            Ok(FileManagerRenameName::Changed(new_name)) => {
+                self.state.request_file_manager_rename = Some(FileManagerRenameRequest {
+                    source_path,
+                    new_name,
+                });
+                true
+            }
+            Err(error) => self.reject_file_manager_rename(error),
+        }
+    }
+
+    fn reject_file_manager_rename(&mut self, error: FileManagerRenameValidationError) -> bool {
+        if let Some(rename) = self.state.file_manager_rename.as_mut() {
+            rename.validation_error = Some(error);
+        }
+        self.state.request_file_manager_rename = None;
+        false
     }
 }
 
