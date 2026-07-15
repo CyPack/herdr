@@ -2047,6 +2047,89 @@ mod tests {
         assert_eq!(fs::read(beta).expect("cancelled beta retained"), b"beta");
     }
 
+    // TP-C4.3-BULK/LIFECYCLE: one complete mapping must match the current
+    // visible selection in its stable row order before App hands it to the
+    // shared lane. Completion projects exact item state and reloads the same
+    // directory without a second scheduler or render-time filesystem work.
+    #[test]
+    fn app_bulk_rename_consumes_current_mapping_and_projects_terminal_items() {
+        let td = TempDir::new("app-bulk-rename");
+        let alpha = td.root.join("alpha.txt");
+        let beta = td.root.join("beta.txt");
+        fs::write(&alpha, b"alpha").expect("write App bulk alpha");
+        fs::write(&beta, b"beta").expect("write App bulk beta");
+        let mut file_manager = crate::fm::FmState::new(&td.root);
+        let alpha_index = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == alpha)
+            .expect("alpha row");
+        let beta_index = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == beta)
+            .expect("beta row");
+        assert!(file_manager.replace_selection(alpha_index));
+        assert!(file_manager.toggle_selection(beta_index));
+        let mut app = test_app();
+        app.state.file_manager = Some(file_manager);
+        app.state.request_file_manager_bulk_rename =
+            Some(crate::app::state::FileManagerBulkRenameRequest {
+                mappings: vec![
+                    (alpha.clone(), "beta.txt".to_string()),
+                    (beta.clone(), "alpha.txt".to_string()),
+                ],
+            });
+
+        assert!(app.sync_file_operation_worker());
+        assert!(app.state.request_file_manager_bulk_rename.is_none());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let _ = app.sync_file_operation_worker();
+            if app
+                .state
+                .file_manager_operation
+                .as_ref()
+                .is_some_and(|operation| !operation.is_running())
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "App bulk rename timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let operation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("terminal App bulk rename");
+        assert_eq!(operation.kind, FileManagerOperationKind::BulkRename);
+        assert_eq!(operation.status, FileManagerOperationStatus::Completed);
+        assert_eq!(operation.completed_items, 2);
+        assert_eq!(operation.failed_items, 0);
+        assert_eq!(
+            operation
+                .items
+                .iter()
+                .map(|item| (item.path.clone(), item.status, item.recovery_path.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    alpha.clone(),
+                    FileManagerOperationItemStatus::Completed,
+                    None
+                ),
+                (
+                    beta.clone(),
+                    FileManagerOperationItemStatus::Completed,
+                    None
+                ),
+            ]
+        );
+        assert_eq!(fs::read(alpha).expect("App bulk alpha output"), b"beta");
+        assert_eq!(fs::read(beta).expect("App bulk beta output"), b"alpha");
+    }
+
     // Keep the single-rename core status imports exercised at the worker
     // boundary so accidental result-type drift is a compile-time failure.
     #[test]
