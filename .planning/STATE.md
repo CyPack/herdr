@@ -2,9 +2,9 @@
 
 - Updated: 2026-07-15
 - Branch: `feat/native-fm`
-- Published CyPack base: `a7bca0e`
-- Verified C4.2 product head: `917cd57`
-- Publication unit: C4.2 seventeen-commit test/product chain through `917cd57`, plus the continuity/graph commit
+- Published CyPack base: `ed47da8`
+- Verified C4.3 product head: `c7043e2`
+- Publication unit: C4.3 eighteen-commit test/product chain through `c7043e2`, plus the continuity/graph commit
   containing this file. Push only CyPack `feat/native-fm` and fork `master`
   after fast-forward ancestry and exact remote-SHA verification.
 
@@ -31,29 +31,33 @@
   preflight, immediate identity revalidation, restricted platform-trash
   backend, permanent file/directory deletion, shared bounded worker lane,
   ordered per-item recovery evidence, and matching-cwd reconciliation.
+- C4.3 exact single-target Rename intent, shared platform-aware component
+  validation, immutable identity revalidation, no-replace file/directory/
+  symlink commit, bounded cycle-safe bulk staging, explicit recovery paths,
+  shared worker lane, and matching-generation App reconciliation.
 
 ## Active Next Increment
 
-TP-C4.3-INTENT must be RED before production changes.
+TP-C4.4-PROGRESS must be RED before production changes.
 
 Test points:
 
-- Header, context, and row Rename must converge on one exact current single
-  target; stale, reordered, multi-selected, closed, or in-flight intent fails closed.
-- Name validation must reject empty, path-like, reserved, non-UTF-8, and
-  over-limit components before scheduling; unchanged input is an explicit no-op.
-- Exact, case-fold, duplicate-output, and replacement-race collisions never
-  overwrite. Single rename revalidates identity and uses no-replace commit.
-- Bulk mapping validates completely before mutation; chains and swaps/cycles
-  use bounded private staging with explicit rollback/partial recovery evidence.
-- The existing worker generation and watcher reconciliation must terminalize
-  every item, reject stale completion, and leave no private staging artifact.
+- Transfer, delete, single rename, and bulk rename must expose one bounded,
+  monotonic aggregate/per-item progress model with coalesced worker updates.
+- Cancellation must be idempotent before work, during reversible staging/copy,
+  and at irreversible publish/delete boundaries; committed work stays explicit.
+- Worker completion, watcher bursts, polling fallback, selection pruning, cwd
+  changes, and close/reopen must converge under one matching generation.
+- Panic/disconnect/cancel recovery must leave the existing lane reusable,
+  preserve uncertain recovery paths, and never orphan in-flight state.
+- Run focused progress/cancel/reconcile/recovery tests, all C4 regressions, the
+  full cross-platform gate, graph freshness, and artifact/diff checks before
+  publication.
 
 ## Ordered Roadmap
 
-1. C4 safe copy/move, trash/delete, rename/bulk rename, bounded progress/cancel,
-   TOCTOU, collision, permission, cross-filesystem, partial-failure, and watcher
-   reconciliation tests.
+1. C4.4 bounded progress/cancel, watcher reconciliation, terminal recovery,
+   lane reuse, and the complete C4 closure gate.
 2. C5 exact pane/agent handoff, quoting/identity, split-and-launch failure
    cleanup, and isolated-session safety.
 3. C6 Finder-fidelity sidebar, highlight/location marker, integrated actions,
@@ -63,17 +67,19 @@ Test points:
 5. North-star backlog: M1 interactive CLI attachments, M2 git-worktree
    controls, M3 general panel/page/button interface evaluation.
 
-## Fresh C4.2 Evidence
+## Fresh C4.3 Evidence
 
-- Focused delete 29/29; broad FM/watcher/preview/context/plugin 321/321.
-- Full nextest 3086/3086; only `path_beta_real_host_probe` skipped.
+- Focused/broad rename, bulk, worker, App, and watcher regression 163/163.
+- Full nextest 3109/3109; only `path_beta_real_host_probe` ignored.
 - Linux all-target and canonical Windows MSVC bin clippy clean with
   `-D warnings`.
 - Bun 17/17; Python maintenance 64/64; fmt and diff-check clean.
-- Isolated throwaway-HOME/XDG Trash proved file and symlink deletion while
-  preserving the symlink target; no delete/staging/preflight artifact remains.
-- Graph refresh: 18,576 nodes / 86,769 edges. Freshness queries returned both
-  `miller_layout` and all current delete confirmation/core/worker symbols.
+- Real temporary-filesystem tests proved file/directory/symlink rename,
+  source/destination races, cycles, swaps, injected rollback failure, and exact
+  recovery paths; no private staging artifact remains.
+- Graph refresh: 18,722 nodes / 88,526 edges. Freshness queries returned
+  `miller_layout` plus current single/bulk/name/App rename symbols after proving
+  the prior `ready` graph was stale.
 
 ## Non-Negotiable Boundaries
 

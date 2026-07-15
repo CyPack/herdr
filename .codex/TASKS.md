@@ -333,12 +333,17 @@ owns filesystem mutation and C5 owns agent delivery.
 | TP-C4.2-TRASH | File/directory/multi-source trash, symlink-as-link behavior, missing/replaced paths, backend unavailable/permission failures, cancellation boundaries, and platform result mapping | Default destructive action moves exact entries to platform trash without following symlinks; every item has an explicit terminal result and failures preserve remaining sources | Trash is the recoverable default but platform backends can partially fail and must not be reported as all-or-nothing success |
 | TP-C4.2-DELETE | Separately gated permanent delete for file, empty/non-empty directory, symlink, read-only/permission failure, replacement race, cancellation, and partial progress | Permanent deletion is never implicit, requires stronger confirmation, revalidates identity immediately before mutation, never follows symlinks, and reports irreversible partial completion exactly | Permanent delete has no rollback boundary and therefore needs stronger authority and failure accounting than trash |
 | TP-C4.2-RECOVERY | Worker panic/disconnect, partial multi-item terminal state, watcher event reorder/burst, selection pruning, retry, and temp-artifact scan | UI remains responsive; completed items, retained sources, and failed items stay distinguishable; current listing converges once without hot retry or leaked staging data | Destructive partial failure must remain understandable and recoverable instead of looking like a clean success |
-| TP-C4.3-INTENT | Header, context-menu, and row Rename routes; exact current single-target identity; stale/reordered/multi-selection/closed-FM/in-flight authority | Every route converges on one typed current target; stale or ambiguous authority is consumed without opening a dialog, scheduling work, or mutating disk | Rename must not turn an old coordinate or display label into filesystem authority |
+| TP-C4.3-INTENT | Context-menu and row Rename routes; exact current single-target identity; stale/reordered/multi-selection/closed-FM/in-flight authority | Every route converges on one typed current target; stale or ambiguous authority is consumed without opening a dialog, scheduling work, or mutating disk | Rename must not turn an old coordinate or display label into filesystem authority; the header has no Rename control |
 | TP-C4.3-NAME | Empty, unchanged, `.`, `..`, separator-bearing, absolute, NUL/non-UTF-8, platform-reserved, and over-limit component names | Invalid names fail before worker scheduling; unchanged input is an explicit no-op; the accepted name is one bounded filesystem component | User text is untrusted path input and must never escape the current parent or create platform-specific undefined behavior |
 | TP-C4.3-COLLISION | Existing exact target, case-fold collision where applicable, file/directory mismatch, duplicate bulk outputs, and target replacement before commit | Default policy never overwrites; all collisions fail closed with exact source/target evidence before mutation or at final revalidation | Rename has no safe implicit overwrite policy, especially across case-insensitive filesystems |
 | TP-C4.3-ATOMIC | Same-directory no-replace rename, immediate source identity revalidation, symlink-as-link behavior, source replacement, and destination creation races | A single rename uses the strongest platform no-replace primitive available; symlinks are renamed rather than followed; a race cannot replace an unrelated entry | Validation alone cannot close TOCTOU; the commit primitive must preserve both source and destination identity |
 | TP-C4.3-BULK | Deterministic old-to-new mapping, bounded input count, duplicate outputs, chains, swaps/cycles, temporary staging, injected failure, and recovery | The complete mapping validates first; cycles use private collision-safe staging; terminal state distinguishes committed, restored, retained, and uncertain items without silent partial success | Bulk rename is a transaction-like graph operation and naive sequential renames corrupt chains or swaps |
 | TP-C4.3-LIFECYCLE | One bounded worker lane, cancellation boundaries, panic/disconnect, close/reopen generation, watcher reorder/burst, selection pruning, and temp-artifact scan | Render stays pure; stale completion cannot mutate a new FM generation; every item terminalizes; current listing converges once; private staging is removed or explicitly reported | Rename must compose with the existing C4 worker and A4 watcher without introducing a second race-prone lifecycle |
+| TP-C4.4-PROGRESS | Transfer, delete, single-rename, and bulk-rename progress for zero/small/bounded-many inputs; repeated/coalesced worker updates; terminal completion | Aggregate and per-item progress are monotonic, bounded, and never exceed known work; terminal state is exact; progress transport cannot create an unbounded queue or render-time mutation | Long operations need truthful responsiveness without turning progress reporting into a memory or event-storm failure mode |
+| TP-C4.4-CANCEL | Cancel before execution, during reversible staging/copy, at irreversible publish/delete boundaries, repeated cancel, and cancel/completion races | Cancellation is idempotent; reversible work is restored or removed; already committed work is reported as committed; every remaining item terminalizes without claiming an impossible rollback | Cancellation cannot be modeled as a generic success/failure bit once an operation crosses irreversible boundaries |
+| TP-C4.4-RECONCILE | Own-operation watcher bursts before/during/after completion, polling fallback, selected-path removal/rename, cwd change, close/reopen, and stale generations | One current generation owns reconciliation; matching cwd converges once and preserves/prunes selection by exact path; stale callbacks cannot reload or project into a reopened FM | Worker completion and filesystem watchers race by design, so refresh ownership must be deterministic |
+| TP-C4.4-RECOVERY | Worker panic/disconnect after progress, cancellation followed by a new operation, uncertain rename recovery evidence, and lane reuse | The existing single worker lane remains reusable; no operation stays in-flight forever; uncertain paths remain visible; no second scheduler, hot retry, or private artifact survives | A terminal UI must recover from worker failure without losing evidence or requiring process restart |
+| TP-C4.4-GATES | Focused progress/cancel/reconcile/failure tests, all C4 operation regressions, full nextest, Linux/Windows clippy, Bun/Python maintenance, graph freshness, and artifact/diff cleanliness | Every applicable gate passes with only the named B0 host probe skipped; no stable Herdr/socket or user process is touched | C4 cannot close until all operation kinds share one verified lifecycle rather than separate happy paths |
 | TP-C4-GATES | Focused preflight/copy/move/failure/cancel/watcher tests, isolated real-filesystem cross-check, existing FM/context/plugin regressions, full nextest, Linux/Windows clippy, Bun/Python maintenance, graph freshness, temp-artifact and diff cleanliness | All applicable gates pass; only the named B0 host probe is skipped; no stable Herdr/socket or user process is touched; no staging/temp artifact remains | Destructive-capable filesystem work cannot be closed by happy-path unit tests alone |
 
 - [x] C4.1 copy/move outside render, with collision, permission, partial-write,
@@ -368,9 +373,37 @@ owns filesystem mutation and C5 owns agent delivery.
   full nextest 3086/3086 plus one named B0 skip, Linux/Windows clippy, Bun
   17/17, Python 64/64, fmt/diff/temp clean. Exact OSV query for `trash 5.2.6`
   returned no vulnerability record. Fresh graph: 18,576 / 86,769.
-- [ ] C4.3 rename and bulk-rename validation, conflicts, and atomicity limits.
+- [x] C4.3 rename and bulk-rename validation, conflicts, and atomicity limits.
+- C4.3 atomic chain: intent `2028bce`/`09ad9cd`, name behavior
+  `4162b2b`/`59e7d97`/`6e92672`, atomic execution `902c480`/`8ec583b`,
+  cycle-safe bulk recovery `01aec01`/`3396df3`, recovery-path evidence
+  `73a547a`/`308fb5d`, worker lifecycle `c023c37`/`4cffcb7`, App bulk
+  lifecycle `770366c`/`36cb8a6`, canonical injected I/O error `03ac819`, and
+  shared operation-name validation `91d3a41`/`c7043e2`.
+- C4.3 context-menu and row intent require one exact current selection; the
+  single-name modal deliberately rejects multi-selection. Typed bounded bulk
+  mappings enter at the App boundary, validate completely, stage cycles and
+  swaps privately, and preserve exact retained/restored/uncertain recovery
+  paths. Single and bulk rename share the existing operation lane and the
+  common platform-aware name authority.
+- C4.3 gates: focused rename/bulk/lifecycle 163/163, full nextest 3109/3109
+  plus only the named B0 host probe skipped, Linux/Windows clippy, Bun 17/17,
+  Python 64/64, fmt/diff/temp clean. Fresh graph: 18,722 / 88,526 with
+  `miller_layout` and current single/bulk/name/App symbols.
 - [ ] C4.4 bounded progress/cancel lifecycle and watcher reconciliation.
-- [ ] Require isolated real-filesystem cross-check and leave no temp artifacts.
+- [ ] C4.4.1 make TP-C4.4-PROGRESS RED and add one bounded/coalesced progress
+  projection shared by transfer, delete, single rename, and bulk rename.
+- [ ] C4.4.2 make TP-C4.4-CANCEL RED and define exact reversible versus
+  irreversible cancellation boundaries with idempotent terminalization.
+- [ ] C4.4.3 make TP-C4.4-RECONCILE RED and prove one matching-generation
+  refresh across watcher bursts, polling fallback, selection pruning, and
+  close/reopen races.
+- [ ] C4.4.4 make TP-C4.4-RECOVERY RED and prove lane reuse after cancel,
+  panic, disconnect, and uncertain bulk recovery without orphan state.
+- [ ] C4.4.5 run TP-C4.4-GATES and the complete C4 gate before publication.
+- [x] C4.3 real temporary-filesystem tests cover file, directory, symlink,
+  collision, replacement race, cycles, swaps, injected rollback failure, and
+  exact recovery paths; no `.herdr-rename-stage-*` artifact remains.
 
 ## P3 — C5 Agent Handoff
 
@@ -407,7 +440,7 @@ owns filesystem mutation and C5 owns agent delivery.
 ## Ordering Resolution
 
 A4, B0, B1, the A3 remainder, B2, C1, N3, C2, N4.2, C3.1, C3.2, C3.3,
-C4.1, and C4.2 are complete through product head `917cd57`. The next execution
-order is C4.3 → C4.4 → C5 → C6.
+C4.1, C4.2, and C4.3 are complete through product head `c7043e2`. The next
+execution order is C4.4 → C5 → C6.
 S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3 remain
 inactive north-star work.

@@ -4,11 +4,11 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Active C4.2 product checkpoint: `917cd57`
-  (`fix: reject unnamed paths from file deletion`).
-- The C4.2 publication unit is seventeen atomic test/product commits from
-  `733d423` through `917cd57`, plus the continuity/graph commit containing this file. At
-  publication, CyPack
+- Active C4.3 product checkpoint: `c7043e2`
+  (`feat: share file rename name validation authority`).
+- The C4.3 publication unit is eighteen atomic test/product commits from
+  `2028bce` through `c7043e2`, plus the continuity/graph commit containing this
+  file. At publication, CyPack
   `feat/native-fm` and fork `master` are verified at that same fast-forward
   branch tip.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
@@ -339,6 +339,44 @@
   `execute_delete_operation`, and `FileOperationWorkerTask`; `ready` alone was
   not accepted as freshness evidence.
 
+## Verified Checkpoint — C4.3 Safe Single and Bulk Rename
+
+- C4.3 is an auditable eighteen-commit test/product chain from intent RED
+  `2028bce` through shared validation GREEN `c7043e2`; no compile-failing RED
+  checkpoint is published alone.
+- Context-menu and row Rename converge on one exact current single-target
+  modal. Stale/reordered, multi-selected, unsupported, closed/reopened, and
+  in-flight authority fails closed before a worker plan exists. The header has
+  no Rename control, and the single-name modal deliberately remains
+  single-target.
+- `src/fm/rename.rs` owns the common platform-aware component validator and
+  immutable source identity snapshot. Empty/path-like/NUL/reserved/over-limit
+  names fail before scheduling; unchanged input is an explicit no-op. Single
+  rename revalidates immediately and uses the strongest available platform
+  no-replace primitive for files, directories, and symlinks.
+- Bounded typed bulk mappings validate all sources and outputs before the first
+  mutation. Chains, swaps, and cycles stage through private collision-safe
+  paths, then publish deterministically. Injected staging, publish, rollback,
+  panic, disconnect, and cancellation paths distinguish renamed, unchanged,
+  restored, retained, and uncertain items; uncertain evidence includes the
+  exact recovery path.
+- Single and bulk rename reuse the existing one-operation worker lane. App
+  completion reloads only the matching current cwd and rejects stale
+  close/reopen generations. The typed App bulk boundary is ready for a future
+  editor surface without silently converting a multi-selection into the
+  single-name dialog. Render remains pure.
+- Gates: focused rename/bulk/worker/App regression 163/163; full nextest
+  3109/3109 with only `path_beta_real_host_probe` ignored; Linux all-target and
+  canonical Windows MSVC bin clippy clean with `-D warnings`; Bun 17/17;
+  Python 64/64; fmt/diff/temp-artifact checks clean. Real temporary-filesystem
+  tests cover file/directory/symlink, destination/source races, cycles, swaps,
+  and recovery failure without leaving `.herdr-rename-stage-*` artifacts.
+- `ready` was explicitly rejected when the pre-refresh graph lacked every new
+  rename symbol. Fast reindex completed at 18,722 nodes / 88,526 edges and
+  returned `miller_layout`, `RenameOperationPlan`, `BulkRenameOperationPlan`,
+  `validate_rename_name_component`, and
+  `consume_file_manager_bulk_rename_request` from current source.
+
 ## Completed Checkpoint — B2 Native Image Preview
 
 - B2 is an auditable dependency decision plus four RED/GREEN increments and a
@@ -499,15 +537,16 @@
 
 ## Exact Next Action
 
-1. Begin C4.3 test-point-first. Graph-first inspect the typed row/context/header
-   rename intents, modal input patterns, C4 immutable identity snapshots,
-   platform no-replace primitives, and the single operation worker lane.
-2. Make TP-C4.3-INTENT RED first: only one exact current target may open Rename;
-   stale, reordered, multi-selected, unsupported, closed-FM, and in-flight
-   routes must be consumed without scheduling work or mutating disk.
-3. Continue in strict order: TP-C4.3-NAME, COLLISION, ATOMIC, BULK, LIFECYCLE,
-   then the complete TP-C4-GATES. Every production increment follows its own
-   observed failing test; no compile-failing RED is pushed alone.
+1. Begin C4.4 test-point-first. Graph-first inspect the existing worker task,
+   cancellation token, aggregate/per-item result projection, scheduled sync,
+   A4 watcher generation, polling fallback, and close/reopen ownership.
+2. Make TP-C4.4-PROGRESS RED first: transfer, delete, single rename, and bulk
+   rename must expose one bounded monotonic progress model without an
+   unbounded event queue or render mutation.
+3. Continue in strict order: TP-C4.4-CANCEL, RECONCILE, RECOVERY, then the
+   complete TP-C4.4-GATES. Every production increment follows its own observed
+   failing test; no compile-failing RED is pushed alone. After C4.4, continue
+   C5 then C6 without skipping modules.
 
 ## Verified B2.0 Dependency Decision
 

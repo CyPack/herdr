@@ -2,11 +2,11 @@
 
 ## 1. SONRAKI ADIM
 
-Make TP-C4.3-INTENT RED before production changes. Graph-first inspect the
-typed row/context/header Rename intents, modal input patterns, immutable C4
-identity snapshots, platform no-replace primitives, and the single operation
-worker lane. Prove exact current single-target authority and stale/reordered/
-multi-selected/closed/in-flight rejection before implementing rename.
+Make TP-C4.4-PROGRESS RED before production changes. Graph-first inspect the
+existing worker task/result channel, cancellation token, aggregate/per-item
+projection, scheduled sync, A4 watcher generation, polling fallback, and
+close/reopen ownership. Prove one bounded monotonic progress contract across
+transfer, delete, single rename, and bulk rename before implementation.
 
 ## 2. AKTİF PROJE
 
@@ -252,6 +252,27 @@ multi-selected/closed/in-flight rejection before implementing rename.
   named B0 skip, Linux/Windows clippy, Bun 17/17, Python 64/64, fmt/diff/temp
   clean. Isolated real Trash used throwaway HOME/XDG. Fresh graph: 18,576 /
   86,769 with both `miller_layout` and current delete symbols.
+- Completed C4.3 as eighteen atomic test/product commits from `2028bce`
+  through `c7043e2`. Context-menu and row Rename require one exact current
+  target; stale/reordered/multi-selected/unsupported/closed/in-flight intent
+  fails closed. The header has no Rename control and the single-name modal
+  deliberately remains single-target.
+- Common platform-aware component validation and immutable identity snapshots
+  protect both single and typed bounded bulk plans. Single rename uses
+  immediate revalidation plus platform no-replace; bulk chains/swaps/cycles
+  use private collision-safe staging and deterministic publish. Failure and
+  rollback preserve renamed/unchanged/restored/retained/uncertain per-item
+  evidence, including exact recovery paths.
+- Single and bulk rename reuse the existing operation worker and matching-cwd
+  App reconciliation. The typed bulk App boundary is present for a future
+  editor surface; it does not silently reinterpret multi-selection in the
+  single modal. Render remains pure.
+- C4.3 gates: focused/broad rename lifecycle 163/163, full nextest 3109/3109
+  plus only `path_beta_real_host_probe` ignored, Linux/Windows clippy, Bun
+  17/17, Python 64/64, fmt/diff/temp clean. Real temporary-filesystem tests
+  cover file/directory/symlink, races, cycles, swaps, and rollback failure.
+  Fresh graph: 18,722 / 88,526 with `miller_layout` and current single, bulk,
+  shared-validator, and App-consumer symbols.
 
 ## 6. KOD DURUMU
 
@@ -441,6 +462,11 @@ the C4.1 publication unit before both CyPack heads are fast-forwarded.
   321/321; final full nextest 3086/3086 plus only the named B0 host probe skip.
   Linux/Windows clippy, Bun 17/17, Python 64/64, isolated real Trash,
   fmt/diff/temp checks, and graph freshness are clean.
+- C4.3 focused/broad rename, bulk, worker, App, and watcher regression 163/163;
+  final full nextest 3109/3109 plus only the named B0 host probe ignored.
+  Linux/Windows clippy, Bun 17/17, Python 64/64, real temporary-filesystem
+  rename/recovery coverage, fmt/diff/temp checks, and graph freshness are
+  clean.
 
 ## 8. KRİTİK KARARLAR
 
@@ -494,10 +520,10 @@ the C4.1 publication unit before both CyPack heads are fast-forwarded.
 
 See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2/N4 contracts and the
 complete C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1, N3,
-C2, N4, C3.1, C3.2, C3.3, C4.1, and C4.2 are closed. The immediate product task is
-TP-C4.3-INTENT RED; then follow C4.3 → C4.4 → C5 → C6 without skipping
-modules. S5–S7/N2 remain evidence-gated; M1–M3 remain
-north-star backlog.
+C2, N4, C3.1, C3.2, C3.3, C4.1, C4.2, and C4.3 are closed. The immediate
+product task is TP-C4.4-PROGRESS RED, followed by CANCEL, RECONCILE, RECOVERY,
+and the complete C4.4 gate. Then continue C5 → C6 without skipping modules.
+S5–S7/N2 remain evidence-gated; M1–M3 remain north-star backlog.
 
 ## 11. ORTAM
 
@@ -545,6 +571,11 @@ north-star backlog.
   with zero extraction errors. CLI status/search/snippet proof returned
   `file_manifest_actions`, `plugin_invocation_params`, Unicode popup geometry,
   and the end-to-end plugin disable-race test; `ready` alone was not accepted.
+- Post-C4.3 fast refresh completed at 18,722 nodes / 88,526 edges. The stale
+  pre-refresh graph said `ready` but returned none of the new rename symbols;
+  after indexing, searches returned `miller_layout`, `RenameOperationPlan`,
+  `BulkRenameOperationPlan`, `validate_rename_name_component`, and
+  `consume_file_manager_bulk_rename_request` from current source.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.
