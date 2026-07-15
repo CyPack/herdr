@@ -2642,6 +2642,55 @@ mod tests {
         );
     }
 
+    // TP-M1.2-OVERLAY: R014 Clear-first ownership replaces background styling
+    // inside a bounded responsive surface while keeping the base pane outside.
+    #[test]
+    fn attachment_picker_clear_overlay_is_responsive_and_blocks_background_input() {
+        let td = TempDir::new("attachment-overlay");
+        td.file("document.txt");
+        let mut app = AppState::test_new();
+        let mut workspace = crate::workspace::Workspace::test_new("attachment-overlay");
+        workspace.identity_cwd = td.root.clone();
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace.tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        app.workspaces = vec![workspace];
+        app.active = Some(0);
+        app.ensure_test_terminals();
+        app.terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_agent_name("codex".into());
+        app.view.terminal_area = Rect::new(0, 0, 80, 24);
+        app.open_agent_attachment_picker().unwrap();
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    Block::default().style(Style::default().bg(Color::Red)),
+                    frame.area(),
+                );
+                render_agent_attachment_picker(&app, frame, frame.area());
+            })
+            .unwrap();
+
+        let popup = agent_attachment_picker_rect(Rect::new(0, 0, 80, 24)).unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_ne!(
+            buffer[(popup.x + 1, popup.y + 1)].style().bg,
+            Some(Color::Red)
+        );
+        let rendered = (popup.x..popup.right())
+            .map(|x| buffer[(x, popup.y + 1)].symbol())
+            .collect::<String>();
+        assert!(rendered.contains("Attach file"), "header: {rendered:?}");
+
+        assert!(agent_attachment_picker_rect(Rect::new(0, 0, 17, 10)).is_none());
+        assert!(agent_attachment_picker_rect(Rect::new(0, 0, 18, 10)).is_some());
+    }
+
     // Degenerate area must not panic.
     #[test]
     fn zero_area_is_panic_free() {

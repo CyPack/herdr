@@ -3071,6 +3071,136 @@ impl AppState {
 mod tests {
     use super::*;
     use crossterm::event::KeyEvent;
+    use std::path::Path;
+
+    struct AttachmentTempDir(PathBuf);
+
+    impl AttachmentTempDir {
+        fn new(tag: &str) -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static COUNTER: AtomicU64 = AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "herdr-attachment-{tag}-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&path).expect("create attachment fixture");
+            Self(path)
+        }
+    }
+
+    impl Drop for AttachmentTempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn focused_agent_attachment_state(root: &Path) -> (AppState, PaneId) {
+        let mut state = AppState::test_new();
+        let mut workspace = crate::workspace::Workspace::test_new("attachment");
+        workspace.identity_cwd = root.to_path_buf();
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace.tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        state.workspaces = vec![workspace];
+        state.active = Some(0);
+        state.selected = 0;
+        state.ensure_test_terminals();
+        state
+            .terminals
+            .get_mut(&terminal_id)
+            .expect("focused terminal")
+            .set_agent_name("codex".into());
+        state.view.terminal_area = Rect::new(0, 0, 80, 24);
+        (state, pane_id)
+    }
+
+    // TP-M1.2-OPEN: picker state binds the exact stable identities and starts
+    // from the same workspace cwd authority as the native FM.
+    #[test]
+    fn opening_attachment_picker_binds_exact_target_and_workspace_cwd() {
+        let root = AttachmentTempDir::new("open");
+        let (mut state, pane_id) = focused_agent_attachment_state(&root.0);
+        let workspace_id = state.workspaces[0].id.clone();
+        let terminal_id = state.terminal_id_for_pane(0, pane_id).unwrap();
+
+        assert_eq!(state.open_agent_attachment_picker(), Ok(()));
+
+        let picker = state
+            .agent_attachment_picker
+            .as_ref()
+            .expect("picker state");
+        assert_eq!(picker.file_manager.cwd, root.0);
+        assert_eq!(picker.target.workspace_id, workspace_id);
+        assert_eq!(picker.target.pane_id, pane_id);
+        assert_eq!(picker.target.terminal_id, terminal_id);
+        assert_eq!(state.mode, Mode::AttachFile);
+        assert_eq!(state.view.agent_attachment_action_area, None);
+    }
+
+    // TP-M1.2-TINY: incomplete modal geometry declines before allocating
+    // picker/FM state and returns one stable visible-reason classification.
+    #[test]
+    fn attachment_picker_tiny_area_declines_with_visible_reason() {
+        let root = AttachmentTempDir::new("tiny");
+        let (mut state, _) = focused_agent_attachment_state(&root.0);
+        state.view.terminal_area = Rect::new(0, 0, 17, 10);
+
+        assert_eq!(
+            state.open_agent_attachment_picker(),
+            Err(AgentAttachmentOpenError::InsufficientSpace)
+        );
+        assert!(state.agent_attachment_picker.is_none());
+        assert_eq!(state.mode, Mode::Terminal);
+    }
+
+    // TP-M1.2-CANCEL: overlay cancellation owns no runtime resource and
+    // restores terminal mode without preparing a delivery request.
+    #[test]
+    fn attachment_picker_escape_restores_valid_focus_without_delivery() {
+        let root = AttachmentTempDir::new("cancel");
+        let (mut state, pane_id) = focused_agent_attachment_state(&root.0);
+        state.open_agent_attachment_picker().unwrap();
+
+        state.close_agent_attachment_picker();
+
+        assert!(state.agent_attachment_picker.is_none());
+        assert_eq!(state.mode, Mode::Terminal);
+        assert_eq!(state.workspaces[0].focused_pane_id(), Some(pane_id));
+        assert!(state.request_agent_attachment_delivery.is_none());
+    }
+
+    // TP-M1.2-AUTHORITY: v1 exposes exactly one current regular UTF-8 file;
+    // directories are navigation targets, never attachment authority.
+    #[test]
+    fn attachment_picker_accepts_one_regular_file_and_disables_other_targets() {
+        let root = AttachmentTempDir::new("authority");
+        let file = root.0.join("photo ünicode.png");
+        let directory = root.0.join("folder");
+        std::fs::write(&file, b"png").unwrap();
+        std::fs::create_dir(&directory).unwrap();
+        let (mut state, _) = focused_agent_attachment_state(&root.0);
+        state.open_agent_attachment_picker().unwrap();
+
+        let picker = state.agent_attachment_picker.as_mut().unwrap();
+        picker.file_manager.cursor = picker
+            .file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == file)
+            .unwrap();
+        assert_eq!(state.agent_attachment_selected_file(), Some(file));
+
+        let picker = state.agent_attachment_picker.as_mut().unwrap();
+        picker.file_manager.cursor = picker
+            .file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == directory)
+            .unwrap();
+        assert_eq!(state.agent_attachment_selected_file(), None);
+    }
 
     // TP-C6.1-MODEL/LIFECYCLE: filesystem discovery happens before render.
     // Existing well-known directories are kept in Finder order, missing
