@@ -490,6 +490,119 @@ enum FileManagerSidebarLine<'a> {
     Item(&'a FileManagerSidebarItem),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FileManagerSidebarMarker {
+    Warning,
+    Eject,
+}
+
+fn file_manager_sidebar_marker(item: &FileManagerSidebarItem) -> Option<FileManagerSidebarMarker> {
+    if !item.accessible {
+        Some(FileManagerSidebarMarker::Warning)
+    } else if item.ejectable {
+        Some(FileManagerSidebarMarker::Eject)
+    } else {
+        None
+    }
+}
+
+fn file_manager_sidebar_item_is_current(app: &AppState, item: &FileManagerSidebarItem) -> bool {
+    app.sidebar_tab == crate::app::state::SidebarTab::Files
+        && item.accessible
+        && app
+            .file_manager
+            .as_ref()
+            .is_some_and(|file_manager| file_manager.cwd.as_path() == item.path.as_path())
+}
+
+fn file_manager_sidebar_item_line(
+    app: &AppState,
+    item: &FileManagerSidebarItem,
+    width: u16,
+) -> Line<'static> {
+    let width = usize::from(width);
+    if width == 0 {
+        return Line::default();
+    }
+
+    let marker = file_manager_sidebar_marker(item);
+    let marker_width = usize::from(marker.is_some());
+    let available_left = width.saturating_sub(marker_width);
+    // Keep a blank cell between row content and a trailing affordance whenever
+    // the row is wide enough to show both.
+    let content_limit =
+        available_left.saturating_sub(usize::from(marker.is_some() && available_left > 0));
+    let mut spans = Vec::new();
+    let mut content_width = 0;
+
+    if file_manager_sidebar_item_is_current(app, item) && content_limit >= 4 {
+        let body_width = content_limit.saturating_sub(3);
+        let full_body = format!("{} {}", item.icon.glyph(), item.label);
+        let body = if body_width == 1 {
+            truncate_end(item.icon.glyph(), body_width)
+        } else {
+            truncate_end(&full_body, body_width)
+        };
+        content_width = 1 + 1 + display_width(&body) + 1;
+        spans.extend([
+            Span::raw(" "),
+            Span::styled("", Style::default().fg(app.palette.accent)),
+            Span::styled(
+                body,
+                Style::default()
+                    .fg(panel_contrast_fg(&app.palette))
+                    .bg(app.palette.accent),
+            ),
+            Span::styled("", Style::default().fg(app.palette.accent)),
+        ]);
+    } else if content_limit > 0 {
+        let prefix_width = content_limit.min(2);
+        spans.push(Span::raw(" ".repeat(prefix_width)));
+        content_width = prefix_width;
+
+        let icon_limit = content_limit.saturating_sub(content_width);
+        if icon_limit > 0 {
+            let icon = truncate_end(item.icon.glyph(), icon_limit);
+            content_width += display_width(&icon);
+            spans.push(Span::styled(
+                icon,
+                Style::default().fg(app.palette.overlay1),
+            ));
+        }
+
+        if content_width < content_limit {
+            spans.push(Span::raw(" "));
+            content_width += 1;
+        }
+
+        let label_limit = content_limit.saturating_sub(content_width);
+        if label_limit > 0 {
+            let label = truncate_end(&item.label, label_limit);
+            content_width += display_width(&label);
+            let style = if item.accessible {
+                Style::default().fg(app.palette.subtext0)
+            } else {
+                Style::default().fg(app.palette.overlay0)
+            };
+            spans.push(Span::styled(label, style));
+        }
+    }
+
+    let padding = available_left.saturating_sub(content_width);
+    if padding > 0 {
+        spans.push(Span::raw(" ".repeat(padding)));
+    }
+    if let Some(marker) = marker {
+        let (symbol, color) = match marker {
+            FileManagerSidebarMarker::Warning => ("⚠", app.palette.yellow),
+            FileManagerSidebarMarker::Eject => ("⏏", app.palette.blue),
+        };
+        spans.push(Span::styled(symbol, Style::default().fg(color)));
+    }
+
+    Line::from(spans)
+}
+
 fn file_manager_sidebar_lines(app: &AppState) -> Vec<FileManagerSidebarLine<'_>> {
     let mut lines = Vec::new();
     for (section_idx, section) in app.file_manager_sidebar.sections.iter().enumerate() {
@@ -559,23 +672,10 @@ fn render_file_manager_sidebar(app: &AppState, frame: &mut Frame, area: Rect) {
                 row,
             ),
             FileManagerSidebarLine::Blank => {}
-            FileManagerSidebarLine::Item(item) => {
-                let style = if item.accessible {
-                    Style::default().fg(app.palette.subtext0)
-                } else {
-                    Style::default().fg(app.palette.overlay0)
-                };
-                let label = truncate_end(&item.label, (row.width as usize).saturating_sub(4));
-                frame.render_widget(
-                    Paragraph::new(Line::from(vec![
-                        Span::styled("  ", Style::default()),
-                        Span::styled(item.icon.glyph(), Style::default().fg(app.palette.overlay1)),
-                        Span::styled(" ", Style::default()),
-                        Span::styled(label, style),
-                    ])),
-                    row,
-                );
-            }
+            FileManagerSidebarLine::Item(item) => frame.render_widget(
+                Paragraph::new(file_manager_sidebar_item_line(app, item, row.width)),
+                row,
+            ),
         }
     }
 }
@@ -2497,12 +2597,24 @@ mod tests {
             "symbols: {symbols:?}"
         );
         assert_eq!(marker, usize::from(row.width) - 1);
-        assert!((left_cap + 1..right_cap).all(|index| {
-            terminal.backend().buffer()[(row.x + index as u16, row.y)]
-                .style()
-                .bg
-                == Some(app.palette.accent)
-        }));
+        let mut continuation_cells = 0;
+        for index in left_cap + 1..right_cap {
+            if continuation_cells > 0 {
+                continuation_cells -= 1;
+                continue;
+            }
+            let cell = &terminal.backend().buffer()[(row.x + index as u16, row.y)];
+            assert_eq!(
+                cell.style().bg,
+                Some(app.palette.accent),
+                "pill glyph start at cell {index} must retain the accent background"
+            );
+            // TestBackend represents hidden cells covered by a wide glyph as
+            // reset blanks. The glyph-start style is the terminal-visible
+            // style, so do not mistake those internal continuation cells for
+            // holes in the pill background.
+            continuation_cells = display_width(cell.symbol()).saturating_sub(1);
+        }
 
         let narrow = render_file_sidebar_for_test(&app, 3, area.height);
         let narrow_row =
