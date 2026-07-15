@@ -1044,6 +1044,164 @@ mod tests {
         );
     }
 
+    #[test]
+    fn unchanged_geometry_key_reuses_shell_generation() {
+        let layout = ShellLayout::default();
+        let area = Rect::new(0, 0, 80, 24);
+        let previous = TestShellView {
+            generation: 7,
+            key: TestShellGeometryKey {
+                area,
+                constraints_revision: 26,
+            },
+            regions: layout.compute_regions(area, legacy_sidebar_resolver(26)),
+            hits: Vec::new(),
+        };
+
+        let current = compute_shell_view_for_test(&layout, area, 26, Some(&previous));
+
+        assert_eq!(current.generation, 7);
+        assert_eq!(current.key, previous.key);
+        assert_eq!(current.regions, previous.regions);
+    }
+
+    #[test]
+    fn area_or_constraint_change_advances_shell_generation_once() {
+        let layout = ShellLayout::default();
+        let area = Rect::new(0, 0, 80, 24);
+        let previous = TestShellView {
+            generation: 7,
+            key: TestShellGeometryKey {
+                area,
+                constraints_revision: 26,
+            },
+            regions: layout.compute_regions(area, legacy_sidebar_resolver(26)),
+            hits: Vec::new(),
+        };
+
+        let area_changed =
+            compute_shell_view_for_test(&layout, Rect::new(0, 0, 81, 24), 26, Some(&previous));
+        let constraint_changed = compute_shell_view_for_test(&layout, area, 27, Some(&previous));
+
+        assert_eq!(
+            [area_changed.generation, constraint_changed.generation],
+            [8, 8]
+        );
+    }
+
+    #[test]
+    fn flattened_hits_are_complete_disjoint_and_in_bounds() {
+        let layout = ShellLayout::default();
+        let area = Rect::new(10, 20, 80, 24);
+        let view = compute_shell_view_for_test(&layout, area, 26, None);
+
+        assert_eq!(view.hits.len(), 2);
+        assert_eq!(view.hits[0].region, RegionId::LeftPanel);
+        assert_eq!(view.hits[1].region, RegionId::WorkspaceStage);
+        assert_eq!(view.hits[0].generation, view.generation);
+        assert_eq!(view.hits[1].generation, view.generation);
+        assert_eq!(view.hits[0].rect.intersection(area), view.hits[0].rect);
+        assert_eq!(view.hits[1].rect.intersection(area), view.hits[1].rect);
+        assert!(view.hits[0].rect.intersection(view.hits[1].rect).is_empty());
+        assert_eq!(
+            u32::from(view.hits[0].rect.width) + u32::from(view.hits[1].rect.width),
+            u32::from(area.width)
+        );
+    }
+
+    #[test]
+    fn stale_shell_hit_generation_is_rejected() {
+        let rect = Rect::new(0, 0, 5, 10);
+        let view = TestShellView {
+            generation: 9,
+            key: TestShellGeometryKey {
+                area: rect,
+                constraints_revision: 5,
+            },
+            regions: RegionRects::default(),
+            hits: vec![TestShellHitArea {
+                generation: 9,
+                region: RegionId::AppDock,
+                rect,
+            }],
+        };
+
+        assert_eq!(shell_hit_for_test(&view, 9, 2, 2), Some(RegionId::AppDock));
+        assert_eq!(shell_hit_for_test(&view, 8, 2, 2), None);
+    }
+
+    #[test]
+    fn legacy_sidebar_and_center_rects_match_compatibility_projection() {
+        let layout = ShellLayout::default();
+        let area = Rect::new(4, 7, 100, 30);
+        let view = compute_shell_view_for_test(&layout, area, 26, None);
+        let [legacy_sidebar, legacy_center] =
+            Layout::horizontal([Constraint::Length(26), Constraint::Min(1)]).areas(area);
+
+        assert_eq!(view.regions.get(RegionId::LeftPanel), legacy_sidebar);
+        assert_eq!(view.regions.get(RegionId::CenterContent), legacy_center);
+        assert_eq!(view.regions.get(RegionId::WorkspaceStage), legacy_center);
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct TestShellGeometryKey {
+        area: Rect,
+        constraints_revision: u64,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct TestShellHitArea {
+        generation: u64,
+        region: RegionId,
+        rect: Rect,
+    }
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct TestShellView {
+        generation: u64,
+        key: TestShellGeometryKey,
+        regions: RegionRects,
+        hits: Vec<TestShellHitArea>,
+    }
+
+    fn compute_shell_view_for_test(
+        layout: &ShellLayout,
+        area: Rect,
+        sidebar_width: u16,
+        _previous: Option<&TestShellView>,
+    ) -> TestShellView {
+        // RED-only seam: SF2.4 replaces the zero generation and empty hit list
+        // with the production cache/generation/flattening projection.
+        TestShellView {
+            generation: 0,
+            key: TestShellGeometryKey {
+                area,
+                constraints_revision: u64::from(sidebar_width),
+            },
+            regions: layout.compute_regions(area, legacy_sidebar_resolver(sidebar_width)),
+            hits: Vec::new(),
+        }
+    }
+
+    fn shell_hit_for_test(
+        view: &TestShellView,
+        _generation: u64,
+        x: u16,
+        y: u16,
+    ) -> Option<RegionId> {
+        // RED-only seam: SF2.4 must reject a generation mismatch before hit
+        // testing the current geometry.
+        let position = ratatui::layout::Position::new(x, y);
+        view.hits
+            .iter()
+            .find(|hit| hit.rect.contains(position))
+            .map(|hit| hit.region)
+    }
+
+    fn legacy_sidebar_resolver(sidebar_width: u16) -> impl Fn(RegionId) -> u16 {
+        move |region| u16::from(region == RegionId::LeftPanel) * sidebar_width
+    }
+
     fn collect_serialized_regions(value: &serde_json::Value, out: &mut Vec<String>) {
         match value {
             serde_json::Value::Object(entries) => {
