@@ -699,6 +699,7 @@ pub enum FileManagerOperationStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileManagerOperationItemStatus {
     Pending,
+    Running,
     Completed,
     Retained,
     Failed,

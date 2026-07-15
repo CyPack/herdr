@@ -38,6 +38,13 @@ pub(super) struct FileOperationWorkerCompletion {
     pub(super) result: Result<FileOperationWorkerResult, FileOperationWorkerError>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct FileOperationWorkerProgress {
+    pub(super) generation: u64,
+    pub(super) active_item_index: usize,
+    pub(super) started_items: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum FileOperationWorkerResult {
     Transfer(FileOperationExecutionResult),
@@ -48,6 +55,7 @@ pub(super) enum FileOperationWorkerResult {
 
 #[derive(Debug, Default)]
 pub(super) struct FileOperationWorkerDrain {
+    pub(super) progress: Option<FileOperationWorkerProgress>,
     pub(super) completion: Option<FileOperationWorkerCompletion>,
     pub(super) disconnected: bool,
 }
@@ -67,6 +75,7 @@ enum FileOperationWorkerTask {
 
 struct FileOperationWorkerState {
     pending: Option<FileOperationWorkerRequest>,
+    progress: Option<FileOperationWorkerProgress>,
     completion: Option<FileOperationWorkerCompletion>,
     active_generation: Option<u64>,
     active_cancellation: Option<FileOperationCancellation>,
@@ -79,6 +88,7 @@ impl Default for FileOperationWorkerState {
     fn default() -> Self {
         Self {
             pending: None,
+            progress: None,
             completion: None,
             active_generation: None,
             active_cancellation: None,
@@ -156,6 +166,21 @@ impl FileOperationWorker {
             + Send
             + 'static,
     {
+        Self::with_progress_task_executor(wake, move |task, cancellation, _report_progress| {
+            executor(task, cancellation)
+        })
+    }
+
+    fn with_progress_task_executor<F>(wake: Arc<Notify>, executor: F) -> Self
+    where
+        F: Fn(
+                &FileOperationWorkerTask,
+                &FileOperationCancellation,
+                &mut dyn FnMut(usize),
+            ) -> FileOperationWorkerResult
+            + Send
+            + 'static,
+    {
         let shared = Arc::new((
             Mutex::new(FileOperationWorkerState::default()),
             Condvar::new(),
@@ -169,8 +194,33 @@ impl FileOperationWorker {
                     wake: wake.clone(),
                 };
                 while let Some(request) = take_next_request(&worker_shared) {
+                    let mut report_progress = |active_item_index: usize| {
+                        let (state, _) = &*worker_shared;
+                        let mut state = lock_state(state);
+                        if state.closed
+                            || state.active_generation != Some(request.generation)
+                            || state.completion.is_some()
+                        {
+                            return;
+                        }
+                        let started_items = state
+                            .progress
+                            .filter(|progress| progress.generation == request.generation)
+                            .map_or(active_item_index.saturating_add(1), |progress| {
+                                progress
+                                    .started_items
+                                    .max(active_item_index.saturating_add(1))
+                            });
+                        state.progress = Some(FileOperationWorkerProgress {
+                            generation: request.generation,
+                            active_item_index,
+                            started_items,
+                        });
+                        drop(state);
+                        wake.notify_one();
+                    };
                     let result = catch_unwind(AssertUnwindSafe(|| {
-                        executor(&request.task, &request.cancellation)
+                        executor(&request.task, &request.cancellation, &mut report_progress)
                     }))
                     .map_err(|_| FileOperationWorkerError::Panicked);
                     let (state, _) = &*worker_shared;
@@ -178,6 +228,7 @@ impl FileOperationWorker {
                     if state.closed {
                         break;
                     }
+                    state.progress = None;
                     state.completion = Some(FileOperationWorkerCompletion {
                         generation: request.generation,
                         result,
@@ -241,6 +292,7 @@ impl FileOperationWorker {
         let cancellation = FileOperationCancellation::default();
         state.active_generation = Some(generation);
         state.active_cancellation = Some(cancellation.clone());
+        state.progress = None;
         state.pending = Some(FileOperationWorkerRequest {
             generation,
             task,
@@ -271,6 +323,7 @@ impl FileOperationWorker {
     pub(super) fn drain(&mut self) -> FileOperationWorkerDrain {
         let (state, _) = &*self.shared;
         let mut state = lock_state(state);
+        let progress = state.progress.take();
         let completion = state.completion.take();
         if let Some(completion) = &completion {
             if state.active_generation == Some(completion.generation) {
@@ -279,6 +332,7 @@ impl FileOperationWorker {
             }
         }
         FileOperationWorkerDrain {
+            progress,
             disconnected: !state.alive && completion.is_none(),
             completion,
         }
@@ -429,6 +483,11 @@ impl crate::app::App {
         changed |= self.consume_file_manager_context_delete();
         changed |= self.consume_file_manager_context_copy();
         let drained = self.file_operation_worker.drain();
+        if let Some(progress) = drained.progress {
+            if let Some(operation) = self.state.file_manager_operation.as_mut() {
+                changed |= apply_worker_progress(operation, progress);
+            }
+        }
         if drained.disconnected {
             let Some(operation) = self.state.file_manager_operation.as_mut() else {
                 return changed;
@@ -805,6 +864,33 @@ fn file_manager_operation_kind(
         FileOperationKind::Copy => crate::app::state::FileManagerOperationKind::Copy,
         FileOperationKind::Move => crate::app::state::FileManagerOperationKind::Move,
     }
+}
+
+fn apply_worker_progress(
+    operation: &mut crate::app::state::FileManagerOperationState,
+    progress: FileOperationWorkerProgress,
+) -> bool {
+    use crate::app::state::FileManagerOperationItemStatus;
+
+    if !operation.is_running() || operation.generation != progress.generation {
+        return false;
+    }
+    let started_items = progress
+        .started_items
+        .min(operation.total_items)
+        .min(operation.items.len());
+    if started_items == 0 || progress.active_item_index >= started_items {
+        return false;
+    }
+
+    let mut changed = false;
+    for item in operation.items.iter_mut().take(started_items) {
+        if item.status == FileManagerOperationItemStatus::Pending {
+            item.status = FileManagerOperationItemStatus::Running;
+            changed = true;
+        }
+    }
+    changed
 }
 
 fn apply_execution_result(
@@ -1199,12 +1285,9 @@ mod tests {
                 reported_tx.send(()).expect("signal progress reported");
                 release_rx.recv().expect("release progress executor");
                 match task {
-                    FileOperationWorkerTask::Transfer(plan) => {
-                        FileOperationWorkerResult::Transfer(execute_file_operation(
-                            plan,
-                            cancellation,
-                        ))
-                    }
+                    FileOperationWorkerTask::Transfer(plan) => FileOperationWorkerResult::Transfer(
+                        execute_file_operation(plan, cancellation),
+                    ),
                     _ => panic!("expected transfer progress task"),
                 }
             },
@@ -1229,6 +1312,105 @@ mod tests {
         let completion = wait_for_completion(&mut worker);
         assert_eq!(completion.generation, generation);
         assert!(worker.drain().progress.is_none());
+    }
+
+    // TP-C4.4-PROGRESS: App projection accepts only the current generation and
+    // exposes bounded per-item Running state before terminal completion.
+    #[test]
+    fn app_projects_current_worker_progress_without_waiting_for_completion() {
+        let td = TempDir::new("app-progress-projection");
+        let first = td.root.join("first.txt");
+        let second = td.root.join("second.txt");
+        fs::write(&first, b"first").expect("write first App progress source");
+        fs::write(&second, b"second").expect("write second App progress source");
+        let destination = td.root.join("destination-progress");
+        fs::create_dir(&destination).expect("create App progress destination");
+        let plan = FileOperationPlan::preflight(FileOperationRequest {
+            kind: FileOperationKind::Copy,
+            sources: vec![first.clone(), second.clone()],
+            destination_directory: destination.clone(),
+            operation_in_flight: false,
+        })
+        .expect("App progress plan");
+        let (reported_tx, reported_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
+        let mut worker = FileOperationWorker::with_progress_task_executor(
+            Arc::new(Notify::new()),
+            move |task, cancellation, report_progress| {
+                report_progress(0);
+                report_progress(1);
+                reported_tx.send(()).expect("signal App progress reported");
+                release_rx.recv().expect("release App progress executor");
+                match task {
+                    FileOperationWorkerTask::Transfer(plan) => FileOperationWorkerResult::Transfer(
+                        execute_file_operation(plan, cancellation),
+                    ),
+                    _ => panic!("expected App transfer progress task"),
+                }
+            },
+        );
+        let generation = worker.start(plan).expect("start App progress operation");
+        let mut app = test_app();
+        app.file_operation_worker = worker;
+        app.state.file_manager_operation = Some(FileManagerOperationState {
+            generation,
+            kind: FileManagerOperationKind::Copy,
+            destination_directory: destination,
+            total_items: 2,
+            completed_items: 0,
+            failed_items: 0,
+            status: FileManagerOperationStatus::Running,
+            items: vec![
+                crate::app::state::FileManagerOperationItemState {
+                    path: first,
+                    recovery_path: None,
+                    status: FileManagerOperationItemStatus::Pending,
+                },
+                crate::app::state::FileManagerOperationItemState {
+                    path: second,
+                    recovery_path: None,
+                    status: FileManagerOperationItemStatus::Pending,
+                },
+            ],
+        });
+        reported_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("App worker reported progress");
+
+        assert!(app.sync_file_operation_worker());
+        let operation = app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .expect("running App progress state");
+        assert_eq!(operation.status, FileManagerOperationStatus::Running);
+        assert_eq!(
+            operation
+                .items
+                .iter()
+                .map(|item| item.status)
+                .collect::<Vec<_>>(),
+            vec![
+                FileManagerOperationItemStatus::Running,
+                FileManagerOperationItemStatus::Running,
+            ]
+        );
+
+        release_tx.send(()).expect("release App progress operation");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app
+            .state
+            .file_manager_operation
+            .as_ref()
+            .is_some_and(FileManagerOperationState::is_running)
+        {
+            let _ = app.sync_file_operation_worker();
+            assert!(
+                Instant::now() < deadline,
+                "App progress completion timed out"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     // TP-C4.1-LIFECYCLE: cancellation is idempotent, wakes the worker, and
