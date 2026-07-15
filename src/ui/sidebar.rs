@@ -2489,9 +2489,20 @@ mod tests {
         let absent = render_file_sidebar_for_test(&app, area.width, area.height);
         assert!(rows.iter().all(|row| !row_has_accent(&absent, *row)));
 
+        app.file_manager = Some(crate::fm::FmState::new("/virtual/home"));
+        app.sidebar_tab = SidebarTab::Spaces;
+        let hidden = render_file_sidebar_for_test(&app, area.width, area.height);
+        assert!(rows.iter().all(|row| !row_has_accent(&hidden, *row)));
+
+        app.sidebar_tab = SidebarTab::Files;
         app.file_manager = None;
         let closed = render_file_sidebar_for_test(&app, area.width, area.height);
         assert!(rows.iter().all(|row| !row_has_accent(&closed, *row)));
+
+        app.file_manager = Some(crate::fm::FmState::new("/virtual/home"));
+        let reopened = render_file_sidebar_for_test(&app, area.width, area.height);
+        assert!(row_has_accent(&reopened, rows[0]));
+        assert!(rows[1..].iter().all(|row| !row_has_accent(&reopened, *row)));
     }
 
     // TP-C6.2-MARKER: warning is stronger than eject, markers are pinned to
