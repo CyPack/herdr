@@ -1,3 +1,295 @@
+use std::fs;
+use std::io;
+use std::path::{Component, Path, PathBuf};
+use std::time::SystemTime;
+
+use crate::fm::operations::FileOperationCancellation;
+use crate::platform::FileIdentity;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RenameOperationRequest {
+    pub(crate) source_path: PathBuf,
+    pub(crate) new_name: String,
+    pub(crate) operation_in_flight: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RenameOperationPreflightError {
+    OperationInFlight,
+    InvalidNewName,
+    NonUtf8Path { path: PathBuf },
+    SourceMissing { path: PathBuf },
+    SourceUnavailable { path: PathBuf, kind: io::ErrorKind },
+    SourceUnsupported { path: PathBuf },
+    SourceHasNoFileName { path: PathBuf },
+    UnchangedName { path: PathBuf },
+    FileIdentityUnavailable { path: PathBuf, kind: io::ErrorKind },
+    DestinationCollision { path: PathBuf },
+    DestinationUnavailable { path: PathBuf, kind: io::ErrorKind },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlannedRenamePathKind {
+    File,
+    Directory,
+    Symlink,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RenameSourceSnapshot {
+    identity: FileIdentity,
+    path_kind: PlannedRenamePathKind,
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RenameOperationPlan {
+    source: PathBuf,
+    destination: PathBuf,
+    snapshot: RenameSourceSnapshot,
+}
+
+impl RenameOperationPlan {
+    pub(crate) fn preflight(
+        request: RenameOperationRequest,
+    ) -> Result<Self, RenameOperationPreflightError> {
+        if request.operation_in_flight {
+            return Err(RenameOperationPreflightError::OperationInFlight);
+        }
+        if request.source_path.to_str().is_none() {
+            return Err(RenameOperationPreflightError::NonUtf8Path {
+                path: request.source_path,
+            });
+        }
+        if !is_single_file_name(&request.new_name) {
+            return Err(RenameOperationPreflightError::InvalidNewName);
+        }
+        let Some(source_name) = request.source_path.file_name() else {
+            return Err(RenameOperationPreflightError::SourceHasNoFileName {
+                path: request.source_path,
+            });
+        };
+        if source_name == request.new_name.as_str() {
+            return Err(RenameOperationPreflightError::UnchangedName {
+                path: request.source_path,
+            });
+        }
+        let Some(parent) = request.source_path.parent() else {
+            return Err(RenameOperationPreflightError::SourceHasNoFileName {
+                path: request.source_path,
+            });
+        };
+        let destination = parent.join(&request.new_name);
+        reject_destination_collision(&destination)?;
+        let snapshot = snapshot_source(&request.source_path)?;
+        Ok(Self {
+            source: request.source_path,
+            destination,
+            snapshot,
+        })
+    }
+
+    pub(crate) fn source(&self) -> &Path {
+        &self.source
+    }
+
+    pub(crate) fn destination(&self) -> &Path {
+        &self.destination
+    }
+
+    pub(crate) fn path_kind(&self) -> PlannedRenamePathKind {
+        self.snapshot.path_kind
+    }
+}
+
+fn is_single_file_name(name: &str) -> bool {
+    if name.is_empty() || name.contains('\0') {
+        return false;
+    }
+    let mut components = Path::new(name).components();
+    matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
+}
+
+fn reject_destination_collision(path: &Path) -> Result<(), RenameOperationPreflightError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Err(RenameOperationPreflightError::DestinationCollision {
+            path: path.to_path_buf(),
+        }),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(RenameOperationPreflightError::DestinationUnavailable {
+            path: path.to_path_buf(),
+            kind: error.kind(),
+        }),
+    }
+}
+
+fn snapshot_source(path: &Path) -> Result<RenameSourceSnapshot, RenameOperationPreflightError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            RenameOperationPreflightError::SourceMissing {
+                path: path.to_path_buf(),
+            }
+        } else {
+            RenameOperationPreflightError::SourceUnavailable {
+                path: path.to_path_buf(),
+                kind: error.kind(),
+            }
+        }
+    })?;
+    let path_kind = if metadata.file_type().is_symlink() {
+        PlannedRenamePathKind::Symlink
+    } else if metadata.is_file() {
+        PlannedRenamePathKind::File
+    } else if metadata.is_dir() {
+        PlannedRenamePathKind::Directory
+    } else {
+        return Err(RenameOperationPreflightError::SourceUnsupported {
+            path: path.to_path_buf(),
+        });
+    };
+    let identity = crate::platform::file_identity(path, &metadata).map_err(|error| {
+        RenameOperationPreflightError::FileIdentityUnavailable {
+            path: path.to_path_buf(),
+            kind: error.kind(),
+        }
+    })?;
+    Ok(RenameSourceSnapshot {
+        identity,
+        path_kind,
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+    })
+}
+
+fn snapshot_for_revalidation(path: &Path) -> Option<RenameSourceSnapshot> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    let path_kind = if metadata.file_type().is_symlink() {
+        PlannedRenamePathKind::Symlink
+    } else if metadata.is_file() {
+        PlannedRenamePathKind::File
+    } else if metadata.is_dir() {
+        PlannedRenamePathKind::Directory
+    } else {
+        return None;
+    };
+    let identity = crate::platform::file_identity(path, &metadata).ok()?;
+    Some(RenameSourceSnapshot {
+        identity,
+        path_kind,
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RenameOperationError {
+    SourceChanged,
+    DestinationCollision,
+    Io(io::ErrorKind),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RenameOperationExecutionStatus {
+    Completed,
+    Cancelled,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RenameOperationOutcome {
+    NotStarted,
+    Renamed,
+    Retained(RenameOperationError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RenameOperationExecutionResult {
+    status: RenameOperationExecutionStatus,
+    outcome: RenameOperationOutcome,
+}
+
+impl RenameOperationExecutionResult {
+    pub(crate) fn status(&self) -> RenameOperationExecutionStatus {
+        self.status
+    }
+
+    pub(crate) fn outcome(&self) -> &RenameOperationOutcome {
+        &self.outcome
+    }
+}
+
+pub(crate) trait RenameOperationHost {
+    /// Test point immediately before the final source/destination read. The
+    /// production host is a no-op; injected hosts use this seam to prove stale
+    /// plans fail closed without widening the filesystem API surface.
+    fn before_revalidation(&mut self) -> io::Result<()>;
+
+    fn publish_no_replace(&mut self, source: &Path, destination: &Path) -> io::Result<()>;
+}
+
+struct RealRenameOperationHost;
+
+impl RenameOperationHost for RealRenameOperationHost {
+    fn before_revalidation(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn publish_no_replace(&mut self, source: &Path, destination: &Path) -> io::Result<()> {
+        crate::platform::publish_staged_path_no_replace(source, destination)
+    }
+}
+
+pub(crate) fn execute_rename_operation(
+    plan: &RenameOperationPlan,
+    cancellation: &FileOperationCancellation,
+) -> RenameOperationExecutionResult {
+    execute_rename_operation_with_host(plan, cancellation, &mut RealRenameOperationHost)
+}
+
+pub(crate) fn execute_rename_operation_with_host<H: RenameOperationHost>(
+    plan: &RenameOperationPlan,
+    cancellation: &FileOperationCancellation,
+    host: &mut H,
+) -> RenameOperationExecutionResult {
+    if cancellation.is_cancelled() {
+        return RenameOperationExecutionResult {
+            status: RenameOperationExecutionStatus::Cancelled,
+            outcome: RenameOperationOutcome::NotStarted,
+        };
+    }
+    if let Err(error) = host.before_revalidation() {
+        return retained_result(RenameOperationError::Io(error.kind()));
+    }
+    if snapshot_for_revalidation(&plan.source).as_ref() != Some(&plan.snapshot) {
+        return retained_result(RenameOperationError::SourceChanged);
+    }
+    if fs::symlink_metadata(&plan.destination).is_ok() {
+        return retained_result(RenameOperationError::DestinationCollision);
+    }
+
+    match host.publish_no_replace(&plan.source, &plan.destination) {
+        Ok(()) => RenameOperationExecutionResult {
+            status: RenameOperationExecutionStatus::Completed,
+            outcome: RenameOperationOutcome::Renamed,
+        },
+        Err(error)
+            if error.kind() == io::ErrorKind::AlreadyExists
+                || fs::symlink_metadata(&plan.destination).is_ok() =>
+        {
+            retained_result(RenameOperationError::DestinationCollision)
+        }
+        Err(error) => retained_result(RenameOperationError::Io(error.kind())),
+    }
+}
+
+fn retained_result(error: RenameOperationError) -> RenameOperationExecutionResult {
+    RenameOperationExecutionResult {
+        status: RenameOperationExecutionStatus::Failed,
+        outcome: RenameOperationOutcome::Retained(error),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
