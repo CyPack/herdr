@@ -89,3 +89,222 @@ impl crate::app::App {
         true
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_file_manager_name, FileManagerRenameName, FileManagerRenamePlatform};
+    use crate::app::state::{FileManagerRenameRequest, FileManagerRenameValidationError, Mode};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn unique() -> u64 {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    }
+
+    struct TempDir {
+        root: PathBuf,
+    }
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "herdr-fm-rename-name-test-{}-{}-{}",
+                std::process::id(),
+                tag,
+                unique()
+            ));
+            fs::create_dir_all(&root).expect("create rename-name test root");
+            Self { root }
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn app_with_source(tag: &str) -> (TempDir, crate::app::App, PathBuf) {
+        let td = TempDir::new(tag);
+        let source = td.root.join("selected.txt");
+        fs::write(&source, b"selected").expect("write rename-name source");
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = crate::app::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.file_manager = Some(crate::fm::FmState::new(&td.root));
+        (td, app, source)
+    }
+
+    // TP-C4.3-NAME: untrusted text must remain one bounded component under
+    // both Unix and Windows policies; unchanged input is an explicit no-op.
+    #[test]
+    fn file_rename_name_validation_is_bounded_and_platform_explicit() {
+        use FileManagerRenameValidationError as Error;
+
+        for (input, expected) in [
+            ("", Error::Empty),
+            (".", Error::CurrentDirectory),
+            ("..", Error::ParentDirectory),
+            ("/tmp", Error::Absolute),
+            ("dir/name", Error::Separator),
+            ("nul\0byte", Error::ContainsNul),
+        ] {
+            assert_eq!(
+                validate_file_manager_name("selected.txt", input, FileManagerRenamePlatform::Unix),
+                Err(expected),
+                "Unix input {input:?}"
+            );
+        }
+        assert_eq!(
+            validate_file_manager_name(
+                "selected.txt",
+                &"é".repeat(128),
+                FileManagerRenamePlatform::Unix,
+            ),
+            Err(Error::NameTooLong)
+        );
+        assert_eq!(
+            validate_file_manager_name(
+                "selected.txt",
+                "selected.txt",
+                FileManagerRenamePlatform::Unix,
+            ),
+            Ok(FileManagerRenameName::Unchanged)
+        );
+        assert_eq!(
+            validate_file_manager_name(
+                "selected.txt",
+                " leading and trailing ",
+                FileManagerRenamePlatform::Unix,
+            ),
+            Ok(FileManagerRenameName::Changed(
+                " leading and trailing ".to_string()
+            ))
+        );
+
+        for (input, expected) in [
+            ("C:\\temp", Error::Absolute),
+            ("dir\\name", Error::Separator),
+            ("CON", Error::WindowsReservedName),
+            ("con.txt", Error::WindowsReservedName),
+            ("LPT9.log", Error::WindowsReservedName),
+            ("bad:name", Error::WindowsReservedCharacter),
+            ("trailing.", Error::WindowsTrailingDotOrSpace),
+            ("trailing ", Error::WindowsTrailingDotOrSpace),
+        ] {
+            assert_eq!(
+                validate_file_manager_name(
+                    "selected.txt",
+                    input,
+                    FileManagerRenamePlatform::Windows,
+                ),
+                Err(expected),
+                "Windows input {input:?}"
+            );
+        }
+        assert_eq!(
+            validate_file_manager_name(
+                "selected.txt",
+                &"😀".repeat(128),
+                FileManagerRenamePlatform::Windows,
+            ),
+            Err(Error::NameTooLong)
+        );
+        assert_eq!(
+            validate_file_manager_name(
+                "selected.txt",
+                "LPT10.txt",
+                FileManagerRenamePlatform::Windows,
+            ),
+            Ok(FileManagerRenameName::Changed("LPT10.txt".to_string()))
+        );
+    }
+
+    // TP-C4.3-NAME: invalid input remains in the modal with a typed reason;
+    // unchanged closes as a no-op; valid input emits only an immutable request.
+    #[test]
+    fn file_rename_submission_is_fail_closed_noop_or_request_only() {
+        let (_td, mut app, source) = app_with_source("submission");
+        assert!(app.open_file_manager_row_rename(source.clone()));
+        app.state.name_input = "../escape".to_string();
+        app.route_client_input(b"\r".to_vec());
+
+        assert_eq!(app.state.mode, Mode::RenameFile);
+        assert_eq!(
+            app.state
+                .file_manager_rename
+                .as_ref()
+                .expect("invalid rename remains open")
+                .validation_error,
+            Some(FileManagerRenameValidationError::Separator)
+        );
+        assert!(app.state.request_file_manager_rename.is_none());
+        assert_eq!(
+            fs::read(&source).expect("invalid source remains"),
+            b"selected"
+        );
+
+        app.state.name_input = "selected.txt".to_string();
+        app.route_client_input(b"\r".to_vec());
+        assert_ne!(app.state.mode, Mode::RenameFile);
+        assert!(app.state.file_manager_rename.is_none());
+        assert!(app.state.request_file_manager_rename.is_none());
+        assert_eq!(
+            fs::read(&source).expect("unchanged source remains"),
+            b"selected"
+        );
+
+        assert!(app.open_file_manager_row_rename(source.clone()));
+        app.state.name_input = "renamed.txt".to_string();
+        app.route_client_input(b"\r".to_vec());
+        assert_eq!(
+            app.state.request_file_manager_rename,
+            Some(FileManagerRenameRequest {
+                source_path: source.clone(),
+                new_name: "renamed.txt".to_string(),
+            })
+        );
+        assert_ne!(app.state.mode, Mode::RenameFile);
+        assert!(app.state.file_manager_operation.is_none());
+        assert!(source.exists());
+        assert!(!source.with_file_name("renamed.txt").exists());
+    }
+
+    // TP-C4.3-NAME: a non-UTF-8 source name cannot enter the text modal and
+    // cannot be normalized into a lossy rename request.
+    #[cfg(unix)]
+    #[test]
+    fn file_rename_rejects_non_utf8_source_name_before_modal() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let td = TempDir::new("non-utf8-source");
+        let source = td.root.join(OsString::from_vec(vec![b'f', 0x80]));
+        fs::write(&source, b"selected").expect("write non-UTF-8 source");
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = crate::app::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.file_manager = Some(crate::fm::FmState::new(&td.root));
+
+        assert!(!app.open_file_manager_row_rename(source.clone()));
+        assert_ne!(app.state.mode, Mode::RenameFile);
+        assert!(app.state.file_manager_rename.is_none());
+        assert!(app.state.request_file_manager_rename.is_none());
+        assert_eq!(
+            fs::read(source).expect("non-UTF-8 source remains"),
+            b"selected"
+        );
+    }
+}
