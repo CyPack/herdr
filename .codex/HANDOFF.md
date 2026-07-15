@@ -2,11 +2,12 @@
 
 ## 1. SONRAKI ADIM
 
-Start C5.1 graph-first. Verify the existing neutral pane/agent send, split,
-start, identity, and failure-cleanup surfaces, then make TP-C5-AUTHORITY RED
-before production code. Current exact path plus uniquely resolved current
-terminal/agent identity must be required; stale or ambiguous authority fails
-closed without touching stable Herdr, its socket, or user processes.
+Start C6.2 test-point-first. Define pill/current-location identity, pure
+geometry/style, inaccessible warning, and eject/removable marker precedence
+before production code. Current highlighting must derive only from live
+`FmState.cwd` plus the prepared C6.1 model; stale, clipped, tab-switched, or
+closed FM state must fail closed without touching stable Herdr, its socket, or
+user processes.
 
 ## 2. AKTİF PROJE
 
@@ -320,6 +321,25 @@ closed without touching stable Herdr, its socket, or user processes.
   17/17, Python 64/64, fmt/diff and operation/staging artifact checks clean.
   Fresh graph: 18,793 / 87,788 with `new_after_generation`, exact recovery
   tests, and `miller_layout` after stale `ready` proof.
+- Completed C5 existing-agent and non-agent handoff through product head
+  `f744e4d`, then published the continuity checkpoint `f23dbc7` to both CyPack
+  heads only. Existing agents receive one exact literal UTF-8 path plus Enter;
+  non-agent sources use one direct-argv `claude` Down split with exact owned-
+  resource rollback on every failure path.
+- Completed C6.1 as durable plan `6464668`, RED contracts `4a65c15`, `4836b32`,
+  `1236f57`, and GREEN `2bcdf14`. The new client-local module prepares a
+  bounded 256-item FAVORITES/optional PINNED/LOCATIONS model outside render,
+  deduplicates exact path authority, and keeps inaccessible pins visible but
+  inert. `compute_view` owns item-only hit areas; input only replaces one typed
+  path; the scheduled App boundary revalidates Files tab/model/live directory
+  before opening exact `FmState` and rebinding the existing watcher. Tab change
+  and FM open/close clear stale intent.
+- C6.1 gates: exact 9/9; sidebar/FM 239/239 (run
+  `d7202d9b-ffbc-409d-82f8-76ec191429d3`); full nextest 3151/3151 plus only
+  `path_beta_real_host_probe` skipped (run
+  `c5232427-adc0-49b9-9898-daf479b623cd`); Linux/Windows clippy, Bun 17/17,
+  Python 64/64, fmt/diff/production-unwrap/temp clean. Fresh graph: 18,899 /
+  90,094 with `miller_layout` and all new sidebar symbols.
 
 ## 6. KOD DURUMU
 
@@ -456,6 +476,21 @@ render mutation, dependency, or public docs surface was added. This continuity
 commit closes the C4.4 publication unit before both CyPack heads are
 fast-forwarded; no RED checkpoint is pushed alone.
 
+C6.1 is an auditable plan/RED/GREEN sequence:
+
+- `6464668`: durable sidebar test points and ordered C6.1–C6.4 decomposition.
+- `4a65c15`: model/geometry/render/navigation RED contract.
+- `4836b32`: live discovery and bounded-source RED contract.
+- `1236f57`: stale-hit and hidden-Spaces input isolation RED contract.
+- `2bcdf14`: sectioned model, pure geometry/render, typed input intent,
+  lifecycle invalidation, scheduled revalidation, and watcher convergence.
+
+No RED checkpoint is published alone. Product/test paths are
+`src/app/file_manager_sidebar.rs`, App state/runtime/actions/watcher/input,
+desktop/mobile view computation, and pure sidebar render. This continuity/
+graph commit closes C6.1 before both CyPack heads are fast-forwarded; upstream
+is never pushed.
+
 ## 7. TEST KANITI
 
 - B1/FM targeted: 64/64.
@@ -465,6 +500,14 @@ fast-forwarded; no RED checkpoint is pushed alone.
   `-D warnings`.
 - Bun 17/17; Python maintenance 64/64; fmt and diff-check clean.
 - Doctests are N/A because Herdr has no library target.
+- C6.1 focused model/geometry/render/input/navigation/lifecycle: 9/9.
+- Broad sidebar/native-FM nextest: 239/239, run
+  `d7202d9b-ffbc-409d-82f8-76ec191429d3`.
+- Final C6.1 full nextest: 3151/3151, one named B0 real-host probe skipped,
+  run `c5232427-adc0-49b9-9898-daf479b623cd`; no retry.
+- C6.1 exact-head Linux all-target and canonical Windows MSVC bin clippy,
+  Bun 17/17, Python 64/64, fmt/diff/production-unwrap/temp-artifact checks are
+  clean. `just` remains absent; the complete recipe was executed directly.
 - Actual B1 lock delta is five packages with no existing-version upgrade.
   Exact OSV batch returned only severity-less `RUSTSEC-2025-0141` for
   unmaintained `bincode 1.3.3`; no security-severity advisory.
@@ -592,13 +635,14 @@ fast-forwarded; no RED checkpoint is pushed alone.
 See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2/N4 contracts and the
 complete C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1, N3,
 C2, N4, C3.1, C3.2, C3.3, C4.1, C4.2, C4.3, C4.4.1 PROGRESS, C4.4.2
-CANCEL, C4.4.3 RECONCILE, C4.4.4 RECOVERY, C4.4.5 GATES, and C5.1–C5.5 are
+CANCEL, C4.4.3 RECONCILE, C4.4.4 RECOVERY, C4.4.5 GATES, C5.1–C5.5, and C6.1 are
 closed. C5's atomic product chain ends at `f744e4d`: exact existing-agent send
 and non-agent `Down` split → direct `claude` argv → first literal path send,
 with exact new-resource rollback on every failure path. The complete gate is
 3143/3143 Rust, Bun 17/17, Python 64/64, Linux/Windows clippy, and fresh graph
-18,854 / 88,064. The immediate ordered task list is C6.1 native sectioned
-sidebar → C6.2 pill/current-location styling → C6.3 integrated header/row/
+18,854 / 88,064. C6.1 then closes at product head `2bcdf14`, full Rust
+3151/3151 plus one named skip, and fresh graph 18,899 / 90,094. The immediate
+ordered task list is C6.2 pill/current-location styling → C6.3 integrated header/row/
 context actions → C6.4 theme/spacing/empty-error/Finder-parity review. Exact
 expected results and reasons remain durable in `.codex/TASKS.md`.
 S5–S7/N2 remain evidence-gated; M1–M3 remain north-star backlog.
@@ -676,6 +720,10 @@ S5–S7/N2 remain evidence-gated; M1–M3 remain north-star backlog.
   symbols including `sync_file_manager_claude_split`,
   `launch_file_manager_claude_split`, and
   `complete_file_manager_claude_split`; `ready` alone was not accepted.
+- Post-C6.1 moderate refresh completed at 18,899 nodes / 90,094 edges. Status
+  was cross-checked with `miller_layout`, `FileManagerSidebarModel`,
+  `compute_file_manager_sidebar_row_areas`, `file_manager_sidebar_path_at`,
+  and `sync_file_manager_sidebar_navigation`; `ready` alone was not accepted.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.

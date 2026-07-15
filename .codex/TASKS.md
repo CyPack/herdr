@@ -514,7 +514,7 @@ owns filesystem mutation and C5 owns agent delivery.
 
 ## P3 — C6 Finder-Fidelity Polish
 
-- [ ] C6.1 replace the existing `Files` sidebar placeholder with one native,
+- [x] C6.1 replace the existing `Files` sidebar placeholder with one native,
   bounded, sectioned FM navigation model. Prepare FAVORITES, optional PINNED,
   and LOCATIONS outside render; derive exact item hit areas in `compute_view`;
   route clicks as typed path requests consumed by an App-owned refresh boundary.
@@ -530,6 +530,22 @@ owns filesystem mutation and C5 owns agent delivery.
 | TP-C6.1-NAV | Exact item click, missing/file/unsupported/stale path, request replacement, scheduled consumption | Input prepares one typed exact path only; App refresh revalidates and opens that directory once, while every invalid case is a no-op | Filesystem work belongs in refresh paths, not mouse/render |
 | TP-C6.1-LIFECYCLE | FM cwd changes, close/reopen, watcher reconciliation, tab switching | Sidebar current-location authority and Miller cwd cannot diverge; no stale request survives a lifecycle change | Two independently stale directory projections would misroute navigation |
 | TP-C6.1-GATES | Focused model/geometry/render/navigation failures, sidebar/FM regressions, full platform and maintenance gates | All applicable checks pass with only the named B0 probe skipped and no stale hit area or filesystem artifact | Finder polish cannot regress core workspace/sidebar or FM safety |
+
+- C6.1 is complete as test-point plan `6464668`, RED contracts `4a65c15`,
+  `4836b32`, and `1236f57`, then GREEN product `2bcdf14`. The prepared model
+  is capped at 256 exact paths, preserves FAVORITES/optional PINNED/LOCATIONS
+  order, deduplicates first authority, and keeps inaccessible pins visible but
+  non-clickable. `compute_view` owns complete item rectangles; headers, gaps,
+  tiny/collapsed/non-Files/stale geometry are inert. Mouse input replaces one
+  typed exact-path intent without I/O; the scheduled App boundary consumes it
+  once, revalidates current Files-tab/model/live-directory authority, opens
+  `FmState`, and lets the existing watcher bind the new cwd. Tab changes and FM
+  open/close clear stale intent. Focused C6.1 is 9/9; combined sidebar/FM
+  nextest is 239/239 (run `d7202d9b-ffbc-409d-82f8-76ec191429d3`); full
+  nextest is 3151/3151 plus only the named B0 probe skipped (run
+  `c5232427-adc0-49b9-9898-daf479b623cd`). Linux/Windows clippy, Bun 17/17,
+  Python 64/64, fmt/diff/production-unwrap/temp checks are clean. Fresh graph:
+  18,899 nodes / 90,094 edges with `miller_layout` and all new sidebar symbols.
 
 ## P4 — Deferred UI Architecture
 
@@ -553,8 +569,8 @@ owns filesystem mutation and C5 owns agent delivery.
 A4, B0, B1, the A3 remainder, B2, C1, N3, C2, N4.2, C3.1, C3.2, C3.3,
 C4.1, C4.2, C4.3, C4.4.1 progress, C4.4.2 cancellation, C4.4.3
 reconciliation, C4.4.4 recovery, C4.4.5 gates, and C5.1–C5.5 are complete
-through product head `f744e4d`. The next execution order is C6.1 native
-sectioned sidebar → C6.2 pill/current-location styling → C6.3 integrated
+through product head `2bcdf14`. C6.1 is complete. The next execution order is
+C6.2 pill/current-location styling → C6.3 integrated
 header/row/context actions → C6.4 theme/spacing/empty-error/Finder-parity review.
 S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3 remain
 inactive north-star work.

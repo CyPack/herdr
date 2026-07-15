@@ -4,12 +4,13 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Published CyPack checkpoint before this continuity publication: `66b00d7`
-  (`feat: send literal paths to focused agent`).
-- Verified C5 product head: `f744e4d`
-  (`feat: launch Claude from native file manager`).
-- The pending publication unit is C5.4 RED/GREEN `6c6a409`/`f744e4d` plus the
-  continuity/graph commit containing this file. At publication, CyPack
+- Published CyPack checkpoint before this continuity publication: `f23dbc7`
+  (`docs: close native file manager agent handoff`).
+- Verified C6.1 product head: `2bcdf14`
+  (`feat: add sectioned native file manager sidebar`).
+- The pending publication unit is C6.1 plan/RED/GREEN `6464668` through
+  `2bcdf14` plus the continuity/graph commit containing this file. At
+  publication, CyPack
   `feat/native-fm` and fork `master` must be verified at that same fast-forward
   branch tip.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
@@ -43,7 +44,38 @@
   `miller_layout` and the new typed request, scheduled launch, exact ownership,
   rollback, completion, and current-authority symbols; freshness was not
   inferred from `ready` alone.
-- Next product module: C6.1 native sectioned sidebar, then C6.2–C6.4 in order.
+- Next product module: C6.2 pill highlight/current-location marker, then
+  C6.3–C6.4 in order.
+
+## Verified Checkpoint — C6.1 Native Sectioned Sidebar
+
+- Durable plan `6464668` and RED contracts `4a65c15`, `4836b32`, `1236f57`
+  precede GREEN `2bcdf14`; no compile-failing RED checkpoint is published
+  alone.
+- `FileManagerSidebarModel` lives in its own client-local module and caps the
+  complete source set at 256 exact paths. FAVORITES, optional PINNED, and
+  LOCATIONS retain stable order; duplicate paths grant authority only to the
+  first row. Startup preparation reads live directory metadata outside render;
+  missing favorites are omitted and inaccessible configured pins remain
+  visible but inert.
+- Desktop `compute_view` produces complete item-only hit rectangles. Headers,
+  blank separators, clipped/tiny/collapsed/non-Files rows, and stale prior
+  geometry carry no navigation authority. Render consumes only the prepared
+  model and removes the old `(files — soon)` placeholder.
+- Mouse input performs no filesystem I/O and stores only the latest exact path.
+  The scheduled App boundary consumes once, revalidates current Files tab,
+  current model accessibility, and live directory type, then opens the exact
+  `FmState`; the existing watcher binds that cwd in the same scheduled flow.
+  Missing, regular-file, model-stale, tab-stale, close/reopen, and same-frame
+  request replacement paths fail closed without changing the prior FM.
+- Fresh gates: exact C6.1 9/9; broad sidebar/FM nextest 239/239, run
+  `d7202d9b-ffbc-409d-82f8-76ec191429d3`; full nextest 3151/3151 plus only the
+  named B0 probe skipped, run `c5232427-adc0-49b9-9898-daf479b623cd`; Linux
+  all-target and canonical Windows MSVC clippy; Bun 17/17; Python 64/64;
+  fmt/diff/production-unwrap/temp-artifact checks clean.
+- Fresh graph is 18,899 nodes / 90,094 edges. `ready` was cross-checked with
+  `miller_layout`, `FileManagerSidebarModel`, exact geometry/hit-test, and
+  scheduled navigation symbols.
 
 ## Verified Checkpoint — C1.1 Header Action Geometry
 
@@ -698,17 +730,16 @@
 
 ## Exact Next Action
 
-1. Start C5.1 graph-first. Verify the existing neutral pane/agent send, split,
-   start, identity, and failure-cleanup surfaces before choosing a production
-   seam; do not deepen the private TUI socket coupling.
-2. Write TP-C5-AUTHORITY test points before production code. Current exact path
-   plus uniquely resolved current terminal/agent identity must be required;
-   stale, reordered, closed, unsupported, or ambiguous authority fails closed.
-3. Continue sequentially through typed handoff intent, existing-agent literal
-   send, split-and-Claude launch rollback, and the complete C5 gate. Use
-   `.local/ISOLATED-DEV-TEST.md` for any runtime proof and never touch stable
-   Herdr, its socket, or user processes. After C5, continue C6 without skipping
-   modules.
+1. Start C6.2 test-point-first. Define selected/current path identity,
+   pill geometry/style, inaccessible warning, and eject/removable marker
+   precedence before production code.
+2. Derive the current marker only from live `FmState.cwd` plus the prepared
+   sidebar model. Rendering remains pure; stale/missing/inaccessible paths,
+   clipping, tab switching, FM close/reopen, and watcher cwd changes must not
+   retain a false highlight or clickable marker.
+3. Run focused render/geometry/lifecycle failures, broad sidebar/FM regression,
+   full direct `just check`, graph freshness, and artifact gates before its
+   atomic commit/publication. Continue C6.3 then C6.4 without skipping order.
 
 ## Verified B2.0 Dependency Decision
 
