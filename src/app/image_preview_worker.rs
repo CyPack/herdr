@@ -555,10 +555,10 @@ mod tests {
         assert_eq!(
             current_image_state(&app),
             &FmImagePreviewState::Loading {
-                target: target(96, 128),
+                target: target(96, 112),
             }
         );
-        assert_eq!(wait_for_ready(&mut app), (target(96, 128), 96, 48));
+        assert_eq!(wait_for_ready(&mut app), (target(96, 112), 96, 48));
 
         app.image_preview_cell_size = HostCellSize {
             width_px: 4,
@@ -571,10 +571,10 @@ mod tests {
         assert_eq!(
             current_image_state(&app),
             &FmImagePreviewState::Loading {
-                target: target(48, 64),
+                target: target(48, 56),
             }
         );
-        assert_eq!(wait_for_ready(&mut app), (target(48, 64), 48, 24));
+        assert_eq!(wait_for_ready(&mut app), (target(48, 56), 48, 24));
 
         app.state.file_manager = None;
         assert!(!app.sync_image_preview_worker());
