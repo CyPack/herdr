@@ -929,8 +929,34 @@ mod tests {
 
     use super::{
         confirm_close_overlay_text, render_file_delete_confirmation_overlay,
-        render_new_linked_worktree_overlay,
+        render_new_linked_worktree_overlay, render_rename_overlay,
     };
+
+    #[test]
+    fn file_rename_modal_renders_typed_validation_error() {
+        let mut app = AppState::test_new();
+        app.mode = crate::app::Mode::RenameFile;
+        app.name_input = "../escape".into();
+        app.file_manager_rename = Some(crate::app::state::FileManagerRenameState {
+            paths: vec!["/tmp/selected.txt".into()],
+            validation_error: Some(crate::app::state::FileManagerRenameValidationError::Separator),
+        });
+        let mut terminal =
+            Terminal::new(TestBackend::new(100, 30)).expect("test terminal should initialize");
+
+        terminal
+            .draw(|frame| render_rename_overlay(&app, frame, Rect::new(0, 0, 100, 30)))
+            .expect("file rename modal should render");
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("name must be one path component"));
+    }
 
     #[test]
     fn confirm_close_text_reports_parent_group_scope() {
