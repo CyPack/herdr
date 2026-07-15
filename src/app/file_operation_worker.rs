@@ -2712,6 +2712,18 @@ mod tests {
                 },
             ],
         });
+        app.file_operation_reconcile_baseline = Some(super::FileOperationReconcileBaseline {
+            operation_generation: failed_generation,
+            destination_directory: destination.clone(),
+            watcher_generation: 13,
+            watcher_revision: 21,
+            affected_paths: [
+                destination.join("failed-first.txt"),
+                destination.join("failed-second.txt"),
+            ]
+            .into_iter()
+            .collect(),
+        });
 
         assert!(app.sync_file_operation_worker());
         let failed = app
@@ -2728,6 +2740,10 @@ mod tests {
             .all(|item| item.status == FileManagerOperationItemStatus::Failed));
         assert!(app.file_operation_reconcile_baseline.is_none());
         assert!(!app.file_operation_worker.is_busy());
+        assert!(
+            !app.sync_file_operation_worker(),
+            "recovered worker must not hot retry"
+        );
 
         app.state.file_manager_clipboard = vec![next_source];
         assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
