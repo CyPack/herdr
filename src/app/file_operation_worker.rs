@@ -296,6 +296,12 @@ impl FileOperationWorker {
         lock_state(state).active_generation.is_some()
     }
 
+    #[cfg(test)]
+    pub(super) fn has_buffered_completion(&self) -> bool {
+        let (state, _) = &*self.shared;
+        lock_state(state).completion.is_some()
+    }
+
     pub(super) fn cancel(&self) -> bool {
         let cancellation = {
             let (state, _) = &*self.shared;

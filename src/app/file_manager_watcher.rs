@@ -319,6 +319,7 @@ impl super::App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::state::FileManagerHeaderAction;
     use crate::fm::watcher::{watch_message_from_result, FmWatcherSlot};
     use notify_debouncer_full::{
         notify::{event::CreateKind, Event, EventKind},
@@ -455,6 +456,71 @@ mod tests {
         let second = drain_receiver(&slot, &rx, &overflowed, 2);
         assert_eq!(second.events.accepted_messages, 1);
         assert!(!second.limit_reached);
+    }
+
+    // TP-C4.4-RECONCILE: a matching worker completion and its already queued
+    // native watcher event share one reconciliation owner. The selected
+    // preview generation is an observable reload counter: one scheduler turn
+    // must advance it once, not once per producer.
+    #[test]
+    fn worker_completion_and_queued_watcher_event_reconcile_matching_cwd_once() {
+        let td = TempDir::new("worker-watcher-coalesce");
+        let source_dir = td.root.join("source");
+        let destination = td.root.join("destination");
+        std::fs::create_dir(&source_dir).expect("create reconcile source directory");
+        std::fs::create_dir(&destination).expect("create reconcile destination directory");
+        let source = source_dir.join("payload.txt");
+        std::fs::write(&source, b"payload").expect("write reconcile source");
+
+        let mut app = test_app();
+        app.state.file_manager = Some(crate::fm::FmState::new(&destination));
+        let now = Instant::now();
+        assert!(!app.sync_file_manager_watcher_at(now));
+        let watcher_generation = app.file_manager_watcher.generation();
+
+        app.state.file_manager_clipboard = vec![source];
+        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !app.file_operation_worker.has_buffered_completion() {
+            assert!(Instant::now() < deadline, "reconcile worker timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let (watch_tx, watch_rx) = sync_channel(1);
+        watch_tx
+            .send(message(
+                watcher_generation,
+                destination
+                    .join("payload.txt")
+                    .to_str()
+                    .expect("UTF-8 temp path"),
+            ))
+            .expect("queue matching watcher event");
+        app.file_manager_watcher.receiver = Some(watch_rx);
+
+        let before_generation = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("file manager open")
+            .preview_generation;
+        assert!(app.sync_file_operation_worker());
+        let _ = app.sync_file_manager_watcher_at(now);
+
+        let file_manager = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(
+            file_manager.preview_generation,
+            before_generation + 1,
+            "worker completion and its watcher event must coalesce into one reload"
+        );
+        assert_eq!(
+            file_manager
+                .entries
+                .iter()
+                .filter(|entry| entry.name == "payload.txt")
+                .count(),
+            1
+        );
     }
 
     #[test]
