@@ -1311,6 +1311,63 @@ mod tests {
         }
     }
 
+    // TP-C6.4-THEME/EMPTY-ERROR: unsupported content/capability states are
+    // warnings, while actual preview I/O/decode failures use the stronger error
+    // role. Pending work remains muted and does not invent failure authority.
+    #[test]
+    fn preview_states_map_warning_error_and_pending_semantic_roles() {
+        let td = TempDir::new("preview-semantic-roles");
+        td.file("selected.txt");
+
+        let mut binary_fm = FmState::new(&td.root);
+        binary_fm.preview = FmPreview::File(FmFilePreview::Unavailable(TextPreviewError::Binary));
+        let binary_app = app_with_fm(binary_fm);
+        let binary = render_buffer(&binary_app, 80, 6);
+        let (x, y) = find_rendered_text(&binary, 80, 6, "(binary file)");
+        assert_eq!(binary[(x, y)].fg, binary_app.palette.yellow);
+
+        let mut denied_fm = FmState::new(&td.root);
+        denied_fm.preview = FmPreview::File(FmFilePreview::Unavailable(TextPreviewError::Io(
+            std::io::ErrorKind::PermissionDenied,
+        )));
+        let denied_app = app_with_fm(denied_fm);
+        let denied = render_buffer(&denied_app, 80, 6);
+        let (x, y) = find_rendered_text(&denied, 80, 6, "(permission denied)");
+        assert_eq!(denied[(x, y)].fg, denied_app.palette.red);
+
+        fs::write(td.root.join("selected.png"), b"image candidate").expect("write image candidate");
+        let image_fm = FmState::new(&td.root);
+        let capability_app = app_with_fm(image_fm.clone());
+        let capability = render_buffer(&capability_app, 80, 6);
+        let (x, y) = find_rendered_text(&capability, 80, 6, "(Kitty graphics req.)");
+        assert_eq!(capability[(x, y)].fg, capability_app.palette.yellow);
+
+        let mut pending_app = app_with_fm(image_fm.clone());
+        pending_app.kitty_graphics_enabled = true;
+        let pending = render_buffer(&pending_app, 80, 6);
+        let (x, y) = find_rendered_text(&pending, 80, 6, "(image preview pending)");
+        assert_eq!(pending[(x, y)].fg, pending_app.palette.overlay1);
+
+        let mut failed_fm = image_fm;
+        match &mut failed_fm.preview {
+            FmPreview::File(FmFilePreview::Image(preview)) => {
+                preview.state = FmImagePreviewState::Unavailable {
+                    target: ImagePreviewTarget {
+                        width_px: 96,
+                        height_px: 64,
+                    },
+                    error: ImagePreviewError::Io(std::io::ErrorKind::PermissionDenied),
+                };
+            }
+            other => panic!("expected image preview state, got {other:?}"),
+        }
+        let mut failed_app = app_with_fm(failed_fm);
+        failed_app.kitty_graphics_enabled = true;
+        let failed = render_buffer(&failed_app, 80, 6);
+        let (x, y) = find_rendered_text(&failed, 80, 6, "(permission denied)");
+        assert_eq!(failed[(x, y)].fg, failed_app.palette.red);
+    }
+
     #[test]
     fn image_preview_has_explicit_non_kitty_fallback_and_ready_content_is_clear() {
         let td = TempDir::new("image-fallback");
@@ -1357,12 +1414,16 @@ mod tests {
             other => panic!("selected text file needs preview state, got {other:?}"),
         }
 
-        let rows = render_rows(&app_with_fm(fm), 80, 6);
+        let rows = render_rows(&app_with_fm(fm.clone()), 80, 6);
         assert!(rows.iter().any(|row| row.contains("visible prefix")));
         assert!(
             rows.iter().any(|row| row.contains("(preview truncated)")),
             "truncation is explicit: {rows:?}"
         );
+        let app = app_with_fm(fm);
+        let buffer = render_buffer(&app, 80, 6);
+        let (x, y) = find_rendered_text(&buffer, 80, 6, "(preview truncated)");
+        assert_eq!(buffer[(x, y)].fg, app.palette.yellow);
     }
 
     // TP-B1.5-LINE-LIMIT: a highlighter that stops at its independent line
