@@ -1,0 +1,76 @@
+{
+  "schema_version": 2,
+  "pipeline_id": "reference-project-intelligence-v2",
+  "run_id": null,
+  "status": "queued",
+  "input": {
+    "source_url": null,
+    "requested_pool": "ratatui",
+    "intent": "full_project_and_herdr_integration_intelligence",
+    "priority_notes": [],
+    "expected_patterns": [],
+    "exclusions": ["herdr_product_code_changes", "stable_herdr_runtime_operations"]
+  },
+  "identity": {
+    "source_id": null,
+    "canonical_url": null,
+    "default_branch": null,
+    "commit_sha": null,
+    "license": null,
+    "clone_path": null,
+    "graph_project": null
+  },
+  "target": {
+    "project": "herdr",
+    "repo_path": "/home/ayaz/projects/herdr",
+    "revision": null,
+    "graph_project": "home-ayaz-projects-herdr",
+    "page_or_feature": null,
+    "product_code_changes_authorized": false,
+    "stable_runtime_operations_authorized": false
+  },
+  "fidelity": {
+    "unit": "terminal_cell",
+    "canonical_viewports": ["160x48", "120x36", "100x30", "80x24", "60x20", "40x12"],
+    "undeclared_diff_budget": 0,
+    "profiles": ["truecolor_unicode", "ansi256_unicode", "ansi16_unicode", "no_color_ascii"],
+    "exceptions": []
+  },
+  "phases": {
+    "P0": {"status": "queued", "owner": "intake_agent", "attempts": [], "artifacts": [], "blocker": null},
+    "P1": {"status": "queued", "owner": "graph_cartographer", "attempts": [], "artifacts": [], "blocker": null},
+    "P2": {"status": "queued", "owner": "runtime_analyst", "attempts": [], "artifacts": [], "blocker": null},
+    "P3": {"status": "queued", "owner": "ui_analyst", "attempts": [], "artifacts": [], "blocker": null},
+    "P4": {"status": "queued", "owner": "source_verifier", "attempts": [], "artifacts": [], "blocker": null},
+    "P5": {"status": "queued", "owner": "classifier_extractor", "attempts": [], "artifacts": [], "blocker": null},
+    "P6": {"status": "queued", "owner": "corpus_publisher", "attempts": [], "artifacts": [], "blocker": null},
+    "P7": {"status": "queued", "owner": "evidence_auditor", "attempts": [], "artifacts": [], "blocker": null},
+    "P8": {"status": "queued", "owner": "herdr_cartographer", "attempts": [], "artifacts": [], "blocker": null},
+    "P9": {"status": "queued", "owner": "behavior_gap_analyst", "attempts": [], "artifacts": [], "blocker": null},
+    "P10": {"status": "queued", "owner": "data_authority_analyst", "attempts": [], "artifacts": [], "blocker": null},
+    "P11": {"status": "queued", "owner": "layout_fidelity_analyst", "attempts": [], "artifacts": [], "blocker": null},
+    "P12": {"status": "queued", "owner": "integration_architect", "attempts": [], "artifacts": [], "blocker": null},
+    "P13": {"status": "queued", "owner": "integration_test_designer", "attempts": [], "artifacts": [], "blocker": null},
+    "P14": {"status": "queued", "owner": "evidence_auditor", "attempts": [], "artifacts": [], "blocker": null}
+  },
+  "verification": {
+    "commands": [],
+    "source_graph_freshness": null,
+    "target_graph_freshness": null,
+    "source_map_v": null,
+    "integration_map_v": null,
+    "registry": null,
+    "artifact_schemas": null,
+    "traceability": null,
+    "fidelity": null,
+    "source_clean": null,
+    "product_isolation": null
+  },
+  "final": {
+    "summary": null,
+    "cautions": [],
+    "implementation_slices": [],
+    "blockers": [],
+    "next_extractions": []
+  }
+}

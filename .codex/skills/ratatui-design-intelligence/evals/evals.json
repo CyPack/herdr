@@ -1,0 +1,89 @@
+{
+  "skill": "ratatui-design-intelligence",
+  "evals": [
+    {
+      "id": "responsive-tiling",
+      "prompt": "Herdr workspace sayfasına mouse ile resize ve pane swap destekli renkli tiling ekle. Miller kolonlarıyla aynı şeymiş gibi davranma; kaynak, state ownership, responsive fallback ve test planı ver.",
+      "must_include": [
+        "R033",
+        "split tree",
+        "compute_view",
+        "tiny terminal",
+        "mouse"
+      ],
+      "must_not_include": [
+        "pixel radius",
+        "render mutates"
+      ]
+    },
+    {
+      "id": "rounded-modal-system",
+      "prompt": "Herdr için oval butonlar, command palette, confirm modal ve toast tasarla; dark/light ve eski terminal desteği de olsun.",
+      "must_include": [
+        "BorderType::Rounded",
+        "Clear",
+        "focus",
+        "ANSI-16",
+        "disabled"
+      ],
+      "must_not_include": [
+        "CSS border-radius is directly reusable"
+      ]
+    },
+    {
+      "id": "animation-loading",
+      "prompt": "Plugin taraması sürerken skeleton loading, tamamlanınca yumuşak geçiş istiyorum. Render saf kalmalı ve CPU boşta yanmamalı.",
+      "must_include": [
+        "R022",
+        "R059",
+        "elapsed_ms",
+        "update",
+        "idle tick"
+      ],
+      "must_not_include": [
+        "sleep inside render",
+        "I/O inside render"
+      ]
+    },
+    {
+      "id": "canonical-reference-project-intake",
+      "prompt": "https://github.com/example/advanced-tui projesini Ratatui referans havuzuna agentic olarak al; kimlik, codebase index, mimari, data flow, component/layout davranışları, test kanıtı, sınıflandırma, extraction ve corpus yayınını kanonik pipeline ile tamamla.",
+      "must_include": [
+        "P0",
+        "Codebase Memory",
+        "immutable commit",
+        "verification.json",
+        "classification",
+        "V=0"
+      ],
+      "must_not_include": [
+        "README is sufficient evidence",
+        "fabricate graph data when MCP is unavailable",
+        "modify Herdr product code"
+      ]
+    },
+    {
+      "id": "master-herdr-integration-intelligence",
+      "prompt": "Archer benzeri bir referans projeyi corpus analizinden sonra Herdr'da Ratatui page olarak uygulamaya hazırla: mevcut Herdr katmanlarını kanıtla, davranış gaplerini, her datanın kaynağını ve authority/transport zincirini, birebir terminal-cell layoutu, responsive/fallback davranışını, macro-micro-overlay component bağlarını ve local/cross test slice'larını kanonik pipeline ile çıkar; ürün kodunu değiştirme.",
+      "must_include": [
+        "P8",
+        "P14",
+        "behavior-gap-matrix.json",
+        "data-authority-map.json",
+        "terminal_cell",
+        "zero undeclared",
+        "generation",
+        "TestBackend",
+        "cross test",
+        "product isolation"
+      ],
+      "must_not_include": [
+        "API is the source of truth",
+        "screenshot alone proves behavior",
+        "pixel-perfect CSS",
+        "invent missing run data",
+        "implementation-ready at P7"
+      ]
+    }
+  ]
+}

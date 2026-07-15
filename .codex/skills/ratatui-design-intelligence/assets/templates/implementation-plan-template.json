@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "artifact_type": "implementation-plan",
+  "source_id": null,
+  "target_project": "herdr",
+  "product_code_changes_authorized": false,
+  "record_contract": [
+    "slice_id",
+    "objective",
+    "depends_on",
+    "authority_boundary",
+    "owned_modules",
+    "protected_behavior",
+    "characterization_tests",
+    "red_tests",
+    "minimal_green_change",
+    "refactor_boundary",
+    "local_tests",
+    "cross_tests",
+    "manual_checks",
+    "observability",
+    "rollback",
+    "risks",
+    "completion_evidence"
+  ],
+  "slices": [],
+  "dependency_graph": [],
+  "commit_plan": [],
+  "rollout": [],
+  "blockers": []
+}

@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "artifact_type": "integration-verification",
+  "source_id": null,
+  "target_project": "herdr",
+  "status_values": ["not_run", "red_confirmed", "passed", "failed", "blocked", "not_applicable"],
+  "record_contract": [
+    "test_id",
+    "test_layer",
+    "scenario",
+    "source_behavior_ids",
+    "datum_ids",
+    "component_ids",
+    "viewport",
+    "capability_profile",
+    "setup",
+    "action",
+    "expected_result",
+    "expected_failure_result",
+    "command",
+    "status",
+    "exit_code",
+    "evidence",
+    "fresh_at"
+  ],
+  "tests": [],
+  "coverage": {},
+  "fidelity_diffs": [],
+  "performance_results": [],
+  "soak_results": [],
+  "unresolved": []
+}

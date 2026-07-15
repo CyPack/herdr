@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "artifact_type": "herdr-system-map",
+  "source_id": null,
+  "source_commit": null,
+  "target_project": "herdr",
+  "target_revision": null,
+  "target_graph_project": "home-ayaz-projects-herdr",
+  "record_contract": [
+    "layer_id",
+    "layer_name",
+    "responsibility",
+    "authority",
+    "current_symbols",
+    "inputs",
+    "transformations",
+    "outputs",
+    "events_or_snapshots",
+    "persistence",
+    "failure_modes",
+    "extension_seams",
+    "protected_invariants",
+    "existing_tests",
+    "evidence"
+  ],
+  "layers": [],
+  "edges": [],
+  "documentation_drift": [],
+  "open_claims": [],
+  "verification": {"graph_fresh": null, "target_revision_matches": null, "V": null}
+}

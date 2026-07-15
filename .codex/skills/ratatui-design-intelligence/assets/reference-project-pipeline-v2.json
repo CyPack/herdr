@@ -1,0 +1,225 @@
+{
+  "schema_version": 2,
+  "pipeline_id": "reference-project-intelligence-v2",
+  "scope": "research-corpus-and-integration-intelligence-only",
+  "statuses": ["queued", "running", "passed", "partial", "blocked", "failed", "skipped"],
+  "input_contract": {
+    "required": ["source_url", "requested_pool", "intent"],
+    "optional": ["priority_notes", "expected_patterns", "preferred_source_id", "exclusions", "verification_commands", "target_project", "target_page", "fidelity_profiles", "adaptation_policy"]
+  },
+  "roles": [
+    "orchestrator",
+    "intake_agent",
+    "graph_cartographer",
+    "runtime_analyst",
+    "ui_analyst",
+    "source_verifier",
+    "classifier_extractor",
+    "corpus_publisher",
+    "evidence_auditor",
+    "herdr_cartographer",
+    "behavior_gap_analyst",
+    "data_authority_analyst",
+    "layout_fidelity_analyst",
+    "integration_architect",
+    "integration_test_designer"
+  ],
+  "phases": [
+    {
+      "id": "P0",
+      "name": "intake_and_source_freeze",
+      "owner": "intake_agent",
+      "depends_on": [],
+      "jobs": ["normalize_and_deduplicate_url", "reserve_source_id", "fetch_repository_identity_and_commit", "inventory_license", "clone_and_pin_source"],
+      "outputs": ["identity.json", "run.json"],
+      "gate": "canonical URL, 40-char SHA, explicit license result, matching clean clone HEAD"
+    },
+    {
+      "id": "P1",
+      "name": "codebase_memory_index_and_ontology",
+      "owner": "graph_cartographer",
+      "depends_on": ["P0"],
+      "jobs": ["full_index_repository", "wait_for_ready_and_record_counts", "run_freshness_symbol_query", "capture_architecture_and_ontology"],
+      "outputs": ["index.json", ".cartography/SYSTEM-MAP.json"],
+      "gate": "MCP ready index, positive nodes and edges, exact fresh symbol, explicit ontology"
+    },
+    {
+      "id": "P2",
+      "name": "architecture_runtime_and_data_flow",
+      "owner": "runtime_analyst",
+      "depends_on": ["P1"],
+      "jobs": ["map_entrypoints_and_configuration", "map_modules_services_and_ownership", "trace_primary_call_paths", "trace_end_to_end_data_flows", "map_persistence_failures_and_hotspots"],
+      "outputs": ["data-flow.json", "evidence.jsonl", "ANALYSIS.md"],
+      "gate": "claim-bound edges and flows with source, transforms, destination, fallback and failure paths"
+    },
+    {
+      "id": "P3",
+      "name": "surface_layout_and_behavior_intelligence",
+      "owner": "ui_analyst",
+      "depends_on": ["P1"],
+      "jobs": ["inventory_surfaces_and_project_form", "inventory_components_and_behaviors", "map_layout_responsiveness_scroll_and_hits", "map_input_focus_modal_and_lifecycle", "map_theme_highlight_capabilities_and_fallbacks", "map_animation_truth_and_negative_capabilities"],
+      "outputs": ["component-catalog.json", "evidence.jsonl", "ANALYSIS.md"],
+      "gate": "every surface has data, state, layout and input ownership; negative capabilities are explicit"
+    },
+    {
+      "id": "P4",
+      "name": "source_owned_verification",
+      "owner": "source_verifier",
+      "depends_on": ["P0"],
+      "jobs": ["inspect_and_install_declared_dependencies_safely", "run_canonical_tests", "run_typecheck_lint_and_format_checks", "build_to_temporary_output_and_check_cleanliness"],
+      "outputs": ["verification.json"],
+      "gate": "truthful commands, exit codes and results; source clone remains clean"
+    },
+    {
+      "id": "P5",
+      "name": "classification_and_herdr_extraction",
+      "owner": "classifier_extractor",
+      "depends_on": ["P2", "P3", "P4"],
+      "jobs": ["classify_project_form_and_compatibility", "create_taxonomy_bound_claims", "separate_reuse_and_caution_buckets", "define_herdr_ownership_purity_and_adaptation", "apply_license_constraints_and_prioritize_extractions"],
+      "outputs": ["classification.json"],
+      "gate": "taxonomy-valid evidence claims with confidence, reuse mode, adaptation cost and cautions"
+    },
+    {
+      "id": "P6",
+      "name": "corpus_publication",
+      "owner": "corpus_publisher",
+      "depends_on": ["P5"],
+      "jobs": ["finalize_system_map", "publish_analysis", "publish_component_catalog", "publish_data_flow", "publish_classification", "update_registry_and_skill_routing"],
+      "outputs": [".cartography/SYSTEM-MAP.json", "ANALYSIS.md", "component-catalog.json", "data-flow.json", "classifications/<source-id>.json", "sources.json"],
+      "gate": "deduplicated contiguous registry and mutually consistent identity, index and classification metadata"
+    },
+    {
+      "id": "P7",
+      "name": "source_audit_closure_and_handoff",
+      "owner": "evidence_auditor",
+      "depends_on": ["P1", "P6"],
+      "jobs": ["validate_registry_taxonomy_and_json", "validate_source_system_map_confidence_and_v", "recheck_source_graph_readiness_and_freshness", "check_source_and_product_code_isolation", "publish_source_intelligence_handoff"],
+      "outputs": ["run.json", "source-validation-records", "source-intelligence-handoff"],
+      "gate": "source validators pass, source V=0, graph fresh, clone clean, product isolation preserved and claims bounded by evidence"
+    },
+    {
+      "id": "P8",
+      "name": "herdr_current_state_cartography",
+      "owner": "herdr_cartographer",
+      "depends_on": ["P1", "P6"],
+      "jobs": ["freeze_target_revision_and_worktree_boundary", "verify_target_codebase_memory_index", "map_runtime_server_api_client_and_tui_layers", "map_state_action_view_render_and_input_ownership", "map_event_subscription_persistence_and_reconnect_paths", "inventory_existing_components_tests_and_extension_seams", "audit_target_architecture_docs_against_code"],
+      "outputs": ["herdr-system-map.json", "evidence.jsonl"],
+      "gate": "target revision and graph are fresh; every relevant Herdr layer, authority seam and extension point is code-backed; product code remains untouched"
+    },
+    {
+      "id": "P9",
+      "name": "behavior_gap_and_coverage_analysis",
+      "owner": "behavior_gap_analyst",
+      "depends_on": ["P5", "P8"],
+      "jobs": ["enumerate_reference_behaviors_and_visible_states", "map_triggers_preconditions_transitions_and_results", "match_each_behavior_to_existing_herdr_capability", "classify_coverage_exact_partial_absent_conflicting_or_out_of_scope", "identify_keyboard_mouse_focus_and_failure_gaps", "define_target_behavior_contracts_and_acceptance_tests", "rank_gaps_by_user_value_dependency_risk_and_reuse"],
+      "outputs": ["behavior-gap-matrix.json"],
+      "gate": "every source behavior has evidence, current Herdr coverage, target decision, state owner, dependencies and acceptance tests; no visual inference is counted as behavior coverage"
+    },
+    {
+      "id": "P10",
+      "name": "data_authority_contract_and_transport_map",
+      "owner": "data_authority_analyst",
+      "depends_on": ["P8", "P9"],
+      "jobs": ["enumerate_every_visible_and_behavioral_datum", "trace_reference_provenance_normalization_state_and_consumer", "classify_each_datum_server_api_client_or_absent", "map_existing_herdr_symbols_events_snapshots_and_subscriptions", "define_missing_runtime_and_client_contracts_without_ui_coupling", "define_refresh_staleness_generation_retry_and_failure_policy", "define_persistence_privacy_retention_and_boundedness", "bind_each_datum_to_component_and_contract_tests"],
+      "outputs": ["data-authority-map.json"],
+      "gate": "every datum is classified as server, API transport, client presentation, or absent; provenance, transforms, freshness, failure, retention and consumer are explicit"
+    },
+    {
+      "id": "P11",
+      "name": "cell_level_layout_fidelity_and_responsive_optimization",
+      "owner": "layout_fidelity_analyst",
+      "depends_on": ["P8", "P9"],
+      "jobs": ["capture_deterministic_reference_viewports", "derive_region_tree_constraints_and_intrinsic_sizes", "map_exact_cells_symbols_styles_modifiers_and_hit_regions", "define_semantic_theme_border_highlight_and_state_tokens", "define_glyph_and_color_fallback_profiles", "specify_responsive_breakpoints_degradation_and_overflow", "define_fixed_time_animation_and_loading_fixtures", "define_testbackend_goldens_and_coordinate_diff_reports", "record_performance_baseline_and_layout_complexity_constraints"],
+      "outputs": ["layout-fidelity-spec.json"],
+      "gate": "canonical viewport fixtures permit zero undeclared geometry, hit-region, symbol, content or semantic-style diffs; every intentional adaptation and terminal fallback is declared"
+    },
+    {
+      "id": "P12",
+      "name": "component_input_focus_and_overlay_integration_blueprint",
+      "owner": "integration_architect",
+      "depends_on": ["P9", "P10", "P11"],
+      "jobs": ["decompose_page_into_macro_micro_and_overlay_components", "map_each_component_to_state_action_view_and_render_owners", "define_page_activation_navigation_and_lifecycle", "define_keyboard_mouse_scroll_drag_and_hit_routing", "define_focus_scope_overlay_stack_and_restore_rules", "define_loading_empty_error_stale_blocked_and_degraded_states", "map_reuse_mode_license_boundary_and_component_registry", "prove_runtime_client_boundary_and_pure_render_compliance"],
+      "outputs": ["component-integration-map.json"],
+      "gate": "every component has data inputs, state owner, geometry, renderer, input owner, lifecycle, failure states, reuse mode and tests without render mutation or private-client runtime facts"
+    },
+    {
+      "id": "P13",
+      "name": "implementation_slicing_tdd_and_cross_test_plan",
+      "owner": "integration_test_designer",
+      "depends_on": ["P10", "P11", "P12"],
+      "jobs": ["slice_work_by_authority_and_dependency_order", "define_red_green_refactor_commits_and_characterization_tests", "define_state_reducer_and_invariant_tests", "define_geometry_buffer_golden_and_fallback_tests", "define_keyboard_mouse_focus_overlay_and_accessibility_tests", "define_adapter_event_snapshot_and_replay_contract_tests", "define_multi_client_reconnect_stale_async_and_failure_cross_tests", "define_viewport_capability_and_platform_test_matrix", "define_benchmark_soak_and_bounded_resource_tests", "define_rollout_observability_rollback_and_completion_evidence"],
+      "outputs": ["implementation-plan.json", "integration-verification.json"],
+      "gate": "every implementation slice starts with a named failing test, has ownership and dependency boundaries, covers local and cross-layer failure paths, and ends with fresh evidence"
+    },
+    {
+      "id": "P14",
+      "name": "integration_readiness_audit",
+      "owner": "evidence_auditor",
+      "depends_on": ["P7", "P10", "P11", "P12", "P13"],
+      "jobs": ["validate_all_integration_artifact_schemas_and_references", "audit_requirement_to_behavior_data_component_and_test_traceability", "audit_target_graph_freshness_and_exact_symbol_evidence", "audit_zero_undeclared_fidelity_diff_contract", "audit_runtime_client_purity_license_and_product_isolation", "audit_failure_reconnect_capability_and_boundedness_coverage", "compute_integration_v_and_terminal_status", "publish_implementation_ready_handoff_or_explicit_blockers"],
+      "outputs": ["run.json", "integration-validation-records", "integration-readiness-handoff"],
+      "gate": "all schemas and references validate, integration V=0, no undeclared fidelity gaps remain, authority and test coverage are complete, and no product code changed"
+    }
+  ],
+  "parallel_groups": [
+    ["P1", "P4"],
+    ["P2", "P3"],
+    ["P7", "P8"],
+    ["P10", "P11"]
+  ],
+  "required_artifacts": [
+    "run.json",
+    "identity.json",
+    "index.json",
+    "evidence.jsonl",
+    "verification.json",
+    "ANALYSIS.md",
+    "component-catalog.json",
+    "data-flow.json",
+    ".cartography/SYSTEM-MAP.json",
+    "classification.json",
+    "herdr-system-map.json",
+    "behavior-gap-matrix.json",
+    "data-authority-map.json",
+    "layout-fidelity-spec.json",
+    "component-integration-map.json",
+    "implementation-plan.json",
+    "integration-verification.json"
+  ],
+  "artifact_templates": {
+    "herdr-system-map.json": "assets/templates/herdr-system-map-template.json",
+    "behavior-gap-matrix.json": "assets/templates/behavior-gap-matrix-template.json",
+    "data-authority-map.json": "assets/templates/data-authority-map-template.json",
+    "layout-fidelity-spec.json": "assets/templates/layout-fidelity-spec-template.json",
+    "component-integration-map.json": "assets/templates/component-integration-map-template.json",
+    "implementation-plan.json": "assets/templates/implementation-plan-template.json",
+    "integration-verification.json": "assets/templates/integration-verification-template.json"
+  },
+  "authority_contract": {
+    "allowed_values": ["server", "api_transport", "client_presentation", "absent", "out_of_scope"],
+    "shared_runtime_fact_default": "server",
+    "visual_interaction_fact_default": "client_presentation",
+    "missing_fact_default": "absent_until_contract_is_approved",
+    "private_tui_socket_expansion": "forbidden"
+  },
+  "fidelity_contract": {
+    "unit": "terminal_cell",
+    "canonical_viewports": ["160x48", "120x36", "100x30", "80x24", "60x20", "40x12"],
+    "comparison_dimensions": ["region_geometry", "hit_regions", "symbols", "content", "semantic_style", "focus_selection", "fixed_time_motion"],
+    "undeclared_diff_budget": 0,
+    "declared_exception_required": true,
+    "fallback_profiles": ["truecolor_unicode", "ansi256_unicode", "ansi16_unicode", "no_color_ascii"]
+  },
+  "test_contract": {
+    "layers": ["state_and_reducer", "geometry_and_view", "buffer_and_golden", "input_and_mouse", "focus_and_overlay", "adapter_and_contract", "api_and_event_cross", "multi_client_and_reconnect", "capability_and_platform", "benchmark_and_soak"],
+    "test_first": true,
+    "fresh_evidence_before_completion": true
+  },
+  "completion_contract": {
+    "passed_requires": ["immutable_source", "ready_fresh_source_and_target_graphs", "evidence_backed_source_maps", "truthful_source_verification", "complete_classification", "complete_behavior_data_layout_component_and_test_traceability", "zero_undeclared_fidelity_diffs", "registry_map_and_schema_validation", "source_and_integration_V_zero", "source_and_product_isolation"],
+    "mcp_unavailable": "blocked",
+    "unresolved_claims": "partial",
+    "source_copy_default": "forbidden_until_license_and_reuse_review",
+    "product_code_changes": "forbidden_without_separate_user_request"
+  }
+}
