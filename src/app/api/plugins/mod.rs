@@ -1834,6 +1834,64 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
         let _ = std::fs::remove_dir_all(root);
     }
 
+    // TP-C6.3-AUTHORITY: a revalidated native-FM plugin intent reaches the
+    // existing App-owned command runtime once. The scheduler consumes the
+    // typed intent; it does not infer an action from the popup title.
+    #[cfg(unix)]
+    #[test]
+    fn file_manager_plugin_intent_uses_existing_command_runtime_once() {
+        let mut app = test_app();
+        let plugin_root = unique_temp_path("fm-plugin-action-runtime");
+        write_manifest_content(
+            &plugin_root,
+            r#"
+id = "example.fm-runtime"
+name = "FM Runtime"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+
+[[actions]]
+id = "inspect"
+title = "Inspect"
+contexts = ["file"]
+command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
+"#,
+        );
+        link_manifest(&mut app, &plugin_root);
+
+        let files_root = unique_temp_path("fm-plugin-action-files");
+        std::fs::create_dir_all(&files_root).expect("create plugin file root");
+        let selected = files_root.join("selected.txt");
+        std::fs::write(&selected, b"selected").expect("write plugin selected file");
+        let mut file_manager = crate::fm::FmState::new(&files_root);
+        assert!(file_manager.replace_selection(0));
+        app.state.file_manager = Some(file_manager);
+        app.state.request_file_manager_context_action =
+            Some(crate::app::state::FileManagerContextActionIntent {
+                action: crate::app::state::FileManagerContextMenuAction::Plugin {
+                    plugin_id: "example.fm-runtime".into(),
+                    action_id: "inspect".into(),
+                },
+                paths: vec![selected],
+            });
+
+        let _ = app.handle_scheduled_tasks(std::time::Instant::now(), false);
+        assert!(app.state.request_file_manager_context_action.is_none());
+        assert_eq!(app.state.plugin_command_logs.len(), 1);
+        assert_eq!(
+            app.state.plugin_command_logs[0].action_id.as_deref(),
+            Some("inspect")
+        );
+        let first_log_id = app.state.plugin_command_logs[0].log_id.clone();
+
+        let _ = app.handle_scheduled_tasks(std::time::Instant::now(), false);
+        assert_eq!(app.state.plugin_command_logs.len(), 1);
+        assert_eq!(app.state.plugin_command_logs[0].log_id, first_log_id);
+
+        let _ = std::fs::remove_dir_all(files_root);
+        let _ = std::fs::remove_dir_all(plugin_root);
+    }
+
     #[cfg(unix)]
     #[test]
     fn manifest_action_invoke_injects_plugin_paths() {

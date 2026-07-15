@@ -1899,6 +1899,38 @@ mod tests {
         );
     }
 
+    // TP-C6.3-AUTHORITY: Context Open is a scheduled A3 navigation intent,
+    // not a label-derived or render-time filesystem action. It consumes once
+    // only when the exact single selected directory is still current.
+    #[test]
+    fn context_open_converges_on_existing_navigation_authority_once() {
+        let td = TempDir::new("context-open-authority");
+        let directory = td.root.join("directory");
+        fs::create_dir(&directory).expect("create context-open directory");
+        fs::write(directory.join("child.txt"), b"child").expect("write context-open child");
+        let mut file_manager = crate::fm::FmState::new(&td.root);
+        let entry_idx = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == directory)
+            .expect("context-open directory row");
+        assert!(file_manager.replace_selection(entry_idx));
+        let mut app = test_app();
+        app.state.file_manager = Some(file_manager);
+        app.state.request_file_manager_context_action = Some(FileManagerContextActionIntent {
+            action: FileManagerContextMenuAction::Open,
+            paths: vec![directory.clone()],
+        });
+
+        assert!(app.sync_file_operation_worker());
+        assert!(app.state.request_file_manager_context_action.is_none());
+        assert_eq!(
+            app.state.file_manager.as_ref().expect("open FM").cwd,
+            directory
+        );
+        assert!(!app.sync_file_operation_worker());
+    }
+
     // TP-C4.1-LIFECYCLE/WATCHER: Paste starts one background generation,
     // rejects concurrent work, publishes the copy, reaches one terminal state,
     // and explicitly reloads only the destination currently shown by the FM.
