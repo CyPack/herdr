@@ -110,6 +110,10 @@ impl ValidatedShellLayout {
     fn into_inner(self) -> ShellLayout {
         self.0
     }
+
+    pub(super) fn as_layout(&self) -> &ShellLayout {
+        &self.0
+    }
 }
 
 /// Fail-closed reasons produced before a shell tree reaches layout projection.

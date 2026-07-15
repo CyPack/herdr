@@ -17,6 +17,7 @@
 
 use ratatui::layout::{Constraint, Layout, Rect};
 
+mod layout;
 mod model;
 mod template;
 
@@ -58,9 +59,36 @@ impl ShellLayout {
         area: Rect,
         resolve_dynamic: impl Fn(RegionId) -> u16,
     ) -> RegionRects {
+        if !self.tracks.is_empty() {
+            let Some(solved) = self.solve_tracked(area, &resolve_dynamic) else {
+                return RegionRects::default();
+            };
+            let (regions, _degradation) = solved.into_parts();
+            return regions;
+        }
+
         let mut rects = RegionRects::default();
         layout_node(&self.root, area, &resolve_dynamic, &mut rects);
         rects
+    }
+
+    fn solve_tracked(
+        &self,
+        area: Rect,
+        resolve_dynamic: &impl Fn(RegionId) -> u16,
+    ) -> Option<layout::SolvedShellLayout> {
+        let validated = self.clone().validate().ok()?;
+        Some(layout::solve(&validated, area, resolve_dynamic))
+    }
+
+    #[cfg(test)]
+    fn solve_tracked_for_test(
+        &self,
+        area: Rect,
+        resolve_dynamic: &impl Fn(RegionId) -> u16,
+    ) -> layout::SolvedShellLayout {
+        self.solve_tracked(area, resolve_dynamic)
+            .expect("test fixture is a validated tracked shell")
     }
 }
 
@@ -763,6 +791,205 @@ mod tests {
         assert!(too_small.get(RegionId::LeftPanel).is_empty());
         assert!(too_small.get(RegionId::WorkspaceStage).is_empty());
         assert!(too_small.get(RegionId::RightPanel).is_empty());
+
+        let threshold_modes = [
+            (65, "Workspace"),
+            (64, "Workspace"),
+            (63, "Wide"),
+            (29, "Wide"),
+            (28, "Wide"),
+            (27, "Standard"),
+            (9, "Standard"),
+            (8, "Standard"),
+            (7, "Compact"),
+            (6, "Compact"),
+            (5, "Compact"),
+            (4, "TooSmall"),
+        ];
+        for (width, expected_mode) in threshold_modes {
+            assert_eq!(
+                degradation_for_test(&layout, Rect::new(0, 0, width, 2)),
+                expected_mode,
+                "unexpected degradation at width {width}"
+            );
+        }
+    }
+
+    #[test]
+    fn shell_degradation_respects_left_panel_track_bounds() {
+        let layout = tracked_horizontal_layout(
+            vec![
+                serialized_sized_child("Dynamic", serialized_slot("AppDock")),
+                serialized_sized_child("Dynamic", serialized_slot("LeftPanel")),
+                serialized_child(serialized_slot("WorkspaceStage")),
+                serialized_sized_child("Dynamic", serialized_slot("RightPanel")),
+            ],
+            serde_json::json!({
+                "AppDock": {
+                    "Resizable": { "min": 3, "preferred": 5, "max": 9 }
+                },
+                "LeftPanel": {
+                    "Resizable": { "min": 1, "preferred": 2, "max": 2 }
+                },
+                "WorkspaceStage": { "Fill": { "weight": 1 } },
+                "RightPanel": {
+                    "Resizable": { "min": 20, "preferred": 32, "max": 60 }
+                },
+            }),
+        );
+
+        let compact = layout.compute_regions(Rect::new(0, 0, 4, 2), |_| 0);
+        assert!(compact.get(RegionId::AppDock).is_empty());
+        assert_eq!(compact.get(RegionId::LeftPanel).width, 2);
+        assert_eq!(compact.get(RegionId::WorkspaceStage).width, 2);
+        assert!(compact.get(RegionId::RightPanel).is_empty());
+    }
+
+    #[test]
+    fn shell_degrades_height_without_starving_stage() {
+        let layout = tracked_layout(
+            "Vertical",
+            vec![
+                serialized_sized_child("Dynamic", serialized_slot("TopBar")),
+                serialized_child(serialized_slot("WorkspaceStage")),
+                serialized_sized_child("Dynamic", serialized_slot("BottomBar")),
+            ],
+            serde_json::json!({
+                "TopBar": { "ContentBounded": { "min": 1, "max": 3 } },
+                "WorkspaceStage": { "Fill": { "weight": 1 } },
+                "BottomBar": { "ContentBounded": { "min": 1, "max": 2 } },
+            }),
+        );
+        let measurement = |region| match region {
+            RegionId::TopBar => 3,
+            RegionId::BottomBar => 2,
+            _ => 0,
+        };
+
+        let roomy = layout.compute_regions(Rect::new(0, 0, 20, 6), measurement);
+        assert_eq!(roomy.get(RegionId::TopBar).height, 3);
+        assert_eq!(roomy.get(RegionId::WorkspaceStage).height, 1);
+        assert_eq!(roomy.get(RegionId::BottomBar).height, 2);
+
+        let minimums = layout.compute_regions(Rect::new(0, 0, 20, 3), measurement);
+        assert_eq!(minimums.get(RegionId::TopBar).height, 1);
+        assert_eq!(minimums.get(RegionId::WorkspaceStage).height, 1);
+        assert_eq!(minimums.get(RegionId::BottomBar).height, 1);
+
+        let without_bottom = layout.compute_regions(Rect::new(0, 0, 20, 2), measurement);
+        assert_eq!(without_bottom.get(RegionId::TopBar).height, 1);
+        assert_eq!(without_bottom.get(RegionId::WorkspaceStage).height, 1);
+        assert!(without_bottom.get(RegionId::BottomBar).is_empty());
+
+        let stage_only = layout.compute_regions(Rect::new(0, 0, 20, 1), measurement);
+        assert!(stage_only.get(RegionId::TopBar).is_empty());
+        assert_eq!(stage_only.get(RegionId::WorkspaceStage).height, 1);
+        assert!(stage_only.get(RegionId::BottomBar).is_empty());
+
+        let empty = layout.compute_regions(Rect::new(0, 0, 20, 0), measurement);
+        assert!(empty.get(RegionId::TopBar).is_empty());
+        assert!(empty.get(RegionId::WorkspaceStage).is_empty());
+        assert!(empty.get(RegionId::BottomBar).is_empty());
+
+        let threshold_modes = [
+            (7, "Workspace"),
+            (6, "Workspace"),
+            (5, "Wide"),
+            (4, "Wide"),
+            (3, "Wide"),
+            (2, "Standard"),
+            (1, "Compact"),
+            (0, "TooSmall"),
+        ];
+        for (height, expected_mode) in threshold_modes {
+            assert_eq!(
+                degradation_for_test_with(&layout, Rect::new(0, 0, 20, height), &measurement,),
+                expected_mode,
+                "unexpected degradation at height {height}"
+            );
+        }
+    }
+
+    #[test]
+    fn nested_stage_drives_height_degradation() {
+        let body = serialized_split(vec![
+            serialized_sized_child("Dynamic", serialized_slot("AppDock")),
+            serialized_child(serialized_slot("WorkspaceStage")),
+        ]);
+        let layout = tracked_layout(
+            "Vertical",
+            vec![
+                serialized_sized_child("Dynamic", serialized_slot("TopBar")),
+                serialized_child(body),
+                serialized_sized_child("Dynamic", serialized_slot("BottomBar")),
+            ],
+            serde_json::json!({
+                "TopBar": { "ContentBounded": { "min": 1, "max": 3 } },
+                "AppDock": {
+                    "Resizable": { "min": 3, "preferred": 5, "max": 9 }
+                },
+                "WorkspaceStage": { "Fill": { "weight": 1 } },
+                "BottomBar": { "ContentBounded": { "min": 1, "max": 2 } },
+            }),
+        );
+
+        let one_row = layout.compute_regions(Rect::new(0, 0, 80, 1), |_| 3);
+        assert!(one_row.get(RegionId::TopBar).is_empty());
+        assert_eq!(
+            one_row.get(RegionId::WorkspaceStage),
+            Rect::new(5, 0, 75, 1)
+        );
+        assert!(one_row.get(RegionId::BottomBar).is_empty());
+    }
+
+    #[test]
+    fn desktop_workspace_template_solves_normal_compact_and_too_small() {
+        let layout: ShellLayout = serde_json::from_value(serde_json::json!({
+            "template": "DesktopWorkspace",
+        }))
+        .expect("built-in desktop template should validate");
+
+        let normal = layout.compute_regions(Rect::new(0, 0, 120, 40), |_| 0);
+        assert!(normal.get(RegionId::TopBar).is_empty());
+        assert_eq!(normal.get(RegionId::AppDock), Rect::new(0, 0, 5, 40));
+        assert_eq!(normal.get(RegionId::LeftPanel), Rect::new(5, 0, 26, 40));
+        assert_eq!(
+            normal.get(RegionId::WorkspaceStage),
+            Rect::new(31, 0, 89, 40)
+        );
+        assert!(normal.get(RegionId::RightPanel).is_empty());
+        assert!(normal.get(RegionId::BottomBar).is_empty());
+
+        let compact = layout.compute_regions(Rect::new(0, 0, 7, 1), |_| 0);
+        assert!(compact.get(RegionId::AppDock).is_empty());
+        assert_eq!(compact.get(RegionId::LeftPanel), Rect::new(0, 0, 4, 1));
+        assert_eq!(compact.get(RegionId::WorkspaceStage), Rect::new(4, 0, 3, 1));
+        assert!(compact.get(RegionId::RightPanel).is_empty());
+
+        let too_small = layout.compute_regions(Rect::new(0, 0, 4, 1), |_| 0);
+        assert!(too_small.get(RegionId::AppDock).is_empty());
+        assert!(too_small.get(RegionId::LeftPanel).is_empty());
+        assert!(too_small.get(RegionId::WorkspaceStage).is_empty());
+        assert!(too_small.get(RegionId::RightPanel).is_empty());
+    }
+
+    #[test]
+    fn invalid_tracked_layout_fails_closed_without_partial_regions() {
+        let invalid = ShellLayout::from_parts(
+            ShellNode::Slot {
+                region: RegionId::AppDock,
+            },
+            std::collections::BTreeMap::from([(
+                RegionId::AppDock,
+                model::TrackPolicy::Fixed { cells: 5 },
+            )]),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        let regions = invalid.compute_regions(Rect::new(0, 0, 80, 24), |_| 5);
+        assert!(regions.get(RegionId::AppDock).is_empty());
+        assert!(regions.get(RegionId::WorkspaceStage).is_empty());
     }
 
     #[test]
@@ -854,23 +1081,50 @@ mod tests {
         children: Vec<serde_json::Value>,
         tracks: serde_json::Value,
     ) -> ShellLayout {
+        tracked_layout("Horizontal", children, tracks)
+    }
+
+    fn tracked_layout(
+        direction: &str,
+        children: Vec<serde_json::Value>,
+        tracks: serde_json::Value,
+    ) -> ShellLayout {
         serde_json::from_value(serde_json::json!({
-            "root": serialized_split(children),
+            "root": {
+                "Split": {
+                    "direction": direction,
+                    "children": children,
+                }
+            },
             "tracks": tracks,
         }))
         .expect("tracked shell fixture should validate")
     }
 
     fn compute_regions_with_visit_count(layout: &ShellLayout, area: Rect) -> (RegionRects, usize) {
-        // RED-only test seam. SF2.3 replaces this sentinel with the solver's
-        // internal bounded visit counter without changing the assertion.
-        (layout.compute_regions(area, |_| 5), usize::MAX)
+        let solved = layout.solve_tracked_for_test(area, &|_| 5);
+        (solved.regions().clone(), solved.visit_count())
     }
 
-    fn degradation_for_test(_layout: &ShellLayout, _area: Rect) -> &'static str {
-        // RED-only test seam. SF2.3 replaces this sentinel with the solver's
-        // explicit responsive-degradation result.
-        "Workspace"
+    fn degradation_for_test(layout: &ShellLayout, area: Rect) -> &'static str {
+        degradation_for_test_with(layout, area, &|_| 0)
+    }
+
+    fn degradation_for_test_with(
+        layout: &ShellLayout,
+        area: Rect,
+        resolve_dynamic: &impl Fn(RegionId) -> u16,
+    ) -> &'static str {
+        match layout
+            .solve_tracked_for_test(area, resolve_dynamic)
+            .degradation()
+        {
+            layout::ResponsiveDegradation::Workspace => "Workspace",
+            layout::ResponsiveDegradation::Wide => "Wide",
+            layout::ResponsiveDegradation::Standard => "Standard",
+            layout::ResponsiveDegradation::Compact => "Compact",
+            layout::ResponsiveDegradation::TooSmall => "TooSmall",
+        }
     }
 
     fn serialized_split(children: Vec<serde_json::Value>) -> serde_json::Value {

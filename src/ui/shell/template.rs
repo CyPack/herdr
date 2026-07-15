@@ -147,7 +147,7 @@ fn dock_track() -> TrackPolicy {
 
 fn sidebar_track() -> TrackPolicy {
     TrackPolicy::Resizable {
-        min: 0,
+        min: 4,
         preferred: 26,
         max: 40,
     }
