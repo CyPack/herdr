@@ -2,9 +2,9 @@
 
 - Updated: 2026-07-15
 - Branch: `feat/native-fm`
-- Published CyPack base: `8bab9de`
-- Verified N2.1 product head: `c530836`; closure evidence: `9af11a4`.
-- Current publication unit: M1.0 discovery/evidence and continuity only. Push
+- Published CyPack base: `5e67099`.
+- Verified M1 product head: `7d3144e`; continuity closure is pending commit.
+- Current publication unit: M1.1–M1.4 atomic RED/GREEN chain plus closure. Push
   only CyPack `feat/native-fm` and fork `master` after targeted staging,
   fast-forward ancestry, and exact remote-SHA verification.
 
@@ -63,51 +63,40 @@
 - M1.0 proved a genuine product delta and selected the narrow existing-agent,
   single-file attachment overlay described in
   `.codex/evidence/m1-agent-attachment-picker.md`.
+- M1.1–M1.4 add the pure focused-agent `[+]` action, `prefix+a`, Clear-first
+  private picker, exact workspace/`PaneId`/`TerminalId` authority, path-stable
+  mouse/keyboard input, and one-shot literal path-plus-CR delivery.
 
 ## Active Next Increment
 
-M1.1 pure focused-agent attachment action/geometry and configurable keybinding.
-Production Rust begins only after each named test is observed RED for the
-intended missing behavior.
+M2.0 evidence matrix for Git worktree management actions. No product mutation
+is permitted until existing dialogs/API/CLI/keybinds are compared action by
+action and each candidate terminates GO or NO-GO.
 
-Test points:
-
-- `focused_agent_attachment_action_is_exact_agent_only_and_responsive`: exactly
-  one focused agent receives a complete `[+]` bottom-border target; non-agent,
-  unfocused, borderless, narrow, mobile-zero, and stale cases expose none; the
-  target never covers terminal `inner_rect`.
-- `default_binds_prefix_a_to_agent_attachment_picker_without_conflict`:
-  `prefix+a` resolves only to M1 and existing user-binding conflict policy is
-  preserved.
-- `agent_attachment_action_render_is_bounded_ascii_and_no_color_safe`: the
-  semantic action stays within its exact hit area and never overwrites corners,
-  terminal cells, scrollbar, split border, or adjacent border content.
-- M1.2–M1.4 remain gated behind M1.1 GREEN. Their exact identity, authority,
-  literal delivery, rollback, and finite-budget tests are frozen in
-  `.codex/evidence/m1-agent-attachment-picker.md` and `.codex/TASKS.md`.
+Test points are the TP-M2-DELTA/IDENTITY/CREATE/REMOVE/RECOVERY/PLATFORM matrix
+in `.codex/TASKS.md`. Expected result: duplicate controls terminate NO-GO;
+only a proven missing lower-friction action may activate a RED production lane.
 
 ## Ordered Roadmap
 
-1. M1.1 pure agent-frame action geometry/keybinding, then M1.2 picker ownership,
-   M1.3 scheduled literal delivery, and M1.4 lifecycle/full closure gates.
-2. M2.0 evidence matrix for missing Git worktree management actions; no product
+1. M2.0 evidence matrix for missing Git worktree management actions; no product
    mutation until action-by-action GO/NO-GO terminates.
-3. M3.0 only after M1/M2 creates a second concrete independently owned
+2. M3.0 only after M1/M2 creates a second concrete independently owned
    component/page/action family.
-4. N2.2 and S5–S7 remain independently evidence-gated.
+3. N2.2 and S5–S7 remain independently evidence-gated.
 
-## Fresh N2.1 Closure Evidence
+## Fresh M1 Closure Evidence
 
-- Exact path-stable navigation 6/6; all FM tests 65/65.
-- Full nextest 3177/3177; only `path_beta_real_host_probe` ignored.
+- Exact attachment family 20/20.
+- Full nextest 3197/3197; only `path_beta_real_host_probe` ignored.
 - Linux all-target and canonical Windows MSVC clippy clean with `-D warnings`.
 - Bun 17/17; Python maintenance 64/64; fmt, diff, production-unwrap,
   debug-marker, and ignored-inventory checks clean.
-- Graph refresh: 18,997 nodes / 89,826 edges. Current snippets for
-  `FmState::reload_focusing_path` and `FmState::leave` proved freshness beyond
-  `ready`.
-- M1.0 is docs-only: no Rust, dependency, protocol, persisted runtime state,
-  process, socket, watcher, worker, pane, agent, or stable Herdr resource changed.
+- Graph refresh: 19,113 nodes / 91,118 edges. Current snippets for
+  `miller_layout`, `sync_agent_attachment_delivery`, and picker row geometry
+  proved freshness beyond `ready`.
+- No dependency, protocol, persisted runtime state, process, socket, watcher,
+  worker, pane, new agent, or stable Herdr resource changed.
 
 ## Non-Negotiable Boundaries
 

@@ -841,18 +841,19 @@ evidence contract proves non-duplicate user value and freezes RED test points.
 - [x] M1.0c define exactly one file, 1 MiB including CR, one pending request,
   one explicit send attempt, zero new workers/watchers/resources, literal UTF-8
   path behavior, close/reopen semantics, and exact RED-capable test names.
-- [ ] M1.1 RED/GREEN: add an agent-only pure `[+]` action model, responsive
+- [x] M1.1 RED/GREEN: add an agent-only pure `[+]` action model, responsive
   bottom-border geometry, no-color/ASCII render, and configurable `prefix+a`.
   Borderless/narrow/hidden/disabled actions expose no mouse target and render
   never covers `PaneInfo::inner_rect`.
-- [ ] M1.2 RED/GREEN: add one client-local `Mode::AttachFile` picker with a
-  private `FmState` and exact workspace/tab/pane/terminal target snapshot. Use
+- [x] M1.2 RED/GREEN: add one client-local `Mode::AttachFile` picker with a
+  private `FmState` and exact workspace/`PaneId`/`TerminalId` target snapshot;
+  tab position is a live projection, not a persistent identity. Use
   Clear-first bounded overlay rendering; route mouse/keyboard before background
   terminal/FM input; accept exactly one current regular UTF-8 file.
-- [ ] M1.3 RED/GREEN: prepare one typed request in input, then execute at the
+- [x] M1.3 RED/GREEN: prepare one typed request in input, then execute at the
   scheduled App boundary through a shared C5 literal terminal-send seam. Never
   shell-interpolate, upload bytes, create an agent/pane, or hot-retry.
-- [ ] M1.4 reconcile completion/cancel/error against current FM and agent
+- [x] M1.4 reconcile completion/cancel/error against current FM and agent
   identities, prove close/reopen, target-exit/replacement, stale-file, busy,
   oversized/non-UTF-8 and zero-resource-rollback cases, run full gates, refresh
   graph, then publish atomically.
@@ -860,11 +861,25 @@ evidence contract proves non-duplicate user value and freezes RED test points.
 | Test point | What is tested | Expected result | Reason |
 |---|---|---|---|
 | TP-M1-DELTA | C5 native file handoff versus CLI attach/send and plugin file actions | One user-visible action absent from all existing surfaces is named, or M1 terminates NO-GO | A second button for an existing behavior adds ambiguity rather than capability |
-| TP-M1-IDENTITY | Stable selected paths, workspace/tab/pane/agent IDs, reorder/delete, target exit/replacement | Activation uses exact live identities and stale snapshots emit no request | Files and agents can both change between render and click |
+| TP-M1-IDENTITY | Stable selected paths, workspace ID, `PaneId`, `TerminalId`, live tab projection, reorder/delete, target exit/replacement | Activation uses exact live identities and stale snapshots emit no request | Files and agents can both change between render and click; Herdr has no persistent tab ID |
 | TP-M1-AUTHORITY | Empty/multiple/unsupported selection, non-agent target, busy operation, disabled plugin, modified input | Every unavailable case has one reason and fails closed before side effects | UI enabled state is advisory unless execution revalidates authority |
 | TP-M1-DELIVERY | Spaces, quotes, Unicode, non-UTF-8 paths, Windows separators, missing/directory target, exact size boundary | One regular UTF-8 path remains literal and gets one CR; unsupported paths fail visibly with no shell parsing, loss, truncation, upload, or partial delivery | File attachment is security-sensitive data transport |
 | TP-M1-ROLLBACK | First-send failure, cancellation, target exit/replacement, close/reopen | Existing panes/agents/processes are never removed; M1 creates no runtime resource; pending client state and hit geometry clear exactly | Even a client-only multi-stage handoff must not retarget or damage unrelated work |
 | TP-M1-BUDGET | One selected path, 1 MiB payload including CR, one pending request, one explicit attempt, zero new workers/watchers | Bounds are enforced before send; busy never hot-retries; stale requests are consumed once | Agent delivery can otherwise become an unbounded queue or memory surface |
+
+### M1 Closure Evidence
+
+- RED/GREEN chain: `948ccf8`, `88f6afa`, `10eb4a4`, `53038fd`, `cffc802`,
+  `b6b4121`, `7d3144e`.
+- Exact attachment family: 20/20. Full nextest: 3197/3197 with only the named
+  B0 real-host probe skipped.
+- Linux all-target and Windows MSVC bin clippy pass locked with `-D warnings`;
+  Bun 17/17; Python maintenance 64/64; fmt and diff checks clean.
+- Full graph refresh: 19,113 nodes / 91,118 edges. Current snippets for
+  `miller_layout`, `sync_agent_attachment_delivery`, and
+  `compute_agent_attachment_picker_row_areas` prove freshness beyond `ready`.
+- M1 adds no dependency, protocol field, persisted runtime fact, pane, process,
+  watcher, worker, byte upload, multi-file queue, or generic UI registry.
 
 ### M2 — Git Worktree Management Actions
 
@@ -925,11 +940,11 @@ evidence contract proves non-duplicate user value and freezes RED test points.
 
 ### Future Ordering and Activation
 
-1. M1.0 is complete with a narrow GO. M1.1 is the next lane and must begin with
-   the exact pure geometry/keybinding RED tests in the evidence file; M1.2–M1.4
-   remain production NO-GO until each preceding RED/GREEN lane closes.
-2. M2.0 follows the M1 decision. It may reuse existing worktree APIs but cannot
-   preempt the M1 lane or introduce a private TUI-only runtime path.
+1. M1.0–M1.4 are complete through the atomic RED/GREEN chain and full closure
+   gates above. The exact single-file existing-agent scope remains frozen.
+2. M2.0 is the next active evidence lane. It may reuse existing worktree APIs
+   but cannot add product controls until the action-by-action matrix terminates
+   GO/NO-GO or introduce a private TUI-only runtime path.
 3. M3.0 follows only after M1/M2 evidence proves a second real consumer. S5–S7
    remain NO-GO until their existing concrete triggers are independently met.
 4. N2.2 remains separate from M1–M3 and inactive until cursor-history demand and
@@ -943,7 +958,6 @@ reconciliation, C4.4.4 recovery, C4.4.5 gates, and C5.1–C5.5 are complete.
 C6.1–C6.4, P4.0, N2.0, and N2.1 are complete through product commit `c530836`
 plus the continuity commit containing this closure. S5–S7 and the original
 dynamic/unbounded N2 state machine remain evidence-gated implementation NO-GO.
-M1.0 is complete with a narrow existing-agent, single-file picker GO. M1.1 pure
-action/geometry RED is next; M1.2–M1.4 remain sequentially gated. M2.0 follows
-M1 closure, while M3.0 requires a real second consumer from M1/M2. N2.2 and
+M1.0–M1.4 are complete for the narrow existing-agent, single-file picker.
+M2.0 evidence is next, while M3.0 requires a real second consumer from M1/M2. N2.2 and
 S5–S7 remain independently gated.

@@ -1,4 +1,4 @@
-# M1.0 Evidence — Focused-Agent Attachment Picker
+# M1 Evidence — Focused-Agent Attachment Picker
 
 Date: 2026-07-15
 
@@ -68,8 +68,9 @@ safe extension of M1.
 `AgentAttachmentPickerState` owns:
 
 - one private `FmState` used only by the picker;
-- one immutable target snapshot containing workspace ID, tab ID, pane ID, and
-  terminal ID;
+- one immutable target snapshot containing workspace ID, `PaneId`, and
+  `TerminalId`; Herdr has no persistent tab ID, so the current tab position is
+  a live projection located through the stable pane identity;
 - one lifecycle state: browsing, pending, or recoverable error;
 - no runtime handle and no filesystem watcher.
 
@@ -85,8 +86,9 @@ performs no filesystem, runtime, focus, or hit-area mutation.
 
 Workspace/tab/pane/terminal organization and agent-terminal state remain in
 their existing owners. M1 adds no TUI-private socket fact. At confirmation the
-scheduled App effect must prove that all four target IDs still form the active,
-focused chain and that the terminal still satisfies
+scheduled App effect must prove that workspace ID, `PaneId`, and `TerminalId`
+still form the active, focused chain through the current tab projection and
+that the terminal still satisfies
 `TerminalState::is_agent_terminal()`.
 
 ### Delivery seam
@@ -211,11 +213,13 @@ zero request, and no directory/multi/non-UTF-8 authority.
 
 ### M1.3 — Scheduled literal delivery
 
-1. `attachment_confirm_prepares_one_request_without_sending_in_input`
-2. `attachment_send_revalidates_file_and_exact_agent_chain_before_one_send`
-3. `attachment_send_preserves_spaces_quotes_unicode_and_windows_separators`
-4. `attachment_send_rejects_non_utf8_missing_directory_and_oversized_paths`
-5. `attachment_send_busy_is_visible_consumed_and_never_hot_retried`
+1. `attachment_picker_enter_prepares_one_typed_request_without_delivery`
+2. `attachment_delivery_sends_one_literal_path_and_closes_on_success`
+3. `attachment_delivery_rejects_lost_agent_and_vanished_file`
+4. `attachment_delivery_rejects_changed_focus_and_missing_runtime`
+5. `attachment_delivery_backpressure_is_visible_without_hot_retry`
+6. `attachment_payload_rejects_more_than_one_mib_including_enter`
+7. `attachment_payload_rejects_non_utf8_path`
 
 Expected RED is missing typed intent/shared C5 seam. GREEN must show no send in
 input/render, one exact payload plus CR at the scheduled boundary, fail-closed
@@ -232,8 +236,12 @@ TOCTOU behavior, finite size, and zero duplicate sends.
 
 ## Terminating Decision
 
-M1 production is **GO** only for this exact existing-agent single-file overlay
-flow. The first permitted Rust lane is M1.1's pure action/geometry RED tests.
+M1 production is **complete** only for this exact existing-agent single-file
+overlay flow. Its atomic TDD chain is `948ccf8` → `88f6afa` → `10eb4a4` →
+`53038fd` → `cffc802` → `b6b4121` → `7d3144e`. Exact attachment tests are
+20/20; full nextest is 3197/3197 with only the named B0 probe skipped; Linux
+and Windows MSVC clippy, Bun 17/17, Python 64/64, fmt/diff checks, and graph
+freshness at 19,113 nodes / 91,118 edges are clean.
 Multi-file messages, new-agent creation, byte upload, drag/drop, watcher reuse,
 generic component/page abstractions, and protocol changes remain independent
 NO-GO items unless new evidence and test contracts activate them.

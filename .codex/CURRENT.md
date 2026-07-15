@@ -4,8 +4,11 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Published CyPack checkpoint before this continuity publication: `a04d55a`
-  (`docs: close integrated file manager actions`).
+- Published CyPack checkpoint before this continuity publication: `5e67099`
+  (`docs: define focused-agent attachment picker`).
+- Verified local M1 product head: `7d3144e` (`feat: deliver files to focused
+  agents`); the atomic M1 RED/GREEN chain and this continuity closure are the
+  pending fork-only publication unit.
 - Verified C6.4 product/test head: `f52cb85`
   (`test: align image resize target with status geometry`).
 - The pending publication unit is C6.4 plan/RED/GREEN/test coverage `5b8f327`
@@ -878,22 +881,15 @@
 
 ## Exact Next Action
 
-1. N2.1 is complete; preserve its RED `e433a2f` → GREEN `c530836` chain and
-   exact verification evidence during fork publication.
-2. M1.0 is complete with a narrow GO documented in
-   `.codex/evidence/m1-agent-attachment-picker.md`: an existing-agent,
-   single-file Clear-first overlay picker, one literal UTF-8 path plus CR, one
-   pending/one explicit send attempt, and zero new worker/watcher/runtime
-   resources. `agent attach`, new-agent creation, multi-file, byte upload,
-   drag/drop, protocol work, and generic component/overlay registries are out.
-3. Start M1.1 with the named pure geometry/keybinding RED tests before Rust
-   production code. Target one exact focused-agent `[+]` bottom-border action
-   plus configurable `prefix+a`; hidden/borderless/narrow geometry must expose
-   no stale hit area and must never cover the terminal inner rect.
-4. Follow the expanded M1 → M2 → M3 macro/micro roadmap and exact
-   expected-result/reason test tables in `.codex/TASKS.md`. N2.2 and S5–S7
-   remain independently deferred. Use the same targeted commit and CyPack
-   fork-only FF workflow for every activated lane.
+1. Publish the verified M1 RED/GREEN chain and continuity closure to CyPack
+   `feat/native-fm` and fork `master` only after exact FF ancestry checks.
+2. Begin M2.0 as evidence-only work: compare every proposed FM worktree action
+   against existing dialogs, neutral API, CLI, and keybind surfaces. Produce the
+   action-by-action GO/NO-GO matrix before any Rust production edit.
+3. Preserve M1's frozen scope: one existing agent, one regular UTF-8 path, one
+   CR, one pending request, one explicit send attempt, zero new resources.
+4. M3.0 remains gated on a second concrete consumer; N2.2 and S5–S7 remain
+   independently deferred.
 
 ## Verified B2.0 Dependency Decision
 
