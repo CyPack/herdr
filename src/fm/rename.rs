@@ -293,7 +293,10 @@ fn retained_result(error: RenameOperationError) -> RenameOperationExecutionResul
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_rename_operation, execute_rename_operation_with_host, PlannedRenamePathKind,
+        execute_bulk_rename_operation, execute_bulk_rename_operation_with_host,
+        execute_rename_operation, execute_rename_operation_with_host, BulkRenameItemOutcome,
+        BulkRenameOperationExecutionStatus, BulkRenameOperationPlan,
+        BulkRenameOperationPreflightError, BulkRenameOperationRequest, PlannedRenamePathKind,
         RenameOperationError, RenameOperationExecutionStatus, RenameOperationHost,
         RenameOperationOutcome, RenameOperationPlan, RenameOperationPreflightError,
         RenameOperationRequest,
@@ -338,6 +341,242 @@ mod tests {
             new_name: new_name.to_string(),
             operation_in_flight: false,
         }
+    }
+
+    fn bulk_request(mappings: Vec<(PathBuf, &str)>) -> BulkRenameOperationRequest {
+        BulkRenameOperationRequest {
+            mappings: mappings
+                .into_iter()
+                .map(|(source_path, new_name)| (source_path, new_name.to_string()))
+                .collect(),
+            operation_in_flight: false,
+        }
+    }
+
+    // TP-C4.3-BULK: the complete ordered mapping validates before mutation.
+    // Outputs must be unique, external destinations must be absent, and source
+    // count remains bounded; occupied destinations are allowed only when they
+    // are exact members of the same rename graph.
+    #[test]
+    fn bulk_rename_preflight_validates_complete_mapping_atomically() {
+        let td = TempDir::new("bulk-preflight");
+        let alpha = td.root.join("alpha.txt");
+        let beta = td.root.join("beta.txt");
+        fs::write(&alpha, b"alpha").expect("write alpha");
+        fs::write(&beta, b"beta").expect("write beta");
+
+        let plan = BulkRenameOperationPlan::preflight(bulk_request(vec![
+            (alpha.clone(), "beta.txt"),
+            (beta.clone(), "gamma.txt"),
+        ]))
+        .expect("chain destinations may name exact sources");
+        assert_eq!(
+            plan.mappings(),
+            &[
+                (alpha.clone(), td.root.join("beta.txt")),
+                (beta.clone(), td.root.join("gamma.txt")),
+            ]
+        );
+        assert_eq!(fs::read(&alpha).expect("alpha remains"), b"alpha");
+        assert_eq!(fs::read(&beta).expect("beta remains"), b"beta");
+
+        assert_eq!(
+            BulkRenameOperationPlan::preflight(bulk_request(vec![])),
+            Err(BulkRenameOperationPreflightError::NoMappings)
+        );
+        assert_eq!(
+            BulkRenameOperationPlan::preflight(BulkRenameOperationRequest {
+                mappings: vec![(alpha.clone(), "renamed.txt".to_string())],
+                operation_in_flight: true,
+            }),
+            Err(BulkRenameOperationPreflightError::OperationInFlight)
+        );
+        assert_eq!(
+            BulkRenameOperationPlan::preflight(bulk_request(vec![
+                (alpha.clone(), "same.txt"),
+                (beta.clone(), "same.txt"),
+            ])),
+            Err(BulkRenameOperationPreflightError::DuplicateDestination {
+                path: td.root.join("same.txt")
+            })
+        );
+        assert_eq!(
+            BulkRenameOperationPlan::preflight(bulk_request(vec![
+                (alpha.clone(), "one.txt"),
+                (alpha.clone(), "two.txt"),
+            ])),
+            Err(BulkRenameOperationPreflightError::DuplicateSource {
+                path: alpha.clone()
+            })
+        );
+
+        let occupied = td.root.join("occupied.txt");
+        fs::write(&occupied, b"occupied").expect("write occupied target");
+        assert_eq!(
+            BulkRenameOperationPlan::preflight(bulk_request(vec![(alpha.clone(), "occupied.txt")])),
+            Err(BulkRenameOperationPreflightError::DestinationCollision {
+                path: occupied.clone()
+            })
+        );
+        assert_eq!(fs::read(alpha).expect("source retained"), b"alpha");
+        assert_eq!(fs::read(occupied).expect("occupied retained"), b"occupied");
+    }
+
+    // TP-C4.3-BULK: staging every source before publishing outputs must make
+    // chains, swaps, and cycles independent from input order while preserving
+    // the payload associated with each original source.
+    #[test]
+    fn bulk_rename_executes_chains_swaps_and_cycles_without_corruption() {
+        let td = TempDir::new("bulk-cycles");
+        let alpha = td.root.join("alpha.txt");
+        let beta = td.root.join("beta.txt");
+        let gamma = td.root.join("gamma.txt");
+        fs::write(&alpha, b"alpha").expect("write cycle alpha");
+        fs::write(&beta, b"beta").expect("write cycle beta");
+        fs::write(&gamma, b"gamma").expect("write cycle gamma");
+
+        let plan = BulkRenameOperationPlan::preflight(bulk_request(vec![
+            (gamma.clone(), "alpha.txt"),
+            (alpha.clone(), "beta.txt"),
+            (beta.clone(), "gamma.txt"),
+        ]))
+        .expect("cycle plan");
+        let staging_paths = plan.staging_paths().to_vec();
+        let result = execute_bulk_rename_operation(&plan, &FileOperationCancellation::default());
+
+        assert_eq!(
+            result.status(),
+            BulkRenameOperationExecutionStatus::Completed
+        );
+        assert!(result
+            .items()
+            .iter()
+            .all(|item| item.outcome() == &BulkRenameItemOutcome::Renamed));
+        assert_eq!(fs::read(&alpha).expect("cycle alpha output"), b"gamma");
+        assert_eq!(fs::read(&beta).expect("cycle beta output"), b"alpha");
+        assert_eq!(fs::read(&gamma).expect("cycle gamma output"), b"beta");
+        assert!(staging_paths.iter().all(|path| !path.exists()));
+
+        let swap = BulkRenameOperationPlan::preflight(bulk_request(vec![
+            (alpha.clone(), "beta.txt"),
+            (beta.clone(), "alpha.txt"),
+        ]))
+        .expect("swap plan");
+        let result = execute_bulk_rename_operation(&swap, &FileOperationCancellation::default());
+        assert_eq!(
+            result.status(),
+            BulkRenameOperationExecutionStatus::Completed
+        );
+        assert_eq!(fs::read(alpha).expect("swap alpha output"), b"alpha");
+        assert_eq!(fs::read(beta).expect("swap beta output"), b"gamma");
+    }
+
+    struct OneShotFailingRenameHost {
+        fail_on_call: usize,
+        calls: usize,
+    }
+
+    impl RenameOperationHost for OneShotFailingRenameHost {
+        fn before_revalidation(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn publish_no_replace(&mut self, source: &Path, destination: &Path) -> io::Result<()> {
+            self.calls += 1;
+            if self.calls == self.fail_on_call {
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "injected one-shot rename failure",
+                ))
+            } else {
+                crate::platform::publish_staged_path_no_replace(source, destination)
+            }
+        }
+    }
+
+    // TP-C4.3-BULK: a staging failure rolls every already-staged source back to
+    // its exact original name, reports a rolled-back terminal state, and leaves
+    // neither requested outputs nor private artifacts behind.
+    #[test]
+    fn bulk_rename_staging_failure_restores_all_sources() {
+        let td = TempDir::new("bulk-stage-failure");
+        let alpha = td.root.join("alpha.txt");
+        let beta = td.root.join("beta.txt");
+        fs::write(&alpha, b"alpha").expect("write stage alpha");
+        fs::write(&beta, b"beta").expect("write stage beta");
+        let plan = BulkRenameOperationPlan::preflight(bulk_request(vec![
+            (alpha.clone(), "renamed-alpha.txt"),
+            (beta.clone(), "renamed-beta.txt"),
+        ]))
+        .expect("stage failure plan");
+        let staging_paths = plan.staging_paths().to_vec();
+        let result = execute_bulk_rename_operation_with_host(
+            &plan,
+            &FileOperationCancellation::default(),
+            &mut OneShotFailingRenameHost {
+                fail_on_call: 2,
+                calls: 0,
+            },
+        );
+
+        assert_eq!(
+            result.status(),
+            BulkRenameOperationExecutionStatus::RolledBack
+        );
+        assert_eq!(fs::read(&alpha).expect("restored stage alpha"), b"alpha");
+        assert_eq!(fs::read(&beta).expect("retained stage beta"), b"beta");
+        assert!(!td.root.join("renamed-alpha.txt").exists());
+        assert!(!td.root.join("renamed-beta.txt").exists());
+        assert!(staging_paths.iter().all(|path| !path.exists()));
+        assert!(result
+            .items()
+            .iter()
+            .any(|item| matches!(item.outcome(), BulkRenameItemOutcome::Restored(_))));
+        assert!(result
+            .items()
+            .iter()
+            .any(|item| matches!(item.outcome(), BulkRenameItemOutcome::Retained(_))));
+    }
+
+    // TP-C4.3-BULK: a publish failure after an earlier output committed first
+    // reverses committed outputs back to private staging, then restores every
+    // source. Recovery is explicit and no partial success is reported.
+    #[test]
+    fn bulk_rename_publish_failure_rolls_back_committed_outputs() {
+        let td = TempDir::new("bulk-publish-failure");
+        let alpha = td.root.join("alpha.txt");
+        let beta = td.root.join("beta.txt");
+        fs::write(&alpha, b"alpha").expect("write publish alpha");
+        fs::write(&beta, b"beta").expect("write publish beta");
+        let plan = BulkRenameOperationPlan::preflight(bulk_request(vec![
+            (alpha.clone(), "renamed-alpha.txt"),
+            (beta.clone(), "renamed-beta.txt"),
+        ]))
+        .expect("publish failure plan");
+        let staging_paths = plan.staging_paths().to_vec();
+        let result = execute_bulk_rename_operation_with_host(
+            &plan,
+            &FileOperationCancellation::default(),
+            &mut OneShotFailingRenameHost {
+                // Calls 1-2 stage both sources, 3 publishes alpha, 4 fails beta.
+                fail_on_call: 4,
+                calls: 0,
+            },
+        );
+
+        assert_eq!(
+            result.status(),
+            BulkRenameOperationExecutionStatus::RolledBack
+        );
+        assert_eq!(fs::read(&alpha).expect("restored publish alpha"), b"alpha");
+        assert_eq!(fs::read(&beta).expect("restored publish beta"), b"beta");
+        assert!(!td.root.join("renamed-alpha.txt").exists());
+        assert!(!td.root.join("renamed-beta.txt").exists());
+        assert!(staging_paths.iter().all(|path| !path.exists()));
+        assert!(result
+            .items()
+            .iter()
+            .all(|item| matches!(item.outcome(), BulkRenameItemOutcome::Restored(_))));
     }
 
     // TP-C4.3-COLLISION: preflight snapshots the exact source object and one
