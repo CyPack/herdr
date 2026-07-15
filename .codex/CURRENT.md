@@ -34,10 +34,22 @@
   `docs/superpowers/plans/2026-07-15-herdr-file-manager-post-shell-implementation.md`.
 - Plan review evidence:
   `.codex/evidence/shell-foundation-plan-review.md`.
-- SF0 and SF1 are closed. A0-A7 and I0-I6 are complete. SF1 added only the
-  current-curtain characterization; no Shell Foundation production behavior
-  changed. The current delivery phase is I7/SF2: observe the first genuine,
-  compile-valid geometry RED.
+- SF0 and SF1 are closed. A0-A7 and I0-I6 are complete. SF2.1-SF2.3 are also
+  closed and published through `f272a881`: named regions, bounded validation,
+  typed templates, deterministic track allocation, and responsive degradation
+  are live. The current delivery phase remains I7/SF2, with SF2.4 cached
+  `ShellView` projection and flattened semantic hits as the only active
+  geometry microtask.
+- The SF2.3 RED/GREEN pair is `2abf2463` / `f272a881`. CyPack
+  `feat/native-fm` and fork `master` both resolve to exact SHA
+  `f272a8811e70b054f5c67f23343d354ff43ecfae`. Fresh closure is broad shell
+  81/81, frozen SF1 11/11, full Nextest 3232/3232 plus only the named B0 skip,
+  Linux/Windows Clippy, Bun 17/17, Python 64/64, fmt, and diff clean.
+- Post-publication single-worker graph evidence is 19,966 nodes / 92,183
+  edges with current `allocate_lengths`, Desktop-template/fail-closed tests,
+  and `miller_layout`. The long-lived built-in MCP channel remains on the old
+  19,890 / 91,721 snapshot; no proxy/process was restarted and CLI status,
+  search, and snippet calls provide the authoritative fresh proof.
 - SF1 commit `7b9b626d` is fast-forward published to both CyPack refs. Exact
   SHA equality at its product/test checkpoint was
   `7b9b626d3e84b4ba03856a8f54b81196985d3f48`. Focused characterization is
@@ -1010,13 +1022,16 @@
 
 ## Exact Next Action
 
-1. Enter I7/SF2. Add only the single compile-valid behavior RED
-   `shell_layout_places_dock_sidebar_stage_without_overlap` and observe its
-   intended geometry/deserialize assertion failure before production code.
-   Compile, setup, filter, fixture, or unrelated failures do not count as RED.
-2. After recording exact RED evidence, implement only the bounded named-region
-   model and typed-template GREEN specified by SF2.2; keep legacy projection
-   unchanged and rerun the SF1 11-test baseline after every slice.
+1. Continue I7/SF2 at SF2.4. Add only the compile-valid cached-view RED
+   contracts `unchanged_geometry_key_reuses_shell_generation`,
+   `area_or_constraint_change_advances_shell_generation_once`,
+   `flattened_hits_are_complete_disjoint_and_in_bounds`,
+   `stale_shell_hit_generation_is_rejected`, and
+   `legacy_sidebar_and_center_rects_match_compatibility_projection`.
+2. After observing intended generation/hit assertion failures, implement one
+   aggregate cached `ShellView` and flattened semantic hits. Keep the legacy
+   sidebar/center projection and visible output unchanged, and rerun the SF1
+   11-test baseline after each slice.
 3. Execute phases sequentially through the approved child plans. Do not mix
    tooling T3.1, Apps/Desktop, S5 registry, S7 popup stack, or unrelated
    refactors into a product commit.

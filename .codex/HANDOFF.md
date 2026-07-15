@@ -3,22 +3,25 @@
 ## 1. SONRAKI ADIM
 
 The user explicitly approved the bounded twelve-phase product program: SF0-SF6
-then FM1-FM5; Apps/Desktop remains later. The approved design and three
-implementation plans are under `docs/superpowers/specs/` and
-`docs/superpowers/plans/`; review evidence is
-`.codex/evidence/shell-foundation-plan-review.md`. A0-A7 and manual I0-I5 are
-complete. SF0 artifact commit `32856f7` is published to both CyPack refs with
-exact remote-SHA equality. SF1 test-only commit `7b9b626d` is also published to
-both CyPack refs; its product/test checkpoint was verified at exact SHA
-`7b9b626d3e84b4ba03856a8f54b81196985d3f48` before continuity closure.
-Focused characterization is 11/11; full nextest is 3203/3203 plus only the
-named B0 real-host probe skip; Linux/Windows Clippy, Bun 17/17, Python 64/64,
-fmt/diff/temp gates are clean. The refreshed graph is 19,809 nodes / 91,610
-edges and exact snippets for the new characterization plus `miller_layout`
-prove freshness beyond `ready`. No Foundation Rust production code exists yet.
-The immediate action is I7/SF2: add only the compile-valid behavior test
-`shell_layout_places_dock_sidebar_stage_without_overlap`, require the intended
-geometry/deserialize assertion RED, then implement the bounded SF2.2 GREEN.
+then FM1-FM5; Apps/Desktop remains later. SF0 and SF1 are closed. SF2.1-SF2.3
+are now closed as the published chain `c45deea7` through `f272a881`: named
+regions, bounded validation, typed templates, deterministic track allocation,
+and responsive width/height degradation are implemented. The SF2.3 RED/GREEN
+pair is `2abf2463` / `f272a881`; CyPack `feat/native-fm` and fork `master` both
+resolve to exact SHA `f272a8811e70b054f5c67f23343d354ff43ecfae`.
+
+Fresh evidence is broad shell 81/81, frozen SF1 11/11, full Nextest 3232/3232
+plus only the named B0 real-host probe skip, Linux/Windows Clippy, Bun 17/17,
+Python 64/64, fmt, and diff clean. The single-worker graph is fresh at 19,966
+nodes / 92,183 edges and returns `allocate_lengths`, the Desktop-template and
+invalid-tree tests, plus `miller_layout`. The built-in MCP channel remains on
+an older snapshot; no process was restarted. Full evidence is
+`.codex/evidence/shell-foundation-sf2-geometry-progress.md`.
+
+The immediate action is I7/SF2.4: write the five cached `ShellView` generation,
+flattened-hit, stale-generation, and legacy-projection RED contracts, then add
+one aggregate `ShellView` without changing visible output. SF2 is not closed
+until SF2.4 and its full gates/publication/graph evidence finish.
 
 The previous S6/dynamic-N2 NO-GO was valid when no real consumer/demand
 existed. New explicit AppDock/WorkspaceStage/Files, resize/collapse/overlay,
@@ -747,8 +750,9 @@ upstream is never pushed.
 
 See `.codex/TASKS.md` first for the active SF0-SF6 plus FM1-FM5 task list and
 then the completed A3/B2/C1/N3/C2/N4 contracts and historical C3–C6, S5–S7,
-N2, and M1–M3 roadmap. SF0 and SF1 are closed. SF1 test-only commit `7b9b626d`
-is published and graph-refreshed; I7/SF2 is the next executable phase. A4, B0,
+N2, and M1–M3 roadmap. SF0 and SF1 are closed. SF2.1-SF2.3 are published
+through `f272a881`; I7/SF2.4 cached view/hit projection is the next executable
+microtask. A4, B0,
 B1, A3, B2, C1, N3,
 C2, N4, C3.1, C3.2, C3.3, C4.1, C4.2, C4.3, C4.4.1 PROGRESS, C4.4.2
 CANCEL, C4.4.3 RECONCILE, C4.4.4 RECOVERY, C4.4.5 GATES, C5.1–C5.5, and

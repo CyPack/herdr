@@ -76,16 +76,22 @@ Authoritative plans:
   probe skip, Linux/Windows Clippy is clean, Bun is 17/17, Python is 64/64,
   and the refreshed graph is 19,809 nodes / 91,610 edges.
 
-### SF2 — Shell Geometry Foundation (I7, next executable phase)
+### SF2 — Shell Geometry Foundation (I7, SF2.4 active)
 
-- [ ] RED `shell_layout_places_dock_sidebar_stage_without_overlap` with a
+- [x] RED `shell_layout_places_dock_sidebar_stage_without_overlap` with a
   compile-valid behavior assertion.
-- [ ] Add bounded named-region model and typed templates.
-- [ ] Add deterministic fixed/content-bounded/resizable/fill/collapsed solver
-  and frozen tiny-terminal degradation.
+- [x] Add bounded named-region model and typed templates.
+- [x] Add deterministic fixed/content-bounded/resizable/fill/collapsed solver
+  and frozen tiny-terminal degradation. The complete SF2.1-SF2.3 chain through
+  `f272a881` is published to both CyPack refs; focused shell is 81/81, frozen
+  SF1 is 11/11, full Nextest is 3232/3232 plus the named B0 skip, and the
+  single-worker graph is fresh at 19,966 nodes / 92,183 edges.
 - [ ] Project cached `ShellView` with generation-safe flattened semantic hits.
 - [ ] Close bounds, O(node_count), legacy-equivalence, Linux/Windows/full gates,
   atomic commits, publication, and graph refresh.
+
+Progress evidence:
+`.codex/evidence/shell-foundation-sf2-geometry-progress.md`.
 
 ### SF3 — Resize / Collapse / Scroll / Persistence
 
