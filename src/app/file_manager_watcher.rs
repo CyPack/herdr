@@ -789,6 +789,79 @@ mod tests {
         );
     }
 
+    // TP-C4.4-RECONCILE: closing and reopening the same cwd creates a new
+    // watcher generation and FM instance. A completion bound to the prior
+    // generation may terminalize its operation, but cannot reload/project the
+    // newly opened state merely because the path string matches again.
+    #[test]
+    fn prior_generation_completion_cannot_reload_reopened_same_cwd() {
+        let td = TempDir::new("same-cwd-reopen");
+        let source_dir = td.root.join("source");
+        let destination = td.root.join("destination");
+        std::fs::create_dir(&source_dir).expect("create source directory");
+        std::fs::create_dir(&destination).expect("create destination directory");
+        let source = source_dir.join("payload.txt");
+        std::fs::write(&source, b"payload").expect("write source");
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let worker = super::super::file_operation_worker::FileOperationWorker::with_executor(
+            Arc::new(Notify::new()),
+            move |plan, cancellation| {
+                started_tx.send(()).expect("signal operation started");
+                release_rx.recv().expect("release stale generation");
+                execute_file_operation(plan, cancellation)
+            },
+        );
+
+        let mut app = test_app();
+        app.file_operation_worker = worker;
+        app.state.file_manager = Some(crate::fm::FmState::new(&destination));
+        let now = Instant::now();
+        assert!(!app.sync_file_manager_watcher_at(now));
+        let prior_watcher_generation = app.file_manager_watcher.generation();
+        app.state.file_manager_clipboard = vec![source];
+        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
+        started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("operation started");
+
+        app.state.file_manager = None;
+        assert!(!app.sync_file_manager_watcher_at(now));
+        app.state.file_manager = Some(crate::fm::FmState::new(&destination));
+        assert!(!app.sync_file_manager_watcher_at(now));
+        assert!(app.file_manager_watcher.generation() > prior_watcher_generation);
+        let reopened_generation = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("file manager reopened")
+            .preview_generation;
+
+        release_tx.send(()).expect("release prior generation");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !app.file_operation_worker.has_buffered_completion() {
+            assert!(Instant::now() < deadline, "stale completion timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(app.sync_file_operation_worker());
+        let _ = app.sync_file_manager_watcher_at(now);
+
+        let reopened = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("file manager reopened");
+        assert_eq!(
+            reopened.preview_generation, reopened_generation,
+            "prior generation completion must not reload reopened same cwd"
+        );
+        assert!(
+            reopened.entries.is_empty(),
+            "prior generation completion must not project its published entry"
+        );
+        assert!(destination.join("payload.txt").exists());
+    }
+
     #[test]
     fn app_sync_binds_once_rebinds_on_cwd_change_and_stops_on_close() {
         let first = TempDir::new("first");
