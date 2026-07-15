@@ -744,6 +744,65 @@ mod tests {
         assert!(!state.cwd_writable);
     }
 
+    // TP-C6.4-EMPTY-ERROR: current-directory read failures are preserved as
+    // prepared state instead of being rendered as a valid empty directory.
+    #[test]
+    fn current_directory_status_distinguishes_available_missing_and_unavailable() {
+        let td = TempDir::new("directory-status");
+        let available = FmState::new(&td.root);
+        assert_eq!(available.cwd_status, FmDirectoryStatus::Available);
+
+        let missing_path = td.root.join("missing");
+        let missing = FmState::new(&missing_path);
+        assert_eq!(missing.cwd_status, FmDirectoryStatus::Missing);
+        assert!(missing.entries.is_empty());
+
+        let file_path = td.root.join("not-a-directory.txt");
+        fs::write(&file_path, b"file").expect("write non-directory fixture");
+        let unavailable = FmState::new(&file_path);
+        assert_eq!(unavailable.cwd_status, FmDirectoryStatus::Unavailable);
+        assert!(unavailable.entries.is_empty());
+    }
+
+    // TP-C6.4-EMPTY-ERROR: permission classification is deterministic even
+    // when the test process itself has elevated filesystem privileges.
+    #[test]
+    fn directory_error_kind_classification_is_platform_independent() {
+        assert_eq!(
+            classify_directory_error(std::io::ErrorKind::NotFound),
+            FmDirectoryStatus::Missing
+        );
+        assert_eq!(
+            classify_directory_error(std::io::ErrorKind::PermissionDenied),
+            FmDirectoryStatus::PermissionDenied
+        );
+        assert_eq!(
+            classify_directory_error(std::io::ErrorKind::NotADirectory),
+            FmDirectoryStatus::Unavailable
+        );
+    }
+
+    // TP-C6.4-EMPTY-ERROR: reload refreshes failure state and can recover when
+    // the same exact cwd path becomes a readable directory again.
+    #[test]
+    fn reload_refreshes_and_recovers_current_directory_status() {
+        let td = TempDir::new("directory-status-reload");
+        let cwd = td.root.join("cwd");
+        fs::create_dir(&cwd).expect("create cwd fixture");
+        let mut state = FmState::new(&cwd);
+        assert_eq!(state.cwd_status, FmDirectoryStatus::Available);
+
+        fs::remove_dir(&cwd).expect("remove cwd fixture");
+        state.reload();
+        assert_eq!(state.cwd_status, FmDirectoryStatus::Missing);
+        assert!(state.entries.is_empty());
+        assert_eq!(state.cursor, 0);
+
+        fs::create_dir(&cwd).expect("recreate cwd fixture");
+        state.reload();
+        assert_eq!(state.cwd_status, FmDirectoryStatus::Available);
+    }
+
     // T-A1.2d: a symlink to a directory is listed and sorted as a directory.
     #[cfg(unix)]
     #[test]
