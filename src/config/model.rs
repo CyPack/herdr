@@ -541,6 +541,8 @@ pub struct KeysConfig {
     pub toggle_sidebar: BindingConfig,
     /// Toggle the native file manager. Default: "prefix+f"
     pub toggle_file_manager: BindingConfig,
+    /// Open the focused-agent attachment picker. Default: "prefix+a"
+    pub agent_attachment_picker: BindingConfig,
     /// Optional indexed shortcuts expanded over number keys 1-9.
     pub indexed: IndexedKeysConfig,
     /// Prefix-mode custom command bindings.
@@ -664,6 +666,8 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     toggle_file_manager: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    agent_attachment_picker: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     indexed: Option<IndexedKeysConfig>,
     #[serde(skip_serializing)]
     command: Option<Vec<CommandKeybindConfig>>,
@@ -741,6 +745,7 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(resize_mode);
         apply_field!(toggle_sidebar);
         apply_field!(toggle_file_manager);
+        apply_field!(agent_attachment_picker);
         apply_field!(indexed);
         apply_field!(command);
 
@@ -841,6 +846,7 @@ impl KeysConfig {
         copy_effective_action_field!(resize_mode, keybinds.resize_mode);
         copy_effective_action_field!(toggle_sidebar, keybinds.toggle_sidebar);
         copy_effective_action_field!(toggle_file_manager, keybinds.toggle_file_manager);
+        copy_effective_action_field!(agent_attachment_picker, keybinds.agent_attachment_picker);
         copy_user_field!(indexed);
 
         profile
@@ -1102,6 +1108,7 @@ impl Default for KeysConfig {
             resize_mode: BindingConfig::one("prefix+r"),
             toggle_sidebar: BindingConfig::one("prefix+b"),
             toggle_file_manager: BindingConfig::one("prefix+f"),
+            agent_attachment_picker: BindingConfig::one("prefix+a"),
             indexed: IndexedKeysConfig::default(),
             command: Vec::new(),
             user_fields: BTreeSet::new(),

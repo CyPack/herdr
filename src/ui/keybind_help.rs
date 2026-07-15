@@ -151,6 +151,10 @@ pub(super) fn keybind_help_groups(app: &AppState) -> Vec<HelpGroup> {
             keybind_label(&kb.toggle_file_manager),
             "toggle file manager",
         ),
+        help_entry(
+            keybind_label(&kb.agent_attachment_picker),
+            "attach file to focused agent",
+        ),
         help_entry(keybind_label(&kb.focus_pane_left), "focus pane left"),
         help_entry(keybind_label(&kb.focus_pane_down), "focus pane down"),
         help_entry(keybind_label(&kb.focus_pane_up), "focus pane up"),

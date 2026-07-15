@@ -11,7 +11,7 @@ use super::scrollbar::{render_pane_scrollbar, should_show_scrollbar};
 use super::text::display_width;
 use super::text::truncate_end;
 use super::widgets::panel_contrast_fg;
-use crate::app::state::Palette;
+use crate::app::state::{AgentAttachmentActionArea, Palette};
 use crate::app::{AppState, Mode};
 use crate::layout::PaneInfo;
 use crate::terminal::{TerminalRuntime, TerminalRuntimeRegistry};
@@ -28,6 +28,54 @@ fn pane_border_title(label: &str, pane_width: u16, _focused: bool) -> Option<Str
     }
     let max_label_width = pane_width.saturating_sub(4) as usize;
     Some(format!(" {} ", truncate_end(label, max_label_width)))
+}
+
+const AGENT_ATTACHMENT_ACTION_WIDTH: u16 = 3;
+
+/// Compute one complete bottom-border `[+]` action for the exact focused agent
+/// pane. Capability failures return no rect; render and input consume only this
+/// snapshot and never derive authority from coordinates.
+pub(super) fn compute_agent_attachment_action_area(
+    app: &AppState,
+    pane_infos: &[PaneInfo],
+) -> Option<AgentAttachmentActionArea> {
+    if app.mode != Mode::Terminal || app.file_manager.is_some() {
+        return None;
+    }
+    let info = pane_infos.iter().find(|info| info.is_focused)?;
+    if !info.borders.contains(Borders::BOTTOM)
+        || info.rect.width < AGENT_ATTACHMENT_ACTION_WIDTH.saturating_add(2)
+        || info.rect.height < 2
+    {
+        return None;
+    }
+    let workspace_idx = app.active?;
+    let terminal_id = app.terminal_id_for_pane(workspace_idx, info.id)?;
+    if !app
+        .terminals
+        .get(&terminal_id)
+        .is_some_and(crate::terminal::TerminalState::is_agent_terminal)
+    {
+        return None;
+    }
+
+    let rect = Rect::new(
+        info.rect
+            .x
+            .saturating_add(info.rect.width)
+            .saturating_sub(AGENT_ATTACHMENT_ACTION_WIDTH.saturating_add(1)),
+        info.rect
+            .y
+            .saturating_add(info.rect.height)
+            .saturating_sub(1),
+        AGENT_ATTACHMENT_ACTION_WIDTH,
+        1,
+    );
+    Some(AgentAttachmentActionArea {
+        rect,
+        pane_id: info.id,
+        terminal_id,
+    })
 }
 
 fn stable_terminal_inner_rect(pane_inner: Rect) -> Rect {
@@ -422,6 +470,29 @@ fn render_pane_borders(app: &AppState, ws: &crate::workspace::Workspace, frame: 
     }
 
     render_pane_border_titles(app, ws, frame);
+    render_agent_attachment_action(app, frame);
+}
+
+fn render_agent_attachment_action(app: &AppState, frame: &mut Frame) {
+    let Some(action) = app.view.agent_attachment_action_area.as_ref() else {
+        return;
+    };
+    let buf = frame.buffer_mut();
+    if action.rect.width != AGENT_ATTACHMENT_ACTION_WIDTH
+        || action.rect.height != 1
+        || action.rect.intersection(buf.area) != action.rect
+    {
+        return;
+    }
+    buf.set_stringn(
+        action.rect.x,
+        action.rect.y,
+        "[+]",
+        AGENT_ATTACHMENT_ACTION_WIDTH as usize,
+        Style::default()
+            .fg(app.palette.accent)
+            .add_modifier(Modifier::BOLD),
+    );
 }
 
 fn add_split_border_cells(
@@ -942,10 +1013,7 @@ mod tests {
 
         assert_eq!(action.pane_id, infos[0].id);
         assert_eq!(action.rect, Rect::new(20, 7, 3, 1));
-        assert_eq!(
-            action.rect.intersection(infos[0].inner_rect),
-            Rect::default()
-        );
+        assert!(action.rect.intersection(infos[0].inner_rect).is_empty());
 
         let (non_agent, infos) = agent_attachment_geometry_fixture(rect, Borders::ALL, true, false);
         assert_eq!(

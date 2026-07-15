@@ -1334,6 +1334,16 @@ pub use super::file_manager_sidebar::{
     FileManagerSidebarItem, FileManagerSidebarModel, FileManagerSidebarRowArea,
 };
 
+/// Client-local, computed hit geometry for the focused agent's attachment
+/// affordance. The stable pane and terminal identities travel with the rect so
+/// input never has to infer authority from a border coordinate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentAttachmentActionArea {
+    pub rect: Rect,
+    pub pane_id: PaneId,
+    pub terminal_id: crate::terminal::TerminalId,
+}
+
 pub struct ViewState {
     pub layout: ViewLayout,
     /// Resolved rects of the named outer-shell regions for this frame (from
@@ -1366,6 +1376,10 @@ pub struct ViewState {
     /// Selection-sensitive persistent action-bar content for this frame.
     /// `None` while the native FM is closed.
     pub file_manager_action_bar: Option<FileManagerActionBarModel>,
+    /// Exact complete `[+]` target for the focused agent pane. `None` for
+    /// non-agent, non-terminal, file-manager, mobile, borderless, or too-small
+    /// layouts.
+    pub agent_attachment_action_area: Option<AgentAttachmentActionArea>,
     pub tab_bar_rect: Rect,
     pub tab_hit_areas: Vec<Rect>,
     pub tab_scroll_left_hit_area: Rect,
@@ -2594,6 +2608,7 @@ impl AppState {
                 file_manager_row_action_areas: Vec::new(),
                 file_manager_header_action_areas: Vec::new(),
                 file_manager_action_bar: None,
+                agent_attachment_action_area: None,
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),
                 tab_scroll_left_hit_area: Rect::default(),
