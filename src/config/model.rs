@@ -1243,6 +1243,36 @@ mod tests {
         );
     }
 
+    // TP-M1.1-KEYBIND: M1 owns one configurable prefix action and must use the
+    // existing user-first conflict registry instead of hard-coding input.
+    #[test]
+    fn default_binds_prefix_a_to_agent_attachment_picker_without_conflict() {
+        let defaults = Config::default();
+        assert_eq!(
+            defaults.keys.agent_attachment_picker,
+            BindingConfig::one("prefix+a")
+        );
+        assert_eq!(
+            defaults
+                .keybinds()
+                .agent_attachment_picker
+                .label()
+                .as_deref(),
+            Some("prefix+a")
+        );
+
+        let displaced: Config = toml::from_str(
+            r#"
+[keys]
+next_tab = "prefix+a"
+"#,
+        )
+        .unwrap();
+        let displaced = displaced.keybinds();
+        assert_eq!(displaced.next_tab.label().as_deref(), Some("prefix+a"));
+        assert!(displaced.agent_attachment_picker.bindings.is_empty());
+    }
+
     #[test]
     fn update_config_defaults_and_parses() {
         let default_config = Config::default();

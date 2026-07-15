@@ -899,6 +899,110 @@ mod tests {
     use crate::terminal::TerminalState;
     use crate::workspace::Workspace;
 
+    fn agent_attachment_geometry_fixture(
+        rect: Rect,
+        borders: Borders,
+        focused: bool,
+        agent: bool,
+    ) -> (AppState, Vec<PaneInfo>) {
+        let mut app = AppState::test_new();
+        app.mode = Mode::Terminal;
+        let workspace = Workspace::test_new("attachment");
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace.tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        let mut terminal = TerminalState::new(terminal_id, "/tmp".into());
+        if agent {
+            terminal.set_agent_name("codex".into());
+        }
+        app.terminals.insert(terminal.id.clone(), terminal);
+        app.workspaces = vec![workspace];
+        app.active = Some(0);
+        let inner_rect = pane_inner_rect(rect, borders);
+        let infos = vec![PaneInfo {
+            id: pane_id,
+            rect,
+            inner_rect,
+            scrollbar_rect: None,
+            borders,
+            is_focused: focused,
+        }];
+        (app, infos)
+    }
+
+    // TP-M1.1-GEOMETRY: only the exact focused agent may own one complete
+    // bottom-border action; capability failures must not leave stale geometry.
+    #[test]
+    fn focused_agent_attachment_action_is_exact_agent_only_and_responsive() {
+        let rect = Rect::new(4, 2, 20, 6);
+        let (app, infos) = agent_attachment_geometry_fixture(rect, Borders::ALL, true, true);
+        let action = compute_agent_attachment_action_area(&app, &infos)
+            .expect("focused agent should expose attachment action");
+
+        assert_eq!(action.pane_id, infos[0].id);
+        assert_eq!(action.rect, Rect::new(20, 7, 3, 1));
+        assert_eq!(
+            action.rect.intersection(infos[0].inner_rect),
+            Rect::default()
+        );
+
+        let (non_agent, infos) = agent_attachment_geometry_fixture(rect, Borders::ALL, true, false);
+        assert_eq!(
+            compute_agent_attachment_action_area(&non_agent, &infos),
+            None
+        );
+
+        let (unfocused, infos) = agent_attachment_geometry_fixture(rect, Borders::ALL, false, true);
+        assert_eq!(
+            compute_agent_attachment_action_area(&unfocused, &infos),
+            None
+        );
+
+        let (borderless, infos) =
+            agent_attachment_geometry_fixture(rect, Borders::NONE, true, true);
+        assert_eq!(
+            compute_agent_attachment_action_area(&borderless, &infos),
+            None
+        );
+
+        let (tiny, infos) =
+            agent_attachment_geometry_fixture(Rect::new(4, 2, 4, 6), Borders::ALL, true, true);
+        assert_eq!(compute_agent_attachment_action_area(&tiny, &infos), None);
+
+        let (mut modal, infos) = agent_attachment_geometry_fixture(rect, Borders::ALL, true, true);
+        modal.mode = Mode::Navigate;
+        assert_eq!(compute_agent_attachment_action_area(&modal, &infos), None);
+    }
+
+    // TP-M1.1-RENDER: render consumes computed geometry only; the ASCII action
+    // must preserve corners and terminal inner cells even with no-color tokens.
+    #[test]
+    fn agent_attachment_action_render_is_bounded_ascii_and_no_color_safe() {
+        let rect = Rect::new(4, 2, 20, 6);
+        let (mut app, infos) = agent_attachment_geometry_fixture(rect, Borders::ALL, true, true);
+        let action = compute_agent_attachment_action_area(&app, &infos)
+            .expect("focused agent should expose attachment action");
+        app.view.terminal_area = Rect::new(0, 0, 28, 10);
+        app.view.pane_infos = infos;
+        app.view.agent_attachment_action_area = Some(action);
+        app.palette.accent = Color::Reset;
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(28, 10)).unwrap();
+        terminal
+            .draw(|frame| render_pane_borders(&app, &app.workspaces[0], frame))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(4, 7)].symbol(), "└");
+        assert_eq!(buffer[(20, 7)].symbol(), "[");
+        assert_eq!(buffer[(21, 7)].symbol(), "+");
+        assert_eq!(buffer[(22, 7)].symbol(), "]");
+        assert_eq!(buffer[(23, 7)].symbol(), "┘");
+        assert_eq!(buffer[(20, 6)].symbol(), " ");
+    }
+
     #[test]
     fn pane_border_title_trims_and_truncates() {
         assert_eq!(
