@@ -390,13 +390,65 @@ mod tests {
     }
 
     #[test]
+    fn shell_rejects_invalid_track_bounds() {
+        for track in [
+            serde_json::json!({ "ContentBounded": { "min": 8, "max": 3 } }),
+            serde_json::json!({
+                "Resizable": { "min": 9, "preferred": 5, "max": 12 }
+            }),
+            serde_json::json!({
+                "Resizable": { "min": 3, "preferred": 13, "max": 12 }
+            }),
+            serde_json::json!({ "Fill": { "weight": 0 } }),
+        ] {
+            assert_serialized_shell_document_rejected(
+                serde_json::json!({
+                    "root": serialized_slot("WorkspaceStage"),
+                    "tracks": { "WorkspaceStage": track },
+                }),
+                "InvalidTrackBounds",
+            );
+        }
+    }
+
+    #[test]
+    fn shell_rejects_out_of_range_stack_selection() {
+        assert_serialized_shell_document_rejected(
+            serde_json::json!({
+                "root": serialized_slot("WorkspaceStage"),
+                "stacks": [{
+                    "children": ["AppDock"],
+                    "selected": 1,
+                }]
+            }),
+            "InvalidStackSelection",
+        );
+    }
+
+    #[test]
     fn typed_templates_validate_without_runtime_registry() {
-        for template in [
-            "StageOnly",
-            "DockStage",
-            "DockSidebarStage",
-            "DesktopWorkspace",
-            "InspectorWorkspace",
+        for (template, expected_regions) in [
+            ("StageOnly", vec!["WorkspaceStage"]),
+            ("DockStage", vec!["AppDock", "WorkspaceStage"]),
+            (
+                "DockSidebarStage",
+                vec!["AppDock", "LeftPanel", "WorkspaceStage"],
+            ),
+            (
+                "DesktopWorkspace",
+                vec![
+                    "AppDock",
+                    "BottomBar",
+                    "LeftPanel",
+                    "RightPanel",
+                    "TopBar",
+                    "WorkspaceStage",
+                ],
+            ),
+            (
+                "InspectorWorkspace",
+                vec!["LeftPanel", "RightPanel", "WorkspaceStage"],
+            ),
         ] {
             let serialized = serde_json::json!({ "template": template }).to_string();
             let layout = serde_json::from_str::<ShellLayout>(&serialized);
@@ -404,6 +456,77 @@ mod tests {
                 layout.is_ok(),
                 "typed template {template} should validate without a runtime registry: {layout:?}"
             );
+            let serialized_layout =
+                serde_json::to_value(layout.expect("checked typed template layout"))
+                    .expect("serialize typed template layout");
+            let mut regions = Vec::new();
+            collect_serialized_regions(&serialized_layout, &mut regions);
+            regions.sort_unstable();
+            regions.dedup();
+            assert_eq!(
+                regions,
+                expected_regions
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>(),
+                "template {template}"
+            );
+            assert_eq!(
+                serialized_layout["component_placements"],
+                serde_json::json!([]),
+                "template {template} should not require runtime placements"
+            );
+            assert_eq!(
+                serialized_layout["stacks"],
+                serde_json::json!([]),
+                "template {template} should not require runtime stacks"
+            );
+
+            if template == "DesktopWorkspace" {
+                assert_eq!(
+                    serialized_layout["tracks"]["TopBar"],
+                    serde_json::json!({ "Fixed": { "cells": 0 } })
+                );
+                assert_eq!(
+                    serialized_layout["tracks"]["AppDock"],
+                    serde_json::json!({
+                        "Resizable": { "min": 3, "preferred": 5, "max": 9 }
+                    })
+                );
+                assert_eq!(
+                    serialized_layout["tracks"]["WorkspaceStage"],
+                    serde_json::json!({ "Fill": { "weight": 1 } })
+                );
+                assert_eq!(
+                    serialized_layout["tracks"]["RightPanel"],
+                    serde_json::json!({ "Collapsed": { "restore": 32 } })
+                );
+                assert_eq!(
+                    serialized_layout["tracks"]["BottomBar"],
+                    serde_json::json!({ "Fixed": { "cells": 0 } })
+                );
+            }
+        }
+    }
+
+    fn collect_serialized_regions(value: &serde_json::Value, out: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(entries) => {
+                for (key, value) in entries {
+                    if key == "region" {
+                        if let Some(region) = value.as_str() {
+                            out.push(region.to_owned());
+                        }
+                    }
+                    collect_serialized_regions(value, out);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    collect_serialized_regions(value, out);
+                }
+            }
+            _ => {}
         }
     }
 
