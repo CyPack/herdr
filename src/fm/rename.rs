@@ -965,11 +965,12 @@ mod tests {
     use super::{
         execute_bulk_rename_operation, execute_bulk_rename_operation_with_host,
         execute_rename_operation, execute_rename_operation_with_host,
-        validate_rename_name_component, BulkRenameItemOutcome, BulkRenameOperationExecutionStatus,
-        BulkRenameOperationPlan, BulkRenameOperationPreflightError, BulkRenameOperationRequest,
-        PlannedRenamePathKind, RenameNameIssue, RenameNamePlatform, RenameOperationError,
-        RenameOperationExecutionStatus, RenameOperationHost, RenameOperationOutcome,
-        RenameOperationPlan, RenameOperationPreflightError, RenameOperationRequest,
+        execute_rename_operation_with_observer, validate_rename_name_component,
+        BulkRenameItemOutcome, BulkRenameOperationExecutionStatus, BulkRenameOperationPlan,
+        BulkRenameOperationPreflightError, BulkRenameOperationRequest, PlannedRenamePathKind,
+        RenameNameIssue, RenameNamePlatform, RenameOperationError, RenameOperationExecutionStatus,
+        RenameOperationHost, RenameOperationOutcome, RenameOperationPlan,
+        RenameOperationPreflightError, RenameOperationRequest,
     };
     use crate::fm::operations::FileOperationCancellation;
     use std::fs;
@@ -1423,6 +1424,33 @@ mod tests {
             fs::read(collision).expect("collision retained"),
             b"occupied"
         );
+    }
+
+    // TP-C4.4-CANCEL: cancellation reported after an item starts but before
+    // the single irreversible publish boundary must retain the source and
+    // terminalize the operation as cancelled without inventing a commit.
+    #[test]
+    fn single_rename_cancel_before_publish_is_terminal_and_side_effect_free() {
+        let td = TempDir::new("single-cancel-before-publish");
+        let source = td.root.join("source.txt");
+        let destination = td.root.join("renamed.txt");
+        fs::write(&source, b"source").expect("write cancellable rename source");
+        let plan = RenameOperationPlan::preflight(request(source.clone(), "renamed.txt"))
+            .expect("cancellable rename plan");
+        let cancellation = FileOperationCancellation::default();
+
+        let result = execute_rename_operation_with_observer(&plan, &cancellation, |_| {
+            cancellation.cancel();
+            cancellation.cancel();
+        });
+
+        assert_eq!(result.status(), RenameOperationExecutionStatus::Cancelled);
+        assert_eq!(result.outcome(), &RenameOperationOutcome::NotStarted);
+        assert_eq!(
+            fs::read(&source).expect("cancelled rename source retained"),
+            b"source"
+        );
+        assert!(!destination.exists());
     }
 
     // TP-C4.3-ATOMIC: the final boundary revalidates both source identity and
