@@ -1509,6 +1509,32 @@ mod tests {
         assert_eq!(reported, vec![0]);
     }
 
+    // TP-C4.4-PROGRESS: a cycle-safe bulk plan reports every mapping once as
+    // it enters staging, independent of later publish or recovery phases.
+    #[test]
+    fn default_worker_task_executor_reports_bulk_rename_item_indices() {
+        let td = TempDir::new("default-bulk-rename-progress");
+        let alpha = td.root.join("alpha.txt");
+        let beta = td.root.join("beta.txt");
+        fs::write(&alpha, b"alpha").expect("write bulk alpha progress source");
+        fs::write(&beta, b"beta").expect("write bulk beta progress source");
+        let plan = BulkRenameOperationPlan::preflight(BulkRenameOperationRequest {
+            mappings: vec![(alpha, "beta.txt".into()), (beta, "alpha.txt".into())],
+            operation_in_flight: false,
+        })
+        .expect("default bulk rename progress plan");
+        let mut reported = Vec::new();
+
+        let result = super::execute_worker_task_with_progress(
+            &FileOperationWorkerTask::BulkRename(plan),
+            &FileOperationCancellation::default(),
+            &mut |item_index| reported.push(item_index),
+        );
+
+        assert!(matches!(result, FileOperationWorkerResult::BulkRename(_)));
+        assert_eq!(reported, vec![0, 1]);
+    }
+
     // TP-C4.1-LIFECYCLE: cancellation is idempotent, wakes the worker, and
     // produces a single Cancelled terminal result without filesystem output.
     #[test]
