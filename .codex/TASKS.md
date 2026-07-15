@@ -422,9 +422,20 @@ owns filesystem mutation and C5 owns agent delivery.
   B0 skip, Linux/Windows clippy, Bun 17/17, Python 64/64, fmt/diff/temp clean.
   Fresh graph: 18,756 / 87,282 with the typed key intent, App/worker cancel
   seams, cancellation tests, and `miller_layout` after stale `ready` proof.
-- [ ] C4.4.3 make TP-C4.4-RECONCILE RED and prove one matching-generation
+- [x] C4.4.3 make TP-C4.4-RECONCILE RED and prove one matching-generation
   refresh across watcher bursts, polling fallback, selection pruning, and
   close/reopen races.
+- C4.4.3 atomic chain: queued ownership `0b04e73`/`9a22d1e`, watcher-first
+  ownership `411de3d`/`6bdb97c`, delayed burst ownership
+  `e9361ab`/`38280fb`, same-cwd reopen generation `1d7350a`/`779d771`, and
+  fallback/selection cross-check `d1a2d2e`. Runtime-only watcher generation,
+  revision, and exact path ownership coalesce before/during/after completion;
+  external paths reload immediately and stale reopened generations fail closed.
+- C4.4.3 gates: broad C4/FM 126/126, full nextest 3128/3128 plus only the named
+  B0 skip, Linux/canonical Windows clippy, Bun 17/17, Python 64/64, fmt/diff and
+  operation/staging artifact checks clean. Fresh graph: 18,786 / 87,697 with
+  `own_operation_reconcile`, exact lifecycle tests, and `miller_layout` after
+  stale `ready` proof.
 - [ ] C4.4.4 make TP-C4.4-RECOVERY RED and prove lane reuse after cancel,
   panic, disconnect, and uncertain bulk recovery without orphan state.
 - [ ] C4.4.5 run TP-C4.4-GATES and the complete C4 gate before publication.
@@ -467,8 +478,8 @@ owns filesystem mutation and C5 owns agent delivery.
 ## Ordering Resolution
 
 A4, B0, B1, the A3 remainder, B2, C1, N3, C2, N4.2, C3.1, C3.2, C3.3,
-C4.1, C4.2, C4.3, C4.4.1 progress, and C4.4.2 cancellation are complete
-through product head `d77858a`. The next execution order is C4.4.3 RECONCILE →
-C4.4.4 RECOVERY → C4.4.5 GATES → C5 → C6.
+C4.1, C4.2, C4.3, C4.4.1 progress, C4.4.2 cancellation, and C4.4.3
+reconciliation are complete through product head `d1a2d2e`. The next execution
+order is C4.4.4 RECOVERY → C4.4.5 GATES → C5 → C6.
 S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3 remain
 inactive north-star work.

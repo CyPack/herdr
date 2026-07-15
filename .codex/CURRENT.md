@@ -4,10 +4,10 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Active C4.4 cancellation product checkpoint: `d77858a`
-  (`fix: prioritize bulk rename cancellation before revalidation`).
-- The pending C4.4 cancellation publication unit is fourteen atomic RED/GREEN
-  commits from `29572ab` through `d77858a`, plus the continuity/graph commit
+- Active C4.4 reconciliation product checkpoint: `d1a2d2e`
+  (`test: cover fallback and selection reconciliation`).
+- The pending C4.4 reconciliation publication unit is nine atomic test/product
+  commits from `0b04e73` through `d1a2d2e`, plus the continuity/graph commit
   containing this file. At
   publication, CyPack
   `feat/native-fm` and fork `master` are verified at that same fast-forward
@@ -446,6 +446,39 @@
   App cancel seam, generation-safe worker method, cancellation tests, and
   existing `miller_layout`.
 
+## Verified Increment — C4.4 Deterministic Watcher Reconciliation
+
+- TP-C4.4-RECONCILE is an auditable RED/GREEN chain covering queued,
+  watcher-first, delayed, polling-fallback, selection-pruning, cwd/rebind, and
+  same-cwd close/reopen orderings. Every production fix followed an observed
+  failure; no compile-failing RED was published alone.
+- Matching worker completion and watcher events now converge through one
+  watcher-owned reload. A runtime-only baseline binds operation generation,
+  cwd, watcher generation/revision, and the exact planned path set without
+  adding state to `AppState` or render.
+- Own-operation events already queued at completion coalesce with the immediate
+  request. A watcher refresh observed after publish owns later completion.
+  Exact delayed native bursts are absorbed for one bounded two-second window,
+  while mixed or external paths reload immediately and the existing periodic
+  reconciliation remains the eventual-correctness safety net.
+- Watcher rebind clears requested/owned state. A prior completion cannot use
+  path equality to reload a same-cwd reopened FM generation. Polling fallback
+  uses the same single lane and immediate reconciliation; selected rename
+  paths are pruned by exact identity with a safe cursor fallback.
+- Atomic chain: queued ownership `0b04e73`/`9a22d1e`, watcher-first ownership
+  `411de3d`/`6bdb97c`, delayed burst ownership `e9361ab`/`38280fb`, same-cwd
+  reopen generation `1d7350a`/`779d771`, and fallback/selection cross-check
+  `d1a2d2e`.
+- Fresh evidence: broad C4/FM regression 126/126; full nextest 3128/3128 with
+  only `path_beta_real_host_probe` ignored; Linux all-target and canonical
+  `LIBGHOSTTY_VT_SIMD=false` Windows MSVC bin clippy clean with `-D warnings`;
+  Bun 17/17; Python 64/64; fmt/diff and operation/staging artifact checks
+  clean. Ignored-only inventory listed the single B0 probe without running it.
+- The pre-refresh graph reported `ready` at 18,756 / 87,282 but returned no
+  `own_operation_reconcile`. Fast reindex completed at 18,786 nodes / 87,697
+  edges and returned the production ownership seam, delayed and same-cwd
+  lifecycle tests, and existing `miller_layout`.
+
 ## Completed Checkpoint — B2 Native Image Preview
 
 - B2 is an auditable dependency decision plus four RED/GREEN increments and a
@@ -606,13 +639,13 @@
 
 ## Exact Next Action
 
-1. Make TP-C4.4-RECONCILE RED before production changes. Graph-first inspect
-   worker completion reload, A4 watcher generation/burst coalescing, polling
-   fallback, selected-path pruning, cwd change, and FM close/reopen ownership.
-2. Prove one matching-generation reconciliation for own-operation watcher
-   bursts before/during/after completion. Stale generations must not reload or
-   project into a reopened FM; selection must preserve or prune exact paths.
-3. Continue in strict order: TP-C4.4-RECOVERY, then the
+1. Make TP-C4.4-RECOVERY RED before production changes. Prove worker panic or
+   disconnect after progress cannot orphan Running state or a reconciliation
+   baseline, and that the existing lane becomes reusable.
+2. Prove cancellation followed by a new generation, uncertain bulk-rename
+   recovery evidence, and failure cleanup retain exact paths without a second
+   scheduler, hot retry, or private staging artifact.
+3. Continue with the
    complete TP-C4.4-GATES. Every production increment follows its own observed
    failing test; no compile-failing RED is pushed alone. After C4.4, continue
    C5 then C6 without skipping modules.

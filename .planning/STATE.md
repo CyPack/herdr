@@ -2,9 +2,9 @@
 
 - Updated: 2026-07-15
 - Branch: `feat/native-fm`
-- Published CyPack base: `b950808`
-- Verified C4.4 cancellation product head: `d77858a`
-- Publication unit: C4.4.2 fourteen-commit RED/GREEN chain through `d77858a`,
+- Published CyPack base: `fb43091`
+- Verified C4.4 reconciliation product head: `d1a2d2e`
+- Publication unit: C4.4.3 nine-commit test/product chain through `d1a2d2e`,
   plus the continuity/graph commit
   containing this file. Push only CyPack `feat/native-fm` and fork `master`
   after fast-forward ancestry and exact remote-SHA verification.
@@ -42,15 +42,16 @@
 - C4.4.2 explicit reversible/irreversible cancellation boundaries, typed Esc
   intent, matching-generation App/worker routing, repeated-cancel idempotence,
   revalidation-race precedence, and buffered-completion authority.
+- C4.4.3 deterministic worker/watcher reconciliation for queued,
+  watcher-first, delayed, polling-fallback, selection-pruning, cwd/rebind, and
+  same-cwd close/reopen races.
 
 ## Active Next Increment
 
-TP-C4.4-RECONCILE must be RED before production changes.
+TP-C4.4-RECOVERY must be RED before production changes.
 
 Test points:
 
-- Worker completion, watcher bursts, polling fallback, selection pruning, cwd
-  changes, and close/reopen must converge under one matching generation.
 - Panic/disconnect/cancel recovery must leave the existing lane reusable,
   preserve uncertain recovery paths, and never orphan in-flight state.
 - Run focused progress/cancel/reconcile/recovery tests, all C4 regressions, the
@@ -70,17 +71,17 @@ Test points:
 5. North-star backlog: M1 interactive CLI attachments, M2 git-worktree
    controls, M3 general panel/page/button interface evaluation.
 
-## Fresh C4.4.2 Evidence
+## Fresh C4.4.3 Evidence
 
-- Broad C4/input regression 98/98.
-- Full nextest 3122/3122; only `path_beta_real_host_probe` ignored. A separate
-  safe inventory proof reported `1 ignored / 0 failed` without executing it.
+- Broad C4/FM regression 126/126.
+- Full nextest 3128/3128; only `path_beta_real_host_probe` ignored. A separate
+  ignored-only inventory listed that exact test without executing it.
 - Linux all-target and canonical Windows MSVC bin clippy clean with
   `-D warnings`.
 - Bun 17/17; Python maintenance 64/64; fmt and diff-check clean.
 - No `.herdr-operation-*` or `.herdr-rename-stage-*` artifact remains.
-- Graph refresh: 18,756 nodes / 87,282 edges. Freshness queries returned the
-  typed key intent, App/worker cancel seams, cancellation tests, and
+- Graph refresh: 18,786 nodes / 87,697 edges. Freshness queries returned
+  `own_operation_reconcile`, delayed and same-cwd lifecycle tests, and
   `miller_layout` after proving the prior `ready` graph was stale.
 
 ## Non-Negotiable Boundaries
