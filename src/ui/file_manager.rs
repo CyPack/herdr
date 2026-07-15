@@ -1600,6 +1600,59 @@ mod tests {
         assert_eq!(empty_model.clipboard_count, 0);
     }
 
+    // TP-C6.3-CATALOG: the durable cross-surface matrix is typed rather than
+    // inferred from rendered labels. Actions without a v1 execution owner are
+    // visible but disabled instead of advertising a silent no-op.
+    #[test]
+    fn file_manager_action_catalog_matches_supported_dispatch_seams() {
+        use crate::app::state::{FileManagerContextMenuAction, FileManagerContextMenuModel};
+
+        assert_eq!(
+            FileManagerHeaderAction::ALL.map(FileManagerHeaderAction::label),
+            ["[copy]", "[paste]", "[new folder]", "[delete]"]
+        );
+        assert_eq!(
+            FileManagerRowAction::ALL.map(FileManagerRowAction::label),
+            [">", "r", "x"]
+        );
+        assert_eq!(
+            FileManagerContextMenuAction::ALL.map(|action| action.label().to_string()),
+            [
+                "Open".to_string(),
+                "Copy".to_string(),
+                "Rename".to_string(),
+                "Delete".to_string(),
+                "Compress".to_string(),
+                "Send to Agent".to_string(),
+            ]
+        );
+
+        let td = TempDir::new("action-catalog");
+        td.file("selected.txt");
+        let mut fm = FmState::new(&td.root);
+        assert!(fm.replace_selection(0));
+        let action_bar = compute_file_manager_action_bar_model(&fm, &[], false);
+        assert!(
+            !action_bar
+                .action_state(FileManagerHeaderAction::NewFolder)
+                .expect("new-folder catalog entry")
+                .enabled,
+            "New Folder has no v1 operation owner"
+        );
+
+        let context = FileManagerContextMenuModel::from_action_bar(&action_bar)
+            .expect("single-selection context catalog");
+        assert!(
+            !context
+                .items
+                .iter()
+                .find(|item| item.action == FileManagerContextMenuAction::Compress)
+                .expect("compress catalog entry")
+                .enabled,
+            "Compress has no v1 operation owner"
+        );
+    }
+
     // TP-N4.2-BULK-AUTHORITY: prepared bulk paths follow current natural list
     // order rather than the BTreeSet's lexical path order.
     #[test]
