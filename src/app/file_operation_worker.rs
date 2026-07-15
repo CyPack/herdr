@@ -39,6 +39,13 @@ pub(super) struct FileOperationWorkerCompletion {
     pub(super) result: Result<FileOperationWorkerResult, FileOperationWorkerError>,
 }
 
+pub(super) struct FileOperationReconcileBaseline {
+    operation_generation: u64,
+    destination_directory: std::path::PathBuf,
+    watcher_generation: u64,
+    watcher_revision: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct FileOperationWorkerProgress {
     pub(super) generation: u64,
@@ -512,6 +519,7 @@ impl crate::app::App {
             Ok(generation) => generation,
             Err(FileOperationStartError::Busy) => return false,
         };
+        self.record_file_operation_reconcile_baseline(generation, &destination_directory);
         self.state.file_manager_operation = Some(FileManagerOperationState {
             generation,
             kind: operation_kind,
@@ -563,6 +571,13 @@ impl crate::app::App {
         }
 
         let destination_directory = operation.destination_directory.clone();
+        let reconcile_baseline = self
+            .file_operation_reconcile_baseline
+            .take()
+            .filter(|baseline| {
+                baseline.operation_generation == completion.generation
+                    && baseline.destination_directory == destination_directory
+            });
         match completion.result {
             Ok(FileOperationWorkerResult::Transfer(result)) => {
                 apply_execution_result(operation, &result)
@@ -584,14 +599,22 @@ impl crate::app::App {
                 );
             }
         }
-        let reconcile_with_watcher = self
-            .state
-            .file_manager
-            .as_ref()
-            .is_some_and(|file_manager| file_manager.cwd == destination_directory)
-            && self
-                .file_manager_watcher
-                .request_reconcile(&destination_directory);
+        let watcher_already_reconciled = reconcile_baseline.as_ref().is_some_and(|baseline| {
+            self.file_manager_watcher.reconciled_since(
+                &destination_directory,
+                baseline.watcher_generation,
+                baseline.watcher_revision,
+            )
+        });
+        let reconcile_with_watcher = watcher_already_reconciled
+            || self
+                .state
+                .file_manager
+                .as_ref()
+                .is_some_and(|file_manager| file_manager.cwd == destination_directory)
+                && self
+                    .file_manager_watcher
+                    .request_reconcile(&destination_directory);
         if !reconcile_with_watcher {
             if let Some(file_manager) = self.state.file_manager.as_mut() {
                 if file_manager.cwd == destination_directory {
@@ -601,6 +624,24 @@ impl crate::app::App {
         }
         changed = true;
         changed
+    }
+
+    fn record_file_operation_reconcile_baseline(
+        &mut self,
+        operation_generation: u64,
+        destination_directory: &Path,
+    ) {
+        self.file_operation_reconcile_baseline = self
+            .file_manager_watcher
+            .reconcile_snapshot(destination_directory)
+            .map(
+                |(watcher_generation, watcher_revision)| FileOperationReconcileBaseline {
+                    operation_generation,
+                    destination_directory: destination_directory.to_path_buf(),
+                    watcher_generation,
+                    watcher_revision,
+                },
+            );
     }
 
     fn consume_file_manager_delete_request(&mut self) -> bool {
@@ -670,6 +711,7 @@ impl crate::app::App {
             Ok(generation) => generation,
             Err(FileOperationStartError::Busy) => return false,
         };
+        self.record_file_operation_reconcile_baseline(generation, &affected_directory);
         self.state.file_manager_operation = Some(FileManagerOperationState {
             generation,
             kind: FileManagerOperationKind::Rename,
@@ -749,6 +791,7 @@ impl crate::app::App {
             Ok(generation) => generation,
             Err(FileOperationStartError::Busy) => return false,
         };
+        self.record_file_operation_reconcile_baseline(generation, &affected_directory);
         self.state.file_manager_operation = Some(FileManagerOperationState {
             generation,
             kind: FileManagerOperationKind::BulkRename,
@@ -824,6 +867,7 @@ impl crate::app::App {
             Ok(generation) => generation,
             Err(FileOperationStartError::Busy) => return false,
         };
+        self.record_file_operation_reconcile_baseline(generation, &affected_directory);
         self.state.file_manager_operation = Some(FileManagerOperationState {
             generation,
             kind: operation_kind,

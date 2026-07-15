@@ -126,6 +126,7 @@ pub(super) struct NativeFileManagerWatcher {
     last_native_error: Option<String>,
     next_reconcile_at: Option<std::time::Instant>,
     requested_reconcile_generation: Option<u64>,
+    reconcile_revision: u64,
 }
 
 impl NativeFileManagerWatcher {
@@ -139,6 +140,7 @@ impl NativeFileManagerWatcher {
             last_native_error: None,
             next_reconcile_at: None,
             requested_reconcile_generation: None,
+            reconcile_revision: 0,
         }
     }
 
@@ -250,6 +252,22 @@ impl NativeFileManagerWatcher {
             .is_some_and(|generation| self.slot.accepts_generation(generation))
     }
 
+    pub(super) fn reconcile_snapshot(&self, directory: &Path) -> Option<(u64, u64)> {
+        (self.slot.watched_dir() == Some(directory) && self.slot.has_backend())
+            .then_some((self.slot.generation(), self.reconcile_revision))
+    }
+
+    pub(super) fn reconciled_since(
+        &self,
+        directory: &Path,
+        generation: u64,
+        revision: u64,
+    ) -> bool {
+        self.slot.watched_dir() == Some(directory)
+            && self.slot.accepts_generation(generation)
+            && self.reconcile_revision != revision
+    }
+
     #[cfg(test)]
     fn next_reconcile_at(&self) -> Option<std::time::Instant> {
         self.next_reconcile_at
@@ -327,6 +345,11 @@ impl super::App {
         let previous_parent = file_manager.parent.clone();
         let previous_preview = file_manager.preview.clone();
         file_manager.reload();
+        self.file_manager_watcher.reconcile_revision = self
+            .file_manager_watcher
+            .reconcile_revision
+            .wrapping_add(1)
+            .max(1);
 
         previous_entries != file_manager.entries
             || previous_cursor != file_manager.cursor

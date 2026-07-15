@@ -149,6 +149,8 @@ pub struct App {
     pub(crate) input_rx: Option<mpsc::Receiver<crate::raw_input::RawInputEvent>>,
     file_manager_watcher: file_manager_watcher::NativeFileManagerWatcher,
     file_operation_worker: file_operation_worker::FileOperationWorker,
+    file_operation_reconcile_baseline:
+        Option<file_operation_worker::FileOperationReconcileBaseline>,
     file_preview_worker: file_preview_worker::FilePreviewHighlightWorker,
     image_preview_worker: image_preview_worker::ImagePreviewWorker,
     image_preview_cell_size: crate::kitty_graphics::HostCellSize,
@@ -866,6 +868,7 @@ impl App {
             file_operation_worker: file_operation_worker::FileOperationWorker::new(
                 render_notify.clone(),
             ),
+            file_operation_reconcile_baseline: None,
             file_preview_worker: file_preview_worker::FilePreviewHighlightWorker::new(
                 render_notify.clone(),
             ),
