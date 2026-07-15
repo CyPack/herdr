@@ -333,6 +333,12 @@ owns filesystem mutation and C5 owns agent delivery.
 | TP-C4.2-TRASH | File/directory/multi-source trash, symlink-as-link behavior, missing/replaced paths, backend unavailable/permission failures, cancellation boundaries, and platform result mapping | Default destructive action moves exact entries to platform trash without following symlinks; every item has an explicit terminal result and failures preserve remaining sources | Trash is the recoverable default but platform backends can partially fail and must not be reported as all-or-nothing success |
 | TP-C4.2-DELETE | Separately gated permanent delete for file, empty/non-empty directory, symlink, read-only/permission failure, replacement race, cancellation, and partial progress | Permanent deletion is never implicit, requires stronger confirmation, revalidates identity immediately before mutation, never follows symlinks, and reports irreversible partial completion exactly | Permanent delete has no rollback boundary and therefore needs stronger authority and failure accounting than trash |
 | TP-C4.2-RECOVERY | Worker panic/disconnect, partial multi-item terminal state, watcher event reorder/burst, selection pruning, retry, and temp-artifact scan | UI remains responsive; completed items, retained sources, and failed items stay distinguishable; current listing converges once without hot retry or leaked staging data | Destructive partial failure must remain understandable and recoverable instead of looking like a clean success |
+| TP-C4.3-INTENT | Header, context-menu, and row Rename routes; exact current single-target identity; stale/reordered/multi-selection/closed-FM/in-flight authority | Every route converges on one typed current target; stale or ambiguous authority is consumed without opening a dialog, scheduling work, or mutating disk | Rename must not turn an old coordinate or display label into filesystem authority |
+| TP-C4.3-NAME | Empty, unchanged, `.`, `..`, separator-bearing, absolute, NUL/non-UTF-8, platform-reserved, and over-limit component names | Invalid names fail before worker scheduling; unchanged input is an explicit no-op; the accepted name is one bounded filesystem component | User text is untrusted path input and must never escape the current parent or create platform-specific undefined behavior |
+| TP-C4.3-COLLISION | Existing exact target, case-fold collision where applicable, file/directory mismatch, duplicate bulk outputs, and target replacement before commit | Default policy never overwrites; all collisions fail closed with exact source/target evidence before mutation or at final revalidation | Rename has no safe implicit overwrite policy, especially across case-insensitive filesystems |
+| TP-C4.3-ATOMIC | Same-directory no-replace rename, immediate source identity revalidation, symlink-as-link behavior, source replacement, and destination creation races | A single rename uses the strongest platform no-replace primitive available; symlinks are renamed rather than followed; a race cannot replace an unrelated entry | Validation alone cannot close TOCTOU; the commit primitive must preserve both source and destination identity |
+| TP-C4.3-BULK | Deterministic old-to-new mapping, bounded input count, duplicate outputs, chains, swaps/cycles, temporary staging, injected failure, and recovery | The complete mapping validates first; cycles use private collision-safe staging; terminal state distinguishes committed, restored, retained, and uncertain items without silent partial success | Bulk rename is a transaction-like graph operation and naive sequential renames corrupt chains or swaps |
+| TP-C4.3-LIFECYCLE | One bounded worker lane, cancellation boundaries, panic/disconnect, close/reopen generation, watcher reorder/burst, selection pruning, and temp-artifact scan | Render stays pure; stale completion cannot mutate a new FM generation; every item terminalizes; current listing converges once; private staging is removed or explicitly reported | Rename must compose with the existing C4 worker and A4 watcher without introducing a second race-prone lifecycle |
 | TP-C4-GATES | Focused preflight/copy/move/failure/cancel/watcher tests, isolated real-filesystem cross-check, existing FM/context/plugin regressions, full nextest, Linux/Windows clippy, Bun/Python maintenance, graph freshness, temp-artifact and diff cleanliness | All applicable gates pass; only the named B0 host probe is skipped; no stable Herdr/socket or user process is touched; no staging/temp artifact remains | Destructive-capable filesystem work cannot be closed by happy-path unit tests alone |
 
 - [x] C4.1 copy/move outside render, with collision, permission, partial-write,
@@ -347,8 +353,21 @@ owns filesystem mutation and C5 owns agent delivery.
 - C4.1 gates: operation core 15/15, App/worker 8/8, broad FM/watcher/preview
   147/147, full nextest 3064/3064 plus one named B0 skip, Linux/Windows clippy,
   Bun 17/17, Python 64/64, fmt/diff/temp clean. Fresh graph: 18,453 / 86,399.
-- [ ] C4.2 trash/delete with confirmation, symlink, missing-path, and rollback
+- [x] C4.2 trash/delete with confirmation, symlink, missing-path, and rollback
   policy; destructive permanent delete is never implicit.
+- C4.2 RED/GREEN chain: confirmation authority `733d423`/`12730a6`, modal
+  render `5e1f50d`/`95b2a01`, delete core `9c1316b`/`8c558da`, worker lifecycle
+  `877519b`/`73b4b39`, per-item recovery `31dacd4`/`d64b9be`, isolated real
+  trash test `d316e79`, worker terminalization `193b166`/`61150b3`, modifier
+  hardening `c08315b`/`92f453f`, root-path rejection `5c143b2`/`917cd57`.
+- C4.2 exact-path confirmation defaults to Trash and requires a separate
+  Permanent Delete stage. Immutable symlink-safe preflight and immediate
+  revalidation run outside render; trash and permanent delete share the one
+  bounded operation lane and preserve ordered per-item terminal evidence.
+- C4.2 gates: focused 29/29, broad FM/watcher/preview/context/plugin 321/321,
+  full nextest 3086/3086 plus one named B0 skip, Linux/Windows clippy, Bun
+  17/17, Python 64/64, fmt/diff/temp clean. Exact OSV query for `trash 5.2.6`
+  returned no vulnerability record. Fresh graph: 18,576 / 86,769.
 - [ ] C4.3 rename and bulk-rename validation, conflicts, and atomicity limits.
 - [ ] C4.4 bounded progress/cancel lifecycle and watcher reconciliation.
 - [ ] Require isolated real-filesystem cross-check and leave no temp artifacts.
@@ -388,7 +407,7 @@ owns filesystem mutation and C5 owns agent delivery.
 ## Ordering Resolution
 
 A4, B0, B1, the A3 remainder, B2, C1, N3, C2, N4.2, C3.1, C3.2, C3.3,
-and C4.1 are complete through product head `98c51e4`. The next execution order
-is C4.2 → C4.3 → C4.4 → C5 → C6.
+C4.1, and C4.2 are complete through product head `917cd57`. The next execution
+order is C4.3 → C4.4 → C5 → C6.
 S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3 remain
 inactive north-star work.

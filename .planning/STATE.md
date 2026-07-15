@@ -2,9 +2,9 @@
 
 - Updated: 2026-07-15
 - Branch: `feat/native-fm`
-- Published CyPack base: `445add3`
-- Verified C4.1 product head: `98c51e4`
-- Publication unit: C4.1 five RED/GREEN pairs through `98c51e4`, plus the continuity/graph commit
+- Published CyPack base: `a7bca0e`
+- Verified C4.2 product head: `917cd57`
+- Publication unit: C4.2 seventeen-commit test/product chain through `917cd57`, plus the continuity/graph commit
   containing this file. Push only CyPack `feat/native-fm` and fork `master`
   after fast-forward ancestry and exact remote-SHA verification.
 
@@ -27,22 +27,27 @@
 - C4.1 immutable exact-path preflight, staged no-replace COPY, atomic/EXDEV-safe
   MOVE, bounded single-lane worker, pure generation/terminal state, header and
   context Copy authority, Paste dispatch, and matching-cwd reconciliation.
+- C4.2 exact-path Trash/Permanent confirmation, immutable symlink-safe delete
+  preflight, immediate identity revalidation, restricted platform-trash
+  backend, permanent file/directory deletion, shared bounded worker lane,
+  ordered per-item recovery evidence, and matching-cwd reconciliation.
 
 ## Active Next Increment
 
-TP-C4.2-CONFIRM must be RED before production changes.
+TP-C4.3-INTENT must be RED before production changes.
 
 Test points:
 
-- Trash versus permanent delete must be explicit and confirmed from current
-  exact path/order authority; a stale dialog or closed FM fails closed.
-- Trash is the recoverable default; symlinks are moved as links, never followed.
-- Missing/replaced/read-only/backend/permission failures and partial multi-item
-  results retain exact per-item state; no destructive success is inferred.
-- Permanent delete is a separately gated irreversible path with stronger
-  confirmation, immediate identity revalidation, and cancellation boundaries.
-- Completion and watcher bursts converge without stale selection, duplicate
-  entries, hot retry, or leaked temp artifacts.
+- Header, context, and row Rename must converge on one exact current single
+  target; stale, reordered, multi-selected, closed, or in-flight intent fails closed.
+- Name validation must reject empty, path-like, reserved, non-UTF-8, and
+  over-limit components before scheduling; unchanged input is an explicit no-op.
+- Exact, case-fold, duplicate-output, and replacement-race collisions never
+  overwrite. Single rename revalidates identity and uses no-replace commit.
+- Bulk mapping validates completely before mutation; chains and swaps/cycles
+  use bounded private staging with explicit rollback/partial recovery evidence.
+- The existing worker generation and watcher reconciliation must terminalize
+  every item, reject stale completion, and leave no private staging artifact.
 
 ## Ordered Roadmap
 
@@ -58,18 +63,17 @@ Test points:
 5. North-star backlog: M1 interactive CLI attachments, M2 git-worktree
    controls, M3 general panel/page/button interface evaluation.
 
-## Fresh C4.1 Evidence
+## Fresh C4.2 Evidence
 
-- Operation core 15/15; App/worker 8/8; FM/watcher/preview 147/147.
-- Full nextest 3064/3064; only `path_beta_real_host_probe` skipped.
+- Focused delete 29/29; broad FM/watcher/preview/context/plugin 321/321.
+- Full nextest 3086/3086; only `path_beta_real_host_probe` skipped.
 - Linux all-target and canonical Windows MSVC bin clippy clean with
   `-D warnings`.
 - Bun 17/17; Python maintenance 64/64; fmt and diff-check clean.
-- Isolated real-filesystem COPY/MOVE/failure/cancel/reopen tests left no
-  operation, staging, or preflight temp artifact.
-- Graph refresh: 18,453 nodes / 86,399 edges. Supported `CBM_WORKERS=1`
-  one-shot CLI completed with zero extraction errors and returned current
-  operation state, dispatch/sync methods, and exact source snippet.
+- Isolated throwaway-HOME/XDG Trash proved file and symlink deletion while
+  preserving the symlink target; no delete/staging/preflight artifact remains.
+- Graph refresh: 18,576 nodes / 86,769 edges. Freshness queries returned both
+  `miller_layout` and all current delete confirmation/core/worker symbols.
 
 ## Non-Negotiable Boundaries
 

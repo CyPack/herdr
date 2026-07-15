@@ -4,10 +4,10 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Active C4.1 product checkpoint: `98c51e4`
-  (`feat: integrate bounded native file operations`).
-- The C4.1 publication unit is five RED/GREEN pairs from `386ddce` through
-  `98c51e4`, plus the continuity/graph commit containing this file. At
+- Active C4.2 product checkpoint: `917cd57`
+  (`fix: reject unnamed paths from file deletion`).
+- The C4.2 publication unit is seventeen atomic test/product commits from
+  `733d423` through `917cd57`, plus the continuity/graph commit containing this file. At
   publication, CyPack
   `feat/native-fm` and fork `master` are verified at that same fast-forward
   branch tip.
@@ -309,6 +309,36 @@
   single-worker graph refresh is fresh at 18,453 nodes / 86,399 edges and
   returns current operation state, dispatch, sync, and exact source snippets.
 
+## Verified Checkpoint — C4.2 Safe Trash and Permanent Delete
+
+- C4.2 is an auditable seventeen-commit test/product chain from confirmation
+  RED `733d423` through unnamed/root-path hardening GREEN `917cd57`; no RED
+  checkpoint is published alone.
+- Header and context Delete share exact ordered-path authority and a typed
+  modal. Trash is the default. Permanent Delete requires `d` and then a
+  separate Enter. Modified keys, stale/reordered targets, closed/reopened FM,
+  unsupported paths, no explicit selection, and in-flight work fail closed.
+- `src/fm/delete.rs` snapshots immutable symlink metadata plus file identity,
+  rejects roots and unnamed paths, and revalidates immediately before each
+  mutation. Trash moves one exact entry at a time through the restricted
+  `trash 5.2.6` backend; permanent deletion chooses file/symlink versus
+  directory primitives without following symlinks.
+- Delete and transfer share the existing single worker lane. Ordered item
+  states distinguish pending, completed, retained, and failed; partial
+  backend errors, cancellation, panic, and disconnect all reach an explicit
+  aggregate and per-item terminal projection. Matching-cwd reload remains the
+  sole App reconciliation path.
+- Gates: focused 29/29, broad FM/watcher/preview/context/plugin 321/321, full
+  nextest 3086/3086 with only the named B0 host probe skipped, Linux all-target
+  and Windows MSVC bin clippy clean, Bun 17/17, Python 64/64, fmt/diff/temp
+  clean. An isolated child used throwaway HOME/XDG trash and proved file plus
+  symlink trash while preserving the symlink target. Exact OSV query for
+  `trash 5.2.6` returned no vulnerability record.
+- Fast graph refresh is fresh at 18,576 nodes / 86,769 edges and returns
+  `miller_layout`, `FileManagerDeleteConfirmation`, `DeleteOperationPlan`,
+  `execute_delete_operation`, and `FileOperationWorkerTask`; `ready` alone was
+  not accepted as freshness evidence.
+
 ## Completed Checkpoint — B2 Native Image Preview
 
 - B2 is an auditable dependency decision plus four RED/GREEN increments and a
@@ -469,15 +499,15 @@
 
 ## Exact Next Action
 
-1. Begin C4.2 test-point-first. Graph-first inspect existing confirmation modal,
-   typed file intents, bounded operation result model, platform seams, and the
-   selected trash backend API before any dependency or production edit.
-2. Make TP-C4.2-CONFIRM RED first: destructive intent must require current exact
-   path authority plus explicit Trash/Permanent Delete confirmation; stale,
-   reordered, missing, unsupported, closed-FM, and in-flight cases fail closed.
-3. Continue TP-C4.2-TRASH RED/GREEN, then permanent delete separately. Trash is
-   the recoverable default, symlinks are handled as links rather than followed,
-   and every partial platform failure must retain per-item terminal evidence.
+1. Begin C4.3 test-point-first. Graph-first inspect the typed row/context/header
+   rename intents, modal input patterns, C4 immutable identity snapshots,
+   platform no-replace primitives, and the single operation worker lane.
+2. Make TP-C4.3-INTENT RED first: only one exact current target may open Rename;
+   stale, reordered, multi-selected, unsupported, closed-FM, and in-flight
+   routes must be consumed without scheduling work or mutating disk.
+3. Continue in strict order: TP-C4.3-NAME, COLLISION, ATOMIC, BULK, LIFECYCLE,
+   then the complete TP-C4-GATES. Every production increment follows its own
+   observed failing test; no compile-failing RED is pushed alone.
 
 ## Verified B2.0 Dependency Decision
 

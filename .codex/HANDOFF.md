@@ -2,12 +2,11 @@
 
 ## 1. SONRAKI ADIM
 
-Make TP-C4.2-CONFIRM RED before production changes. Graph-first inspect the
-existing confirmation modal, typed file intents, bounded operation/result
-model, platform seams, and selected trash backend API. Prove exact current
-path authority, explicit Trash versus Permanent Delete choice, stale-dialog
-rejection, symlink no-follow policy, partial failure evidence, and in-flight
-exclusion before the first destructive mutation.
+Make TP-C4.3-INTENT RED before production changes. Graph-first inspect the
+typed row/context/header Rename intents, modal input patterns, immutable C4
+identity snapshots, platform no-replace primitives, and the single operation
+worker lane. Prove exact current single-target authority and stale/reordered/
+multi-selected/closed/in-flight rejection before implementing rename.
 
 ## 2. AKTİF PROJE
 
@@ -239,6 +238,20 @@ exclusion before the first destructive mutation.
   entries. C4.1 gates: core 15/15, App/worker 8/8, broad 147/147, full
   3064/3064 plus one named B0 skip, Linux/Windows clippy, Bun 17/17, Python
   64/64, fmt/diff/temp clean. Fresh graph: 18,453 / 86,399.
+- Completed C4.2 as seventeen atomic test/product commits from `733d423`
+  through `917cd57`. Header/context Delete converge on typed exact-path
+  confirmation; Trash is default and Permanent requires a separate stage.
+  Modified keys, stale/reordered/no-selection/closed/in-flight authority fail
+  closed before a worker plan exists.
+- Immutable delete preflight snapshots symlink metadata and file identity,
+  rejects roots/unnamed paths, and revalidates before every mutation. Trash
+  and permanent delete share the C4 worker lane and preserve ordered per-item
+  completed/retained/failed evidence across partial errors, cancellation,
+  panic, and disconnect. Matching-cwd completion owns reconciliation.
+- C4.2 gates: focused 29/29, broad 321/321, full nextest 3086/3086 plus one
+  named B0 skip, Linux/Windows clippy, Bun 17/17, Python 64/64, fmt/diff/temp
+  clean. Isolated real Trash used throwaway HOME/XDG. Fresh graph: 18,576 /
+  86,769 with both `miller_layout` and current delete symbols.
 
 ## 6. KOD DURUMU
 
@@ -424,6 +437,10 @@ the C4.1 publication unit before both CyPack heads are fast-forwarded.
   final full nextest 3064/3064 plus only the named B0 host probe skip. Linux
   all-target and canonical Windows MSVC bin clippy, Bun 17/17, Python 64/64,
   fmt/diff/temp checks, and graph freshness are clean.
+- C4.2 focused delete 29/29 and broad FM/watcher/preview/context/plugin
+  321/321; final full nextest 3086/3086 plus only the named B0 host probe skip.
+  Linux/Windows clippy, Bun 17/17, Python 64/64, isolated real Trash,
+  fmt/diff/temp checks, and graph freshness are clean.
 
 ## 8. KRİTİK KARARLAR
 
@@ -477,9 +494,9 @@ the C4.1 publication unit before both CyPack heads are fast-forwarded.
 
 See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2/N4 contracts and the
 complete C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1, N3,
-C2, N4, C3.1, C3.2, C3.3, and C4.1 are closed. The immediate product task is
-TP-C4.2-CONFIRM RED; then follow C4.2 → C4.3 → C4.4 → C5
-→ C6 without skipping modules. S5–S7/N2 remain evidence-gated; M1–M3 remain
+C2, N4, C3.1, C3.2, C3.3, C4.1, and C4.2 are closed. The immediate product task is
+TP-C4.3-INTENT RED; then follow C4.3 → C4.4 → C5 → C6 without skipping
+modules. S5–S7/N2 remain evidence-gated; M1–M3 remain
 north-star backlog.
 
 ## 11. ORTAM
