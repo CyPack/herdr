@@ -349,24 +349,61 @@ impl RenameOperationHost for RealRenameOperationHost {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn execute_rename_operation(
     plan: &RenameOperationPlan,
     cancellation: &FileOperationCancellation,
 ) -> RenameOperationExecutionResult {
-    execute_rename_operation_with_host(plan, cancellation, &mut RealRenameOperationHost)
+    execute_rename_operation_with_host_and_observer(
+        plan,
+        cancellation,
+        &mut RealRenameOperationHost,
+        |_| {},
+    )
 }
 
+pub(crate) fn execute_rename_operation_with_observer<F>(
+    plan: &RenameOperationPlan,
+    cancellation: &FileOperationCancellation,
+    observer: F,
+) -> RenameOperationExecutionResult
+where
+    F: FnMut(usize),
+{
+    execute_rename_operation_with_host_and_observer(
+        plan,
+        cancellation,
+        &mut RealRenameOperationHost,
+        observer,
+    )
+}
+
+#[cfg(test)]
 pub(crate) fn execute_rename_operation_with_host<H: RenameOperationHost>(
     plan: &RenameOperationPlan,
     cancellation: &FileOperationCancellation,
     host: &mut H,
 ) -> RenameOperationExecutionResult {
+    execute_rename_operation_with_host_and_observer(plan, cancellation, host, |_| {})
+}
+
+fn execute_rename_operation_with_host_and_observer<H, F>(
+    plan: &RenameOperationPlan,
+    cancellation: &FileOperationCancellation,
+    host: &mut H,
+    mut observer: F,
+) -> RenameOperationExecutionResult
+where
+    H: RenameOperationHost,
+    F: FnMut(usize),
+{
     if cancellation.is_cancelled() {
         return RenameOperationExecutionResult {
             status: RenameOperationExecutionStatus::Cancelled,
             outcome: RenameOperationOutcome::NotStarted,
         };
     }
+    observer(0);
     if let Err(error) = host.before_revalidation() {
         return retained_result(RenameOperationError::Io(error.kind()));
     }

@@ -16,7 +16,7 @@ use crate::fm::operations::{
     FileOperationRequest,
 };
 use crate::fm::rename::{
-    execute_bulk_rename_operation, execute_rename_operation, BulkRenameItemOutcome,
+    execute_bulk_rename_operation, execute_rename_operation_with_observer, BulkRenameItemOutcome,
     BulkRenameOperationExecutionResult, BulkRenameOperationExecutionStatus,
     BulkRenameOperationPlan, BulkRenameOperationRequest, RenameOperationExecutionResult,
     RenameOperationExecutionStatus, RenameOperationOutcome, RenameOperationPlan,
@@ -139,9 +139,9 @@ impl FileOperationWorker {
             FileOperationWorkerTask::Delete(plan) => FileOperationWorkerResult::Delete(
                 crate::fm::delete::execute_delete_operation(plan, cancellation),
             ),
-            FileOperationWorkerTask::Rename(plan) => {
-                FileOperationWorkerResult::Rename(execute_rename_operation(plan, cancellation))
-            }
+            FileOperationWorkerTask::Rename(plan) => FileOperationWorkerResult::Rename(
+                crate::fm::rename::execute_rename_operation(plan, cancellation),
+            ),
             FileOperationWorkerTask::BulkRename(plan) => FileOperationWorkerResult::BulkRename(
                 execute_bulk_rename_operation(plan, cancellation),
             ),
@@ -342,9 +342,9 @@ fn execute_worker_task_with_progress(
         FileOperationWorkerTask::Delete(plan) => FileOperationWorkerResult::Delete(
             execute_delete_operation_with_observer(plan, cancellation, report_progress),
         ),
-        FileOperationWorkerTask::Rename(plan) => {
-            FileOperationWorkerResult::Rename(execute_rename_operation(plan, cancellation))
-        }
+        FileOperationWorkerTask::Rename(plan) => FileOperationWorkerResult::Rename(
+            execute_rename_operation_with_observer(plan, cancellation, report_progress),
+        ),
         FileOperationWorkerTask::BulkRename(plan) => {
             FileOperationWorkerResult::BulkRename(execute_bulk_rename_operation(plan, cancellation))
         }
