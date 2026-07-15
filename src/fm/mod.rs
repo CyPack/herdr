@@ -315,6 +315,13 @@ impl FmState {
     pub fn reload(&mut self) {
         let selected_path = self.selected().map(|entry| entry.path.clone());
         let previous_cursor = self.cursor;
+        self.reload_focusing_path(selected_path.as_deref(), previous_cursor);
+    }
+
+    /// Re-read cwd once, preferring one exact visible path and otherwise using
+    /// the supplied cursor fallback. Directory navigation uses this seam to
+    /// transfer path identity without retaining per-directory history.
+    fn reload_focusing_path(&mut self, selected_path: Option<&Path>, fallback_cursor: usize) {
         let snapshot = read_directory_snapshot(&self.cwd, self.show_hidden);
         self.entries = snapshot.entries;
         self.cwd_status = snapshot.status;
@@ -322,9 +329,8 @@ impl FmState {
             self.cwd_status == FmDirectoryStatus::Available && directory_is_writable(&self.cwd);
         self.reconcile_multi_selection();
         self.cursor = selected_path
-            .as_ref()
-            .and_then(|path| self.entries.iter().position(|entry| &entry.path == path))
-            .unwrap_or(previous_cursor);
+            .and_then(|path| self.entries.iter().position(|entry| entry.path == path))
+            .unwrap_or(fallback_cursor);
         self.clamp_cursor();
         self.refresh_context();
     }
@@ -548,15 +554,17 @@ impl FmState {
         }
     }
 
-    /// Go to the parent directory, re-reading its contents with the cursor at the
-    /// top. A no-op at the filesystem root (no parent).
+    /// Go to the parent directory, re-reading its contents and focusing the
+    /// exact departed child when it remains visible. Missing or filtered paths
+    /// use the deterministic top fallback. A no-op at the filesystem root.
     pub fn leave(&mut self) {
-        if let Some(parent) = self.cwd.parent().map(Path::to_path_buf) {
+        let departed = self.cwd.clone();
+        if let Some(parent) = departed.parent().map(Path::to_path_buf) {
             self.clear_multi_selection();
             self.cwd = parent;
             self.cursor = 0;
             self.viewport_start = 0;
-            self.reload();
+            self.reload_focusing_path(Some(&departed), 0);
         }
     }
 
@@ -1463,7 +1471,7 @@ mod tests {
         assert_eq!(st.cwd, before, "entering a file does not change directory");
     }
 
-    // TP-A3.3: leaving goes to the parent directory, cursor at top.
+    // TP-A3.3: leaving goes to the parent and focuses the departed child.
     #[test]
     fn leave_ascends_to_parent() {
         let td = TempDir::new("leave");
