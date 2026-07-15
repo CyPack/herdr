@@ -650,6 +650,56 @@ filesystem mutation inside render or input.
   `ready` was cross-checked with current snippets for `miller_layout`, row
   dispatch, scheduled Open, and scheduled plugin execution.
 
+### C6.4a Semantic Visual-Role Matrix
+
+This matrix is the durable C6.4 palette and precedence contract. Every value is
+an existing `Palette` role; C6.4 must not add literal RGB colors or infer state
+from rendered glyphs. Background filling and geometry remain pure render work,
+while filesystem-derived directory state is prepared only by `FmState`
+construction/reload paths.
+
+| Surface / state | Foreground role | Background role | Modifier / marker | Precedence and bounded behavior |
+|---|---|---|---|---|
+| FM canvas | `text` | `panel_bg` | none | Fill only the current FM rect; zero area is inert and hidden terminal content cannot bleed through |
+| Identity header | `subtext0` | `panel_bg` | bold | Exact cwd/selection identity truncates before complete action controls |
+| Panel title | `overlay1` | `panel_bg` | bold | One complete row; title never consumes list geometry |
+| Divider / separator | `surface_dim` | `panel_bg` | single cell line | Exists only at the active Miller breakpoint and never becomes hit authority |
+| Cursor focus | `text` | `surface0` | bold only where already established | Cursor remains the sole focus signal; it does not grant bulk authority |
+| Explicit multi-selection | `text` | `surface1` | none | Lower precedence than cursor focus; exact prepared paths only |
+| Current sidebar location | `panel_contrast_fg` | `accent` | complete two-cap pill | Exact accessible cwd only; complete-or-omitted at narrow widths |
+| Disabled action / inaccessible row | `overlay0` | inherited surface | dim for actions | Cannot dispatch; error/warning markers may still override its trailing cell |
+| Read-only / warning | `yellow` | inherited surface | stable warning copy/marker | Stronger than ordinary focus/current decoration but weaker than error/recovery |
+| Running operation | `yellow` | `surface0` | progress fraction + `Esc cancel` | Current bounded counts only; never obscures exact cwd identity on narrow layouts |
+| Completed operation | `green` | `surface0` | terminal summary | Stable terminal evidence until replaced by a later operation |
+| Cancelled operation | `peach` | `surface0` | terminal summary | Distinguishes committed work from untouched work |
+| Partial / failed operation | `red` | `surface0` | failure counts + recovery hint | Highest semantic precedence; at least one exact recovery path remains inspectable when present |
+| Empty / no selection | `overlay0` | `panel_bg` | explicit stable copy | Must differ from missing/unreadable and remain width/height bounded |
+| Preview pending / unavailable / truncated | `overlay1`, warning/error as applicable | `panel_bg` | explicit stable copy | Ready pixels have no text underlay; every non-ready state remains distinguishable |
+
+Deterministic semantic precedence is recovery/error > unavailable/warning/
+read-only > running progress > cursor focus > explicit selection > ordinary
+content. Geometry precedence remains modal/context popup > visible FM controls
+> hidden terminal content; C6.4 changes no input authority.
+
+### C6.4 Ordered Microtasks
+
+1. C6.4a RED: characterize the current default/alternate-palette buffer and
+   prove semantic token mappings, canvas fill, dividers, cursor, explicit
+   selection, disabled actions, sidebar current/warning, and narrow/Unicode
+   behavior.
+2. C6.4a GREEN: introduce the smallest pure visual-token seam and route all
+   native FM surfaces through the matrix without changing action authority.
+3. C6.4b RED/GREEN: distinguish empty from missing/unreadable/read-only cwd in
+   prepared FM state; render explicit preview and operation terminal/recovery
+   summaries with bounded geometry and no render-time I/O.
+4. C6.4c RED/GREEN: assert complete one/two/three-column, expanded/collapsed
+   sidebar, context/modal/progress composition for desktop/mobile and alternate
+   palettes; document accepted terminal/font differences.
+5. C6.4 closure: run the isolated throwaway-XDG Finder-parity review, complete
+   direct `just check` equivalent, canonical Windows lint, graph freshness,
+   production-unwrap, diff, and artifact gates; publish only fast-forward to
+   CyPack feature/master.
+
 ## P4 — Deferred UI Architecture
 
 - [ ] S5 ComponentRegistry only when a second real component/page proves the
