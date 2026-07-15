@@ -1328,6 +1328,76 @@ mod tests {
         );
     }
 
+    // TP-C4.3-INTENT: the stable row Rename tag must converge on one typed
+    // exact-path file modal. Opening it is pure client-local authority: no
+    // worker generation or filesystem mutation exists yet.
+    #[test]
+    fn row_rename_opens_exact_file_modal_without_filesystem_work() {
+        let td = TempDir::new("row-rename-intent");
+        td.file("alpha.txt");
+        td.file("beta.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let entry_path = install_row_actions(&mut app, 1);
+        let before = fs::read(&entry_path).expect("read row rename fixture");
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 44, 3));
+
+        assert_eq!(app.state.mode, Mode::RenameFile);
+        assert_eq!(
+            app.state
+                .file_manager_rename
+                .as_ref()
+                .expect("typed file rename modal")
+                .paths,
+            vec![entry_path.clone()]
+        );
+        assert_eq!(app.state.name_input, "beta.txt");
+        assert!(app.state.name_input_replace_on_type);
+        assert!(app.state.file_manager_operation.is_none());
+        assert_eq!(
+            fs::read(&entry_path).expect("row rename target remains untouched"),
+            before
+        );
+    }
+
+    // TP-C4.3-INTENT: a row coordinate is not independent authority while a
+    // bulk selection or another operation is active. Both cases fail closed
+    // before a modal or worker request can exist.
+    #[test]
+    fn row_rename_rejects_bulk_selection_and_inflight_operation() {
+        let td = TempDir::new("row-rename-fail-closed");
+        td.file("alpha.txt");
+        td.file("beta.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_row_actions(&mut app, 1);
+        let fm = app.state.file_manager.as_mut().expect("open FM");
+        assert!(fm.replace_selection(0));
+        assert!(fm.toggle_selection(1));
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 44, 3));
+        assert_ne!(app.state.mode, Mode::RenameFile);
+        assert!(app.state.file_manager_rename.is_none());
+
+        app.state
+            .file_manager
+            .as_mut()
+            .expect("open FM")
+            .clear_multi_selection();
+        app.state.file_manager_operation = Some(crate::app::state::FileManagerOperationState {
+            generation: 9,
+            kind: crate::app::state::FileManagerOperationKind::Copy,
+            destination_directory: td.root.clone(),
+            total_items: 1,
+            completed_items: 0,
+            failed_items: 0,
+            status: crate::app::state::FileManagerOperationStatus::Running,
+            items: Vec::new(),
+        });
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 44, 3));
+        assert_ne!(app.state.mode, Mode::RenameFile);
+        assert!(app.state.file_manager_rename.is_none());
+    }
+
     // TP-C2.2-NON-TARGETS: the name rectangle preserves selection, while
     // gaps, hidden actions, middle presses, modifiers, and stale closed-FM
     // geometry cannot invent a row action. Right press is owned by C3.2.

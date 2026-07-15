@@ -1121,6 +1121,67 @@ mod tests {
         assert!(app.state.file_manager_operation.is_none());
     }
 
+    // TP-C4.3-INTENT: C3's revalidated context Rename and C2's row Rename
+    // converge on the same typed exact-path modal. Multi-path, stale, and
+    // closed-FM intents are consumed but cannot install authority.
+    #[test]
+    fn app_context_rename_converges_and_invalid_intents_fail_closed() {
+        let td = TempDir::new("context-rename-intent");
+        let source = td.root.join("selected.txt");
+        fs::write(&source, b"selected").expect("write context rename fixture");
+        let mut app = test_app();
+        let mut file_manager = crate::fm::FmState::new(&td.root);
+        assert!(file_manager.replace_selection(0));
+        app.state.file_manager = Some(file_manager);
+        app.state.request_file_manager_context_action = Some(FileManagerContextActionIntent {
+            action: FileManagerContextMenuAction::Rename,
+            paths: vec![source.clone()],
+        });
+
+        assert!(app.sync_file_operation_worker());
+        assert_eq!(app.state.mode, crate::app::Mode::RenameFile);
+        assert_eq!(
+            app.state
+                .file_manager_rename
+                .as_ref()
+                .expect("context file rename modal")
+                .paths,
+            vec![source.clone()]
+        );
+        assert!(app.state.request_file_manager_context_action.is_none());
+        assert!(app.state.file_manager_operation.is_none());
+        assert_eq!(fs::read(&source).expect("source remains"), b"selected");
+
+        for paths in [
+            vec![source.clone(), td.root.join("other.txt")],
+            vec![td.root.join("stale.txt")],
+        ] {
+            app.state.mode = crate::app::Mode::Terminal;
+            app.state.file_manager_rename = None;
+            app.state.request_file_manager_context_action = Some(FileManagerContextActionIntent {
+                action: FileManagerContextMenuAction::Rename,
+                paths,
+            });
+            assert!(app.sync_file_operation_worker());
+            assert_ne!(app.state.mode, crate::app::Mode::RenameFile);
+            assert!(app.state.file_manager_rename.is_none());
+            assert!(app.state.request_file_manager_context_action.is_none());
+        }
+
+        app.state.file_manager = None;
+        app.state.request_file_manager_context_action = Some(FileManagerContextActionIntent {
+            action: FileManagerContextMenuAction::Rename,
+            paths: vec![source.clone()],
+        });
+        assert!(app.sync_file_operation_worker());
+        assert_ne!(app.state.mode, crate::app::Mode::RenameFile);
+        assert!(app.state.file_manager_rename.is_none());
+        assert_eq!(
+            fs::read(&source).expect("closed FM source remains"),
+            b"selected"
+        );
+    }
+
     // TP-C4.2-DELETE/RECOVERY: a separately confirmed permanent request enters
     // the same bounded worker lane, reaches terminal per-item state, and
     // reloads the matching native-FM directory after completion.
