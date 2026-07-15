@@ -390,7 +390,7 @@ owns filesystem mutation and C5 owns agent delivery.
   plus only the named B0 host probe skipped, Linux/Windows clippy, Bun 17/17,
   Python 64/64, fmt/diff/temp clean. Fresh graph: 18,722 / 88,526 with
   `miller_layout` and current single/bulk/name/App symbols.
-- [ ] C4.4 bounded progress/cancel lifecycle and watcher reconciliation.
+- [x] C4.4 bounded progress/cancel lifecycle and watcher reconciliation.
 - [x] C4.4.1 make TP-C4.4-PROGRESS RED and add one bounded/coalesced progress
   projection shared by transfer, delete, single rename, and bulk rename.
 - C4.4.1 atomic chain: worker/App `aa9c894`/`da46bfb`, transfer
