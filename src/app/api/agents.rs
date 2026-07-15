@@ -265,4 +265,40 @@ mod tests {
         };
         assert_eq!(agent.agent_status, AgentStatus::Idle);
     }
+
+    // TP-C5-SEND-API: extracting a shared terminal-input seam must preserve
+    // agent.send's success envelope and byte-for-byte text behavior.
+    #[test]
+    fn agent_send_preserves_exact_text_and_success_contract() {
+        let mut app = app_with_agent();
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.state.workspaces[0]
+            .terminal_id(pane_id)
+            .expect("agent send terminal id")
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .expect("agent send terminal state")
+            .set_agent_name("exact-send".into());
+        let (runtime, mut receiver) = crate::terminal::TerminalRuntime::test_with_channel(80, 24);
+        app.terminal_runtimes.insert(terminal_id.clone(), runtime);
+        let text = "space 'quote' $(touch nope) `echo` ünicode\r";
+
+        let response = app.handle_agent_send(
+            "send".into(),
+            AgentSendParams {
+                target: terminal_id.to_string(),
+                text: text.into(),
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).expect("agent send success");
+        assert!(matches!(success.result, ResponseResult::Ok {}));
+        assert_eq!(
+            receiver.try_recv().expect("exact API send bytes"),
+            Bytes::from(text)
+        );
+        assert!(receiver.try_recv().is_err());
+    }
 }

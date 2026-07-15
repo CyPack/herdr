@@ -97,3 +97,217 @@ impl crate::app::App {
         true
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+
+    use crate::app::state::FileManagerAgentHandoffRequest;
+
+    struct HandoffFixture {
+        root: std::path::PathBuf,
+    }
+
+    impl HandoffFixture {
+        fn new(tag: &str) -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "herdr-fm-agent-handoff-{}-{tag}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).expect("create handoff fixture root");
+            Self { root }
+        }
+
+        fn file(&self, name: &str) -> std::path::PathBuf {
+            let path = self.root.join(name);
+            std::fs::write(&path, b"handoff").expect("write handoff fixture");
+            path
+        }
+    }
+
+    impl Drop for HandoffFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn app_with_agent_handoff(
+        root: &std::path::Path,
+        channel_capacity: usize,
+    ) -> (
+        crate::app::App,
+        crate::terminal::TerminalId,
+        tokio::sync::mpsc::Receiver<Bytes>,
+    ) {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = crate::app::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        let workspace = crate::workspace::Workspace::test_new("fm-agent-handoff-send");
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace
+            .terminal_id(pane_id)
+            .expect("handoff terminal id")
+            .clone();
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .expect("handoff terminal state")
+            .set_agent_name("handoff-target".into());
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.file_manager = Some(crate::fm::FmState::new(root));
+        let (runtime, receiver) =
+            crate::terminal::TerminalRuntime::test_with_channel_capacity(80, 24, channel_capacity);
+        app.terminal_runtimes.insert(terminal_id.clone(), runtime);
+        (app, terminal_id, receiver)
+    }
+
+    // TP-C5-SEND: the handoff is one literal UTF-8 path followed by exactly
+    // one terminal Enter. Shell metacharacters are data, never command syntax.
+    #[test]
+    fn existing_agent_receives_one_literal_path_and_enter_exactly_once() {
+        let fixture = HandoffFixture::new("literal");
+        let path = fixture.file("space 'quote' $(touch nope) `echo` ünicode.txt");
+        let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 4);
+        app.state.request_file_manager_agent_handoff = Some(FileManagerAgentHandoffRequest {
+            path: path.clone(),
+            terminal_id,
+        });
+
+        assert!(app.sync_file_manager_agent_handoff_send());
+        assert!(app.state.request_file_manager_agent_handoff.is_none());
+        let mut expected = path
+            .to_str()
+            .expect("UTF-8 fixture path")
+            .as_bytes()
+            .to_vec();
+        expected.push(b'\r');
+        assert_eq!(
+            receiver.try_recv().expect("one literal handoff payload"),
+            Bytes::from(expected)
+        );
+        assert!(receiver.try_recv().is_err(), "no second payload");
+        assert!(!app.sync_file_manager_agent_handoff_send());
+        assert!(receiver.try_recv().is_err(), "frame retry stays silent");
+    }
+
+    // TP-C5-SEND: authority is revalidated at send time. Lost agent identity
+    // consumes the stale request without writing any bytes.
+    #[test]
+    fn existing_agent_handoff_fails_closed_after_agent_identity_is_lost() {
+        let fixture = HandoffFixture::new("lost-agent");
+        let path = fixture.file("selected.txt");
+        let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 2);
+        app.state.request_file_manager_agent_handoff = Some(FileManagerAgentHandoffRequest {
+            path,
+            terminal_id: terminal_id.clone(),
+        });
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .expect("handoff terminal state")
+            .clear_agent_name();
+
+        assert!(app.sync_file_manager_agent_handoff_send());
+        assert!(app.state.request_file_manager_agent_handoff.is_none());
+        assert!(receiver.try_recv().is_err());
+        let toast = app.state.toast.as_ref().expect("visible authority failure");
+        assert_eq!(toast.kind, crate::app::state::ToastKind::NeedsAttention);
+        assert_eq!(toast.title, "send to agent failed");
+        assert_eq!(toast.context, "agent handoff authority changed");
+    }
+
+    // TP-C5-SEND: a watcher-reconciled stale entry and a vanished runtime are
+    // independently fail-closed and visible; neither can route to another pane.
+    #[test]
+    fn existing_agent_handoff_rejects_stale_path_and_missing_runtime() {
+        let fixture = HandoffFixture::new("stale-path");
+        let path = fixture.file("selected.txt");
+        let (mut stale, terminal_id, mut stale_receiver) = app_with_agent_handoff(&fixture.root, 2);
+        stale.state.request_file_manager_agent_handoff = Some(FileManagerAgentHandoffRequest {
+            path: path.clone(),
+            terminal_id,
+        });
+        stale
+            .state
+            .file_manager
+            .as_mut()
+            .expect("open handoff FM")
+            .entries
+            .clear();
+
+        assert!(stale.sync_file_manager_agent_handoff_send());
+        assert!(stale_receiver.try_recv().is_err());
+        assert_eq!(
+            stale
+                .state
+                .toast
+                .as_ref()
+                .map(|toast| toast.context.as_str()),
+            Some("agent handoff authority changed")
+        );
+
+        let (mut missing, terminal_id, mut missing_receiver) =
+            app_with_agent_handoff(&fixture.root, 2);
+        missing.state.request_file_manager_agent_handoff = Some(FileManagerAgentHandoffRequest {
+            path,
+            terminal_id: terminal_id.clone(),
+        });
+        let runtime = missing
+            .terminal_runtimes
+            .remove(&terminal_id)
+            .expect("remove handoff runtime");
+
+        assert!(missing.sync_file_manager_agent_handoff_send());
+        assert!(missing_receiver.try_recv().is_err());
+        assert_eq!(
+            missing
+                .state
+                .toast
+                .as_ref()
+                .map(|toast| toast.context.as_str()),
+            Some("agent runtime is unavailable")
+        );
+        runtime.shutdown();
+    }
+
+    // TP-C5-SEND: a full terminal input lane is a terminal failure for this
+    // one-shot request. It is not retried on later frame ticks.
+    #[test]
+    fn existing_agent_handoff_backpressure_is_consumed_without_hot_retry() {
+        let fixture = HandoffFixture::new("backpressure");
+        let path = fixture.file("selected.txt");
+        let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 1);
+        app.terminal_runtimes
+            .get(&terminal_id)
+            .expect("handoff runtime")
+            .try_send_bytes(Bytes::from_static(b"occupied"))
+            .expect("fill handoff input lane");
+        app.state.request_file_manager_agent_handoff =
+            Some(FileManagerAgentHandoffRequest { path, terminal_id });
+
+        assert!(app.sync_file_manager_agent_handoff_send());
+        assert!(app.state.request_file_manager_agent_handoff.is_none());
+        assert_eq!(
+            receiver.try_recv().expect("pre-existing lane payload"),
+            Bytes::from_static(b"occupied")
+        );
+        assert!(!app.sync_file_manager_agent_handoff_send());
+        assert!(
+            receiver.try_recv().is_err(),
+            "failed handoff is not retried"
+        );
+        let toast = app.state.toast.as_ref().expect("visible send failure");
+        assert_eq!(toast.kind, crate::app::state::ToastKind::NeedsAttention);
+        assert_eq!(toast.title, "send to agent failed");
+        assert_eq!(toast.context, "agent input is busy");
+    }
+}
