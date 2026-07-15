@@ -36,6 +36,7 @@ fn modified_url_click_modifier_matches_terminal_mouse_reporting() {
 
 mod copy_mode;
 mod file_manager;
+pub(crate) use file_manager::handle_agent_attachment_picker_key;
 mod modal;
 mod mouse;
 mod navigate;
@@ -115,6 +116,11 @@ impl App {
             return;
         }
 
+        if self.state.mode == Mode::AttachFile {
+            file_manager::handle_agent_attachment_picker_key(&mut self.state, key_event);
+            return;
+        }
+
         match self.state.mode {
             Mode::Terminal => self.handle_terminal_key(key).await,
             Mode::Prefix => self.handle_prefix_key(key),
@@ -146,6 +152,7 @@ impl App {
                     handle_navigator_key(&mut self.state, &self.terminal_runtimes, key_event)
                 }
                 Mode::Terminal => unreachable!(),
+                Mode::AttachFile => unreachable!(),
             },
         }
     }
@@ -279,6 +286,33 @@ impl App {
     }
 
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent) {
+        if self.state.mode == Mode::Terminal
+            && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+            && mouse.modifiers.is_empty()
+        {
+            let action = self.state.view.agent_attachment_action_area.clone();
+            if let Some(action) = action.filter(|action| {
+                mouse.column >= action.rect.x
+                    && mouse.column < action.rect.right()
+                    && mouse.row >= action.rect.y
+                    && mouse.row < action.rect.bottom()
+            }) {
+                let current = self.state.active.and_then(|workspace_idx| {
+                    let pane_id = self
+                        .state
+                        .workspaces
+                        .get(workspace_idx)?
+                        .focused_pane_id()?;
+                    let terminal_id = self.state.terminal_id_for_pane(workspace_idx, pane_id)?;
+                    Some((pane_id, terminal_id))
+                });
+                if current == Some((action.pane_id, action.terminal_id)) {
+                    self.open_agent_attachment_picker_with_feedback();
+                }
+                return;
+            }
+        }
+
         if self.handle_overlay_mouse(mouse) {
             return;
         }
@@ -432,6 +466,12 @@ impl App {
             self.selection_autoscroll_deadline =
                 Some(std::time::Instant::now() + super::SELECTION_AUTOSCROLL_INTERVAL);
         }
+    }
+
+    fn open_agent_attachment_picker_with_feedback(&mut self) {
+        let previous_toast = self.state.toast.clone();
+        let _ = self.state.open_agent_attachment_picker();
+        self.sync_toast_deadline(previous_toast);
     }
 
     fn handle_modified_url_click(&mut self, mouse: MouseEvent) -> bool {

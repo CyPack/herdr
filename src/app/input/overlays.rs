@@ -20,6 +20,33 @@ fn rect_contains(rect: Rect, col: u16, row: u16) -> bool {
 
 impl App {
     pub(super) fn handle_overlay_mouse(&mut self, mouse: MouseEvent) -> bool {
+        if self.state.mode == Mode::AttachFile {
+            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                && mouse.modifiers.is_empty()
+            {
+                let target = self
+                    .state
+                    .view
+                    .agent_attachment_picker_row_areas
+                    .iter()
+                    .find(|row| rect_contains(row.rect, mouse.column, mouse.row))
+                    .map(|row| (row.entry_idx, row.entry_path.clone()));
+                if let Some((entry_idx, entry_path)) = target {
+                    let is_current = self
+                        .state
+                        .agent_attachment_picker
+                        .as_ref()
+                        .and_then(|picker| picker.file_manager.entries.get(entry_idx))
+                        .is_some_and(|entry| entry.path == entry_path);
+                    if is_current {
+                        if let Some(picker) = self.state.agent_attachment_picker.as_mut() {
+                            picker.file_manager.select(entry_idx);
+                        }
+                    }
+                }
+            }
+            return true;
+        }
         if self.state.mode == Mode::ConfirmFileDelete {
             if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
                 let stage = self

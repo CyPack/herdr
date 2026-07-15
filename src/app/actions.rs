@@ -359,6 +359,125 @@ impl AppState {
         self.file_manager = Some(crate::fm::FmState::new(cwd));
     }
 
+    /// Open the blocking single-file picker for the exact focused agent. This
+    /// prepares client-local filesystem state only; no runtime input is sent.
+    pub(crate) fn open_agent_attachment_picker(
+        &mut self,
+    ) -> Result<(), crate::app::state::AgentAttachmentOpenError> {
+        use crate::app::state::{
+            AgentAttachmentOpenError, AgentAttachmentPickerState, AgentAttachmentTarget,
+        };
+
+        let prepared = (|| {
+            if self.view.terminal_area.width < 18 || self.view.terminal_area.height < 10 {
+                return Err(AgentAttachmentOpenError::InsufficientSpace);
+            }
+            if self.mode != Mode::Terminal
+                || self.file_manager.is_some()
+                || self.agent_attachment_picker.is_some()
+            {
+                return Err(AgentAttachmentOpenError::Unavailable);
+            }
+            let workspace_idx = self.active.ok_or(AgentAttachmentOpenError::Unavailable)?;
+            let workspace = self
+                .workspaces
+                .get(workspace_idx)
+                .ok_or(AgentAttachmentOpenError::Unavailable)?;
+            let pane_id = workspace
+                .focused_pane_id()
+                .ok_or(AgentAttachmentOpenError::Unavailable)?;
+            let terminal_id = self
+                .terminal_id_for_pane(workspace_idx, pane_id)
+                .ok_or(AgentAttachmentOpenError::Unavailable)?;
+            if !self
+                .terminals
+                .get(&terminal_id)
+                .is_some_and(crate::terminal::TerminalState::is_agent_terminal)
+            {
+                return Err(AgentAttachmentOpenError::Unavailable);
+            }
+            Ok((
+                AgentAttachmentTarget {
+                    workspace_id: workspace.id.clone(),
+                    pane_id,
+                    terminal_id,
+                },
+                workspace.identity_cwd.clone(),
+            ))
+        })();
+        let (target, cwd) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.toast = Some(ToastNotification {
+                    kind: ToastKind::NeedsAttention,
+                    title: "attach file unavailable".to_string(),
+                    context: match error {
+                        AgentAttachmentOpenError::InsufficientSpace => {
+                            "attachment picker needs more terminal space"
+                        }
+                        AgentAttachmentOpenError::Unavailable => {
+                            "focused pane is not an available agent"
+                        }
+                    }
+                    .to_string(),
+                    position: None,
+                    target: None,
+                });
+                return Err(error);
+            }
+        };
+        let file_manager = crate::fm::FmState::new(cwd);
+        self.agent_attachment_picker = Some(AgentAttachmentPickerState {
+            file_manager,
+            target,
+        });
+        self.request_agent_attachment_delivery = None;
+        self.view.agent_attachment_action_area = None;
+        self.mode = Mode::AttachFile;
+        Ok(())
+    }
+
+    pub(crate) fn close_agent_attachment_picker(&mut self) {
+        self.agent_attachment_picker = None;
+        self.request_agent_attachment_delivery = None;
+        self.mode = if self.active.is_some() {
+            Mode::Terminal
+        } else {
+            Mode::Navigate
+        };
+    }
+
+    pub(crate) fn agent_attachment_selected_file(&self) -> Option<std::path::PathBuf> {
+        let file_manager = &self.agent_attachment_picker.as_ref()?.file_manager;
+        let entry = file_manager.entries.get(file_manager.cursor)?;
+        (!entry.is_dir && entry.operation_supported && entry.path.to_str().is_some())
+            .then(|| entry.path.clone())
+    }
+
+    pub(crate) fn agent_attachment_target_is_current(
+        &self,
+        target: &crate::app::state::AgentAttachmentTarget,
+    ) -> bool {
+        let Some(workspace_idx) = self.active else {
+            return false;
+        };
+        let Some(workspace) = self.workspaces.get(workspace_idx) else {
+            return false;
+        };
+        if workspace.id != target.workspace_id
+            || workspace.focused_pane_id() != Some(target.pane_id)
+            || self
+                .terminal_id_for_pane(workspace_idx, target.pane_id)
+                .as_ref()
+                != Some(&target.terminal_id)
+        {
+            return false;
+        }
+        self.terminals
+            .get(&target.terminal_id)
+            .is_some_and(crate::terminal::TerminalState::is_agent_terminal)
+    }
+
     /// Close the native file manager, returning the center to the terminal panes.
     pub(crate) fn close_file_manager(&mut self) {
         self.request_file_manager_sidebar_navigation = None;

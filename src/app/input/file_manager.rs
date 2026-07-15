@@ -113,6 +113,40 @@ pub(super) fn handle_file_manager_key(
     FileManagerKeyDispatch::Consumed
 }
 
+pub(crate) fn handle_agent_attachment_picker_key(state: &mut AppState, key: KeyEvent) {
+    match (key.code, key.modifiers) {
+        (KeyCode::Esc | KeyCode::Char('q'), _) => state.close_agent_attachment_picker(),
+        (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
+            if let Some(picker) = state.agent_attachment_picker.as_mut() {
+                picker.file_manager.move_down();
+            }
+        }
+        (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) => {
+            if let Some(picker) = state.agent_attachment_picker.as_mut() {
+                picker.file_manager.move_up();
+            }
+        }
+        (KeyCode::Enter | KeyCode::Right | KeyCode::Char('l'), KeyModifiers::NONE) => {
+            if state.agent_attachment_selected_file().is_none() {
+                if let Some(picker) = state.agent_attachment_picker.as_mut() {
+                    picker.file_manager.enter();
+                }
+            }
+        }
+        (KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h'), KeyModifiers::NONE) => {
+            if let Some(picker) = state.agent_attachment_picker.as_mut() {
+                picker.file_manager.leave();
+            }
+        }
+        (KeyCode::Char('.'), KeyModifiers::NONE) => {
+            if let Some(picker) = state.agent_attachment_picker.as_mut() {
+                picker.file_manager.toggle_hidden();
+            }
+        }
+        _ => {}
+    }
+}
+
 impl App {
     /// Convert one stable row hit target into the same typed intent consumed by
     /// header/context actions. A cloned projection proves the anchored row is

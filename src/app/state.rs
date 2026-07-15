@@ -1344,6 +1344,31 @@ pub struct AgentAttachmentActionArea {
     pub terminal_id: crate::terminal::TerminalId,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentAttachmentTarget {
+    pub workspace_id: String,
+    pub pane_id: PaneId,
+    pub terminal_id: crate::terminal::TerminalId,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentAttachmentPickerState {
+    pub file_manager: crate::fm::FmState,
+    pub target: AgentAttachmentTarget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentAttachmentDeliveryRequest {
+    pub path: PathBuf,
+    pub target: AgentAttachmentTarget,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentAttachmentOpenError {
+    InsufficientSpace,
+    Unavailable,
+}
+
 pub struct ViewState {
     pub layout: ViewLayout,
     /// Resolved rects of the named outer-shell regions for this frame (from
@@ -1380,6 +1405,10 @@ pub struct ViewState {
     /// non-agent, non-terminal, file-manager, mobile, borderless, or too-small
     /// layouts.
     pub agent_attachment_action_area: Option<AgentAttachmentActionArea>,
+    /// Exact visible CURRENT rows inside the blocking attachment picker. The
+    /// render and mouse paths share this snapshot so responsive geometry is
+    /// never reconstructed from coordinates during input handling.
+    pub agent_attachment_picker_row_areas: Vec<FileManagerRowArea>,
     pub tab_bar_rect: Rect,
     pub tab_hit_areas: Vec<Rect>,
     pub tab_scroll_left_hit_area: Rect,
@@ -1402,6 +1431,7 @@ pub enum Mode {
     Prefix,
     Copy,
     Terminal,
+    AttachFile,
     RenameWorkspace,
     RenameTab,
     RenamePane,
@@ -1443,6 +1473,7 @@ impl Mode {
                 | Mode::ContextMenu
                 | Mode::GlobalMenu
                 | Mode::KeybindHelp
+                | Mode::AttachFile
         )
     }
 }
@@ -2052,6 +2083,11 @@ pub struct AppState {
     /// panes render as usual). Client-side presentation state (v1 TUI-only,
     /// per the runtime/client boundary), swapped in like `SidebarTab` content.
     pub file_manager: Option<crate::fm::FmState>,
+    /// Blocking client-local picker that keeps terminal panes in the base
+    /// layer. It owns no watcher, worker, process, pane, or server state.
+    pub agent_attachment_picker: Option<AgentAttachmentPickerState>,
+    /// At most one typed request may cross the scheduled delivery boundary.
+    pub request_agent_attachment_delivery: Option<AgentAttachmentDeliveryRequest>,
     /// Client-local source paths prepared for future native-FM paste actions.
     /// Closing the FM does not discard clipboard content; no filesystem work
     /// is performed merely by storing these paths.
@@ -2532,6 +2568,8 @@ impl AppState {
             selected: 0,
             mode: Mode::Navigate,
             file_manager: None,
+            agent_attachment_picker: None,
+            request_agent_attachment_delivery: None,
             file_manager_clipboard: Vec::new(),
             file_manager_operation: None,
             file_manager_delete_confirmation: None,
@@ -2609,6 +2647,7 @@ impl AppState {
                 file_manager_header_action_areas: Vec::new(),
                 file_manager_action_bar: None,
                 agent_attachment_action_area: None,
+                agent_attachment_picker_row_areas: Vec::new(),
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),
                 tab_scroll_left_hit_area: Rect::default(),

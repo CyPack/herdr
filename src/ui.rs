@@ -29,12 +29,14 @@ use self::dialogs::{
     render_new_linked_worktree_overlay, render_open_existing_worktree_overlay,
     render_remove_worktree_overlay, render_rename_overlay,
 };
+use self::file_manager::{
+    agent_attachment_picker_visible_rows, compute_agent_attachment_picker_row_areas,
+    compute_file_manager_header_action_areas, compute_file_manager_row_geometry,
+    file_manager_visible_rows, render_agent_attachment_picker, render_file_manager,
+    FileManagerRowGeometry,
+};
 pub(crate) use self::file_manager::{
     compute_file_manager_action_bar_model, file_manager_preview_content_area,
-};
-use self::file_manager::{
-    compute_file_manager_header_action_areas, compute_file_manager_row_geometry,
-    file_manager_visible_rows, render_file_manager, FileManagerRowGeometry,
 };
 use self::keybind_help::render_keybind_help_overlay;
 use self::menus::{
@@ -367,6 +369,7 @@ fn compute_view_internal(
     );
     let agent_attachment_action_area =
         panes::compute_agent_attachment_action_area(app, &pane_infos);
+    let agent_attachment_picker_row_areas = sync_agent_attachment_picker_view(app, terminal_area);
     if resize_panes {
         resize_background_tab_panes_for_desktop(app, terminal_runtimes, main_area, cell_size);
     }
@@ -397,6 +400,7 @@ fn compute_view_internal(
         file_manager_header_action_areas,
         file_manager_action_bar,
         agent_attachment_action_area,
+        agent_attachment_picker_row_areas,
         tab_bar_rect,
         tab_hit_areas: tab_bar_view.tab_hit_areas,
         tab_scroll_left_hit_area: tab_bar_view.scroll_left_hit_area,
@@ -471,6 +475,7 @@ fn compute_mobile_view(
         resize_panes,
         cell_size,
     );
+    let agent_attachment_picker_row_areas = sync_agent_attachment_picker_view(app, terminal_area);
     if resize_panes {
         resize_background_tab_panes_to_area(app, terminal_runtimes, terminal_area, cell_size);
     }
@@ -497,6 +502,7 @@ fn compute_mobile_view(
         file_manager_header_action_areas,
         file_manager_action_bar,
         agent_attachment_action_area: None,
+        agent_attachment_picker_row_areas,
         tab_bar_rect: Rect::default(),
         tab_hit_areas: Vec::new(),
         tab_scroll_left_hit_area: Rect::default(),
@@ -520,6 +526,22 @@ fn sync_file_manager_view(app: &mut AppState, area: Rect) -> FileManagerRowGeome
     } else {
         FileManagerRowGeometry::default()
     }
+}
+
+fn sync_agent_attachment_picker_view(
+    app: &mut AppState,
+    area: Rect,
+) -> Vec<crate::app::state::FileManagerRowArea> {
+    let visible_rows = agent_attachment_picker_visible_rows(area);
+    let Some(picker) = app.agent_attachment_picker.as_mut() else {
+        return Vec::new();
+    };
+    picker.file_manager.sync_viewport(visible_rows);
+    compute_agent_attachment_picker_row_areas(
+        area,
+        &picker.file_manager.entries,
+        picker.file_manager.viewport_start,
+    )
 }
 
 /// Render the UI — reads AppState but does not mutate it.
@@ -631,6 +653,7 @@ impl compose::Component for OverlayLayer {
             Mode::GlobalMenu => render_global_launcher_menu(app, frame),
             Mode::KeybindHelp => render_keybind_help_overlay(app, frame),
             Mode::Navigator => render_navigator_overlay(app, terminal_runtimes, frame),
+            Mode::AttachFile => render_agent_attachment_picker(app, frame, terminal_area),
             Mode::Terminal => {}
         }
     }

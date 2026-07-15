@@ -18,6 +18,7 @@ use ratatui::Frame;
 use std::collections::BTreeSet;
 
 use super::text::truncate_end;
+use super::widgets::{centered_popup_rect, render_panel_shell};
 use crate::app::state::{AppState, Palette};
 use crate::app::state::{
     FileManagerActionBarModel, FileManagerActionBarSelection, FileManagerActionBarSelectionKind,
@@ -755,6 +756,223 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         {
             let status = truncate_end(&format!(" {status}"), areas.status.width as usize);
             frame.render_widget(Paragraph::new(status).style(style), areas.status);
+        }
+    }
+}
+
+pub(crate) fn agent_attachment_picker_rect(area: Rect) -> Option<Rect> {
+    if area.width < 18 || area.height < 10 {
+        return None;
+    }
+    centered_popup_rect(area, 96, 30)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AgentAttachmentPickerAreas {
+    popup: Rect,
+    header: Rect,
+    content: Rect,
+    footer: Rect,
+}
+
+fn agent_attachment_picker_areas(area: Rect) -> Option<AgentAttachmentPickerAreas> {
+    let popup = agent_attachment_picker_rect(area)?;
+    if popup.width < 2 || popup.height < 2 {
+        return None;
+    }
+    let inner = Rect::new(
+        popup.x.saturating_add(1),
+        popup.y.saturating_add(1),
+        popup.width.saturating_sub(2),
+        popup.height.saturating_sub(2),
+    );
+    let [header, content, footer] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+    Some(AgentAttachmentPickerAreas {
+        popup,
+        header,
+        content,
+        footer,
+    })
+}
+
+pub(crate) fn agent_attachment_picker_visible_rows(area: Rect) -> usize {
+    agent_attachment_picker_areas(area)
+        .and_then(|areas| file_manager_areas(areas.content))
+        .map(|areas| panel_areas(areas.columns.current)[1].height as usize)
+        .unwrap_or(0)
+}
+
+pub(crate) fn compute_agent_attachment_picker_row_areas(
+    area: Rect,
+    entries: &[FileEntry],
+    viewport_start: usize,
+) -> Vec<FileManagerRowArea> {
+    let Some(list) = agent_attachment_picker_areas(area)
+        .and_then(|areas| file_manager_areas(areas.content))
+        .map(|areas| panel_areas(areas.columns.current)[1])
+    else {
+        return Vec::new();
+    };
+    let visible_rows = list.height as usize;
+    if list.width == 0 || visible_rows == 0 || entries.is_empty() {
+        return Vec::new();
+    }
+    let start = viewport_start.min(entries.len().saturating_sub(visible_rows));
+    entries
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(visible_rows)
+        .map(|(entry_idx, entry)| FileManagerRowArea {
+            rect: Rect::new(
+                list.x,
+                list.y
+                    .saturating_add(entry_idx.saturating_sub(start) as u16),
+                list.width,
+                1,
+            ),
+            entry_idx,
+            entry_path: entry.path.clone(),
+        })
+        .collect()
+}
+
+/// Paint the blocking picker above the terminal base. The private `FmState`
+/// was prepared outside render; this function only consumes cached data.
+pub(crate) fn render_agent_attachment_picker(app: &AppState, frame: &mut Frame, area: Rect) {
+    let Some(picker) = app.agent_attachment_picker.as_ref() else {
+        return;
+    };
+    let Some(areas) = agent_attachment_picker_areas(area) else {
+        return;
+    };
+    if render_panel_shell(frame, areas.popup, app.palette.accent, app.palette.panel_bg).is_none() {
+        return;
+    }
+    let target_current = app.agent_attachment_target_is_current(&picker.target);
+    let (title, color) = if target_current {
+        ("Attach file", app.palette.text)
+    } else {
+        ("Attach file · target unavailable", app.palette.peach)
+    };
+    frame.render_widget(
+        Paragraph::new(title).style(Style::default().fg(color).add_modifier(Modifier::BOLD)),
+        areas.header,
+    );
+    let fallback_rows;
+    let rows = if area == app.view.terminal_area {
+        app.view.agent_attachment_picker_row_areas.as_slice()
+    } else {
+        fallback_rows = compute_agent_attachment_picker_row_areas(
+            area,
+            &picker.file_manager.entries,
+            picker.file_manager.viewport_start,
+        );
+        fallback_rows.as_slice()
+    };
+    render_agent_attachment_file_manager(app, &picker.file_manager, frame, areas.content, rows);
+    frame.render_widget(
+        Paragraph::new("Enter attach  Esc cancel").style(Style::default().fg(app.palette.overlay1)),
+        areas.footer,
+    );
+}
+
+fn render_agent_attachment_file_manager(
+    app: &AppState,
+    fm: &FmState,
+    frame: &mut Frame,
+    area: Rect,
+    current_rows: &[FileManagerRowArea],
+) {
+    let Some(areas) = file_manager_areas(area) else {
+        return;
+    };
+    let styles = file_manager_visual_styles(&app.palette);
+    frame.render_widget(Block::default().style(styles.canvas), area);
+    let cwd = truncate_end(&fm.cwd.to_string_lossy(), areas.header.width as usize);
+    frame.render_widget(Paragraph::new(cwd).style(styles.identity), areas.header);
+    for divider in areas.columns.dividers.into_iter().flatten() {
+        frame.render_widget(
+            Block::default()
+                .borders(Borders::LEFT)
+                .border_style(styles.divider),
+            divider,
+        );
+    }
+    if let Some(parent_area) = areas.columns.parent {
+        if let Some(parent) = fm.parent.as_ref() {
+            render_panel(
+                app,
+                frame,
+                parent_area,
+                "PARENT",
+                &parent.entries,
+                parent.cursor,
+                "(empty)",
+                None,
+                None,
+                None,
+            );
+        } else {
+            render_panel(
+                app,
+                frame,
+                parent_area,
+                "PARENT",
+                &[],
+                None,
+                "(root)",
+                None,
+                None,
+                None,
+            );
+        }
+    }
+    let (empty, empty_style) = file_manager_current_empty_state(fm, styles);
+    render_panel(
+        app,
+        frame,
+        areas.columns.current,
+        "CURRENT",
+        &fm.entries,
+        (!fm.entries.is_empty()).then_some(fm.cursor),
+        empty,
+        Some(empty_style),
+        Some(current_rows),
+        None,
+    );
+    if let Some(preview_area) = areas.columns.preview {
+        match &fm.preview {
+            FmPreview::None => render_panel(
+                app,
+                frame,
+                preview_area,
+                "PREVIEW",
+                &[],
+                None,
+                "(nothing selected)",
+                None,
+                None,
+                None,
+            ),
+            FmPreview::File(preview) => render_file_preview(app, frame, preview_area, preview),
+            FmPreview::Directory(entries) => render_panel(
+                app,
+                frame,
+                preview_area,
+                "PREVIEW",
+                entries,
+                None,
+                "(empty)",
+                None,
+                None,
+                None,
+            ),
         }
     }
 }
@@ -2657,6 +2875,7 @@ mod tests {
             .clone();
         app.workspaces = vec![workspace];
         app.active = Some(0);
+        app.mode = crate::app::Mode::Terminal;
         app.ensure_test_terminals();
         app.terminals
             .get_mut(&terminal_id)

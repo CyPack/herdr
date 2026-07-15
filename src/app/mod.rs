@@ -604,6 +604,8 @@ impl App {
             selected,
             mode,
             file_manager: None,
+            agent_attachment_picker: None,
+            request_agent_attachment_delivery: None,
             file_manager_clipboard: Vec::new(),
             file_manager_operation: None,
             file_manager_delete_confirmation: None,
@@ -687,6 +689,7 @@ impl App {
                 file_manager_header_action_areas: Vec::new(),
                 file_manager_action_bar: None,
                 agent_attachment_action_area: None,
+                agent_attachment_picker_row_areas: Vec::new(),
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),
                 tab_scroll_left_hit_area: Rect::default(),
@@ -1857,6 +1860,9 @@ impl App {
             }
             Mode::Navigator => {
                 input::handle_navigator_key(&mut self.state, &self.terminal_runtimes, key_event);
+            }
+            Mode::AttachFile => {
+                input::handle_agent_attachment_picker_key(&mut self.state, key_event);
             }
             Mode::Terminal => {
                 // Should not be called in terminal mode.

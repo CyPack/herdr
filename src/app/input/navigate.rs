@@ -393,6 +393,10 @@ impl App {
                 self.state.toggle_file_manager();
                 leave_navigate_mode(&mut self.state);
             }
+            NavigateAction::OpenAgentAttachmentPicker => {
+                leave_navigate_mode(&mut self.state);
+                self.open_agent_attachment_picker_with_feedback();
+            }
             NavigateAction::CyclePaneNext => {
                 self.cycle_pane_via_api(false);
                 leave_navigate_mode(&mut self.state);
@@ -1322,6 +1326,7 @@ pub(crate) enum NavigateAction {
     EnterResizeMode,
     ToggleSidebar,
     ToggleFileManager,
+    OpenAgentAttachmentPicker,
     CyclePaneNext,
     CyclePanePrevious,
     LastPane,
@@ -1460,6 +1465,10 @@ fn non_indexed_action_for_key(
         (&kb.resize_mode, NavigateAction::EnterResizeMode),
         (&kb.toggle_sidebar, NavigateAction::ToggleSidebar),
         (&kb.toggle_file_manager, NavigateAction::ToggleFileManager),
+        (
+            &kb.agent_attachment_picker,
+            NavigateAction::OpenAgentAttachmentPicker,
+        ),
         (&kb.reload_config, NavigateAction::ReloadConfig),
         (
             &kb.open_notification_target,
@@ -1717,6 +1726,10 @@ pub(super) fn execute_navigate_action_in_context(
         NavigateAction::ToggleFileManager => {
             state.toggle_file_manager();
             leave_navigate_mode(state);
+        }
+        NavigateAction::OpenAgentAttachmentPicker => {
+            leave_navigate_mode(state);
+            let _ = state.open_agent_attachment_picker();
         }
         NavigateAction::CyclePaneNext => {
             state.cycle_pane(false);
