@@ -732,19 +732,33 @@ covered by deterministic alternate-palette and breakpoint buffer tests.
   restore/migration, and adversarial-width tests.
 - [ ] S7 popup stack with ownership, focus, close ordering, and nested popup
   tests.
-- [ ] N2 dynamic Miller auto-navigation is v2-only after v1 A–C completion.
-- [ ] N2.0 define an implementation-ready dynamic Miller product contract
+- [x] N2 dynamic/unbounded Miller state machine evaluated after v1 A–C;
+  implementation NO-GO because the bounded current projection already matches
+  the inspected references and an arbitrary visible chain adds no proven value.
+- [x] N2.0 define an implementation-ready Miller navigation product contract
   before production code; this is the only active post-P4.0 discovery lane.
-- [ ] N2.0a compare at least two independent ranger/Joshuto/Yazi-class
+- [x] N2.0a compare at least two independent ranger/Joshuto/Yazi-class
   navigation references against Herdr's current cached parent/current/preview
   behavior; name the user-visible delta instead of copying an architecture.
-- [ ] N2.0b specify the bounded client-local transition model for enter, leave,
+- [x] N2.0b specify the bounded client-local transition model for enter, leave,
   cursor movement, watcher refresh, path disappearance, root, narrow width,
   selection, preview generation, and close/reopen; add no server/protocol state.
-- [ ] N2.0c write exact RED-capable characterization/test points, complexity and
+- [x] N2.0c write exact RED-capable characterization/test points, complexity and
   cleanup budgets, accepted static behavior, and a final implementation GO/NO-GO.
-- [ ] N2.1 implement only after N2.0 proves behavior not already supplied by
-  current `FmState` refresh plus responsive `miller_layout`.
+- [ ] N2.1 implement only the proven path-stable parent-return delta from
+  `.codex/evidence/n2-path-stable-miller-navigation.md`.
+- [ ] N2.1a RED: add exact departed-path focus, preview/selection, reorder/delete,
+  viewport, missing/hidden, and root-no-op tests in `src/fm/mod.rs`; run and
+  record the expected current cursor-zero failures before production edits.
+- [ ] N2.1b GREEN: make `FmState::leave()` focus the exact departed visible child
+  after the existing reload, with deterministic top/clamp fallback and no new
+  retained state, I/O pass, dependency, runtime owner, or render mutation.
+- [ ] N2.1c REFACTOR/GATES: run exact tests, all FM tests, full direct `just
+  check` equivalent, production-unwrap/diff/artifact scans, then refresh the
+  graph and publish only through the CyPack fork FF workflow.
+- [ ] N2.2 retained per-directory cursor/back-forward history remains deferred;
+  activate only with independent demand, finite eviction, restore semantics,
+  and a separate test-first contract.
 
 | Test point | What is tested | Expected result | Reason |
 |---|---|---|---|
@@ -759,7 +773,7 @@ covered by deterministic alternate-palette and breakpoint buffer tests.
 | S5 ComponentRegistry | `Compositor` contains two fixed `Component` layers; `BaseLayer` performs one explicit terminal/FM content swap; no dynamic registration, per-component event ownership, or second page lifecycle exists | A second real independently owned component/page that duplicates render, hit-area, lifecycle, and event routing | Implementation NO-GO; keep the concrete content-swap pattern |
 | S6 resizable persisted shell | `ShellLayout::default()` computes only LeftPanel/CenterContent; nested and serde fixtures exist; `SessionSnapshot` already persists the concrete sidebar width/split but no shell tree | A real RightPanel/BottomBar consumer or user-resizable region whose identity, migration, and restore cannot be represented by existing sidebar fields | Implementation NO-GO; preserve current snapshot compatibility |
 | S7 popup ownership stack | One `Mode` selects one `OverlayLayer`; `render_modal_shell` has eight callers, `modal_stack_areas` ten, and context/modal transition tests already protect focus/close order | A real simultaneously nested popup that must retain parent ownership while a child opens and closes | Implementation NO-GO; reuse existing modal/context seams |
-| N2 dynamic Miller | V1 A-C is closed; current `FmState::enter/leave/reload` already refresh cached parent/current/preview; `miller_layout` owns bounded 1/2/3-column projection | Exact user-visible meaning of ranger-style auto-split/auto-prune beyond today's refresh, plus transition/failure budgets and independent reference comparison | Discovery GO only for N2.0; production remains NO-GO until its contract proves non-duplicate value |
+| N2 dynamic Miller | V1 A-C is closed; current `FmState::enter/leave/reload` already refresh cached parent/current/preview; `miller_layout` owns bounded 1/2/3-column projection; pinned Yazi/Joshuto evidence identifies only departed-child focus as missing | The original arbitrary visible chain has no trigger. Path-stable leave must protect exact identity plus missing/hidden/reorder/delete/root/viewport outcomes without new retained state | Dynamic/unbounded state machine NO-GO; narrow N2.1 path-stable parent return GO |
 
 ### N2.0 Test-Point Contract
 
@@ -769,6 +783,21 @@ covered by deterministic alternate-palette and breakpoint buffer tests.
 | TP-N2-TRANSITIONS | Root, file/directory cursor, enter/leave, watcher reorder/delete, hidden toggle, selection, preview generation, narrow columns, close/reopen | Every event has one bounded client-local transition, stale async work cannot retarget a new cwd, and no server/protocol/filesystem work enters render | Dynamic navigation crosses independently changing path, selection, viewport, and preview authority |
 | TP-N2-BUDGET | Maximum retained path/column state, per-event work, refresh frequency, rollback/cleanup, cross-platform filesystem semantics | Explicit finite bounds and recovery outcomes exist before RED tests; no unbounded directory chain, hot retry, or hidden process/runtime owner is introduced | A new state machine is production-safe only when memory, latency, and failure behavior are designed first |
 | TP-N2-GO | User-visible delta, implementation size, protected tests, reversibility, and complete gate cost | Exactly one implementation plan is approved or N2 returns to deferred with the missing evidence recorded | Discovery must terminate in a falsifiable decision rather than becoming permanent speculative design work |
+
+### N2.0 Final Decision
+
+- Evidence: `.codex/evidence/n2-path-stable-miller-navigation.md`, including
+  pinned Yazi `4dab4803`, Joshuto `d2581fb0`, and Ranger/Yazi primary docs.
+- Dynamic/unbounded visible Miller chain: implementation NO-GO. All inspected
+  products use a bounded parent/current/preview projection and Herdr already
+  provides responsive 1/2/3-column projection plus cached context refresh.
+- Path-stable parent return: N2.1 implementation GO. Both source references
+  focus the directory just exited when moving to its parent; Herdr currently
+  loses that path identity by forcing cursor zero.
+- Budget: zero new state fields/history, no extra directory read, one exact-path
+  search over the existing snapshot, no protocol/server/render/worker change.
+- Exact RED tests and failure-path expectations are frozen in the evidence file
+  before any Rust edit.
 
 ## Future Mission — Recorded, Not Active
 
@@ -782,9 +811,9 @@ covered by deterministic alternate-palette and breakpoint buffer tests.
 A4, B0, B1, the A3 remainder, B2, C1, N3, C2, N4.2, C3.1, C3.2, C3.3,
 C4.1, C4.2, C4.3, C4.4.1 progress, C4.4.2 cancellation, C4.4.3
 reconciliation, C4.4.4 recovery, C4.4.5 gates, and C5.1–C5.5 are complete.
-C6.1–C6.4 and the P4.0 evidence gate are complete through C6.4 test closure
-`f52cb85` plus the continuity commit containing this decision. S5–S7 remain
-evidence-gated implementation NO-GO. The next execution order is N2.0 bounded
-product/reference specification; N2 production remains NO-GO until N2.0 proves
-a user-visible delta and exact test contract. M1–M3 remain inactive north-star
-work.
+C6.1–C6.4, P4.0, and N2.0 are complete through C6.4 test closure `f52cb85`
+plus their continuity commits. S5–S7 and the original dynamic/unbounded N2
+state machine remain evidence-gated implementation NO-GO. N2.0 proved one
+bounded delta, so the next execution order is N2.1 path-stable parent return
+under the exact RED/GREEN/gate contract above. N2.2 and M1–M3 remain inactive
+future work.

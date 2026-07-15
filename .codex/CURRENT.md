@@ -159,7 +159,8 @@
 - Fresh graph is 18,974 nodes / 89,775 edges. `ready` was cross-checked with
   current source snippets for `miller_layout`, `FmDirectoryStatus`,
   `file_manager_visual_styles`, and `file_manager_status_line`.
-- P4.0 evidence gate is closed below; N2.0 is the only active discovery lane.
+- P4.0 and N2.0 evidence gates are closed below; N2.1 is the only active
+  implementation lane.
 
 ## Verified Checkpoint — P4.0 Architecture Evidence Gate
 
@@ -177,15 +178,24 @@
   `render_modal_shell` and `modal_stack_areas` already serve eight and ten
   callers respectively. Existing context-to-confirmation tests cover staged
   focus/close behavior; no simultaneous nested popup requires ownership stack.
-- N2 receives discovery-only GO because v1 A-C is closed and the roadmap names
-  ranger-style auto-split/auto-prune, but production remains NO-GO: current
-  `FmState` refresh already updates parent/current/preview and no N2 spec file
-  defines the remaining observable delta or state-machine budget.
-- Durable N2.0 microtasks and test points now require two independent behavior
-  references, exact transition/failure/bounds design, explicit comparison with
-  current behavior, and a terminating implementation GO/NO-GO.
-- Next module: N2.0 bounded product/reference specification; no Rust edit until
-  its test contract proves non-duplicate user value.
+- N2.0 is complete in
+  `.codex/evidence/n2-path-stable-miller-navigation.md`. Pinned Yazi and Joshuto
+  source plus Ranger/Yazi primary docs confirm a bounded parent/current/preview
+  projection, not an arbitrarily growing visible column chain. The original
+  dynamic/unbounded state-machine idea is implementation NO-GO.
+- Both independent source references preserve the path identity of the child
+  just exited when leaving to its parent. Herdr alone forces current cursor zero
+  in `FmState::leave()`, which selects an unrelated sibling whenever the child
+  is not first. N2.1 receives a narrow implementation GO for that observable
+  path-stable parent-return delta.
+- N2.1 adds zero retained fields/history, no extra directory read, and no
+  protocol/server/render/worker surface. Missing/hidden/raced child paths use
+  the existing deterministic top/clamp fallback. Per-directory cursor history,
+  back/forward, and parent-column sibling controls remain deferred as N2.2.
+- Exact RED tests, transition/failure behavior, resource budgets, and complete
+  gates are frozen in the evidence file and `.codex/TASKS.md` before Rust work.
+- Next module: N2.1 RED tests in `src/fm/mod.rs`, then the smallest GREEN
+  path-focus change and complete verification.
 
 ## Verified Checkpoint — C1.1 Header Action Geometry
 
@@ -840,13 +850,14 @@
 
 ## Exact Next Action
 
-1. Start N2.0 from the durable delta/transition/budget/decision test points in
-   `.codex/TASKS.md`; this is specification and reference comparison only.
-2. Compare at least two independent dynamic-Miller behaviors with current
-   `FmState::enter/leave/reload` and responsive `miller_layout`. Define only the
-   observable delta, never copy a foreign architecture blindly.
-3. Publish a bounded client-local state-machine contract and one final N2
-   implementation GO/NO-GO before any Rust production or RED test commit.
+1. Start N2.1 by adding the exact RED-capable tests frozen in
+   `.codex/evidence/n2-path-stable-miller-navigation.md` to `src/fm/mod.rs`.
+2. Run the focused test set and record that current `leave()` selects cursor
+   zero instead of the departed nonzero child; do not edit production first.
+3. Implement only path-stable departed-child focus after the existing reload,
+   then run exact, FM-wide, complete direct `just check`, graph-freshness, and
+   fork-only FF publication gates. Leave N2.2 and other deferred architecture
+   untouched.
 
 ## Verified B2.0 Dependency Decision
 

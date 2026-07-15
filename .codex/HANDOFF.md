@@ -2,12 +2,12 @@
 
 ## 1. SONRAKI ADIM
 
-Start N2.0 specification/reference work from the durable delta/transition/
-budget/decision test points in `.codex/TASKS.md`. Compare at least two
-independent dynamic-Miller behaviors against current `FmState` refresh and
-responsive layout, then publish a bounded client-local state-machine contract
-and terminating implementation GO/NO-GO. Do not write Rust before that contract
-proves non-duplicate user value; never touch stable Herdr/socket/processes.
+Start N2.1 with the exact RED tests frozen in
+`.codex/evidence/n2-path-stable-miller-navigation.md`. Prove current
+`FmState::leave()` incorrectly selects cursor zero when the departed child is a
+nonzero sibling, then implement only exact-path child focus after the existing
+reload. Run focused, FM-wide, full direct `just check`, graph freshness, and
+CyPack fork-only FF publication gates. Never touch stable Herdr/socket/processes.
 
 ## 2. AKTİF PROJE
 
@@ -687,11 +687,11 @@ upstream is never pushed.
   and graph-indexed. P4.0 is read-only evidence gathering; it may activate at
   most one deferred architecture candidate and cannot itself justify product
   refactoring.
-- P4.0 is complete. S5/S6/S7 are implementation NO-GO because their required
-  second consumer, resizable-region, and nested-popup triggers are absent. N2
-  receives discovery-only GO; production remains NO-GO until N2.0 proves an
-  observable delta beyond current cached parent/current/preview refresh and
-  defines bounded transition/failure behavior.
+- P4.0 and N2.0 are complete. S5/S6/S7 and the original dynamic/unbounded N2
+  state machine are implementation NO-GO. Pinned Yazi/Joshuto source proves one
+  narrow missing behavior: leave should focus the exact child just exited.
+  N2.1 receives implementation GO under zero-new-state/no-extra-read budgets;
+  N2.2 retained history and parent-column sibling navigation remain deferred.
 
 ## 9. GÜVENLİK
 
@@ -721,10 +721,11 @@ and fresh graph 18,909 / 90,194. C6.3 closes at product head `8b21442` plus
 test closure `2d974da`, full Rust 3160/3160 plus one named skip, and fresh
 graph 18,922 / 89,277. C6.4 closes at test/product head `f52cb85`, full Rust
 3171/3171 plus one named skip, isolated API/PTY residue zero, and fresh graph
-18,974 / 89,775. P4.0 then closes as a documentation-only evidence matrix:
-S5–S7 implementation NO-GO, N2 discovery-only GO. The immediate ordered task
-is N2.0 bounded product/reference specification; N2 production remains NO-GO
-until a terminating decision. M1–M3 remain north-star backlog.
+18,974 / 89,775. P4.0 closes as a documentation-only evidence matrix with
+S5–S7 implementation NO-GO. N2.0 then rejects the original dynamic/unbounded
+state machine but proves N2.1 path-stable parent return as a bounded GO with
+exact RED tests. The immediate ordered task is N2.1 RED/GREEN/gates; N2.2 and
+M1–M3 remain deferred backlog.
 
 ## 11. ORTAM
 
