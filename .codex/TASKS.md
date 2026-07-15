@@ -558,7 +558,7 @@ owns filesystem mutation and C5 owns agent delivery.
 | TP-C6.2-MARKER | Accessible, inaccessible, ejectable, and inaccessible-plus-ejectable rows at normal and narrow widths | Inaccessible rows show a right-aligned warning; accessible ejectable rows show eject; warning takes precedence when both flags are present; every marker stays inside the row | Access failure is stronger safety information than a removable-media affordance and must not be hidden by it |
 | TP-C6.2-LIFECYCLE | Sidebar navigation, watcher-driven cwd transition, FM close/reopen, model refresh, and tab switch | The next frame derives styling from current FM/model state with no stale highlight cache; render performs no filesystem or runtime mutation | Cwd and sidebar projection change independently, so visual authority must converge without another lifecycle owner |
 | TP-C6.2-GATES | Focused authority/layout/render/lifecycle failures, broad sidebar/FM regressions, full platform and maintenance gates, graph and artifact checks | Every applicable gate passes with only the named B0 probe skipped; no production `unwrap()`, temp residue, stable Herdr/socket access, or user-process change occurs | Finder styling crosses state projection, Unicode geometry, rendering, and existing click authority despite having no filesystem side effect |
-| TP-C6.3-CATALOG | Header Copy/Paste/New Folder/Delete, row Open/Rename/Delete, built-in context actions, plugin file actions, zero/one/many selections, and enabled/disabled reasons | One durable matrix names which action appears on each surface, its prepared authority source, selection cardinality, and exact typed dispatch seam; no action is inferred from a label or icon | Existing safe actions were built in separate modules and visual integration must not create a second semantic catalog |
+| TP-C6.3-CATALOG | Header Copy/Paste/New Folder/Delete, row Send to Agent/Rename/Delete, built-in context actions, plugin file actions, zero/one/many selections, and enabled/disabled reasons | One durable matrix names which action appears on each surface, its prepared authority source, selection cardinality, and exact typed dispatch seam; no action is inferred from a label or icon | Existing safe actions were built in separate modules and visual integration must not create a second semantic catalog |
 | TP-C6.3-AUTHORITY | Equivalent action from every supported surface; stale/reordered/missing/unsupported/read-only selection; operation in flight; disabled plugin | Equivalent actions converge on the existing C3/C4 request and scheduled revalidation path exactly once; every invalid case is consumed without filesystem work, duplicate dispatch, or popup/focus corruption | Surface consistency is unsafe if identical-looking controls have different authority or mutation owners |
 | TP-C6.3-GEOMETRY | Normal/narrow/zero desktop and mobile layouts, hidden header/row controls, context popup at every edge, long Unicode labels, sidebar expanded/collapsed | Only complete visible controls receive hit geometry; labels/icons truncate by display cell; hidden/clipped/gap coordinates stay inert and no surface overlaps Miller dividers or terminal targets | Integrating four responsive surfaces can reintroduce independent arithmetic and phantom targets |
 | TP-C6.3-LIFECYCLE | Watcher reorder/delete, selection change, popup open/close, operation start/finish/cancel, cwd transition, FM close/reopen, stale prior frame | The next compute/input boundary derives every surface from current prepared state; stale geometry and menu/action intent clear deterministically with no cached render authority | Each source state can change between paint and input, so integration requires one fail-closed convergence rule |
@@ -567,6 +567,38 @@ owns filesystem mutation and C5 owns agent delivery.
 | TP-C6.4-EMPTY-ERROR | Empty directory, no selection, unavailable/permission/read-only cwd, preview unavailable/truncated/error, operation failure/partial/uncertain recovery | Each state has explicit stable copy and bounded geometry, preserves actionable recovery evidence, and performs no filesystem/runtime mutation during render | Empty and failure states are the production path users see when mounts, permissions, previews, or operations fail |
 | TP-C6.4-VISUAL | One/two/three-column breakpoints, expanded/collapsed Files sidebar, header/row/context/progress/modal composition, desktop/mobile, isolated real TUI | Buffer assertions and isolated screenshots show coherent Finder-inspired hierarchy, spacing, alignment, and focus; accepted platform/font differences are documented instead of silently ignored | Cell-level correctness can still compose into a confusing or inaccessible full screen |
 | TP-C6.4-GATES | Theme/breakpoint/empty/error buffers, full FM/sidebar regressions, isolated runtime parity and cleanup, complete direct `just check`, graph/artifact/diff checks | V1 A–C closes only with all automated gates green, isolated runtime residue zero, and no stable Herdr/socket/user-process change | C6.4 is the final v1 quality gate and must establish both deterministic correctness and real-host usability |
+
+### C6.3a Cross-Surface Action Matrix
+
+This matrix is the durable semantic inventory for C6.3. Labels and glyphs are
+presentation only; input dispatches the typed action enum and revalidates the
+prepared authority at the existing App-owned boundary. `Unsupported` means the
+control must render disabled and emit no intent because v1 has no matching
+C3/C4/C5 owner; it must never look enabled while silently doing nothing.
+
+| Surface | Typed action | Label / glyph | Cardinality | Prepared authority | Exact dispatch seam |
+|---|---|---|---|---|---|
+| Header | `Copy` | `[copy]` | one or many | action-bar exact selection paths | C3 intent → C4 scheduled clipboard controller |
+| Header | `Paste` | `[paste]` | zero selection; non-empty clipboard | action-bar cwd writable + clipboard snapshot | existing C4 paste preflight → bounded worker |
+| Header | `NewFolder` | `[new folder]` | zero selection | writable cwd only | `Unsupported` in v1; disabled, no request |
+| Header | `Delete` | `[delete]` | one or many | action-bar exact selection paths | C3 intent → C4 delete confirmation → scheduled worker |
+| Row | `SendAgent` | `>` | exactly one anchored current path | row hit area path + current action-bar selection | C3 intent → C5 scheduled handoff/split authority |
+| Row | `Rename` | `r` | exactly one anchored current path | row hit area path + current action-bar selection | C3 intent → C4 rename modal → scheduled worker |
+| Row | `Delete` | `x` | exactly one anchored current path | row hit area path + current action-bar selection | C3 intent → C4 delete confirmation → scheduled worker |
+| Context | `Open` | `Open` | exactly one | revalidated context snapshot paths/kind | existing A3 enter/navigation state transition |
+| Context | `Copy` | `Copy` | one or many | revalidated context snapshot paths/kind | C3 intent → C4 scheduled clipboard controller |
+| Context | `Rename` | `Rename` | exactly one | revalidated context snapshot paths/kind | C3 intent → C4 rename modal → scheduled worker |
+| Context | `Delete` | `Delete` | one or many | revalidated context snapshot paths/kind | C3 intent → C4 delete confirmation → scheduled worker |
+| Context | `Compress` | `Compress` | one or many | revalidated context snapshot paths/kind | `Unsupported` in v1; disabled, no request |
+| Context | `SendAgent` | `Send to Agent` | exactly one | revalidated context snapshot paths/kind | C3 intent → C5 scheduled handoff/split authority |
+| Context plugin | manifest `Plugin` | manifest title | one or many UTF-8 paths | current enabled/platform-supported manifest + revalidated exact paths | existing plugin action lookup → App-owned plugin command runtime |
+
+The required integration rule is one semantic action → one existing owner.
+Header, row, and context variants of Copy, Rename, Delete, and Send to Agent
+may differ in geometry, but must converge on the same typed request and current-
+state validation. New Folder and Compress stay explicitly disabled until a
+separate test-point-first operation owner is approved; C6.3 does not introduce
+filesystem mutation inside render or input.
 
 - C6.1 is complete as test-point plan `6464668`, RED contracts `4a65c15`,
   `4836b32`, and `1236f57`, then GREEN product `2bcdf14`. The prepared model
