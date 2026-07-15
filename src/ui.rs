@@ -1126,6 +1126,85 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // SF1 characterization: Files currently replaces the terminal surface
+    // inside `terminal_area`, but opening/rendering it does not remove the
+    // server-owned terminal runtime that sits behind the curtain.
+    #[tokio::test]
+    async fn files_curtain_currently_replaces_terminal_surface() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        struct FixtureRoot(std::path::PathBuf);
+
+        impl Drop for FixtureRoot {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "herdr-ui-fm-curtain-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _fixture_root = FixtureRoot(root.clone());
+        std::fs::create_dir_all(&root).expect("create curtain fixture root");
+        std::fs::write(root.join("FM_VISIBLE"), b"x").expect("write file manager curtain marker");
+
+        let mut app = crate::app::state::AppState::test_new();
+        let workspace = Workspace::test_new("one");
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace
+            .terminal_id(pane_id)
+            .expect("root pane terminal identity")
+            .clone();
+        app.workspaces = vec![workspace];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.file_manager = Some(crate::fm::FmState::new(&root));
+
+        let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        assert!(
+            terminal_runtimes
+                .insert(
+                    terminal_id.clone(),
+                    crate::terminal::TerminalRuntime::test_with_screen_bytes(
+                        100,
+                        30,
+                        b"TERMINAL_SURFACE_SHOULD_BE_HIDDEN",
+                    ),
+                )
+                .is_none(),
+            "fixture inserts exactly one runtime"
+        );
+        let runtime_count = terminal_runtimes.len();
+
+        let area = Rect::new(0, 0, 100, 30);
+        compute_view_with_runtime_registry(&mut app, &terminal_runtimes, area);
+        let terminal_area = app.view.terminal_area;
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height))
+            .expect("curtain characterization terminal");
+        terminal
+            .draw(|frame| render_with_runtime_registry(&app, &terminal_runtimes, frame))
+            .expect("curtain characterization render");
+        let surface_text = buffer_rect_text(terminal.backend().buffer(), terminal_area);
+
+        assert!(
+            surface_text.contains("FM_VISIBLE"),
+            "Files content should occupy terminal_area; rendered surface: {surface_text:?}"
+        );
+        assert!(
+            !surface_text.contains("TERMINAL_SURFACE_SHOULD_BE_HIDDEN"),
+            "terminal pane content should be absent behind the Files curtain"
+        );
+        assert_eq!(terminal_runtimes.len(), runtime_count);
+        assert!(
+            terminal_runtimes.get(&terminal_id).is_some(),
+            "Files rendering should preserve the exact terminal runtime"
+        );
+    }
+
     fn native_fm_visual_composition_app(root: &std::path::Path) -> AppState {
         use crate::app::state::{
             FileManagerOperationKind, FileManagerOperationState, FileManagerOperationStatus,
