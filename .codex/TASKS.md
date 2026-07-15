@@ -514,10 +514,22 @@ owns filesystem mutation and C5 owns agent delivery.
 
 ## P3 — C6 Finder-Fidelity Polish
 
-- [ ] C6.1 native sectioned sidebar.
+- [ ] C6.1 replace the existing `Files` sidebar placeholder with one native,
+  bounded, sectioned FM navigation model. Prepare FAVORITES, optional PINNED,
+  and LOCATIONS outside render; derive exact item hit areas in `compute_view`;
+  route clicks as typed path requests consumed by an App-owned refresh boundary.
 - [ ] C6.2 pill highlight and current-location marker.
 - [ ] C6.3 integrate header/row/context actions consistently.
 - [ ] C6.4 theme, spacing, empty/error states, and visual Finder-parity review.
+
+| Test point | What is tested | Expected result | Reason |
+|---|---|---|---|
+| TP-C6.1-MODEL | FAVORITES/PINNED/LOCATIONS ordering, empty optional section, duplicates, inaccessible paths, source cap | Deterministic bounded rows; invalid or repeated source data cannot create ambiguous path authority | Config and mount sources are live, fallible, and potentially unbounded |
+| TP-C6.1-GEOMETRY | Item/header/blank rows, narrow and tiny heights, clipping, collapsed sidebar, non-Files tabs, stale prior frame | Only complete visible item rectangles are addressable; every hidden/inert/stale rectangle is cleared | Old coordinates and labels must never become navigation authority |
+| TP-C6.1-RENDER | Three section headings, icon/label rows, placeholder removal, truncation, empty state | Files tab renders only prepared state and never reads filesystem/environment during render | Herdr render is pure and must remain deterministic |
+| TP-C6.1-NAV | Exact item click, missing/file/unsupported/stale path, request replacement, scheduled consumption | Input prepares one typed exact path only; App refresh revalidates and opens that directory once, while every invalid case is a no-op | Filesystem work belongs in refresh paths, not mouse/render |
+| TP-C6.1-LIFECYCLE | FM cwd changes, close/reopen, watcher reconciliation, tab switching | Sidebar current-location authority and Miller cwd cannot diverge; no stale request survives a lifecycle change | Two independently stale directory projections would misroute navigation |
+| TP-C6.1-GATES | Focused model/geometry/render/navigation failures, sidebar/FM regressions, full platform and maintenance gates | All applicable checks pass with only the named B0 probe skipped and no stale hit area or filesystem artifact | Finder polish cannot regress core workspace/sidebar or FM safety |
 
 ## P4 — Deferred UI Architecture
 
