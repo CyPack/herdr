@@ -191,6 +191,11 @@ mod tests {
         }
     }
 
+    fn open_header_delete_confirmation(app: &mut crate::app::App) {
+        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Delete));
+        assert!(app.sync_file_operation_worker());
+    }
+
     // TP-C4.2-CONFIRM: header Delete snapshots current prepared path order into
     // a typed confirmation only. Opening the modal performs no filesystem work.
     #[test]
@@ -201,7 +206,7 @@ mod tests {
         let mut app = test_app(&td.root);
         let paths = select_all(&mut app);
 
-        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Delete));
+        open_header_delete_confirmation(&mut app);
 
         assert_eq!(app.state.mode, Mode::ConfirmFileDelete);
         let confirmation = app
@@ -281,7 +286,7 @@ mod tests {
         let source = td.file("selected.txt", b"selected");
         let mut app = test_app(&td.root);
         let paths = select_all(&mut app);
-        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Delete));
+        open_header_delete_confirmation(&mut app);
 
         app.handle_file_manager_delete_confirmation_key(key(KeyCode::Esc));
         assert_eq!(app.state.mode, Mode::Navigate);
@@ -292,7 +297,7 @@ mod tests {
             b"selected"
         );
 
-        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Delete));
+        open_header_delete_confirmation(&mut app);
         app.handle_file_manager_delete_confirmation_key(key(KeyCode::Char('t')));
         let request = app
             .state
@@ -315,7 +320,7 @@ mod tests {
         let source = td.file("selected.txt", b"selected");
         let mut app = test_app(&td.root);
         let paths = select_all(&mut app);
-        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Delete));
+        open_header_delete_confirmation(&mut app);
 
         app.handle_file_manager_delete_confirmation_key(key(KeyCode::Char('d')));
         assert!(app.state.request_file_manager_delete.is_none());
@@ -350,7 +355,7 @@ mod tests {
         let source = td.file("selected.txt", b"selected");
         let mut app = test_app(&td.root);
         select_all(&mut app);
-        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Delete));
+        open_header_delete_confirmation(&mut app);
 
         app.handle_file_manager_delete_confirmation_key(KeyEvent::new(
             KeyCode::Char('t'),
@@ -387,7 +392,7 @@ mod tests {
         let second_path = second.file("second.txt", b"second");
         let mut app = test_app(&first.root);
         select_all(&mut app);
-        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Delete));
+        open_header_delete_confirmation(&mut app);
 
         app.state.file_manager = None;
         app.state.file_manager = Some(crate::fm::FmState::new(&second.root));
@@ -410,7 +415,7 @@ mod tests {
         let source = td.file("selected.txt", b"selected");
         let mut app = test_app(&td.root);
         let paths = select_all(&mut app);
-        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Delete));
+        open_header_delete_confirmation(&mut app);
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 100, 30));
 
         app.handle_mouse(click(Rect::new(0, 0, 1, 1)));
