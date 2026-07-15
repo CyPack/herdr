@@ -15,15 +15,49 @@
   publication or implementation task remains pending.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
 
+## Active Product Lane — Shell Foundation and Files Workspace
+
+- The user explicitly approved the bounded twelve-phase direction: SF0-SF6,
+  followed by FM1-FM5. Apps/Desktop remains a later independent program.
+- Approved design:
+  `docs/superpowers/specs/2026-07-15-herdr-shell-foundation-v0-design.md`.
+- Approved execution package:
+  `docs/superpowers/plans/2026-07-15-herdr-shell-file-manager-program-plan.md`,
+  `docs/superpowers/plans/2026-07-15-herdr-shell-foundation-v0-implementation.md`,
+  and
+  `docs/superpowers/plans/2026-07-15-herdr-file-manager-post-shell-implementation.md`.
+- Plan review evidence:
+  `.codex/evidence/shell-foundation-plan-review.md`.
+- A0-A7 are complete. The approved plans manually evidence I0-I5. The current
+  delivery phase is I6: run and strengthen SF1 characterization before the
+  first new SF2 behavior RED. No Shell Foundation Rust product code has been
+  written yet.
+- Fresh planning graph evidence is 19,534 nodes / 91,017 edges. Freshness was
+  proved through the current `miller_layout` symbol and exact persistence,
+  render, queue, retained-PTY, input, shell, and Files lifecycle snippets;
+  `ready` alone was not accepted.
+- The prior P4.0 S6 and dynamic-N2 NO-GO decisions were correct for the then-
+  available evidence. The later explicit user demand now supplies the missing
+  triggers: a real AppDock/WorkspaceStage/Files consumer, resizable/collapsible
+  shell regions, overlay input blocking, horizontal Miller traversal, column
+  resize, and all-column mouse ownership. The new design remains bounded and
+  does not authorize the rejected arbitrary component registry, unbounded
+  Miller state, visual editor, or Apps/Desktop expansion.
+- Product and non-product tooling commits must remain separate. The change-
+  pipeline T3.1 lane is paused while this sequential product lane closes its
+  current phase. The untracked user-owned `.superpowers/` tree remains outside
+  every stage/commit.
+
 ## Active Non-Product Tooling Lane — Change Pipeline
 
 - Design commits `86a25e8`, `0ea0f77`, and `600c0d6` define Ratatui reference
   intelligence v2.1 plus generalized A0-A7 change intelligence and I0-I14
   delivery governance.
 - Durable human/agent task state is in
-  `.codex/CHANGE-PIPELINE-TASKS.md`; T0, T1, and T2 are complete. The active
-  micro action is T3.1: write the RED identity/version/authority contracts for
-  the sibling `herdr-change-pipeline` module.
+  `.codex/CHANGE-PIPELINE-TASKS.md`; T0, T1, and T2 are complete. The queued
+  tooling micro action is T3.1, paused until the sequential product lane closes
+  its current phase: write the RED identity/version/authority contracts for the
+  sibling `herdr-change-pipeline` module.
 - The user-approved execution contracts are the shared program
   plan plus the separate Ratatui v2.1 and change-pipeline v1 TDD plans under
   `docs/superpowers/plans/2026-07-15-*.md`.
@@ -55,8 +89,10 @@
   process, pane, socket, or stable Herdr resource changed during the audit.
 - Fresh exact-head characterization is 16/16, zero retry, nextest run
   `c3e40137-6400-4547-9eb8-729f29fd6583`.
-- No speculative production increment is active. S5, S6, S7, and N2.2 remain
-  the only unchecked tasks and require their recorded independent triggers.
+- At this completion-audit checkpoint no speculative production increment was
+  active. Later explicit user demand now satisfies bounded S6/N2.2 triggers as
+  recorded in the active product lane; S5 registry and S7 popup stack remain
+  inactive.
 
 ## Completed Checkpoint
 
@@ -240,8 +276,9 @@
 - Fresh graph is 18,974 nodes / 89,775 edges. `ready` was cross-checked with
   current source snippets for `miller_layout`, `FmDirectoryStatus`,
   `file_manager_visual_styles`, and `file_manager_status_line`.
-- P4.0, N2.0, and N2.1 are closed below; no future implementation lane is
-  automatically active.
+- P4.0, N2.0, and N2.1 are closed below. Their then-current NO-GO evidence did
+  not automatically activate a future lane; the later active lane exists only
+  because the user supplied and approved new concrete product demand.
 
 ## Verified Checkpoint — P4.0 Architecture Evidence Gate
 
@@ -251,7 +288,8 @@
 - S5 is implementation NO-GO: `Compositor` has two fixed layers and `BaseLayer`
   has one explicit terminal/FM swap, but no second dynamic component/page owns
   duplicated event and lifecycle seams.
-- S6 is implementation NO-GO: `ShellLayout` already has nested/serde fixtures,
+- At the P4.0 evidence checkpoint, S6 was implementation NO-GO:
+  `ShellLayout` already had nested/serde fixtures,
   yet production computes only LeftPanel/CenterContent and `SessionSnapshot`
   persists the concrete sidebar fields. No RightPanel/BottomBar consumer or
   general restore/migration pressure exists.
@@ -303,8 +341,9 @@
   so a stable runtime was neither touched nor required. Unreleased release docs
   need no new command documentation because keys and visible controls are
   unchanged.
-- N2.1 is closed. N2.2 retained cursor/back-forward history remains deferred
-  behind independent demand and a finite-eviction contract.
+- N2.1 is closed. At this checkpoint N2.2 retained cursor/back-forward history
+  remained deferred behind independent demand and a finite-eviction contract;
+  the later approved FM1-FM4 program now supplies that bounded trigger.
 
 ## Verified Checkpoint — C1.1 Header Action Geometry
 
@@ -959,19 +998,24 @@
 
 ## Exact Next Action
 
-1. Execute T3.1 from `.codex/CHANGE-PIPELINE-TASKS.md`: write and observe the
-   RED `TP-CHG-MODULE` tests for sibling-module identity, version, required
-   directories/documents, and default authorization=false. Do not implement
-   T3.2 before the RED reason is proven.
-2. The tooling lane is not product authority. No product or architecture
-   publication is pending after the M3.0 evidence checkpoint `e9f2fe0`.
-3. Do not start speculative production work. Activate only a
-   task whose recorded trigger is independently satisfied by real product
-   demand.
-4. S5–S7 and N2.2 remain the durable future product list with explicit trigger,
-   characterization, migration, and rollback requirements in `TASKS.md`.
-5. Any third frame action first evaluates a private pure geometry/render helper;
-   it does not automatically authorize a registry or general page interface.
+1. Close SF0 documentation: self-review the three plans against the approved
+   design, run Markdown/diff/path/placeholder/link checks, targeted-stage only
+   the design/plans/continuity files, commit, fast-forward publish only to the
+   CyPack fork, then verify remote SHA and refresh graph evidence as applicable.
+2. Enter I6/SF1. Re-query exact current symbols, run the frozen focused
+   characterization inventory, and add only the missing
+   `files_curtain_currently_replaces_terminal_surface` characterization. SF1 is
+   test-only; product behavior must not change.
+3. Require the focused and full baseline green before SF2. Then add the single
+   compile-valid behavior RED
+   `shell_layout_places_dock_sidebar_stage_without_overlap` and observe its
+   intended assertion failure before production geometry code.
+4. Execute phases sequentially through the approved child plans. Do not mix
+   tooling T3.1, Apps/Desktop, S5 registry, S7 popup stack, or unrelated
+   refactors into a product commit.
+5. Preserve targeted staging, atomic RED/GREEN/refactor commits, direct full
+   `just check` equivalent, isolated runtime safety, CyPack-only FF writes, and
+   post-publication exact-symbol graph freshness at every phase.
 
 ## Verified B2.0 Dependency Decision
 

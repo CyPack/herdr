@@ -2,19 +2,25 @@
 
 ## 1. SONRAKI ADIM
 
-The non-product change-pipeline lane has completed T0, T1, and T2. Ratatui
-Design Intelligence v2.1 is locally committed from baseline `7622dde` through
-governance `2517353`; fresh closure is 59/59 tests, 15 phases/101 jobs, both
-validators PASS, JSON parse PASS, skill validation PASS, and product isolation
-PASS. The only active micro action is T3.1: write and observe RED
-`TP-CHG-MODULE` contracts for the sibling `herdr-change-pipeline` module.
-Product authorization remains false; no tooling-lane push or graph refresh has
-occurred.
+The user explicitly approved the bounded twelve-phase product program: SF0-SF6
+then FM1-FM5; Apps/Desktop remains later. The approved design and three
+implementation plans are under `docs/superpowers/specs/` and
+`docs/superpowers/plans/`; review evidence is
+`.codex/evidence/shell-foundation-plan-review.md`. A0-A7 and manual I0-I5 are
+complete; no Foundation Rust product code exists yet. The immediate action is
+to self-review and
+atomically publish SF0 documentation/continuity, then enter I6/SF1: run the
+frozen characterization inventory and add only the test
+`files_curtain_currently_replaces_terminal_surface` before any SF2 behavior
+RED.
 
-The product completion audit still proves A1–C6, N1/N3/N4, N2.1, M1, and M2
-complete; M3 is closed implementation NO-GO. No speculative production lane is
-active. Inspect S5, S6, S7, and N2.2 triggers before any independent product
-work. Never touch stable Herdr/socket/processes.
+The previous S6/dynamic-N2 NO-GO was valid when no real consumer/demand
+existed. New explicit AppDock/WorkspaceStage/Files, resize/collapse/overlay,
+horizontal Miller, column resize, and all-column mouse demand supplies the
+missing bounded trigger. It does not authorize S5 arbitrary registry, S7 popup
+stack, unbounded history, visual editor, or Apps/Desktop. The non-product
+change-pipeline lane remains paused at T3.1 and must not be mixed with product
+commits. Never touch stable Herdr/socket/processes or stage `.superpowers/`.
 
 ## 2. AKTİF PROJE
 
@@ -699,11 +705,14 @@ upstream is never pushed.
   and graph-indexed. P4.0 is read-only evidence gathering; it may activate at
   most one deferred architecture candidate and cannot itself justify product
   refactoring.
-- P4.0 and N2.0 are complete. S5/S6/S7 and the original dynamic/unbounded N2
-  state machine are implementation NO-GO. Pinned Yazi/Joshuto source proves one
+- At their historical checkpoint, P4.0 and N2.0 were complete and S5/S6/S7 plus
+  the original dynamic/unbounded N2 state machine were implementation NO-GO.
+  Pinned Yazi/Joshuto source proved one
   narrow missing behavior: leave should focus the exact child just exited.
   N2.1 receives implementation GO under zero-new-state/no-extra-read budgets;
-  N2.2 retained history and parent-column sibling navigation remain deferred.
+  N2.2 retained history and parent-column sibling navigation remained deferred
+  at that checkpoint; the later bounded SF/FM program activation is recorded
+  at the top of this handoff.
 - N2.1 is implementation-complete as RED `e433a2f` and GREEN `c530836`.
   Exact 6/6, FM 65/65, full nextest 3177/3177 plus one named ignored host probe,
   Linux/Windows clippy, Bun 17/17, Python 64/64, and fresh graph 18,997 / 89,826
@@ -730,8 +739,10 @@ upstream is never pushed.
 
 ## 10. AÇIK GÖREVLER
 
-See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2/N4 contracts and the
-complete C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1, N3,
+See `.codex/TASKS.md` first for the active SF0-SF6 plus FM1-FM5 task list and
+then the completed A3/B2/C1/N3/C2/N4 contracts and historical C3–C6, S5–S7,
+N2, and M1–M3 roadmap. SF0 documentation/continuity closure is current; SF1
+characterization is the next executable phase. A4, B0, B1, A3, B2, C1, N3,
 C2, N4, C3.1, C3.2, C3.3, C4.1, C4.2, C4.3, C4.4.1 PROGRESS, C4.4.2
 CANCEL, C4.4.3 RECONCILE, C4.4.4 RECOVERY, C4.4.5 GATES, C5.1–C5.5, and
 C6.1–C6.4 are closed. C5's atomic product chain ends at `f744e4d`: exact existing-agent send
@@ -756,8 +767,10 @@ GREEN `0ae6175`: exact M2.1 5/5, worktree/attachment 131/131, full 3202/3202
 plus the named skip, Linux/Windows clippy, Bun 17/17, Python 64/64, and fresh
 graph 19,534 / 91,017. Duplicate management implementations remain NO-GO.
 M3.0–M3.3 close implementation NO-GO with a fresh 16/16 characterization set
-and no product diff. N2.2 and S5–S7 remain independently deferred future tasks
-with explicit activation criteria; there is no speculative active code lane.
+and no product diff. At that checkpoint N2.2 and S5–S7 were independently
+deferred with explicit activation criteria. The later approved product lane
+activates only bounded S6/N2.2-derived work; S5 registry and S7 popup stack
+remain deferred.
 
 ## 11. ORTAM
 

@@ -3,14 +3,14 @@
 ## Status
 
 - Design date: 2026-07-15
-- Design status: written specification under user review
+- Design status: approved by the user; implementation plans frozen
 - Change mode: `mid_flight_adoption`
 - Product direction: **Thin Shell Foundation -> Files first consumer -> FM UX continuation -> Apps/Desktop expansion**
 - Product authorization: approved for the bounded Shell Foundation and the
   subsequent Files migration described here
-- Product implementation status: not started by this specification
-- Delivery status: A6 target frozen; A7 review pending; I0-I14 implementation
-  delivery has not started
+- Product implementation status: not started; SF1 characterization is next
+- Delivery status: A0-A7 complete; I0-I5 manually evidenced by the approved
+  three-plan package; current delivery phase is I6 characterization
 - Repository: `/home/ayaz/projects/herdr`
 - Branch at design freeze: `feat/native-fm`
 - Design checkpoint parent: `11a5503`
@@ -1097,8 +1097,11 @@ Shell Foundation v0 is complete only when:
 - A4 options and pattern decision: bounded core shell selected;
 - A5 fresh Herdr cartography and fit: complete at the recorded graph;
 - A6 target contract: frozen in this specification;
-- A7 normalized handoff/readiness: pending user review of this written file.
+- A7 normalized handoff/readiness: complete through explicit user approval of
+  this written specification and its twelve-phase direction.
 
-I0 may begin only after the user approves this written specification. The next
-artifact is then a code-level, test-first implementation plan. Product code
-must not begin directly from this design document.
+I0-I5 are now represented by the approved program plan plus the two code-level
+test-first implementation plans. The next executable delivery phase is I6:
+run and, where required, strengthen SF1 characterization before observing the
+first new SF2 behavior RED. Product code must not begin directly from this
+design document or skip SF1.

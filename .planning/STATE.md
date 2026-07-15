@@ -2,13 +2,24 @@
 
 - Updated: 2026-07-15
 - Branch: `feat/native-fm`
+- Current Git checkpoint: `aca2243`
+  (`docs: define shell foundation v0 architecture`).
+- Approved product program: SF0-SF6 followed by FM1-FM5; Apps/Desktop remains
+  a later independent program.
+- Current phase: SF0 documentation/continuity publication closure. The next
+  executable phase is I6/SF1 characterization; no Shell Foundation Rust
+  product code exists yet.
+- Current graph: 19,534 nodes / 91,017 edges. Freshness is proved through the
+  current `miller_layout` symbol rather than `ready` alone.
 - Published CyPack M3 evidence checkpoint: `e9f2fe0`.
 - Verified M2.1 chain: RED `dab1e20`; GREEN product head `0ae6175`.
 - M3.0 evidence is published with exact SHA equality to CyPack
   `feat/native-fm` and fork `master`. No product publication is pending.
 - Completion audit: all approved native-FM core/post-core scope is reconciled
   in `.codex/evidence/native-fm-completion-audit.md`; ignored local PRD drift
-  was repaired without product changes. Only S5/S6/S7/N2.2 remain trigger-gated.
+  was repaired without product changes. The later explicit user demand now
+  activates bounded S6/N2.2-derived work through the approved SF/FM program;
+  S5 registry and S7 popup stack remain trigger-gated.
 
 ## Completed
 
@@ -78,26 +89,44 @@
 
 ## Active Next Increment
 
-No speculative production increment is active. Activate future work only when
-one recorded independent trigger is satisfied by concrete product demand.
+- Finish SF0 by validating, targeted-staging, committing, and publishing only
+  the approved design, three execution plans, review evidence, and continuity
+  state to the CyPack fork with fast-forward ancestry and remote-SHA proof.
+- Enter I6/SF1 and add only the test-only characterization
+  `files_curtain_currently_replaces_terminal_surface` after re-querying the
+  frozen baseline symbols and running the existing characterization inventory.
+- Require the focused and full baseline green before SF2. The first new
+  behavior RED is
+  `shell_layout_places_dock_sidebar_stage_without_overlap`; compile/setup or
+  filter failures do not count as RED.
+- Execute SF2-SF6 and then FM1-FM5 sequentially through the approved child
+  plans. Product, continuity, and tooling concerns remain separate.
 
 The separate non-product change-pipeline lane has completed T0-T2. Ratatui
 Design Intelligence v2.1 is locally committed (`7622dde` through `2517353`)
 and freshly verified at 59/59 tests plus 15 phases/101 jobs. Its next exact
-micro action is T3.1 RED module-contract tests for `herdr-change-pipeline`.
-This does not authorize product code, stable runtime access, push, or reindex.
+micro action is T3.1 RED module-contract tests for `herdr-change-pipeline`,
+paused while the sequential product lane closes its current phase. This does
+not authorize product code, stable runtime access, push, or reindex.
 
 ## Ordered Roadmap
 
-1. S5 only after a second independently owned page/component repeats render,
-   hit geometry, lifecycle, focus/close ownership, and event routing.
-2. S6 only after a real additional resizable region requires persisted identity,
-   migration, restore, and adversarial-width behavior.
-3. S7 only after a real nested popup must retain and restore parent ownership.
-4. N2.2 only after independent retained-history demand plus finite eviction and
-   restore semantics.
-5. A third frame action may first justify a private pure draw/geometry helper;
-   it does not automatically authorize a registry.
+1. SF0 design and baseline freeze.
+2. SF1 characterization tests.
+3. SF2 shell geometry foundation.
+4. SF3 resize, collapse, scroll, and snapshot v4 persistence.
+5. SF4 SurfaceHost and fail-closed input routing.
+6. SF5 icon-only bounded AppDock.
+7. SF6 Files migration to the native Workspace Stage.
+8. FM1 horizontal Miller viewport.
+9. FM2 Miller column resize.
+10. FM3 all-column mouse ownership.
+11. FM4 Finder-like path-stable growing navigation.
+12. FM5 preview/Inspector placement evidence and GO/NO-GO.
+
+S5 arbitrary registry and S7 popup ownership stack remain independently
+deferred. Apps/Desktop expansion begins only after this twelve-phase program
+closes and receives its own authorization.
 
 ## Fresh M2 Closure Evidence
 
@@ -134,4 +163,10 @@ This does not authorize product code, stable runtime access, push, or reindex.
 - Targeted staging only; never `git add -A`; never push `upstream` or force.
 
 Canonical sources: `.codex/CURRENT.md`, `.codex/TASKS.md`, and
-`.codex/HANDOFF.md`.
+`.codex/HANDOFF.md`. Approved execution artifacts:
+
+- `docs/superpowers/specs/2026-07-15-herdr-shell-foundation-v0-design.md`
+- `docs/superpowers/plans/2026-07-15-herdr-shell-file-manager-program-plan.md`
+- `docs/superpowers/plans/2026-07-15-herdr-shell-foundation-v0-implementation.md`
+- `docs/superpowers/plans/2026-07-15-herdr-file-manager-post-shell-implementation.md`
+- `.codex/evidence/shell-foundation-plan-review.md`

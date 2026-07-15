@@ -12,11 +12,163 @@
 - [x] Keep ignored local continuity repair, tracked documentation, and product
   code as separate concerns; no product code changed in this audit.
 
-The product queue is intentionally not filled with speculative implementation.
-The only unchecked product boxes in this file are the four future
-trigger-gated items; their absence of activation is a verified architecture
-decision, not missing task decomposition. A separate non-product tooling lane
-is tracked below and does not activate those product items.
+At the completion-audit checkpoint the product queue intentionally contained
+only four trigger-gated future items; that absence was a verified architecture
+decision, not missing decomposition. Later explicit user demand now activates
+the bounded Shell/Files/FM program below. The historical P4 decisions remain
+evidence of what was rejected, while the new active task list records the
+specific trigger, limits, and implementation boundaries. The separate
+non-product tooling lane does not grant product authority.
+
+## Active Product Program — Shell Foundation -> Files -> FM-next
+
+The user has now supplied independent concrete product demand that was absent
+at the P4.0 checkpoint: Files must become a real app surface instead of a
+terminal curtain; AppDock/WorkspaceStage must exist; shell regions must be
+bounded, resizable, collapsible, scroll-aware, and overlay-safe; Miller must
+support horizontal traversal, column resize, and all-column mouse ownership.
+This activates a new bounded program without reviving the rejected arbitrary
+component registry, unbounded history, visual editor, or Apps/Desktop scope.
+
+Authoritative plans:
+
+- `docs/superpowers/plans/2026-07-15-herdr-shell-file-manager-program-plan.md`
+- `docs/superpowers/plans/2026-07-15-herdr-shell-foundation-v0-implementation.md`
+- `docs/superpowers/plans/2026-07-15-herdr-file-manager-post-shell-implementation.md`
+
+### SF0 — Design and Baseline Freeze
+
+- [x] Preserve the current branch, published FM work, tests, graph, and
+  user-owned `.superpowers/` state under `mid_flight_adoption`.
+- [x] Complete A0-A7 across product, layout, input, runtime/PTY, persistence,
+  failure, platform, and performance dimensions.
+- [x] Freeze bounds, degradation, typed surface ownership, non-goals, migration,
+  rollback, and performance budgets in the approved design.
+- [x] Obtain explicit user approval for 7 Foundation + 5 FM phases.
+- [x] Discover exact current symbols/call paths through Codebase Memory and
+  prove graph freshness with current `miller_layout` rather than `ready`.
+- [x] Write the program, Foundation, and FM-next code-level TDD plans with
+  exact files, interfaces, test names, expected results/reasons, commands,
+  commits, full gates, and publication boundaries.
+- [x] Self-review phase count, A0-A7/I0-I14 coverage, primitive/interaction/
+  lifecycle/persistence/FM requirements, RED validity, placeholders, links,
+  whitespace, and current graph-symbol assumptions; record evidence in
+  `.codex/evidence/shell-foundation-plan-review.md`.
+- [ ] Self-review the complete plan set, update continuity, targeted-stage only
+  documentation/continuity, commit and CyPack-only FF publish, verify remote
+  SHA, and close SF0 evidence. The self-review portion is complete; Git and
+  publication closure remain.
+
+### SF1 — Characterization Tests (I6, next executable phase)
+
+- [ ] Re-query every named baseline symbol and detect drift from the plans.
+- [ ] Run the exact legacy desktop/mobile shell, Files composition, v3
+  persistence, identical-frame, retained dirty-row, and bounded-render-queue
+  characterization inventory.
+- [ ] Add test-only
+  `files_curtain_currently_replaces_terminal_surface`; prove current Files
+  replacement behavior and unchanged terminal runtime registry.
+- [ ] Run the focused set plus fresh full nextest/direct maintenance baseline.
+- [ ] Commit tests only as `test: characterize shell foundation baseline`.
+
+### SF2 — Shell Geometry Foundation
+
+- [ ] RED `shell_layout_places_dock_sidebar_stage_without_overlap` with a
+  compile-valid behavior assertion.
+- [ ] Add bounded named-region model and typed templates.
+- [ ] Add deterministic fixed/content-bounded/resizable/fill/collapsed solver
+  and frozen tiny-terminal degradation.
+- [ ] Project cached `ShellView` with generation-safe flattened semantic hits.
+- [ ] Close bounds, O(node_count), legacy-equivalence, Linux/Windows/full gates,
+  atomic commits, publication, and graph refresh.
+
+### SF3 — Resize / Collapse / Scroll / Persistence
+
+- [ ] Add transactional divider preview/commit/cancel with zero preview disk/
+  PTY churn and at most one commit resize.
+- [ ] Add bounded collapse/restore and owning horizontal/vertical viewports.
+- [ ] Add snapshot v4 shell presentation state; migrate v3 sidebar width,
+  preserve sidebar-section ownership, contain invalid shell data, reject future
+  versions.
+- [ ] Close failure, migration, performance, full-gate, Git, and graph evidence.
+
+### SF4 — SurfaceHost and Input Router
+
+- [ ] Add typed client-local Terminal/Files Stage surface state without new
+  runtime/protocol identity.
+- [ ] Add focus scope, active capture, topmost hit, page/global shortcut, and
+  fail-closed precedence.
+- [ ] Prove overlays block every background action and hidden terminal input is
+  inert while Files owns Stage.
+- [ ] Split shell projection from active-surface projection and preserve pure
+  deterministic render/retained PTY behavior.
+
+### SF5 — AppDock
+
+- [ ] Render icon-only Terminal/Files dock at preferred 5, min 3, max 9 cells.
+- [ ] Add stable active/running/disabled targets, singleton activation, bounded
+  right-click name popover, overlay blocking, resize/collapse, and tiny-terminal
+  behavior.
+- [ ] Close UI/input/failure/performance/full-gate/Git/graph evidence.
+
+### SF6 — Files as Native Workspace Stage
+
+- [ ] Replace the terminal curtain branch with typed `NativeFiles` Stage
+  projection/render while preserving AppDock/LeftPanel independence.
+- [ ] Preserve `FmState`, watcher, text/image workers, operations, selection,
+  context menus, agent handoff, and all failure/recovery semantics.
+- [ ] Prove singleton open/reactivate/close/failure restores previous Stage and
+  focus; terminal process stays alive but hidden input/hits/cursor are absent.
+- [ ] Close snapshot, render queue, retained PTY, isolated runtime, performance,
+  full-gate, Git, remote-SHA, and graph evidence.
+
+### FM1 — Horizontal Miller Viewport
+
+- [ ] Add logical history <=32, resident directory projections <=5, and at
+  most five visible complete columns.
+- [ ] Add native horizontal wheel, Shift+wheel, and bounded header navigation;
+  clamp after path/cache/terminal shrink and clear stale hits.
+- [ ] Prove close/reopen reset, inaccessible ancestors, render purity, resource
+  bounds, full gates, publication, and graph freshness.
+
+### FM2 — Miller Column Resize
+
+- [ ] Reuse the Shell resize transaction for min 16/preferred 28/max 64 column
+  widths.
+- [ ] Prove preview causes zero persistence/PTY/filesystem/image-target churn;
+  commit updates one revision and at most one final image target.
+- [ ] Close stale divider, terminal resize, cancel, 1,000-move bound,
+  cross-layer/full/performance/Git/graph gates.
+
+### FM3 — All-Column Mouse Ownership
+
+- [ ] Generate stable column/directory/entry/generation row targets for every
+  rendered directory column.
+- [ ] Route plain/right/double/wheel gestures in parent/current/preview/ancestor
+  columns; keep Ctrl/Shift operation authority current-directory-only.
+- [ ] Revalidate non-current paths before mutation; consume stale/reordered/
+  deleted/evicted targets without replay or side effect.
+- [ ] Close overlay/background-blocking, context/operation/selection, isolated
+  SGR mouse, full-gate, Git, and graph evidence.
+
+### FM4 — Finder-Like Path-Stable Growing Navigation
+
+- [ ] Append one child segment on directory selection, truncate descendants on
+  ancestor branch change, and replace deeper chain with file preview.
+- [ ] Restore exact child focus/cursor/viewport; handle missing/hidden/reordered/
+  deleted/root/inaccessible paths deterministically.
+- [ ] Preserve all N2.1 tests, chain <=32, resident <=5, watcher generations,
+  close/reopen reset, adversarial 10,000-action invariants, and performance.
+- [ ] Close full gates, isolated deep-navigation proof, publication, and graph.
+
+### FM5 — Preview / Inspector Placement
+
+- [ ] Measure inline final column, Shell RightPanel, and adaptive hybrid across
+  terminal/path/Unicode/preview/failure/focus/performance fixtures.
+- [ ] Record raw evidence and explicit GO/NO-GO. A NO-GO keeps inline preview;
+  a GO requiring product code must receive a separate approved micro plan.
+- [ ] Commit the evidence/decision independently. Do not expand into
+  Apps/Desktop or speculative RightPanel consumers.
 
 ## Active Non-Product Tooling Lane — Change Pipeline
 
@@ -31,7 +183,8 @@ is tracked below and does not activate those product items.
 - [x] Implement and verify Ratatui Design Intelligence v2.1 with atomic
   baseline/RED/GREEN/governance commits and fresh module gates.
 - [ ] Implement and verify `herdr-change-pipeline`, adapters, pilots, Git
-  publication, and graph refresh; next exact action is T3.1.
+  publication, and graph refresh; paused at T3.1 while the sequential active
+  product lane closes its current phase.
 
 Full non-product macro/micro registry:
 `.codex/CHANGE-PIPELINE-TASKS.md`.
@@ -769,8 +922,9 @@ covered by deterministic alternate-palette and breakpoint buffer tests.
   trigger recorded instead of manufacturing abstraction work.
 - [ ] S5 ComponentRegistry only when a second real component/page proves the
   abstraction; do not build a speculative registry.
-- [ ] S6 resizable shell regions plus deferred `ShellLayout` persistence,
-  restore/migration, and adversarial-width tests.
+- [x] S6 activation gate superseded by later explicit product demand and
+  absorbed into active SF0-SF6. Implementation remains open in the active
+  program above.
 - [ ] S7 popup stack with ownership, focus, close ordering, and nested popup
   tests.
 - [x] N2 dynamic/unbounded Miller state machine evaluated after v1 A–C;
@@ -797,9 +951,9 @@ covered by deterministic alternate-palette and breakpoint buffer tests.
 - [x] N2.1c REFACTOR/GATES: run exact tests, all FM tests, full direct `just
   check` equivalent, production-unwrap/diff/artifact scans, then refresh the
   graph and publish only through the CyPack fork FF workflow.
-- [ ] N2.2 retained per-directory cursor/back-forward history remains deferred;
-  activate only with independent demand, finite eviction, restore semantics,
-  and a separate test-first contract.
+- [x] N2.2 activation gate superseded by later explicit horizontal/Finder-like
+  demand and absorbed into FM1-FM4 with finite 32-segment/5-resident bounds and
+  a separate approved test-first plan. Implementation remains open above.
 
 | Test point | What is tested | Expected result | Reason |
 |---|---|---|---|
@@ -808,6 +962,10 @@ covered by deterministic alternate-palette and breakpoint buffer tests.
 | TP-P4-DECISION | S5/S6/S7/N2 benefit, blast radius, dependency order, reversibility, and complete gate cost | Exactly one candidate becomes active only when its trigger is proven; otherwise all remain deferred with a precise evidence gap | Sequential Git discipline requires one auditable architecture concern, not a mixed speculative rewrite |
 
 ### P4.0 Evidence and Decision Matrix
+
+The rows below preserve the historical P4.0 decision snapshot. They do not
+override the later explicitly approved bounded SF/FM program: only the former
+S6 and N2.2 activation gates are superseded; S5 and S7 remain NO-GO.
 
 | Candidate | Current evidence | Missing trigger / protected behavior | Decision |
 |---|---|---|---|
