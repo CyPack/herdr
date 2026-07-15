@@ -4,12 +4,12 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Published CyPack checkpoint before this continuity publication: `f23dbc7`
-  (`docs: close native file manager agent handoff`).
-- Verified C6.1 product head: `2bcdf14`
-  (`feat: add sectioned native file manager sidebar`).
-- The pending publication unit is C6.1 plan/RED/GREEN `6464668` through
-  `2bcdf14` plus the continuity/graph commit containing this file. At
+- Published CyPack checkpoint before this continuity publication: `93c780b`
+  (`docs: close completed operation lifecycle task`).
+- Verified C6.2 product head: `b88fc12`
+  (`feat: add current-location styling to file sidebar`).
+- The pending publication unit is C6.2 plan/RED/GREEN/test coverage `c3dfa6f`
+  through `a078d98` plus the continuity/graph commit containing this file. At
   publication, CyPack
   `feat/native-fm` and fork `master` must be verified at that same fast-forward
   branch tip.
@@ -44,8 +44,7 @@
   `miller_layout` and the new typed request, scheduled launch, exact ownership,
   rollback, completion, and current-authority symbols; freshness was not
   inferred from `ready` alone.
-- Next product module: C6.2 pill highlight/current-location marker, then
-  C6.3–C6.4 in order.
+- Next product module: C6.3 integrated header/row/context actions, then C6.4.
 
 ## Verified Checkpoint — C6.1 Native Sectioned Sidebar
 
@@ -76,6 +75,31 @@
 - Fresh graph is 18,899 nodes / 90,094 edges. `ready` was cross-checked with
   `miller_layout`, `FileManagerSidebarModel`, exact geometry/hit-test, and
   scheduled navigation symbols.
+
+## Verified Checkpoint — C6.2 Current-Location Sidebar Styling
+
+- Durable plan `c3dfa6f` and RED contract `ac4eecb` precede GREEN product
+  `b88fc12`; test-only lifecycle closure `a078d98` explicitly covers the
+  non-Files and close/reopen boundaries. The RED checkpoint was not published
+  alone.
+- Exact current authority is derived every frame from open `FmState.cwd` plus
+  one exact prepared accessible sidebar item. Closed FM, non-Files tab,
+  inaccessible/model-missing/stale path, cwd transition, and close/reopen
+  cannot retain an accent pill; no highlight cache or render-time I/O exists.
+- The pure row builder reserves the final cell for warning/eject affordances,
+  gives warning precedence when an inaccessible ejectable path carries both
+  facts, truncates by display cells, and emits both Powerline caps together or
+  neither. Zero and narrow widths remain bounded and panic-free.
+- Fresh gates: focused sidebar/FM groups 11/11, 60/60, and 56/56; full nextest
+  3154/3154 with only the named B0 host probe skipped, run
+  `3ffc29fb-d053-4a6c-bbda-86b63745fc64`; Linux all-target and canonical
+  Windows MSVC clippy; Bun 17/17; Python 64/64; fmt/diff/production-unwrap/
+  artifact checks clean.
+- Fresh graph is 18,909 nodes / 90,194 edges. MCP parallel refresh failed on
+  the known native extraction path, so the recorded `CBM_WORKERS=1` CLI
+  fallback completed with zero extraction errors. `ready` was cross-checked with
+  `miller_layout`, `file_manager_sidebar_item_is_current`,
+  `file_manager_sidebar_marker`, and `file_manager_sidebar_item_line`.
 
 ## Verified Checkpoint — C1.1 Header Action Geometry
 
@@ -730,16 +754,17 @@
 
 ## Exact Next Action
 
-1. Start C6.2 test-point-first. Define selected/current path identity,
-   pill geometry/style, inaccessible warning, and eject/removable marker
-   precedence before production code.
-2. Derive the current marker only from live `FmState.cwd` plus the prepared
-   sidebar model. Rendering remains pure; stale/missing/inaccessible paths,
-   clipping, tab switching, FM close/reopen, and watcher cwd changes must not
-   retain a false highlight or clickable marker.
-3. Run focused render/geometry/lifecycle failures, broad sidebar/FM regression,
-   full direct `just check`, graph freshness, and artifact gates before its
-   atomic commit/publication. Continue C6.3 then C6.4 without skipping order.
+1. Start C6.3a test-point-first from the durable C6.3 catalog/authority/
+   geometry/lifecycle/gate matrix in `.codex/TASKS.md`. Inventory the existing
+   header, row-local, context, and plugin action authorities and make the first
+   matrix assertion RED before production code.
+2. Reuse typed C1/C2/C3/C4 action preparation and scheduled execution seams;
+   do not create label-derived dispatch, duplicate filesystem owners, cached
+   render authority, or a private TUI/runtime protocol path.
+3. Prove normal, multi-selection, unsupported, stale, in-flight, narrow,
+   mobile, and close/reopen cases with focused RED/GREEN evidence, then run the
+   broad FM/sidebar and complete direct `just check` gates. Continue C6.4 only
+   after C6.3 has an atomic product commit, fresh graph proof, and publication.
 
 ## Verified B2.0 Dependency Decision
 

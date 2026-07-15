@@ -518,16 +518,32 @@ owns filesystem mutation and C5 owns agent delivery.
   bounded, sectioned FM navigation model. Prepare FAVORITES, optional PINNED,
   and LOCATIONS outside render; derive exact item hit areas in `compute_view`;
   route clicks as typed path requests consumed by an App-owned refresh boundary.
-- [ ] C6.2 pill highlight and current-location marker.
-- [ ] C6.2a derive one exact current-location visual authority from the open
+- [x] C6.2 pill highlight and current-location marker.
+- [x] C6.2a derive one exact current-location visual authority from the open
   `FmState.cwd` and the prepared accessible sidebar item; add no cached
   highlight state and no render-time filesystem work.
-- [ ] C6.2b render a complete responsive pill plus right-aligned warning/eject
+- [x] C6.2b render a complete responsive pill plus right-aligned warning/eject
   marker with display-width truncation and explicit narrow/zero-area behavior.
-- [ ] C6.2c prove navigation/watcher cwd changes, close/reopen, tab switching,
+- [x] C6.2c prove navigation/watcher cwd changes, close/reopen, tab switching,
   stale model paths, and the complete C6.2 gate before publication.
 - [ ] C6.3 integrate header/row/context actions consistently.
+- [ ] C6.3a inventory every existing header, row-local, context, and plugin
+  action kind, label/icon, enabled reason, selection cardinality, and typed
+  dispatch seam; define one explicit cross-surface integration matrix.
+- [ ] C6.3b render and route each surface from current prepared authority while
+  preserving its responsive geometry; converge equivalent actions on the
+  existing C3/C4 intent path without a second filesystem owner.
+- [ ] C6.3c prove stale/reordered selection, operation-in-flight, unsupported,
+  narrow/mobile, popup close, FM close/reopen, and complete publication gates.
 - [ ] C6.4 theme, spacing, empty/error states, and visual Finder-parity review.
+- [ ] C6.4a define palette-role, spacing, separator, focus, disabled, warning,
+  and current-location visual tokens across all native FM surfaces.
+- [ ] C6.4b make empty directory, unavailable path, permission/read-only,
+  preview failure, operation failure/recovery, and no-selection states explicit
+  without render-time I/O or layout drift.
+- [ ] C6.4c run buffer-level breakpoint/theme/accessibility assertions plus an
+  isolated manual Finder-parity review; record accepted differences and close
+  the v1 A–C visual gate before any deferred architecture work.
 
 | Test point | What is tested | Expected result | Reason |
 |---|---|---|---|
@@ -542,6 +558,15 @@ owns filesystem mutation and C5 owns agent delivery.
 | TP-C6.2-MARKER | Accessible, inaccessible, ejectable, and inaccessible-plus-ejectable rows at normal and narrow widths | Inaccessible rows show a right-aligned warning; accessible ejectable rows show eject; warning takes precedence when both flags are present; every marker stays inside the row | Access failure is stronger safety information than a removable-media affordance and must not be hidden by it |
 | TP-C6.2-LIFECYCLE | Sidebar navigation, watcher-driven cwd transition, FM close/reopen, model refresh, and tab switch | The next frame derives styling from current FM/model state with no stale highlight cache; render performs no filesystem or runtime mutation | Cwd and sidebar projection change independently, so visual authority must converge without another lifecycle owner |
 | TP-C6.2-GATES | Focused authority/layout/render/lifecycle failures, broad sidebar/FM regressions, full platform and maintenance gates, graph and artifact checks | Every applicable gate passes with only the named B0 probe skipped; no production `unwrap()`, temp residue, stable Herdr/socket access, or user-process change occurs | Finder styling crosses state projection, Unicode geometry, rendering, and existing click authority despite having no filesystem side effect |
+| TP-C6.3-CATALOG | Header Copy/Paste/New Folder/Delete, row Open/Rename/Delete, built-in context actions, plugin file actions, zero/one/many selections, and enabled/disabled reasons | One durable matrix names which action appears on each surface, its prepared authority source, selection cardinality, and exact typed dispatch seam; no action is inferred from a label or icon | Existing safe actions were built in separate modules and visual integration must not create a second semantic catalog |
+| TP-C6.3-AUTHORITY | Equivalent action from every supported surface; stale/reordered/missing/unsupported/read-only selection; operation in flight; disabled plugin | Equivalent actions converge on the existing C3/C4 request and scheduled revalidation path exactly once; every invalid case is consumed without filesystem work, duplicate dispatch, or popup/focus corruption | Surface consistency is unsafe if identical-looking controls have different authority or mutation owners |
+| TP-C6.3-GEOMETRY | Normal/narrow/zero desktop and mobile layouts, hidden header/row controls, context popup at every edge, long Unicode labels, sidebar expanded/collapsed | Only complete visible controls receive hit geometry; labels/icons truncate by display cell; hidden/clipped/gap coordinates stay inert and no surface overlaps Miller dividers or terminal targets | Integrating four responsive surfaces can reintroduce independent arithmetic and phantom targets |
+| TP-C6.3-LIFECYCLE | Watcher reorder/delete, selection change, popup open/close, operation start/finish/cancel, cwd transition, FM close/reopen, stale prior frame | The next compute/input boundary derives every surface from current prepared state; stale geometry and menu/action intent clear deterministically with no cached render authority | Each source state can change between paint and input, so integration requires one fail-closed convergence rule |
+| TP-C6.3-GATES | Exact matrix/authority/geometry/lifecycle failures, broad C1–C5/FM/sidebar/context/plugin regressions, full Linux/Windows/Bun/Python gates, graph and artifact checks | All applicable checks pass with only the named B0 probe skipped; no production `unwrap()`, stable process/socket access, duplicate operation owner, or residue exists | C6.3 reconnects every prior action surface and therefore needs cross-module evidence rather than visual happy paths |
+| TP-C6.4-THEME | Default and alternate palettes, focus/selection/current/disabled/warning/error/progress roles, narrow and Unicode rows | Every semantic state uses an existing palette role with readable contrast and deterministic precedence; no literal one-off color becomes hidden authority | Final polish must remain theme-safe and must not encode semantics only in ad hoc color choices |
+| TP-C6.4-EMPTY-ERROR | Empty directory, no selection, unavailable/permission/read-only cwd, preview unavailable/truncated/error, operation failure/partial/uncertain recovery | Each state has explicit stable copy and bounded geometry, preserves actionable recovery evidence, and performs no filesystem/runtime mutation during render | Empty and failure states are the production path users see when mounts, permissions, previews, or operations fail |
+| TP-C6.4-VISUAL | One/two/three-column breakpoints, expanded/collapsed Files sidebar, header/row/context/progress/modal composition, desktop/mobile, isolated real TUI | Buffer assertions and isolated screenshots show coherent Finder-inspired hierarchy, spacing, alignment, and focus; accepted platform/font differences are documented instead of silently ignored | Cell-level correctness can still compose into a confusing or inaccessible full screen |
+| TP-C6.4-GATES | Theme/breakpoint/empty/error buffers, full FM/sidebar regressions, isolated runtime parity and cleanup, complete direct `just check`, graph/artifact/diff checks | V1 A–C closes only with all automated gates green, isolated runtime residue zero, and no stable Herdr/socket/user-process change | C6.4 is the final v1 quality gate and must establish both deterministic correctness and real-host usability |
 
 - C6.1 is complete as test-point plan `6464668`, RED contracts `4a65c15`,
   `4836b32`, and `1236f57`, then GREEN product `2bcdf14`. The prepared model
@@ -558,6 +583,22 @@ owns filesystem mutation and C5 owns agent delivery.
   `c5232427-adc0-49b9-9898-daf479b623cd`). Linux/Windows clippy, Bun 17/17,
   Python 64/64, fmt/diff/production-unwrap/temp checks are clean. Fresh graph:
   18,899 nodes / 90,094 edges with `miller_layout` and all new sidebar symbols.
+
+- C6.2 is complete as durable test-point plan `c3dfa6f`, RED contract
+  `ac4eecb`, GREEN product `b88fc12`, and test-only lifecycle closure
+  `a078d98`. Current-location styling is derived
+  every frame from exact open `FmState.cwd` plus one prepared accessible item;
+  no cached highlight authority or render-time I/O was added. Complete
+  Powerline caps are emitted only when the row can fit the whole pill,
+  display-cell truncation handles Unicode, and trailing warning/eject markers
+  remain inside the final cell with warning precedence. Focused sidebar/FM
+  groups are 11/11, 60/60, and 56/56; full nextest is 3154/3154 plus only the
+  named B0 probe skipped (run `3ffc29fb-d053-4a6c-bbda-86b63745fc64`). Linux
+  all-target and canonical Windows MSVC clippy, Bun 17/17, Python 64/64,
+  fmt/diff/production-unwrap/artifact checks are clean. Fresh graph: 18,909
+  nodes / 90,194 edges with `miller_layout` and all three new C6.2 helpers;
+  the known MCP extraction crash recovered through the recorded single-worker
+  CLI path with zero extraction errors and no process restart.
 
 ## P4 — Deferred UI Architecture
 
@@ -581,8 +622,8 @@ owns filesystem mutation and C5 owns agent delivery.
 A4, B0, B1, the A3 remainder, B2, C1, N3, C2, N4.2, C3.1, C3.2, C3.3,
 C4.1, C4.2, C4.3, C4.4.1 progress, C4.4.2 cancellation, C4.4.3
 reconciliation, C4.4.4 recovery, C4.4.5 gates, and C5.1–C5.5 are complete
-through product head `2bcdf14`. C6.1 is complete. The next execution order is
-C6.2 pill/current-location styling → C6.3 integrated
-header/row/context actions → C6.4 theme/spacing/empty-error/Finder-parity review.
+through product head `b88fc12`. C6.1 and C6.2 are complete. The next execution
+order is C6.3 integrated header/row/context actions → C6.4
+theme/spacing/empty-error/Finder-parity review.
 S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3 remain
 inactive north-star work.

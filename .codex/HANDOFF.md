@@ -2,12 +2,13 @@
 
 ## 1. SONRAKI ADIM
 
-Start C6.2 test-point-first. Define pill/current-location identity, pure
-geometry/style, inaccessible warning, and eject/removable marker precedence
-before production code. Current highlighting must derive only from live
-`FmState.cwd` plus the prepared C6.1 model; stale, clipped, tab-switched, or
-closed FM state must fail closed without touching stable Herdr, its socket, or
-user processes.
+Start C6.3a test-point-first from the durable catalog/authority/geometry/
+lifecycle/gate matrix in `.codex/TASKS.md`. Inventory the existing typed
+header, row-local, context, and plugin action authorities and make the first
+matrix assertion RED before production code. Reuse C1/C2/C3/C4 preparation
+and scheduled execution seams; stale, unsupported, in-flight, clipped, mobile,
+or closed-FM state must fail closed without touching stable Herdr, its socket,
+or user processes.
 
 ## 2. AKTİF PROJE
 
@@ -340,6 +341,20 @@ user processes.
   `c5232427-adc0-49b9-9898-daf479b623cd`); Linux/Windows clippy, Bun 17/17,
   Python 64/64, fmt/diff/production-unwrap/temp clean. Fresh graph: 18,899 /
   90,094 with `miller_layout` and all new sidebar symbols.
+- Completed C6.2 as durable plan `c3dfa6f`, RED contract `ac4eecb`, GREEN
+  product `b88fc12`, and test-only lifecycle closure `a078d98`. Current
+  authority is derived every frame from exact open
+  `FmState.cwd` plus a prepared accessible row. The responsive accent pill is
+  complete-or-omitted; Unicode truncation is display-cell safe; inaccessible
+  warning overrides accessible eject, and every marker stays in the final row
+  cell. Render remains pure and owns no filesystem/runtime mutation.
+- C6.2 gates: focused sidebar/FM groups 11/11, 60/60, and 56/56; full nextest
+  3154/3154 plus only `path_beta_real_host_probe` skipped (run
+  `3ffc29fb-d053-4a6c-bbda-86b63745fc64`); Linux/Windows clippy, Bun 17/17,
+  Python 64/64, fmt/diff/production-unwrap/artifact checks clean. Fresh graph:
+  18,909 / 90,194 with `miller_layout` and the three C6.2 helper symbols. The
+  known MCP extraction failure recovered via `CBM_WORKERS=1` CLI with zero
+  extraction errors and no service/process restart.
 
 ## 6. KOD DURUMU
 
@@ -484,11 +499,17 @@ C6.1 is an auditable plan/RED/GREEN sequence:
 - `1236f57`: stale-hit and hidden-Spaces input isolation RED contract.
 - `2bcdf14`: sectioned model, pure geometry/render, typed input intent,
   lifecycle invalidation, scheduled revalidation, and watcher convergence.
+- `c3dfa6f`: durable C6.2 current/pill/marker/lifecycle/gate test points.
+- `ac4eecb`: C6.2 exact-authority, responsive Unicode pill, and marker RED
+  contracts.
+- `b88fc12`: pure current-location derivation plus bounded pill and
+  warning/eject rendering.
+- `a078d98`: explicit non-Files and close/reopen lifecycle coverage.
 
 No RED checkpoint is published alone. Product/test paths are
 `src/app/file_manager_sidebar.rs`, App state/runtime/actions/watcher/input,
 desktop/mobile view computation, and pure sidebar render. This continuity/
-graph commit closes C6.1 before both CyPack heads are fast-forwarded; upstream
+graph commit closes C6.2 before both CyPack heads are fast-forwarded; upstream
 is never pushed.
 
 ## 7. TEST KANITI
@@ -508,6 +529,12 @@ is never pushed.
 - C6.1 exact-head Linux all-target and canonical Windows MSVC bin clippy,
   Bun 17/17, Python 64/64, fmt/diff/production-unwrap/temp-artifact checks are
   clean. `just` remains absent; the complete recipe was executed directly.
+- C6.2 focused sidebar/FM groups: 11/11, 60/60, and 56/56. Final full nextest:
+  3154/3154 plus one named B0 real-host probe skipped, run
+  `3ffc29fb-d053-4a6c-bbda-86b63745fc64`; no retry-only closure.
+- C6.2 exact-head Linux all-target and canonical Windows MSVC bin clippy,
+  Bun 17/17, Python 64/64, fmt/diff/production-unwrap/artifact checks are clean.
+  `just` remains absent; the complete recipe was executed directly.
 - Actual B1 lock delta is five packages with no existing-version upgrade.
   Exact OSV batch returned only severity-less `RUSTSEC-2025-0141` for
   unmaintained `bincode 1.3.3`; no security-severity advisory.
@@ -635,15 +662,17 @@ is never pushed.
 See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2/N4 contracts and the
 complete C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1, N3,
 C2, N4, C3.1, C3.2, C3.3, C4.1, C4.2, C4.3, C4.4.1 PROGRESS, C4.4.2
-CANCEL, C4.4.3 RECONCILE, C4.4.4 RECOVERY, C4.4.5 GATES, C5.1–C5.5, and C6.1 are
-closed. C5's atomic product chain ends at `f744e4d`: exact existing-agent send
+CANCEL, C4.4.3 RECONCILE, C4.4.4 RECOVERY, C4.4.5 GATES, C5.1–C5.5, C6.1, and
+C6.2 are closed. C5's atomic product chain ends at `f744e4d`: exact existing-agent send
 and non-agent `Down` split → direct `claude` argv → first literal path send,
 with exact new-resource rollback on every failure path. The complete gate is
 3143/3143 Rust, Bun 17/17, Python 64/64, Linux/Windows clippy, and fresh graph
 18,854 / 88,064. C6.1 then closes at product head `2bcdf14`, full Rust
 3151/3151 plus one named skip, and fresh graph 18,899 / 90,094. The immediate
-ordered task list is C6.2 pill/current-location styling → C6.3 integrated header/row/
-context actions → C6.4 theme/spacing/empty-error/Finder-parity review. Exact
+ordered task list is C6.3 integrated header/row/context actions → C6.4
+theme/spacing/empty-error/Finder-parity review. C6.2 closes at product head
+`b88fc12` plus test closure `a078d98`, full Rust 3154/3154 plus one named skip,
+and fresh graph 18,909 / 90,194. Exact
 expected results and reasons remain durable in `.codex/TASKS.md`.
 S5–S7/N2 remain evidence-gated; M1–M3 remain north-star backlog.
 
