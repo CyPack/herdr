@@ -3106,6 +3106,7 @@ mod tests {
         state.workspaces = vec![workspace];
         state.active = Some(0);
         state.selected = 0;
+        state.mode = Mode::Terminal;
         state.ensure_test_terminals();
         state
             .terminals
@@ -3153,6 +3154,35 @@ mod tests {
         );
         assert!(state.agent_attachment_picker.is_none());
         assert_eq!(state.mode, Mode::Terminal);
+        let toast = state.toast.as_ref().expect("visible size failure");
+        assert_eq!(toast.kind, ToastKind::NeedsAttention);
+        assert_eq!(toast.title, "attach file unavailable");
+        assert_eq!(toast.context, "attachment picker needs more terminal space");
+    }
+
+    // TP-M1.2-UNAVAILABLE: capability loss fails closed and gives the user a
+    // stable reason instead of silently consuming the configured action.
+    #[test]
+    fn attachment_picker_unavailable_target_is_visible_and_non_mutating() {
+        let root = AttachmentTempDir::new("unavailable");
+        let (mut state, pane_id) = focused_agent_attachment_state(&root.0);
+        let terminal_id = state.terminal_id_for_pane(0, pane_id).unwrap();
+        state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_agent_name(String::new());
+
+        assert_eq!(
+            state.open_agent_attachment_picker(),
+            Err(AgentAttachmentOpenError::Unavailable)
+        );
+        assert!(state.agent_attachment_picker.is_none());
+        assert_eq!(state.mode, Mode::Terminal);
+        let toast = state.toast.as_ref().expect("visible target failure");
+        assert_eq!(toast.kind, ToastKind::NeedsAttention);
+        assert_eq!(toast.title, "attach file unavailable");
+        assert_eq!(toast.context, "focused pane is not an available agent");
     }
 
     // TP-M1.2-CANCEL: overlay cancellation owns no runtime resource and

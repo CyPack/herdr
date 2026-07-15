@@ -3336,6 +3336,30 @@ navigate_pane_down = "ctrl+j"
     }
 
     #[test]
+    fn prefix_a_opens_attachment_picker_only_for_focused_agent() {
+        let mut state = state_with_workspaces(&["attachment"]);
+        state.workspaces[0].identity_cwd = std::env::temp_dir();
+        state.ensure_test_terminals();
+        let pane_id = state.workspaces[0].focused_pane_id().unwrap();
+        let terminal_id = state.terminal_id_for_pane(0, pane_id).unwrap();
+        state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_agent_name("codex".into());
+        state.view.terminal_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+        state.keybinds.agent_attachment_picker = crate::config::ActionKeybinds::prefix("a");
+
+        handle_navigate_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+        );
+
+        assert_eq!(state.mode, Mode::AttachFile);
+        assert!(state.agent_attachment_picker.is_some());
+    }
+
+    #[test]
     fn new_tab_action_can_skip_rename_dialog() {
         let mut state = state_with_workspaces(&["test"]);
         state.prompt_new_tab_name = false;

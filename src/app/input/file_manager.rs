@@ -479,6 +479,190 @@ mod tests {
         KeyEvent::new(code, modifiers)
     }
 
+    #[test]
+    fn attachment_picker_swallowing_unknown_key_preserves_background_terminal() {
+        let td = TempDir::new("attachment-key-block");
+        td.file("a.txt");
+        let mut state = AppState::test_new();
+        let mut workspace = crate::workspace::Workspace::test_new("attachment-key-block");
+        workspace.identity_cwd = td.root.clone();
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace.tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        state.workspaces = vec![workspace];
+        state.active = Some(0);
+        state.mode = Mode::Terminal;
+        state.ensure_test_terminals();
+        state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_agent_name("codex".into());
+        state.view.terminal_area = Rect::new(0, 0, 80, 24);
+        state.open_agent_attachment_picker().unwrap();
+        let before = state
+            .agent_attachment_picker
+            .as_ref()
+            .unwrap()
+            .file_manager
+            .cursor;
+
+        handle_agent_attachment_picker_key(&mut state, key(KeyCode::Char('x')));
+
+        assert_eq!(state.mode, Mode::AttachFile);
+        assert_eq!(
+            state
+                .agent_attachment_picker
+                .as_ref()
+                .unwrap()
+                .file_manager
+                .cursor,
+            before
+        );
+        assert!(state.request_agent_attachment_delivery.is_none());
+    }
+
+    #[test]
+    fn attachment_frame_click_revalidates_exact_target_before_opening_picker() {
+        let td = TempDir::new("attachment-frame-click");
+        let mut app = super::super::app_for_mouse_test();
+        let mut workspace = crate::workspace::Workspace::test_new("attachment-frame-click");
+        workspace.identity_cwd = td.root.clone();
+        let pane_id = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        let terminal_id = workspace.tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.ensure_test_terminals();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_agent_name("codex".into());
+        compute_view(&mut app.state, Rect::new(0, 0, 100, 24));
+        let action = app
+            .state
+            .view
+            .agent_attachment_action_area
+            .clone()
+            .expect("agent action");
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            action.rect.x + 1,
+            action.rect.y,
+        ));
+
+        assert_eq!(app.state.mode, Mode::AttachFile);
+        assert_eq!(
+            app.state
+                .agent_attachment_picker
+                .as_ref()
+                .unwrap()
+                .target
+                .terminal_id,
+            terminal_id
+        );
+    }
+
+    // TP-M1.2-MOUSE: the blocking picker owns exact current-row hit targets;
+    // stale paths, modifiers, and coordinates outside those targets are inert.
+    #[test]
+    fn attachment_picker_mouse_selects_only_fresh_unmodified_current_row() {
+        let td = TempDir::new("attachment-picker-mouse");
+        let first = td.root.join("a.txt");
+        let second = td.root.join("b.txt");
+        td.file("a.txt");
+        td.file("b.txt");
+        let mut app = super::super::app_for_mouse_test();
+        let mut workspace = crate::workspace::Workspace::test_new("attachment-picker-mouse");
+        workspace.identity_cwd = td.root.clone();
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace.tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.ensure_test_terminals();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_agent_name("codex".into());
+        app.state.view.terminal_area = Rect::new(0, 0, 120, 30);
+        app.state.open_agent_attachment_picker().unwrap();
+        compute_view(&mut app.state, Rect::new(0, 0, 120, 30));
+
+        let second_row = app
+            .state
+            .view
+            .agent_attachment_picker_row_areas
+            .iter()
+            .find(|row| row.entry_path == second)
+            .cloned()
+            .expect("second picker row");
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            second_row.rect.x,
+            second_row.rect.y,
+        ));
+        assert_eq!(
+            app.state.agent_attachment_selected_file(),
+            Some(second.clone())
+        );
+
+        let first_idx = app
+            .state
+            .agent_attachment_picker
+            .as_ref()
+            .unwrap()
+            .file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == first)
+            .unwrap();
+        app.state
+            .agent_attachment_picker
+            .as_mut()
+            .unwrap()
+            .file_manager
+            .select(first_idx);
+        let second_row_pos = app
+            .state
+            .view
+            .agent_attachment_picker_row_areas
+            .iter()
+            .position(|row| row.entry_idx == second_row.entry_idx)
+            .unwrap();
+        app.state.view.agent_attachment_picker_row_areas[second_row_pos].entry_path =
+            td.root.join("stale.txt");
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            second_row.rect.x,
+            second_row.rect.y,
+        ));
+        assert_eq!(
+            app.state.agent_attachment_selected_file(),
+            Some(first.clone())
+        );
+
+        app.state.view.agent_attachment_picker_row_areas[second_row_pos].entry_path =
+            second.clone();
+        let mut modified = mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            second_row.rect.x,
+            second_row.rect.y,
+        );
+        modified.modifiers = KeyModifiers::CONTROL;
+        app.handle_mouse(modified);
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 0, 0));
+        assert_eq!(app.state.agent_attachment_selected_file(), Some(first));
+    }
+
     fn app_with_fm(fm: FmState) -> AppState {
         let mut app = AppState::test_new();
         app.file_manager = Some(fm);
