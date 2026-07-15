@@ -780,7 +780,7 @@ fn render_file_preview(app: &AppState, frame: &mut Frame, area: Rect, preview: &
                 content_area.width as usize,
             );
             frame.render_widget(
-                Paragraph::new(label).style(Style::default().fg(p.overlay1)),
+                Paragraph::new(label).style(text_preview_error_style(*error, styles)),
                 content_area,
             );
         }
@@ -796,35 +796,52 @@ fn render_file_preview(app: &AppState, frame: &mut Frame, area: Rect, preview: &
             if truncated {
                 lines.push(Line::styled(
                     "  (preview truncated)",
-                    Style::default()
-                        .fg(p.overlay1)
-                        .add_modifier(Modifier::ITALIC),
+                    styles.warning.add_modifier(Modifier::ITALIC),
                 ));
             }
             frame.render_widget(Paragraph::new(lines), content_area);
         }
         FmFilePreview::Image(preview) => {
-            let label = if !app.kitty_graphics_enabled {
-                Some("(Kitty graphics req.)")
+            let label_and_style = if !app.kitty_graphics_enabled {
+                Some(("(Kitty graphics req.)", styles.warning))
             } else {
                 match &preview.state {
-                    FmImagePreviewState::Pending => Some("(image preview pending)"),
-                    FmImagePreviewState::Loading { .. } => Some("(loading image...)"),
-                    FmImagePreviewState::Ready { .. } => None,
-                    FmImagePreviewState::Unavailable { error, .. } => {
-                        Some(image_preview_error_label(*error))
+                    FmImagePreviewState::Pending => {
+                        Some(("(image preview pending)", styles.enabled_action))
                     }
+                    FmImagePreviewState::Loading { .. } => {
+                        Some(("(loading image...)", styles.enabled_action))
+                    }
+                    FmImagePreviewState::Ready { .. } => None,
+                    FmImagePreviewState::Unavailable { error, .. } => Some((
+                        image_preview_error_label(*error),
+                        image_preview_error_style(*error, styles),
+                    )),
                 }
             };
-            let Some(label) = label else {
+            let Some((label, style)) = label_and_style else {
                 return;
             };
             let label = truncate_end(&format!("  {label}"), content_area.width as usize);
-            frame.render_widget(
-                Paragraph::new(label).style(Style::default().fg(p.overlay1)),
-                content_area,
-            );
+            frame.render_widget(Paragraph::new(label).style(style), content_area);
         }
+    }
+}
+
+fn image_preview_error_style(error: ImagePreviewError, styles: FileManagerVisualStyles) -> Style {
+    match error {
+        ImagePreviewError::EncodedTooLarge { .. }
+        | ImagePreviewError::DimensionsTooLarge { .. }
+        | ImagePreviewError::PixelCountTooLarge { .. }
+        | ImagePreviewError::DecodedBytesTooLarge { .. }
+        | ImagePreviewError::OutputTooLarge { .. }
+        | ImagePreviewError::UnsupportedFormat => styles.warning,
+        ImagePreviewError::Io(_)
+        | ImagePreviewError::NotRegularFile
+        | ImagePreviewError::EmptyTarget
+        | ImagePreviewError::ArithmeticOverflow
+        | ImagePreviewError::DecodeFailed
+        | ImagePreviewError::DecoderPanicked => styles.error,
     }
 }
 
@@ -854,6 +871,13 @@ fn text_preview_error_label(error: TextPreviewError) -> &'static str {
         TextPreviewError::Io(std::io::ErrorKind::PermissionDenied) => "(permission denied)",
         TextPreviewError::Io(_) => "(preview unavailable)",
         TextPreviewError::NotRegularFile => "(not a regular file)",
+    }
+}
+
+fn text_preview_error_style(error: TextPreviewError, styles: FileManagerVisualStyles) -> Style {
+    match error {
+        TextPreviewError::Binary | TextPreviewError::InvalidUtf8 { .. } => styles.warning,
+        TextPreviewError::Io(_) | TextPreviewError::NotRegularFile => styles.error,
     }
 }
 
