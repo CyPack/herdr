@@ -975,10 +975,7 @@ mod tests {
         fn publish_no_replace(&mut self, source: &Path, destination: &Path) -> io::Result<()> {
             self.calls += 1;
             if self.calls == self.fail_on_call {
-                Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "injected one-shot rename failure",
-                ))
+                Err(io::Error::other("injected one-shot rename failure"))
             } else {
                 crate::platform::publish_staged_path_no_replace(source, destination)
             }
