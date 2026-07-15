@@ -377,8 +377,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_delete_operation_with_host, DeleteBackendError, DeleteOperationExecutionStatus,
-        DeleteOperationHost, DeleteOperationItemOutcome, DeleteOperationKind, DeleteOperationPlan,
+        execute_delete_operation_with_host, execute_delete_operation_with_observer,
+        DeleteBackendError, DeleteOperationExecutionStatus, DeleteOperationHost,
+        DeleteOperationItemOutcome, DeleteOperationKind, DeleteOperationPlan,
         DeleteOperationPreflightError, DeleteOperationRequest, PlannedDeletePathKind,
     };
     use crate::fm::operations::FileOperationCancellation;
@@ -702,6 +703,37 @@ mod tests {
         assert!(!directory.exists());
         assert!(!link.exists());
         assert_eq!(fs::read(target).expect("link target preserved"), b"target");
+    }
+
+    // TP-C4.4-CANCEL: cancellation reported after an item starts but before
+    // the irreversible delete call must preserve the path and terminalize it
+    // as NotStarted, even when the same token is cancelled repeatedly.
+    #[test]
+    fn delete_cancel_before_irreversible_call_is_terminal_and_side_effect_free() {
+        let td = TempDir::new("cancel-before-delete");
+        let source = td.file("source.txt", b"source");
+        let plan = DeleteOperationPlan::preflight(request(
+            DeleteOperationKind::Permanent,
+            vec![source.clone()],
+            false,
+        ))
+        .expect("valid cancellable delete plan");
+        let cancellation = FileOperationCancellation::default();
+
+        let result = execute_delete_operation_with_observer(&plan, &cancellation, |_| {
+            cancellation.cancel();
+            cancellation.cancel();
+        });
+
+        assert_eq!(result.status(), DeleteOperationExecutionStatus::Cancelled);
+        assert!(matches!(
+            result.items()[0].outcome(),
+            DeleteOperationItemOutcome::NotStarted
+        ));
+        assert_eq!(
+            fs::read(source).expect("cancelled delete source retained"),
+            b"source"
+        );
     }
 
     // TP-C4.2-RECOVERY: cancellation after one irreversible terminal result
