@@ -325,16 +325,18 @@ impl FileOperationWorker {
         active_item_index: usize,
         started_items: usize,
     ) -> Self {
-        let mut state = FileOperationWorkerState::default();
-        state.alive = false;
-        state.next_generation = generation;
-        state.active_generation = Some(generation);
-        state.active_cancellation = Some(FileOperationCancellation::default());
-        state.progress = Some(FileOperationWorkerProgress {
-            generation,
-            active_item_index,
-            started_items,
-        });
+        let state = FileOperationWorkerState {
+            alive: false,
+            next_generation: generation,
+            active_generation: Some(generation),
+            active_cancellation: Some(FileOperationCancellation::default()),
+            progress: Some(FileOperationWorkerProgress {
+                generation,
+                active_item_index,
+                started_items,
+            }),
+            ..FileOperationWorkerState::default()
+        };
         Self {
             shared: Arc::new((Mutex::new(state), Condvar::new())),
             handle: None,
