@@ -646,6 +646,70 @@ mod tests {
         );
     }
 
+    // TP-C4.4-RECONCILE: native backends may deliver the operation's own
+    // debounced event after terminal completion already forced convergence.
+    // That exact delayed burst must not invalidate preview state twice.
+    #[test]
+    fn delayed_own_operation_watcher_event_does_not_reload_twice() {
+        let td = TempDir::new("delayed-own-event");
+        let source_dir = td.root.join("source");
+        let destination = td.root.join("destination");
+        std::fs::create_dir(&source_dir).expect("create source directory");
+        std::fs::create_dir(&destination).expect("create destination directory");
+        let source = source_dir.join("payload.txt");
+        std::fs::write(&source, b"payload").expect("write source");
+
+        let mut app = test_app();
+        app.state.file_manager = Some(crate::fm::FmState::new(&destination));
+        let now = Instant::now();
+        assert!(!app.sync_file_manager_watcher_at(now));
+        let watcher_generation = app.file_manager_watcher.generation();
+        app.state.file_manager_clipboard = vec![source];
+        assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !app.file_operation_worker.has_buffered_completion() {
+            assert!(Instant::now() < deadline, "completion buffering timed out");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let before_generation = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("file manager open")
+            .preview_generation;
+        assert!(app.sync_file_operation_worker());
+        let _ = app.sync_file_manager_watcher_at(now);
+
+        let (watch_tx, watch_rx) = sync_channel(1);
+        watch_tx
+            .send(message(
+                watcher_generation,
+                destination
+                    .join("payload.txt")
+                    .to_str()
+                    .expect("UTF-8 temp path"),
+            ))
+            .expect("queue delayed own-operation event");
+        app.file_manager_watcher.receiver = Some(watch_rx);
+        let _ = app.sync_file_manager_watcher_at(now);
+
+        let file_manager = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(
+            file_manager.preview_generation,
+            before_generation + 1,
+            "delayed own-operation watcher event must be absorbed"
+        );
+        assert_eq!(
+            file_manager
+                .entries
+                .iter()
+                .filter(|entry| entry.name == "payload.txt")
+                .count(),
+            1
+        );
+    }
+
     #[test]
     fn app_sync_binds_once_rebinds_on_cwd_change_and_stops_on_close() {
         let first = TempDir::new("first");
