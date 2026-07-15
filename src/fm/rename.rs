@@ -1,6 +1,8 @@
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use crate::fm::operations::FileOperationCancellation;
@@ -288,6 +290,486 @@ fn retained_result(error: RenameOperationError) -> RenameOperationExecutionResul
         status: RenameOperationExecutionStatus::Failed,
         outcome: RenameOperationOutcome::Retained(error),
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BulkRenameOperationRequest {
+    pub(crate) mappings: Vec<(PathBuf, String)>,
+    pub(crate) operation_in_flight: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BulkRenameOperationPreflightError {
+    NoMappings,
+    TooManyMappings { count: usize, limit: usize },
+    OperationInFlight,
+    InvalidNewName { source: PathBuf },
+    DuplicateSource { path: PathBuf },
+    DuplicateDestination { path: PathBuf },
+    DifferentParent { path: PathBuf },
+    NonUtf8Path { path: PathBuf },
+    SourceMissing { path: PathBuf },
+    SourceUnavailable { path: PathBuf, kind: io::ErrorKind },
+    SourceUnsupported { path: PathBuf },
+    SourceHasNoFileName { path: PathBuf },
+    FileIdentityUnavailable { path: PathBuf, kind: io::ErrorKind },
+    DestinationCollision { path: PathBuf },
+    DestinationUnavailable { path: PathBuf, kind: io::ErrorKind },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BulkRenameOperationPlan {
+    mappings: Vec<(PathBuf, PathBuf)>,
+    snapshots: Vec<RenameSourceSnapshot>,
+    staging_paths: Vec<PathBuf>,
+}
+
+impl BulkRenameOperationPlan {
+    pub(crate) fn preflight(
+        request: BulkRenameOperationRequest,
+    ) -> Result<Self, BulkRenameOperationPreflightError> {
+        if request.operation_in_flight {
+            return Err(BulkRenameOperationPreflightError::OperationInFlight);
+        }
+        if request.mappings.is_empty() {
+            return Err(BulkRenameOperationPreflightError::NoMappings);
+        }
+        if request.mappings.len() > crate::fm::MAX_MULTI_SELECTION_PATHS {
+            return Err(BulkRenameOperationPreflightError::TooManyMappings {
+                count: request.mappings.len(),
+                limit: crate::fm::MAX_MULTI_SELECTION_PATHS,
+            });
+        }
+
+        let mut source_paths = HashSet::with_capacity(request.mappings.len());
+        let mut destination_paths = HashSet::with_capacity(request.mappings.len());
+        let mut mappings = Vec::with_capacity(request.mappings.len());
+        let mut snapshots = Vec::with_capacity(request.mappings.len());
+        let mut common_parent: Option<PathBuf> = None;
+
+        for (source, new_name) in request.mappings {
+            if source.to_str().is_none() {
+                return Err(BulkRenameOperationPreflightError::NonUtf8Path { path: source });
+            }
+            if !is_single_file_name(&new_name) {
+                return Err(BulkRenameOperationPreflightError::InvalidNewName { source });
+            }
+            if !source_paths.insert(source.clone()) {
+                return Err(BulkRenameOperationPreflightError::DuplicateSource { path: source });
+            }
+            if source.file_name().is_none() {
+                return Err(BulkRenameOperationPreflightError::SourceHasNoFileName {
+                    path: source,
+                });
+            }
+            let Some(parent) = source.parent().map(Path::to_path_buf) else {
+                return Err(BulkRenameOperationPreflightError::SourceHasNoFileName {
+                    path: source,
+                });
+            };
+            if common_parent
+                .as_ref()
+                .is_some_and(|current| current != &parent)
+            {
+                return Err(BulkRenameOperationPreflightError::DifferentParent { path: source });
+            }
+            common_parent.get_or_insert_with(|| parent.clone());
+            let destination = parent.join(new_name);
+            if !destination_paths.insert(destination.clone()) {
+                return Err(BulkRenameOperationPreflightError::DuplicateDestination {
+                    path: destination,
+                });
+            }
+            snapshots.push(snapshot_bulk_source(&source)?);
+            mappings.push((source, destination));
+        }
+
+        for (_, destination) in &mappings {
+            match fs::symlink_metadata(destination) {
+                Ok(_) if source_paths.contains(destination) => {}
+                Ok(_) => {
+                    return Err(BulkRenameOperationPreflightError::DestinationCollision {
+                        path: destination.clone(),
+                    });
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(BulkRenameOperationPreflightError::DestinationUnavailable {
+                        path: destination.clone(),
+                        kind: error.kind(),
+                    });
+                }
+            }
+        }
+
+        let parent = common_parent.unwrap_or_default();
+        let mut reserved_paths = source_paths;
+        reserved_paths.extend(destination_paths);
+        let mut staging_paths = Vec::with_capacity(mappings.len());
+        for index in 0..mappings.len() {
+            let staging = unique_staging_path(&parent, index, &reserved_paths);
+            reserved_paths.insert(staging.clone());
+            staging_paths.push(staging);
+        }
+
+        Ok(Self {
+            mappings,
+            snapshots,
+            staging_paths,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mappings(&self) -> &[(PathBuf, PathBuf)] {
+        &self.mappings
+    }
+
+    #[cfg(test)]
+    pub(crate) fn staging_paths(&self) -> &[PathBuf] {
+        &self.staging_paths
+    }
+}
+
+fn snapshot_bulk_source(
+    path: &Path,
+) -> Result<RenameSourceSnapshot, BulkRenameOperationPreflightError> {
+    snapshot_source(path).map_err(|error| match error {
+        RenameOperationPreflightError::SourceMissing { path } => {
+            BulkRenameOperationPreflightError::SourceMissing { path }
+        }
+        RenameOperationPreflightError::SourceUnavailable { path, kind } => {
+            BulkRenameOperationPreflightError::SourceUnavailable { path, kind }
+        }
+        RenameOperationPreflightError::SourceUnsupported { path } => {
+            BulkRenameOperationPreflightError::SourceUnsupported { path }
+        }
+        RenameOperationPreflightError::FileIdentityUnavailable { path, kind } => {
+            BulkRenameOperationPreflightError::FileIdentityUnavailable { path, kind }
+        }
+        _ => BulkRenameOperationPreflightError::SourceUnavailable {
+            path: path.to_path_buf(),
+            kind: io::ErrorKind::InvalidInput,
+        },
+    })
+}
+
+fn unique_staging_path(parent: &Path, index: usize, reserved: &HashSet<PathBuf>) -> PathBuf {
+    static NEXT_STAGING_ID: AtomicU64 = AtomicU64::new(0);
+
+    loop {
+        let id = NEXT_STAGING_ID.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(
+            ".herdr-rename-stage-{}-{id}-{index}",
+            std::process::id()
+        ));
+        if !reserved.contains(&candidate) && fs::symlink_metadata(&candidate).is_err() {
+            return candidate;
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BulkRenameOperationError {
+    SourceChanged,
+    DestinationCollision,
+    Cancelled,
+    Io(io::ErrorKind),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BulkRenameOperationExecutionStatus {
+    Completed,
+    Cancelled,
+    RolledBack,
+    RecoveryFailed,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BulkRenameItemOutcome {
+    NotStarted,
+    Renamed,
+    Unchanged,
+    Restored(BulkRenameOperationError),
+    Retained(BulkRenameOperationError),
+    Uncertain(BulkRenameOperationError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BulkRenameOperationItemResult {
+    source: PathBuf,
+    destination: PathBuf,
+    outcome: BulkRenameItemOutcome,
+}
+
+impl BulkRenameOperationItemResult {
+    pub(crate) fn source(&self) -> &Path {
+        &self.source
+    }
+
+    pub(crate) fn destination(&self) -> &Path {
+        &self.destination
+    }
+
+    pub(crate) fn outcome(&self) -> &BulkRenameItemOutcome {
+        &self.outcome
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BulkRenameOperationExecutionResult {
+    status: BulkRenameOperationExecutionStatus,
+    items: Vec<BulkRenameOperationItemResult>,
+}
+
+impl BulkRenameOperationExecutionResult {
+    pub(crate) fn status(&self) -> BulkRenameOperationExecutionStatus {
+        self.status
+    }
+
+    pub(crate) fn items(&self) -> &[BulkRenameOperationItemResult] {
+        &self.items
+    }
+}
+
+pub(crate) fn execute_bulk_rename_operation(
+    plan: &BulkRenameOperationPlan,
+    cancellation: &FileOperationCancellation,
+) -> BulkRenameOperationExecutionResult {
+    execute_bulk_rename_operation_with_host(plan, cancellation, &mut RealRenameOperationHost)
+}
+
+pub(crate) fn execute_bulk_rename_operation_with_host<H: RenameOperationHost>(
+    plan: &BulkRenameOperationPlan,
+    cancellation: &FileOperationCancellation,
+    host: &mut H,
+) -> BulkRenameOperationExecutionResult {
+    let mut result = bulk_initial_result(plan);
+    if cancellation.is_cancelled() {
+        result.status = BulkRenameOperationExecutionStatus::Cancelled;
+        return result;
+    }
+    if let Err(error) = host.before_revalidation() {
+        mark_all_retained(&mut result, BulkRenameOperationError::Io(error.kind()));
+        return result;
+    }
+    for (index, ((source, destination), snapshot)) in
+        plan.mappings.iter().zip(&plan.snapshots).enumerate()
+    {
+        if source == destination {
+            result.items[index].outcome = BulkRenameItemOutcome::Unchanged;
+            continue;
+        }
+        if snapshot_for_revalidation(source).as_ref() != Some(snapshot) {
+            mark_all_retained(&mut result, BulkRenameOperationError::SourceChanged);
+            return result;
+        }
+    }
+
+    let source_paths = plan
+        .mappings
+        .iter()
+        .map(|(source, _)| source)
+        .collect::<HashSet<_>>();
+    for (_, destination) in &plan.mappings {
+        match fs::symlink_metadata(destination) {
+            Ok(_) if source_paths.contains(destination) => {}
+            Ok(_) => {
+                mark_all_retained(&mut result, BulkRenameOperationError::DestinationCollision);
+                return result;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                mark_all_retained(&mut result, BulkRenameOperationError::Io(error.kind()));
+                return result;
+            }
+        }
+    }
+
+    let mut staged = vec![false; plan.mappings.len()];
+    for index in 0..plan.mappings.len() {
+        let (source, destination) = &plan.mappings[index];
+        if source == destination {
+            continue;
+        }
+        if cancellation.is_cancelled() {
+            return recover_staged(
+                plan,
+                result,
+                &mut staged,
+                host,
+                BulkRenameOperationError::Cancelled,
+                BulkRenameOperationExecutionStatus::Cancelled,
+            );
+        }
+        if let Err(error) = host.publish_no_replace(source, &plan.staging_paths[index]) {
+            return recover_staged(
+                plan,
+                result,
+                &mut staged,
+                host,
+                classify_bulk_io(error, &plan.staging_paths[index]),
+                BulkRenameOperationExecutionStatus::RolledBack,
+            );
+        }
+        staged[index] = true;
+    }
+
+    if cancellation.is_cancelled() {
+        return recover_staged(
+            plan,
+            result,
+            &mut staged,
+            host,
+            BulkRenameOperationError::Cancelled,
+            BulkRenameOperationExecutionStatus::Cancelled,
+        );
+    }
+
+    let mut committed = vec![false; plan.mappings.len()];
+    for index in 0..plan.mappings.len() {
+        let (source, destination) = &plan.mappings[index];
+        if source == destination {
+            continue;
+        }
+        if cancellation.is_cancelled() {
+            return recover_committed_and_staged(
+                plan,
+                result,
+                &mut staged,
+                &mut committed,
+                host,
+                BulkRenameOperationError::Cancelled,
+                BulkRenameOperationExecutionStatus::Cancelled,
+            );
+        }
+        if let Err(error) = host.publish_no_replace(&plan.staging_paths[index], destination) {
+            return recover_committed_and_staged(
+                plan,
+                result,
+                &mut staged,
+                &mut committed,
+                host,
+                classify_bulk_io(error, destination),
+                BulkRenameOperationExecutionStatus::RolledBack,
+            );
+        }
+        staged[index] = false;
+        committed[index] = true;
+        result.items[index].outcome = BulkRenameItemOutcome::Renamed;
+    }
+
+    result.status = BulkRenameOperationExecutionStatus::Completed;
+    result
+}
+
+fn bulk_initial_result(plan: &BulkRenameOperationPlan) -> BulkRenameOperationExecutionResult {
+    BulkRenameOperationExecutionResult {
+        status: BulkRenameOperationExecutionStatus::Failed,
+        items: plan
+            .mappings
+            .iter()
+            .map(|(source, destination)| BulkRenameOperationItemResult {
+                source: source.clone(),
+                destination: destination.clone(),
+                outcome: BulkRenameItemOutcome::NotStarted,
+            })
+            .collect(),
+    }
+}
+
+fn mark_all_retained(
+    result: &mut BulkRenameOperationExecutionResult,
+    error: BulkRenameOperationError,
+) {
+    for item in &mut result.items {
+        if item.outcome != BulkRenameItemOutcome::Unchanged {
+            item.outcome = BulkRenameItemOutcome::Retained(error.clone());
+        }
+    }
+}
+
+fn classify_bulk_io(error: io::Error, destination: &Path) -> BulkRenameOperationError {
+    if error.kind() == io::ErrorKind::AlreadyExists || fs::symlink_metadata(destination).is_ok() {
+        BulkRenameOperationError::DestinationCollision
+    } else {
+        BulkRenameOperationError::Io(error.kind())
+    }
+}
+
+fn recover_committed_and_staged<H: RenameOperationHost>(
+    plan: &BulkRenameOperationPlan,
+    mut result: BulkRenameOperationExecutionResult,
+    staged: &mut [bool],
+    committed: &mut [bool],
+    host: &mut H,
+    error: BulkRenameOperationError,
+    recovered_status: BulkRenameOperationExecutionStatus,
+) -> BulkRenameOperationExecutionResult {
+    let mut recovery_failed = false;
+    for index in (0..committed.len()).rev() {
+        if !committed[index] {
+            continue;
+        }
+        let destination = &plan.mappings[index].1;
+        match host.publish_no_replace(destination, &plan.staging_paths[index]) {
+            Ok(()) => {
+                committed[index] = false;
+                staged[index] = true;
+            }
+            Err(_) => {
+                recovery_failed = true;
+                result.items[index].outcome = BulkRenameItemOutcome::Uncertain(error.clone());
+            }
+        }
+    }
+    let recovered = recover_staged(plan, result, staged, host, error, recovered_status);
+    if recovery_failed {
+        BulkRenameOperationExecutionResult {
+            status: BulkRenameOperationExecutionStatus::RecoveryFailed,
+            ..recovered
+        }
+    } else {
+        recovered
+    }
+}
+
+fn recover_staged<H: RenameOperationHost>(
+    plan: &BulkRenameOperationPlan,
+    mut result: BulkRenameOperationExecutionResult,
+    staged: &mut [bool],
+    host: &mut H,
+    error: BulkRenameOperationError,
+    recovered_status: BulkRenameOperationExecutionStatus,
+) -> BulkRenameOperationExecutionResult {
+    let mut recovery_failed = false;
+    for index in (0..staged.len()).rev() {
+        if !staged[index] {
+            if matches!(
+                result.items[index].outcome,
+                BulkRenameItemOutcome::NotStarted
+            ) {
+                result.items[index].outcome = BulkRenameItemOutcome::Retained(error.clone());
+            }
+            continue;
+        }
+        match host.publish_no_replace(&plan.staging_paths[index], &plan.mappings[index].0) {
+            Ok(()) => {
+                staged[index] = false;
+                result.items[index].outcome = BulkRenameItemOutcome::Restored(error.clone());
+            }
+            Err(_) => {
+                recovery_failed = true;
+                result.items[index].outcome = BulkRenameItemOutcome::Uncertain(error.clone());
+            }
+        }
+    }
+    result.status = if recovery_failed {
+        BulkRenameOperationExecutionStatus::RecoveryFailed
+    } else {
+        recovered_status
+    };
+    result
 }
 
 #[cfg(test)]
