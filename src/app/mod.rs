@@ -608,6 +608,7 @@ impl App {
             request_file_manager_delete: None,
             request_file_manager_context_action: None,
             request_file_manager_agent_handoff: None,
+            request_file_manager_claude_split: None,
             should_quit: false,
             detach_exits: no_session,
             detach_requested: false,

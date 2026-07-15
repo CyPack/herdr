@@ -1,7 +1,19 @@
 use crate::app::state::{
-    FileManagerAgentHandoffRequest, FileManagerContextMenuAction, FileManagerOperationState,
+    FileManagerAgentHandoffRequest, FileManagerClaudeSplitRequest, FileManagerContextMenuAction,
+    FileManagerOperationState,
 };
 use bytes::Bytes;
+
+#[derive(Debug)]
+struct OwnedFileManagerClaudeSplit {
+    workspace_id: String,
+    pane_id: crate::layout::PaneId,
+    terminal_id: crate::terminal::TerminalId,
+}
+
+fn file_manager_claude_argv() -> [String; 1] {
+    ["claude".to_string()]
+}
 
 pub(super) enum TerminalInputSendError {
     RuntimeUnavailable,
@@ -32,6 +44,7 @@ impl crate::app::App {
 
     fn prepare_file_manager_agent_handoff(&mut self, paths: Vec<std::path::PathBuf>) -> bool {
         self.state.request_file_manager_agent_handoff = None;
+        self.state.request_file_manager_claude_split = None;
         let Some(path) = paths.first().filter(|_| paths.len() == 1).cloned() else {
             return false;
         };
@@ -45,45 +58,50 @@ impl crate::app::App {
         {
             return false;
         }
-        let path_is_current = self
-            .state
-            .file_manager
-            .as_ref()
-            .is_some_and(|file_manager| {
-                file_manager
-                    .entries
-                    .iter()
-                    .any(|entry| entry.operation_supported && entry.path == path)
-            });
-        if !path_is_current {
+        let Some(file_manager) = self.state.file_manager.as_ref() else {
+            return false;
+        };
+        if !file_manager
+            .entries
+            .iter()
+            .any(|entry| entry.operation_supported && entry.path == path)
+        {
             return false;
         }
+        let cwd = file_manager.cwd.clone();
 
         let Some(workspace_idx) = self.state.active else {
             return false;
         };
-        let Some(pane_id) = self
-            .state
-            .workspaces
-            .get(workspace_idx)
-            .and_then(crate::workspace::Workspace::focused_pane_id)
-        else {
+        let Some(workspace) = self.state.workspaces.get(workspace_idx) else {
+            return false;
+        };
+        let workspace_id = workspace.id.clone();
+        let Some(pane_id) = workspace.focused_pane_id() else {
             return false;
         };
         let Some(terminal_id) = self.state.terminal_id_for_pane(workspace_idx, pane_id) else {
             return false;
         };
-        if !self
+        let is_agent = self
             .state
             .terminals
             .get(&terminal_id)
-            .is_some_and(crate::terminal::TerminalState::is_agent_terminal)
-        {
+            .is_some_and(crate::terminal::TerminalState::is_agent_terminal);
+        if is_agent {
+            self.state.request_file_manager_agent_handoff =
+                Some(FileManagerAgentHandoffRequest { path, terminal_id });
+        } else if self.state.terminals.contains_key(&terminal_id) {
+            self.state.request_file_manager_claude_split = Some(FileManagerClaudeSplitRequest {
+                path,
+                cwd,
+                workspace_id,
+                source_pane_id: pane_id,
+                source_terminal_id: terminal_id,
+            });
+        } else {
             return false;
         }
-
-        self.state.request_file_manager_agent_handoff =
-            Some(FileManagerAgentHandoffRequest { path, terminal_id });
         true
     }
 
@@ -152,6 +170,281 @@ impl crate::app::App {
             }
         }
         true
+    }
+
+    pub(super) fn sync_file_manager_claude_split(&mut self) -> bool {
+        let argv = file_manager_claude_argv();
+        self.sync_file_manager_claude_split_with_argv(&argv)
+    }
+
+    fn sync_file_manager_claude_split_with_argv(&mut self, argv: &[String]) -> bool {
+        let Some(request) = self.state.request_file_manager_claude_split.take() else {
+            return false;
+        };
+        if !self.file_manager_claude_split_is_current(&request) {
+            self.show_file_manager_agent_handoff_failure("agent handoff authority changed");
+            return true;
+        }
+
+        match self.launch_file_manager_claude_split(&request, argv) {
+            Ok(owned) => {
+                let _ = self.complete_file_manager_claude_split(&request, owned);
+            }
+            Err(context) => self.show_file_manager_agent_handoff_failure(&context),
+        }
+        true
+    }
+
+    fn launch_file_manager_claude_split(
+        &mut self,
+        request: &FileManagerClaudeSplitRequest,
+        argv: &[String],
+    ) -> Result<OwnedFileManagerClaudeSplit, String> {
+        if argv.is_empty() {
+            return Err("Claude launch argv is empty".to_string());
+        }
+        let Some(workspace_idx) = self
+            .state
+            .workspaces
+            .iter()
+            .position(|workspace| workspace.id == request.workspace_id)
+        else {
+            return Err("agent handoff authority changed".to_string());
+        };
+
+        let split = self.spawn_agent_split(
+            workspace_idx,
+            request.source_pane_id,
+            crate::api::schema::SplitDirection::Down,
+            request.cwd.clone(),
+            argv,
+            Vec::new(),
+            false,
+        );
+        let (_, _, pane_id) = split.map_err(|error| {
+            let body = self.agent_start_error_body(error);
+            format!("Claude could not be launched: {}", body.message)
+        })?;
+
+        let Some(terminal_id) = self.state.terminal_id_for_pane(workspace_idx, pane_id) else {
+            self.rollback_file_manager_claude_split_pane(
+                request,
+                &request.workspace_id,
+                pane_id,
+                None,
+            );
+            return Err("Claude terminal setup failed".to_string());
+        };
+        let owned = OwnedFileManagerClaudeSplit {
+            workspace_id: request.workspace_id.clone(),
+            pane_id,
+            terminal_id,
+        };
+        let agent_name = self.next_file_manager_claude_name();
+        let Some(terminal) = self.state.terminals.get_mut(&owned.terminal_id) else {
+            self.rollback_file_manager_claude_split(request, &owned);
+            return Err("Claude terminal setup failed".to_string());
+        };
+        terminal.set_agent_name(agent_name.clone());
+        terminal.set_manual_label(agent_name);
+        self.state.mark_session_dirty();
+        Ok(owned)
+    }
+
+    fn complete_file_manager_claude_split(
+        &mut self,
+        request: &FileManagerClaudeSplitRequest,
+        owned: OwnedFileManagerClaudeSplit,
+    ) -> bool {
+        if !self.file_manager_claude_split_is_current(request)
+            || !self.file_manager_claude_split_is_owned(&owned)
+        {
+            self.rollback_file_manager_claude_split(request, &owned);
+            self.show_file_manager_agent_handoff_failure("agent handoff authority changed");
+            return false;
+        }
+        let Some(path) = request.path.to_str() else {
+            self.rollback_file_manager_claude_split(request, &owned);
+            self.show_file_manager_agent_handoff_failure("agent handoff authority changed");
+            return false;
+        };
+        let mut payload = Vec::with_capacity(path.len() + 1);
+        payload.extend_from_slice(path.as_bytes());
+        payload.push(b'\r');
+
+        if let Err(error) = self.try_send_terminal_input(&owned.terminal_id, Bytes::from(payload)) {
+            let context = match error {
+                TerminalInputSendError::RuntimeUnavailable => "Claude runtime is unavailable",
+                TerminalInputSendError::SendFailed { busy: true, .. } => "Claude input is busy",
+                TerminalInputSendError::SendFailed { busy: false, .. } => {
+                    "Claude runtime is unavailable"
+                }
+            };
+            self.rollback_file_manager_claude_split(request, &owned);
+            self.show_file_manager_agent_handoff_failure(context);
+            return false;
+        }
+
+        let Some(workspace_idx) = self
+            .state
+            .workspaces
+            .iter()
+            .position(|workspace| workspace.id == owned.workspace_id)
+        else {
+            self.rollback_file_manager_claude_split(request, &owned);
+            self.show_file_manager_agent_handoff_failure("agent handoff authority changed");
+            return false;
+        };
+        self.state
+            .focus_pane_in_workspace(workspace_idx, owned.pane_id);
+        self.state.close_file_manager();
+        self.state.settle_terminal_mode_after_focus();
+        self.schedule_session_save();
+        true
+    }
+
+    fn file_manager_claude_split_is_current(
+        &self,
+        request: &FileManagerClaudeSplitRequest,
+    ) -> bool {
+        if self.file_operation_worker.is_busy()
+            || self
+                .state
+                .file_manager_operation
+                .as_ref()
+                .is_some_and(FileManagerOperationState::is_running)
+            || request.path.to_str().is_none()
+        {
+            return false;
+        }
+        let Some(file_manager) = self.state.file_manager.as_ref() else {
+            return false;
+        };
+        if file_manager.cwd != request.cwd
+            || !file_manager
+                .entries
+                .iter()
+                .any(|entry| entry.operation_supported && entry.path == request.path)
+        {
+            return false;
+        }
+        let Some(workspace_idx) = self.state.active else {
+            return false;
+        };
+        let Some(workspace) = self.state.workspaces.get(workspace_idx) else {
+            return false;
+        };
+        if workspace.id != request.workspace_id
+            || workspace.focused_pane_id() != Some(request.source_pane_id)
+            || self
+                .state
+                .terminal_id_for_pane(workspace_idx, request.source_pane_id)
+                .as_ref()
+                != Some(&request.source_terminal_id)
+        {
+            return false;
+        }
+        self.state
+            .terminals
+            .get(&request.source_terminal_id)
+            .is_some_and(|terminal| !terminal.is_agent_terminal())
+    }
+
+    fn file_manager_claude_split_is_owned(&self, owned: &OwnedFileManagerClaudeSplit) -> bool {
+        let Some(workspace_idx) = self
+            .state
+            .workspaces
+            .iter()
+            .position(|workspace| workspace.id == owned.workspace_id)
+        else {
+            return false;
+        };
+        self.state
+            .terminal_id_for_pane(workspace_idx, owned.pane_id)
+            .as_ref()
+            == Some(&owned.terminal_id)
+            && self
+                .state
+                .terminals
+                .get(&owned.terminal_id)
+                .is_some_and(crate::terminal::TerminalState::is_agent_terminal)
+    }
+
+    fn rollback_file_manager_claude_split(
+        &mut self,
+        request: &FileManagerClaudeSplitRequest,
+        owned: &OwnedFileManagerClaudeSplit,
+    ) {
+        self.rollback_file_manager_claude_split_pane(
+            request,
+            &owned.workspace_id,
+            owned.pane_id,
+            Some(&owned.terminal_id),
+        );
+    }
+
+    fn rollback_file_manager_claude_split_pane(
+        &mut self,
+        request: &FileManagerClaudeSplitRequest,
+        workspace_id: &str,
+        pane_id: crate::layout::PaneId,
+        expected_terminal_id: Option<&crate::terminal::TerminalId>,
+    ) {
+        let Some(workspace_idx) = self
+            .state
+            .workspaces
+            .iter()
+            .position(|workspace| workspace.id == workspace_id)
+        else {
+            return;
+        };
+        let terminal_id = self.state.terminal_id_for_pane(workspace_idx, pane_id);
+        if expected_terminal_id.is_some_and(|expected| terminal_id.as_ref() != Some(expected)) {
+            return;
+        }
+        let Some(terminal_id) = terminal_id else {
+            return;
+        };
+        let should_close_workspace = self.state.workspaces[workspace_idx].remove_pane(pane_id);
+        if should_close_workspace {
+            return;
+        }
+        self.state.remove_plugin_pane_records([pane_id]);
+        self.state.remove_unattached_terminal_ids([terminal_id]);
+        self.shutdown_detached_terminal_runtimes();
+        if self
+            .state
+            .workspaces
+            .get(workspace_idx)
+            .and_then(|workspace| workspace.terminal_id(request.source_pane_id))
+            == Some(&request.source_terminal_id)
+        {
+            self.state
+                .focus_pane_in_workspace(workspace_idx, request.source_pane_id);
+        }
+        self.state.mark_session_dirty();
+        self.schedule_session_save();
+    }
+
+    fn next_file_manager_claude_name(&self) -> String {
+        let agents = self.collect_agent_infos();
+        let base = "fm-claude";
+        if agents
+            .iter()
+            .all(|agent| agent.name.as_deref() != Some(base))
+        {
+            return base.to_string();
+        }
+        for suffix in 2..=agents.len().saturating_add(2) {
+            let candidate = format!("{base}-{suffix}");
+            if agents
+                .iter()
+                .all(|agent| agent.name.as_deref() != Some(candidate.as_str()))
+            {
+                return candidate;
+            }
+        }
+        format!("{base}-{}", agents.len().saturating_add(3))
     }
 
     fn file_manager_agent_handoff_is_current(
@@ -324,13 +617,13 @@ mod tests {
     }
 
     #[cfg(windows)]
-    fn exiting_test_command() -> &'static str {
-        "C:\\Windows\\System32\\whoami.exe"
+    fn running_test_command() -> &'static str {
+        "C:\\Windows\\System32\\more.com"
     }
 
     #[cfg(not(windows))]
-    fn exiting_test_command() -> &'static str {
-        "/usr/bin/true"
+    fn running_test_command() -> &'static str {
+        "/bin/cat"
     }
 
     fn impossible_test_command() -> String {
@@ -379,7 +672,7 @@ mod tests {
 
         assert_eq!(super::file_manager_claude_argv(), ["claude".to_string()]);
         assert!(
-            app.sync_file_manager_claude_split_with_argv(&[exiting_test_command().to_string(),])
+            app.sync_file_manager_claude_split_with_argv(&[running_test_command().to_string(),])
         );
         assert!(app.state.request_file_manager_claude_split.is_none());
         assert_eq!(app.state.workspaces[0].tabs[0].layout.pane_count(), 2);
@@ -409,7 +702,7 @@ mod tests {
         assert_eq!(new_terminal.cwd, fixture.root);
         assert_eq!(
             new_terminal.launch_argv,
-            Some(vec![exiting_test_command().to_string()])
+            Some(vec![running_test_command().to_string()])
         );
         assert!(new_terminal.is_agent_terminal());
 
@@ -483,7 +776,7 @@ mod tests {
 
         prepare_claude_split(&mut app, &path);
         assert!(
-            app.sync_file_manager_claude_split_with_argv(&[exiting_test_command().to_string(),])
+            app.sync_file_manager_claude_split_with_argv(&[running_test_command().to_string(),])
         );
         assert_eq!(
             app.state.workspaces[0].tabs[0].layout.pane_count(),
@@ -511,7 +804,7 @@ mod tests {
         prepare_claude_split(&mut app, &path);
         app.state.request_file_manager_claude_split = None;
         assert!(
-            !app.sync_file_manager_claude_split_with_argv(&[exiting_test_command().to_string(),])
+            !app.sync_file_manager_claude_split_with_argv(&[running_test_command().to_string(),])
         );
         assert_eq!(
             app.state.workspaces[0].tabs[0].layout.pane_ids(),
@@ -526,7 +819,7 @@ mod tests {
             .entries
             .clear();
         assert!(
-            app.sync_file_manager_claude_split_with_argv(&[exiting_test_command().to_string(),])
+            app.sync_file_manager_claude_split_with_argv(&[running_test_command().to_string(),])
         );
         assert_eq!(
             app.state.workspaces[0].tabs[0].layout.pane_ids(),
@@ -536,7 +829,7 @@ mod tests {
         app.state.file_manager = Some(crate::fm::FmState::new(&fixture.root));
         let request = prepare_claude_split(&mut app, &path);
         let owned = app
-            .launch_file_manager_claude_split(&request, &[exiting_test_command().to_string()])
+            .launch_file_manager_claude_split(&request, &[running_test_command().to_string()])
             .expect("safe split launch");
         let runtime = app
             .terminal_runtimes

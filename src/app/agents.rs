@@ -350,7 +350,7 @@ impl App {
         Ok((ws_idx, 0, pane_id))
     }
 
-    fn spawn_agent_split(
+    pub(super) fn spawn_agent_split(
         &mut self,
         ws_idx: usize,
         target_pane: crate::layout::PaneId,
