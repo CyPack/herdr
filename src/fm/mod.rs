@@ -1484,6 +1484,173 @@ mod tests {
         assert_eq!(st.cwd, PathBuf::from("/"));
     }
 
+    // TP-N2.1-PATH: leaving must transfer the exact departed child identity
+    // into the new current list instead of reusing the unrelated row zero.
+    #[test]
+    fn leave_focuses_departed_child_by_path() {
+        let td = TempDir::new("leave-path-focus");
+        td.dir("alpha");
+        td.dir("target");
+        td.dir("zulu");
+        let target = td.root.join("target");
+        let mut state = FmState::new(&target);
+
+        state.leave();
+
+        assert_eq!(state.cwd, td.root);
+        assert_eq!(
+            state.selected().map(|entry| &entry.path),
+            Some(&target),
+            "leave follows the departed path rather than its former row index"
+        );
+    }
+
+    // TP-N2.1-PATH: directory-boundary selection cleanup and preview
+    // generation must converge on the same departed-child focus authority.
+    #[test]
+    fn leave_focuses_child_preview_and_clears_selection() {
+        let td = TempDir::new("leave-preview-selection");
+        td.dir("alpha");
+        td.dir("target");
+        td.file("target/inside.txt");
+        let target = td.root.join("target");
+        let mut state = FmState::new(&target);
+        assert!(state.replace_selection(0));
+        let generation_before = state.preview_generation;
+
+        state.leave();
+
+        assert!(state.multi_selection_paths().is_empty());
+        assert!(state.multi_selection_anchor().is_none());
+        assert_eq!(state.selected().map(|entry| &entry.path), Some(&target));
+        assert!(state.preview_generation > generation_before);
+        match &state.preview {
+            FmPreview::Directory(entries) => assert_eq!(names(entries), vec!["inside.txt"]),
+            other => panic!("departed directory needs its own preview, got {other:?}"),
+        }
+    }
+
+    // TP-N2.1-PATH: watcher-style reorder follows exact path identity; a later
+    // delete falls back to a live bounded row without retaining the old path.
+    #[test]
+    fn leave_focus_survives_parent_reorder_and_deletion() {
+        let td = TempDir::new("leave-reorder-delete");
+        td.dir("alpha");
+        td.dir("target");
+        td.dir("zulu");
+        let target = td.root.join("target");
+        let mut state = FmState::new(&target);
+
+        state.leave();
+        assert_eq!(state.selected().map(|entry| &entry.path), Some(&target));
+
+        td.dir("bravo");
+        state.reload();
+        assert_eq!(state.selected().map(|entry| &entry.path), Some(&target));
+
+        fs::remove_dir(&target).expect("remove departed child");
+        state.reload();
+        assert!(state.cursor < state.entries.len());
+        assert_ne!(state.selected().map(|entry| &entry.path), Some(&target));
+        assert!(
+            state.entries.iter().all(|entry| entry.path != target),
+            "deleted departed identity is not retained"
+        );
+    }
+
+    // TP-N2.1-PATH: geometry normalization owns scrolling after navigation;
+    // leave only restores focus and the bounded viewport contains that cursor.
+    #[test]
+    fn leave_focus_scrolls_into_bounded_viewport() {
+        let td = TempDir::new("leave-viewport-focus");
+        for name in ["alpha", "bravo", "charlie", "delta", "target"] {
+            td.dir(name);
+        }
+        let target = td.root.join("target");
+        let mut state = FmState::new(&target);
+
+        state.leave();
+        state.sync_viewport(2);
+
+        assert_eq!(state.selected().map(|entry| &entry.path), Some(&target));
+        assert!(state.viewport_start <= state.cursor);
+        assert!(state.cursor < state.viewport_start + 2);
+        assert!(state.viewport_start <= state.entries.len().saturating_sub(2));
+    }
+
+    // TP-N2.1-PATH: a raced-away or filtered departed child does not create a
+    // synthetic row. Navigation reaches the parent with the existing fallback.
+    #[test]
+    fn leave_missing_or_hidden_child_uses_top_fallback() {
+        let td = TempDir::new("leave-missing-hidden");
+        td.dir("visible");
+
+        let missing = td.root.join("missing");
+        let mut missing_state = FmState::new(&missing);
+        missing_state.leave();
+        assert_eq!(missing_state.cwd, td.root);
+        assert_eq!(missing_state.cursor, 0);
+        assert!(missing_state
+            .entries
+            .iter()
+            .all(|entry| entry.path != missing));
+
+        td.dir(".hidden");
+        let hidden = td.root.join(".hidden");
+        let mut hidden_state = FmState::with_hidden(&hidden, false);
+        hidden_state.leave();
+        assert_eq!(hidden_state.cwd, td.root);
+        assert_eq!(hidden_state.cursor, 0);
+        assert!(hidden_state
+            .entries
+            .iter()
+            .all(|entry| entry.path != hidden));
+        assert_eq!(
+            hidden_state.selected().map(|entry| entry.name.as_str()),
+            Some("visible")
+        );
+    }
+
+    // TP-N2.1-PATH: root leave is a complete state no-op, including selection,
+    // prepared context, viewport, and preview generation lifecycle.
+    #[test]
+    fn leave_at_root_preserves_complete_state() {
+        let mut state = synthetic_state(1);
+        state.cwd = PathBuf::from("/");
+        state.viewport_start = 0;
+        state.preview_generation = 41;
+        state.preview = FmPreview::Directory(state.entries.clone());
+        assert!(state.replace_selection(0));
+
+        let cwd = state.cwd.clone();
+        let entries = state.entries.clone();
+        let cursor = state.cursor;
+        let viewport_start = state.viewport_start;
+        let show_hidden = state.show_hidden;
+        let cwd_writable = state.cwd_writable;
+        let cwd_status = state.cwd_status;
+        let parent = state.parent.clone();
+        let preview = state.preview.clone();
+        let preview_generation = state.preview_generation;
+        let selected_paths = state.multi_selection_paths().clone();
+        let selection_anchor = state.multi_selection_anchor().map(Path::to_path_buf);
+
+        state.leave();
+
+        assert_eq!(state.cwd, cwd);
+        assert_eq!(state.entries, entries);
+        assert_eq!(state.cursor, cursor);
+        assert_eq!(state.viewport_start, viewport_start);
+        assert_eq!(state.show_hidden, show_hidden);
+        assert_eq!(state.cwd_writable, cwd_writable);
+        assert_eq!(state.cwd_status, cwd_status);
+        assert_eq!(state.parent, parent);
+        assert_eq!(state.preview, preview);
+        assert_eq!(state.preview_generation, preview_generation);
+        assert_eq!(state.multi_selection_paths(), &selected_paths);
+        assert_eq!(state.multi_selection_anchor(), selection_anchor.as_deref());
+    }
+
     // TP-A2.2.2/3: Miller context is loaded into pure state before render. The
     // parent cursor identifies cwd and a selected directory exposes its child
     // entries without filesystem access from the renderer.
