@@ -406,8 +406,22 @@ owns filesystem mutation and C5 owns agent delivery.
   real/synthetic `Instant` ordering. Fresh graph: 18,745 / 87,178 with the
   progress type, shared worker seam, four observer adapters, and
   `miller_layout`.
-- [ ] C4.4.2 make TP-C4.4-CANCEL RED and define exact reversible versus
+- [x] C4.4.2 make TP-C4.4-CANCEL RED and define exact reversible versus
   irreversible cancellation boundaries with idempotent terminalization.
+- C4.4.2 atomic chain: single rename `29572ab`/`d246f09`, delete
+  `43d573b`/`1cf0ca4`, typed Esc intent `eef9a9b`/`a0d91ec`, end-to-end
+  generation-safe App cancellation `699f21c`/`9eb7f4b`, single rename race
+  precedence `f0a8280`/`26484ed`, buffered completion race
+  `a66bef7`/`dfe21e6`, and bulk rename race precedence
+  `15c7a27`/`d77858a`.
+- C4.4.2 preserves existing transfer staging/commit rollback, checks delete
+  before irreversible mutation, gives observed cancel precedence over single/
+  bulk revalidation races, routes repeated Esc only to the matching active
+  generation, and rejects cancellation after completion is buffered.
+- C4.4.2 gates: broad C4/input 98/98, full nextest 3122/3122 plus only the named
+  B0 skip, Linux/Windows clippy, Bun 17/17, Python 64/64, fmt/diff/temp clean.
+  Fresh graph: 18,756 / 87,282 with the typed key intent, App/worker cancel
+  seams, cancellation tests, and `miller_layout` after stale `ready` proof.
 - [ ] C4.4.3 make TP-C4.4-RECONCILE RED and prove one matching-generation
   refresh across watcher bursts, polling fallback, selection pruning, and
   close/reopen races.
@@ -453,8 +467,8 @@ owns filesystem mutation and C5 owns agent delivery.
 ## Ordering Resolution
 
 A4, B0, B1, the A3 remainder, B2, C1, N3, C2, N4.2, C3.1, C3.2, C3.3,
-C4.1, C4.2, C4.3, and C4.4.1 progress are complete through product head
-`cd4368a` with separate test-stability head `30d99bd`. The next execution order
-is C4.4.2 CANCEL → C4.4.3 RECONCILE → C4.4.4 RECOVERY → C4.4.5 GATES → C5 → C6.
+C4.1, C4.2, C4.3, C4.4.1 progress, and C4.4.2 cancellation are complete
+through product head `d77858a`. The next execution order is C4.4.3 RECONCILE →
+C4.4.4 RECOVERY → C4.4.5 GATES → C5 → C6.
 S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3 remain
 inactive north-star work.

@@ -4,12 +4,11 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Active C4.4 progress product checkpoint: `cd4368a`
-  (`feat: report bulk rename progress`). Separate test-stability head:
-  `30d99bd` (`test: make OMP lifecycle clock deterministic`).
-- The pending C4.4 progress publication unit is ten atomic RED/GREEN commits
-  from `aa9c894` through `cd4368a`, the separate test-stability commit
-  `30d99bd`, and the continuity/graph commit containing this file. At
+- Active C4.4 cancellation product checkpoint: `d77858a`
+  (`fix: prioritize bulk rename cancellation before revalidation`).
+- The pending C4.4 cancellation publication unit is fourteen atomic RED/GREEN
+  commits from `29572ab` through `d77858a`, plus the continuity/graph commit
+  containing this file. At
   publication, CyPack
   `feat/native-fm` and fork `master` are verified at that same fast-forward
   branch tip.
@@ -411,6 +410,42 @@
   87,178 edges and returned the progress type, common worker seam, all four
   observer adapters, and the existing `miller_layout` symbol.
 
+## Verified Increment — C4.4 Generation-Safe Cancellation
+
+- TP-C4.4-CANCEL is an auditable fourteen-commit RED/GREEN chain from single
+  rename boundary RED `29572ab` through bulk cancellation precedence GREEN
+  `d77858a`; every gap was observed failing before its production fix.
+- Transfer retains its existing before-start, staging, between-commit rollback,
+  and idempotent token contracts. Delete now checks the token after progress
+  but before its irreversible backend call; completed deletes remain Deleted
+  while untouched items remain NotStarted.
+- Single and bulk rename give an already-observed cancellation precedence over
+  later revalidation races and check again at their final safe boundary.
+  External replacements remain visible; no publish/staging artifact is
+  invented and committed work is never reported rolled back without proof.
+- Running operations route `Esc` through typed `FileManagerKeyDispatch` to the
+  exact active worker generation. Repeated Esc is idempotent, stale App
+  generations fail closed, the FM remains open, and normal Esc/q close behavior
+  remains unchanged when no operation runs.
+- Buffered completion wins the cancel/completion race: cancellation is rejected
+  once the sole terminal result exists, even before App drains it. Correctly
+  cancelled work projects `Cancelled` with exact per-item evidence and leaves
+  the single lane idle.
+- Atomic chain: single rename `29572ab`/`d246f09`, delete
+  `43d573b`/`1cf0ca4`, typed key intent `eef9a9b`/`a0d91ec`, end-to-end App
+  route `699f21c`/`9eb7f4b`, single rename precedence `f0a8280`/`26484ed`,
+  completion race `a66bef7`/`dfe21e6`, and bulk precedence
+  `15c7a27`/`d77858a`.
+- Fresh evidence: broad C4/input regression 98/98; full nextest 3122/3122 with
+  only `path_beta_real_host_probe` ignored; Linux all-target and canonical
+  Windows MSVC bin clippy clean; Bun 17/17; Python 64/64;
+  fmt/diff/temp-artifact checks clean; B0 skip separately proved as
+  `1 ignored / 0 failed` without execution.
+- The stale graph said `ready` but lacked `cancel_file_manager_operation`.
+  Reindex completed at 18,756 nodes / 87,282 edges and returned the key intent,
+  App cancel seam, generation-safe worker method, cancellation tests, and
+  existing `miller_layout`.
+
 ## Completed Checkpoint — B2 Native Image Preview
 
 - B2 is an auditable dependency decision plus four RED/GREEN increments and a
@@ -571,13 +606,13 @@
 
 ## Exact Next Action
 
-1. Make TP-C4.4-CANCEL RED before production changes. Graph-first inspect each
-   operation's reversible staging/copy and irreversible publish/delete
-   boundary plus the existing cancellation token and terminal result mapping.
-2. Prove cancel-before-start, mid-reversible-work, post-commit, repeated cancel,
-   and cancel/completion races. Cancellation must be idempotent; committed work
-   stays committed and every remaining item reaches an exact terminal state.
-3. Continue in strict order: TP-C4.4-RECONCILE, RECOVERY, then the
+1. Make TP-C4.4-RECONCILE RED before production changes. Graph-first inspect
+   worker completion reload, A4 watcher generation/burst coalescing, polling
+   fallback, selected-path pruning, cwd change, and FM close/reopen ownership.
+2. Prove one matching-generation reconciliation for own-operation watcher
+   bursts before/during/after completion. Stale generations must not reload or
+   project into a reopened FM; selection must preserve or prune exact paths.
+3. Continue in strict order: TP-C4.4-RECOVERY, then the
    complete TP-C4.4-GATES. Every production increment follows its own observed
    failing test; no compile-failing RED is pushed alone. After C4.4, continue
    C5 then C6 without skipping modules.

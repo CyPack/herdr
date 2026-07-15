@@ -2,11 +2,10 @@
 
 ## 1. SONRAKI ADIM
 
-Make TP-C4.4-CANCEL RED before production changes. Graph-first inspect every
-operation's reversible staging/copy and irreversible publish/delete boundary,
-the cancellation token, and terminal result projection. Prove idempotent
-cancel-before-start, mid-work, post-commit, repeated-cancel, and
-cancel/completion-race behavior before implementation.
+Make TP-C4.4-RECONCILE RED before production changes. Graph-first inspect worker
+completion reload, A4 watcher generation and burst coalescing, polling fallback,
+selected-path pruning, cwd changes, and FM close/reopen ownership. Prove one
+matching-generation refresh and fail closed for every stale callback.
 
 ## 2. AKTİF PROJE
 
@@ -287,6 +286,16 @@ cancel/completion-race behavior before implementation.
   Python 64/64, fmt/diff/temp clean. Fresh graph: 18,745 / 87,178 with the
   progress type, common worker seam, four observer adapters, and
   `miller_layout` after the stale `ready` graph was disproven.
+- Completed TP-C4.4-CANCEL as fourteen atomic RED/GREEN commits from `29572ab`
+  through `d77858a`. Transfer rollback remains protected; delete checks before
+  irreversible mutation; single/bulk rename prioritize already-observed cancel
+  over later revalidation races. Repeated Esc routes only to the matching
+  active generation and keeps FM open; buffered completion rejects late cancel.
+- C4.4 cancellation gates: broad C4/input 98/98, full nextest 3122/3122 plus
+  only `path_beta_real_host_probe` ignored, Linux/Windows clippy, Bun 17/17,
+  Python 64/64, fmt/diff/temp clean. Fresh graph: 18,756 / 87,282 with typed
+  input, App/worker cancel seams, exact tests, and `miller_layout` after stale
+  `ready` was disproven.
 
 ## 6. KOD DURUMU
 
@@ -534,10 +543,10 @@ the C4.1 publication unit before both CyPack heads are fast-forwarded.
 
 See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2/N4 contracts and the
 complete C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1, N3,
-C2, N4, C3.1, C3.2, C3.3, C4.1, C4.2, C4.3, and C4.4.1 PROGRESS are closed.
-The immediate product task is TP-C4.4-CANCEL RED, followed by RECONCILE,
-RECOVERY, and the complete C4.4 gate. Then continue C5 → C6 without skipping
-modules.
+C2, N4, C3.1, C3.2, C3.3, C4.1, C4.2, C4.3, C4.4.1 PROGRESS, and C4.4.2
+CANCEL are closed. The immediate product task is TP-C4.4-RECONCILE RED,
+followed by RECOVERY and the complete C4.4 gate. Then continue C5 → C6 without
+skipping modules.
 S5–S7/N2 remain evidence-gated; M1–M3 remain north-star backlog.
 
 ## 11. ORTAM
@@ -596,6 +605,10 @@ S5–S7/N2 remain evidence-gated; M1–M3 remain north-star backlog.
   after indexing it returned the progress type,
   `execute_worker_task_with_progress`, all four operation observer adapters,
   and the prior `miller_layout` symbol.
+- Post-C4.4.2 fast refresh completed at 18,756 nodes / 87,282 edges. The stale
+  graph said `ready` but lacked `cancel_file_manager_operation`; after indexing
+  it returned `FileManagerKeyDispatch`, the App cancel seam, generation-safe
+  worker cancel, exact cancellation tests, and `miller_layout`.
 - `mcp-proxy.service` cold start measured 54 seconds for 26 servers. Readiness
   now has a 120-second internal and 150-second systemd budget; live proof was
   `expected=26 observed=26 critical_tools=14`.

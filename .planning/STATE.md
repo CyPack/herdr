@@ -2,11 +2,10 @@
 
 - Updated: 2026-07-15
 - Branch: `feat/native-fm`
-- Published CyPack base: `23adffc`
-- Verified C4.4 progress product head: `cd4368a`
-- Separate test-stability head: `30d99bd`
-- Publication unit: C4.4.1 ten-commit RED/GREEN chain through `cd4368a`,
-  separate test-only `30d99bd`, plus the continuity/graph commit
+- Published CyPack base: `b950808`
+- Verified C4.4 cancellation product head: `d77858a`
+- Publication unit: C4.4.2 fourteen-commit RED/GREEN chain through `d77858a`,
+  plus the continuity/graph commit
   containing this file. Push only CyPack `feat/native-fm` and fork `master`
   after fast-forward ancestry and exact remote-SHA verification.
 
@@ -40,15 +39,16 @@
 - C4.4.1 one bounded latest-value worker progress slot, monotonic started-item
   projection, same-generation App consumption, and production progress
   adapters shared by transfer, delete, single rename, and bulk rename.
+- C4.4.2 explicit reversible/irreversible cancellation boundaries, typed Esc
+  intent, matching-generation App/worker routing, repeated-cancel idempotence,
+  revalidation-race precedence, and buffered-completion authority.
 
 ## Active Next Increment
 
-TP-C4.4-CANCEL must be RED before production changes.
+TP-C4.4-RECONCILE must be RED before production changes.
 
 Test points:
 
-- Cancellation must be idempotent before work, during reversible staging/copy,
-  and at irreversible publish/delete boundaries; committed work stays explicit.
 - Worker completion, watcher bursts, polling fallback, selection pruning, cwd
   changes, and close/reopen must converge under one matching generation.
 - Panic/disconnect/cancel recovery must leave the existing lane reusable,
@@ -70,20 +70,17 @@ Test points:
 5. North-star backlog: M1 interactive CLI attachments, M2 git-worktree
    controls, M3 general panel/page/button interface evaluation.
 
-## Fresh C4.4.1 Evidence
+## Fresh C4.4.2 Evidence
 
-- Focused C4 operation regression 57/57.
-- Full nextest 3115/3115; only `path_beta_real_host_probe` ignored. A separate
+- Broad C4/input regression 98/98.
+- Full nextest 3122/3122; only `path_beta_real_host_probe` ignored. A separate
   safe inventory proof reported `1 ignored / 0 failed` without executing it.
 - Linux all-target and canonical Windows MSVC bin clippy clean with
   `-D warnings`.
 - Bun 17/17; Python maintenance 64/64; fmt and diff-check clean.
-- The first full suite exposed an unrelated mixed real/synthetic-clock OMP
-  fixture; separate test-only `30d99bd` uses one explicit monotonic clock. The
-  exact test, 33-test family, and second full suite passed.
 - No `.herdr-operation-*` or `.herdr-rename-stage-*` artifact remains.
-- Graph refresh: 18,745 nodes / 87,178 edges. Freshness queries returned the
-  progress type, common worker seam, four production observer adapters, and
+- Graph refresh: 18,756 nodes / 87,282 edges. Freshness queries returned the
+  typed key intent, App/worker cancel seams, cancellation tests, and
   `miller_layout` after proving the prior `ready` graph was stale.
 
 ## Non-Negotiable Boundaries
