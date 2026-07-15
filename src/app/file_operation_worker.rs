@@ -6,8 +6,9 @@ use std::thread::JoinHandle;
 use tokio::sync::Notify;
 
 use crate::fm::delete::{
-    execute_delete_operation, DeleteOperationExecutionResult, DeleteOperationExecutionStatus,
-    DeleteOperationItemOutcome, DeleteOperationKind, DeleteOperationPlan, DeleteOperationRequest,
+    execute_delete_operation_with_observer, DeleteOperationExecutionResult,
+    DeleteOperationExecutionStatus, DeleteOperationItemOutcome, DeleteOperationKind,
+    DeleteOperationPlan, DeleteOperationRequest,
 };
 use crate::fm::operations::{
     execute_file_operation_with_observer, FileOperationCancellation, FileOperationExecutionResult,
@@ -135,9 +136,9 @@ impl FileOperationWorker {
             FileOperationWorkerTask::Transfer(plan) => {
                 FileOperationWorkerResult::Transfer(executor(plan, cancellation))
             }
-            FileOperationWorkerTask::Delete(plan) => {
-                FileOperationWorkerResult::Delete(execute_delete_operation(plan, cancellation))
-            }
+            FileOperationWorkerTask::Delete(plan) => FileOperationWorkerResult::Delete(
+                crate::fm::delete::execute_delete_operation(plan, cancellation),
+            ),
             FileOperationWorkerTask::Rename(plan) => {
                 FileOperationWorkerResult::Rename(execute_rename_operation(plan, cancellation))
             }
@@ -338,9 +339,9 @@ fn execute_worker_task_with_progress(
                 report_progress(event.item_index());
             }),
         ),
-        FileOperationWorkerTask::Delete(plan) => {
-            FileOperationWorkerResult::Delete(execute_delete_operation(plan, cancellation))
-        }
+        FileOperationWorkerTask::Delete(plan) => FileOperationWorkerResult::Delete(
+            execute_delete_operation_with_observer(plan, cancellation, report_progress),
+        ),
         FileOperationWorkerTask::Rename(plan) => {
             FileOperationWorkerResult::Rename(execute_rename_operation(plan, cancellation))
         }

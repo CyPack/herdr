@@ -286,19 +286,46 @@ fn map_trash_error(error: trash::Error) -> DeleteBackendError {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn execute_delete_operation(
     plan: &DeleteOperationPlan,
     cancellation: &FileOperationCancellation,
 ) -> DeleteOperationExecutionResult {
     let mut host = RealDeleteOperationHost;
-    execute_delete_operation_with_host(plan, cancellation, &mut host)
+    execute_delete_operation_with_host_and_observer(plan, cancellation, &mut host, |_| {})
 }
 
+pub(crate) fn execute_delete_operation_with_observer<F>(
+    plan: &DeleteOperationPlan,
+    cancellation: &FileOperationCancellation,
+    observer: F,
+) -> DeleteOperationExecutionResult
+where
+    F: FnMut(usize),
+{
+    let mut host = RealDeleteOperationHost;
+    execute_delete_operation_with_host_and_observer(plan, cancellation, &mut host, observer)
+}
+
+#[cfg(test)]
 pub(crate) fn execute_delete_operation_with_host<H: DeleteOperationHost>(
     plan: &DeleteOperationPlan,
     cancellation: &FileOperationCancellation,
     host: &mut H,
 ) -> DeleteOperationExecutionResult {
+    execute_delete_operation_with_host_and_observer(plan, cancellation, host, |_| {})
+}
+
+fn execute_delete_operation_with_host_and_observer<H, F>(
+    plan: &DeleteOperationPlan,
+    cancellation: &FileOperationCancellation,
+    host: &mut H,
+    mut observer: F,
+) -> DeleteOperationExecutionResult
+where
+    H: DeleteOperationHost,
+    F: FnMut(usize),
+{
     let mut result = DeleteOperationExecutionResult {
         status: DeleteOperationExecutionStatus::Failed,
         items: plan
@@ -316,6 +343,7 @@ pub(crate) fn execute_delete_operation_with_host<H: DeleteOperationHost>(
             result.status = DeleteOperationExecutionStatus::Cancelled;
             return result;
         }
+        observer(index);
         if snapshot_for_revalidation(&item.path).as_ref() != Some(&item.snapshot) {
             result.items[index].outcome =
                 DeleteOperationItemOutcome::Retained(DeleteBackendError::SourceChanged);
