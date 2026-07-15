@@ -276,6 +276,65 @@ mod tests {
         assert_eq!(nested, restored);
     }
 
+    #[test]
+    fn shell_layout_places_dock_sidebar_stage_without_overlap() {
+        let serialized = r#"
+        {
+          "root": {
+            "Split": {
+              "direction": "Horizontal",
+              "children": [
+                {
+                  "size": "Dynamic",
+                  "node": { "Slot": { "region": "AppDock" } }
+                },
+                {
+                  "size": "Dynamic",
+                  "node": { "Slot": { "region": "LeftPanel" } }
+                },
+                {
+                  "size": "Fill",
+                  "node": { "Slot": { "region": "WorkspaceStage" } }
+                }
+              ]
+            }
+          }
+        }
+        "#;
+        let layout = serde_json::from_str::<ShellLayout>(serialized);
+        assert!(
+            layout.is_ok(),
+            "SF2 named shell regions should deserialize: {layout:?}"
+        );
+        let layout = layout.expect("checked named shell layout");
+        let area = Rect::new(0, 0, 120, 40);
+        let regions = layout.compute_regions(area, |region| match format!("{region:?}").as_str() {
+            "AppDock" => 5,
+            "LeftPanel" => 26,
+            _ => 0,
+        });
+        let rect_for = |name: &str| {
+            regions
+                .rects
+                .iter()
+                .find_map(|(region, rect)| (format!("{region:?}") == name).then_some(*rect))
+                .unwrap_or_else(|| panic!("missing shell region {name}"))
+        };
+
+        assert_eq!(regions.rects.len(), 3);
+        let dock = rect_for("AppDock");
+        let sidebar = rect_for("LeftPanel");
+        let stage = rect_for("WorkspaceStage");
+        assert_eq!(dock, Rect::new(0, 0, 5, 40));
+        assert_eq!(sidebar, Rect::new(5, 0, 26, 40));
+        assert_eq!(stage, Rect::new(31, 0, 89, 40));
+
+        for (left, right) in [(dock, sidebar), (dock, stage), (sidebar, stage)] {
+            assert!(left.intersection(right).is_empty());
+        }
+        assert_eq!(dock.union(sidebar).union(stage), area);
+    }
+
     /// The tree walker generalizes beyond the 2-slot default: a nested tree
     /// (sidebar | (center over bottom bar)) lays out every region correctly and
     /// a degenerate zero area does not panic.
