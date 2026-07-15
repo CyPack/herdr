@@ -4,13 +4,12 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Published CyPack checkpoint before this continuity publication: `93c780b`
-  (`docs: close completed operation lifecycle task`).
-- Verified C6.2 product head: `b88fc12`
-  (`feat: add current-location styling to file sidebar`).
-- The pending publication unit is C6.2 plan/RED/GREEN/test coverage `c3dfa6f`
-  through `a078d98` plus the continuity/graph commit containing this file. At
-  publication, CyPack
+- Published CyPack checkpoint before this continuity publication: `fcddbfa`
+  (`docs: close current-location sidebar styling`).
+- Verified C6.3 product head: `8b21442`
+  (`fix: clear stale file action authority`) plus test closure `2d974da`.
+- The pending publication unit is C6.3 matrix/RED/GREEN/test coverage `2648a08`
+  through `2d974da` plus the continuity/graph commit containing this file. At publication, CyPack
   `feat/native-fm` and fork `master` must be verified at that same fast-forward
   branch tip.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
@@ -100,6 +99,35 @@
   fallback completed with zero extraction errors. `ready` was cross-checked with
   `miller_layout`, `file_manager_sidebar_item_is_current`,
   `file_manager_sidebar_marker`, and `file_manager_sidebar_item_line`.
+
+## Verified Checkpoint — C6.3 Integrated Action Authority
+
+- Durable cross-surface matrix `2648a08` and compile-valid RED contracts
+  `a12a870`, `9aad978`, `ab27caa`, and `0905e49` precede product commits
+  `40c7ab9`, `dd00f25`, `e7614aa`, and `8b21442`; scheduled-delete test closure
+  is `2d974da`. No RED checkpoint is published alone.
+- New Folder and Compress remain visible but explicitly disabled because v1
+  has no mutation owner. Header and exact-row Copy/Rename/Delete/Send actions
+  converge on the existing typed context intent and C4/C5 scheduled authority;
+  invalid row projection is checked on a clone before current selection changes.
+- Scheduled Open revalidates current exact paths and enabled action state before
+  calling `FmState::enter`. Plugin intents revalidate the current installed
+  manifest, platform support, selection, and enabled action before invoking the
+  existing App-owned plugin command runtime exactly once.
+- Stale/reordered/missing/unsupported selection, operation in flight, popup
+  close, unsupported intent, FM close/reopen, and manifest drift are consumed
+  fail-closed without duplicate mutation, filesystem work in input/render, or
+  stale focus/action authority.
+- Fresh gates: focused C6.3 nextest 118/118, run
+  `41e5dbf8-576c-4e6b-a7eb-eedd9897121b`; full nextest 3160/3160 with only the
+  named B0 host probe skipped, run `ec91fccd-12fc-49b9-ae92-0d464de19552`;
+  Linux all-target and canonical Windows MSVC clippy; Bun 17/17; Python 64/64;
+  fmt/diff/production-unwrap/temp-artifact checks clean.
+- Fresh graph is 18,922 nodes / 89,277 edges. Current source snippets for
+  `miller_layout`, `dispatch_file_manager_row_action`,
+  `consume_file_manager_context_open`, and
+  `sync_file_manager_plugin_action` prove freshness beyond `ready`.
+- Next product module: C6.4 theme/spacing/empty-error/Finder-parity review.
 
 ## Verified Checkpoint — C1.1 Header Action Geometry
 
@@ -754,17 +782,15 @@
 
 ## Exact Next Action
 
-1. Start C6.3a test-point-first from the durable C6.3 catalog/authority/
-   geometry/lifecycle/gate matrix in `.codex/TASKS.md`. Inventory the existing
-   header, row-local, context, and plugin action authorities and make the first
-   matrix assertion RED before production code.
-2. Reuse typed C1/C2/C3/C4 action preparation and scheduled execution seams;
-   do not create label-derived dispatch, duplicate filesystem owners, cached
-   render authority, or a private TUI/runtime protocol path.
-3. Prove normal, multi-selection, unsupported, stale, in-flight, narrow,
-   mobile, and close/reopen cases with focused RED/GREEN evidence, then run the
-   broad FM/sidebar and complete direct `just check` gates. Continue C6.4 only
-   after C6.3 has an atomic product commit, fresh graph proof, and publication.
+1. Start C6.4a test-point-first from the durable C6.4 theme/empty-error/visual/
+   gate matrix in `.codex/TASKS.md`; inventory existing palette and spacing
+   roles before writing the first failing buffer-level assertion.
+2. Keep render pure and derive focus, selection, current, disabled, warning,
+   error, and progress presentation only from current prepared state. Do not
+   add literal one-off colors, cached authority, or render-time filesystem I/O.
+3. Complete C6.4b explicit empty/error/recovery states, then C6.4c breakpoint,
+   theme, accessibility, isolated Finder-parity, full direct `just check`,
+   graph, artifact, and stable-process/socket isolation gates before closing v1.
 
 ## Verified B2.0 Dependency Decision
 

@@ -526,14 +526,14 @@ owns filesystem mutation and C5 owns agent delivery.
   marker with display-width truncation and explicit narrow/zero-area behavior.
 - [x] C6.2c prove navigation/watcher cwd changes, close/reopen, tab switching,
   stale model paths, and the complete C6.2 gate before publication.
-- [ ] C6.3 integrate header/row/context actions consistently.
-- [ ] C6.3a inventory every existing header, row-local, context, and plugin
+- [x] C6.3 integrate header/row/context actions consistently.
+- [x] C6.3a inventory every existing header, row-local, context, and plugin
   action kind, label/icon, enabled reason, selection cardinality, and typed
   dispatch seam; define one explicit cross-surface integration matrix.
-- [ ] C6.3b render and route each surface from current prepared authority while
+- [x] C6.3b render and route each surface from current prepared authority while
   preserving its responsive geometry; converge equivalent actions on the
   existing C3/C4 intent path without a second filesystem owner.
-- [ ] C6.3c prove stale/reordered selection, operation-in-flight, unsupported,
+- [x] C6.3c prove stale/reordered selection, operation-in-flight, unsupported,
   narrow/mobile, popup close, FM close/reopen, and complete publication gates.
 - [ ] C6.4 theme, spacing, empty/error states, and visual Finder-parity review.
 - [ ] C6.4a define palette-role, spacing, separator, focus, disabled, warning,
@@ -582,9 +582,9 @@ C3/C4/C5 owner; it must never look enabled while silently doing nothing.
 | Header | `Paste` | `[paste]` | zero selection; non-empty clipboard | action-bar cwd writable + clipboard snapshot | existing C4 paste preflight → bounded worker |
 | Header | `NewFolder` | `[new folder]` | zero selection | writable cwd only | `Unsupported` in v1; disabled, no request |
 | Header | `Delete` | `[delete]` | one or many | action-bar exact selection paths | C3 intent → C4 delete confirmation → scheduled worker |
-| Row | `SendAgent` | `>` | exactly one anchored current path | row hit area path + current action-bar selection | C3 intent → C5 scheduled handoff/split authority |
-| Row | `Rename` | `r` | exactly one anchored current path | row hit area path + current action-bar selection | C3 intent → C4 rename modal → scheduled worker |
-| Row | `Delete` | `x` | exactly one anchored current path | row hit area path + current action-bar selection | C3 intent → C4 delete confirmation → scheduled worker |
+| Row | `SendAgent` | `>` | exactly one anchored current path | exact row hit path projected into a cloned current FM, validated, then applied as prepared selection | C3 intent → C5 scheduled handoff/split authority |
+| Row | `Rename` | `r` | exactly one anchored current path | exact row hit path projected into a cloned current FM, validated, then applied as prepared selection | C3 intent → C4 rename modal → scheduled worker |
+| Row | `Delete` | `x` | exactly one anchored current path | exact row hit path projected into a cloned current FM, validated, then applied as prepared selection | C3 intent → C4 delete confirmation → scheduled worker |
 | Context | `Open` | `Open` | exactly one | revalidated context snapshot paths/kind | existing A3 enter/navigation state transition |
 | Context | `Copy` | `Copy` | one or many | revalidated context snapshot paths/kind | C3 intent → C4 scheduled clipboard controller |
 | Context | `Rename` | `Rename` | exactly one | revalidated context snapshot paths/kind | C3 intent → C4 rename modal → scheduled worker |
@@ -632,6 +632,24 @@ filesystem mutation inside render or input.
   the known MCP extraction crash recovered through the recorded single-worker
   CLI path with zero extraction errors and no process restart.
 
+- C6.3 is complete as matrix commit `2648a08`, RED contracts `a12a870`,
+  `9aad978`, `ab27caa`, and `0905e49`, GREEN/fix product commits `40c7ab9`,
+  `dd00f25`, `e7614aa`, and `8b21442`, plus scheduled-delete test closure
+  `2d974da`. New Folder and Compress are explicitly disabled because v1 has no
+  mutation owner. Header and row actions converge on the existing typed
+  context intent; Open revalidates then enters through `FmState`; plugin
+  actions revalidate the current enabled manifest/action before invoking the
+  existing App-owned command runtime once. Invalid row projection does not
+  corrupt focus, and stale, unsupported, in-flight, popup-close, FM-close, and
+  close/reopen authority is consumed fail-closed. Focused C6.3 nextest is
+  118/118 (run `41e5dbf8-576c-4e6b-a7eb-eedd9897121b`); full nextest is
+  3160/3160 plus only the named B0 probe skipped (run
+  `ec91fccd-12fc-49b9-ae92-0d464de19552`). Linux all-target and canonical
+  Windows MSVC clippy, Bun 17/17, Python 64/64, fmt/diff/production-unwrap/
+  temp-artifact checks are clean. Fresh graph: 18,922 nodes / 89,277 edges;
+  `ready` was cross-checked with current snippets for `miller_layout`, row
+  dispatch, scheduled Open, and scheduled plugin execution.
+
 ## P4 — Deferred UI Architecture
 
 - [ ] S5 ComponentRegistry only when a second real component/page proves the
@@ -653,9 +671,9 @@ filesystem mutation inside render or input.
 
 A4, B0, B1, the A3 remainder, B2, C1, N3, C2, N4.2, C3.1, C3.2, C3.3,
 C4.1, C4.2, C4.3, C4.4.1 progress, C4.4.2 cancellation, C4.4.3
-reconciliation, C4.4.4 recovery, C4.4.5 gates, and C5.1–C5.5 are complete
-through product head `b88fc12`. C6.1 and C6.2 are complete. The next execution
-order is C6.3 integrated header/row/context actions → C6.4
-theme/spacing/empty-error/Finder-parity review.
+reconciliation, C4.4.4 recovery, C4.4.5 gates, and C5.1–C5.5 are complete.
+C6.1, C6.2, and C6.3 are complete through product head `8b21442` plus test
+closure `2d974da`. The next execution order is C6.4 theme/spacing/empty-error/
+Finder-parity review.
 S5–S7 and N2 remain evidence-gated deferred architecture, while M1–M3 remain
 inactive north-star work.

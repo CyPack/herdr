@@ -2,13 +2,12 @@
 
 ## 1. SONRAKI ADIM
 
-Start C6.3a test-point-first from the durable catalog/authority/geometry/
-lifecycle/gate matrix in `.codex/TASKS.md`. Inventory the existing typed
-header, row-local, context, and plugin action authorities and make the first
-matrix assertion RED before production code. Reuse C1/C2/C3/C4 preparation
-and scheduled execution seams; stale, unsupported, in-flight, clipped, mobile,
-or closed-FM state must fail closed without touching stable Herdr, its socket,
-or user processes.
+Start C6.4a test-point-first from the durable theme/empty-error/visual/gate
+matrix in `.codex/TASKS.md`. Inventory existing palette roles and spacing
+authority, then make the first buffer-level breakpoint/theme assertion RED
+before production code. Keep render pure; stale, clipped, disabled, empty,
+error, recovery, mobile, or closed-FM state must remain bounded and truthful
+without touching stable Herdr, its socket, or user processes.
 
 ## 2. AKTİF PROJE
 
@@ -355,6 +354,20 @@ or user processes.
   18,909 / 90,194 with `miller_layout` and the three C6.2 helper symbols. The
   known MCP extraction failure recovered via `CBM_WORKERS=1` CLI with zero
   extraction errors and no service/process restart.
+- Completed C6.3 as matrix `2648a08`, RED contracts `a12a870`, `9aad978`,
+  `ab27caa`, and `0905e49`, product commits `40c7ab9`, `dd00f25`, `e7614aa`,
+  and `8b21442`, plus test closure `2d974da`. Unsupported New Folder/Compress
+  are explicitly disabled; header, row, context, Open, and plugin paths
+  converge on current typed and scheduled authority. Stale, reordered,
+  unsupported, in-flight, popup-close, FM-close/reopen, and manifest-drift
+  cases consume fail-closed without duplicate execution or focus corruption.
+- C6.3 gates: focused 118/118 (run
+  `41e5dbf8-576c-4e6b-a7eb-eedd9897121b`); full nextest 3160/3160 plus only
+  `path_beta_real_host_probe` skipped (run
+  `ec91fccd-12fc-49b9-ae92-0d464de19552`); Linux/Windows clippy, Bun 17/17,
+  Python 64/64, fmt/diff/production-unwrap/temp clean. Fresh graph: 18,922 /
+  89,277 with current `miller_layout`, row dispatcher, Open scheduler, and
+  plugin scheduler snippets.
 
 ## 6. KOD DURUMU
 
@@ -663,16 +676,17 @@ See `.codex/TASKS.md` for the completed A3/B2/C1/N3/C2/N4 contracts and the
 complete C3–C6, S5–S7, N2, and M1–M3 roadmap. A4, B0, B1, A3, B2, C1, N3,
 C2, N4, C3.1, C3.2, C3.3, C4.1, C4.2, C4.3, C4.4.1 PROGRESS, C4.4.2
 CANCEL, C4.4.3 RECONCILE, C4.4.4 RECOVERY, C4.4.5 GATES, C5.1–C5.5, C6.1, and
-C6.2 are closed. C5's atomic product chain ends at `f744e4d`: exact existing-agent send
+C6.2, and C6.3 are closed. C5's atomic product chain ends at `f744e4d`: exact existing-agent send
 and non-agent `Down` split → direct `claude` argv → first literal path send,
 with exact new-resource rollback on every failure path. The complete gate is
 3143/3143 Rust, Bun 17/17, Python 64/64, Linux/Windows clippy, and fresh graph
 18,854 / 88,064. C6.1 then closes at product head `2bcdf14`, full Rust
-3151/3151 plus one named skip, and fresh graph 18,899 / 90,094. The immediate
-ordered task list is C6.3 integrated header/row/context actions → C6.4
-theme/spacing/empty-error/Finder-parity review. C6.2 closes at product head
+3151/3151 plus one named skip, and fresh graph 18,899 / 90,094. C6.2 closes at product head
 `b88fc12` plus test closure `a078d98`, full Rust 3154/3154 plus one named skip,
-and fresh graph 18,909 / 90,194. Exact
+and fresh graph 18,909 / 90,194. C6.3 closes at product head `8b21442` plus
+test closure `2d974da`, full Rust 3160/3160 plus one named skip, and fresh
+graph 18,922 / 89,277. The immediate ordered task list is C6.4
+theme/spacing/empty-error/Finder-parity review. Exact
 expected results and reasons remain durable in `.codex/TASKS.md`.
 S5–S7/N2 remain evidence-gated; M1–M3 remain north-star backlog.
 
