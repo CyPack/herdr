@@ -14,6 +14,7 @@ pub(crate) mod delete;
 pub(crate) mod image_preview;
 mod natsort;
 pub(crate) mod operations;
+pub(crate) mod rename;
 mod text_preview;
 pub(crate) mod watcher;
 
