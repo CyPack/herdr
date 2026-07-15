@@ -13,8 +13,9 @@ List/Create/Remove/Switch implementations remain NO-GO. M3.0–M3.3 are now
 closed implementation NO-GO: `[+]` and `[w]` repeat only small pure geometry/
 render mechanics, while lifecycle, authority, focus, and cleanup owners differ.
 No Rust production code changed. Future work remains S5–S7 and N2.2 only when
-their explicit independent triggers are satisfied. Never touch stable Herdr/
-socket/processes.
+their explicit independent triggers are satisfied. M3 evidence commit
+`e9f2fe0` is published with exact SHA equality to both CyPack refs. Never touch
+stable Herdr/socket/processes.
 
 ## 2. AKTİF PROJE
 

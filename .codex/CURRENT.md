@@ -4,15 +4,15 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
-- Published CyPack checkpoint before this continuity publication: `a61cfb6`
-  (`docs: close focused-agent worktree launcher`).
+- Published CyPack M3 evidence checkpoint: `e9f2fe0`
+  (`docs: close general UI interface evaluation`).
 - Verified M2.1 chain: RED `dab1e20`; GREEN `0ae6175`
   (`feat: add focused-agent worktree launcher`).
 - Verified C6.4 product/test head: `f52cb85`
   (`test: align image resize target with status geometry`).
-- The pending publication unit is M3.0 evidence/continuity only. At publication,
-  CyPack `feat/native-fm` and fork `master` must be verified at the same
-  fast-forward branch tip.
+- M3.0 evidence is published to both CyPack refs with exact remote-SHA
+  equality. This continuity-only follow-up records that result; no product
+  publication or implementation task remains pending.
 - `origin` is the `CyPack/herdr` fork. `upstream` is `ogulcancelik/herdr` and must never be pushed.
 
 ## Completed Checkpoint
@@ -916,9 +916,9 @@
 
 ## Exact Next Action
 
-1. Commit and publish the M3.0 evidence/continuity unit to CyPack
-   `feat/native-fm` and fork `master` only after exact FF ancestry checks.
-2. Do not start speculative production work after publication. Activate only a
+1. No product or architecture publication is pending after the M3.0 evidence
+   checkpoint `e9f2fe0`.
+2. Do not start speculative production work. Activate only a
    task whose recorded trigger is independently satisfied by real product
    demand.
 3. S5–S7 and N2.2 remain the durable future task list with explicit trigger,

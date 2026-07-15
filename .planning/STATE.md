@@ -2,11 +2,10 @@
 
 - Updated: 2026-07-15
 - Branch: `feat/native-fm`
-- Published CyPack base: `a61cfb6`.
+- Published CyPack M3 evidence checkpoint: `e9f2fe0`.
 - Verified M2.1 chain: RED `dab1e20`; GREEN product head `0ae6175`.
-- Current publication unit: M3.0 evidence/continuity. Push
-  only CyPack `feat/native-fm` and fork `master` after targeted staging,
-  fast-forward ancestry, and exact remote-SHA verification.
+- M3.0 evidence is published with exact SHA equality to CyPack
+  `feat/native-fm` and fork `master`. No product publication is pending.
 
 ## Completed
 
@@ -76,9 +75,8 @@
 
 ## Active Next Increment
 
-No speculative production increment is active. Publish the documentation-only
-M3 closure, then activate future work only when one recorded independent
-trigger is satisfied by concrete product demand.
+No speculative production increment is active. Activate future work only when
+one recorded independent trigger is satisfied by concrete product demand.
 
 ## Ordered Roadmap
 
