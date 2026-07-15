@@ -215,8 +215,9 @@ pub(crate) fn compute_file_manager_action_bar_model(
                         None
                     }
                 }
-                FileManagerHeaderAction::NewFolder => (!file_manager.cwd_writable)
-                    .then_some(FileManagerActionDisabledReason::ReadOnlyTarget),
+                FileManagerHeaderAction::NewFolder => {
+                    Some(FileManagerActionDisabledReason::UnsupportedAction)
+                }
                 FileManagerHeaderAction::Delete => {
                     prepared_selection.disabled_reason.or_else(|| {
                         (!file_manager.cwd_writable)
@@ -1758,10 +1759,11 @@ mod tests {
                 .disabled_reason,
             Some(FileManagerActionDisabledReason::EmptyClipboard)
         );
-        assert!(
+        assert_eq!(
             base.action_state(FileManagerHeaderAction::NewFolder)
                 .expect("new-folder state")
-                .enabled
+                .disabled_reason,
+            Some(FileManagerActionDisabledReason::UnsupportedAction)
         );
         assert!(fm.replace_selection(0));
         let selected = compute_file_manager_action_bar_model(&fm, &[], false);
@@ -1797,7 +1799,6 @@ mod tests {
         );
         for action in [
             FileManagerHeaderAction::Paste,
-            FileManagerHeaderAction::NewFolder,
             FileManagerHeaderAction::Delete,
         ] {
             assert_eq!(
@@ -1808,6 +1809,13 @@ mod tests {
                 Some(FileManagerActionDisabledReason::ReadOnlyTarget)
             );
         }
+        assert_eq!(
+            read_only
+                .action_state(FileManagerHeaderAction::NewFolder)
+                .expect("new-folder state")
+                .disabled_reason,
+            Some(FileManagerActionDisabledReason::UnsupportedAction)
+        );
 
         fm.cwd_writable = true;
         assert!(fm.toggle_selection(1));

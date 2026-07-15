@@ -357,15 +357,21 @@ mod tests {
                 &action,
                 FileManagerContextMenuAction::Open
                     | FileManagerContextMenuAction::Rename
+                    | FileManagerContextMenuAction::Compress
                     | FileManagerContextMenuAction::SendAgent
             );
             let label = action.label().to_string();
+            let disabled_reason = match action {
+                FileManagerContextMenuAction::Compress => {
+                    Some(FileManagerActionDisabledReason::UnsupportedAction)
+                }
+                _ => disabled.then_some(FileManagerActionDisabledReason::MultipleSelection),
+            };
             FileManagerContextMenuItem {
                 action,
                 label,
                 enabled: !disabled,
-                disabled_reason: disabled
-                    .then_some(FileManagerActionDisabledReason::MultipleSelection),
+                disabled_reason,
             }
         });
         app.context_menu = Some(ContextMenuState {

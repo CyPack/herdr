@@ -881,6 +881,7 @@ pub enum FileManagerActionDisabledReason {
     MultipleSelection,
     StaleSelection,
     UnsupportedSelection,
+    UnsupportedAction,
     OperationInFlight,
 }
 
@@ -1043,8 +1044,10 @@ impl FileManagerContextMenuModel {
                         | FileManagerContextMenuAction::Copy
                         | FileManagerContextMenuAction::SendAgent => copy_reason,
                         FileManagerContextMenuAction::Rename
-                        | FileManagerContextMenuAction::Delete
-                        | FileManagerContextMenuAction::Compress => write_reason,
+                        | FileManagerContextMenuAction::Delete => write_reason,
+                        FileManagerContextMenuAction::Compress => {
+                            Some(FileManagerActionDisabledReason::UnsupportedAction)
+                        }
                         FileManagerContextMenuAction::Plugin { .. } => {
                             Some(FileManagerActionDisabledReason::UnsupportedSelection)
                         }
@@ -3483,7 +3486,15 @@ mod tests {
                 .expect("explicit context model");
             assert_eq!(model.target_kind, expected_kind);
             assert_eq!(model.paths, vec![path]);
-            assert!(model.items.iter().all(|item| item.enabled));
+            assert!(model.items.iter().all(|item| {
+                if item.action == FileManagerContextMenuAction::Compress {
+                    !item.enabled
+                        && item.disabled_reason
+                            == Some(FileManagerActionDisabledReason::UnsupportedAction)
+                } else {
+                    item.enabled
+                }
+            }));
         }
     }
 
@@ -3539,7 +3550,6 @@ mod tests {
         for action in [
             FileManagerContextMenuAction::Rename,
             FileManagerContextMenuAction::Delete,
-            FileManagerContextMenuAction::Compress,
         ] {
             let item = file_context_item(&model, action);
             assert!(!item.enabled);
@@ -3548,6 +3558,12 @@ mod tests {
                 Some(FileManagerActionDisabledReason::ReadOnlyTarget)
             );
         }
+        let compress = file_context_item(&model, FileManagerContextMenuAction::Compress);
+        assert!(!compress.enabled);
+        assert_eq!(
+            compress.disabled_reason,
+            Some(FileManagerActionDisabledReason::UnsupportedAction)
+        );
     }
 
     // TP-C3.1-CONTEXT-MODEL: multiple selection permits only bulk-capable
@@ -3574,10 +3590,15 @@ mod tests {
         for action in [
             FileManagerContextMenuAction::Copy,
             FileManagerContextMenuAction::Delete,
-            FileManagerContextMenuAction::Compress,
         ] {
             assert!(file_context_item(&model, action).enabled);
         }
+        let compress = file_context_item(&model, FileManagerContextMenuAction::Compress);
+        assert!(!compress.enabled);
+        assert_eq!(
+            compress.disabled_reason,
+            Some(FileManagerActionDisabledReason::UnsupportedAction)
+        );
         for action in [
             FileManagerContextMenuAction::Open,
             FileManagerContextMenuAction::Rename,
