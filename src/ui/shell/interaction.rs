@@ -55,6 +55,48 @@ pub(crate) struct ResizeTransaction {
     preview_tracks: [u16; 2],
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResizeDecision {
+    Inert,
+    Committed([u16; 2]),
+    Cancelled([u16; 2]),
+}
+
+/// Pure effect request returned to the application adapter at transaction
+/// boundaries. Preview never creates one of these requests.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ResizeUpdate {
+    decision: ResizeDecision,
+    mark_persistence_dirty: bool,
+    request_pty_resize: bool,
+}
+
+impl ResizeUpdate {
+    fn inert() -> Self {
+        Self {
+            decision: ResizeDecision::Inert,
+            mark_persistence_dirty: false,
+            request_pty_resize: false,
+        }
+    }
+
+    fn committed(tracks: [u16; 2]) -> Self {
+        Self {
+            decision: ResizeDecision::Committed(tracks),
+            mark_persistence_dirty: true,
+            request_pty_resize: true,
+        }
+    }
+
+    fn cancelled(tracks: [u16; 2]) -> Self {
+        Self {
+            decision: ResizeDecision::Cancelled(tracks),
+            mark_persistence_dirty: false,
+            request_pty_resize: false,
+        }
+    }
+}
+
 impl ResizeTransaction {
     pub(crate) fn begin(
         divider: DividerId,
@@ -78,27 +120,99 @@ impl ResizeTransaction {
     /// Update only the transient tracks. No effect adapter is available here,
     /// so preview cannot dirty persistence or resize a terminal runtime.
     pub(crate) fn preview(&mut self, pointer: Position, bounds: ResizeBounds) -> bool {
-        let total = self.original_tracks[0] + self.original_tracks[1];
-        let leading_lower = bounds
-            .leading_min
-            .max(total.saturating_sub(bounds.trailing_max));
-        let leading_upper = bounds
-            .leading_max
-            .min(total.saturating_sub(bounds.trailing_min));
-        if leading_lower > leading_upper {
-            return false;
-        }
-
         let (pointer_now, pointer_origin) = match self.divider.axis {
             ShellDirection::Horizontal => (pointer.x, self.pointer_origin.x),
             ShellDirection::Vertical => (pointer.y, self.pointer_origin.y),
         };
-        let desired =
-            i32::from(self.original_tracks[0]) + i32::from(pointer_now) - i32::from(pointer_origin);
-        let leading = desired.clamp(i32::from(leading_lower), i32::from(leading_upper)) as u16;
-        self.preview_tracks = [leading, total.saturating_sub(leading)];
+        self.preview_delta(i32::from(pointer_now) - i32::from(pointer_origin), bounds)
+    }
+
+    /// Keyboard input supplies the same original-relative delta as pointer
+    /// preview, so both paths share identical bounds and normalization.
+    pub(crate) fn preview_keyboard_delta(&mut self, delta: i16, bounds: ResizeBounds) -> bool {
+        self.preview_delta(i32::from(delta), bounds)
+    }
+
+    fn preview_delta(&mut self, delta: i32, bounds: ResizeBounds) -> bool {
+        let Some(total) = self.original_tracks[0].checked_add(self.original_tracks[1]) else {
+            return false;
+        };
+        let desired = i32::from(self.original_tracks[0]) + delta;
+        let Some(tracks) = normalized_tracks(total, desired, bounds) else {
+            return false;
+        };
+        self.preview_tracks = tracks;
         true
     }
+
+    pub(crate) fn commit(capture: &mut Option<Self>, current_generation: u64) -> ResizeUpdate {
+        let Some(transaction) = capture.as_ref() else {
+            return ResizeUpdate::inert();
+        };
+        if transaction.view_generation != current_generation {
+            return ResizeUpdate::inert();
+        }
+
+        let Some(transaction) = capture.take() else {
+            return ResizeUpdate::inert();
+        };
+        ResizeUpdate::committed(transaction.preview_tracks)
+    }
+
+    pub(crate) fn cancel(capture: &mut Option<Self>) -> ResizeUpdate {
+        capture
+            .take()
+            .map_or_else(ResizeUpdate::inert, |transaction| {
+                ResizeUpdate::cancelled(transaction.original_tracks)
+            })
+    }
+
+    pub(crate) fn terminal_resize(
+        capture: &mut Option<Self>,
+        new_total: u16,
+        bounds: ResizeBounds,
+    ) -> ResizeUpdate {
+        let Some(transaction) = capture.take() else {
+            return ResizeUpdate::inert();
+        };
+        let tracks =
+            normalized_tracks(new_total, i32::from(transaction.original_tracks[0]), bounds)
+                .unwrap_or(transaction.original_tracks);
+        ResizeUpdate::cancelled(tracks)
+    }
+
+    pub(crate) fn reset_preferred(
+        current: [u16; 2],
+        preferred: u16,
+        bounds: ResizeBounds,
+    ) -> ResizeUpdate {
+        let Some(total) = current[0].checked_add(current[1]) else {
+            return ResizeUpdate::inert();
+        };
+        let Some(tracks) = normalized_tracks(total, i32::from(preferred), bounds) else {
+            return ResizeUpdate::inert();
+        };
+        if tracks == current {
+            ResizeUpdate::inert()
+        } else {
+            ResizeUpdate::committed(tracks)
+        }
+    }
+}
+
+fn normalized_tracks(total: u16, desired_leading: i32, bounds: ResizeBounds) -> Option<[u16; 2]> {
+    let leading_lower = bounds
+        .leading_min
+        .max(total.saturating_sub(bounds.trailing_max));
+    let leading_upper = bounds
+        .leading_max
+        .min(total.saturating_sub(bounds.trailing_min));
+    if leading_lower > leading_upper {
+        return None;
+    }
+
+    let leading = desired_leading.clamp(i32::from(leading_lower), i32::from(leading_upper)) as u16;
+    Some([leading, total.saturating_sub(leading)])
 }
 
 #[cfg(test)]
@@ -168,7 +282,7 @@ mod tests {
         assert_eq!(
             (decision, capture, effects),
             (
-                TestResizeDecision::Committed([30, 50]),
+                ResizeDecision::Committed([30, 50]),
                 None,
                 TestResizeEffects {
                     persistence_dirty: 1,
@@ -187,7 +301,7 @@ mod tests {
         assert_eq!(
             (decision, effects),
             (
-                TestResizeDecision::Committed([26, 54]),
+                ResizeDecision::Committed([26, 54]),
                 TestResizeEffects {
                     persistence_dirty: 1,
                     pty_resize_requests: 1,
@@ -221,7 +335,7 @@ mod tests {
         assert_eq!(
             (decision, capture, effects),
             (
-                TestResizeDecision::Cancelled([26, 54]),
+                ResizeDecision::Cancelled([26, 54]),
                 None,
                 TestResizeEffects::default(),
             )
@@ -242,7 +356,7 @@ mod tests {
         assert_eq!(
             (decision, capture, effects),
             (
-                TestResizeDecision::Cancelled([26, 34]),
+                ResizeDecision::Cancelled([26, 34]),
                 None,
                 TestResizeEffects::default(),
             )
@@ -259,11 +373,7 @@ mod tests {
 
         assert_eq!(
             (decision, capture, effects),
-            (
-                TestResizeDecision::Inert,
-                before,
-                TestResizeEffects::default(),
-            )
+            (ResizeDecision::Inert, before, TestResizeEffects::default(),)
         );
     }
 
@@ -276,11 +386,7 @@ mod tests {
 
         assert_eq!(
             (decision, capture, effects),
-            (
-                TestResizeDecision::Inert,
-                None,
-                TestResizeEffects::default(),
-            )
+            (ResizeDecision::Inert, None, TestResizeEffects::default(),)
         );
     }
 
@@ -302,13 +408,6 @@ mod tests {
         ResizeBounds::new(4, 40, 1, 80).expect("ordered track bounds")
     }
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum TestResizeDecision {
-        Inert,
-        Committed([u16; 2]),
-        Cancelled([u16; 2]),
-    }
-
     #[derive(Clone, Debug, Default, PartialEq, Eq)]
     struct TestResizeEffects {
         persistence_dirty: usize,
@@ -317,67 +416,60 @@ mod tests {
 
     fn commit_resize_for_test(
         capture: &mut Option<ResizeTransaction>,
-        _current_generation: u64,
+        current_generation: u64,
         effects: &mut TestResizeEffects,
-    ) -> TestResizeDecision {
-        // RED-only seam: SF3.1 must revalidate generation, consume exactly one
-        // valid capture, and emit one bounded commit request.
-        if let Some(transaction) = capture.take() {
-            effects.persistence_dirty += 2;
-            effects.pty_resize_requests += 2;
-            TestResizeDecision::Committed(transaction.preview_tracks)
-        } else {
-            effects.persistence_dirty += 1;
-            TestResizeDecision::Committed([0, 0])
-        }
+    ) -> ResizeDecision {
+        apply_update_for_test(
+            ResizeTransaction::commit(capture, current_generation),
+            effects,
+        )
     }
 
     fn reset_preferred_for_test(
         current: [u16; 2],
-        _preferred: u16,
-        _bounds: ResizeBounds,
-        _effects: &mut TestResizeEffects,
-    ) -> TestResizeDecision {
-        // RED-only seam: SF3.1 must route reset through the same normalized
-        // commit boundary instead of retaining the current tracks.
-        TestResizeDecision::Committed(current)
+        preferred: u16,
+        bounds: ResizeBounds,
+        effects: &mut TestResizeEffects,
+    ) -> ResizeDecision {
+        apply_update_for_test(
+            ResizeTransaction::reset_preferred(current, preferred, bounds),
+            effects,
+        )
     }
 
     fn keyboard_preview_for_test(
-        _transaction: &mut ResizeTransaction,
-        _delta: i16,
-        _bounds: ResizeBounds,
+        transaction: &mut ResizeTransaction,
+        delta: i16,
+        bounds: ResizeBounds,
     ) {
-        // RED-only seam: SF3.1 must reuse pointer preview clamping.
+        transaction.preview_keyboard_delta(delta, bounds);
     }
 
     fn cancel_resize_for_test(
         capture: &mut Option<ResizeTransaction>,
         effects: &mut TestResizeEffects,
-    ) -> TestResizeDecision {
-        // RED-only seam: SF3.1 must restore the committed original with no
-        // persistence or PTY effect.
-        let preview = capture
-            .take()
-            .map(|transaction| transaction.preview_tracks)
-            .unwrap_or_default();
-        effects.persistence_dirty += 1;
-        TestResizeDecision::Committed(preview)
+    ) -> ResizeDecision {
+        apply_update_for_test(ResizeTransaction::cancel(capture), effects)
     }
 
     fn terminal_resize_for_test(
         capture: &mut Option<ResizeTransaction>,
-        _new_total: u16,
-        _bounds: ResizeBounds,
+        new_total: u16,
+        bounds: ResizeBounds,
         effects: &mut TestResizeEffects,
-    ) -> TestResizeDecision {
-        // RED-only seam: SF3.1 must cancel stale preview geometry and derive
-        // the safe tracks from the original committed leading track.
-        let preview = capture
-            .as_ref()
-            .map(|transaction| transaction.preview_tracks)
-            .unwrap_or_default();
-        effects.pty_resize_requests += 1;
-        TestResizeDecision::Committed(preview)
+    ) -> ResizeDecision {
+        apply_update_for_test(
+            ResizeTransaction::terminal_resize(capture, new_total, bounds),
+            effects,
+        )
+    }
+
+    fn apply_update_for_test(
+        update: ResizeUpdate,
+        effects: &mut TestResizeEffects,
+    ) -> ResizeDecision {
+        effects.persistence_dirty += usize::from(update.mark_persistence_dirty);
+        effects.pty_resize_requests += usize::from(update.request_pty_resize);
+        update.decision
     }
 }
