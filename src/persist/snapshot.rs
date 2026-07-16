@@ -811,6 +811,72 @@ mod tests {
     }
 
     #[test]
+    fn v4_shell_round_trip_is_idempotent() {
+        let shell = serde_json::json!({
+            "schema_version": 1,
+            "template": "DockSidebarStage",
+            "root": {
+                "Split": {
+                    "direction": "Horizontal",
+                    "children": [
+                        {
+                            "size": "Dynamic",
+                            "node": { "Slot": { "region": "AppDock" } }
+                        },
+                        {
+                            "size": "Dynamic",
+                            "node": { "Slot": { "region": "LeftPanel" } }
+                        },
+                        {
+                            "size": "Fill",
+                            "node": { "Slot": { "region": "WorkspaceStage" } }
+                        }
+                    ]
+                }
+            },
+            "region_constraints": {
+                "AppDock": {
+                    "Resizable": { "min": 3, "preferred": 5, "max": 9 }
+                },
+                "LeftPanel": {
+                    "Resizable": { "min": 4, "preferred": 31, "max": 40 }
+                },
+                "WorkspaceStage": { "Fill": { "weight": 1 } }
+            },
+            "component_placements": [
+                { "component": "AppDock", "region": "AppDock" },
+                { "component": "AgentSidebar", "region": "LeftPanel" },
+                { "component": "WorkspaceStage", "region": "WorkspaceStage" }
+            ],
+            "collapse_restore_widths": {
+                "AppDock": 5,
+                "LeftPanel": 31
+            },
+            "pinned_dock_order": ["Terminal", "Files"]
+        });
+        let input = serde_json::json!({
+            "version": 4,
+            "workspaces": [],
+            "active": null,
+            "selected": 0,
+            "shell": shell.clone(),
+            "sidebar_width": 19,
+            "sidebar_section_split": 0.4
+        });
+
+        let first = parse_snapshot(&input.to_string())
+            .expect("snapshot v4 with a bounded shell must be supported");
+        let first_value = serde_json::to_value(&first).unwrap();
+        assert_eq!(first_value["shell"], shell);
+        assert_eq!(first.sidebar_width, Some(19));
+        assert_eq!(first.sidebar_section_split, Some(0.4));
+
+        let second = parse_snapshot(&first_value.to_string()).unwrap();
+        let second_value = serde_json::to_value(&second).unwrap();
+        assert_eq!(second_value, first_value);
+    }
+
+    #[test]
     fn old_snapshot_defaults_sidebar_fields() {
         let json = serde_json::json!({
             "version": SNAPSHOT_VERSION,
