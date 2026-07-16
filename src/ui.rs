@@ -266,7 +266,7 @@ fn compute_view_internal(
         area,
         LEGACY_DESKTOP_SHELL_LAYOUT_REVISION,
         u64::from(sidebar_w),
-        u64::from(app.sidebar_collapsed),
+        app.shell_presentation.left_panel_collapse_revision(),
     );
     let previous_shell_view = std::mem::take(&mut app.view.shell);
     let shell_view =
