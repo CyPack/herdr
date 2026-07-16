@@ -448,6 +448,80 @@ mod tests {
         assert!(state.view.file_manager_header_action_areas.is_empty());
     }
 
+    // SF4.3-02: the surface-switch transaction itself retires the hidden
+    // surface's projected view geometry. The window between a switch and
+    // the next compute must not carry stale hit rectangles (or a stale
+    // cursor projection — the terminal cursor placement derives from
+    // `pane_infos`) for a surface that no longer owns the stage.
+    #[test]
+    fn hidden_surface_has_no_stale_hits_or_cursor() {
+        struct FixtureRoot(std::path::PathBuf);
+
+        impl Drop for FixtureRoot {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let root = std::env::temp_dir().join(format!("herdr-stale-hits-{}", std::process::id()));
+        let _fixture_root = FixtureRoot(root.clone());
+        std::fs::create_dir_all(&root).expect("create stale hits fixture root");
+        std::fs::write(root.join("00.txt"), b"x").expect("fixture entry");
+
+        let mut state = AppState::test_new();
+        let mut workspace = Workspace::test_new("stale-hits");
+        workspace.test_split(ratatui::layout::Direction::Horizontal);
+        state.workspaces = vec![workspace];
+        state.active = Some(0);
+        state.selected = 0;
+        state.mobile_width_threshold = 0;
+        let area = ratatui::layout::Rect::new(0, 0, 80, 24);
+
+        // Control: a terminal frame is projected.
+        crate::ui::compute_view(&mut state, area);
+        assert!(!state.view.pane_infos.is_empty());
+        assert!(!state.view.split_borders.is_empty());
+
+        // Switching to Files WITHOUT an intervening compute must already
+        // have retired the terminal projection.
+        state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .expect("Files activation");
+        assert!(
+            state.view.pane_infos.is_empty(),
+            "the switch itself must retire stale pane hit geometry"
+        );
+        assert!(
+            state.view.split_borders.is_empty(),
+            "the switch itself must retire stale split borders"
+        );
+
+        // Control: a Files frame is projected.
+        crate::ui::compute_view(&mut state, area);
+        assert!(!state.view.file_manager_row_areas.is_empty());
+        assert!(!state.view.file_manager_header_action_areas.is_empty());
+
+        // Closing Files WITHOUT an intervening compute must already have
+        // retired the Files projection.
+        state.close_file_manager();
+        assert!(
+            state.view.file_manager_row_areas.is_empty(),
+            "the close itself must retire stale Files row geometry"
+        );
+        assert!(
+            state.view.file_manager_row_action_areas.is_empty(),
+            "the close itself must retire stale Files row actions"
+        );
+        assert!(
+            state.view.file_manager_header_action_areas.is_empty(),
+            "the close itself must retire stale Files header actions"
+        );
+        assert!(
+            state.view.file_manager_action_bar.is_none(),
+            "the close itself must retire the stale Files action bar"
+        );
+    }
+
     #[tokio::test]
     async fn stage_surface_switch_does_not_destroy_terminal_runtime() {
         use std::sync::atomic::{AtomicU64, Ordering};
