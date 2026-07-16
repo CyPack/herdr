@@ -2154,6 +2154,7 @@ mod tests {
     fn custom_sidebar_toggle_key_toggles_and_exits_navigate() {
         let mut state = state_with_workspaces(&["test"]);
         state.keybinds.toggle_sidebar = crate::config::ActionKeybinds::prefix("g");
+        state.session_dirty = false;
         assert!(!state.sidebar_collapsed);
 
         handle_navigate_key(
@@ -2162,6 +2163,7 @@ mod tests {
         );
 
         assert!(state.sidebar_collapsed);
+        assert!(state.session_dirty);
         assert_eq!(state.mode, Mode::Terminal);
     }
 

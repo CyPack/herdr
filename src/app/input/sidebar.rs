@@ -1295,6 +1295,7 @@ mod tests {
     fn clicking_expanded_sidebar_toggle_collapses_sidebar() {
         let mut app = app_for_mouse_test();
         app.state.sidebar_collapsed = false;
+        app.state.session_dirty = false;
         app.state.view.sidebar_rect = Rect::new(0, 0, 26, 20);
         app.state.view.terminal_area = Rect::new(26, 0, 80, 20);
 
@@ -1306,6 +1307,7 @@ mod tests {
         ));
 
         assert!(app.state.sidebar_collapsed);
+        assert!(app.state.session_dirty);
         assert!(app.state.drag.is_none());
     }
 
