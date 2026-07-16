@@ -497,6 +497,178 @@ mod tests {
         );
     }
 
+    #[test]
+    fn collapse_remembers_last_committed_width() {
+        let mut state = TestCollapseState::expanded(RegionId::LeftPanel, 32);
+        let mut effects = TestCollapseEffects::default();
+
+        let decision = collapse_for_test(&mut state, 32, &mut effects);
+
+        assert_eq!(
+            (
+                decision,
+                state.visible_width(),
+                state.restore_width,
+                state.collapsed,
+                state.revision,
+                effects,
+            ),
+            (
+                TestCollapseDecision::Collapsed { restore_width: 32 },
+                0,
+                32,
+                true,
+                1,
+                TestCollapseEffects {
+                    persistence_dirty: 1,
+                },
+            )
+        );
+    }
+
+    #[test]
+    fn repeated_collapse_is_inert() {
+        let mut state = TestCollapseState::expanded(RegionId::LeftPanel, 32);
+        let mut effects = TestCollapseEffects::default();
+        collapse_for_test(&mut state, 32, &mut effects);
+
+        let decision = collapse_for_test(&mut state, 0, &mut effects);
+
+        assert_eq!(decision, TestCollapseDecision::Inert);
+        assert_eq!((state.revision, effects.persistence_dirty), (1, 1));
+        assert_eq!((state.visible_width(), state.restore_width), (0, 32));
+    }
+
+    #[test]
+    fn expand_clamps_restore_width_to_current_bounds() {
+        let mut state = TestCollapseState::collapsed(RegionId::LeftPanel, 32);
+        let bounds = ResizeBounds::new(18, 36, 10, 40).expect("ordered track bounds");
+        let mut effects = TestCollapseEffects::default();
+
+        let decision = expand_for_test(&mut state, 36, bounds, &mut effects);
+
+        assert_eq!(
+            (
+                decision,
+                state.visible_width(),
+                state.restore_width,
+                state.collapsed,
+                state.revision,
+                effects,
+            ),
+            (
+                TestCollapseDecision::Expanded { width: 26 },
+                26,
+                26,
+                false,
+                1,
+                TestCollapseEffects {
+                    persistence_dirty: 1,
+                },
+            )
+        );
+    }
+
+    #[test]
+    fn stage_collapse_is_rejected() {
+        for region in [RegionId::WorkspaceStage, RegionId::CenterContent] {
+            let mut state = TestCollapseState::expanded(region, 80);
+            let mut effects = TestCollapseEffects::default();
+
+            let decision = collapse_for_test(&mut state, 80, &mut effects);
+
+            assert_eq!(
+                (
+                    decision,
+                    state.visible_width(),
+                    state.restore_width,
+                    state.collapsed,
+                    state.revision,
+                    effects,
+                ),
+                (
+                    TestCollapseDecision::Inert,
+                    80,
+                    80,
+                    false,
+                    0,
+                    TestCollapseEffects::default(),
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn empty_optional_region_collapses_to_zero() {
+        let mut state = TestCollapseState::expanded(RegionId::RightPanel, 0);
+        let mut effects = TestCollapseEffects::default();
+
+        let decision = collapse_for_test(&mut state, 0, &mut effects);
+
+        assert_eq!(
+            (
+                decision,
+                state.visible_width(),
+                state.restore_width,
+                state.collapsed,
+                state.revision,
+                effects,
+            ),
+            (
+                TestCollapseDecision::Collapsed { restore_width: 0 },
+                0,
+                0,
+                true,
+                1,
+                TestCollapseEffects {
+                    persistence_dirty: 1,
+                },
+            )
+        );
+    }
+
+    #[test]
+    fn collapse_revision_exhaustion_is_inert() {
+        let mut state = TestCollapseState::expanded(RegionId::LeftPanel, 32);
+        state.revision = u64::MAX;
+        let mut effects = TestCollapseEffects::default();
+
+        let decision = collapse_for_test(&mut state, 32, &mut effects);
+
+        assert_eq!(decision, TestCollapseDecision::Inert);
+        assert_eq!(
+            (
+                state.visible_width(),
+                state.restore_width,
+                state.collapsed,
+                state.revision,
+                effects,
+            ),
+            (32, 32, false, u64::MAX, TestCollapseEffects::default(),)
+        );
+    }
+
+    #[test]
+    fn expand_without_feasible_tracks_is_inert() {
+        let mut state = TestCollapseState::collapsed(RegionId::LeftPanel, 32);
+        let bounds = ResizeBounds::new(30, 40, 20, 30).expect("ordered track bounds");
+        let mut effects = TestCollapseEffects::default();
+
+        let decision = expand_for_test(&mut state, 40, bounds, &mut effects);
+
+        assert_eq!(decision, TestCollapseDecision::Inert);
+        assert_eq!(
+            (
+                state.visible_width(),
+                state.restore_width,
+                state.collapsed,
+                state.revision,
+                effects,
+            ),
+            (0, 32, true, 0, TestCollapseEffects::default(),)
+        );
+    }
+
     fn divider() -> DividerId {
         DividerId::new(
             RegionId::LeftPanel,
@@ -519,6 +691,79 @@ mod tests {
     struct TestResizeEffects {
         persistence_dirty: usize,
         pty_resize_requests: usize,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum TestCollapseDecision {
+        Inert,
+        Collapsed { restore_width: u16 },
+        Expanded { width: u16 },
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct TestCollapseState {
+        region: RegionId,
+        restore_width: u16,
+        collapsed: bool,
+        revision: u64,
+    }
+
+    impl TestCollapseState {
+        fn expanded(region: RegionId, width: u16) -> Self {
+            Self {
+                region,
+                restore_width: width,
+                collapsed: false,
+                revision: 0,
+            }
+        }
+
+        fn collapsed(region: RegionId, restore_width: u16) -> Self {
+            Self {
+                region,
+                restore_width,
+                collapsed: true,
+                revision: 0,
+            }
+        }
+
+        fn visible_width(&self) -> u16 {
+            if self.collapsed {
+                0
+            } else {
+                self.restore_width
+            }
+        }
+    }
+
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    struct TestCollapseEffects {
+        persistence_dirty: usize,
+    }
+
+    fn collapse_for_test(
+        state: &mut TestCollapseState,
+        _committed_width: u16,
+        _effects: &mut TestCollapseEffects,
+    ) -> TestCollapseDecision {
+        // RED-only seam: this deliberately does not retain the committed
+        // width, own revision/dirty effects, or reject the mandatory stage.
+        state.restore_width = 0;
+        state.collapsed = true;
+        TestCollapseDecision::Inert
+    }
+
+    fn expand_for_test(
+        state: &mut TestCollapseState,
+        _total: u16,
+        _bounds: ResizeBounds,
+        _effects: &mut TestCollapseEffects,
+    ) -> TestCollapseDecision {
+        // RED-only seam: this deliberately ignores bounds and loses the
+        // restore width without producing the required decision/effect.
+        state.restore_width = 0;
+        state.collapsed = false;
+        TestCollapseDecision::Inert
     }
 
     fn commit_resize_for_test(
