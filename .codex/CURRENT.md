@@ -1103,28 +1103,32 @@
 
 ## Exact Next Action
 
-1. Stay in SF4.1. Use Codebase Memory first to locate the frozen SF1 terminal-
-   runtime preservation fixture and current typed Stage seams. The new session
-   must distrust a `ready`-only built-in result until it returns current
-   `AppState.try_open_file_manager_with` source plus `miller_layout`.
-2. Write compile-valid behavior RED
-   `stage_surface_switch_does_not_destroy_terminal_runtime`. It must extend a
-   test-owned runtime fixture, switch Terminal -> Files -> Terminal (including
-   failure/close as applicable), and fail only on a missing behavior assertion.
-   Compile, Tokio-reactor, filter, environment, zero-test, and setup failures do
-   not count as RED evidence.
-3. Commit the RED atomically, then implement the smallest GREEN that preserves
-   exact terminal runtime identity/count while Stage presentation changes. Add
-   no AppDock render, Files Stage rendering migration, focus router, protocol
-   field, server identity, watcher, process, or filesystem work.
-4. Finish only the minimum `AppDefinition`/launch-policy and typed surface-view
-   model demanded by the eight SF4.1 tests. Close SF4.1 with exact 8/8, frozen
-   SF1 11/11, broad regressions, the full direct `just check` recipe, Git/remote
-   SHA, and fresh graph evidence before entering SF4.2.
-5. Then execute SF4.2 focus/input precedence, SF4.3 overlay/background
-   blocking, SF4.4 pure surface projection, SF5 AppDock, SF6 Files migration,
-   and FM1-FM5 strictly in dependency order. Keep tooling T3.1 paused until the
-   current sequential product phase closes; do not activate Apps/Desktop, S5
+1. SF4.1 is CLOSED at product head `944a9d4c` (RED `784fdc2e`, closure
+   evidence in `.codex/evidence/shell-foundation-sf4-stage-progress.md`).
+   Both CyPack refs equal exact SHA
+   `944a9d4cf4ecb92f97e9be80b18060db6c5ffb4d`; the fresh sequential graph is
+   20,396 / 93,372 with current `StageState.surface_view`,
+   launch-policy-consulting `activate_files`, and `miller_layout`.
+2. Enter SF4.2 focus scopes, capture, and semantic input precedence
+   (`docs/superpowers/plans/2026-07-15-herdr-shell-foundation-v0-implementation.md`
+   Task SF4.2). First RED: table-driven
+   `shell_input_router_follows_frozen_precedence` covering overlay, active
+   capture, overlapping topmost hit, focused component, page shortcut, global
+   shortcut, and no target. Compile, Tokio-reactor, filter, environment,
+   zero-test, and setup failures do not count as RED evidence.
+3. Continue the remaining SF4.2 REDs (overlay mouse/keyboard blocking, capture
+   ownership outside the original rect, focus restore after overlay close,
+   collapsed/inert region focus rejection, stale hit generation,
+   `files_stage_blocks_hidden_terminal_input`), then one bounded focus/capture
+   router shared by mouse and keyboard. Never infer authority from paint
+   output or stale coordinates.
+4. Prove terminal resize, surface close/failure, focus target disappearance,
+   hidden/zero regions, and capture cancellation restore one valid owner
+   without replay, duplicate action, or stuck capture before SF4.3.
+5. Then execute SF4.3 overlay/background blocking, SF4.4 pure surface
+   projection and SF4 closure, SF5 AppDock, SF6 Files migration, and FM1-FM5
+   strictly in dependency order. Keep tooling T3.1 paused until the current
+   sequential product phase closes; do not activate Apps/Desktop, S5
    registry, S7 popup stack, or unrelated refactors.
 6. Preserve targeted staging, atomic RED/GREEN/refactor commits, isolated
    runtime safety, CyPack-only fast-forward writes, no RED-only publication,

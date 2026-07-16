@@ -1,6 +1,6 @@
 # Shell Foundation SF4.1 Stage Progress Evidence
 
-Updated: 2026-07-16 CEST
+Updated: 2026-07-16 CEST (SF4.1 closed)
 
 ## Scope and Boundary
 
@@ -25,7 +25,7 @@ frozen migration invariant.
 | SF4.1-05 | `instance_generation_exhaustion_fails_without_aliasing` | `u32::MAX` cannot wrap or reuse identity | Generation overflow must fail closed | GREEN |
 | SF4.1-06 | `closing_files_restores_previous_terminal_surface` | Files is removed and Terminal becomes active | Close must not strand an invalid active ID | GREEN |
 | SF4.1-07 | `failed_files_open_restores_previous_surface_and_focus` | Preparation failure restores exact Stage/focus and leaves FM closed | Partial activation must be transactional | GREEN |
-| SF4.1-08 | `stage_surface_switch_does_not_destroy_terminal_runtime` | Switch/reactivate/close/failure preserve exact terminal runtime identity/count | Presentation state must not own or destroy runtime state | NEXT RED |
+| SF4.1-08 | `stage_surface_switch_does_not_destroy_terminal_runtime` | Switch/reactivate/close/failure preserve exact terminal runtime identity/count | Presentation state must not own or destroy runtime state | GREEN |
 
 ## Atomic TDD Evidence
 
@@ -70,10 +70,68 @@ frozen migration invariant.
      close-authority run `10da9a43-b851-489a-b907-b2526439c696` passed 1/1;
      toggle run `6d747dc5-b2e2-4069-bfd6-5f875c477849` passed 2/2.
 
+8. Runtime preservation: RED `784fdc2e`, GREEN `944a9d4c`.
+   - RED run `ffb0f3b0-b98e-49f7-8c1d-834455b4b22d` compiled, ran exactly one
+     test, and failed only on the missing typed bridge:
+     `LegacyFileManagerCurtain` versus `TerminalWorkspace` at
+     `src/ui/surface_host.rs:369`. The test extends the frozen SF1 fixture
+     (`Workspace::test_new` + `TerminalRuntimeRegistry` +
+     `TerminalRuntime::test_with_screen_bytes`, `#[tokio::test]`) and drives
+     switch, singleton reactivation, close (including
+     `test_process_pty_bytes` usability proof), failed open, and the
+     zero-new-identity resource boundary.
+   - GREEN adds `AppDefinition`/`LaunchPolicy::Singleton` consulted by
+     `activate_files` and the pure `StageState::surface_view()` typed
+     projection (`StageSurfaceView`); no AppDock render, Files migration,
+     focus router, protocol/server identity, dependency, watcher, process, or
+     filesystem behavior was added.
+   - GREEN exact run `4c57dd90-1fa1-4904-ac26-f9ab5959db21` passed 1/1; Stage
+     exact run `d2e2eeda-c36d-465b-a07b-15bb1d795ff5` passed 8/8.
+
 Compile failures, setup failures, rejected Nextest filters, and zero-test runs
 are not counted as RED or GREEN evidence. In particular, run
 `85af8790-8739-4f0b-a9b9-0c55426bc53e` selected zero tests and was rejected;
 the exact inventory was queried before the successful named runs above.
+
+## Separate Test-Stability Work (parallel-load flake class closed)
+
+The fresh full gate at `b33ee430` failed once on
+`terminal::state::tests::missing_session_after_process_exit_waits_for_fresh_process_evidence`
+under 452-test parallel load. Root cause: the suppression record is stamped
+with real `Instant::now()`
+(`suppress_full_lifecycle_hook_report_with_session_ref`), while four tests
+captured their synthetic baseline before that stamp with millisecond offsets;
+load-induced descheduling inverted the release comparison in
+`detected_state_observed_before_release_suppression`. The established
+`Instant::now() + Duration::from_secs(1)` idiom (already used by
+`fresh_detected_process_keeps_old_session_suppressed_after_process_exit`) was
+applied to the four vulnerable tests in test-only commit `3c853a70`
+(`test: make process-exit suppression tests deterministic under load`).
+Isolated repro passed, focused `terminal::state` was 94/94, and the clean full
+baseline was 3,299/3,299 (run `d9690d94-f9c2-48ad-b52e-236135164537`).
+
+## SF4.1 Closure Gate at `944a9d4c`
+
+- Frozen SF1 characterization: 11/11, run
+  `d1a7de31-2776-46e3-b66d-7059586675d9`.
+- Broad Stage/open/close/toggle/curtain regressions: 15/15, run
+  `3956a862-dec4-46dc-8560-921cb32dbf19`.
+- Full Nextest: 3,300/3,300 passed, one named B0 real-host probe skipped,
+  zero retry, run `5694bdd6-c22f-46ce-86b7-c496aea6e39c`.
+- `cargo fmt --check`, Linux all-target Clippy, and canonical Windows MSVC bin
+  Clippy with `LIBGHOSTTY_VT_SIMD=false`: PASS with `-D warnings`.
+- Bun integration assets 5/5; plugin marketplace 12/12; Python maintenance
+  64/64; `git diff --check` clean.
+- Added-production-`unwrap()` audit: zero; fixture temp-root scan: zero
+  residue; ignored inventory is exactly
+  `herdr::bin/herdr kitty_graphics::tests::path_beta_real_host_probe`.
+- Publication: sequential fast-forward pushes only to CyPack; both
+  `feat/native-fm` and fork `master` equal exact SHA
+  `944a9d4cf4ecb92f97e9be80b18060db6c5ffb4d`; `upstream` untouched.
+- Post-publication sequential graph refresh: 20,396 nodes / 93,372 edges with
+  current `StageState.surface_view`, `activate_files` consulting
+  `BuiltInAppId::Files.definition().launch`, and `miller_layout`; freshness
+  was not inferred from `ready` alone.
 
 ## Fresh Repository Verification at `f0f32075`
 
@@ -119,10 +177,12 @@ exact snippet before trusting that transport.
 
 ## Exact Next Microtask
 
-Remain inside SF4.1. Graph-first find the frozen SF1 terminal-runtime fixture
-and the typed Stage activation seam. Write only the compile-valid behavior RED
-`stage_surface_switch_does_not_destroy_terminal_runtime`; require an assertion
-failure proving the missing typed Stage/runtime-preservation bridge, not a
-Tokio reactor, filter, compile, environment, or setup failure. Do not begin
-SF4.2 focus routing, SF5 AppDock, SF6 Files rendering migration, FM1 history,
-or change-pipeline T3.1 until this SF4.1 slice and its GREEN are closed.
+SF4.1 is CLOSED with 8/8 exact contracts, frozen SF1 11/11, broad
+regressions, the complete direct `just check` equivalent, publication, and
+fresh graph symbols above. The next microtask is the first SF4.2 RED:
+table-driven `shell_input_router_follows_frozen_precedence` covering overlay,
+active capture, overlapping topmost hit, focused component, page shortcut,
+global shortcut, and no target (see
+`docs/superpowers/plans/2026-07-15-herdr-shell-foundation-v0-implementation.md`
+Task SF4.2). Do not begin SF5 AppDock, SF6 Files rendering migration, FM1
+history, or change-pipeline T3.1 before SF4.2-SF4.4 close in order.

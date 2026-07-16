@@ -44,20 +44,21 @@ renumber tasks.
 
 At this handoff there are:
 
-- 39 unchecked product/Shell/FM/deferred items in `.codex/TASKS.md`.
+- 36 unchecked product/Shell/FM/deferred items in `.codex/TASKS.md`.
 - 89 unchecked non-product pipeline items in
   `.codex/CHANGE-PIPELINE-TASKS.md`.
-- 128 unchecked items total, copied exactly into `.codex/HANDOFF.md` section 8.
+- 125 unchecked items total, copied exactly into `.codex/HANDOFF.md` section 8.
 
 Recount them. If counts differ, stop before code and reconcile the registry,
 handoff, and current state. Mark only one product microtask `in_progress`:
-SF4.1-08. Keep every later product task pending and the non-product pipeline
-paused.
+the first SF4.2 RED. Keep every later product task pending and the
+non-product pipeline paused.
 
 Priority is mandatory:
 
-1. P0 ACTIVE: SF4.1-08 and complete SF4.1 closure.
-2. P0 NEXT: SF4.2 -> SF4.3 -> SF4.4 -> SF5 -> SF6 -> FM1 -> FM2 -> FM3 -> FM4
+1. P0 ACTIVE: SF4.2 focus scopes, capture, and semantic input precedence,
+   starting with RED `shell_input_router_follows_frozen_precedence`.
+2. P0 NEXT: SF4.3 -> SF4.4 -> SF5 -> SF6 -> FM1 -> FM2 -> FM3 -> FM4
    -> FM5.
 3. P1 PAUSED: `herdr-change-pipeline` T3.1-T10.9, until the current sequential
    product phase closes.
@@ -71,12 +72,14 @@ continuity, and pipeline files in one commit.
 ## Current Verified Truth
 
 - Branch: `feat/native-fm`.
-- Verified product head: `f0f32075`
-  (`feat: roll back failed files stage opens`).
-- Matching RED: `056f0879` (`test: require files open rollback`).
-- SF0-SF3 are closed.
-- SF4 is active.
-- SF4.1 typed Stage state/lifecycle is 7/8 behavior slices GREEN.
+- Verified product head: `944a9d4c`
+  (`feat: preserve terminal runtime across stage switches`).
+- Matching RED: `784fdc2e`
+  (`test: require terminal runtime preservation across stage switches`).
+- Separate test-stability commit `3c853a70` closed the parallel-load
+  process-exit suppression flake class in `src/terminal/state.rs`.
+- SF0-SF3 are closed. SF4.1 is CLOSED with 8/8 behavior slices GREEN.
+- SF4 remains active; SF4.2 is the active microphase.
 - Closed SF4.1 pairs:
   - `557bcc77` / `6a18f0c7`: default Terminal Stage.
   - `f22bdac4` / `b9180de3`: Files activation history.
@@ -85,16 +88,21 @@ continuity, and pipeline files in one commit.
   - `207c9da3` / `f31ab28a`: checked generation exhaustion.
   - `a5e5bace` / `e1c82036`: close restores Terminal.
   - `056f0879` / `f0f32075`: failed open restores exact Stage/focus.
+  - `784fdc2e` / `944a9d4c`: stage switches preserve terminal runtime
+    (`AppDefinition`/`LaunchPolicy` + pure `StageState::surface_view()`).
 - Next test is not yet written:
-  `stage_surface_switch_does_not_destroy_terminal_runtime`.
+  `shell_input_router_follows_frozen_precedence` (SF4.2, table-driven).
 - Legacy `AppState.file_manager: Option<FmState>` curtain still renders. Do
   not remove it until SF6.
 - `previous_pane_focus` is existing pane history, not the new SF4.2 focus
   router.
-- Protocol remains 16. SF4.1 is client-local presentation state.
-- Full current gate: Nextest 3,299/3,299 passed plus one named B0 skip, Linux
-  all-target Clippy, Windows MSVC bin Clippy, Bun 17/17, Python 64/64, fmt,
-  diff and added-production-`unwrap()` clean.
+- Protocol remains 16. SF4.1 stayed client-local presentation state.
+- Full current gate: Nextest 3,300/3,300 passed plus one named B0 skip (run
+  `5694bdd6-c22f-46ce-86b7-c496aea6e39c`), Linux all-target Clippy, Windows
+  MSVC bin Clippy, Bun 5/5 + 12/12, Python 64/64, fmt, diff and
+  added-production-`unwrap()` clean.
+- Both CyPack refs equal exact SHA
+  `944a9d4cf4ecb92f97e9be80b18060db6c5ffb4d`.
 - User-owned `.superpowers/` is untracked and must never be staged or edited.
 
 ## Mandatory Git and Remote Audit
@@ -133,10 +141,10 @@ Use Codebase Memory MCP before grep for code discovery:
 6. Use `trace_path` for runtime ownership and current callers.
 7. Use `get_architecture` when ownership is unclear.
 
-Do not trust `ready` alone. The fresh sequential store at handoff is 20,340
-nodes / 93,429 edges. The previous long-lived built-in channel was stale at
-20,291 / 94,542 and could not find the transaction. A new session must prove
-current symbols and snippet content before accepting freshness.
+Do not trust `ready` alone. The fresh sequential store at handoff is 20,396
+nodes / 93,372 edges and contains `StageState.surface_view`,
+launch-policy-consulting `activate_files`, and `miller_layout`. A new session
+must prove current symbols and snippet content before accepting freshness.
 
 If refresh is required, do not restart/kill the proxy or user processes. Use:
 
@@ -165,40 +173,39 @@ Report all of the following in commentary before editing:
 
 ## Exact Next TDD Slice
 
-Write the compile-valid behavior RED:
+Write the compile-valid table-driven behavior RED:
 
 ```text
-stage_surface_switch_does_not_destroy_terminal_runtime
+shell_input_router_follows_frozen_precedence
 ```
 
 Test points to announce first:
 
 | Test point | Expected result | Reason |
 |---|---|---|
-| Live terminal before Files activation | Exact runtime identity/count survives Terminal -> Files | Stage is presentation, not runtime ownership |
-| Files singleton reactivation | No duplicate runtime or Stage instance | Repeated app activation must be idempotent |
-| Files close | Terminal Stage returns and original runtime is still usable | Close must restore, not recreate |
-| Files preparation/activation failure | Stage/focus/runtime restore exactly and FM stays closed | Partial open must be transactional |
-| Resource boundary | Zero new pane/process/worker/watcher/protocol identity | SF4.1 cannot deepen runtime coupling |
+| Precedence table rows (overlay, active capture, overlapping topmost hit, focused component, page shortcut, global shortcut, no target) | Exactly one owner per event following overlay -> capture -> active Stage surface -> shell/page -> global; the no-target row is inert | Input authority must be explicit and total before SF4.3 blocking and SF6 migration rely on it |
+| Stale hit generation | Consumed without action | Old coordinates must never become authority |
+| Collapsed/inert region focus | Cannot receive focus | Hidden geometry must not own input |
+| Hidden background target | No fall-through to hidden terminal input | Fixes the reported curtain/input leak class |
+| Recovery (terminal resize, surface close/failure, focus target disappearance, capture cancellation) | One valid owner restored without replay, duplicate action, or stuck capture | The router must fail closed under lifecycle churn |
 
-Use the existing frozen SF1 test-owned runtime fixture. If that fixture needs a
-Tokio reactor, follow the existing `#[tokio::test]` pattern. Compile failure,
-reactor panic, environment/setup failure, rejected/zero-test filter, flaky
-timing, or an already-green characterization is not a valid RED.
+Follow `docs/superpowers/plans/2026-07-15-herdr-shell-foundation-v0-implementation.md`
+Task SF4.2 for the complete RED list. Compile failure, reactor panic,
+environment/setup failure, rejected/zero-test filter, flaky timing, or an
+already-green characterization is not a valid RED.
 
 Planned RED commit:
 
 ```text
-test: require terminal runtime preservation across stage switches
+test: define shell focus and input ownership
 ```
 
 After observing the correct assertion failure, implement only the minimum
-GREEN. It may complete the minimal `AppDefinition`/launch-policy and typed
-surface-view model required by the eight SF4.1 tests. It must not add:
+GREEN: one bounded focus/capture router shared by mouse and keyboard, routing
+through the frozen `ShellView` hit list. It must not add:
 
 - AppDock rendering;
 - Files Stage rendering migration;
-- SF4.2 focus/capture router;
 - protocol/server/pane/tab/workspace/terminal identities;
 - watcher, preview, operation, process or filesystem behavior;
 - dependency or snapshot change;
@@ -208,12 +215,12 @@ surface-view model required by the eight SF4.1 tests. It must not add:
 Planned GREEN commit:
 
 ```text
-feat: preserve terminal runtime across stage switches
+feat: route shell input through semantic ownership
 ```
 
-Do not push the RED alone. Close the pair locally, then run proportional tests.
-Before SF4.1 phase closure run exact 8/8, frozen SF1 11/11, broad runtime/
-Stage/open/close/toggle regressions, and the full direct `just check` equivalent.
+Do not push the RED alone. Close the pair locally, then run proportional
+overlay/FM-input/sidebar/terminal-input/router tests. Before SF4.2 closure run
+broad regressions and the full direct `just check` equivalent.
 
 ## Verification Contract
 

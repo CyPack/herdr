@@ -11,27 +11,33 @@
 - Branch: `feat/native-fm`
 - Acting identity: CyPack external contributor; `origin` is the writable
   `CyPack/herdr` fork and `upstream` is read-only.
-- Current verified product head: `f0f32075`
-  (`feat: roll back failed files stage opens`).
-- Matching observed behavior RED: `056f0879`
-  (`test: require files open rollback`).
+- Current verified product head: `944a9d4c`
+  (`feat: preserve terminal runtime across stage switches`).
+- Matching observed behavior RED: `784fdc2e`
+  (`test: require terminal runtime preservation across stage switches`).
+- Separate test-stability commit `3c853a70` closed the parallel-load
+  process-exit suppression flake class in `src/terminal/state.rs`.
 - Program: 7 Shell Foundation phases SF0-SF6 plus 5 FM phases FM1-FM5.
-- Closed phases: SF0, SF1, SF2, SF3.
+- Closed phases: SF0, SF1, SF2, SF3, and microphase SF4.1 (8/8 slices GREEN).
 - Active phase: SF4 SurfaceHost and input router.
-- Active microphase: SF4.1 typed Stage state/lifecycle, 7 of 8 approved
-  behavior slices GREEN.
-- Immediate next microtask: compile-valid behavior RED
-  `stage_surface_switch_does_not_destroy_terminal_runtime`.
-- Product tree: clean at `f0f32075`; only the user-owned untracked
+- Active microphase: SF4.2 focus scopes, capture, and semantic input
+  precedence.
+- Immediate next microtask: compile-valid table-driven behavior RED
+  `shell_input_router_follows_frozen_precedence`.
+- Product tree: clean at `944a9d4c`; only the user-owned untracked
   `.superpowers/` tree exists and must remain untouched/unstaged.
-- Full exact-head gate: 3,299/3,299 Rust tests passed, one named B0 real-host
-  probe skipped, zero retry; Linux/Windows Clippy, Bun 17/17, Python 64/64,
+- Full exact-head gate: 3,300/3,300 Rust tests passed (run
+  `5694bdd6-c22f-46ce-86b7-c496aea6e39c`), one named B0 real-host probe
+  skipped, zero retry; Linux/Windows Clippy, Bun 5/5 + 12/12, Python 64/64,
   fmt/diff/added-production-unwrap checks passed.
-- Fresh sequential Codebase Memory store: 20,340 nodes / 93,429 edges with
-  current `AppState.try_open_file_manager_with` and `miller_layout` source.
-- Current Codex built-in MCP channel is stale at 20,291 / 94,542 and lacks the
-  new symbol. Do not restart any proxy/process; a fresh session must verify the
-  built-in channel against the current symbol before trusting it.
+- Both CyPack refs (`feat/native-fm`, fork `master`) equal exact SHA
+  `944a9d4cf4ecb92f97e9be80b18060db6c5ffb4d`; `upstream` untouched.
+- Fresh sequential Codebase Memory store: 20,396 nodes / 93,372 edges with
+  current `StageState.surface_view`, launch-policy-consulting
+  `activate_files`, and `miller_layout` source.
+- The built-in MCP channel now serves the fresh store; this was verified with
+  exact symbol and snippet, never `ready` alone. A fresh session must repeat
+  that proof before trusting the transport.
 - Stable Herdr process/socket, installed binary, user terminal/editor/browser,
   and every user process were untouched.
 
@@ -246,27 +252,16 @@ No lower-priority task may preempt P0 merely because it is easier. A blocker
 does not authorize jumping lanes; record it and request user direction if safe
 in-scope alternatives are exhausted.
 
-## 8. COMPLETE UNCHECKED TASK INVENTORY — 128 ITEMS
+## 8. COMPLETE UNCHECKED TASK INVENTORY — 125 ITEMS
 
 The two blocks below are generated from the canonical registries and are part
-of this handoff. Count at handoff creation: 39 product-program items plus 89
+of this handoff. Count after SF4.1 closure: 36 product-program items plus 89
 change-pipeline items. The next agent must recount after reading; any mismatch
 means registry drift and must be reconciled before code.
 
 ### 8.1 Product / Shell / FM / Deferred Registry — exact unchecked items
 
 <!-- PRODUCT_OPEN_TASKS_START -->
-- [ ] RED/GREEN `stage_surface_switch_does_not_destroy_terminal_runtime`.
-  The test must extend the frozen SF1 runtime fixture, fail for missing typed
-  Stage/runtime-preservation behavior rather than setup, and prove switch,
-  reactivation, close, and failure leave terminal runtime count/identity alive.
-- [ ] Complete the minimum `AppDefinition`/launch-policy and typed surface-view
-  model required by the eight approved SF4.1 contracts. Do not render AppDock,
-  migrate Files, add focus scopes, or create protocol/runtime identities here.
-- [ ] Close SF4.1 with exact 8/8, frozen SF1 11/11, broad Stage/open/close/
-  toggle/runtime regressions, full direct `just check`, Linux/Windows Clippy,
-  diff/unwrap/residue audit, atomic publication, remote-SHA equality, and fresh
-  graph symbols.
 - [ ] RED-test focus scope entry/restore, active capture, topmost semantic hit,
   page/global shortcut precedence, stale generation rejection, and no-owner
   fallback before adding router production state.
@@ -509,53 +504,50 @@ means registry drift and must be reconciled before code.
 
 ## 9. EXACT NEXT MICROTASK CONTRACT
 
-Before production code, announce these test points with expected result and
-reason:
+SF4.1-08 is closed (RED `784fdc2e`, GREEN `944a9d4c`; evidence in
+`.codex/evidence/shell-foundation-sf4-stage-progress.md`). The next microtask
+is the first SF4.2 RED. Before production code, announce these test points
+with expected result and reason:
 
-1. `stage_surface_switch_does_not_destroy_terminal_runtime`
-   - Test: a test-owned terminal runtime exists before Stage Files activation;
-     activation/reactivation/close/failure transitions occur.
-   - Expected: exact terminal runtime identity/count and its state remain
-     present; Stage presentation changes only.
-   - Reason: Files must become an app surface, not the owner/destructor of a
-     running terminal.
-2. Failure-path companion within the same fixture, if required by existing
-   seams.
-   - Test: injected Files preparation/activation failure after a live terminal.
-   - Expected: Terminal Stage/focus/runtime remain exactly usable, no Files FM
-     state or duplicate instance survives.
-   - Reason: a partial open must not strand or destroy the user's active app.
-3. Resource boundary.
-   - Test: repeated activation/reactivation/close does not create a runtime,
-     pane, terminal ID, process, worker, watcher, queue, or protocol field.
-   - Expected: only bounded client-local Stage state changes.
-   - Reason: SF4.1 is presentation identity, not runtime orchestration.
+1. `shell_input_router_follows_frozen_precedence` (table-driven)
+   - Test: overlay, active capture, overlapping topmost hit, focused
+     component, page shortcut, global shortcut, and no-target rows resolve
+     through one precedence table.
+   - Expected: exactly one owner per event following
+     overlay -> capture -> active Stage surface -> shell/page -> global; the
+     no-target row is inert.
+   - Reason: input authority must be explicit and total before SF4.3 blocking
+     and SF6 migration can rely on it.
+2. Stale/inert rejection companions within the same contract.
+   - Test: stale hit generation, collapsed/inert region focus, and hidden
+     background targets.
+   - Expected: consumed without action; no fall-through to hidden terminal
+     input.
+   - Reason: old coordinates and paint output must never become authority.
+3. Recovery.
+   - Test: terminal resize, surface close/failure, focus target
+     disappearance, and capture cancellation.
+   - Expected: one valid owner is restored without replay, duplicate action,
+     or stuck capture.
+   - Reason: the router must fail closed under lifecycle churn.
 
-Use Codebase Memory to find the exact frozen SF1 fixture. If a Tokio runtime is
-needed, follow an existing `#[tokio::test]` pattern; a reactor panic is setup
-failure, not RED. The RED commit must contain only the new compile-valid test
-and minimum test seam. Proposed message:
-`test: require terminal runtime preservation across stage switches`.
-
-After observed RED, implement the minimum GREEN. Proposed message:
-`feat: preserve terminal runtime across stage switches`.
+Follow `docs/superpowers/plans/2026-07-15-herdr-shell-foundation-v0-implementation.md`
+Task SF4.2 for the complete RED list and commit messages
+(`test: define shell focus and input ownership`;
+`feat: route shell input through semantic ownership`).
 
 ## 10. FILE OWNERSHIP AND COMMIT BOUNDARY
 
-Likely SF4.1-08 owned files, subject to graph/source confirmation:
+Likely SF4.2 owned files, subject to graph/source confirmation:
 
-- `src/ui/surface_host.rs`: typed Stage contract/tests.
-- The existing SF1 runtime characterization file only if extending its exact
-  test-owned fixture is required.
-- `src/app/state.rs` or `src/app/actions.rs` only when the observed RED proves a
-  missing product bridge.
-- `src/app/mod.rs`/`src/ui.rs` only if the minimum typed view model truly
-  requires module wiring.
+- create/modify `src/app/input/shell.rs`; modify `src/app/input/mod.rs`,
+  `src/app/input/overlays.rs`, `src/app/state.rs`.
+- `src/ui/surface_host.rs` only if the router consumes the typed surface view.
 
-Forbidden in this microtask: AppDock render, Files render migration, focus
-router, mouse routing, watcher/preview/operation changes, protocol/persistence,
-dependencies, docs/website, change-pipeline module, `.superpowers/`, stable
-runtime tooling, and unrelated refactors.
+Forbidden in this microtask: AppDock render, Files render migration,
+watcher/preview/operation changes, protocol/persistence, dependencies,
+docs/website, change-pipeline module, `.superpowers/`, stable runtime tooling,
+and unrelated refactors.
 
 Every concern has separate targeted staging. RED and GREEN are separate atomic
 commits but are never pushed as a RED-only remote tip. Continuity/evidence is a

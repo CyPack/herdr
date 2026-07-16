@@ -2,8 +2,10 @@
 
 - Updated: 2026-07-16
 - Branch: `feat/native-fm`
-- Current verified product head: `f0f32075` (`feat: roll back failed files
-  stage opens`); matching RED `056f0879`.
+- Current verified product head: `944a9d4c` (`feat: preserve terminal runtime
+  across stage switches`); matching RED `784fdc2e`. Separate test-stability
+  commit `3c853a70` closed the parallel-load process-exit suppression flake
+  class in `src/terminal/state.rs`.
 - Published SF0 planning artifact checkpoint: `32856f7`
   (`docs: plan shell foundation and files workspace`).
 - Published SF1 characterization checkpoint: `7b9b626d`
@@ -18,18 +20,21 @@
   `master` at product SHA `90be689359988424b2a7c6206ff45a3207422196`.
 - Approved product program: SF0-SF6 followed by FM1-FM5; Apps/Desktop remains
   a later independent program.
-- Current phase: SF0-SF3 closed through I14. SF4.1 is ACTIVE with 7/8 typed
+- Current phase: SF0-SF3 closed through I14. SF4.1 is CLOSED with 8/8 typed
   Stage behavior slices GREEN: default, activation history, singleton,
-  16-instance bound, checked generation exhaustion, close restoration, and
-  failed-open Stage/focus rollback. The next behavior RED is
-  `stage_surface_switch_does_not_destroy_terminal_runtime`.
+  16-instance bound, checked generation exhaustion, close restoration,
+  failed-open Stage/focus rollback, and terminal-runtime preservation across
+  stage switches (`AppDefinition`/`LaunchPolicy` + pure
+  `StageState::surface_view()`). SF4.2 is the ACTIVE next slice; its first
+  RED is table-driven `shell_input_router_follows_frozen_precedence`.
 - Published SF2.4 RED/GREEN: `2a440478` / `07133b8b`; both CyPack refs equal
   exact SHA `07133b8b9e9cf10b9b3dea0febe22a8389457164`.
-- Current sequential CLI graph: 20,340 nodes / 93,429 edges. Fresh exact search
-  and snippet prove `AppState.try_open_file_manager_with` plus
-  `miller_layout`; freshness was not inferred from status alone. The already-
-  open built-in MCP channel remains stale at 20,291 / 94,542 and was not
-  restarted.
+- Current sequential CLI graph: 20,396 nodes / 93,372 edges after the
+  post-SF4.1 reindex. Fresh exact search proves `StageState.surface_view`,
+  `activate_files` consulting `BuiltInAppId::Files.definition().launch`, and
+  `miller_layout`; freshness was not inferred from status alone. The built-in
+  MCP channel now serves the fresh store (verified by exact symbol and
+  snippet, not `ready` alone).
 - Published CyPack M3 evidence checkpoint: `e9f2fe0`.
 - Verified M2.1 chain: RED `dab1e20`; GREEN product head `0ae6175`.
 - M3.0 evidence is published with exact SHA equality to CyPack
@@ -108,20 +113,23 @@
 
 ## Active Next Increment
 
-- Remain in SF4.1. Seven atomic RED/GREEN pairs are closed through
-  `056f0879`/`f0f32075`; detailed evidence is
+- SF4.1 is CLOSED. Eight atomic RED/GREEN pairs end at `784fdc2e`/`944a9d4c`;
+  detailed evidence is
   `.codex/evidence/shell-foundation-sf4-stage-progress.md`.
-- Next RED: `stage_surface_switch_does_not_destroy_terminal_runtime`. Extend
-  the frozen SF1 test-owned runtime fixture; require an assertion failure for
-  missing typed Stage/runtime preservation, never compile/setup/reactor/filter
-  failure.
-- Minimal GREEN must preserve exact terminal runtime identity/count through
-  Files activation, reactivation, close, and failure. It may complete only the
-  `AppDefinition`/launch-policy and typed surface-view model required by SF4.1.
-- Preserve frozen SF1 and complete SF2/SF3 baselines. Do not mix SF4.2 focus
-  routing, SF5 AppDock render, SF6 Files rendering migration, FM1 history, or
-  change-pipeline T3.1 into this increment.
-- After SF4.1 full closure, execute SF4.2-SF6 and FM1-FM5 sequentially through
+- Enter SF4.2 focus scopes, capture, and semantic input precedence. First
+  RED: table-driven `shell_input_router_follows_frozen_precedence` covering
+  overlay, active capture, overlapping topmost hit, focused component, page
+  shortcut, global shortcut, and no target
+  (`docs/superpowers/plans/2026-07-15-herdr-shell-foundation-v0-implementation.md`
+  Task SF4.2).
+- Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
+  restore, inert regions, stale generation, hidden-terminal blocking), one
+  bounded focus/capture router shared by mouse and keyboard, and recovery
+  proofs before SF4.3.
+- Preserve frozen SF1 and complete SF2/SF3/SF4.1 baselines. Do not mix SF5
+  AppDock render, SF6 Files rendering migration, FM1 history, or
+  change-pipeline T3.1 into SF4.2 increments.
+- After SF4 full closure, execute SF5, SF6, and FM1-FM5 sequentially through
   the approved plans. Product, continuity, and tooling commits remain separate.
 
 The separate non-product change-pipeline lane has completed T0-T2. Ratatui

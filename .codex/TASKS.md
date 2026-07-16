@@ -143,7 +143,7 @@ Progress evidence:
 
 ### SF4 — SurfaceHost and Input Router (P0 ACTIVE)
 
-#### SF4.1 — Typed Stage State and Lifecycle (7/8 behavior slices GREEN)
+#### SF4.1 — Typed Stage State and Lifecycle (CLOSED — 8/8 behavior slices GREEN)
 
 - [x] Graph-first inventory the legacy terminal/Files curtain, workspace/tab
   identity, `FmState`, terminal runtime registry, and input ownership. Keep the
@@ -166,17 +166,27 @@ Progress evidence:
 - [x] RED/GREEN `failed_files_open_restores_previous_surface_and_focus`:
   `056f0879` / `f0f32075`; preparation failure restores exact Stage/focus,
   leaves FM closed, and clears stale sidebar navigation only on success.
-- [ ] RED/GREEN `stage_surface_switch_does_not_destroy_terminal_runtime`.
-  The test must extend the frozen SF1 runtime fixture, fail for missing typed
-  Stage/runtime-preservation behavior rather than setup, and prove switch,
-  reactivation, close, and failure leave terminal runtime count/identity alive.
-- [ ] Complete the minimum `AppDefinition`/launch-policy and typed surface-view
-  model required by the eight approved SF4.1 contracts. Do not render AppDock,
-  migrate Files, add focus scopes, or create protocol/runtime identities here.
-- [ ] Close SF4.1 with exact 8/8, frozen SF1 11/11, broad Stage/open/close/
-  toggle/runtime regressions, full direct `just check`, Linux/Windows Clippy,
-  diff/unwrap/residue audit, atomic publication, remote-SHA equality, and fresh
-  graph symbols.
+- [x] RED/GREEN `stage_surface_switch_does_not_destroy_terminal_runtime`:
+  `784fdc2e` / `944a9d4c`. The test extends the frozen SF1 runtime fixture
+  (`#[tokio::test]`, `TerminalRuntimeRegistry`), failed only on the missing
+  typed bridge (`LegacyFileManagerCurtain` versus `TerminalWorkspace`, RED run
+  `ffb0f3b0`), and proves switch, reactivation, close (runtime still usable),
+  and failure leave terminal runtime count/identity alive with zero new
+  pane/workspace/terminal identity.
+- [x] Complete the minimum `AppDefinition`/launch-policy and typed surface-view
+  model required by the eight approved SF4.1 contracts: `LaunchPolicy::
+  Singleton` definitions consulted by `activate_files` plus the pure
+  `StageState::surface_view()` projection. No AppDock render, Files migration,
+  focus scopes, or protocol/runtime identities were added.
+- [x] Close SF4.1 with exact 8/8 (run `d2e2eeda`), frozen SF1 11/11 (run
+  `d1a7de31`), broad Stage/open/close/toggle regressions 15/15 (run
+  `3956a862`), full Nextest 3300/3300 plus only the named B0 skip (run
+  `5694bdd6`), Linux/Windows Clippy, Bun 5/5 + 12/12, Python 64/64,
+  diff/unwrap/residue audits, atomic publication with both CyPack refs at
+  exact SHA `944a9d4cf4ecb92f97e9be80b18060db6c5ffb4d`, and fresh graph
+  20,396 / 93,372 (`surface_view`, launch-policy-consulting
+  `activate_files`, `miller_layout`). Separate test-only commit `3c853a70`
+  closed the parallel-load process-exit suppression flake class.
 
 Progress evidence:
 `.codex/evidence/shell-foundation-sf4-stage-progress.md`.
