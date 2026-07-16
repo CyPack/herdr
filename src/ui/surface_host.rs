@@ -229,4 +229,28 @@ mod tests {
         );
         assert_eq!(stage, retained);
     }
+
+    #[test]
+    fn closing_files_restores_previous_terminal_surface() {
+        let mut state = AppState::test_new();
+        state.open_file_manager();
+        assert_eq!(
+            state.stage.active_surface(),
+            Some(AppSurfaceRef::NativeFiles)
+        );
+
+        state.close_file_manager();
+
+        assert_eq!(
+            (state.stage.active_surface(), state.stage.previous_surface()),
+            (Some(AppSurfaceRef::TerminalWorkspace), None)
+        );
+        assert!(
+            state
+                .stage
+                .instances()
+                .all(|instance| instance.id.app != BuiltInAppId::Files),
+            "closed Files must not leave a resident instance"
+        );
+    }
 }
