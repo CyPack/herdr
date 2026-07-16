@@ -2096,7 +2096,6 @@ pub struct AppState {
     pub file_manager: Option<crate::fm::FmState>,
     /// Typed client-local owner of the active WorkspaceStage surface. It does
     /// not create or replace server, workspace, tab, pane, or terminal IDs.
-    #[allow(dead_code)] // SF4.2/SF4.3 consume this state after lifecycle contracts close.
     pub(crate) stage: crate::ui::surface_host::StageState,
     /// Blocking client-local picker that keeps terminal panes in the base
     /// layer. It owns no watcher, worker, process, pane, or server state.

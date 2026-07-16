@@ -1,11 +1,13 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AppSurfaceRef {
     TerminalWorkspace,
+    NativeFiles,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct StageState {
     active: AppSurfaceRef,
+    previous: Option<AppSurfaceRef>,
 }
 
 impl StageState {
@@ -13,12 +15,23 @@ impl StageState {
     pub(crate) const fn active_surface(&self) -> AppSurfaceRef {
         self.active
     }
+
+    #[allow(dead_code)] // SF4.1 close/failure restoration consumes this after its RED contracts.
+    pub(crate) const fn previous_surface(&self) -> Option<AppSurfaceRef> {
+        self.previous
+    }
+
+    pub(crate) fn activate_files(&mut self) {
+        self.previous = Some(self.active);
+        self.active = AppSurfaceRef::NativeFiles;
+    }
 }
 
 impl Default for StageState {
     fn default() -> Self {
         Self {
             active: AppSurfaceRef::TerminalWorkspace,
+            previous: None,
         }
     }
 }
@@ -28,18 +41,6 @@ mod tests {
     use crate::app::state::AppState;
 
     use super::{AppSurfaceRef, StageState};
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum TestSurfaceRef {
-        TerminalWorkspace,
-        NativeFiles,
-    }
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    struct TestStageActivation {
-        active: TestSurfaceRef,
-        previous: Option<TestSurfaceRef>,
-    }
 
     #[test]
     fn stage_starts_on_terminal_workspace() {
@@ -53,29 +54,16 @@ mod tests {
 
     #[test]
     fn activating_files_records_previous_surface() {
-        let stage = StageState::default();
+        let mut stage = StageState::default();
 
-        let activated = activate_files_for_test(&stage);
+        stage.activate_files();
 
         assert_eq!(
-            (activated.active, activated.previous),
+            (stage.active_surface(), stage.previous_surface()),
             (
-                TestSurfaceRef::NativeFiles,
-                Some(TestSurfaceRef::TerminalWorkspace),
+                AppSurfaceRef::NativeFiles,
+                Some(AppSurfaceRef::TerminalWorkspace),
             )
         );
-    }
-
-    fn activate_files_for_test(stage: &StageState) -> TestStageActivation {
-        let current = match stage.active_surface() {
-            AppSurfaceRef::TerminalWorkspace => TestSurfaceRef::TerminalWorkspace,
-        };
-
-        // RED-only seam: SF4.1 must atomically retain the displaced surface
-        // and activate NativeFiles instead of leaving the current Stage inert.
-        TestStageActivation {
-            active: current,
-            previous: None,
-        }
     }
 }
