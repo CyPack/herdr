@@ -1167,6 +1167,132 @@ mod tests {
         std::fs::remove_dir_all(root).expect("remove temp root");
     }
 
+    // SF4.3-03 characterization: valid RED refuted by source sweep — the
+    // stage surface render path (`render_panes` / `render_file_manager`)
+    // reads no clock and no randomness, so identical state must produce
+    // byte-identical buffers. (The sidebar Projects tab DOES read
+    // `SystemTime::now()` for relative timestamps; that sits outside the
+    // stage surface and is recorded in the SF4.3 evidence.) This freezes
+    // determinism for BOTH stage surfaces through the real Compositor.
+    #[test]
+    fn surface_render_is_deterministic_for_identical_state() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "herdr-render-determinism-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).expect("create temp root");
+        std::fs::write(root.join("00.txt"), b"x").expect("write fixture entry");
+
+        let draw = |app: &crate::app::state::AppState| {
+            let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test terminal");
+            terminal
+                .draw(|frame| render(app, frame))
+                .expect("render frame");
+            terminal.backend().buffer().clone()
+        };
+
+        let mut app = crate::app::state::AppState::test_new();
+        let mut workspace = Workspace::test_new("render-determinism");
+        workspace.test_split(ratatui::layout::Direction::Horizontal);
+        app.workspaces = vec![workspace];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.mobile_width_threshold = 0;
+
+        compute_view(&mut app, Rect::new(0, 0, 100, 30));
+        assert_eq!(
+            draw(&app),
+            draw(&app),
+            "the terminal surface must render byte-identically for identical state"
+        );
+
+        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .expect("Files activation");
+        compute_view(&mut app, Rect::new(0, 0, 100, 30));
+        assert_eq!(
+            draw(&app),
+            draw(&app),
+            "the Files surface must render byte-identically for identical state"
+        );
+
+        std::fs::remove_dir_all(&root).expect("remove temp root");
+    }
+
+    // SF4.3-04 characterization: `render` takes `&AppState`, so direct
+    // mutation is compile-impossible; the remaining hazard is interior
+    // mutability reached through the runtime registry. Freeze the observable
+    // stage state across a render of both surfaces.
+    #[test]
+    fn surface_render_does_not_mutate_app_state() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "herdr-render-no-mutation-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).expect("create temp root");
+        std::fs::write(root.join("00.txt"), b"x").expect("write fixture entry");
+
+        let mut app = crate::app::state::AppState::test_new();
+        let mut workspace = Workspace::test_new("render-no-mutation");
+        workspace.test_split(ratatui::layout::Direction::Horizontal);
+        app.workspaces = vec![workspace];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.mobile_width_threshold = 0;
+
+        let render_once = |app: &crate::app::state::AppState| {
+            let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test terminal");
+            terminal
+                .draw(|frame| render(app, frame))
+                .expect("render frame");
+        };
+        let snapshot = |app: &crate::app::state::AppState| {
+            (
+                app.stage,
+                app.mode,
+                app.view.terminal_area,
+                app.view.sidebar_rect,
+                app.view.pane_infos.len(),
+                app.view.split_borders.len(),
+                app.view.file_manager_row_areas.len(),
+                app.file_manager
+                    .as_ref()
+                    .map(|fm| (fm.cursor, fm.entries.len())),
+                app.workspace_scroll,
+                app.tab_scroll,
+            )
+        };
+
+        compute_view(&mut app, Rect::new(0, 0, 100, 30));
+        let before = snapshot(&app);
+        render_once(&app);
+        assert_eq!(
+            snapshot(&app),
+            before,
+            "rendering the terminal surface must not change observable state"
+        );
+
+        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .expect("Files activation");
+        compute_view(&mut app, Rect::new(0, 0, 100, 30));
+        let before = snapshot(&app);
+        render_once(&app);
+        assert_eq!(
+            snapshot(&app),
+            before,
+            "rendering the Files surface must not change observable state"
+        );
+
+        std::fs::remove_dir_all(&root).expect("remove temp root");
+    }
+
     // A2 integration: when the file manager is open, the base layer renders the
     // directory list in the center (CenterContent) instead of the terminal panes.
     #[test]
