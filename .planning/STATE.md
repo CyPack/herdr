@@ -15,9 +15,10 @@
   and preview are the next behavior-specific RED slice.
 - Published SF2.4 RED/GREEN: `2a440478` / `07133b8b`; both CyPack refs equal
   exact SHA `07133b8b9e9cf10b9b3dea0febe22a8389457164`.
-- Current single-worker graph: 20,017 nodes / 91,917 edges. CLI and built-in
+- Current single-worker graph: 20,018 nodes / 91,918 edges. CLI and built-in
   MCP status/search/snippet prove current by-value `compute_shell_view`, its
-  failure characterizations, and `miller_layout`; no process was restarted.
+  failure characterizations, `miller_layout`, and the SF3.1 RED task; no
+  process was restarted.
 - Published CyPack M3 evidence checkpoint: `e9f2fe0`.
 - Verified M2.1 chain: RED `dab1e20`; GREEN product head `0ae6175`.
 - M3.0 evidence is published with exact SHA equality to CyPack

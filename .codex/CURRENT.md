@@ -46,11 +46,13 @@
   7/7, broad shell 88/88, every `src/ui.rs` test 41/41, frozen SF1 11/11,
   full Nextest 3239/3239 plus only the named B0 skip, Linux/Windows Clippy,
   Bun 17/17, Python 64/64, fmt, and diff clean.
-- Post-publication single-worker graph evidence is 20,017 nodes / 91,917
-  edges. CLI and built-in MCP status/search/snippet calls return the current
-  by-value `compute_shell_view`, both new fail-closed characterizations, and
-  `miller_layout`; freshness was verified by symbols rather than `ready` alone.
-  No proxy or process was restarted.
+- Product post-publication single-worker graph evidence is 20,017 nodes /
+  91,917 edges; after the separate continuity checkpoint the current graph is
+  20,018 / 91,918. CLI and built-in MCP status/search/snippet calls return the
+  current by-value `compute_shell_view`, both new fail-closed
+  characterizations, `miller_layout`, and the SF3.1 RED task; freshness was
+  verified by content rather than `ready` alone. No proxy or process was
+  restarted.
 - SF1 commit `7b9b626d` is fast-forward published to both CyPack refs. Exact
   SHA equality at its product/test checkpoint was
   `7b9b626d3e84b4ba03856a8f54b81196985d3f48`. Focused characterization is

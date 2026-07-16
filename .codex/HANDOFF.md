@@ -14,10 +14,10 @@ The SF2.4 RED/GREEN pair is `2a440478` / `07133b8b`; CyPack
 Fresh evidence is cached-view 7/7, broad shell 88/88, all `src/ui.rs` tests
 41/41, frozen SF1 11/11, full Nextest 3239/3239 plus only the named B0 real-
 host probe skip, Linux/Windows Clippy, Bun 17/17, Python 64/64, fmt, and diff
-clean. The single-worker graph is fresh at 20,017 nodes / 91,917 edges; both
+clean. The single-worker graph is fresh at 20,018 nodes / 91,918 edges; both
 CLI and built-in MCP return current `compute_shell_view`, fail-closed tests,
-and `miller_layout`. No process was restarted. Full evidence is
-`.codex/evidence/shell-foundation-sf2-geometry-progress.md`.
+`miller_layout`, and the SF3.1 RED task. No process was restarted. Full
+evidence is `.codex/evidence/shell-foundation-sf2-geometry-progress.md`.
 
 The immediate action is SF3.1 at I2-I6: trace and characterize the existing
 divider drag, mouse capture, persistence-dirty, and PTY-resize seams. Then add
