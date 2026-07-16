@@ -17,7 +17,7 @@ SF4.1 typed Stage closure (`944a9d4c`) and every earlier baseline stay frozen.
 | SF4.2-02 | `overlay_blocks_every_background_mouse_action` | Every active overlay kind consumes background-targeted mouse events with zero background action | Topmost blocking overlays prevent every background route (design spec) | GREEN |
 | SF4.2-03 | `overlay_blocks_background_keyboard_shortcut` | No background capture/shortcut acts while a blocking overlay owns focus | Keyboard parity for the same rule | GREEN |
 | SF4.2-04 | `capture_owns_move_and_up_outside_original_rect` | Active capture receives move/up even outside its origin rect | Only one owner captures a pointer gesture | GREEN (characterization) |
-| SF4.2-05 | `focus_restores_after_overlay_close` | Closing an overlay restores the previous valid focus owner or template fallback | Deterministic focus restoration | PENDING |
+| SF4.2-05 | `focus_restores_after_overlay_close` | Closing an overlay restores the previous valid focus owner or template fallback | Deterministic focus restoration | GREEN (GlobalMenu/KeybindHelp wired; ContextMenu wiring = SF4.2-05b) |
 | SF4.2-06 | `collapsed_or_inert_region_cannot_receive_focus` | Collapsed/zero regions expose no focusable target | Hidden geometry must not own input | PENDING |
 | SF4.2-07 | `stale_hit_generation_fails_closed` | A hit resolved against a non-current `ShellView` generation is consumed inert | Old coordinates must never become authority | PENDING |
 | SF4.2-08 | `files_stage_blocks_hidden_terminal_input` | With Files active, no event reaches hidden terminal targets | Fixes the reported curtain/input leak class | PENDING |
@@ -214,7 +214,41 @@ Approved GREEN design (production-grade, NOT a one-field hack):
   pin `mode == Terminal` after close from Terminal-origin (unchanged
   behavior) to stay green; only non-default-origin flows change.
 
-Afterwards: SF4.2-06 inert regions, SF4.2-07 stale hit generation (wire
-`ShellView::hit_at` into the mouse context builder), SF4.2-08
-hidden-terminal blocking, then the SF4.2 closure gate. Do not start SF4.3,
-SF5, SF6, or change-pipeline T3.1 before SF4.2 closes.
+## SF4.2-05 Atomic TDD Evidence (scoped GREEN — deliberate deviation recorded)
+
+- RED `8b1882eb` (`test: require focus restore after overlay close`), run
+  `acc45dd5-2881-4b5e-b5d1-38bc2de8d531`: the Terminal-origin control row
+  passed, the Resize-origin row failed exactly (`Terminal` versus `Resize`),
+  and an invalid-owner row guards blind restoration.
+- GREEN `5eb63763` (`feat: restore previous focus owner after overlay
+  close`): client-local `AppState.overlay_return_mode` (never persisted) +
+  `enter_overlay_mode()` (remembers `Resize`/`Copy` from non-overlay
+  origins, preserves the original owner across overlay-to-overlay chains,
+  clears stale values by construction) + `leave_modal` consumes (`take`) and
+  restores only while valid (`Resize` needs an active workspace; `Copy`
+  needs `copy_mode`).
+- DEVIATION from the full-sweep design, recorded with justification: only
+  `open_global_menu` and `open_keybind_help` are wired in this slice. Every
+  GlobalMenu exit was audited — Esc/outside/launcher-toggle/Detach/
+  ReloadConfig consume via `leave_modal`; Keybinds/Settings/WhatsNew chain
+  into overlays whose dismissals also `leave_modal` (KeybindHelp Esc,
+  Settings x3) — except `dismiss_release_notes`'s direct exit, which now
+  drops the remembered owner explicitly. Lingering restore is therefore
+  impossible within the wired scope. Wiring the remaining entry inventory
+  (ContextMenu x4, Rename*, worktree modals, Settings/Navigator/AttachFile/
+  ConfirmClose direct opens) is SF4.2-05b and reuses `enter_overlay_mode`.
+- GREEN exact run `3c2df96c` (1/1, all three rows); full Nextest 3,305/3,305
+  plus only the named B0 skip; fmt, Linux all-target and Windows MSVC bin
+  Clippy clean; zero added production `unwrap()`. Both CyPack refs equal
+  exact SHA `5eb63763ca5bbd00b3d7c100207462a3c8b18b02`.
+
+## Exact Next Microtask
+
+SF4.2-05b: wire the remaining overlay entry inventory through
+`enter_overlay_mode` (sites recorded above with exact lines), extending the
+RED with a ContextMenu-from-Copy row. Then SF4.2-06 inert regions, SF4.2-07
+stale hit generation (wire `ShellView::hit_at` into the mouse context
+builder), SF4.2-08 hidden-terminal blocking, then the SF4.2 closure gate
+(full direct `just check`, Bun/Python, broad regressions, publication,
+graph). Do not start SF4.3, SF5, SF6, or change-pipeline T3.1 before SF4.2
+closes.

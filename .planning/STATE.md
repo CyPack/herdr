@@ -134,12 +134,16 @@
   coordinate re-resolution; every left-down clears selection before a
   capture can begin), so the test freezes capture ownership outside the
   origin rect end-to-end (SF1 precedent).
-- Next microtask: SF4.2-05 `focus_restores_after_overlay_close` — FIRST
-  verify RED-ability (candidate gap: an overlay opened from `Mode::Resize`
-  closes into Terminal, dropping the prior owner — defect or accepted
-  template fallback per spec?). Then SF4.2-06 inert regions, SF4.2-07 stale
-  hit generation (`ShellView::hit_at` wiring), SF4.2-08 hidden-terminal
-  blocking, SF4.2 closure gate. See
+- SF4.2-05 is GREEN in scoped form (`8b1882eb`/`5eb63763`): `leave_modal`
+  now consumes `overlay_return_mode` and restores a still-valid
+  `Resize`/`Copy` owner; `enter_overlay_mode()` wires GlobalMenu/KeybindHelp
+  with all exits audited (the one direct exit in `dismiss_release_notes`
+  drops the value explicitly). Current verified product head: `5eb63763`.
+- Next microtask: SF4.2-05b — wire the remaining overlay entry inventory
+  through `enter_overlay_mode` (exact sites in the evidence file), extend
+  the RED with a ContextMenu-from-Copy row. Then SF4.2-06 inert regions,
+  SF4.2-07 stale hit generation (`ShellView::hit_at` wiring), SF4.2-08
+  hidden-terminal blocking, SF4.2 closure gate. See
   `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one

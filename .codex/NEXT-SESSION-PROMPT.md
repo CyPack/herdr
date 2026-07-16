@@ -59,12 +59,12 @@ Priority is mandatory:
 1. P0 ACTIVE: SF4.2 focus scopes, capture, and semantic input precedence.
    SF4.2-01 (`f4f5e3cb`), SF4.2-02 (`017ba97f`), SF4.2-03 (`efe6446b`), and
    SF4.2-04 (`119e4a2d`, capture-ownership characterization) are GREEN.
-   Next: SF4.2-05 `focus_restores_after_overlay_close` — FIRST verify
-   RED-ability (candidate gap: overlay opened from `Mode::Resize` closes
-   into Terminal — defect or accepted template fallback per spec?), then
-   SF4.2-06 inert regions, SF4.2-07 stale hit generation
-   (`ShellView::hit_at` wiring), SF4.2-08 hidden-terminal blocking, and the
-   SF4.2 closure gate. See
+   SF4.2-05 is GREEN in scoped form (`5eb63763`). Next: SF4.2-05b — wire
+   the remaining overlay entry inventory through `enter_overlay_mode`
+   (exact sites in the evidence file) and extend the RED with a
+   ContextMenu-from-Copy row; then SF4.2-06 inert regions, SF4.2-07 stale
+   hit generation (`ShellView::hit_at` wiring), SF4.2-08 hidden-terminal
+   blocking, and the SF4.2 closure gate. See
    `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
 2. P0 NEXT: SF4.3 -> SF4.4 -> SF5 -> SF6 -> FM1 -> FM2 -> FM3 -> FM4
    -> FM5.
