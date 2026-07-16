@@ -2167,7 +2167,7 @@ mod tests {
             None,
             Some(1000),
         );
-        let process_exit_seen_at = Instant::now() + Duration::from_millis(1);
+        let process_exit_seen_at = Instant::now() + Duration::from_secs(1);
         terminal.set_detected_state_with_screen_signals_at(
             Some(Agent::Pi),
             AgentState::Idle,
@@ -2286,7 +2286,7 @@ mod tests {
         let mut terminal = test_terminal();
         let old_session = test_session_path("old-before-process-exit.jsonl");
         let new_session = test_session_path("new-after-process-exit.jsonl");
-        let now = Instant::now();
+        let now = Instant::now() + Duration::from_secs(1);
         terminal.set_detected_state(Some(Agent::Pi), AgentState::Idle);
         terminal.set_hook_authority_with_custom_status_at(
             "herdr:pi".into(),
@@ -2360,7 +2360,7 @@ mod tests {
     fn missing_session_after_process_exit_waits_for_fresh_process_evidence() {
         let mut terminal = test_terminal();
         let old_session = test_session_path("old-before-nosession-process-exit.jsonl");
-        let now = Instant::now();
+        let now = Instant::now() + Duration::from_secs(1);
         terminal.set_detected_state(Some(Agent::Pi), AgentState::Idle);
         terminal.set_hook_authority_with_custom_status_at(
             "herdr:pi".into(),
@@ -2708,7 +2708,7 @@ mod tests {
 
     #[test]
     fn omp_reacquires_full_lifecycle_hook_after_process_exit_with_fresh_process_and_session_ref() {
-        let now = Instant::now();
+        let now = Instant::now() + Duration::from_secs(1);
         let mut terminal = test_terminal();
         terminal.set_detected_state_with_screen_signals_at(
             Some(Agent::Omp),
