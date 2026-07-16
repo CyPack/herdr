@@ -635,6 +635,24 @@ mod tests {
         state
     }
 
+    fn current_workspace_json(id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "custom_name": "preserved",
+            "identity_cwd": "/tmp/preserved",
+            "tabs": [{
+                "layout": { "Pane": 0 },
+                "panes": {
+                    "0": { "cwd": "/tmp/preserved" }
+                },
+                "zoomed": false,
+                "focused": 0,
+                "root_pane": 0
+            }],
+            "active_tab": 0
+        })
+    }
+
     fn capture_from_state(state: &AppState) -> SessionSnapshot {
         let terminal_runtimes = TerminalRuntimeRegistry::new();
         capture_from_state_with_runtimes(state, &terminal_runtimes)
@@ -939,6 +957,46 @@ mod tests {
         let second = parse_snapshot(&first_value.to_string()).unwrap();
         let second_value = serde_json::to_value(&second).unwrap();
         assert_eq!(second_value, first_value);
+    }
+
+    #[test]
+    fn invalid_v4_shell_falls_back_without_losing_workspaces() {
+        let input = serde_json::json!({
+            "version": 4,
+            "workspaces": [current_workspace_json("w-preserved")],
+            "active": 0,
+            "selected": 0,
+            "shell": {
+                "schema_version": 1,
+                "template": "DockSidebarStage",
+                "root": { "Slot": { "region": "NotARegion" } }
+            },
+            "sidebar_width": 29,
+            "sidebar_section_split": 0.4
+        });
+
+        let restored = parse_snapshot(&input.to_string())
+            .expect("invalid shell preferences must not discard valid session data");
+        assert_eq!(restored.workspaces.len(), 1);
+        assert_eq!(restored.workspaces[0].id.as_deref(), Some("w-preserved"));
+        assert_eq!(restored.active, Some(0));
+        assert_eq!(restored.selected, 0);
+        assert_eq!(restored.sidebar_width, Some(29));
+        assert_eq!(restored.sidebar_section_split, Some(0.4));
+
+        let encoded = serde_json::to_value(&restored).unwrap();
+        assert_eq!(
+            encoded
+                .pointer("/shell/region_constraints/LeftPanel/Resizable/preferred")
+                .and_then(serde_json::Value::as_u64),
+            Some(29)
+        );
+        assert_eq!(
+            encoded
+                .pointer("/shell/collapse_restore_widths/LeftPanel")
+                .and_then(serde_json::Value::as_u64),
+            Some(29)
+        );
     }
 
     #[test]
