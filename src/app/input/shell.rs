@@ -547,6 +547,89 @@ mod tests {
         state.handle_shell_resize_key(key)
     }
 
+    // SF4.2-04 characterization: an active divider capture already owns every
+    // move/up event through `DragState`, independent of coordinates. This is
+    // GREEN by intent (SF1 precedent): drag routing never re-resolves rects,
+    // and a left-down clears any lingering selection before a capture can
+    // begin, so no competing owner is reachable mid-gesture.
+    #[test]
+    fn capture_owns_move_and_up_outside_original_rect() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+
+        fn mouse_event(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+            MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: crossterm::event::KeyModifiers::empty(),
+            }
+        }
+
+        let mut state = AppState::test_new();
+        state.workspaces = vec![
+            crate::workspace::Workspace::test_new("one"),
+            crate::workspace::Workspace::test_new("two"),
+        ];
+        state.active = Some(0);
+        state.selected = 1;
+        crate::ui::compute_view(&mut state, Rect::new(0, 0, 106, 40));
+        state.session_dirty = false;
+        let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+
+        let _ = state.handle_mouse(
+            &mut terminal_runtimes,
+            mouse_event(MouseEventKind::Down(MouseButton::Left), 25, 5),
+        );
+        assert!(
+            state.shell_resize_active(),
+            "a divider left-down must begin the resize capture"
+        );
+
+        // Drag over the pane area, far outside the divider rect.
+        let _ = state.handle_mouse(
+            &mut terminal_runtimes,
+            mouse_event(MouseEventKind::Drag(MouseButton::Left), 30, 15),
+        );
+        assert_eq!(state.shell_resize_preview_width(), Some(31));
+        assert!(state.selection.is_none(), "capture drag must not select");
+
+        // Drag over the sidebar workspace rows: no press, reorder, or
+        // selection movement may start under the active capture.
+        let _ = state.handle_mouse(
+            &mut terminal_runtimes,
+            mouse_event(MouseEventKind::Drag(MouseButton::Left), 5, 3),
+        );
+        assert_eq!(
+            (state.shell_resize_preview_width(), state.selected),
+            (Some(state.sidebar_min_width), 1)
+        );
+
+        // Drag to the far corner clamps at the bound and keeps ownership.
+        let _ = state.handle_mouse(
+            &mut terminal_runtimes,
+            mouse_event(MouseEventKind::Drag(MouseButton::Left), 100, 35),
+        );
+        assert_eq!(
+            state.shell_resize_preview_width(),
+            Some(state.sidebar_max_width)
+        );
+
+        // Releasing outside the original rect commits exactly once.
+        let _ = state.handle_mouse(
+            &mut terminal_runtimes,
+            mouse_event(MouseEventKind::Up(MouseButton::Left), 100, 35),
+        );
+        assert_eq!(
+            (
+                state.sidebar_width,
+                state.shell_resize_active(),
+                state.session_dirty,
+                state.selected,
+            ),
+            (state.sidebar_max_width, false, true, 1)
+        );
+    }
+
     #[test]
     fn shell_input_router_follows_frozen_precedence() {
         struct PrecedenceRow {
