@@ -433,4 +433,138 @@ mod tests {
     fn handle_shell_resize_key_for_test(state: &mut AppState, key: KeyEvent) -> bool {
         state.handle_shell_resize_key(key)
     }
+
+    #[test]
+    fn shell_input_router_follows_frozen_precedence() {
+        struct PrecedenceRow {
+            name: &'static str,
+            context: TestShellInputRouteContext,
+            expected: TestShellInputOwner,
+        }
+
+        let rows = [
+            PrecedenceRow {
+                name: "topmost blocking overlay owns input ahead of every lower tier",
+                context: TestShellInputRouteContext {
+                    topmost_overlay: true,
+                    active_capture: true,
+                    topmost_hit: Some(RegionId::WorkspaceStage),
+                    focused_component: true,
+                    page_shortcut: true,
+                    global_shortcut: true,
+                },
+                expected: TestShellInputOwner::TopmostOverlay,
+            },
+            PrecedenceRow {
+                name: "active capture owns input under an absent overlay",
+                context: TestShellInputRouteContext {
+                    topmost_overlay: false,
+                    active_capture: true,
+                    topmost_hit: Some(RegionId::WorkspaceStage),
+                    focused_component: true,
+                    page_shortcut: true,
+                    global_shortcut: true,
+                },
+                expected: TestShellInputOwner::ActiveCapture,
+            },
+            PrecedenceRow {
+                name: "resolved z-ordered topmost hit owns input under overlay and capture",
+                context: TestShellInputRouteContext {
+                    topmost_overlay: false,
+                    active_capture: false,
+                    topmost_hit: Some(RegionId::LeftPanel),
+                    focused_component: true,
+                    page_shortcut: true,
+                    global_shortcut: true,
+                },
+                expected: TestShellInputOwner::TopmostHit(RegionId::LeftPanel),
+            },
+            PrecedenceRow {
+                name: "focused component owns non-positional input without a hit",
+                context: TestShellInputRouteContext {
+                    topmost_overlay: false,
+                    active_capture: false,
+                    topmost_hit: None,
+                    focused_component: true,
+                    page_shortcut: true,
+                    global_shortcut: true,
+                },
+                expected: TestShellInputOwner::FocusedComponent,
+            },
+            PrecedenceRow {
+                name: "page shortcut owner precedes global shortcuts",
+                context: TestShellInputRouteContext {
+                    topmost_overlay: false,
+                    active_capture: false,
+                    topmost_hit: None,
+                    focused_component: false,
+                    page_shortcut: true,
+                    global_shortcut: true,
+                },
+                expected: TestShellInputOwner::PageShortcut,
+            },
+            PrecedenceRow {
+                name: "global application shortcuts are the last acting tier",
+                context: TestShellInputRouteContext {
+                    topmost_overlay: false,
+                    active_capture: false,
+                    topmost_hit: None,
+                    focused_component: false,
+                    page_shortcut: false,
+                    global_shortcut: true,
+                },
+                expected: TestShellInputOwner::GlobalShortcut,
+            },
+            PrecedenceRow {
+                name: "input with no owner fails closed instead of reaching hidden surfaces",
+                context: TestShellInputRouteContext {
+                    topmost_overlay: false,
+                    active_capture: false,
+                    topmost_hit: None,
+                    focused_component: false,
+                    page_shortcut: false,
+                    global_shortcut: false,
+                },
+                expected: TestShellInputOwner::FailClosed,
+            },
+        ];
+
+        for row in rows {
+            assert_eq!(
+                route_shell_input_for_test(row.context),
+                row.expected,
+                "frozen precedence row: {}",
+                row.name
+            );
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct TestShellInputRouteContext {
+        topmost_overlay: bool,
+        active_capture: bool,
+        topmost_hit: Option<RegionId>,
+        focused_component: bool,
+        page_shortcut: bool,
+        global_shortcut: bool,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum TestShellInputOwner {
+        LegacyImplicitChain,
+        TopmostOverlay,
+        ActiveCapture,
+        TopmostHit(RegionId),
+        FocusedComponent,
+        PageShortcut,
+        GlobalShortcut,
+        FailClosed,
+    }
+
+    fn route_shell_input_for_test(_context: TestShellInputRouteContext) -> TestShellInputOwner {
+        // RED-only seam: production has no typed total input router yet; the
+        // frozen precedence exists only as implicit if-chain ordering inside
+        // `handle_key` and `handle_mouse_without_agent_frame_action`.
+        TestShellInputOwner::LegacyImplicitChain
+    }
 }
