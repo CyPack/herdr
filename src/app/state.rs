@@ -2225,6 +2225,9 @@ pub struct AppState {
     /// Transient shell capture/preview state. Never persisted and never owns
     /// runtime resources.
     pub(crate) shell_interaction: crate::ui::shell::ShellInteractionState,
+    /// Committed client-local shell presentation preferences. SF3.3 persists
+    /// this aggregate through the versioned shell snapshot contract.
+    pub(crate) shell_presentation: crate::ui::shell::ShellPresentationState,
     pub(crate) drag: Option<DragState>,
     pub(crate) workspace_press: Option<WorkspacePressState>,
     pub(crate) tab_press: Option<TabPressState>,
@@ -2676,6 +2679,7 @@ impl AppState {
                 split_borders: Vec::new(),
             },
             shell_interaction: Default::default(),
+            shell_presentation: crate::ui::shell::ShellPresentationState::new(26),
             drag: None,
             workspace_press: None,
             tab_press: None,

@@ -3,8 +3,8 @@ use ratatui::layout::Position;
 
 use super::super::state::{AppState, DragState, DragTarget, SidebarWidthSource};
 use crate::ui::shell::{
-    DividerId, RegionId, ResizeBounds, ResizeDecision, ResizeTransaction, ResizeUpdate,
-    ShellDirection,
+    CollapseDecision, DividerId, RegionId, ResizeBounds, ResizeDecision, ResizeTransaction,
+    ResizeUpdate, ShellDirection,
 };
 
 impl AppState {
@@ -64,6 +64,46 @@ impl AppState {
             _ => {}
         }
         true
+    }
+
+    pub(crate) fn set_sidebar_collapsed(&mut self, collapsed: bool) -> bool {
+        let update = if collapsed {
+            self.shell_presentation
+                .collapse_left_panel(self.sidebar_width)
+        } else {
+            let Some(total) = self.current_sidebar_resize_total() else {
+                return false;
+            };
+            let Some(bounds) = self.sidebar_resize_bounds(total) else {
+                return false;
+            };
+            self.shell_presentation.expand_left_panel(total, bounds)
+        };
+
+        match update.decision() {
+            CollapseDecision::Inert => return false,
+            CollapseDecision::Collapsed { .. } => {
+                self.sidebar_collapsed = true;
+            }
+            CollapseDecision::Expanded { width } => {
+                self.sidebar_collapsed = false;
+                self.sidebar_width = width;
+                self.sidebar_width_source = SidebarWidthSource::Manual;
+                self.sidebar_width_auto = false;
+            }
+        }
+        if update.marks_persistence_dirty() {
+            self.mark_session_dirty();
+        }
+        true
+    }
+
+    #[cfg(test)]
+    fn sidebar_collapse_snapshot_for_test(&self) -> (u16, u64) {
+        (
+            self.shell_presentation.left_panel_restore_width(),
+            self.shell_presentation.left_panel_collapse_revision(),
+        )
     }
 
     pub(crate) fn commit_sidebar_resize(&mut self) {
@@ -383,18 +423,11 @@ mod tests {
     }
 
     fn set_sidebar_collapsed_for_test(state: &mut AppState, collapsed: bool) -> bool {
-        // RED-only seam: existing direct toggles do not own retained width,
-        // revision, or persistence effects through the shared reducer.
-        if state.sidebar_collapsed == collapsed {
-            return false;
-        }
-        state.sidebar_collapsed = collapsed;
-        true
+        state.set_sidebar_collapsed(collapsed)
     }
 
-    fn sidebar_collapse_snapshot_for_test(_state: &AppState) -> (u16, u64) {
-        // RED-only absence of aggregate shell presentation state.
-        (0, 0)
+    fn sidebar_collapse_snapshot_for_test(state: &AppState) -> (u16, u64) {
+        state.sidebar_collapse_snapshot_for_test()
     }
 
     fn handle_shell_resize_key_for_test(state: &mut AppState, key: KeyEvent) -> bool {

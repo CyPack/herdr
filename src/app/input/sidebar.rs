@@ -1264,9 +1264,10 @@ mod tests {
     #[test]
     fn clicking_collapsed_sidebar_toggle_expands_sidebar() {
         let mut app = app_for_mouse_test();
-        app.state.sidebar_collapsed = true;
         app.state.view.sidebar_rect = Rect::new(0, 0, 4, 20);
         app.state.view.terminal_area = Rect::new(4, 0, 80, 20);
+        assert!(app.state.set_sidebar_collapsed(true));
+        app.state.session_dirty = false;
 
         let toggle = crate::ui::collapsed_sidebar_toggle_rect(app.state.view.sidebar_rect);
         app.handle_mouse(mouse(

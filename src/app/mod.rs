@@ -704,6 +704,7 @@ impl App {
                 split_borders: Vec::new(),
             },
             shell_interaction: Default::default(),
+            shell_presentation: crate::ui::shell::ShellPresentationState::new(sidebar_width),
             drag: None,
             workspace_press: None,
             tab_press: None,

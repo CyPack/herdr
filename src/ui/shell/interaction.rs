@@ -95,6 +95,13 @@ pub(crate) struct CollapseUpdate {
     mark_persistence_dirty: bool,
 }
 
+/// Aggregate committed shell presentation preferences. AppState owns one of
+/// these rather than accumulating region-specific fields at its top level.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ShellPresentationState {
+    left_panel: RegionCollapseState,
+}
+
 impl ResizeUpdate {
     fn inert() -> Self {
         Self {
@@ -221,6 +228,30 @@ impl RegionCollapseState {
         self.collapsed = false;
         self.revision = revision;
         CollapseUpdate::expanded(width)
+    }
+}
+
+impl ShellPresentationState {
+    pub(crate) const fn new(left_panel_width: u16) -> Self {
+        Self {
+            left_panel: RegionCollapseState::expanded(RegionId::LeftPanel, left_panel_width),
+        }
+    }
+
+    pub(crate) fn collapse_left_panel(&mut self, committed_width: u16) -> CollapseUpdate {
+        self.left_panel.collapse(committed_width)
+    }
+
+    pub(crate) fn expand_left_panel(&mut self, total: u16, bounds: ResizeBounds) -> CollapseUpdate {
+        self.left_panel.expand(total, bounds)
+    }
+
+    pub(crate) const fn left_panel_restore_width(&self) -> u16 {
+        self.left_panel.restore_width
+    }
+
+    pub(crate) const fn left_panel_collapse_revision(&self) -> u64 {
+        self.left_panel.revision
     }
 }
 

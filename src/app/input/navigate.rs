@@ -386,7 +386,8 @@ impl App {
             }
             NavigateAction::EnterResizeMode => self.state.mode = Mode::Resize,
             NavigateAction::ToggleSidebar => {
-                self.state.sidebar_collapsed = !self.state.sidebar_collapsed;
+                self.state
+                    .set_sidebar_collapsed(!self.state.sidebar_collapsed);
                 leave_navigate_mode(&mut self.state);
             }
             NavigateAction::ToggleFileManager => {
@@ -1720,7 +1721,7 @@ pub(super) fn execute_navigate_action_in_context(
         }
         NavigateAction::EnterResizeMode => state.mode = Mode::Resize,
         NavigateAction::ToggleSidebar => {
-            state.sidebar_collapsed = !state.sidebar_collapsed;
+            state.set_sidebar_collapsed(!state.sidebar_collapsed);
             leave_navigate_mode(state);
         }
         NavigateAction::ToggleFileManager => {

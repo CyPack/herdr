@@ -515,7 +515,7 @@ impl AppState {
 
                 if in_sidebar {
                     if self.on_sidebar_toggle(mouse.column, mouse.row) {
-                        self.sidebar_collapsed = !self.sidebar_collapsed;
+                        self.set_sidebar_collapsed(!self.sidebar_collapsed);
                         return None;
                     }
 
