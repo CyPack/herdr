@@ -848,6 +848,23 @@ fn wait_for_file(path: &std::path::Path) -> String {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn active_shell_resize_capture_owns_key_before_terminal_dispatch() {
+        let mut app = app_for_mouse_test();
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
+        assert!(app
+            .state
+            .begin_sidebar_resize(ratatui::layout::Position::new(25, 5)));
+        app.state.session_dirty = false;
+
+        app.handle_key(TerminalKey::new(KeyCode::Right, KeyModifiers::NONE))
+            .await;
+
+        assert_eq!(app.state.shell_resize_preview_width(), Some(27));
+        assert_eq!(app.state.sidebar_width, 26);
+        assert!(!app.state.session_dirty);
+    }
+
     fn test_app() -> App {
         App::new(
             &crate::config::Config::default(),
