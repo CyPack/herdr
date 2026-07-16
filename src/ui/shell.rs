@@ -17,6 +17,8 @@
 
 use ratatui::layout::{Constraint, Layout, Rect};
 
+#[cfg(test)]
+mod interaction;
 mod layout;
 mod model;
 mod template;
