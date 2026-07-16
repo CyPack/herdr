@@ -11,11 +11,12 @@
 - Branch: `feat/native-fm`
 - Acting identity: CyPack external contributor; `origin` is the writable
   `CyPack/herdr` fork and `upstream` is read-only.
-- Current verified product head: `efe6446b`
-  (`feat: give blocking overlays keyboard ownership over captures`).
-- Matching observed behavior RED: `bb6f8970`
-  (`test: require overlay keyboard ownership over active capture`).
-- Prior closed heads this session: SF4.2-02 `41362e89`/`017ba97f`, SF4.2-01
+- Current verified product head: `5eb63763`
+  (`feat: restore previous focus owner after overlay close`).
+- Matching observed behavior RED: `8b1882eb`
+  (`test: require focus restore after overlay close`).
+- Prior closed heads this session: SF4.2-04 characterization `119e4a2d`,
+  SF4.2-03 `bb6f8970`/`efe6446b`, SF4.2-02 `41362e89`/`017ba97f`, SF4.2-01
   `92777e23`/`f4f5e3cb`, SF4.1-08 `784fdc2e`/`944a9d4c`, and test-stability
   `3c853a70`.
 - Program: 7 Shell Foundation phases SF0-SF6 plus 5 FM phases FM1-FM5.
@@ -23,21 +24,22 @@
 - Active phase: SF4 SurfaceHost and input router.
 - Active microphase: SF4.2; slices 01 (frozen seven-tier router), 02 (overlay
   mouse blocking), 03 (overlay keyboard ownership over captures, shared
-  exhaustive `blocking_overlay_active()` classifier), and 04 (capture
-  ownership outside the origin rect — explicit characterization `119e4a2d`,
-  valid-RED refuted with source evidence) are GREEN.
-- Immediate next microtask: SF4.2-05 `focus_restores_after_overlay_close` —
-  FIRST verify RED-ability (candidate gap: overlay opened from
-  `Mode::Resize` closes into Terminal — defect or accepted template
-  fallback per spec?). See
+  exhaustive `blocking_overlay_active()` classifier), 04 (capture-ownership
+  characterization), and 05 in scoped form (focus restore:
+  `overlay_return_mode` + `enter_overlay_mode` + validity-filtered
+  `leave_modal`; GlobalMenu/KeybindHelp wired, all exits audited) are GREEN.
+- Immediate next microtask: SF4.2-05b — wire the remaining overlay entry
+  inventory through `enter_overlay_mode` (exact sites in the evidence file)
+  and extend the RED with a ContextMenu-from-Copy row. See
   `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
-- Product tree: clean at `119e4a2d`; only the user-owned untracked
+- Product tree: clean at `5eb63763`; only the user-owned untracked
   `.superpowers/` tree exists and must remain untouched/unstaged.
-- Full exact-head gate: 3,304/3,304 Rust tests passed, one named B0 real-host
-  probe skipped, zero retry; Linux/Windows Clippy, Bun 5/5 + 12/12, Python
-  64/64, fmt/diff/added-production-unwrap checks passed.
+- Full exact-head gate: 3,305/3,305 Rust tests passed, one named B0 real-host
+  probe skipped, zero retry; Linux all-target and Windows MSVC bin Clippy,
+  fmt/diff/added-production-unwrap checks passed.
 - Both CyPack refs (`feat/native-fm`, fork `master`) equal exact SHA
-  `119e4a2d5026af2c4f4e2e23a9aaa27ac2134804`; `upstream` untouched.
+  `5eb63763ca5bbd00b3d7c100207462a3c8b18b02` at the product checkpoint;
+  `upstream` untouched.
 - Fresh sequential Codebase Memory store refreshed post-publication with
   current `blocking_overlay_active`, `shell_mouse_input_owner`,
   `route_shell_input`, and `miller_layout` source.
