@@ -484,6 +484,7 @@ impl AppState {
     pub(crate) fn close_file_manager(&mut self) {
         self.request_file_manager_sidebar_navigation = None;
         self.request_file_manager_context_action = None;
+        self.stage.close_files();
         self.file_manager = None;
         if matches!(
             self.context_menu.as_ref().map(|menu| &menu.kind),

@@ -92,6 +92,36 @@ impl StageState {
         Ok(())
     }
 
+    pub(crate) fn close_files(&mut self) {
+        let Some(files_index) = self
+            .instances()
+            .position(|instance| instance.id.app == BuiltInAppId::Files)
+        else {
+            return;
+        };
+        let Some(files_id) = self.instances[files_index].map(|instance| instance.id) else {
+            return;
+        };
+
+        if self.active == files_id {
+            let restore = self
+                .previous
+                .filter(|id| self.instance(*id).is_some())
+                .or_else(|| {
+                    self.instances()
+                        .find(|instance| instance.id.app == BuiltInAppId::Terminal)
+                        .map(|instance| instance.id)
+                });
+            let Some(restore) = restore else {
+                return;
+            };
+            self.active = restore;
+        }
+
+        self.remove_instance_at(files_index);
+        self.previous = None;
+    }
+
     fn instance(&self, id: AppInstanceId) -> Option<&AppInstance> {
         self.instances().find(|instance| instance.id == id)
     }
@@ -115,6 +145,14 @@ impl StageState {
                 .unwrap_or(instance.id.generation),
         );
         Ok(())
+    }
+
+    fn remove_instance_at(&mut self, index: usize) {
+        for slot in index..self.instance_count.saturating_sub(1) {
+            self.instances[slot] = self.instances[slot + 1];
+        }
+        self.instance_count = self.instance_count.saturating_sub(1);
+        self.instances[self.instance_count] = None;
     }
 
     fn next_instance_id(&self, app: BuiltInAppId) -> Result<AppInstanceId, StageStateError> {
