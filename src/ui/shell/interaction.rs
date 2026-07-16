@@ -390,6 +390,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn mouse_up_without_preview_clears_capture_without_effect() {
+        let mut capture = Some(transaction());
+        let mut effects = TestResizeEffects::default();
+
+        let decision = commit_resize_for_test(&mut capture, 7, &mut effects);
+
+        assert_eq!(
+            (decision, capture, effects),
+            (ResizeDecision::Inert, None, TestResizeEffects::default(),)
+        );
+    }
+
     fn divider() -> DividerId {
         DividerId::new(
             RegionId::LeftPanel,
