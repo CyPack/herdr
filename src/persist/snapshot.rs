@@ -602,7 +602,7 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
-    use ratatui::layout::{Direction, Rect};
+    use ratatui::layout::{Direction, Position, Rect};
 
     use super::*;
     use crate::app::{AppState, Mode};
@@ -749,6 +749,12 @@ mod tests {
                 .and_then(serde_json::Value::as_u64),
             expected_width
         );
+    }
+
+    fn restored_left_panel_width_for_test(snapshot: &SessionSnapshot) -> Option<u16> {
+        // This is the pre-GREEN application restore behavior. The v4 authority
+        // RED below requires the production adapter to supersede this seam.
+        snapshot.sidebar_width
     }
 
     fn capture_from_state(state: &AppState) -> SessionSnapshot {
@@ -1014,6 +1020,73 @@ mod tests {
         let second = parse_snapshot(&first_value.to_string()).unwrap();
         let second_value = serde_json::to_value(&second).unwrap();
         assert_eq!(second_value, first_value);
+    }
+
+    #[test]
+    fn v4_shell_preference_is_authoritative_over_legacy_width() {
+        let input = serde_json::json!({
+            "version": 4,
+            "workspaces": [],
+            "active": null,
+            "selected": 0,
+            "shell": valid_v4_shell_json(),
+            "sidebar_width": 19,
+            "sidebar_section_split": 0.4
+        });
+
+        let restored = parse_snapshot(&input.to_string()).unwrap();
+
+        assert_eq!(restored_left_panel_width_for_test(&restored), Some(31));
+        assert_eq!(restored.sidebar_width, Some(19));
+    }
+
+    #[test]
+    fn resize_preview_is_not_captured() {
+        let mut state = state_with_workspaces(&["one"]);
+        crate::ui::compute_view(&mut state, Rect::new(0, 0, 106, 40));
+        assert!(state.begin_sidebar_resize(Position::new(25, 5)));
+        assert!(state.preview_sidebar_resize(Position::new(31, 5)));
+        assert_eq!(state.shell_resize_preview_width(), Some(32));
+
+        let snapshot = capture_from_state(&state);
+        let encoded = serde_json::to_value(&snapshot).unwrap();
+
+        assert_eq!(snapshot.sidebar_width, Some(26));
+        assert_eq!(
+            encoded
+                .pointer("/shell/region_constraints/LeftPanel/Resizable/preferred")
+                .and_then(serde_json::Value::as_u64),
+            Some(26)
+        );
+        assert!(encoded.pointer("/shell/resize").is_none());
+        assert!(encoded.pointer("/shell/view_generation").is_none());
+        assert!(encoded.pointer("/shell/active_capture").is_none());
+    }
+
+    #[test]
+    fn resize_commit_is_captured_once() {
+        let mut state = state_with_workspaces(&["one"]);
+        crate::ui::compute_view(&mut state, Rect::new(0, 0, 106, 40));
+        assert!(state.begin_sidebar_resize(Position::new(25, 5)));
+        assert!(state.preview_sidebar_resize(Position::new(31, 5)));
+        state.session_dirty = false;
+
+        state.commit_sidebar_resize();
+        let committed = serde_json::to_value(capture_from_state(&state)).unwrap();
+        assert_eq!(state.sidebar_width, 32);
+        assert!(state.session_dirty);
+        assert_eq!(
+            committed
+                .pointer("/shell/region_constraints/LeftPanel/Resizable/preferred")
+                .and_then(serde_json::Value::as_u64),
+            Some(32)
+        );
+
+        state.session_dirty = false;
+        state.commit_sidebar_resize();
+        let repeated = serde_json::to_value(capture_from_state(&state)).unwrap();
+        assert!(!state.session_dirty);
+        assert_eq!(repeated["shell"], committed["shell"]);
     }
 
     #[test]
@@ -1523,7 +1596,7 @@ mod tests {
     }
 
     #[test]
-    fn future_version_is_rejected() {
+    fn future_snapshot_version_is_still_rejected() {
         let json = r#"{"version":999,"workspaces":[],"active":null,"selected":0}"#;
         assert!(parse_snapshot(json).is_err());
     }
