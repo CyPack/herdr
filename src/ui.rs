@@ -844,6 +844,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn shell_resize_preview_suppresses_runtime_resize_policy() {
+        assert!(!resize_panes_during_shell_preview_for_test(true, true));
+        assert!(resize_panes_during_shell_preview_for_test(true, false));
+        assert!(!resize_panes_during_shell_preview_for_test(false, true));
+    }
+
+    fn resize_panes_during_shell_preview_for_test(
+        resize_panes: bool,
+        _shell_preview_active: bool,
+    ) -> bool {
+        // RED-only seam: SF3.1 must suppress runtime resize while rendering a
+        // transient shell preview.
+        resize_panes
+    }
+
     // Mobile keeps its own header/terminal split; the named shell regions stay
     // empty there for now (desktop-only concept).
     #[test]
