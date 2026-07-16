@@ -71,6 +71,30 @@ pub(crate) struct ResizeUpdate {
     request_pty_resize: bool,
 }
 
+/// Client-local committed collapse state for one named optional region.
+/// Transient resize preview never writes this state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RegionCollapseState {
+    region: RegionId,
+    restore_width: u16,
+    collapsed: bool,
+    revision: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CollapseDecision {
+    Inert,
+    Collapsed { restore_width: u16 },
+    Expanded { width: u16 },
+}
+
+/// Pure persistence effect request for one collapse/expand boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CollapseUpdate {
+    decision: CollapseDecision,
+    mark_persistence_dirty: bool,
+}
+
 impl ResizeUpdate {
     fn inert() -> Self {
         Self {
@@ -107,6 +131,101 @@ impl ResizeUpdate {
     pub(crate) const fn requests_pty_resize(self) -> bool {
         self.request_pty_resize
     }
+}
+
+impl CollapseUpdate {
+    const fn inert() -> Self {
+        Self {
+            decision: CollapseDecision::Inert,
+            mark_persistence_dirty: false,
+        }
+    }
+
+    const fn collapsed(restore_width: u16) -> Self {
+        Self {
+            decision: CollapseDecision::Collapsed { restore_width },
+            mark_persistence_dirty: true,
+        }
+    }
+
+    const fn expanded(width: u16) -> Self {
+        Self {
+            decision: CollapseDecision::Expanded { width },
+            mark_persistence_dirty: true,
+        }
+    }
+
+    pub(crate) const fn decision(self) -> CollapseDecision {
+        self.decision
+    }
+
+    pub(crate) const fn marks_persistence_dirty(self) -> bool {
+        self.mark_persistence_dirty
+    }
+}
+
+impl RegionCollapseState {
+    pub(crate) const fn expanded(region: RegionId, width: u16) -> Self {
+        Self {
+            region,
+            restore_width: width,
+            collapsed: false,
+            revision: 0,
+        }
+    }
+
+    pub(crate) const fn collapsed(region: RegionId, restore_width: u16) -> Self {
+        Self {
+            region,
+            restore_width,
+            collapsed: true,
+            revision: 0,
+        }
+    }
+
+    pub(crate) const fn visible_width(self) -> u16 {
+        if self.collapsed {
+            0
+        } else {
+            self.restore_width
+        }
+    }
+
+    pub(crate) fn collapse(&mut self, committed_width: u16) -> CollapseUpdate {
+        if self.collapsed || is_mandatory_stage(self.region) {
+            return CollapseUpdate::inert();
+        }
+        let Some(revision) = self.revision.checked_add(1) else {
+            return CollapseUpdate::inert();
+        };
+
+        self.restore_width = committed_width;
+        self.collapsed = true;
+        self.revision = revision;
+        CollapseUpdate::collapsed(committed_width)
+    }
+
+    pub(crate) fn expand(&mut self, total: u16, bounds: ResizeBounds) -> CollapseUpdate {
+        if !self.collapsed {
+            return CollapseUpdate::inert();
+        }
+        let Some([width, _]) = normalized_tracks(total, i32::from(self.restore_width), bounds)
+        else {
+            return CollapseUpdate::inert();
+        };
+        let Some(revision) = self.revision.checked_add(1) else {
+            return CollapseUpdate::inert();
+        };
+
+        self.restore_width = width;
+        self.collapsed = false;
+        self.revision = revision;
+        CollapseUpdate::expanded(width)
+    }
+}
+
+const fn is_mandatory_stage(region: RegionId) -> bool {
+    matches!(region, RegionId::CenterContent | RegionId::WorkspaceStage)
 }
 
 /// Aggregate transient interaction state. It is intentionally absent from
@@ -693,48 +812,8 @@ mod tests {
         pty_resize_requests: usize,
     }
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum TestCollapseDecision {
-        Inert,
-        Collapsed { restore_width: u16 },
-        Expanded { width: u16 },
-    }
-
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    struct TestCollapseState {
-        region: RegionId,
-        restore_width: u16,
-        collapsed: bool,
-        revision: u64,
-    }
-
-    impl TestCollapseState {
-        fn expanded(region: RegionId, width: u16) -> Self {
-            Self {
-                region,
-                restore_width: width,
-                collapsed: false,
-                revision: 0,
-            }
-        }
-
-        fn collapsed(region: RegionId, restore_width: u16) -> Self {
-            Self {
-                region,
-                restore_width,
-                collapsed: true,
-                revision: 0,
-            }
-        }
-
-        fn visible_width(&self) -> u16 {
-            if self.collapsed {
-                0
-            } else {
-                self.restore_width
-            }
-        }
-    }
+    type TestCollapseState = RegionCollapseState;
+    type TestCollapseDecision = CollapseDecision;
 
     #[derive(Clone, Debug, Default, PartialEq, Eq)]
     struct TestCollapseEffects {
@@ -743,27 +822,23 @@ mod tests {
 
     fn collapse_for_test(
         state: &mut TestCollapseState,
-        _committed_width: u16,
-        _effects: &mut TestCollapseEffects,
+        committed_width: u16,
+        effects: &mut TestCollapseEffects,
     ) -> TestCollapseDecision {
-        // RED-only seam: this deliberately does not retain the committed
-        // width, own revision/dirty effects, or reject the mandatory stage.
-        state.restore_width = 0;
-        state.collapsed = true;
-        TestCollapseDecision::Inert
+        let update = state.collapse(committed_width);
+        effects.persistence_dirty += usize::from(update.marks_persistence_dirty());
+        update.decision()
     }
 
     fn expand_for_test(
         state: &mut TestCollapseState,
-        _total: u16,
-        _bounds: ResizeBounds,
-        _effects: &mut TestCollapseEffects,
+        total: u16,
+        bounds: ResizeBounds,
+        effects: &mut TestCollapseEffects,
     ) -> TestCollapseDecision {
-        // RED-only seam: this deliberately ignores bounds and loses the
-        // restore width without producing the required decision/effect.
-        state.restore_width = 0;
-        state.collapsed = false;
-        TestCollapseDecision::Inert
+        let update = state.expand(total, bounds);
+        effects.persistence_dirty += usize::from(update.marks_persistence_dirty());
+        update.decision()
     }
 
     fn commit_resize_for_test(
