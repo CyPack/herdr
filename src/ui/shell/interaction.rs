@@ -819,6 +819,76 @@ mod tests {
         );
     }
 
+    #[test]
+    fn horizontal_and_vertical_offsets_clamp_independently() {
+        let mut state =
+            TestScrollViewportState::new(scroll_viewport_id(RegionId::WorkspaceStage, 0));
+        let metrics = TestScrollViewportMetrics::new(10, 4, 25, 9);
+
+        assert_eq!(
+            scroll_for_test(&mut state, TestScrollAxis::Horizontal, i32::MAX, metrics,),
+            TestScrollDecision::Consumed { changed: true }
+        );
+        assert_eq!(state.offset, TestScrollOffset::new(15, 0));
+
+        assert_eq!(
+            scroll_for_test(&mut state, TestScrollAxis::Vertical, i32::MAX, metrics,),
+            TestScrollDecision::Consumed { changed: true }
+        );
+        assert_eq!(state.offset, TestScrollOffset::new(15, 5));
+
+        assert_eq!(
+            scroll_for_test(&mut state, TestScrollAxis::Horizontal, i32::MIN, metrics,),
+            TestScrollDecision::Consumed { changed: true }
+        );
+        assert_eq!(state.offset, TestScrollOffset::new(0, 5));
+    }
+
+    #[test]
+    fn content_shrink_clamps_stale_scroll_offset() {
+        let mut state = TestScrollViewportState::with_offset(
+            scroll_viewport_id(RegionId::LeftPanel, 0),
+            TestScrollOffset::new(15, 5),
+        );
+        let smaller = TestScrollViewportMetrics::new(10, 4, 12, 3);
+
+        assert!(reconcile_scroll_for_test(&mut state, smaller));
+        assert_eq!(state.offset, TestScrollOffset::new(2, 0));
+        assert!(!reconcile_scroll_for_test(&mut state, smaller));
+    }
+
+    #[test]
+    fn zero_area_viewport_consumes_without_mutation() {
+        let mut state = TestScrollViewportState::new(scroll_viewport_id(RegionId::RightPanel, 0));
+        let zero_area = TestScrollViewportMetrics::new(0, 0, 100, 100);
+
+        let decision = scroll_for_test(&mut state, TestScrollAxis::Vertical, 3, zero_area);
+
+        assert_eq!(decision, TestScrollDecision::Consumed { changed: false });
+        assert_eq!(state.offset, TestScrollOffset::new(0, 0));
+    }
+
+    #[test]
+    fn scroll_changes_only_topmost_owning_viewport() {
+        let bottom_id = scroll_viewport_id(RegionId::WorkspaceStage, 0);
+        let top_id = scroll_viewport_id(RegionId::RightPanel, 0);
+        let mut states = [
+            TestScrollViewportState::new(bottom_id),
+            TestScrollViewportState::new(top_id),
+        ];
+        let metrics = TestScrollViewportMetrics::new(10, 4, 10, 12);
+        let owners = [
+            TestScrollOwner::new(bottom_id, metrics),
+            TestScrollOwner::new(top_id, metrics),
+        ];
+
+        let decision = route_scroll_for_test(&mut states, &owners, TestScrollAxis::Vertical, 3);
+
+        assert_eq!(decision, TestScrollDecision::Consumed { changed: true });
+        assert_eq!(states[0].offset, TestScrollOffset::new(0, 0));
+        assert_eq!(states[1].offset, TestScrollOffset::new(0, 3));
+    }
+
     fn divider() -> DividerId {
         DividerId::new(
             RegionId::LeftPanel,
@@ -849,6 +919,123 @@ mod tests {
     #[derive(Clone, Debug, Default, PartialEq, Eq)]
     struct TestCollapseEffects {
         persistence_dirty: usize,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum TestScrollAxis {
+        Horizontal,
+        Vertical,
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    struct TestScrollOffset {
+        horizontal: usize,
+        vertical: usize,
+    }
+
+    impl TestScrollOffset {
+        const fn new(horizontal: usize, vertical: usize) -> Self {
+            Self {
+                horizontal,
+                vertical,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct TestScrollViewportId {
+        region: RegionId,
+        slot: u8,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct TestScrollViewportMetrics {
+        viewport_width: u16,
+        viewport_height: u16,
+        content_width: usize,
+        content_height: usize,
+    }
+
+    impl TestScrollViewportMetrics {
+        const fn new(
+            viewport_width: u16,
+            viewport_height: u16,
+            content_width: usize,
+            content_height: usize,
+        ) -> Self {
+            Self {
+                viewport_width,
+                viewport_height,
+                content_width,
+                content_height,
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct TestScrollViewportState {
+        id: TestScrollViewportId,
+        offset: TestScrollOffset,
+    }
+
+    impl TestScrollViewportState {
+        const fn new(id: TestScrollViewportId) -> Self {
+            Self::with_offset(id, TestScrollOffset::new(0, 0))
+        }
+
+        const fn with_offset(id: TestScrollViewportId, offset: TestScrollOffset) -> Self {
+            Self { id, offset }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct TestScrollOwner {
+        id: TestScrollViewportId,
+        metrics: TestScrollViewportMetrics,
+    }
+
+    impl TestScrollOwner {
+        const fn new(id: TestScrollViewportId, metrics: TestScrollViewportMetrics) -> Self {
+            Self { id, metrics }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum TestScrollDecision {
+        Unhandled,
+        Consumed { changed: bool },
+    }
+
+    const fn scroll_viewport_id(region: RegionId, slot: u8) -> TestScrollViewportId {
+        TestScrollViewportId { region, slot }
+    }
+
+    fn scroll_for_test(
+        _state: &mut TestScrollViewportState,
+        _axis: TestScrollAxis,
+        _delta: i32,
+        _metrics: TestScrollViewportMetrics,
+    ) -> TestScrollDecision {
+        // RED-only seam: the bounded viewport reducer does not exist yet.
+        TestScrollDecision::Unhandled
+    }
+
+    fn reconcile_scroll_for_test(
+        _state: &mut TestScrollViewportState,
+        _metrics: TestScrollViewportMetrics,
+    ) -> bool {
+        // RED-only seam: stale offsets are not normalized by a shared reducer.
+        false
+    }
+
+    fn route_scroll_for_test(
+        _states: &mut [TestScrollViewportState],
+        _owners: &[TestScrollOwner],
+        _axis: TestScrollAxis,
+        _delta: i32,
+    ) -> TestScrollDecision {
+        // RED-only seam: topmost scroll ownership has no shared router.
+        TestScrollDecision::Unhandled
     }
 
     fn collapse_for_test(
