@@ -88,19 +88,21 @@ impl App {
         // dispatches within the tier it was granted.
         match self.state.shell_key_input_owner() {
             ShellInputOwner::TopmostOverlay => {
-                // An open context menu, delete confirmation, or file rename
-                // modal owns keyboard focus even when its native-FM surface
-                // remains visible underneath it.
+                // A blocking overlay owns keyboard focus ahead of the active
+                // capture and the visible surface, even when its native-FM
+                // surface remains visible underneath it. Overlay modes
+                // without a dedicated route below own their keys through the
+                // same mode-guarded global dispatch.
                 match self.state.mode {
                     Mode::ContextMenu => self.handle_context_menu_key_via_api(key_event),
                     Mode::ConfirmFileDelete => {
                         self.handle_file_manager_delete_confirmation_key(key_event)
                     }
                     Mode::RenameFile => self.handle_rename_key_via_api(key_event),
-                    _ => debug_assert!(
-                        false,
-                        "topmost overlay keyboard ownership requires an overlay mode"
-                    ),
+                    Mode::AttachFile => {
+                        file_manager::handle_agent_attachment_picker_key(&mut self.state, key_event)
+                    }
+                    _ => self.handle_global_key_dispatch(key).await,
                 }
             }
             ShellInputOwner::ActiveCapture => {
@@ -124,7 +126,10 @@ impl App {
                         self.last_file_manager_click = None;
                     }
                 } else {
-                    file_manager::handle_agent_attachment_picker_key(&mut self.state, key_event);
+                    debug_assert!(
+                        false,
+                        "focused component keyboard ownership requires an open file manager"
+                    );
                 }
             }
             ShellInputOwner::GlobalShortcut => self.handle_global_key_dispatch(key).await,

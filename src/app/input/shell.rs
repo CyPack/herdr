@@ -69,13 +69,10 @@ impl AppState {
     /// global application dispatch.
     pub(crate) fn shell_key_input_owner(&self) -> ShellInputOwner {
         route_shell_input(ShellInputRouteContext {
-            topmost_overlay: matches!(
-                self.mode,
-                Mode::ContextMenu | Mode::ConfirmFileDelete | Mode::RenameFile
-            ),
+            topmost_overlay: self.blocking_overlay_active(),
             active_capture: self.shell_resize_active(),
             topmost_hit: None,
-            focused_component: self.file_manager.is_some() || self.mode == Mode::AttachFile,
+            focused_component: self.file_manager.is_some(),
             page_shortcut: false,
             global_shortcut: true,
         })
@@ -88,7 +85,7 @@ impl AppState {
     /// mode-guarded global dispatch.
     pub(crate) fn shell_mouse_input_owner(&self) -> ShellInputOwner {
         route_shell_input(ShellInputRouteContext {
-            topmost_overlay: self.mouse_blocking_overlay_active(),
+            topmost_overlay: self.blocking_overlay_active(),
             active_capture: false,
             topmost_hit: None,
             focused_component: false,
@@ -97,10 +94,10 @@ impl AppState {
         })
     }
 
-    /// Every mode whose surface is a topmost blocking overlay for mouse
-    /// routing. The match is exhaustive so a new mode must choose a side
-    /// explicitly instead of silently leaking background gestures.
-    fn mouse_blocking_overlay_active(&self) -> bool {
+    /// Every mode whose surface is a topmost blocking overlay for mouse and
+    /// keyboard routing. The match is exhaustive so a new mode must choose a
+    /// side explicitly instead of silently leaking background input.
+    fn blocking_overlay_active(&self) -> bool {
         match self.mode {
             Mode::Terminal | Mode::Prefix | Mode::Navigate | Mode::Copy | Mode::Resize => false,
             Mode::Onboarding

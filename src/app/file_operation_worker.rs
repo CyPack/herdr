@@ -2137,6 +2137,10 @@ mod tests {
             },
         );
         let mut app = test_app();
+        // A default-config App starts in onboarding, and a blocking overlay
+        // owns Esc ahead of the focused file manager. Esc cancellation drives
+        // the realistic open-FM state, which only exists outside onboarding.
+        app.state.mode = crate::app::state::Mode::Terminal;
         app.file_operation_worker = worker;
         app.state.file_manager = Some(crate::fm::FmState::new(&destination));
         app.state.file_manager_clipboard = vec![source.clone()];
