@@ -889,6 +889,44 @@ mod tests {
         assert_eq!(states[1].offset, TestScrollOffset::new(0, 3));
     }
 
+    #[test]
+    fn topmost_scroll_boundary_does_not_fall_through() {
+        let bottom_id = scroll_viewport_id(RegionId::WorkspaceStage, 0);
+        let top_id = scroll_viewport_id(RegionId::RightPanel, 0);
+        let mut states = [
+            TestScrollViewportState::new(bottom_id),
+            TestScrollViewportState::with_offset(top_id, TestScrollOffset::new(0, 8)),
+        ];
+        let metrics = TestScrollViewportMetrics::new(10, 4, 10, 12);
+        let owners = [
+            TestScrollOwner::new(bottom_id, metrics),
+            TestScrollOwner::new(top_id, metrics),
+        ];
+
+        let decision = route_scroll_for_test(&mut states, &owners, TestScrollAxis::Vertical, 3);
+
+        assert_eq!(decision, TestScrollDecision::Consumed { changed: false });
+        assert_eq!(states[0].offset, TestScrollOffset::new(0, 0));
+        assert_eq!(states[1].offset, TestScrollOffset::new(0, 8));
+    }
+
+    #[test]
+    fn stale_topmost_scroll_owner_is_consumed_inert() {
+        let bottom_id = scroll_viewport_id(RegionId::WorkspaceStage, 0);
+        let stale_top_id = scroll_viewport_id(RegionId::RightPanel, 0);
+        let mut states = [TestScrollViewportState::new(bottom_id)];
+        let metrics = TestScrollViewportMetrics::new(10, 4, 10, 12);
+        let owners = [
+            TestScrollOwner::new(bottom_id, metrics),
+            TestScrollOwner::new(stale_top_id, metrics),
+        ];
+
+        let decision = route_scroll_for_test(&mut states, &owners, TestScrollAxis::Vertical, 3);
+
+        assert_eq!(decision, TestScrollDecision::Consumed { changed: false });
+        assert_eq!(states[0].offset, TestScrollOffset::new(0, 0));
+    }
+
     fn divider() -> DividerId {
         DividerId::new(
             RegionId::LeftPanel,
