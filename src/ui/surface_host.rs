@@ -6,6 +6,15 @@ pub(crate) enum BuiltInAppId {
     Files,
 }
 
+impl BuiltInAppId {
+    const fn index(self) -> usize {
+        match self {
+            Self::Terminal => 0,
+            Self::Files => 1,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum AppSurfaceRef {
     TerminalWorkspace,
@@ -37,6 +46,7 @@ impl AppInstance {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StageStateError {
     BuiltInInstanceCapacityReached,
+    InstanceGenerationExhausted,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,6 +55,7 @@ pub(crate) struct StageState {
     instance_count: usize,
     active: AppInstanceId,
     previous: Option<AppInstanceId>,
+    last_generations: [Option<u32>; 2],
 }
 
 impl StageState {
@@ -64,14 +75,14 @@ impl StageState {
             return Ok(());
         }
 
-        let files_id = self
+        let files_id = match self
             .instances()
             .find(|instance| instance.id.app == BuiltInAppId::Files)
             .map(|instance| instance.id)
-            .unwrap_or(AppInstanceId {
-                app: BuiltInAppId::Files,
-                generation: 0,
-            });
+        {
+            Some(id) => id,
+            None => self.next_instance_id(BuiltInAppId::Files)?,
+        };
         if self.instance(files_id).is_none() {
             self.insert_instance(AppInstance::built_in(files_id))?;
         }
@@ -97,7 +108,23 @@ impl StageState {
         }
         self.instances[self.instance_count] = Some(instance);
         self.instance_count += 1;
+        let last_generation = &mut self.last_generations[instance.id.app.index()];
+        *last_generation = Some(
+            last_generation
+                .map(|last| last.max(instance.id.generation))
+                .unwrap_or(instance.id.generation),
+        );
         Ok(())
+    }
+
+    fn next_instance_id(&self, app: BuiltInAppId) -> Result<AppInstanceId, StageStateError> {
+        let generation = match self.last_generations[app.index()] {
+            Some(last) => last
+                .checked_add(1)
+                .ok_or(StageStateError::InstanceGenerationExhausted)?,
+            None => 0,
+        };
+        Ok(AppInstanceId { app, generation })
     }
 }
 
@@ -114,6 +141,7 @@ impl Default for StageState {
             instance_count: 1,
             active: terminal_id,
             previous: None,
+            last_generations: [Some(0), None],
         }
     }
 }
@@ -126,11 +154,6 @@ mod tests {
         AppInstance, AppInstanceId, AppSurfaceRef, BuiltInAppId, StageState, StageStateError,
         MAX_BUILT_IN_INSTANCES,
     };
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    struct TestGenerationAllocator {
-        last: u32,
-    }
 
     #[test]
     fn stage_starts_on_terminal_workspace() {
@@ -196,23 +219,14 @@ mod tests {
 
     #[test]
     fn instance_generation_exhaustion_fails_without_aliasing() {
-        let mut allocator = TestGenerationAllocator { last: u32::MAX };
-        let retained = allocator;
+        let mut stage = StageState::default();
+        stage.last_generations[BuiltInAppId::Files.index()] = Some(u32::MAX);
+        let retained = stage;
 
         assert_eq!(
-            allocate_next_generation_for_test(&mut allocator),
-            Err("instance generation exhausted")
+            stage.next_instance_id(BuiltInAppId::Files),
+            Err(StageStateError::InstanceGenerationExhausted)
         );
-        assert_eq!(allocator, retained);
-    }
-
-    fn allocate_next_generation_for_test(
-        allocator: &mut TestGenerationAllocator,
-    ) -> Result<u32, &'static str> {
-        // RED-only seam: wrapping would alias generation zero after exhaustion.
-        // SF4.1 replaces it with checked allocation before any state mutation.
-        let generation = allocator.last.wrapping_add(1);
-        allocator.last = generation;
-        Ok(generation)
+        assert_eq!(stage, retained);
     }
 }
