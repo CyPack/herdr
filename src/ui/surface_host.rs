@@ -96,8 +96,8 @@ impl StageState {
 
     /// Project the active Stage surface for render dispatch. The projection is
     /// a pure read of typed Stage state: it can never own, create, resize, or
-    /// destroy terminal runtime state.
-    #[allow(dead_code)] // SF6 Files Stage rendering migration consumes this typed projection.
+    /// destroy terminal runtime state. The view computation consumes this to
+    /// grant exactly one surface the projected stage hit geometry per frame.
     pub(crate) fn surface_view(&self) -> StageSurfaceView {
         match self.active_surface() {
             Some(AppSurfaceRef::NativeFiles) => StageSurfaceView::NativeFiles,
@@ -378,10 +378,7 @@ mod tests {
             }
         }
 
-        let root = std::env::temp_dir().join(format!(
-            "herdr-stage-hits-{}",
-            std::process::id(),
-        ));
+        let root = std::env::temp_dir().join(format!("herdr-stage-hits-{}", std::process::id(),));
         let _fixture_root = FixtureRoot(root.clone());
         std::fs::create_dir_all(&root).expect("create stage hits fixture root");
         std::fs::write(root.join("00.txt"), b"x").expect("fixture entry");

@@ -375,25 +375,37 @@ fn compute_view_internal(
         .unwrap_or_default();
     app.tab_scroll = tab_bar_view.scroll;
 
-    let split_borders = app
-        .active
-        .and_then(|i| app.workspaces.get(i))
-        .map(|ws| {
-            if ws.zoomed {
-                Vec::new()
-            } else {
-                ws.layout.splits(terminal_area)
-            }
-        })
-        .unwrap_or_default();
+    // Exactly one stage surface owns projected hit geometry per frame: the
+    // hidden terminal projects no pane/split rectangles (and receives no
+    // resize side effects) while the NativeFiles surface is active.
+    let terminal_surface_active =
+        app.stage.surface_view() == surface_host::StageSurfaceView::TerminalWorkspace;
+    let split_borders = if terminal_surface_active {
+        app.active
+            .and_then(|i| app.workspaces.get(i))
+            .map(|ws| {
+                if ws.zoomed {
+                    Vec::new()
+                } else {
+                    ws.layout.splits(terminal_area)
+                }
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
-    let pane_infos = compute_pane_infos(
-        app,
-        terminal_runtimes,
-        terminal_area,
-        resize_panes,
-        cell_size,
-    );
+    let pane_infos = if terminal_surface_active {
+        compute_pane_infos(
+            app,
+            terminal_runtimes,
+            terminal_area,
+            resize_panes,
+            cell_size,
+        )
+    } else {
+        Vec::new()
+    };
     let agent_attachment_action_area =
         panes::compute_agent_attachment_action_area(app, &pane_infos);
     let agent_worktree_action_area = panes::compute_agent_worktree_action_area(app, &pane_infos);
@@ -489,25 +501,36 @@ fn compute_mobile_view(
         app.mobile_switcher_scroll = app.mobile_switcher_scroll.min(max_scroll);
     }
 
-    let split_borders = app
-        .active
-        .and_then(|i| app.workspaces.get(i))
-        .map(|ws| {
-            if ws.zoomed {
-                Vec::new()
-            } else {
-                ws.layout.splits(terminal_area)
-            }
-        })
-        .unwrap_or_default();
+    // The same surface-exclusivity contract as the desktop projection: a
+    // hidden terminal projects no pane/split hit geometry under NativeFiles.
+    let terminal_surface_active =
+        app.stage.surface_view() == surface_host::StageSurfaceView::TerminalWorkspace;
+    let split_borders = if terminal_surface_active {
+        app.active
+            .and_then(|i| app.workspaces.get(i))
+            .map(|ws| {
+                if ws.zoomed {
+                    Vec::new()
+                } else {
+                    ws.layout.splits(terminal_area)
+                }
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
-    let pane_infos = compute_pane_infos(
-        app,
-        terminal_runtimes,
-        terminal_area,
-        resize_panes,
-        cell_size,
-    );
+    let pane_infos = if terminal_surface_active {
+        compute_pane_infos(
+            app,
+            terminal_runtimes,
+            terminal_area,
+            resize_panes,
+            cell_size,
+        )
+    } else {
+        Vec::new()
+    };
     let agent_attachment_picker_row_areas = sync_agent_attachment_picker_view(app, terminal_area);
     if resize_panes {
         resize_background_tab_panes_to_area(app, terminal_runtimes, terminal_area, cell_size);
