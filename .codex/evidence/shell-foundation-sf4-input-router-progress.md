@@ -15,7 +15,7 @@ SF4.1 typed Stage closure (`944a9d4c`) and every earlier baseline stay frozen.
 |---|---|---|---|---|
 | SF4.2-01 | `shell_input_router_follows_frozen_precedence` | Table-driven: overlay -> capture -> topmost hit -> focused component -> page -> global -> fail-closed, exactly one owner per row | Precedence must be a typed total authority, not implicit if-chain ordering | GREEN |
 | SF4.2-02 | `overlay_blocks_every_background_mouse_action` | Every active overlay kind consumes background-targeted mouse events with zero background action | Topmost blocking overlays prevent every background route (design spec) | GREEN |
-| SF4.2-03 | `overlay_blocks_background_keyboard_shortcut` | No global/page shortcut acts while a blocking overlay owns focus | Keyboard parity for the same rule | PENDING |
+| SF4.2-03 | `overlay_blocks_background_keyboard_shortcut` | No background capture/shortcut acts while a blocking overlay owns focus | Keyboard parity for the same rule | GREEN |
 | SF4.2-04 | `capture_owns_move_and_up_outside_original_rect` | Active capture receives move/up even outside its origin rect | Only one owner captures a pointer gesture | PENDING |
 | SF4.2-05 | `focus_restores_after_overlay_close` | Closing an overlay restores the previous valid focus owner or template fallback | Deterministic focus restoration | PENDING |
 | SF4.2-06 | `collapsed_or_inert_region_cannot_receive_focus` | Collapsed/zero regions expose no focusable target | Hidden geometry must not own input | PENDING |
@@ -118,18 +118,50 @@ Current mouse ownership is distributed, not total:
   `shell_mouse_input_owner`, `mouse_blocking_overlay_active`, and the new
   blocking test.
 
+## SF4.2-03 Atomic TDD Evidence
+
+- RED-ability was verified before writing the test: a launcher click can open
+  the global menu while a sidebar resize capture stays active, and the
+  keyboard overlay tier only recognized three modes, so arrow keys resized
+  the sidebar under the open menu and Esc cancelled the capture instead of
+  closing the menu.
+- RED `bb6f8970` (`test: require overlay keyboard ownership over active
+  capture`), run `3c0df85b-3053-4574-8708-d591a0ca7bea`: the control phase
+  proved the capture consumes keys without an overlay (preview 26 -> 27),
+  then the overlay phase failed exactly on the leak (`Some(28)` — the menu
+  key adjusted the capture). The test also pins Esc-closes-overlay-only and
+  capture resumption after the overlay closes.
+- GREEN `efe6446b` (`feat: give blocking overlays keyboard ownership over
+  captures`):
+  - The keyboard and mouse builders now share one exhaustive
+    `blocking_overlay_active()` classifier; `AttachFile` moved to the
+    keyboard overlay tier and the focused-component tier is the open file
+    manager only.
+  - `handle_key`'s TopmostOverlay arm dispatches ContextMenu/
+    ConfirmFileDelete/RenameFile/AttachFile directly and routes every other
+    overlay mode through the same mode-guarded global dispatch — inside the
+    overlay tier, so captures and the FM can never intercept overlay keys.
+  - One fixture correction:
+    `app_esc_cancellation_is_generation_safe_and_lane_reusable` inherited
+    `Mode::Onboarding` from a default-config `App::new` while driving Esc
+    into an open FM — an unreachable production state; the fixture now sets
+    the realistic `Mode::Terminal`. The no-fail-fast sweep proved this was
+    the only affected test.
+- GREEN exact run `4870639f` (2/2 with the corrected fixture); broad
+  keyboard/overlay regressions 482/482 (run `85df300d`); full Nextest
+  3,303/3,303 plus only the named B0 skip; fmt, Linux/Windows Clippy, Bun
+  5/5 + 12/12, Python 64/64, diff/unwrap checks clean.
+- Publication: both CyPack refs equal exact SHA
+  `efe6446bc77495176e061c5d3231d28b7bc5fe04`; `upstream` untouched.
+
 ## Exact Next Microtask
 
-SF4.2-03 `overlay_blocks_background_keyboard_shortcut`: FIRST verify
-RED-ability. The keyboard chain may already block by construction — every
-overlay mode's key handler consumes unknown keys, the router's overlay tier
-precedes capture, and the modal paste shortcut is intended behavior. If no
-failing behavior exists, record the evidence and add the test as an explicit
-characterization with justification (SF1 precedent) instead of manufacturing
-an invalid RED; then continue with SF4.2-04 capture ownership. Remaining
-in-dispatch wheel leaks for non-ContextMenu overlay modes (Rename*/
-ConfirmClose/worktree modals) are covered by the pre-branch gating for
-mod.rs paths but their `state.handle_mouse` wheel arms still act only behind
+SF4.2-04 `capture_owns_move_and_up_outside_original_rect`: FIRST verify
+RED-ability against the existing SF3 drag path — `preview_sidebar_resize`
+may already own move/up outside the divider rect through `DragState`;
+if the behavior already holds, record it as an explicit characterization
+(SF1 precedent) and continue with SF4.2-05 focus restore. Remaining
+in-dispatch wheel arms for non-ContextMenu overlay modes act only behind
 `in_sidebar`/pane guards — the SF4.3 gesture matrix owns the exhaustive
 sweep. Do not start SF4.3, SF5, SF6, or change-pipeline T3.1 before SF4.2
 closes.

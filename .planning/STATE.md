@@ -2,10 +2,11 @@
 
 - Updated: 2026-07-16
 - Branch: `feat/native-fm`
-- Current verified product head: `017ba97f` (`feat: block background mouse
-  routes under topmost overlays`); matching RED `41362e89`. Prior heads this
-  session: SF4.2-01 `92777e23`/`f4f5e3cb`, SF4.1-08 `784fdc2e`/`944a9d4c`,
-  and test-stability `3c853a70`.
+- Current verified product head: `efe6446b` (`feat: give blocking overlays
+  keyboard ownership over captures`); matching RED `bb6f8970`. Prior heads
+  this session: SF4.2-02 `41362e89`/`017ba97f`, SF4.2-01
+  `92777e23`/`f4f5e3cb`, SF4.1-08 `784fdc2e`/`944a9d4c`, and test-stability
+  `3c853a70`.
 - Published SF0 planning artifact checkpoint: `32856f7`
   (`docs: plan shell foundation and files workspace`).
 - Published SF1 characterization checkpoint: `7b9b626d`
@@ -124,10 +125,14 @@
   `shell_mouse_input_owner()`, and one total early `Mode::ContextMenu` block
   consumes wheel/drag fail-closed while preserving item dispatch, hover,
   outside-close, and right-click re-targeting.
-- Next microtask: SF4.2-03 `overlay_blocks_background_keyboard_shortcut` —
-  FIRST verify RED-ability (keyboard may already block by construction); if
-  already green, record it as an explicit characterization with evidence
-  (SF1 precedent) and continue with SF4.2-04 capture ownership. See
+- SF4.2-03 is GREEN (`bb6f8970`/`efe6446b`): blocking overlays own keyboard
+  input ahead of the active capture and the focused FM through one shared
+  exhaustive `blocking_overlay_active()` classifier; `AttachFile` joined the
+  overlay tier; one unrealistic Onboarding-mode fixture was corrected.
+- Next microtask: SF4.2-04 `capture_owns_move_and_up_outside_original_rect`
+  — FIRST verify RED-ability against the existing SF3 drag path; if the
+  behavior already holds, record an explicit characterization (SF1
+  precedent) and continue with SF4.2-05 focus restore. See
   `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one

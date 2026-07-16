@@ -11,32 +11,34 @@
 - Branch: `feat/native-fm`
 - Acting identity: CyPack external contributor; `origin` is the writable
   `CyPack/herdr` fork and `upstream` is read-only.
-- Current verified product head: `017ba97f`
-  (`feat: block background mouse routes under topmost overlays`).
-- Matching observed behavior RED: `41362e89`
-  (`test: require overlay blocking for background mouse actions`).
-- Prior closed heads this session: SF4.2-01 `92777e23`/`f4f5e3cb`, SF4.1-08
-  `784fdc2e`/`944a9d4c`, and test-stability `3c853a70`.
+- Current verified product head: `efe6446b`
+  (`feat: give blocking overlays keyboard ownership over captures`).
+- Matching observed behavior RED: `bb6f8970`
+  (`test: require overlay keyboard ownership over active capture`).
+- Prior closed heads this session: SF4.2-02 `41362e89`/`017ba97f`, SF4.2-01
+  `92777e23`/`f4f5e3cb`, SF4.1-08 `784fdc2e`/`944a9d4c`, and test-stability
+  `3c853a70`.
 - Program: 7 Shell Foundation phases SF0-SF6 plus 5 FM phases FM1-FM5.
 - Closed phases: SF0, SF1, SF2, SF3, and microphase SF4.1 (8/8 slices GREEN).
 - Active phase: SF4 SurfaceHost and input router.
-- Active microphase: SF4.2; slices SF4.2-01 (frozen seven-tier router +
-  keyboard tier selection) and SF4.2-02 (overlay mouse blocking) are GREEN.
-- Immediate next microtask: SF4.2-03
-  `overlay_blocks_background_keyboard_shortcut` — FIRST verify RED-ability;
-  the keyboard chain may already block by construction, in which case record
-  an explicit characterization with evidence (SF1 precedent) and continue
-  with SF4.2-04 capture ownership. See
+- Active microphase: SF4.2; slices 01 (frozen seven-tier router), 02 (overlay
+  mouse blocking), and 03 (overlay keyboard ownership over captures, shared
+  exhaustive `blocking_overlay_active()` classifier) are GREEN.
+- Immediate next microtask: SF4.2-04
+  `capture_owns_move_and_up_outside_original_rect` — FIRST verify
+  RED-ability against the existing SF3 drag path; if the behavior already
+  holds, record an explicit characterization (SF1 precedent) and continue
+  with SF4.2-05 focus restore. See
   `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
-- Product tree: clean at `017ba97f`; only the user-owned untracked
+- Product tree: clean at `efe6446b`; only the user-owned untracked
   `.superpowers/` tree exists and must remain untouched/unstaged.
-- Full exact-head gate: 3,302/3,302 Rust tests passed, one named B0 real-host
+- Full exact-head gate: 3,303/3,303 Rust tests passed, one named B0 real-host
   probe skipped, zero retry; Linux/Windows Clippy, Bun 5/5 + 12/12, Python
   64/64, fmt/diff/added-production-unwrap checks passed.
 - Both CyPack refs (`feat/native-fm`, fork `master`) equal exact SHA
-  `017ba97f26ce111070f83ecf3c9306abfc756dcc`; `upstream` untouched.
-- Fresh sequential Codebase Memory store: 20,421 nodes / 94,238 edges with
-  current `shell_mouse_input_owner`, `mouse_blocking_overlay_active`,
+  `efe6446bc77495176e061c5d3231d28b7bc5fe04`; `upstream` untouched.
+- Fresh sequential Codebase Memory store refreshed post-publication with
+  current `blocking_overlay_active`, `shell_mouse_input_owner`,
   `route_shell_input`, and `miller_layout` source.
 - The built-in MCP channel now serves the fresh store; this was verified with
   exact symbol and snippet, never `ready` alone. A fresh session must repeat

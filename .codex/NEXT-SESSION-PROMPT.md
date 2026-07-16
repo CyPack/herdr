@@ -57,12 +57,12 @@ non-product pipeline paused.
 Priority is mandatory:
 
 1. P0 ACTIVE: SF4.2 focus scopes, capture, and semantic input precedence.
-   SF4.2-01 (`f4f5e3cb`) and SF4.2-02 (`017ba97f`, overlay mouse blocking)
-   are GREEN. Next: SF4.2-03
-   `overlay_blocks_background_keyboard_shortcut` — FIRST verify RED-ability
-   (may already block by construction; then record a characterization with
-   evidence per the SF1 precedent and continue with SF4.2-04 capture
-   ownership). See
+   SF4.2-01 (`f4f5e3cb`), SF4.2-02 (`017ba97f`), and SF4.2-03 (`efe6446b`,
+   overlay keyboard ownership over captures) are GREEN. Next: SF4.2-04
+   `capture_owns_move_and_up_outside_original_rect` — FIRST verify
+   RED-ability against the existing SF3 drag path (if already held, record a
+   characterization per the SF1 precedent and continue with SF4.2-05 focus
+   restore). See
    `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
 2. P0 NEXT: SF4.3 -> SF4.4 -> SF5 -> SF6 -> FM1 -> FM2 -> FM3 -> FM4
    -> FM5.
