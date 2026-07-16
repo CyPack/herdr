@@ -191,14 +191,23 @@ Progress evidence:
 Progress evidence:
 `.codex/evidence/shell-foundation-sf4-stage-progress.md`.
 
-#### SF4.2 — Focus Scope and Input Precedence
+#### SF4.2 — Focus Scope and Input Precedence (SF4.2-01 GREEN)
 
 - [ ] RED-test focus scope entry/restore, active capture, topmost semantic hit,
   page/global shortcut precedence, stale generation rejection, and no-owner
-  fallback before adding router production state.
+  fallback before adding router production state. Progress: table-driven
+  `shell_input_router_follows_frozen_precedence` is GREEN (RED `92777e23`,
+  run `67730dbd`; seven tiers including fail-closed no-owner). Remaining REDs:
+  overlay mouse/keyboard blocking, capture-outside-rect, focus restore, inert
+  regions, stale generation, hidden-terminal blocking — see
+  `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
 - [ ] Add one bounded focus/capture router shared by mouse and keyboard. It
   must route overlay -> capture -> active Stage surface -> shell/page -> global
-  and never infer authority from paint output or stale coordinates.
+  and never infer authority from paint output or stale coordinates. Progress:
+  pure `route_shell_input` + `AppState::shell_key_input_owner()` landed in
+  GREEN `f4f5e3cb`; `App::handle_key` selects its tier through the router
+  with preserved behavior. Mouse-side extraction is still open and follows
+  the SF4.2-02+ REDs.
 - [ ] Prove terminal resize, surface close/failure, focus target disappearance,
   hidden/zero regions, and capture cancellation restore one valid owner without
   replay, duplicate action, or stuck capture.

@@ -2,10 +2,10 @@
 
 - Updated: 2026-07-16
 - Branch: `feat/native-fm`
-- Current verified product head: `944a9d4c` (`feat: preserve terminal runtime
-  across stage switches`); matching RED `784fdc2e`. Separate test-stability
-  commit `3c853a70` closed the parallel-load process-exit suppression flake
-  class in `src/terminal/state.rs`.
+- Current verified product head: `f4f5e3cb` (`feat: route shell input through
+  semantic ownership`); matching RED `92777e23`. Prior heads: `944a9d4c`
+  (SF4.1-08 GREEN, RED `784fdc2e`) and test-stability `3c853a70` (parallel-load
+  process-exit suppression flake class closed in `src/terminal/state.rs`).
 - Published SF0 planning artifact checkpoint: `32856f7`
   (`docs: plan shell foundation and files workspace`).
 - Published SF1 characterization checkpoint: `7b9b626d`
@@ -116,12 +116,18 @@
 - SF4.1 is CLOSED. Eight atomic RED/GREEN pairs end at `784fdc2e`/`944a9d4c`;
   detailed evidence is
   `.codex/evidence/shell-foundation-sf4-stage-progress.md`.
-- Enter SF4.2 focus scopes, capture, and semantic input precedence. First
-  RED: table-driven `shell_input_router_follows_frozen_precedence` covering
-  overlay, active capture, overlapping topmost hit, focused component, page
-  shortcut, global shortcut, and no target
-  (`docs/superpowers/plans/2026-07-15-herdr-shell-foundation-v0-implementation.md`
-  Task SF4.2).
+- SF4.2-01 is GREEN: the table-driven
+  `shell_input_router_follows_frozen_precedence` (RED `92777e23`, GREEN
+  `f4f5e3cb`) froze the seven-tier precedence as pure `route_shell_input`,
+  and `App::handle_key` now selects its keyboard tier through
+  `AppState::shell_key_input_owner()` with preserved behavior.
+- Next RED: `overlay_blocks_every_background_mouse_action` from the recorded
+  reconnaissance in
+  `.codex/evidence/shell-foundation-sf4-input-router-progress.md` (unguarded
+  sidebar-divider double-click under `Mode::ContextMenu` and wheel
+  fall-through are the observed leak candidates). GREEN routes
+  `handle_mouse_without_agent_frame_action`'s overlay tier through the frozen
+  router before any background branch.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one
   bounded focus/capture router shared by mouse and keyboard, and recovery

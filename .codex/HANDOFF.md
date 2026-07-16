@@ -11,30 +11,32 @@
 - Branch: `feat/native-fm`
 - Acting identity: CyPack external contributor; `origin` is the writable
   `CyPack/herdr` fork and `upstream` is read-only.
-- Current verified product head: `944a9d4c`
-  (`feat: preserve terminal runtime across stage switches`).
-- Matching observed behavior RED: `784fdc2e`
-  (`test: require terminal runtime preservation across stage switches`).
-- Separate test-stability commit `3c853a70` closed the parallel-load
-  process-exit suppression flake class in `src/terminal/state.rs`.
+- Current verified product head: `f4f5e3cb`
+  (`feat: route shell input through semantic ownership`).
+- Matching observed behavior RED: `92777e23`
+  (`test: define shell focus and input ownership`).
+- Prior closed heads this session: SF4.1-08 `784fdc2e`/`944a9d4c` and
+  test-stability `3c853a70` (parallel-load process-exit suppression flake
+  class closed in `src/terminal/state.rs`).
 - Program: 7 Shell Foundation phases SF0-SF6 plus 5 FM phases FM1-FM5.
 - Closed phases: SF0, SF1, SF2, SF3, and microphase SF4.1 (8/8 slices GREEN).
 - Active phase: SF4 SurfaceHost and input router.
-- Active microphase: SF4.2 focus scopes, capture, and semantic input
-  precedence.
-- Immediate next microtask: compile-valid table-driven behavior RED
-  `shell_input_router_follows_frozen_precedence`.
-- Product tree: clean at `944a9d4c`; only the user-owned untracked
+- Active microphase: SF4.2; slice SF4.2-01 (frozen seven-tier router +
+  keyboard tier selection) is GREEN.
+- Immediate next microtask: compile-valid behavior RED
+  `overlay_blocks_every_background_mouse_action` — start from the recorded
+  reconnaissance in
+  `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
+- Product tree: clean at `f4f5e3cb`; only the user-owned untracked
   `.superpowers/` tree exists and must remain untouched/unstaged.
-- Full exact-head gate: 3,300/3,300 Rust tests passed (run
-  `5694bdd6-c22f-46ce-86b7-c496aea6e39c`), one named B0 real-host probe
-  skipped, zero retry; Linux/Windows Clippy, Bun 5/5 + 12/12, Python 64/64,
-  fmt/diff/added-production-unwrap checks passed.
+- Full exact-head gate: 3,301/3,301 Rust tests passed, one named B0 real-host
+  probe skipped, zero retry; Linux/Windows Clippy, Bun 5/5 + 12/12, Python
+  64/64, fmt/diff/added-production-unwrap checks passed.
 - Both CyPack refs (`feat/native-fm`, fork `master`) equal exact SHA
-  `944a9d4cf4ecb92f97e9be80b18060db6c5ffb4d`; `upstream` untouched.
-- Fresh sequential Codebase Memory store: 20,396 nodes / 93,372 edges with
-  current `StageState.surface_view`, launch-policy-consulting
-  `activate_files`, and `miller_layout` source.
+  `f4f5e3cbb65e391b073c57ebe750d10dddb5d9b1`; `upstream` untouched.
+- Fresh sequential Codebase Memory store: 20,410 nodes / 93,605 edges with
+  current `route_shell_input`, `shell_key_input_owner`,
+  `StageState.surface_view`, and `miller_layout` source.
 - The built-in MCP channel now serves the fresh store; this was verified with
   exact symbol and snippet, never `ready` alone. A fresh session must repeat
   that proof before trusting the transport.

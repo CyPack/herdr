@@ -56,8 +56,12 @@ non-product pipeline paused.
 
 Priority is mandatory:
 
-1. P0 ACTIVE: SF4.2 focus scopes, capture, and semantic input precedence,
-   starting with RED `shell_input_router_follows_frozen_precedence`.
+1. P0 ACTIVE: SF4.2 focus scopes, capture, and semantic input precedence.
+   SF4.2-01 (`shell_input_router_follows_frozen_precedence`) is GREEN at
+   `f4f5e3cb`; the next RED is
+   `overlay_blocks_every_background_mouse_action` — start from the
+   reconnaissance in
+   `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
 2. P0 NEXT: SF4.3 -> SF4.4 -> SF5 -> SF6 -> FM1 -> FM2 -> FM3 -> FM4
    -> FM5.
 3. P1 PAUSED: `herdr-change-pipeline` T3.1-T10.9, until the current sequential

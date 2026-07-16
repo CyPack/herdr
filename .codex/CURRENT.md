@@ -1109,13 +1109,16 @@
    `944a9d4cf4ecb92f97e9be80b18060db6c5ffb4d`; the fresh sequential graph is
    20,396 / 93,372 with current `StageState.surface_view`,
    launch-policy-consulting `activate_files`, and `miller_layout`.
-2. Enter SF4.2 focus scopes, capture, and semantic input precedence
-   (`docs/superpowers/plans/2026-07-15-herdr-shell-foundation-v0-implementation.md`
-   Task SF4.2). First RED: table-driven
-   `shell_input_router_follows_frozen_precedence` covering overlay, active
-   capture, overlapping topmost hit, focused component, page shortcut, global
-   shortcut, and no target. Compile, Tokio-reactor, filter, environment,
-   zero-test, and setup failures do not count as RED evidence.
+2. SF4.2-01 is GREEN at `f4f5e3cb` (RED `92777e23`): the seven-tier frozen
+   precedence is pure `route_shell_input` in `src/app/input/shell.rs`, and
+   `App::handle_key` selects its keyboard tier through
+   `AppState::shell_key_input_owner()` with preserved behavior. Next RED:
+   `overlay_blocks_every_background_mouse_action` from the reconnaissance in
+   `.codex/evidence/shell-foundation-sf4-input-router-progress.md`
+   (unguarded sidebar-divider double-click under `Mode::ContextMenu` and
+   context-menu wheel fall-through are the observed leak candidates).
+   Compile, Tokio-reactor, filter, environment, zero-test, and setup
+   failures do not count as RED evidence.
 3. Continue the remaining SF4.2 REDs (overlay mouse/keyboard blocking, capture
    ownership outside the original rect, focus restore after overlay close,
    collapsed/inert region focus rejection, stale hit generation,
