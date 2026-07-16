@@ -426,8 +426,16 @@ impl RegionCollapseState {
 
 impl ShellPresentationState {
     pub(crate) const fn new(left_panel_width: u16) -> Self {
+        Self::from_restored_left_panel(left_panel_width, false)
+    }
+
+    pub(crate) const fn from_restored_left_panel(left_panel_width: u16, collapsed: bool) -> Self {
         Self {
-            left_panel: RegionCollapseState::expanded(RegionId::LeftPanel, left_panel_width),
+            left_panel: if collapsed {
+                RegionCollapseState::collapsed(RegionId::LeftPanel, left_panel_width)
+            } else {
+                RegionCollapseState::expanded(RegionId::LeftPanel, left_panel_width)
+            },
         }
     }
 
@@ -441,6 +449,10 @@ impl ShellPresentationState {
 
     pub(crate) const fn left_panel_restore_width(&self) -> u16 {
         self.left_panel.restore_width
+    }
+
+    pub(crate) const fn left_panel_collapsed(&self) -> bool {
+        self.left_panel.collapsed
     }
 
     pub(crate) const fn left_panel_collapse_revision(&self) -> u64 {

@@ -8,7 +8,7 @@ use crate::layout::Node;
 use crate::terminal::TerminalRuntimeRegistry;
 use crate::ui::shell::{
     template_persistence_parts, validate_persisted_shell_parts, ComponentPlacement, RegionId,
-    ShellComponentId, ShellNode, ShellTemplateId, TrackPolicy,
+    ShellComponentId, ShellNode, ShellPresentationState, ShellTemplateId, TrackPolicy,
 };
 use crate::workspace::Workspace;
 
@@ -46,19 +46,44 @@ pub(crate) enum PinnedBuiltinAppV1 {
     Files,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RestoredLeftPanelPreference {
+    pub(crate) width: u16,
+    pub(crate) collapsed: bool,
+}
+
 impl ShellSnapshotV1 {
     fn from_legacy_sidebar_width(sidebar_width: Option<u16>) -> Self {
-        let preferred = sidebar_width
-            .unwrap_or(LEGACY_LEFT_PANEL_DEFAULT_WIDTH)
-            .clamp(LEGACY_LEFT_PANEL_MIN_WIDTH, LEGACY_LEFT_PANEL_MAX_WIDTH);
+        Self::from_left_panel_preference(
+            sidebar_width.unwrap_or(LEGACY_LEFT_PANEL_DEFAULT_WIDTH),
+            false,
+        )
+    }
+
+    fn from_presentation(sidebar_width: u16, shell_presentation: &ShellPresentationState) -> Self {
+        let collapsed = shell_presentation.left_panel_collapsed();
+        let width = if collapsed {
+            shell_presentation.left_panel_restore_width()
+        } else {
+            sidebar_width
+        };
+        Self::from_left_panel_preference(width, collapsed)
+    }
+
+    fn from_left_panel_preference(width: u16, collapsed: bool) -> Self {
+        let preferred = width.clamp(LEGACY_LEFT_PANEL_MIN_WIDTH, LEGACY_LEFT_PANEL_MAX_WIDTH);
         let template = ShellTemplateId::DockSidebarStage;
         let (root, mut region_constraints, _) = template_persistence_parts(template);
         region_constraints.insert(
             RegionId::LeftPanel,
-            TrackPolicy::Resizable {
-                min: LEGACY_LEFT_PANEL_MIN_WIDTH,
-                preferred,
-                max: LEGACY_LEFT_PANEL_MAX_WIDTH,
+            if collapsed {
+                TrackPolicy::Collapsed { restore: preferred }
+            } else {
+                TrackPolicy::Resizable {
+                    min: LEGACY_LEFT_PANEL_MIN_WIDTH,
+                    preferred,
+                    max: LEGACY_LEFT_PANEL_MAX_WIDTH,
+                }
             },
         );
         Self {
@@ -104,24 +129,25 @@ impl ShellSnapshotV1 {
         Ok(snapshot)
     }
 
-    fn restored_left_panel_width(&self) -> Option<u16> {
+    fn restored_left_panel_preference(&self) -> Option<RestoredLeftPanelPreference> {
         let retained = self
             .collapse_restore_widths
             .get(&RegionId::LeftPanel)
             .copied();
-        match self.region_constraints.get(&RegionId::LeftPanel)? {
-            TrackPolicy::Fixed { cells } => Some(*cells),
+        let (width, collapsed) = match self.region_constraints.get(&RegionId::LeftPanel)? {
+            TrackPolicy::Fixed { cells } => (*cells, false),
             TrackPolicy::ContentBounded { min, max } => {
-                Some(retained.unwrap_or(*min).clamp(*min, *max))
+                (retained.unwrap_or(*min).clamp(*min, *max), false)
             }
             TrackPolicy::Resizable {
                 min,
                 preferred,
                 max,
-            } => Some((*preferred).clamp(*min, *max)),
-            TrackPolicy::Collapsed { restore } => Some(retained.unwrap_or(*restore)),
-            TrackPolicy::Fill { .. } => retained,
-        }
+            } => ((*preferred).clamp(*min, *max), false),
+            TrackPolicy::Collapsed { restore } => (retained.unwrap_or(*restore), true),
+            TrackPolicy::Fill { .. } => (retained?, false),
+        };
+        Some(RestoredLeftPanelPreference { width, collapsed })
     }
 }
 
@@ -145,11 +171,16 @@ pub struct SessionSnapshot {
 }
 
 impl SessionSnapshot {
-    pub(crate) fn restored_left_panel_width(&self) -> Option<u16> {
+    pub(crate) fn restored_left_panel_preference(&self) -> Option<RestoredLeftPanelPreference> {
         self.shell
             .as_ref()
-            .and_then(ShellSnapshotV1::restored_left_panel_width)
-            .or(self.sidebar_width)
+            .and_then(ShellSnapshotV1::restored_left_panel_preference)
+            .or_else(|| {
+                self.sidebar_width.map(|width| RestoredLeftPanelPreference {
+                    width,
+                    collapsed: false,
+                })
+            })
     }
 }
 
@@ -406,6 +437,7 @@ pub fn capture(
     active: Option<usize>,
     selected: usize,
     sidebar_width: u16,
+    shell_presentation: &ShellPresentationState,
     sidebar_section_split: f32,
     collapsed_space_keys: std::collections::HashSet<String>,
 ) -> SessionSnapshot {
@@ -417,9 +449,10 @@ pub fn capture(
             .collect(),
         active,
         selected,
-        shell: Some(ShellSnapshotV1::from_legacy_sidebar_width(Some(
+        shell: Some(ShellSnapshotV1::from_presentation(
             sidebar_width,
-        ))),
+            shell_presentation,
+        )),
         sidebar_width: Some(sidebar_width),
         sidebar_section_split: Some(sidebar_section_split),
         collapsed_space_keys,
@@ -781,11 +814,17 @@ mod tests {
     }
 
     fn restored_left_panel_width_for_test(snapshot: &SessionSnapshot) -> Option<u16> {
-        snapshot.restored_left_panel_width()
+        snapshot
+            .restored_left_panel_preference()
+            .map(|preference| preference.width)
     }
 
     fn restored_left_panel_preference_for_test(snapshot: &SessionSnapshot) -> (Option<u16>, bool) {
-        (snapshot.restored_left_panel_width(), false)
+        snapshot
+            .restored_left_panel_preference()
+            .map_or((None, false), |preference| {
+                (Some(preference.width), preference.collapsed)
+            })
     }
 
     fn capture_from_state(state: &AppState) -> SessionSnapshot {
@@ -804,6 +843,7 @@ mod tests {
             state.active,
             state.selected,
             state.sidebar_width,
+            &state.shell_presentation,
             state.sidebar_section_split,
             state.collapsed_space_keys.clone(),
         )

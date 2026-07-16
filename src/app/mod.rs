@@ -444,6 +444,7 @@ impl App {
             active,
             selected,
             sidebar_width,
+            sidebar_collapsed,
             sidebar_width_source,
             sidebar_section_split,
             collapsed_space_keys,
@@ -453,12 +454,16 @@ impl App {
                 None,
                 0,
                 config.ui.sidebar_width,
+                false,
                 state::SidebarWidthSource::ConfigDefault,
                 0.5_f32,
                 std::collections::HashSet::new(),
             )
         } else if let Some(snap) = crate::persist::load() {
-            let restored_sidebar_width = snap.restored_left_panel_width();
+            let restored_left_panel = snap.restored_left_panel_preference();
+            let restored_sidebar_width = restored_left_panel.map(|preference| preference.width);
+            let restored_sidebar_collapsed =
+                restored_left_panel.is_some_and(|preference| preference.collapsed);
             let history = config
                 .experimental
                 .pane_history
@@ -486,6 +491,7 @@ impl App {
                     None,
                     0,
                     restored_sidebar_width.unwrap_or(config.ui.sidebar_width),
+                    restored_sidebar_collapsed,
                     if restored_sidebar_width.is_some() {
                         state::SidebarWidthSource::Persisted
                     } else {
@@ -503,6 +509,7 @@ impl App {
                     active,
                     selected,
                     restored_sidebar_width.unwrap_or(config.ui.sidebar_width),
+                    restored_sidebar_collapsed,
                     if restored_sidebar_width.is_some() {
                         state::SidebarWidthSource::Persisted
                     } else {
@@ -518,6 +525,7 @@ impl App {
                 None,
                 0,
                 config.ui.sidebar_width,
+                false,
                 state::SidebarWidthSource::ConfigDefault,
                 0.5_f32,
                 std::collections::HashSet::new(),
@@ -705,7 +713,10 @@ impl App {
                 split_borders: Vec::new(),
             },
             shell_interaction: Default::default(),
-            shell_presentation: crate::ui::shell::ShellPresentationState::new(sidebar_width),
+            shell_presentation: crate::ui::shell::ShellPresentationState::from_restored_left_panel(
+                sidebar_width,
+                sidebar_collapsed,
+            ),
             drag: None,
             workspace_press: None,
             tab_press: None,
@@ -730,7 +741,7 @@ impl App {
             mobile_width_threshold: config.ui.mobile_width_threshold,
             sidebar_width_source,
             sidebar_width_auto: false,
-            sidebar_collapsed: false,
+            sidebar_collapsed,
             sidebar_collapsed_mode: config.ui.sidebar_collapsed_mode,
             sidebar_section_split,
             agent_panel_sort,
@@ -955,10 +966,15 @@ impl App {
         app.state.selected = snapshot
             .selected
             .min(app.state.workspaces.len().saturating_sub(1));
-        if let Some(width) = snapshot.restored_left_panel_width() {
-            app.state.sidebar_width = width;
+        if let Some(preference) = snapshot.restored_left_panel_preference() {
+            app.state.sidebar_width = preference.width;
+            app.state.sidebar_collapsed = preference.collapsed;
             app.state.sidebar_width_source = state::SidebarWidthSource::Persisted;
-            app.state.shell_presentation = crate::ui::shell::ShellPresentationState::new(width);
+            app.state.shell_presentation =
+                crate::ui::shell::ShellPresentationState::from_restored_left_panel(
+                    preference.width,
+                    preference.collapsed,
+                );
         }
         if let Some(split) = snapshot.sidebar_section_split {
             app.state.sidebar_section_split = split;
