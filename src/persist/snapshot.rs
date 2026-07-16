@@ -784,6 +784,10 @@ mod tests {
         snapshot.restored_left_panel_width()
     }
 
+    fn restored_left_panel_preference_for_test(snapshot: &SessionSnapshot) -> (Option<u16>, bool) {
+        (snapshot.restored_left_panel_width(), false)
+    }
+
     fn capture_from_state(state: &AppState) -> SessionSnapshot {
         let terminal_runtimes = TerminalRuntimeRegistry::new();
         capture_from_state_with_runtimes(state, &terminal_runtimes)
@@ -1114,6 +1118,35 @@ mod tests {
         let repeated = serde_json::to_value(capture_from_state(&state)).unwrap();
         assert!(!state.session_dirty);
         assert_eq!(repeated["shell"], committed["shell"]);
+    }
+
+    #[test]
+    fn collapsed_left_panel_round_trip_restores_visibility_and_width() {
+        let mut state = state_with_workspaces(&["one"]);
+        state.sidebar_width = 32;
+        crate::ui::compute_view(&mut state, Rect::new(0, 0, 106, 40));
+        assert!(state.set_sidebar_collapsed(true));
+
+        let captured = capture_from_state(&state);
+        let encoded = serde_json::to_value(&captured).unwrap();
+        assert_eq!(
+            encoded
+                .pointer("/shell/region_constraints/LeftPanel/Collapsed/restore")
+                .and_then(serde_json::Value::as_u64),
+            Some(32)
+        );
+        assert_eq!(
+            encoded
+                .pointer("/shell/collapse_restore_widths/LeftPanel")
+                .and_then(serde_json::Value::as_u64),
+            Some(32)
+        );
+
+        let restored = parse_snapshot(&encoded.to_string()).unwrap();
+        assert_eq!(
+            restored_left_panel_preference_for_test(&restored),
+            (Some(32), true)
+        );
     }
 
     #[test]
