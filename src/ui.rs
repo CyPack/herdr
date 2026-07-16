@@ -1293,6 +1293,51 @@ mod tests {
         std::fs::remove_dir_all(&root).expect("remove temp root");
     }
 
+    // SF4.3-05 characterization: valid RED refuted by source — the cached
+    // `ShellView` already returns the previous projection when the geometry
+    // key is unchanged (SF2.4). This freezes the retained path END-TO-END
+    // through `compute_view`: a dirty terminal row triggers a recompute with
+    // identical geometry, and that recompute must keep the exact cached
+    // shell generation instead of re-solving the shell per PTY row. The
+    // control phase proves the generation DOES advance when geometry truly
+    // changes, so the pin cannot pass vacuously.
+    #[test]
+    fn terminal_dirty_row_keeps_retained_path_with_static_shell() {
+        let mut app = crate::app::state::AppState::test_new();
+        let mut workspace = Workspace::test_new("retained-shell");
+        workspace.test_split(ratatui::layout::Direction::Horizontal);
+        app.workspaces = vec![workspace];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.mobile_width_threshold = 0;
+        let area = Rect::new(0, 0, 100, 30);
+
+        compute_view(&mut app, area);
+        let retained_generation = app.view.shell.generation;
+        let retained_regions = app.view.shell.regions.clone();
+
+        // A dirty-row frame recomputes with identical geometry: the shell
+        // stays on the retained path.
+        for _ in 0..3 {
+            compute_view(&mut app, area);
+            assert_eq!(
+                app.view.shell.generation, retained_generation,
+                "a static shell must keep its cached generation across dirty-row recomputes"
+            );
+            assert_eq!(app.view.shell.regions, retained_regions);
+        }
+
+        // Control: a real geometry change leaves the retained path exactly
+        // once.
+        compute_view(&mut app, Rect::new(0, 0, 101, 30));
+        assert_eq!(
+            app.view.shell.generation,
+            retained_generation + 1,
+            "control: changed geometry must advance the shell generation"
+        );
+    }
+
     // A2 integration: when the file manager is open, the base layer renders the
     // directory list in the center (CenterContent) instead of the terminal panes.
     #[test]
