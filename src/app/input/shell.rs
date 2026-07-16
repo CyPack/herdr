@@ -605,6 +605,37 @@ mod tests {
             Mode::Navigate,
             "an invalid remembered owner must fall back, never restore blindly"
         );
+
+        // A ContextMenu opened from Copy mode (the right-click arms carry no
+        // mode guard) must restore the live copy session instead of stranding
+        // `copy_mode: Some` under `Mode::Terminal`.
+        state.active = Some(0);
+        state.selected = 0;
+        let pane_id = state.workspaces[0]
+            .focused_pane_id()
+            .expect("test workspace exposes a focused pane");
+        state.copy_mode = Some(crate::app::state::CopyModeState {
+            pane_id,
+            cursor_row: 0,
+            cursor_col: 0,
+            entry_offset_from_bottom: 0,
+            selection: None,
+            search: crate::app::state::CopyModeSearchState::default(),
+        });
+        state.mode = Mode::Copy;
+        state.open_project_new_chat_menu(0, 4, 4);
+        assert_eq!(state.mode, Mode::ContextMenu);
+        let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        super::super::modal::handle_context_menu_key(&mut state, &mut terminal_runtimes, esc);
+        assert_eq!(
+            state.mode,
+            Mode::Copy,
+            "closing a context menu must restore the live copy session"
+        );
+        assert!(
+            state.copy_mode.is_some(),
+            "the copy session itself must survive the overlay episode"
+        );
     }
 
     // SF4.2-04 characterization: an active divider capture already owns every
