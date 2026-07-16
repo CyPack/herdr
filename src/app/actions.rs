@@ -388,6 +388,14 @@ impl AppState {
 
         self.request_file_manager_sidebar_navigation = None;
         self.file_manager = Some(prepared);
+        // The hidden terminal surface loses its projected hit geometry (and
+        // with it the cursor placement and agent frame actions) in the same
+        // transaction, so no stale rectangle can act between this switch and
+        // the next compute.
+        self.view.pane_infos = Vec::new();
+        self.view.split_borders = Vec::new();
+        self.view.agent_attachment_action_area = None;
+        self.view.agent_worktree_action_area = None;
         Ok(())
     }
 
@@ -516,6 +524,13 @@ impl AppState {
         self.request_file_manager_context_action = None;
         self.stage.close_files();
         self.file_manager = None;
+        // The hidden Files surface loses its projected stage geometry in the
+        // same transaction, so no stale row/header rectangle can act between
+        // this close and the next compute.
+        self.view.file_manager_row_areas = Vec::new();
+        self.view.file_manager_row_action_areas = Vec::new();
+        self.view.file_manager_header_action_areas = Vec::new();
+        self.view.file_manager_action_bar = None;
         if matches!(
             self.context_menu.as_ref().map(|menu| &menu.kind),
             Some(ContextMenuKind::File { .. })
