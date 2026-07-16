@@ -187,7 +187,10 @@ impl Default for StageState {
 #[cfg(test)]
 mod tests {
     use crate::{
-        app::state::{AppState, PaneFocusTarget},
+        app::{
+            actions::FileManagerOpenError,
+            state::{AppState, PaneFocusTarget},
+        },
         layout::PaneId,
     };
 
@@ -306,20 +309,14 @@ mod tests {
         let retained_focus = state.previous_pane_focus.clone();
 
         assert_eq!(
-            fail_files_open_for_test(&mut state),
-            Err("Files preparation failed")
+            state.try_open_file_manager_with(|focus| {
+                *focus = None;
+                None
+            }),
+            Err(FileManagerOpenError::PreparationFailed)
         );
         assert_eq!(state.stage, retained_stage);
         assert_eq!(state.previous_pane_focus, retained_focus);
         assert!(state.file_manager.is_none());
-    }
-
-    fn fail_files_open_for_test(state: &mut AppState) -> Result<(), &'static str> {
-        state
-            .stage
-            .activate_files()
-            .expect("RED seam activates Files before preparation");
-        state.previous_pane_focus = None;
-        Err("Files preparation failed")
     }
 }

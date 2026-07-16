@@ -19,6 +19,12 @@ use super::state::{
     ToastNotification, ToastTarget, ViewLayout,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FileManagerOpenError {
+    Stage(crate::ui::surface_host::StageStateError),
+    PreparationFailed,
+}
+
 fn is_background_completion_transition(prev_state: AgentState, new_state: AgentState) -> bool {
     matches!(new_state, AgentState::Idle)
         && matches!(prev_state, AgentState::Working | AgentState::Blocked)
@@ -348,7 +354,6 @@ impl AppState {
     /// Open the native file manager at the active workspace's directory (or the
     /// process working directory when there is no active workspace).
     pub(crate) fn open_file_manager(&mut self) {
-        self.request_file_manager_sidebar_navigation = None;
         let cwd = self
             .active
             .and_then(|i| self.workspaces.get(i))
@@ -356,9 +361,34 @@ impl AppState {
             .unwrap_or_else(|| {
                 std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
             });
-        if self.stage.activate_files().is_ok() {
-            self.file_manager = Some(crate::fm::FmState::new(cwd));
+        if let Err(error) = self.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(cwd)))
+        {
+            warn!(?error, "failed to open native file manager");
         }
+    }
+
+    pub(crate) fn try_open_file_manager_with(
+        &mut self,
+        prepare: impl FnOnce(&mut Option<PaneFocusTarget>) -> Option<crate::fm::FmState>,
+    ) -> Result<(), FileManagerOpenError> {
+        let retained_stage = self.stage;
+        let retained_focus = self.previous_pane_focus.clone();
+
+        self.stage
+            .activate_files()
+            .map_err(FileManagerOpenError::Stage)?;
+        let prepared = match prepare(&mut self.previous_pane_focus) {
+            Some(prepared) => prepared,
+            None => {
+                self.stage = retained_stage;
+                self.previous_pane_focus = retained_focus;
+                return Err(FileManagerOpenError::PreparationFailed);
+            }
+        };
+
+        self.request_file_manager_sidebar_navigation = None;
+        self.file_manager = Some(prepared);
+        Ok(())
     }
 
     /// Open the blocking single-file picker for the exact focused agent. This
