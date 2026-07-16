@@ -2509,6 +2509,97 @@ mod tests {
         assert_eq!(app.state.context_menu.unwrap().list.highlighted, 1);
     }
 
+    // SF4.2-02: a topmost blocking overlay owns every mouse event. Background
+    // routes (sidebar wheel selection, divider double-click gestures) must not
+    // act while the overlay is open, and the outside click that closes the
+    // overlay must not prime a background gesture for the next click.
+    #[test]
+    fn overlay_blocks_every_background_mouse_action() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![
+            crate::workspace::Workspace::test_new("one"),
+            crate::workspace::Workspace::test_new("two"),
+            crate::workspace::Workspace::test_new("three"),
+        ];
+        app.state.active = Some(1);
+        app.state.selected = 1;
+        app.state.sidebar_width = 32;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 40));
+        let divider_col = app.state.view.sidebar_rect.x + app.state.view.sidebar_rect.width - 1;
+        assert!(
+            app.state.on_sidebar_divider(divider_col, 10),
+            "fixture must target the live divider column"
+        );
+
+        // Control: without an overlay the sidebar wheel moves the selection.
+        app.handle_mouse(mouse(MouseEventKind::ScrollUp, 5, 3));
+        assert_eq!(
+            app.state.selected, 0,
+            "control: sidebar wheel must reach the workspace list without an overlay"
+        );
+        app.state.selected = 1;
+
+        app.state.context_menu = Some(ContextMenuState {
+            kind: ContextMenuKind::Workspace { ws_idx: 0 },
+            x: 60,
+            y: 20,
+            list: MenuListState::new(0),
+        });
+        app.state.mode = Mode::ContextMenu;
+
+        // The open menu owns a background sidebar wheel fail-closed.
+        app.handle_mouse(mouse(MouseEventKind::ScrollUp, 5, 3));
+        assert_eq!(
+            (
+                app.state.selected,
+                app.state.mode,
+                app.state.context_menu.is_some(),
+            ),
+            (1, Mode::ContextMenu, true),
+            "an open context menu must consume a background sidebar wheel"
+        );
+
+        // The outside click on the divider closes the menu (its contract) but
+        // must not prime a divider double-click gesture.
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            divider_col,
+            10,
+        ));
+        assert_ne!(app.state.mode, Mode::ContextMenu);
+        assert!(app.state.context_menu.is_none());
+        assert_eq!(app.state.sidebar_width, 32);
+
+        // The immediate next divider click is a first click, never the second
+        // half of a double-click primed while the overlay owned input.
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            divider_col,
+            10,
+        ));
+        assert_eq!(
+            app.state.sidebar_width, 32,
+            "the overlay-consumed click must not pair into a divider double-click reset"
+        );
+
+        // Control: a fresh non-overlay double-click still resets the width.
+        app.last_sidebar_divider_click = None;
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            divider_col,
+            10,
+        ));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            divider_col,
+            10,
+        ));
+        assert_eq!(
+            app.state.sidebar_width, app.state.default_sidebar_width,
+            "control: the divider double-click reset must survive overlay blocking"
+        );
+    }
+
     // TP-C3.3-PLUGIN-SURFACE: dynamic plugin titles size the shared popup by
     // terminal display cells, not UTF-8 byte length.
     #[test]
