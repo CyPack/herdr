@@ -638,6 +638,72 @@ mod tests {
         );
     }
 
+    // SF4.2-07: the mouse context builder must resolve the z-ordered topmost
+    // hit from the exact current `ShellView` generation, so a position is
+    // authority only against live geometry — old coordinates re-resolve to
+    // their CURRENT owner after every geometry change and never grant a
+    // vanished region's authority.
+    #[test]
+    fn stale_hit_generation_fails_closed() {
+        let layout = crate::ui::shell::ShellLayout::default();
+        let area = ratatui::layout::Rect::new(0, 0, 80, 24);
+        let sidebar_position = Position::new(5, 5);
+
+        let mut state = AppState::test_new();
+        state.view.shell = crate::ui::shell::compute_shell_view(
+            &layout,
+            crate::ui::shell::ShellGeometryKey::new(area, 0, 26, 0),
+            crate::ui::shell::ShellView::default(),
+            &|region| u16::from(region == RegionId::LeftPanel) * 26,
+        );
+
+        // A current-generation position inside the sidebar is owned by the
+        // hit tier.
+        assert_eq!(
+            shell_mouse_owner_at(&state, sidebar_position),
+            ShellInputOwner::TopmostHit(RegionId::LeftPanel),
+            "a live sidebar position must resolve through the hit tier"
+        );
+
+        // A blocking overlay outranks every positional hit.
+        state.mode = Mode::GlobalMenu;
+        assert_eq!(
+            shell_mouse_owner_at(&state, sidebar_position),
+            ShellInputOwner::TopmostOverlay,
+            "the hit tier must never outrank a blocking overlay"
+        );
+        state.mode = Mode::Terminal;
+
+        // After a geometry change the SAME coordinates belong to the current
+        // owner; the vanished sidebar authority is gone with its generation.
+        let previous = std::mem::take(&mut state.view.shell);
+        state.view.shell = crate::ui::shell::compute_shell_view(
+            &layout,
+            crate::ui::shell::ShellGeometryKey::new(area, 0, 4, 0),
+            previous,
+            &|region| u16::from(region == RegionId::LeftPanel) * 4,
+        );
+        assert_eq!(
+            shell_mouse_owner_at(&state, sidebar_position),
+            ShellInputOwner::TopmostHit(RegionId::WorkspaceStage),
+            "old coordinates must re-resolve to their current owner"
+        );
+
+        // Outside every live region the hit tier stays silent.
+        assert_eq!(
+            shell_mouse_owner_at(&state, Position::new(100, 100)),
+            ShellInputOwner::GlobalShortcut,
+            "a positionless miss must fall through, never invent a hit"
+        );
+    }
+
+    // Test-local seam mirroring today's production mouse context builder
+    // exactly; the SF4.2-07 GREEN replaces this with the position-taking
+    // production `shell_mouse_input_owner` (SF4.2-01 seam precedent).
+    fn shell_mouse_owner_at(state: &AppState, _position: Position) -> ShellInputOwner {
+        state.shell_mouse_input_owner()
+    }
+
     // SF4.2-06 companion characterization: the collapsed-sidebar guard inside
     // `on_sidebar_divider` is load-bearing but was previously unpinned. The
     // adversarial fixture keeps a stale non-zero sidebar rect in the view so
