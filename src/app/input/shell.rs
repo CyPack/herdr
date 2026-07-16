@@ -152,3 +152,128 @@ impl AppState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::layout::{Position, Rect};
+
+    use super::*;
+
+    #[test]
+    fn active_sidebar_capture_right_arrow_previews_one_cell() {
+        let mut state = state_with_sidebar_capture();
+
+        let handled = handle_shell_resize_key_for_test(
+            &mut state,
+            KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+        );
+
+        assert_eq!(
+            (
+                handled,
+                state.shell_resize_preview_width(),
+                state.sidebar_width,
+                state.session_dirty,
+            ),
+            (true, Some(27), 26, false)
+        );
+    }
+
+    #[test]
+    fn repeated_keyboard_resize_accumulates_through_same_preview_path() {
+        let mut state = state_with_sidebar_capture();
+        let right = KeyEvent::new(KeyCode::Right, KeyModifiers::NONE);
+
+        handle_shell_resize_key_for_test(&mut state, right);
+        handle_shell_resize_key_for_test(&mut state, right);
+
+        assert_eq!(state.shell_resize_preview_width(), Some(28));
+        assert_eq!(state.sidebar_width, 26);
+        assert!(!state.session_dirty);
+    }
+
+    #[test]
+    fn active_sidebar_capture_enter_commits_preview() {
+        let mut state = state_with_sidebar_capture();
+        handle_shell_resize_key_for_test(
+            &mut state,
+            KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+        );
+        state.session_dirty = false;
+
+        let handled = handle_shell_resize_key_for_test(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+
+        assert_eq!(
+            (
+                handled,
+                state.sidebar_width,
+                state.shell_resize_active(),
+                state.session_dirty,
+            ),
+            (true, 27, false, true)
+        );
+    }
+
+    #[test]
+    fn active_sidebar_capture_escape_restores_original() {
+        let mut state = state_with_sidebar_capture();
+        handle_shell_resize_key_for_test(
+            &mut state,
+            KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+        );
+        state.session_dirty = false;
+
+        let handled = handle_shell_resize_key_for_test(
+            &mut state,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        );
+
+        assert_eq!(
+            (
+                handled,
+                state.sidebar_width,
+                state.shell_resize_active(),
+                state.session_dirty,
+            ),
+            (true, 26, false, false)
+        );
+    }
+
+    #[test]
+    fn active_sidebar_capture_consumes_non_axis_key_inert() {
+        let mut state = state_with_sidebar_capture();
+
+        let handled = handle_shell_resize_key_for_test(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+        );
+
+        assert_eq!(
+            (
+                handled,
+                state.shell_resize_preview_width(),
+                state.sidebar_width,
+                state.session_dirty,
+            ),
+            (true, Some(26), 26, false)
+        );
+    }
+
+    fn state_with_sidebar_capture() -> AppState {
+        let mut state = AppState::test_new();
+        crate::ui::compute_view(&mut state, Rect::new(0, 0, 106, 40));
+        assert!(state.begin_sidebar_resize(Position::new(25, 5)));
+        state.session_dirty = false;
+        state
+    }
+
+    fn handle_shell_resize_key_for_test(_state: &mut AppState, _key: KeyEvent) -> bool {
+        // RED-only seam: SF3.1 routes focused divider keys through the same
+        // capture/preview/commit/cancel reducer as mouse input.
+        false
+    }
+}
