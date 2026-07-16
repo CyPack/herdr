@@ -76,7 +76,7 @@ Authoritative plans:
   probe skip, Linux/Windows Clippy is clean, Bun is 17/17, Python is 64/64,
   and the refreshed graph is 19,809 nodes / 91,610 edges.
 
-### SF2 — Shell Geometry Foundation (I7, SF2.4 active)
+### SF2 — Shell Geometry Foundation (I7-I14 closed)
 
 - [x] RED `shell_layout_places_dock_sidebar_stage_without_overlap` with a
   compile-valid behavior assertion.
@@ -86,15 +86,26 @@ Authoritative plans:
   `f272a881` is published to both CyPack refs; focused shell is 81/81, frozen
   SF1 is 11/11, full Nextest is 3232/3232 plus the named B0 skip, and the
   single-worker graph is fresh at 19,966 nodes / 92,183 edges.
-- [ ] Project cached `ShellView` with generation-safe flattened semantic hits.
-- [ ] Close bounds, O(node_count), legacy-equivalence, Linux/Windows/full gates,
-  atomic commits, publication, and graph refresh.
+- [x] Project cached `ShellView` with generation-safe flattened semantic hits.
+  SF2.4 RED/GREEN is `2a440478` / `07133b8b`; unchanged keys reuse the owned
+  view without solver invocation or collection clone, changed keys advance
+  once, stale/exhausted generations fail closed, and mobile clears hits once.
+- [x] Close bounds, O(node_count), legacy-equivalence, Linux/Windows/full gates,
+  atomic commits, publication, and graph refresh. Both CyPack refs equal exact
+  product SHA `07133b8b9e9cf10b9b3dea0febe22a8389457164`; fresh closure is
+  cached-view 7/7, broad shell 88/88, `src/ui.rs` 41/41, SF1 11/11, full
+  Nextest 3239/3239 plus only the B0 skip, and graph 20,017 / 91,917.
 
 Progress evidence:
 `.codex/evidence/shell-foundation-sf2-geometry-progress.md`.
 
-### SF3 — Resize / Collapse / Scroll / Persistence
+### SF3 — Resize / Collapse / Scroll / Persistence (SF3.1 active)
 
+- [ ] Complete the SF3.1 I2-I6 graph/drift and characterization pass for
+  divider capture, preview, persistence dirtying, and PTY resize ownership.
+- [ ] RED `divider_down_captures_original_constraints` and
+  `drag_preview_clamps_without_dirty_or_pty_resize` with compile-valid missing-
+  behavior assertions; planned commit `test: define transactional shell resize`.
 - [ ] Add transactional divider preview/commit/cancel with zero preview disk/
   PTY churn and at most one commit resize.
 - [ ] Add bounded collapse/restore and owning horizontal/vertical viewports.

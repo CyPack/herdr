@@ -1,4 +1,4 @@
-# Current State — 2026-07-15
+# Current State — 2026-07-16
 
 ## Repository
 
@@ -34,22 +34,23 @@
   `docs/superpowers/plans/2026-07-15-herdr-file-manager-post-shell-implementation.md`.
 - Plan review evidence:
   `.codex/evidence/shell-foundation-plan-review.md`.
-- SF0 and SF1 are closed. A0-A7 and I0-I6 are complete. SF2.1-SF2.3 are also
-  closed and published through `f272a881`: named regions, bounded validation,
-  typed templates, deterministic track allocation, and responsive degradation
-  are live. The current delivery phase remains I7/SF2, with SF2.4 cached
-  `ShellView` projection and flattened semantic hits as the only active
-  geometry microtask.
-- The SF2.3 RED/GREEN pair is `2abf2463` / `f272a881`. CyPack
+- SF0, SF1, and SF2 are closed. A0-A7 and delivery gates I0-I14 are complete
+  for the geometry phase. Named regions, bounded validation, typed templates,
+  deterministic track allocation, responsive degradation, one aggregate
+  cached `ShellView`, and generation-safe flattened semantic hits are live.
+  The next product slice is SF3.1 transactional divider resize; it starts with
+  a fresh I2-I6 drift/characterization pass before entering I7 RED.
+- The SF2.4 RED/GREEN pair is `2a440478` / `07133b8b`. CyPack
   `feat/native-fm` and fork `master` both resolve to exact SHA
-  `f272a8811e70b054f5c67f23343d354ff43ecfae`. Fresh closure is broad shell
-  81/81, frozen SF1 11/11, full Nextest 3232/3232 plus only the named B0 skip,
-  Linux/Windows Clippy, Bun 17/17, Python 64/64, fmt, and diff clean.
-- Post-publication single-worker graph evidence is 19,966 nodes / 92,183
-  edges with current `allocate_lengths`, Desktop-template/fail-closed tests,
-  and `miller_layout`. The long-lived built-in MCP channel remains on the old
-  19,890 / 91,721 snapshot; no proxy/process was restarted and CLI status,
-  search, and snippet calls provide the authoritative fresh proof.
+  `07133b8b9e9cf10b9b3dea0febe22a8389457164`. Fresh closure is cached-view
+  7/7, broad shell 88/88, every `src/ui.rs` test 41/41, frozen SF1 11/11,
+  full Nextest 3239/3239 plus only the named B0 skip, Linux/Windows Clippy,
+  Bun 17/17, Python 64/64, fmt, and diff clean.
+- Post-publication single-worker graph evidence is 20,017 nodes / 91,917
+  edges. CLI and built-in MCP status/search/snippet calls return the current
+  by-value `compute_shell_view`, both new fail-closed characterizations, and
+  `miller_layout`; freshness was verified by symbols rather than `ready` alone.
+  No proxy or process was restarted.
 - SF1 commit `7b9b626d` is fast-forward published to both CyPack refs. Exact
   SHA equality at its product/test checkpoint was
   `7b9b626d3e84b4ba03856a8f54b81196985d3f48`. Focused characterization is
@@ -1022,20 +1023,22 @@
 
 ## Exact Next Action
 
-1. Continue I7/SF2 at SF2.4. Add only the compile-valid cached-view RED
-   contracts `unchanged_geometry_key_reuses_shell_generation`,
-   `area_or_constraint_change_advances_shell_generation_once`,
-   `flattened_hits_are_complete_disjoint_and_in_bounds`,
-   `stale_shell_hit_generation_is_rejected`, and
-   `legacy_sidebar_and_center_rects_match_compatibility_projection`.
-2. After observing intended generation/hit assertion failures, implement one
-   aggregate cached `ShellView` and flattened semantic hits. Keep the legacy
-   sidebar/center projection and visible output unchanged, and rerun the SF1
-   11-test baseline after each slice.
-3. Execute phases sequentially through the approved child plans. Do not mix
+1. Begin SF3.1 at delivery gates I2-I6: graph-first trace the existing sidebar
+   divider drag, mouse-capture, persistence-dirty, and PTY-resize seams; name
+   the protected legacy behavior and verify the current characterization set.
+2. Enter I7 only after that drift pass. Add compile-valid RED contracts
+   `divider_down_captures_original_constraints` and
+   `drag_preview_clamps_without_dirty_or_pty_resize`; run them and require
+   missing resize-transaction behavior assertions to fail. Compile/setup
+   errors are not RED evidence. The planned RED commit is
+   `test: define transactional shell resize`.
+3. After valid RED evidence, implement only the smallest bounded transaction
+   state needed for capture and preview. Preview must not write persistence or
+   resize a PTY; production code waits until the behavior RED is observed.
+4. Execute phases sequentially through the approved child plans. Do not mix
    tooling T3.1, Apps/Desktop, S5 registry, S7 popup stack, or unrelated
    refactors into a product commit.
-4. Preserve targeted staging, atomic RED/GREEN/refactor commits, direct full
+5. Preserve targeted staging, atomic RED/GREEN/refactor commits, direct full
    `just check` equivalent, isolated runtime safety, CyPack-only FF writes, and
    post-publication exact-symbol graph freshness at every phase.
 

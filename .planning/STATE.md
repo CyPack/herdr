@@ -1,6 +1,6 @@
 # Herdr Native-FM Planning State
 
-- Updated: 2026-07-15
+- Updated: 2026-07-16
 - Branch: `feat/native-fm`
 - Published SF0 planning artifact checkpoint: `32856f7`
   (`docs: plan shell foundation and files workspace`).
@@ -10,14 +10,14 @@
   `master` at the artifact checkpoint.
 - Approved product program: SF0-SF6 followed by FM1-FM5; Apps/Desktop remains
   a later independent program.
-- Current phase: SF0-SF1 and SF2.1-SF2.3 closed; I7/SF2.4 cached `ShellView`
-  projection and flattened hits are the next executable microtask. SF2 remains
-  open until that slice closes.
-- Published SF2.3 RED/GREEN: `2abf2463` / `f272a881`; both CyPack refs equal
-  exact SHA `f272a8811e70b054f5c67f23343d354ff43ecfae`.
-- Current single-worker graph: 19,966 nodes / 92,183 edges. CLI status/search/
-  snippet prove current `allocate_lengths` and `miller_layout`; the built-in
-  MCP channel is explicitly known stale and was not restarted.
+- Current phase: SF0-SF2 closed through I14. SF3.1 begins at I2-I6 with a
+  fresh graph/drift and characterization pass; transactional divider capture
+  and preview are the next behavior-specific RED slice.
+- Published SF2.4 RED/GREEN: `2a440478` / `07133b8b`; both CyPack refs equal
+  exact SHA `07133b8b9e9cf10b9b3dea0febe22a8389457164`.
+- Current single-worker graph: 20,017 nodes / 91,917 edges. CLI and built-in
+  MCP status/search/snippet prove current by-value `compute_shell_view`, its
+  failure characterizations, and `miller_layout`; no process was restarted.
 - Published CyPack M3 evidence checkpoint: `e9f2fe0`.
 - Verified M2.1 chain: RED `dab1e20`; GREEN product head `0ae6175`.
 - M3.0 evidence is published with exact SHA equality to CyPack
@@ -96,12 +96,16 @@
 
 ## Active Next Increment
 
-- Continue I7/SF2 at SF2.4. First add the five compile-valid cached
-  `ShellView` generation, flattened-hit, stale-generation, and legacy-
-  projection RED contracts from the approved implementation plan.
-- Preserve the published SF1 11-test characterization baseline and visible
-  output while adding one aggregate `ShellView` in atomic RED/GREEN slices.
-- Execute SF2-SF6 and then FM1-FM5 sequentially through the approved child
+- Begin SF3.1 at I2-I6. Trace and characterize existing divider drag, capture,
+  persistence-dirty, and PTY-resize ownership before changing production code.
+- Then write compile-valid RED tests
+  `divider_down_captures_original_constraints` and
+  `drag_preview_clamps_without_dirty_or_pty_resize`, and require missing-
+  transaction behavior assertions to fail. Planned RED commit:
+  `test: define transactional shell resize`.
+- Preserve the SF2 cached-view and SF1 characterization baselines while adding
+  the smallest bounded capture/preview state in atomic RED/GREEN slices.
+- Execute SF3-SF6 and then FM1-FM5 sequentially through the approved child
   plans. Product, continuity, and tooling concerns remain separate.
 
 The separate non-product change-pipeline lane has completed T0-T2. Ratatui

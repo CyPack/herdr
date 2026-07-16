@@ -1,15 +1,16 @@
 # Shell Foundation SF2 Geometry Progress Evidence
 
-Date: 2026-07-15
+Date: 2026-07-16
 
 ## Decision
 
-Result: **PASS for SF2.1-SF2.3. SF2 remains open; SF2.4 is next.**
+Result: **PASS for SF2.1-SF2.4. SF2 is closed; SF3.1 is next.**
 
 The bounded named-region model, typed templates, validation, track policies,
-deterministic solver, and responsive degradation are published. Cached
-`ShellView` projection and flattened semantic hits are intentionally not part
-of this checkpoint and remain the only unfinished SF2 microtask.
+deterministic solver, responsive degradation, cached `ShellView` projection,
+and generation-safe flattened semantic hits are published. The compatibility
+projection preserves the existing sidebar/center output, and the next product
+slice is SF3.1 transactional resize.
 
 ## Git and Publication Boundary
 
@@ -24,17 +25,19 @@ The published SF2 chain is:
 - `2868a681` — `feat: add bounded shell model and templates`
 - `2abf2463` — `test: define shell allocation and degradation`
 - `f272a881` — `feat: add deterministic shell layout solver`
+- `2a440478` — `test: define shell view projection contracts`
+- `07133b8b` — `refactor: project shell geometry through bounded view`
 
-Only `src/ui/shell.rs`, `src/ui/shell/model.rs`,
-`src/ui/shell/template.rs`, and the new `src/ui/shell/layout.rs` entered the
-SF2.3 GREEN commit. The user-owned `.superpowers/` tree was not staged.
+The SF2.4 GREEN commit contains only `src/ui/shell.rs`, the new
+`src/ui/shell/view.rs`, `src/ui.rs`, `src/app/state.rs`, and `src/app/mod.rs`.
+The user-owned `.superpowers/` tree was not staged.
 
-Before publication, both CyPack refs resolved to
-`2868a6812bf5c604657bf90985ddb106169a1d87` and were proven ancestors of the
-local head. Sequential fast-forward pushes then published the complete
-RED/GREEN pair. CyPack `feat/native-fm` and fork `master` both resolve to exact
-SHA `f272a8811e70b054f5c67f23343d354ff43ecfae`. `upstream` was not pushed and
-no force operation occurred.
+Before SF2.4 publication, both CyPack refs resolved to
+`c7307469c17354d60721c84f09f7acba7c08b036` and were proven ancestors of the
+local RED/GREEN chain. Sequential fast-forward pushes published both commits.
+CyPack `feat/native-fm` and fork `master` both resolve to exact SHA
+`07133b8b9e9cf10b9b3dea0febe22a8389457164`. `upstream` was not pushed and no
+force operation occurred.
 
 ## RED Validity
 
@@ -68,6 +71,26 @@ helper supplied a different ContentBounded measurement than the rect
 assertions; production code was not changed, the helper was bound to the same
 measurement authority, and the corrected test passed.
 
+SF2.4 RED commit `2a440478` is compile-valid behavior evidence:
+
+- `unchanged_geometry_key_reuses_shell_generation` observed generation 0
+  instead of 7; run `21b60a22-fa23-44d9-83e5-2618f69ee830`.
+- `area_or_constraint_change_advances_shell_generation_once` observed
+  generations `[0, 0]` instead of `[8, 8]`; run
+  `1ee8f7e0-787d-4e19-90df-c58715b3eb61`.
+- `flattened_hits_are_complete_disjoint_and_in_bounds` observed zero hits
+  instead of two; run `681bf711-d097-4bd0-aed4-71ff4dee65ab`.
+- `stale_shell_hit_generation_is_rejected` returned the current AppDock hit
+  for a stale generation instead of `None`; run
+  `2d72d7fd-e55d-440a-91dd-953106a40ab1`.
+- `legacy_sidebar_and_center_rects_match_compatibility_projection` passed as
+  an explicit compatibility characterization; run
+  `57772f1f-ffef-46d7-a7fc-ad8391d2c479`.
+
+The mobile-empty and generation-exhaustion tests were added after GREEN as
+failure-path characterizations. They are not represented as missing-behavior
+RED evidence.
+
 ## Solver and Failure Contract
 
 - Validation rejects over-depth, over-count, duplicate, missing-stage,
@@ -90,7 +113,51 @@ measurement authority, and the corrected test passed.
   projection unchanged.
 - Production additions contain no `unwrap()` or `expect()`.
 
+## Cached View and Hit Contract
+
+- `ViewState` owns one client-local aggregate `ShellView`; no region-by-region
+  fields, runtime facts, socket messages, filesystem handles, or PTY authority
+  were added.
+- The complete cache key carries terminal area plus layout, constraint, and
+  collapse revisions. A same-key projection returns the owned prior view
+  without solver invocation or HashMap/Vec clone.
+- Every authoritative key change advances generation exactly once and
+  flattens the finite named regions in a deterministic order. Absent and
+  zero-area regions produce no hit target, and the `CenterContent`
+  compatibility alias never creates duplicate input authority.
+- `hit_at` rejects a generation mismatch before coordinate lookup. Generation
+  exhaustion keeps the new geometry visible but clears every hit so `u64`
+  wrap cannot alias an old token.
+- Desktop maps `WorkspaceStage` back through the current center/terminal flow.
+  Mobile owns a distinct empty-projection revision, clears desktop hits once,
+  and reuses the empty view on identical frames.
+- The production compute path moves the cached view with `mem::take`; render
+  remains pure, and the existing retained PTY/render queue behavior is
+  unchanged.
+
 ## Fresh Verification
+
+SF2.4 exact-head closure:
+
+- Exact cached-view/failure selection: 7/7 pass; run
+  `97100ca9-f187-44b5-a8cf-eb6966564ba9`.
+- Broad shell family: 88/88 pass; run
+  `8c0602de-6fbf-4a8e-9683-556d940afea2`.
+- Every `src/ui.rs` test: 41/41 pass; run
+  `f56f4f7b-49a2-445c-9e9d-7efe145da2ae`.
+- Frozen SF1 baseline: 11/11 pass; run
+  `3e18ca5d-ac40-4e8b-a2df-576bc22aee5b`.
+- Full repository Nextest: 3239/3239 pass plus only the named B0 real-host
+  probe skip; no retry; run `a66a2977-7356-4bab-8fa8-4d224cdf958e`.
+- Ordinary Cargo proves `path_beta_real_host_probe` as 1 ignored and 0 failed
+  without executing it.
+- Linux all-target and canonical Windows MSVC binary Clippy pass with
+  `-D warnings`; Bun integration assets 5/5, plugin marketplace 12/12, and
+  Python maintenance 64/64 pass; fmt and diff checks are clean.
+- Deterministic performance evidence: a cache hit invokes the dynamic resolver
+  zero times; a miss retains the existing at-most-two-visits-per-node solver;
+  flattened outer hits are capped by the six finite region identities. No
+  unsupported wall-clock latency claim is made.
 
 - Core solver selection: 17/17 pass, including all 15 planned solver tests;
   run `6c4ca824-3574-417a-bef1-fc6a2b05f3ed`.
@@ -121,33 +188,28 @@ contacted, restarted, or terminated.
 
 ## Graph Evidence
 
-The built-in MCP channel reported `ready` at the old 19,890 nodes / 91,721
-edges and could not find the new solver, proving that `ready` alone was stale.
-No proxy or process was restarted. The documented single-worker command ran:
+Before SF2.4 refresh, the built-in MCP channel reported `ready` at the SF2.3
+19,966 nodes / 92,183 edges and could not find `compute_shell_view`, proving
+that `ready` alone was stale. No proxy or process was restarted. The documented
+single-worker command ran:
 
 ```text
 CBM_WORKERS=1 codebase-memory-mcp cli index_repository '{"repo_path":"/home/ayaz/projects/herdr","mode":"fast","persistence":true}'
 ```
 
-It completed with zero extraction errors at 19,966 nodes / 92,183 edges. CLI
-status, search, and exact snippet calls return current `allocate_lengths`, the
-real Desktop template test, the invalid-tree failure test, and the existing
-`miller_layout`. The graph reports `allocate_lengths` with loop depth 1, no
-linear scan in a loop, no allocation in a loop, and no recursion.
+It completed with zero extraction errors at 20,017 nodes / 91,917 edges. CLI
+and built-in MCP status/search/snippet calls now return the by-value
+`compute_shell_view`, both new failure-path characterizations, and existing
+`miller_layout`. The graph reports `compute_shell_view` with no loop,
+allocation-in-loop, recursion, or linear scan, and the earlier bounded solver
+visit proof remains green.
 
 ## Exact Next Gate
 
-SF2.4 starts with test-only contracts:
-
-1. `unchanged_geometry_key_reuses_shell_generation`;
-2. `area_or_constraint_change_advances_shell_generation_once`;
-3. `flattened_hits_are_complete_disjoint_and_in_bounds`;
-4. `stale_shell_hit_generation_is_rejected`;
-5. `legacy_sidebar_and_center_rects_match_compatibility_projection`.
-
-The tests must be compile-valid and fail only for missing cached `ShellView`
-generation/hit behavior. Production then adds `src/ui/shell/view.rs`, one
-aggregate `ShellView` in `ViewState`, and compatibility projection without
-changing visible output. SF2 closes only after exact tests, all `src/ui.rs`
-tests, the SF1 baseline, Linux/Windows/full gates, CyPack-only publication, and
-fresh graph evidence.
+SF2 completed delivery gates I7-I14. SF3.1 now begins its fresh drift and
+characterization pass before the first new RED. The next behavior-specific RED
+commit is `test: define transactional shell resize`, starting with
+`divider_down_captures_original_constraints` and
+`drag_preview_clamps_without_dirty_or_pty_resize`. Production code must not be
+written until the compile-valid assertions fail for missing resize-transaction
+behavior rather than setup or compilation.
