@@ -1356,7 +1356,7 @@ impl App {
         }
 
         if self.state.product_announcement.is_some() {
-            self.state.mode = Mode::ProductAnnouncement;
+            self.state.enter_overlay_mode(Mode::ProductAnnouncement);
         } else {
             // This exit bypasses `leave_modal`, so drop any remembered
             // pre-overlay focus owner instead of letting it restore later

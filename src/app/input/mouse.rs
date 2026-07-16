@@ -1194,7 +1194,7 @@ impl AppState {
                         y: mouse.row,
                         list: MenuListState::new(0),
                     });
-                    self.mode = Mode::ContextMenu;
+                    self.enter_overlay_mode(Mode::ContextMenu);
                 }
             }
 
@@ -1210,7 +1210,7 @@ impl AppState {
                         y: mouse.row,
                         list: MenuListState::new(0),
                     });
-                    self.mode = Mode::ContextMenu;
+                    self.enter_overlay_mode(Mode::ContextMenu);
                 }
             }
 
@@ -1246,7 +1246,7 @@ impl AppState {
                         y: mouse.row,
                         list: MenuListState::new(0),
                     });
-                    self.mode = Mode::ContextMenu;
+                    self.enter_overlay_mode(Mode::ContextMenu);
                 }
             }
 

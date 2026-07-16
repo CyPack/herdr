@@ -465,7 +465,7 @@ impl AppState {
         });
         self.request_agent_attachment_delivery = None;
         self.view.agent_attachment_action_area = None;
-        self.mode = Mode::AttachFile;
+        self.enter_overlay_mode(Mode::AttachFile);
         Ok(())
     }
 
@@ -552,7 +552,7 @@ impl AppState {
             self.navigator.expanded_workspaces.insert(ws.id.clone());
         }
 
-        self.mode = Mode::Navigator;
+        self.enter_overlay_mode(Mode::Navigator);
         self.navigator.selected = self
             .current_navigator_row_index_from(terminal_runtimes)
             .unwrap_or(0);
@@ -1972,7 +1972,7 @@ impl AppState {
     pub(crate) fn confirm_implicit_worktree_group_close(&mut self, ws_idx: usize) -> bool {
         if self.confirm_close && self.workspace_close_would_close_worktree_group(ws_idx) {
             self.selected = ws_idx;
-            self.mode = Mode::ConfirmClose;
+            self.enter_overlay_mode(Mode::ConfirmClose);
             true
         } else {
             false

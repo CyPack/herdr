@@ -122,7 +122,7 @@ impl App {
             error: None,
             creating: false,
         });
-        self.state.mode = Mode::NewLinkedWorktree;
+        self.state.enter_overlay_mode(Mode::NewLinkedWorktree);
     }
 
     pub(crate) fn open_remove_linked_worktree_confirmation(&mut self, ws_idx: usize) {
@@ -149,7 +149,7 @@ impl App {
             removing: false,
             force_confirmation: false,
         });
-        self.state.mode = Mode::ConfirmRemoveWorktree;
+        self.state.enter_overlay_mode(Mode::ConfirmRemoveWorktree);
     }
 
     pub(crate) fn open_existing_worktree_dialog(&mut self, ws_idx: usize) {
@@ -231,7 +231,7 @@ impl App {
             search_focused: false,
             error: None,
         });
-        self.state.mode = Mode::OpenExistingWorktree;
+        self.state.enter_overlay_mode(Mode::OpenExistingWorktree);
     }
 
     pub(crate) fn handle_worktree_create_key(&mut self, key: KeyEvent) {
@@ -427,7 +427,7 @@ impl App {
                     search_focused: false,
                     error: Some(format!("failed to open worktree: {err}")),
                 });
-                self.state.mode = Mode::OpenExistingWorktree;
+                self.state.enter_overlay_mode(Mode::OpenExistingWorktree);
             }
         }
     }

@@ -348,7 +348,7 @@ impl AppState {
             y,
             list: crate::app::state::MenuListState::new(highlighted),
         });
-        self.mode = crate::app::Mode::ContextMenu;
+        self.enter_overlay_mode(crate::app::Mode::ContextMenu);
     }
 
     /// Handle a left click on a Projects-tab row. A project header row toggles

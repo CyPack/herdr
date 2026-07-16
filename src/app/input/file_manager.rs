@@ -391,7 +391,7 @@ impl App {
                                 y: mouse.row,
                                 list: MenuListState::new(0),
                             });
-                            self.state.mode = Mode::ContextMenu;
+                            self.state.enter_overlay_mode(Mode::ContextMenu);
                         }
                     }
                 }

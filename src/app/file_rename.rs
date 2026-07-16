@@ -135,7 +135,7 @@ impl crate::app::App {
         });
         self.state.name_input = name;
         self.state.name_input_replace_on_type = true;
-        self.state.mode = Mode::RenameFile;
+        self.state.enter_overlay_mode(Mode::RenameFile);
         true
     }
 

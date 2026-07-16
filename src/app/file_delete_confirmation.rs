@@ -31,7 +31,7 @@ impl crate::app::App {
             paths,
             stage: FileManagerDeleteConfirmationStage::ChooseAction,
         });
-        self.state.mode = Mode::ConfirmFileDelete;
+        self.state.enter_overlay_mode(Mode::ConfirmFileDelete);
         true
     }
 

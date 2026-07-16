@@ -116,7 +116,7 @@ fn open_update_release_notes(state: &mut AppState) {
         scroll: 0,
         preview: notes.preview,
     });
-    state.mode = Mode::ReleaseNotes;
+    state.enter_overlay_mode(Mode::ReleaseNotes);
 }
 
 pub(super) fn request_detach(state: &mut AppState) {
@@ -308,7 +308,7 @@ pub(super) fn open_rename_workspace(
     state.name_input =
         state.workspaces[ws_idx].display_name_from(&state.terminals, terminal_runtimes);
     state.name_input_replace_on_type = false;
-    state.mode = Mode::RenameWorkspace;
+    state.enter_overlay_mode(Mode::RenameWorkspace);
 }
 
 pub(super) fn open_rename_active_tab(state: &mut AppState, replace_on_type: bool) {
@@ -319,7 +319,7 @@ pub(super) fn open_rename_active_tab(state: &mut AppState, replace_on_type: bool
         if let Some(name) = ws.active_tab_display_name() {
             state.name_input = name;
             state.name_input_replace_on_type = replace_on_type;
-            state.mode = Mode::RenameTab;
+            state.enter_overlay_mode(Mode::RenameTab);
         }
     }
 }
@@ -339,7 +339,7 @@ pub(super) fn open_rename_pane(state: &mut AppState, pane_id: crate::layout::Pan
         .and_then(|t| t.manual_label.clone())
         .unwrap_or_default();
     state.name_input_replace_on_type = terminal.and_then(|t| t.manual_label.as_ref()).is_none();
-    state.mode = Mode::RenamePane;
+    state.enter_overlay_mode(Mode::RenamePane);
 }
 
 fn next_new_tab_default_name(state: &AppState) -> String {
@@ -356,7 +356,7 @@ pub(super) fn open_new_tab_dialog(state: &mut AppState) {
     state.rename_pane_target = None;
     state.name_input = next_new_tab_default_name(state);
     state.name_input_replace_on_type = true;
-    state.mode = Mode::RenameTab;
+    state.enter_overlay_mode(Mode::RenameTab);
 }
 
 pub(super) fn leave_modal(state: &mut AppState) {
@@ -663,7 +663,7 @@ pub(crate) fn handle_resize_key(state: &mut AppState, raw_key: TerminalKey) {
 }
 
 pub(super) fn open_confirm_close(state: &mut AppState) {
-    state.mode = Mode::ConfirmClose;
+    state.enter_overlay_mode(Mode::ConfirmClose);
 }
 
 #[cfg(test)]
