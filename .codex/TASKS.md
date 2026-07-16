@@ -99,7 +99,7 @@ Authoritative plans:
 Progress evidence:
 `.codex/evidence/shell-foundation-sf2-geometry-progress.md`.
 
-### SF3 — Resize / Collapse / Scroll / Persistence (SF3.3 active)
+### SF3 — Resize / Collapse / Scroll / Persistence (closed)
 
 - [x] Complete the SF3.1 I2-I6 graph/drift and characterization pass for
   divider capture, preview, persistence dirtying, and PTY resize ownership.
@@ -128,10 +128,18 @@ Progress evidence:
   SF1 11/11, full Nextest 3281/3281 plus only B0, Linux/Windows Clippy,
   Bun 17/17, Python 64/64, and graph 20,236 / 94,402. Evidence:
   `.codex/evidence/shell-foundation-sf3-collapse-scroll-progress.md`.
-- [ ] SF3.3: add snapshot v4 shell presentation state; migrate v3 sidebar width,
-  preserve sidebar-section ownership, contain invalid shell data, reject future
-  versions.
-- [ ] Close failure, migration, performance, full-gate, Git, and graph evidence.
+- [x] SF3.3: add snapshot v4 shell presentation state; migrate v3 sidebar
+  width, preserve sidebar-section ownership, contain invalid shell data, reject
+  future versions, make valid v4 shell preferences authoritative, and persist
+  committed collapse/restore state without transient preview geometry.
+- [x] Close failure, migration, performance, full-gate, Git, and graph
+  evidence. The eleven-commit RED/GREEN chain ends at `90be6893`; fresh
+  closure is new snapshot matrix 12/12, broad persistence/shell/sidebar input
+  137/137, frozen SF1 11/11, full Nextest 3292/3292 plus only B0,
+  Linux/Windows Clippy, Bun 17/17, Python 64/64, and graph 20,291 / 94,542.
+  Both CyPack refs equal exact product SHA
+  `90be689359988424b2a7c6206ff45a3207422196`. Evidence:
+  `.codex/evidence/shell-foundation-sf3-persistence.md`.
 
 ### SF4 — SurfaceHost and Input Router
 

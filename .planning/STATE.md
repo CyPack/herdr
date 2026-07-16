@@ -10,18 +10,23 @@
   (`feat: add keyboard shell resize routing`).
 - Published SF3.2 product checkpoint: `45a2e87e`
   (`feat: add bounded shell scroll ownership`).
+- Published SF3.3 product checkpoint: `90be6893`
+  (`feat: persist shell collapse preference`).
 - Exact remote SHA equality was verified for CyPack `feat/native-fm` and fork
-  `master` at the artifact checkpoint.
+  `master` at product SHA `90be689359988424b2a7c6206ff45a3207422196`.
 - Approved product program: SF0-SF6 followed by FM1-FM5; Apps/Desktop remains
   a later independent program.
-- Current phase: SF0-SF2, SF3.1, and SF3.2 closed through I14. SF3.3 begins
-  with a graph/drift pass over snapshot parse/migrate/save/restore ownership,
-  then a behavior-specific v3-to-shell-presentation migration RED.
+- Current phase: SF0-SF3 closed through I14. SF4.1 begins with graph/drift
+  analysis of existing terminal/Files surface, tab/workspace, `FmState`, input,
+  and runtime ownership, then behavior RED
+  `stage_starts_on_terminal_workspace`.
 - Published SF2.4 RED/GREEN: `2a440478` / `07133b8b`; both CyPack refs equal
   exact SHA `07133b8b9e9cf10b9b3dea0febe22a8389457164`.
-- Current single-worker graph: 20,236 nodes / 94,402 edges. Fresh exact search
-  and snippets prove `route_scroll_to_topmost`, `set_sidebar_collapsed`, and
-  `miller_layout`; freshness was not inferred from status alone.
+- Current sequential graph: 20,291 nodes / 94,542 edges. Fresh exact search and
+  snippets prove `miller_layout`, `ShellSnapshotV1`,
+  `SessionSnapshot.restored_left_panel_preference`, and
+  `ShellPresentationState.from_restored_left_panel`; freshness was not inferred
+  from status alone.
 - Published CyPack M3 evidence checkpoint: `e9f2fe0`.
 - Verified M2.1 chain: RED `dab1e20`; GREEN product head `0ae6175`.
 - M3.0 evidence is published with exact SHA equality to CyPack
@@ -100,16 +105,18 @@
 
 ## Active Next Increment
 
-- Begin SF3.3 with graph-first ownership/drift analysis of `SessionSnapshot`,
-  `parse_snapshot`, `migrate_snapshot`, save projection, and restore
-  application.
-- First RED: a v3 snapshot derives bounded shell-presentation defaults from
-  its existing sidebar facts while preserving sidebar-section and unrelated
-  session state.
-- Then add snapshot v4 round-trip, invalid shell containment, and future-
-  version rejection through separate RED/GREEN slices.
-- Preserve SF1/SF2 and the complete SF3.1/SF3.2 behavior baselines; do not mix
-  persistence production with SF4 input/surface work.
+- Begin SF4.1 with graph-first ownership/drift analysis of the existing
+  terminal/Files swap, workspace/tab identities, `FmState`, focus/input
+  precedence, and terminal runtime preservation.
+- First RED: `stage_starts_on_terminal_workspace` proves the new typed
+  client-local Stage state starts on the existing terminal surface without
+  creating a protocol/runtime identity or changing render behavior.
+- Then add activation, bounded singleton/generation failure, close/failure
+  restoration, and terminal-runtime preservation through separate RED/GREEN
+  slices.
+- Preserve frozen SF1 and complete SF2/SF3 baselines; do not mix AppDock render,
+  Files Stage migration, or the broader input router into the first SF4.1 state
+  slice.
 - Execute SF3-SF6 and then FM1-FM5 sequentially through the approved child
   plans. Product, continuity, and tooling concerns remain separate.
 

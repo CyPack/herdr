@@ -3,32 +3,33 @@
 ## 1. SONRAKI ADIM
 
 The user explicitly approved the bounded twelve-phase product program: SF0-SF6
-then FM1-FM5; Apps/Desktop remains later. SF0, SF1, SF2, SF3.1, and SF3.2 are
-closed. SF3.2 adds committed bounded collapse/restore state, routes the existing
-mouse and both keyboard sidebar toggles through one adapter, keys geometry by a
-monotonic collapse revision, and establishes a pure horizontal/vertical scroll
-reducer whose topmost owner consumes boundary and stale input fail-closed.
+then FM1-FM5; Apps/Desktop remains later. SF0-SF3 are closed. SF3 now includes
+transactional divider resize, committed bounded collapse/restore, fail-closed
+two-axis scroll ownership, and typed snapshot-v4 persistence with v3 migration
+and invalid-shell containment.
 
-The published SF3.2 chain is collapse RED/GREEN `deb8ca45` / `08a7d42b`,
-adapter/routing REDs `71d79894`, `a316422e` with GREEN `0ede6fd8`, monotonic
-cache RED/GREEN `5b007728` / `79e50983`, and scroll REDs `3faca061`, `d833081c`
-with GREEN `45a2e87e`. CyPack `feat/native-fm` and fork `master` both resolve
-to exact SHA `45a2e87ec0b69b14c2a19348d09f85a2c7568191`.
+The published SF3.3 chain is migration RED/GREEN `da41127f` / `be917131`,
+typed-v4 RED/GREEN `352e394d` / `385a0bcc`, corruption REDs `1b06456e` and
+`e12e78cf` with GREEN `d22d0d15`, restore-authority RED/GREEN `6fb8f803` /
+`ef9d7f2b`, and collapse round-trip RED/GREEN `4dd62047` / `90be6893`.
+CyPack `feat/native-fm` and fork `master` both resolve to exact product SHA
+`90be689359988424b2a7c6206ff45a3207422196`.
 
-Fresh closure is scroll 6/6, broad shell/sidebar/input 202/202, frozen SF1
-11/11, full Nextest 3281/3281 plus only the named B0 real-host skip,
-Linux/Windows Clippy, Bun 17/17, Python 64/64, and fmt/diff/production-unwrap/
-residue clean. The fresh single-worker graph is 20,236 nodes / 94,402 edges;
-exact search and snippets return `route_scroll_to_topmost`,
-`set_sidebar_collapsed`, and `miller_layout`. Full evidence is
-`.codex/evidence/shell-foundation-sf3-collapse-scroll-progress.md`.
+Fresh SF3.3 closure is snapshot matrix 12/12, broad persistence/shell/sidebar
+input 137/137, frozen SF1 11/11, full Nextest 3292/3292 plus only the named B0
+real-host skip, Linux/Windows Clippy, Bun 17/17, Python 64/64, and clean
+fmt/diff/production-unwrap/residue boundaries. The fresh sequential graph is
+20,291 nodes / 94,542 edges; exact source reads prove `miller_layout`,
+`ShellSnapshotV1`, `SessionSnapshot.restored_left_panel_preference`, and
+`ShellPresentationState.from_restored_left_panel`. Full evidence is
+`.codex/evidence/shell-foundation-sf3-persistence.md`.
 
-The immediate action is SF3.3: graph-first trace `SessionSnapshot`,
-`parse_snapshot`, `migrate_snapshot`, save projection, and restore application.
-Then write the smallest compile-valid behavior RED requiring a v3 snapshot to
-derive bounded shell-presentation defaults from its existing sidebar facts
-without losing sidebar-section or unrelated session state. Do not add snapshot
-v4 product code before that assertion RED.
+The immediate action is SF4.1: graph-first trace the existing terminal/Files
+swap, tab/workspace identity, `FmState`, input precedence, and runtime ownership.
+Then write the smallest compile-valid behavior RED
+`stage_starts_on_terminal_workspace`. Do not add Stage production state before
+that assertion RED. Keep AppDock rendering, Files Stage migration, and the
+broader SF4 router out of this first state slice.
 
 The previous S6/dynamic-N2 NO-GO was valid when no real consumer/demand
 existed. New explicit AppDock/WorkspaceStage/Files, resize/collapse/overlay,
@@ -65,6 +66,13 @@ commits. Never touch stable Herdr/socket/processes or stage `.superpowers/`.
 
 ## 5. BU CODEX OTURUMUNDA TAMAMLANANLAR
 
+- Closed SF3.3 through eleven atomic product commits ending at `90be6893`:
+  snapshot-v4 typed shell state, v3 compatibility migration, corruption
+  containment, v4 restore authority, and committed collapse/restore capture.
+- Ran fresh SF3 closure: snapshot matrix 12/12, broad 137/137, SF1 11/11, full
+  3292/3292 plus only B0, Linux/Windows Clippy, Bun 17/17, Python 64/64, and
+  graph 20,291 / 94,542. Snapshot version is 4, wire protocol remains 16, and
+  stable runtime/socket/processes were untouched.
 - Closed SF3.2 through ten atomic product commits ending at `45a2e87e`:
   bounded collapse/restore, shared input adapter, monotonic cache revision, and
   fail-closed two-axis topmost scroll ownership.
@@ -763,9 +771,10 @@ upstream is never pushed.
 
 See `.codex/TASKS.md` first for the active SF0-SF6 plus FM1-FM5 task list and
 then the completed A3/B2/C1/N3/C2/N4 contracts and historical C3–C6, S5–S7,
-N2, and M1–M3 roadmap. SF0-SF2 are closed through the published SF2.4
-RED/GREEN pair `2a440478` / `07133b8b`; SF3.1 drift/characterization and the
-transactional divider RED are the next executable microtask. A4, B0,
+N2, and M1–M3 roadmap. SF0-SF3 are closed through the published SF3.3 product
+checkpoint `90be6893`; SF4.1 graph/drift analysis and the compile-valid
+`stage_starts_on_terminal_workspace` RED are the next executable microtask.
+A4, B0,
 B1, A3, B2, C1, N3,
 C2, N4, C3.1, C3.2, C3.3, C4.1, C4.2, C4.3, C4.4.1 PROGRESS, C4.4.2
 CANCEL, C4.4.3 RECONCILE, C4.4.4 RECOVERY, C4.4.5 GATES, C5.1–C5.5, and
