@@ -66,4 +66,15 @@ mod tests {
             )
         );
     }
+
+    #[test]
+    fn reactivating_singleton_files_keeps_one_surface() {
+        let mut stage = StageState::default();
+        stage.activate_files();
+        let first_activation = stage;
+
+        stage.activate_files();
+
+        assert_eq!(stage, first_activation);
+    }
 }
