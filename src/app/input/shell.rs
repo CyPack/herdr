@@ -547,6 +547,54 @@ mod tests {
         state.handle_shell_resize_key(key)
     }
 
+    // SF4.2-05: closing an overlay restores the previous VALID focus owner,
+    // not blindly the Terminal/Navigate template fallback. The launcher is
+    // explicitly enabled in Resize mode, so GlobalMenu-from-Resize is a real
+    // user path whose close must return to the resize session.
+    #[test]
+    fn focus_restores_after_overlay_close() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+
+        // Control: a Terminal-origin overlay still falls back to Terminal.
+        let mut state = AppState::test_new();
+        state.workspaces = vec![crate::workspace::Workspace::test_new("one")];
+        state.active = Some(0);
+        state.selected = 0;
+        state.mode = Mode::Terminal;
+        super::super::modal::open_global_menu(&mut state);
+        assert_eq!(state.mode, Mode::GlobalMenu);
+        super::super::modal::handle_global_menu_key(&mut state, esc);
+        assert_eq!(
+            state.mode,
+            Mode::Terminal,
+            "control: a Terminal-origin overlay close keeps the fallback"
+        );
+
+        // A Resize-origin overlay close must restore the resize session.
+        state.mode = Mode::Resize;
+        super::super::modal::open_global_menu(&mut state);
+        assert_eq!(state.mode, Mode::GlobalMenu);
+        super::super::modal::handle_global_menu_key(&mut state, esc);
+        assert_eq!(
+            state.mode,
+            Mode::Resize,
+            "closing an overlay must restore the previous valid focus owner"
+        );
+
+        // A remembered owner that is no longer valid falls back instead.
+        state.mode = Mode::Resize;
+        super::super::modal::open_global_menu(&mut state);
+        state.active = None;
+        super::super::modal::handle_global_menu_key(&mut state, esc);
+        assert_eq!(
+            state.mode,
+            Mode::Navigate,
+            "an invalid remembered owner must fall back, never restore blindly"
+        );
+    }
+
     // SF4.2-04 characterization: an active divider capture already owns every
     // move/up event through `DragState`, independent of coordinates. This is
     // GREEN by intent (SF1 precedent): drag routing never re-resolves rects,
