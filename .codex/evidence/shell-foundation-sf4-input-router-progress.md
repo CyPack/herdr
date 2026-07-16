@@ -177,18 +177,44 @@ Current mouse ownership is distributed, not total:
   B0 skip; fmt and Linux/Windows Clippy clean. Both CyPack refs equal exact
   SHA `119e4a2d5026af2c4f4e2e23a9aaa27ac2134804`.
 
-## Exact Next Microtask
+## SF4.2-05 Design Analysis (completed — implementation is the next unit)
 
-SF4.2-05 `focus_restores_after_overlay_close`: FIRST verify RED-ability.
-Analysis so far: `leave_modal` restores Terminal/Navigate; the FM tier and
-the capture tier resume by construction after an overlay closes (the
-capture case is already pinned by `overlay_blocks_background_keyboard_shortcut`).
-Candidate genuine gap: an overlay opened FROM `Mode::Resize` (right-click
-pane while resizing is reachable) closes into `Mode::Terminal`, dropping the
-prior Resize owner — decide whether the spec's "previous valid focus owner
-or the template fallback" makes that a defect or an accepted fallback, then
-RED or characterize accordingly. Afterwards: SF4.2-06 inert regions,
-SF4.2-07 stale hit generation (wire `ShellView::hit_at` into the mouse
-context builder), SF4.2-08 hidden-terminal blocking, then the SF4.2 closure
-gate. Do not start SF4.3, SF5, SF6, or change-pipeline T3.1 before SF4.2
-closes.
+RED-ability is CONFIRMED. The genuine gap: `leave_modal`
+(`src/app/input/modal.rs:362`) always restores Terminal/Navigate, dropping a
+non-default previous focus owner. Reachable flows: the launcher explicitly
+allows `Mode::Resize` (`launcher_enabled` includes it), so
+GlobalMenu-from-Resize is a real user path; the `Down(Right)` context-menu
+arms have no mode guard, so ContextMenu-from-Resize and ContextMenu-from-Copy
+are reachable too (the Copy case additionally strands `copy_mode: Some` under
+`Mode::Terminal` — a state inconsistency).
+
+Planned RED: open GlobalMenu from `Mode::Resize`, press Esc, assert the mode
+returns to `Resize` (today: `Terminal`) — plus a ContextMenu-from-Copy row
+asserting `Copy` restore while `copy_mode` is live.
+
+Approved GREEN design (production-grade, NOT a one-field hack):
+- One client-local `overlay_return_mode: Option<Mode>` on `AppState`, set
+  FRESH at EVERY overlay entry site through one `enter_overlay_mode(Mode)`
+  helper (entry inventory, non-test: `worktrees.rs:125/152/234/430`,
+  `file_rename.rs:138`, `file_delete_confirmation.rs:34`, `mod.rs:1358`,
+  `settings.rs:365`, `actions.rs:468/555/1975`, `modal.rs:100/105` plus the
+  three right-click context-menu arms and FM context-menu opens in
+  `mouse.rs`/C3 paths). Wiring every entry removes the stale-restore hazard
+  by construction; partial wiring was analyzed and REJECTED (a lingering
+  value from an unwired entry could restore a long-dead mode).
+- `leave_modal` consumes (`take`) the value and restores it only if still
+  valid (`Resize` requires an active workspace/pane; `Copy` requires
+  `copy_mode.is_some()`); otherwise the existing Terminal/Navigate fallback.
+- Pleasant emergent property: overlay-to-overlay chains (GlobalMenu ->
+  Settings, ContextMenu -> Rename) naturally restore the original owner when
+  the chain closes, matching user intent.
+- Classification: refactor-risk (2+ core surfaces, UI/input state
+  projection) — per HP4 run the characterization inventory over existing
+  `leave_modal` expectations before edits, and expect several fixtures that
+  pin `mode == Terminal` after close from Terminal-origin (unchanged
+  behavior) to stay green; only non-default-origin flows change.
+
+Afterwards: SF4.2-06 inert regions, SF4.2-07 stale hit generation (wire
+`ShellView::hit_at` into the mouse context builder), SF4.2-08
+hidden-terminal blocking, then the SF4.2 closure gate. Do not start SF4.3,
+SF5, SF6, or change-pipeline T3.1 before SF4.2 closes.
