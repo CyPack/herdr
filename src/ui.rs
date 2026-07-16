@@ -657,13 +657,16 @@ impl compose::Component for BaseLayer {
         if app.view.layout != ViewLayout::Mobile {
             render_tab_bar(app, frame, tab_bar_area);
         }
-        // CenterContent hosts either the terminal panes (default) or, when the
-        // native file manager is open, its directory list — the first
-        // non-terminal content swapped into a named region.
-        if app.file_manager.is_some() {
-            render_file_manager(app, frame, terminal_area);
-        } else {
-            render_panes(app, terminal_runtimes, frame, terminal_area);
+        // CenterContent hosts exactly one typed stage surface. The TYPED
+        // Stage projection chooses the renderer so a divergent legacy
+        // boolean can never paint a surface the stage does not own.
+        match app.stage.surface_view() {
+            surface_host::StageSurfaceView::NativeFiles => {
+                render_file_manager(app, frame, terminal_area)
+            }
+            surface_host::StageSurfaceView::TerminalWorkspace => {
+                render_panes(app, terminal_runtimes, frame, terminal_area)
+            }
         }
 
         // Ambient notifications sit above the center content, but below
@@ -948,7 +951,8 @@ mod tests {
         app.active = Some(0);
         app.selected = 0;
         app.mode = Mode::Terminal;
-        app.file_manager = Some(crate::fm::FmState::new(&root));
+        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .expect("Files activation");
         app.file_manager.as_mut().expect("open fm").cursor = 8;
 
         // Desktop: height 7 -> tab bar 1, FM header 1, panel title 1,
@@ -1000,7 +1004,8 @@ mod tests {
         app.active = Some(0);
         app.selected = 0;
         app.mode = Mode::Terminal;
-        app.file_manager = Some(crate::fm::FmState::new(&root));
+        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .expect("Files activation");
         app.file_manager.as_mut().expect("open fm").cursor = 4;
 
         compute_view(&mut app, Rect::new(0, 0, 100, 6));
@@ -1074,7 +1079,8 @@ mod tests {
         app.active = Some(0);
         app.selected = 0;
         app.mode = Mode::Terminal;
-        app.file_manager = Some(crate::fm::FmState::new(&root));
+        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .expect("Files activation");
         app.file_manager_clipboard = vec![root.join("clipboard.txt")];
 
         compute_view(&mut app, Rect::new(0, 0, 100, 6));
@@ -1154,7 +1160,8 @@ mod tests {
         compute_view(&mut app, Rect::new(0, 0, 100, 6));
         assert!(app.view.file_manager_action_bar.is_none());
 
-        app.file_manager = Some(crate::fm::FmState::new(&root));
+        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .expect("Files activation");
         compute_view(&mut app, Rect::new(0, 0, 100, 6));
         let reopened = app
             .view
@@ -1418,7 +1425,8 @@ mod tests {
         app.active = Some(0);
         app.selected = 0;
         app.mode = Mode::Terminal;
-        app.file_manager = Some(crate::fm::FmState::new(&root));
+        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .expect("Files activation");
 
         compute_view(&mut app, Rect::new(0, 0, 100, 30));
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
@@ -1475,7 +1483,8 @@ mod tests {
         app.active = Some(0);
         app.selected = 0;
         app.mode = Mode::Terminal;
-        app.file_manager = Some(crate::fm::FmState::new(&root));
+        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .expect("Files activation");
 
         let mut terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
         assert!(
@@ -1544,7 +1553,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
         );
-        app.file_manager = Some(file_manager);
+        app.try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
         app.file_manager_operation = Some(FileManagerOperationState {
             generation: 1,
             kind: FileManagerOperationKind::Copy,
