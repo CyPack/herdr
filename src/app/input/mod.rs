@@ -865,6 +865,42 @@ mod tests {
         assert!(!app.state.session_dirty);
     }
 
+    #[test]
+    fn shell_resize_keyboard_supports_both_directions_and_vim_aliases() {
+        let mut state = AppState::test_new();
+        crate::ui::compute_view(&mut state, ratatui::layout::Rect::new(0, 0, 106, 40));
+        assert!(state.begin_sidebar_resize(ratatui::layout::Position::new(25, 5)));
+        state.session_dirty = false;
+
+        for (code, expected) in [
+            (KeyCode::Left, 25),
+            (KeyCode::Char('h'), 24),
+            (KeyCode::Char('l'), 25),
+            (KeyCode::Right, 26),
+        ] {
+            assert!(state.handle_shell_resize_key(KeyEvent::new(code, KeyModifiers::NONE)));
+            assert_eq!(state.shell_resize_preview_width(), Some(expected));
+        }
+        assert_eq!(state.sidebar_width, 26);
+        assert!(!state.session_dirty);
+    }
+
+    #[tokio::test]
+    async fn context_menu_escape_owns_key_before_active_shell_resize_capture() {
+        let mut app = app_for_mouse_test();
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
+        assert!(app
+            .state
+            .begin_sidebar_resize(ratatui::layout::Position::new(25, 5)));
+        app.state.mode = Mode::ContextMenu;
+
+        app.handle_key(TerminalKey::new(KeyCode::Esc, KeyModifiers::NONE))
+            .await;
+
+        assert!(app.state.shell_resize_active());
+        assert_ne!(app.state.mode, Mode::ContextMenu);
+    }
+
     fn test_app() -> App {
         App::new(
             &crate::config::Config::default(),
