@@ -56,16 +56,13 @@ non-product pipeline paused.
 
 Priority is mandatory:
 
-1. P0 ACTIVE: SF4.3 cross-layer surface projection and render purity.
-   SF4.2 is CLOSED 8/8 at `20f659c1` (closure gate incl. Bun/Python;
-   evidence `shell-foundation-sf4-input-router-progress.md`). SF4.3-01
-   (`7796d855`/`acc82ffd`, surface-exclusive stage hit geometry on
-   desktop AND mobile) and SF4.3-02 (`bb5a6899`/`1bc69cf5`, stale
-   projection retirement inside the switch transactions) are GREEN.
-   Next: SF4.3-03/04 render purity rows (verify RED-ability first —
-   likely characterizations), then 05 retained path, 06 SurfaceHost
-   typed renderer selection, closure gate. Evidence:
-   `.codex/evidence/shell-foundation-sf4-surface-projection-progress.md`.
+1. P0 ACTIVE: SF4 is FULLY CLOSED (SF4.1 8/8, SF4.2 8/8 at `20f659c1`,
+   SF4.3 6/6 at `f973740e` — closure gate incl. Bun/Python). Next: run
+   the SF4 closure review against the plan's "Phase Completion and
+   Publication" section, then SF5.1 Dock model/geometry/pure render and
+   SF5.2 Dock interaction/popover. Evidence:
+   `.codex/evidence/shell-foundation-sf4-surface-projection-progress.md`
+   and `shell-foundation-sf4-input-router-progress.md`.
 2. P0 NEXT: SF4.3 -> SF4.4 -> SF5 -> SF6 -> FM1 -> FM2 -> FM3 -> FM4
    -> FM5.
 3. P1 PAUSED: `herdr-change-pipeline` T3.1-T10.9, until the current sequential
@@ -80,10 +77,11 @@ continuity, and pipeline files in one commit.
 ## Current Verified Truth
 
 - Branch: `feat/native-fm`.
-- Verified product head: `1bc69cf5`
-  (`feat: retire hidden surface projection on stage switch`, SF4.3-02).
-- Matching RED: `bb5a6899`
-  (`test: require stale projection retirement on surface switch`).
+- Verified product head: `f973740e`
+  (`feat: choose stage renderer from typed surface authority`, SF4.3-06
+  — SF4.3 CLOSED 6/6, SF4 fully closed).
+- Matching RED: `a9b67112`
+  (`test: require typed stage authority for renderer choice`).
 - Separate test-stability commit `3c853a70` closed the parallel-load
   process-exit suppression flake class in `src/terminal/state.rs`.
 - SF0-SF3 are closed. SF4.1 is CLOSED with 8/8 behavior slices GREEN.
@@ -99,10 +97,9 @@ continuity, and pipeline files in one commit.
   - `056f0879` / `f0f32075`: failed open restores exact Stage/focus.
   - `784fdc2e` / `944a9d4c`: stage switches preserve terminal runtime
     (`AppDefinition`/`LaunchPolicy` + pure `StageState::surface_view()`).
-- Next tests are not yet written:
-  `surface_render_is_deterministic_for_identical_state` and
-  `surface_render_does_not_mutate_app_state` (SF4.3-03/04 — verify
-  RED-ability BEFORE writing; likely characterizations).
+- Next test is not yet written: the first SF5.1 RED from the plan's
+  "Task SF5.1" catalog (Dock model, geometry, and pure render), after the
+  SF4 closure review.
 - Legacy `AppState.file_manager: Option<FmState>` curtain still renders. Do
   not remove it until SF6.
 - `previous_pane_focus` is existing pane history, not the new SF4.2 focus
@@ -110,13 +107,12 @@ continuity, and pipeline files in one commit.
   seam, never persisted.
 - Protocol remains 16. SF4.1 and SF4.2 stayed client-local presentation
   state.
-- Full current gate: Nextest 3,311/3,311 passed plus one named B0 skip
-  (`--no-fail-fast`, zero regressions), Linux all-target Clippy, Windows
-  MSVC bin Clippy, fmt, diff and added-production-`unwrap()` clean (Bun
-  5/5 + 12/12 and Python 64/64 last verified at the SF4.2 closure gate
-  `20f659c1`; rerun at the SF4.3 closure gate).
+- Full current CLOSURE gate: Nextest 3,315/3,315 passed plus one named
+  B0 skip (`--no-fail-fast`), Linux all-target Clippy, Windows MSVC bin
+  Clippy, Bun 5/5 + 12/12, Python 64/64, fmt, diff and
+  added-production-`unwrap()` clean.
 - Both CyPack refs equal exact SHA
-  `1bc69cf5d8f1118468d4a1adffd3b33956ebcf14`.
+  `f973740e2bda45c0cc39d8c9afd1061d8b47761d`.
 - User-owned `.superpowers/` is untracked and must never be staged or edited.
 
 ## Mandatory Git and Remote Audit

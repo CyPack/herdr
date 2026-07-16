@@ -179,10 +179,19 @@
   transactions retire the hidden surface's projected view geometry in the
   same mutation (open: pane/split/agent-frame; close: Files
   row/action/header/action-bar), closing the stale window between a
-  switch and the next compute. Current verified head: `1bc69cf5`.
-- Next microtask: SF4.3-03/04 render purity rows (verify RED-ability
-  first — likely characterizations), then 05 retained path, 06
-  SurfaceHost typed renderer, SF4.3 closure gate. See
+  switch and the next compute.
+- SF4.3 is CLOSED 6/6: 03+04 render purity characterizations
+  (`08d73676`, plus a noted sidebar Projects-tab `SystemTime::now()`
+  render read recorded as a follow-up candidate), 05 retained-path
+  characterization (`1f57ccbb`), 06 typed renderer authority
+  (`a9b67112`/`f973740e` — `BaseLayer` matches `stage.surface_view()`;
+  seven direct-FM test fixtures migrated onto the stage transaction).
+  Closure gate at `f973740e`: Rust 3,315/3,315 + B0 skip, Bun 5/5 +
+  12/12, Python 64/64, both Clippy targets, fmt/diff/unwrap clean.
+  SF4 (4.1/4.2/4.3) is now fully closed. Current verified head:
+  `f973740e`.
+- Next microtask: SF4 closure review (plan "Phase Completion and
+  Publication"), then SF5.1 Dock model/geometry/pure render. See
   `.codex/evidence/shell-foundation-sf4-surface-projection-progress.md`.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one
