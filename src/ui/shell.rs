@@ -15,6 +15,8 @@
 //! area and returns rects, matching herdr's `compute_view` (geometry) / `render`
 //! (pure draw) split.
 
+use std::collections::BTreeMap;
+
 use ratatui::layout::{Constraint, Layout, Rect};
 
 // Interaction reducers land test-first before their input adapters consume
@@ -32,10 +34,38 @@ pub(crate) use interaction::{
 };
 pub(crate) use layout::ResponsiveDegradation;
 pub(crate) use model::{
-    RegionId, RegionRects, RegionSize, ShellChild, ShellDirection, ShellLayout, ShellNode,
-    TrackPolicy,
+    ComponentPlacement, RegionId, RegionRects, RegionSize, ShellChild, ShellComponentId,
+    ShellDirection, ShellLayout, ShellNode, TrackPolicy,
 };
+pub(crate) use template::ShellTemplateId;
 pub(crate) use view::{compute_empty_shell_view, compute_shell_view, ShellGeometryKey, ShellView};
+
+pub(crate) fn template_persistence_parts(
+    template: ShellTemplateId,
+) -> (
+    ShellNode,
+    BTreeMap<RegionId, TrackPolicy>,
+    Vec<ComponentPlacement>,
+) {
+    let layout = template.build();
+    (layout.root, layout.tracks, layout.component_placements)
+}
+
+pub(crate) fn validate_persisted_shell_parts(
+    root: &ShellNode,
+    region_constraints: &BTreeMap<RegionId, TrackPolicy>,
+    component_placements: &[ComponentPlacement],
+) -> Result<(), String> {
+    ShellLayout::from_parts(
+        root.clone(),
+        region_constraints.clone(),
+        Vec::new(),
+        component_placements.to_vec(),
+    )
+    .validate()
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
 
 impl Default for ShellLayout {
     /// Today's outer shell: a horizontal split of the frame into the left

@@ -6,12 +6,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::layout::Node;
 use crate::terminal::TerminalRuntimeRegistry;
-use crate::ui::shell::{RegionId, TrackPolicy};
+use crate::ui::shell::{
+    template_persistence_parts, validate_persisted_shell_parts, ComponentPlacement, RegionId,
+    ShellComponentId, ShellNode, ShellTemplateId, TrackPolicy,
+};
 use crate::workspace::Workspace;
 
 /// Current snapshot format version.
-pub(super) const SNAPSHOT_VERSION: u32 = 3;
+pub(super) const SNAPSHOT_VERSION: u32 = 4;
 
+const SHELL_SNAPSHOT_VERSION: u16 = 1;
 const LEGACY_LEFT_PANEL_MIN_WIDTH: u16 = 4;
 const LEGACY_LEFT_PANEL_DEFAULT_WIDTH: u16 = 26;
 const LEGACY_LEFT_PANEL_MAX_WIDTH: u16 = 40;
@@ -20,12 +24,26 @@ const LEGACY_LEFT_PANEL_MAX_WIDTH: u16 = 40;
 ///
 /// SF3.3 grows this bounded DTO test-first. It deliberately excludes runtime,
 /// focus, hover, capture, computed geometry, and worker state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ShellSnapshotV1 {
+    pub(crate) schema_version: u16,
+    pub(crate) template: ShellTemplateId,
+    pub(crate) root: ShellNode,
     #[serde(default)]
     pub(crate) region_constraints: BTreeMap<RegionId, TrackPolicy>,
     #[serde(default)]
+    pub(crate) component_placements: Vec<ComponentPlacement>,
+    #[serde(default)]
     pub(crate) collapse_restore_widths: BTreeMap<RegionId, u16>,
+    #[serde(default)]
+    pub(crate) pinned_dock_order: Vec<PinnedBuiltinAppV1>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum PinnedBuiltinAppV1 {
+    Terminal,
+    Files,
 }
 
 impl ShellSnapshotV1 {
@@ -33,17 +51,57 @@ impl ShellSnapshotV1 {
         let preferred = sidebar_width
             .unwrap_or(LEGACY_LEFT_PANEL_DEFAULT_WIDTH)
             .clamp(LEGACY_LEFT_PANEL_MIN_WIDTH, LEGACY_LEFT_PANEL_MAX_WIDTH);
+        let template = ShellTemplateId::DockSidebarStage;
+        let (root, mut region_constraints, _) = template_persistence_parts(template);
+        region_constraints.insert(
+            RegionId::LeftPanel,
+            TrackPolicy::Resizable {
+                min: LEGACY_LEFT_PANEL_MIN_WIDTH,
+                preferred,
+                max: LEGACY_LEFT_PANEL_MAX_WIDTH,
+            },
+        );
         Self {
-            region_constraints: BTreeMap::from([(
-                RegionId::LeftPanel,
-                TrackPolicy::Resizable {
-                    min: LEGACY_LEFT_PANEL_MIN_WIDTH,
-                    preferred,
-                    max: LEGACY_LEFT_PANEL_MAX_WIDTH,
+            schema_version: SHELL_SNAPSHOT_VERSION,
+            template,
+            root,
+            region_constraints,
+            component_placements: vec![
+                ComponentPlacement {
+                    component: ShellComponentId::AppDock,
+                    region: RegionId::AppDock,
                 },
-            )]),
-            collapse_restore_widths: BTreeMap::from([(RegionId::LeftPanel, preferred)]),
+                ComponentPlacement {
+                    component: ShellComponentId::AgentSidebar,
+                    region: RegionId::LeftPanel,
+                },
+                ComponentPlacement {
+                    component: ShellComponentId::WorkspaceStage,
+                    region: RegionId::WorkspaceStage,
+                },
+            ],
+            collapse_restore_widths: BTreeMap::from([
+                (RegionId::AppDock, 5),
+                (RegionId::LeftPanel, preferred),
+            ]),
+            pinned_dock_order: vec![PinnedBuiltinAppV1::Terminal, PinnedBuiltinAppV1::Files],
         }
+    }
+
+    fn from_value(value: serde_json::Value) -> Result<Self, String> {
+        let snapshot = serde_json::from_value::<Self>(value).map_err(|error| error.to_string())?;
+        if snapshot.schema_version != SHELL_SNAPSHOT_VERSION {
+            return Err(format!(
+                "shell snapshot version {} is unsupported",
+                snapshot.schema_version
+            ));
+        }
+        validate_persisted_shell_parts(
+            &snapshot.root,
+            &snapshot.region_constraints,
+            &snapshot.component_placements,
+        )?;
+        Ok(snapshot)
     }
 }
 
@@ -225,9 +283,18 @@ struct RawSessionSnapshot {
 }
 
 fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> {
-    // Snapshot v3 and older never grant authority to a shell payload. Keeping
-    // it raw here lets the v4 slice validate or contain it independently.
-    let _raw_shell = raw.shell;
+    let shell = if raw.version == SNAPSHOT_VERSION {
+        match raw.shell {
+            Some(value) => Some(ShellSnapshotV1::from_value(value)?),
+            None => Some(ShellSnapshotV1::from_legacy_sidebar_width(
+                raw.sidebar_width,
+            )),
+        }
+    } else {
+        Some(ShellSnapshotV1::from_legacy_sidebar_width(
+            raw.sidebar_width,
+        ))
+    };
     Ok(SessionSnapshot {
         version: raw.version,
         workspaces: raw
@@ -237,9 +304,7 @@ fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> 
             .collect::<Result<Vec<_>, _>>()?,
         active: raw.active,
         selected: raw.selected,
-        shell: Some(ShellSnapshotV1::from_legacy_sidebar_width(
-            raw.sidebar_width,
-        )),
+        shell,
         sidebar_width: raw.sidebar_width,
         sidebar_section_split: raw.sidebar_section_split,
         collapsed_space_keys: raw.collapsed_space_keys,

@@ -22,7 +22,7 @@ impl ShellTemplateId {
         self.build().validate()
     }
 
-    fn build(self) -> ShellLayout {
+    pub(super) fn build(self) -> ShellLayout {
         match self {
             Self::StageOnly => shell_layout(
                 slot(RegionId::WorkspaceStage),
