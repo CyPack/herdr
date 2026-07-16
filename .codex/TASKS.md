@@ -137,7 +137,7 @@ Progress evidence:
   closure is new snapshot matrix 12/12, broad persistence/shell/sidebar input
   137/137, frozen SF1 11/11, full Nextest 3292/3292 plus only B0,
   Linux/Windows Clippy, Bun 17/17, Python 64/64, and graph 20,291 / 94,542.
-  Both CyPack refs equal exact product SHA
+  At the product checkpoint, both CyPack refs equaled exact product SHA
   `90be689359988424b2a7c6206ff45a3207422196`. Evidence:
   `.codex/evidence/shell-foundation-sf3-persistence.md`.
 

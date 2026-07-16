@@ -12,7 +12,8 @@ The published SF3.3 chain is migration RED/GREEN `da41127f` / `be917131`,
 typed-v4 RED/GREEN `352e394d` / `385a0bcc`, corruption REDs `1b06456e` and
 `e12e78cf` with GREEN `d22d0d15`, restore-authority RED/GREEN `6fb8f803` /
 `ef9d7f2b`, and collapse round-trip RED/GREEN `4dd62047` / `90be6893`.
-CyPack `feat/native-fm` and fork `master` both resolve to exact product SHA
+At the product checkpoint, CyPack `feat/native-fm` and fork `master` both
+resolved to exact product SHA
 `90be689359988424b2a7c6206ff45a3207422196`.
 
 Fresh SF3.3 closure is snapshot matrix 12/12, broad persistence/shell/sidebar

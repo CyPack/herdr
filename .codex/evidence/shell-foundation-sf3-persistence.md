@@ -120,8 +120,8 @@ probe was contacted, restarted, terminated, or executed.
 
 ## Git and Graph Evidence
 
-Every product commit was targeted-stage only. CyPack `feat/native-fm` and fork
-`master` both resolve to exact product SHA
+Every product commit was targeted-stage only. At the product checkpoint, CyPack
+`feat/native-fm` and fork `master` both resolved to exact product SHA
 `90be689359988424b2a7c6206ff45a3207422196`. `upstream` was not pushed; no
 force push occurred.
 
