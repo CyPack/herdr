@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::{Direction, Rect};
+use ratatui::layout::{Direction, Position, Rect};
 use tracing::warn;
 
 use crate::{
@@ -427,10 +427,7 @@ impl AppState {
                 }
 
                 if self.on_sidebar_divider(mouse.column, mouse.row) {
-                    self.drag = Some(DragState {
-                        target: DragTarget::SidebarDivider,
-                    });
-                    self.set_manual_sidebar_width(mouse.column);
+                    self.begin_sidebar_resize(Position::new(mouse.column, mouse.row));
                     return None;
                 }
 
@@ -895,7 +892,7 @@ impl AppState {
                             }
                         }
                         DragTarget::SidebarDivider => {
-                            self.set_manual_sidebar_width(mouse.column);
+                            self.preview_sidebar_resize(Position::new(mouse.column, mouse.row));
                         }
                         DragTarget::SidebarSectionDivider => {
                             self.set_sidebar_section_split(mouse.row);
@@ -970,6 +967,11 @@ impl AppState {
                                 insert_idx,
                             });
                         }
+                    }
+                    Some(DragState {
+                        target: DragTarget::SidebarDivider,
+                    }) => {
+                        self.commit_sidebar_resize();
                     }
                     Some(_) => {}
                     None => {

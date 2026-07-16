@@ -703,6 +703,7 @@ impl App {
                 pane_infos: Vec::new(),
                 split_borders: Vec::new(),
             },
+            shell_interaction: Default::default(),
             drag: None,
             workspace_press: None,
             tab_press: None,

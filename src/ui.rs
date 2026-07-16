@@ -230,12 +230,19 @@ fn compute_view_internal(
     resize_panes: bool,
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
+    if app
+        .shell_resize_original_total()
+        .is_some_and(|original_total| original_total != area.width)
+    {
+        app.cancel_sidebar_resize_for_terminal_area(area.width);
+    }
+
     if is_mobile_width(area, app.mobile_width_threshold) {
         compute_mobile_view(app, terminal_runtimes, area, resize_panes, cell_size);
         return;
     }
 
-    let sidebar_w = if app.sidebar_collapsed {
+    let committed_sidebar_w = if app.sidebar_collapsed {
         match app.sidebar_collapsed_mode {
             crate::config::SidebarCollapsedModeConfig::Compact => COLLAPSED_WIDTH,
             crate::config::SidebarCollapsedModeConfig::Hidden => 0,
@@ -244,6 +251,11 @@ fn compute_view_internal(
         app.sidebar_width
             .clamp(app.sidebar_min_width, app.sidebar_max_width)
     };
+    let shell_preview_active = app.shell_resize_active();
+    let sidebar_w = app
+        .shell_resize_preview_width()
+        .unwrap_or(committed_sidebar_w);
+    let resize_panes = resize_panes_during_shell_preview(resize_panes, shell_preview_active);
 
     // Derive the outer split from the named-region shell tree. `default()`
     // encodes exactly today's `sidebar | main` layout, so this stays
@@ -265,6 +277,9 @@ fn compute_view_internal(
                 0
             }
         });
+    if shell_preview_active {
+        app.rebase_sidebar_resize_generation(shell_view.generation);
+    }
     let sidebar_area = shell_view.regions.get(RegionId::LeftPanel);
     let main_area = shell_view.regions.get(RegionId::CenterContent);
 
@@ -427,6 +442,10 @@ fn compute_view_internal(
         split_borders,
     };
     app.sync_copy_mode_search_geometry();
+}
+
+fn resize_panes_during_shell_preview(resize_panes: bool, shell_preview_active: bool) -> bool {
+    resize_panes && !shell_preview_active
 }
 
 fn compute_mobile_view(
@@ -853,11 +872,9 @@ mod tests {
 
     fn resize_panes_during_shell_preview_for_test(
         resize_panes: bool,
-        _shell_preview_active: bool,
+        shell_preview_active: bool,
     ) -> bool {
-        // RED-only seam: SF3.1 must suppress runtime resize while rendering a
-        // transient shell preview.
-        resize_panes
+        resize_panes_during_shell_preview(resize_panes, shell_preview_active)
     }
 
     // Mobile keeps its own header/terminal split; the named shell regions stay

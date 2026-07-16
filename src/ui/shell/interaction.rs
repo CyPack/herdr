@@ -95,6 +95,82 @@ impl ResizeUpdate {
             request_pty_resize: false,
         }
     }
+
+    pub(crate) const fn decision(self) -> ResizeDecision {
+        self.decision
+    }
+
+    pub(crate) const fn marks_persistence_dirty(self) -> bool {
+        self.mark_persistence_dirty
+    }
+
+    pub(crate) const fn requests_pty_resize(self) -> bool {
+        self.request_pty_resize
+    }
+}
+
+/// Aggregate transient interaction state. It is intentionally absent from
+/// snapshots and owns no runtime or I/O handle.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ShellInteractionState {
+    resize: Option<ResizeTransaction>,
+}
+
+impl ShellInteractionState {
+    pub(crate) fn begin_resize(&mut self, transaction: ResizeTransaction) {
+        self.resize = Some(transaction);
+    }
+
+    pub(crate) fn resize_active(&self) -> bool {
+        self.resize.is_some()
+    }
+
+    pub(crate) fn resize_generation(&self) -> Option<u64> {
+        self.resize
+            .as_ref()
+            .map(|transaction| transaction.view_generation)
+    }
+
+    pub(crate) fn resize_preview_tracks(&self) -> Option<[u16; 2]> {
+        self.resize
+            .as_ref()
+            .map(|transaction| transaction.preview_tracks)
+    }
+
+    pub(crate) fn resize_original_total(&self) -> Option<u16> {
+        let transaction = self.resize.as_ref()?;
+        transaction.original_tracks[0].checked_add(transaction.original_tracks[1])
+    }
+
+    pub(crate) fn preview_resize(&mut self, pointer: Position, bounds: ResizeBounds) -> bool {
+        self.resize
+            .as_mut()
+            .is_some_and(|transaction| transaction.preview(pointer, bounds))
+    }
+
+    pub(crate) fn preview_keyboard_resize(&mut self, delta: i16, bounds: ResizeBounds) -> bool {
+        self.resize
+            .as_mut()
+            .is_some_and(|transaction| transaction.preview_keyboard_delta(delta, bounds))
+    }
+
+    pub(crate) fn rebase_resize_generation(&mut self, generation: u64) {
+        if let Some(transaction) = self.resize.as_mut() {
+            transaction.view_generation = generation;
+        }
+    }
+
+    pub(crate) fn commit_resize(&mut self, generation: u64) -> ResizeUpdate {
+        ResizeTransaction::commit(&mut self.resize, generation)
+    }
+
+    pub(crate) fn cancel_resize(&mut self) -> ResizeUpdate {
+        ResizeTransaction::cancel(&mut self.resize)
+    }
+
+    pub(crate) fn terminal_resize(&mut self, new_total: u16, bounds: ResizeBounds) -> ResizeUpdate {
+        ResizeTransaction::terminal_resize(&mut self.resize, new_total, bounds)
+    }
 }
 
 impl ResizeTransaction {
@@ -156,6 +232,9 @@ impl ResizeTransaction {
         let Some(transaction) = capture.take() else {
             return ResizeUpdate::inert();
         };
+        if transaction.preview_tracks == transaction.original_tracks {
+            return ResizeUpdate::inert();
+        }
         ResizeUpdate::committed(transaction.preview_tracks)
     }
 

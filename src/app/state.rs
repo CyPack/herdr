@@ -2222,6 +2222,9 @@ pub struct AppState {
     pub mobile_switcher_scroll: usize,
     // View geometry (computed before render, consumed by render + mouse)
     pub view: ViewState,
+    /// Transient shell capture/preview state. Never persisted and never owns
+    /// runtime resources.
+    pub(crate) shell_interaction: crate::ui::shell::ShellInteractionState,
     pub(crate) drag: Option<DragState>,
     pub(crate) workspace_press: Option<WorkspacePressState>,
     pub(crate) tab_press: Option<TabPressState>,
@@ -2672,6 +2675,7 @@ impl AppState {
                 pane_infos: Vec::new(),
                 split_borders: Vec::new(),
             },
+            shell_interaction: Default::default(),
             drag: None,
             workspace_press: None,
             tab_press: None,

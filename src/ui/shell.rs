@@ -26,6 +26,9 @@ mod model;
 mod template;
 mod view;
 
+pub(crate) use interaction::{
+    DividerId, ResizeBounds, ResizeDecision, ResizeTransaction, ResizeUpdate, ShellInteractionState,
+};
 pub(crate) use layout::ResponsiveDegradation;
 pub(crate) use model::{
     RegionId, RegionRects, RegionSize, ShellChild, ShellDirection, ShellLayout, ShellNode,

@@ -487,14 +487,6 @@ impl AppState {
             && row < rect.y + rect.height
     }
 
-    pub(super) fn set_manual_sidebar_width(&mut self, divider_col: u16) {
-        let sidebar = self.view.sidebar_rect;
-        let width = divider_col.saturating_sub(sidebar.x).saturating_add(1);
-        self.sidebar_width = width.clamp(self.sidebar_min_width, self.sidebar_max_width);
-        self.sidebar_width_source = crate::app::state::SidebarWidthSource::Manual;
-        self.mark_session_dirty();
-    }
-
     pub(super) fn on_sidebar_section_divider(&self, col: u16, row: u16) -> bool {
         if self.sidebar_collapsed {
             return false;
@@ -1873,26 +1865,56 @@ mod tests {
     }
 
     #[test]
+    fn sidebar_preview_geometry_rebases_generation_and_commits() {
+        let mut app = app_for_mouse_test();
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 25, 5));
+        app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 30, 5));
+        app.state.session_dirty = false;
+
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 40));
+        assert_eq!(app.state.view.sidebar_rect.width, 31);
+        assert_eq!(app.state.sidebar_width, 26);
+        assert!(shell_resize_capture_for_test(&app.state));
+
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 30, 5));
+
+        assert_eq!(app.state.sidebar_width, 31);
+        assert!(app.state.session_dirty);
+        assert!(!shell_resize_capture_for_test(&app.state));
+    }
+
+    #[test]
+    fn sidebar_divider_click_without_drag_is_clean() {
+        let mut app = app_for_mouse_test();
+        app.state.session_dirty = false;
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 25, 5));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 25, 5));
+
+        assert_eq!(app.state.sidebar_width, 26);
+        assert!(!app.state.session_dirty);
+        assert!(!shell_resize_capture_for_test(&app.state));
+    }
+
+    #[test]
     fn dragging_sidebar_divider_sets_manual_width() {
         let mut app = app_for_mouse_test();
 
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 25, 5));
         app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 30, 5));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 30, 5));
 
         assert_eq!(app.state.sidebar_width, 31);
         let snapshot = capture_snapshot(&app.state);
         assert_eq!(snapshot.sidebar_width, Some(31));
     }
 
-    fn shell_resize_capture_for_test(_state: &crate::app::state::AppState) -> bool {
-        // RED-only seam: SF3.1 adds one aggregate transient shell capture.
-        false
+    fn shell_resize_capture_for_test(state: &crate::app::state::AppState) -> bool {
+        state.shell_resize_active()
     }
 
-    fn shell_resize_preview_width_for_test(_state: &crate::app::state::AppState) -> Option<u16> {
-        // RED-only seam: SF3.1 exposes preview geometry without committing the
-        // persisted sidebar width.
-        None
+    fn shell_resize_preview_width_for_test(state: &crate::app::state::AppState) -> Option<u16> {
+        state.shell_resize_preview_width()
     }
 
     #[test]
@@ -1911,6 +1933,11 @@ mod tests {
             divider_col + 5,
             bottom_row,
         ));
+        app.handle_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            divider_col + 5,
+            bottom_row,
+        ));
 
         assert_eq!(app.state.sidebar_width, 31);
     }
@@ -1922,6 +1949,7 @@ mod tests {
 
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 25, 5));
         app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 50, 5));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 50, 5));
 
         assert_eq!(app.state.sidebar_width, 30);
     }
@@ -1933,6 +1961,7 @@ mod tests {
 
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 25, 5));
         app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 5, 5));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 5, 5));
 
         assert_eq!(app.state.sidebar_width, 22);
     }
