@@ -379,36 +379,45 @@ impl App {
             return;
         }
 
-        match self.handle_file_manager_mouse(mouse) {
-            file_manager::FileManagerMouseDispatch::NotHandled => {}
-            file_manager::FileManagerMouseDispatch::Consumed => return,
-            file_manager::FileManagerMouseDispatch::RowAction { action, entry_path } => {
-                let _ = self.dispatch_file_manager_row_action(action, entry_path);
+        // While a topmost blocking overlay owns the mouse, every background
+        // pre-branch (file manager surface, divider gestures, URL clicks)
+        // stays inert. The overlay's own interactions live in the
+        // mode-guarded state dispatch below.
+        let blocking_overlay =
+            self.state.shell_mouse_input_owner() == ShellInputOwner::TopmostOverlay;
+
+        if !blocking_overlay {
+            match self.handle_file_manager_mouse(mouse) {
+                file_manager::FileManagerMouseDispatch::NotHandled => {}
+                file_manager::FileManagerMouseDispatch::Consumed => return,
+                file_manager::FileManagerMouseDispatch::RowAction { action, entry_path } => {
+                    let _ = self.dispatch_file_manager_row_action(action, entry_path);
+                    return;
+                }
+                file_manager::FileManagerMouseDispatch::HeaderAction(action) => {
+                    let _ = self.dispatch_file_manager_header_action(action);
+                    return;
+                }
+            }
+
+            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                && self.state.on_sidebar_divider(mouse.column, mouse.row)
+            {
+                let now = std::time::Instant::now();
+                let is_double_click = self.last_sidebar_divider_click.is_some_and(|last| {
+                    now.duration_since(last) <= super::SIDEBAR_DOUBLE_CLICK_WINDOW
+                });
+                self.last_sidebar_divider_click = Some(now);
+
+                if is_double_click {
+                    self.state.reset_sidebar_resize_to_preferred();
+                    return;
+                }
+            }
+
+            if self.handle_modified_url_click(mouse) {
                 return;
             }
-            file_manager::FileManagerMouseDispatch::HeaderAction(action) => {
-                let _ = self.dispatch_file_manager_header_action(action);
-                return;
-            }
-        }
-
-        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-            && self.state.on_sidebar_divider(mouse.column, mouse.row)
-        {
-            let now = std::time::Instant::now();
-            let is_double_click = self
-                .last_sidebar_divider_click
-                .is_some_and(|last| now.duration_since(last) <= super::SIDEBAR_DOUBLE_CLICK_WINDOW);
-            self.last_sidebar_divider_click = Some(now);
-
-            if is_double_click {
-                self.state.reset_sidebar_resize_to_preferred();
-                return;
-            }
-        }
-
-        if self.handle_modified_url_click(mouse) {
-            return;
         }
 
         let handled_pane_double_click = self.handle_pane_double_click(mouse);

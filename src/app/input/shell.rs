@@ -81,6 +81,49 @@ impl AppState {
         })
     }
 
+    /// Project current mouse ownership into the frozen router. v0 populates
+    /// the overlay tier only: the capture, positional-hit, and
+    /// focused-component tiers arrive with the later SF4.2 capture and
+    /// stale-generation slices, so unrouted events stay with the existing
+    /// mode-guarded global dispatch.
+    pub(crate) fn shell_mouse_input_owner(&self) -> ShellInputOwner {
+        route_shell_input(ShellInputRouteContext {
+            topmost_overlay: self.mouse_blocking_overlay_active(),
+            active_capture: false,
+            topmost_hit: None,
+            focused_component: false,
+            page_shortcut: false,
+            global_shortcut: true,
+        })
+    }
+
+    /// Every mode whose surface is a topmost blocking overlay for mouse
+    /// routing. The match is exhaustive so a new mode must choose a side
+    /// explicitly instead of silently leaking background gestures.
+    fn mouse_blocking_overlay_active(&self) -> bool {
+        match self.mode {
+            Mode::Terminal | Mode::Prefix | Mode::Navigate | Mode::Copy | Mode::Resize => false,
+            Mode::Onboarding
+            | Mode::ReleaseNotes
+            | Mode::ProductAnnouncement
+            | Mode::AttachFile
+            | Mode::RenameWorkspace
+            | Mode::RenameTab
+            | Mode::RenamePane
+            | Mode::RenameFile
+            | Mode::NewLinkedWorktree
+            | Mode::OpenExistingWorktree
+            | Mode::ConfirmRemoveWorktree
+            | Mode::ConfirmClose
+            | Mode::ConfirmFileDelete
+            | Mode::ContextMenu
+            | Mode::Settings
+            | Mode::GlobalMenu
+            | Mode::KeybindHelp
+            | Mode::Navigator => true,
+        }
+    }
+
     pub(crate) fn begin_sidebar_resize(&mut self, pointer: Position) -> bool {
         let Some(total) = self.current_sidebar_resize_total() else {
             return false;

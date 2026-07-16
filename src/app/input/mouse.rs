@@ -191,6 +191,41 @@ impl AppState {
             return None;
         }
 
+        // An open context menu owns every mouse event except a re-targeting
+        // right-click, which falls through to the shared open arms below.
+        // Wheel, drag, and every other background gesture is consumed
+        // fail-closed so hidden surfaces never act while the menu is open.
+        if self.mode == Mode::ContextMenu
+            && !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right))
+        {
+            match mouse.kind {
+                MouseEventKind::Moved => {
+                    let hovered = self.context_menu_item_at(mouse.column, mouse.row);
+                    if let Some(menu) = &mut self.context_menu {
+                        menu.list.hover(hovered);
+                    }
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    let item_idx = self.context_menu_item_at(mouse.column, mouse.row);
+                    if item_idx.is_some_and(|idx| {
+                        self.context_menu
+                            .as_ref()
+                            .is_some_and(|menu| !menu.item_enabled(idx))
+                    }) {
+                        return None;
+                    }
+                    if let Some(menu) = self.context_menu.take() {
+                        if let Some(idx) = item_idx {
+                            return Some(MouseAction::ContextMenu { menu, idx });
+                        }
+                        leave_modal(self);
+                    }
+                }
+                _ => {}
+            }
+            return None;
+        }
+
         if self.mode == Mode::OpenExistingWorktree {
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
@@ -405,25 +440,6 @@ impl AppState {
                         })
                         .unwrap_or(ModalAction::Cancel);
                     return Some(MouseAction::RenameModal(action));
-                }
-
-                if self.mode == Mode::ContextMenu {
-                    let item_idx = self.context_menu_item_at(mouse.column, mouse.row);
-                    if item_idx.is_some_and(|idx| {
-                        self.context_menu
-                            .as_ref()
-                            .is_some_and(|menu| !menu.item_enabled(idx))
-                    }) {
-                        return None;
-                    }
-                    if let Some(menu) = self.context_menu.take() {
-                        if let Some(idx) = item_idx {
-                            return Some(MouseAction::ContextMenu { menu, idx });
-                        } else {
-                            leave_modal(self);
-                        }
-                    }
-                    return None;
                 }
 
                 if self.on_sidebar_divider(mouse.column, mouse.row) {
@@ -1096,13 +1112,6 @@ impl AppState {
                     self.scroll_workspace_list(1);
                 } else {
                     self.move_selected_workspace_by_visible_delta(1);
-                }
-            }
-
-            MouseEventKind::Moved if self.mode == Mode::ContextMenu => {
-                let hovered = self.context_menu_item_at(mouse.column, mouse.row);
-                if let Some(menu) = &mut self.context_menu {
-                    menu.list.hover(hovered);
                 }
             }
 
