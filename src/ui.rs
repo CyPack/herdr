@@ -1338,6 +1338,67 @@ mod tests {
         );
     }
 
+    // SF4.3-06: the stage renderer is chosen by the TYPED Stage authority
+    // (`stage.surface_view()`), not by the legacy `file_manager.is_some()`
+    // boolean. The adversarial divergent state (Files domain state present
+    // while the typed stage says TerminalWorkspace) pins which source wins:
+    // exactly one typed surface may be rendered and actionable.
+    #[test]
+    fn stage_renderer_follows_typed_surface_authority() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "herdr-typed-renderer-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).expect("create temp root");
+        std::fs::write(root.join("MARKER_ENTRY.txt"), b"x").expect("write marker");
+
+        let text_of = |app: &crate::app::state::AppState| {
+            let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test terminal");
+            terminal
+                .draw(|frame| render(app, frame))
+                .expect("render frame");
+            let buffer = terminal.backend().buffer().clone();
+            let mut text = String::new();
+            for y in 0..30 {
+                for x in 0..100 {
+                    text.push(buffer[(x, y)].symbol().chars().next().unwrap_or(' '));
+                }
+            }
+            text
+        };
+
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("typed-renderer")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.mobile_width_threshold = 0;
+
+        // Control: the aligned NativeFiles state renders the Files surface.
+        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .expect("Files activation");
+        compute_view(&mut app, Rect::new(0, 0, 100, 30));
+        assert!(
+            text_of(&app).contains("MARKER_ENTRY.txt"),
+            "control: the aligned Files state must render the Files surface"
+        );
+
+        // Adversarial divergence: Files domain state present while the typed
+        // stage says TerminalWorkspace. The TYPED authority must win — the
+        // hidden Files surface may not be rendered.
+        app.stage.close_files();
+        compute_view(&mut app, Rect::new(0, 0, 100, 30));
+        assert!(
+            !text_of(&app).contains("MARKER_ENTRY.txt"),
+            "the typed stage authority must choose the renderer, not the legacy boolean"
+        );
+
+        std::fs::remove_dir_all(&root).expect("remove temp root");
+    }
+
     // A2 integration: when the file manager is open, the base layer renders the
     // directory list in the center (CenterContent) instead of the terminal panes.
     #[test]
