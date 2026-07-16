@@ -11,7 +11,10 @@
 - Branch: `feat/native-fm`
 - Acting identity: CyPack external contributor; `origin` is the writable
   `CyPack/herdr` fork and `upstream` is read-only.
-- Current verified product head: `c6b024ce`
+- Current verified head: `20f659c1`
+  (`test: seal hidden terminal input under files surface`, SF4.2-08
+  characterization — SF4.2 MICROPHASE CLOSED 8/8).
+- Latest product GREEN: `c6b024ce`
   (`feat: resolve mouse hits against current shell generation`), RED
   `bb3ac54d` (`test: require current generation hit resolution`).
 - Prior closed heads this session: SF4.2-05 scoped core `8b1882eb`/`5eb63763`,
@@ -21,7 +24,10 @@
 - Program: 7 Shell Foundation phases SF0-SF6 plus 5 FM phases FM1-FM5.
 - Closed phases: SF0, SF1, SF2, SF3, and microphase SF4.1 (8/8 slices GREEN).
 - Active phase: SF4 SurfaceHost and input router.
-- Active microphase: SF4.2; slices 01 (frozen seven-tier router), 02 (overlay
+- Microphase SF4.2 is CLOSED with 8/8 slices GREEN; the closure gate ran
+  the full direct `just check` equivalent (Rust 3,309/3,309 + B0 skip, Bun
+  5/5 + 12/12, Python 64/64, both Clippy targets, fmt/diff/unwrap).
+  Historical slice detail: slices 01 (frozen seven-tier router), 02 (overlay
   mouse blocking), 03 (overlay keyboard ownership over captures, shared
   exhaustive `blocking_overlay_active()` classifier), 04 (capture-ownership
   characterization), and 05 CLOSED (focus restore: `overlay_return_mode` +
@@ -40,17 +46,24 @@
   coordinates re-resolve to their current owner and never grant vanished
   authority; the caller still consumes only the overlay comparison, so
   dispatch stays bit-identical until SF4.3/SF6 consume semantic targets.
-- Immediate next microtask: SF4.2-08 —
-  `files_stage_blocks_hidden_terminal_input` (Files active: no event
-  reaches hidden terminal targets), then the SF4.2 closure gate. See
+- Slice 08 (`20f659c1`, characterization): the hidden-terminal seal was
+  proven already closed by recon plus an 8-kind event matrix through the
+  full production `App::handle_mouse` with a control phase proving the
+  same press reaches the live terminal once Files closes.
+- Immediate next microtask: SF4.3 — cross-layer surface projection and
+  render purity (plan "Task SF4.3"); start from its RED catalog plus the
+  SF4.3 candidates recorded in the evidence file (direct-exit
+  `leave_modal` normalization, in-dispatch wheel arms, FM double-click
+  across overlay episodes, semantic `TopmostHit` consumption). See
   `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
-- Product tree: clean at `c6b024ce`; only the user-owned untracked
+- Product tree: clean at `20f659c1`; only the user-owned untracked
   `.superpowers/` tree exists and must remain untouched/unstaged.
-- Full exact-head gate: 3,308/3,308 Rust tests passed (`--no-fail-fast`),
+- Full exact-head CLOSURE gate: 3,309/3,309 Rust tests (`--no-fail-fast`),
   one named B0 real-host probe skipped, zero retry; Linux all-target and
-  Windows MSVC bin Clippy, fmt/diff/added-production-unwrap checks passed.
+  Windows MSVC bin Clippy; Bun 5/5 + 12/12; Python 64/64;
+  fmt/diff/added-production-unwrap checks passed.
 - Both CyPack refs (`feat/native-fm`, fork `master`) equal exact SHA
-  `c6b024ced8116d88eaf04d1a660d41cd7a86afeb` at this checkpoint;
+  `20f659c17c14a5988c15a02781eb017de5168ae9` at this checkpoint;
   `upstream` untouched.
 - Fresh sequential Codebase Memory store refreshed post-publication with
   current `blocking_overlay_active`, `shell_mouse_input_owner`,

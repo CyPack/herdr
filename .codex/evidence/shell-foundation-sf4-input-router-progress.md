@@ -20,7 +20,7 @@ SF4.1 typed Stage closure (`944a9d4c`) and every earlier baseline stay frozen.
 | SF4.2-05 | `focus_restores_after_overlay_close` | Closing an overlay restores the previous valid focus owner or template fallback | Deterministic focus restoration | GREEN (SF4.2-05b done: every production overlay entry wired) |
 | SF4.2-06 | `collapsed_or_inert_region_cannot_receive_focus` | Collapsed/zero regions expose no focusable target | Hidden geometry must not own input | GREEN (characterization) |
 | SF4.2-07 | `stale_hit_generation_fails_closed` | A hit resolved against a non-current `ShellView` generation is consumed inert | Old coordinates must never become authority | GREEN |
-| SF4.2-08 | `files_stage_blocks_hidden_terminal_input` | With Files active, no event reaches hidden terminal targets | Fixes the reported curtain/input leak class | PENDING |
+| SF4.2-08 | `files_stage_blocks_hidden_terminal_input` | With Files active, no event reaches hidden terminal targets | Fixes the reported curtain/input leak class | GREEN (characterization) |
 
 ## SF4.2-01 Atomic TDD Evidence
 
@@ -356,13 +356,60 @@ Approved GREEN design (production-grade, NOT a one-field hack):
 - Publication: FF pushes to CyPack only; both refs equal exact SHA
   `c6b024ced8116d88eaf04d1a660d41cd7a86afeb`; `upstream` untouched.
 
+## SF4.2-08 Evidence (characterization — valid RED refuted empirically)
+
+- Recon enumerated every candidate leak path with FM open BEFORE the test
+  was written: in-center events all terminate in the FM dispatcher's
+  fail-closed consumption (its final `_ => {}` plus tail `Consumed`);
+  keyboard belongs to the `FocusedComponent` tier (SF4.2-01/03); the
+  `[+]`/`[w]` agent-frame pre-branches are compute-guarded
+  (`compute_agent_attachment_action_area` and the worktree twin both return
+  `None` while `file_manager.is_some()`); pane double-click/focus/URL
+  branches sit AFTER the FM dispatch return. No reachable leaking event was
+  found, and the empirical matrix passed on first run — per the SF1/04/06
+  precedent the slice landed as one `test:` characterization commit
+  `20f659c1` (`test: seal hidden terminal input under files surface`).
+- `files_stage_blocks_hidden_terminal_input`
+  (`src/app/input/file_manager.rs`) drives the FULL production
+  `App::handle_mouse` entry over a computed view with a real
+  workspace/pane/agent-terminal underneath: an 8-kind event matrix
+  (left down/drag/up, move, both wheels, middle, right) at covered
+  non-FM-control terrain asserts no selection anchor, no mode change, no
+  menu, and a surviving Files surface; the keyboard tier is asserted
+  `FocusedComponent`. The CONTROL phase closes the Files surface,
+  recomputes the view, proves the probe sits on the live pane, and shows
+  the SAME press then anchors a terminal selection — the seal cannot pass
+  vacuously.
+- Gates at the SF4.2 CLOSURE checkpoint (head `20f659c1`): full Nextest
+  `--no-fail-fast` 3,309/3,309 plus only the named B0 skip; fmt; Linux
+  all-target Clippy and Windows MSVC bin Clippy with `-D warnings`; Bun
+  5/5 + 12/12; Python 64/64; `git diff --check` clean; zero added
+  production `unwrap()` (test-only commit).
+- Publication: explicit FF proof (`merge-base --is-ancestor` for both
+  refs), sequential pushes to CyPack only; both refs equal exact SHA
+  `20f659c17c14a5988c15a02781eb017de5168ae9`; `upstream` untouched.
+
+## SF4.2 MICROPHASE CLOSED — 8/8 slices GREEN
+
+Chain: 01 `92777e23`/`f4f5e3cb` router · 02 `41362e89`/`017ba97f` overlay
+mouse · 03 `bb6f8970`/`efe6446b` overlay keyboard · 04 `119e4a2d` capture
+characterization · 05 `8b1882eb`/`5eb63763` + 05b `27f8699f`/`3880c66b`
+focus restore with the full overlay-entry sweep · 06 `3580ff19` inert
+regions characterization · 07 `bb3ac54d`/`c6b024ce` current-generation hit
+tier · 08 `20f659c1` hidden-terminal seal characterization. Test inventory
+grew 3,301 -> 3,309 across the microphase.
+
+Noted for SF4.3 (recorded, not started): normalize direct overlay exits
+(worktree accepts, `close_agent_attachment_picker`, `close_files` teardown)
+onto `leave_modal` so they also restore a remembered Resize/Copy owner;
+non-ContextMenu overlay modes' in-dispatch wheel arms; FM double-click
+across overlay episodes; consume `TopmostHit` semantic targets in dispatch.
+
 ## Exact Next Microtask
 
-SF4.2-08: `files_stage_blocks_hidden_terminal_input` — with the Files
-surface active, no mouse/keyboard event may reach hidden terminal targets
-(the reported curtain/input leak class). Recon first: how FM-open routing
-currently reaches `state.handle_mouse`/terminal forwarding, and whether the
-focused-component mouse tier (FM open) closes the leak. Then the SF4.2
-closure gate (full direct `just check` equivalent, Bun/Python, broad
-regressions, publication, graph). Do not start SF4.3, SF5, SF6, or
-change-pipeline T3.1 before SF4.2 closes.
+SF4.2 is closed. Next per the frozen priority chain: SF4.3 cross-layer
+surface projection and render purity (design/plan section "Task SF4.3",
+`src/ui.rs`, `src/ui/surface_host.rs`, `src/ui/compose.rs`) — start with
+its RED catalog and the SF4.3 candidates recorded above. Then SF4.4 + SF4
+closure, SF5 AppDock, SF6 Files-to-NativeFiles-Stage, FM1-FM5.
+Change-pipeline T3.1 stays paused until the product phase closes.

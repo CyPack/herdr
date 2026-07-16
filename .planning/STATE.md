@@ -158,10 +158,19 @@
   generation — old coordinates re-resolve to their current owner and never
   grant vanished authority; the single caller still consumes only the
   overlay comparison, so dispatch stays bit-identical until SF4.3/SF6
-  consume semantic targets. Current verified head: `c6b024ce`.
-- Next microtask: SF4.2-08 hidden-terminal blocking
-  (`files_stage_blocks_hidden_terminal_input`), then the SF4.2 closure
-  gate. See
+  consume semantic targets.
+- SF4.2-08 is GREEN as a characterization (`20f659c1`): recon plus an
+  8-kind event matrix through the full production `App::handle_mouse`
+  proved the hidden-terminal seal already closed (FM in-center fail-closed
+  consumption, keyboard `FocusedComponent` tier, compute-guarded
+  agent-frame actions); the control phase proves the same press reaches
+  the live terminal once Files closes.
+- SF4.2 MICROPHASE CLOSED 8/8. Closure gate at head `20f659c1`: Nextest
+  3,309/3,309 + B0 skip, both Clippy targets, Bun 5/5 + 12/12, Python
+  64/64, fmt/diff/unwrap clean. Current verified head: `20f659c1`.
+- Next microtask: SF4.3 cross-layer surface projection and render purity
+  (plan "Task SF4.3"), starting from its RED catalog plus the SF4.3
+  candidates recorded in the evidence file. See
   `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one
