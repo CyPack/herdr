@@ -56,15 +56,15 @@ non-product pipeline paused.
 
 Priority is mandatory:
 
-1. P0 ACTIVE: SF4.2 is CLOSED 8/8 — 01 (`f4f5e3cb`), 02 (`017ba97f`),
-   03 (`efe6446b`), 04 (`119e4a2d` characterization), 05 (`5eb63763` +
-   `3880c66b` full entry sweep), 06 (`3580ff19` characterization),
-   07 (`c6b024ce` current-generation hit tier), 08 (`20f659c1`
-   hidden-terminal seal characterization); the closure gate ran the full
-   direct `just check` equivalent including Bun and Python. Next: SF4.3
-   cross-layer surface projection and render purity (plan "Task SF4.3"),
-   starting from its RED catalog plus the SF4.3 candidates recorded in
-   `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
+1. P0 ACTIVE: SF4.3 cross-layer surface projection and render purity.
+   SF4.2 is CLOSED 8/8 at `20f659c1` (closure gate incl. Bun/Python;
+   evidence `shell-foundation-sf4-input-router-progress.md`). SF4.3-01
+   (`7796d855`/`acc82ffd`, surface-exclusive stage hit geometry on
+   desktop AND mobile) is GREEN. Next: SF4.3-02
+   `hidden_surface_has_no_stale_hits_or_cursor` (verify RED-ability
+   first), then 03/04 render purity, 05 retained path, 06 SurfaceHost
+   typed renderer selection, closure gate. Evidence:
+   `.codex/evidence/shell-foundation-sf4-surface-projection-progress.md`.
 2. P0 NEXT: SF4.3 -> SF4.4 -> SF5 -> SF6 -> FM1 -> FM2 -> FM3 -> FM4
    -> FM5.
 3. P1 PAUSED: `herdr-change-pipeline` T3.1-T10.9, until the current sequential
@@ -79,12 +79,10 @@ continuity, and pipeline files in one commit.
 ## Current Verified Truth
 
 - Branch: `feat/native-fm`.
-- Verified head: `20f659c1`
-  (`test: seal hidden terminal input under files surface`, SF4.2-08
-  characterization — SF4.2 CLOSED 8/8).
-- Latest product GREEN: `c6b024ce`
-  (`feat: resolve mouse hits against current shell generation`); its RED
-  is `bb3ac54d` (`test: require current generation hit resolution`).
+- Verified product head: `acc82ffd`
+  (`feat: grant stage hit geometry to active surface only`, SF4.3-01).
+- Matching RED: `7796d855`
+  (`test: require exclusive stage surface hit geometry`).
 - Separate test-stability commit `3c853a70` closed the parallel-load
   process-exit suppression flake class in `src/terminal/state.rs`.
 - SF0-SF3 are closed. SF4.1 is CLOSED with 8/8 behavior slices GREEN.
@@ -100,8 +98,9 @@ continuity, and pipeline files in one commit.
   - `056f0879` / `f0f32075`: failed open restores exact Stage/focus.
   - `784fdc2e` / `944a9d4c`: stage switches preserve terminal runtime
     (`AppDefinition`/`LaunchPolicy` + pure `StageState::surface_view()`).
-- Next test is not yet written: the first SF4.3 RED from the plan's
-  "Task SF4.3" catalog (cross-layer surface projection / render purity).
+- Next test is not yet written:
+  `hidden_surface_has_no_stale_hits_or_cursor` (SF4.3-02 — verify
+  RED-ability BEFORE writing; candidates recorded in the SF4.3 evidence).
 - Legacy `AppState.file_manager: Option<FmState>` curtain still renders. Do
   not remove it until SF6.
 - `previous_pane_focus` is existing pane history, not the new SF4.2 focus
@@ -109,12 +108,14 @@ continuity, and pipeline files in one commit.
   seam, never persisted.
 - Protocol remains 16. SF4.1 and SF4.2 stayed client-local presentation
   state.
-- Full current CLOSURE gate: Nextest 3,309/3,309 passed plus one named B0
-  skip (`--no-fail-fast`), Linux all-target Clippy, Windows MSVC bin
-  Clippy, Bun 5/5 + 12/12, Python 64/64, fmt, diff and
-  added-production-`unwrap()` clean.
+- Full current gate: Nextest 3,310/3,310 passed plus one named B0 skip
+  (`--no-fail-fast`, zero regressions from the projection split), Linux
+  all-target Clippy, Windows MSVC bin Clippy, fmt, diff and
+  added-production-`unwrap()` clean (Bun 5/5 + 12/12 and Python 64/64
+  last verified at the SF4.2 closure gate `20f659c1`; rerun at the SF4.3
+  closure gate).
 - Both CyPack refs equal exact SHA
-  `20f659c17c14a5988c15a02781eb017de5168ae9`.
+  `acc82ffdd272885150278dc0ce941828e4db68cd`.
 - User-owned `.superpowers/` is untracked and must never be staged or edited.
 
 ## Mandatory Git and Remote Audit

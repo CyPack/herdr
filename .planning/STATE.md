@@ -168,10 +168,17 @@
 - SF4.2 MICROPHASE CLOSED 8/8. Closure gate at head `20f659c1`: Nextest
   3,309/3,309 + B0 skip, both Clippy targets, Bun 5/5 + 12/12, Python
   64/64, fmt/diff/unwrap clean. Current verified head: `20f659c1`.
-- Next microtask: SF4.3 cross-layer surface projection and render purity
-  (plan "Task SF4.3"), starting from its RED catalog plus the SF4.3
-  candidates recorded in the evidence file. See
-  `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
+- SF4.3 is the active microphase. SF4.3-01 is GREEN
+  (`7796d855`/`acc82ffd`): exactly one stage surface owns projected hit
+  geometry per frame — pane/split projection and `rt.resize` side effects
+  are gated behind `stage.surface_view() == TerminalWorkspace` on desktop
+  AND mobile; `surface_view()`'s dead-code allow was removed with its
+  named consumption condition satisfied; full suite 3,310/3,310 with zero
+  regressions from the split. Current verified head: `acc82ffd`.
+- Next microtask: SF4.3-02 `hidden_surface_has_no_stale_hits_or_cursor`
+  (verify RED-ability first), then 03/04 render purity, 05 retained path,
+  06 SurfaceHost typed renderer, SF4.3 closure gate. See
+  `.codex/evidence/shell-foundation-sf4-surface-projection-progress.md`.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one
   bounded focus/capture router shared by mouse and keyboard, and recovery
