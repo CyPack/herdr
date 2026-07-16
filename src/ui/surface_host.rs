@@ -22,6 +22,9 @@ impl StageState {
     }
 
     pub(crate) fn activate_files(&mut self) {
+        if self.active == AppSurfaceRef::NativeFiles {
+            return;
+        }
         self.previous = Some(self.active);
         self.active = AppSurfaceRef::NativeFiles;
     }
