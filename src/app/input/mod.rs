@@ -913,6 +913,52 @@ mod tests {
         assert!(!state.session_dirty);
     }
 
+    // SF4.2-03: a topmost blocking overlay owns keyboard input ahead of an
+    // active background capture. A launcher click can open the global menu
+    // while a sidebar resize capture stays active, so overlay keys must never
+    // adjust or cancel the capture underneath.
+    #[tokio::test]
+    async fn overlay_blocks_background_keyboard_shortcut() {
+        let mut app = app_for_mouse_test();
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
+        assert!(app
+            .state
+            .begin_sidebar_resize(ratatui::layout::Position::new(25, 5)));
+
+        // Control: without an overlay the active capture consumes the key.
+        app.handle_key(TerminalKey::new(KeyCode::Right, KeyModifiers::NONE))
+            .await;
+        assert_eq!(app.state.shell_resize_preview_width(), Some(27));
+
+        modal::open_global_menu(&mut app.state);
+        assert_eq!(app.state.mode, Mode::GlobalMenu);
+
+        app.handle_key(TerminalKey::new(KeyCode::Right, KeyModifiers::NONE))
+            .await;
+        assert_eq!(
+            (app.state.shell_resize_preview_width(), app.state.mode),
+            (Some(27), Mode::GlobalMenu),
+            "an open global menu must consume background keys ahead of the capture"
+        );
+
+        app.handle_key(TerminalKey::new(KeyCode::Esc, KeyModifiers::NONE))
+            .await;
+        assert_ne!(
+            app.state.mode,
+            Mode::GlobalMenu,
+            "escape must close the overlay"
+        );
+        assert!(
+            app.state.shell_resize_active(),
+            "escape must never cancel the background capture through the overlay"
+        );
+
+        // With the overlay gone the capture owns keys again.
+        app.handle_key(TerminalKey::new(KeyCode::Right, KeyModifiers::NONE))
+            .await;
+        assert_eq!(app.state.shell_resize_preview_width(), Some(28));
+    }
+
     #[tokio::test]
     async fn context_menu_escape_owns_key_before_active_shell_resize_capture() {
         let mut app = app_for_mouse_test();
