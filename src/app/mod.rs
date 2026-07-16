@@ -458,6 +458,7 @@ impl App {
                 std::collections::HashSet::new(),
             )
         } else if let Some(snap) = crate::persist::load() {
+            let restored_sidebar_width = snap.restored_left_panel_width();
             let history = config
                 .experimental
                 .pane_history
@@ -484,8 +485,8 @@ impl App {
                     Vec::new(),
                     None,
                     0,
-                    snap.sidebar_width.unwrap_or(config.ui.sidebar_width),
-                    if snap.sidebar_width.is_some() {
+                    restored_sidebar_width.unwrap_or(config.ui.sidebar_width),
+                    if restored_sidebar_width.is_some() {
                         state::SidebarWidthSource::Persisted
                     } else {
                         state::SidebarWidthSource::ConfigDefault
@@ -501,8 +502,8 @@ impl App {
                     ws,
                     active,
                     selected,
-                    snap.sidebar_width.unwrap_or(config.ui.sidebar_width),
-                    if snap.sidebar_width.is_some() {
+                    restored_sidebar_width.unwrap_or(config.ui.sidebar_width),
+                    if restored_sidebar_width.is_some() {
                         state::SidebarWidthSource::Persisted
                     } else {
                         state::SidebarWidthSource::ConfigDefault
@@ -954,9 +955,10 @@ impl App {
         app.state.selected = snapshot
             .selected
             .min(app.state.workspaces.len().saturating_sub(1));
-        if let Some(width) = snapshot.sidebar_width {
+        if let Some(width) = snapshot.restored_left_panel_width() {
             app.state.sidebar_width = width;
             app.state.sidebar_width_source = state::SidebarWidthSource::Persisted;
+            app.state.shell_presentation = crate::ui::shell::ShellPresentationState::new(width);
         }
         if let Some(split) = snapshot.sidebar_section_split {
             app.state.sidebar_section_split = split;

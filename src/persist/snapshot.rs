@@ -103,6 +103,26 @@ impl ShellSnapshotV1 {
         )?;
         Ok(snapshot)
     }
+
+    fn restored_left_panel_width(&self) -> Option<u16> {
+        let retained = self
+            .collapse_restore_widths
+            .get(&RegionId::LeftPanel)
+            .copied();
+        match self.region_constraints.get(&RegionId::LeftPanel)? {
+            TrackPolicy::Fixed { cells } => Some(*cells),
+            TrackPolicy::ContentBounded { min, max } => {
+                Some(retained.unwrap_or(*min).clamp(*min, *max))
+            }
+            TrackPolicy::Resizable {
+                min,
+                preferred,
+                max,
+            } => Some((*preferred).clamp(*min, *max)),
+            TrackPolicy::Collapsed { restore } => Some(retained.unwrap_or(*restore)),
+            TrackPolicy::Fill { .. } => retained,
+        }
+    }
 }
 
 /// Serializable snapshot of the entire herdr session.
@@ -122,6 +142,15 @@ pub struct SessionSnapshot {
     pub sidebar_section_split: Option<f32>,
     #[serde(default)]
     pub collapsed_space_keys: std::collections::HashSet<String>,
+}
+
+impl SessionSnapshot {
+    pub(crate) fn restored_left_panel_width(&self) -> Option<u16> {
+        self.shell
+            .as_ref()
+            .and_then(ShellSnapshotV1::restored_left_panel_width)
+            .or(self.sidebar_width)
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -752,9 +781,7 @@ mod tests {
     }
 
     fn restored_left_panel_width_for_test(snapshot: &SessionSnapshot) -> Option<u16> {
-        // This is the pre-GREEN application restore behavior. The v4 authority
-        // RED below requires the production adapter to supersede this seam.
-        snapshot.sidebar_width
+        snapshot.restored_left_panel_width()
     }
 
     fn capture_from_state(state: &AppState) -> SessionSnapshot {
