@@ -3,28 +3,35 @@
 ## 1. SONRAKI ADIM
 
 The user explicitly approved the bounded twelve-phase product program: SF0-SF6
-then FM1-FM5; Apps/Desktop remains later. SF0, SF1, and SF2 are closed. The
-published SF2 chain `c45deea7` through `07133b8b` implements named regions,
-bounded validation, typed templates, deterministic allocation and responsive
-degradation, plus one cached `ShellView` with generation-safe flattened hits.
-The SF2.4 RED/GREEN pair is `2a440478` / `07133b8b`; CyPack
-`feat/native-fm` and fork `master` both resolve to exact SHA
-`07133b8b9e9cf10b9b3dea0febe22a8389457164`.
+then FM1-FM5; Apps/Desktop remains later. SF0, SF1, SF2, and SF3.1 are closed.
+SF3.1 adds one pure transient resize transaction shared by the outer sidebar
+mouse divider and focused keyboard input. Preview changes only projected shell
+geometry; it produces zero persistence and PTY effects. Changed commit marks
+dirty once and requests at most one high-level resize. Cancel, terminal-area
+drift, stale capture, no movement, and no capture are effect-free.
 
-Fresh evidence is cached-view 7/7, broad shell 88/88, all `src/ui.rs` tests
-41/41, frozen SF1 11/11, full Nextest 3239/3239 plus only the named B0 real-
-host probe skip, Linux/Windows Clippy, Bun 17/17, Python 64/64, fmt, and diff
-clean. The single-worker graph is fresh at 20,018 nodes / 91,918 edges; both
-CLI and built-in MCP return current `compute_shell_view`, fail-closed tests,
-`miller_layout`, and the SF3.1 RED task. No process was restarted. Full
-evidence is `.codex/evidence/shell-foundation-sf2-geometry-progress.md`.
+The published SF3.1 chain is reducer `368c4d3a` through `807cb76c`, sidebar
+adapter `96a1660e` through `61b915a9`, and keyboard/ownership `4888c3f8`
+through `336fa3de`. At the product checkpoint, CyPack `feat/native-fm` and fork
+`master` both resolve to exact SHA
+`336fa3ded217c49ceaed1d8876127a843562e152`.
 
-The immediate action is SF3.1 at I2-I6: trace and characterize the existing
-divider drag, mouse capture, persistence-dirty, and PTY-resize seams. Then add
-compile-valid RED tests `divider_down_captures_original_constraints` and
-`drag_preview_clamps_without_dirty_or_pty_resize`; compile/setup failure is not
-RED. The planned RED commit is `test: define transactional shell resize`, and
-no SF3 production code is allowed before missing-behavior assertion evidence.
+Fresh closure is keyboard/ownership 8/8, broad shell/sidebar/input 119/119,
+frozen SF1 11/11, full Nextest 3264/3264 plus only the named B0 real-host skip,
+Linux/Windows Clippy, Bun 17/17, Python 64/64, fmt/diff/production-unwrap
+clean. The fresh single-worker CLI graph is 20,132 nodes / 93,587 edges and
+returns the current key route, both keyboard-step reducer symbols, and
+`miller_layout`. The built-in transport remains stale at 20,118 / 93,603; it
+was not restarted and its `ready` flag was not treated as freshness evidence.
+Full evidence is
+`.codex/evidence/shell-foundation-sf3-interaction-progress.md`.
+
+The immediate action is SF3.2: refresh drift/ownership, then write the smallest
+compile-valid behavior RED `collapse_remembers_last_committed_width`. Expected:
+collapse stores the last committed bounded width and makes exactly one
+revision/dirty transition; repeated collapse is inert. Collapse production
+code, scroll reducers, and snapshot v4 must each wait for their own matching
+behavior RED.
 
 The previous S6/dynamic-N2 NO-GO was valid when no real consumer/demand
 existed. New explicit AppDock/WorkspaceStage/Files, resize/collapse/overlay,

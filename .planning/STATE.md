@@ -6,19 +6,21 @@
   (`docs: plan shell foundation and files workspace`).
 - Published SF1 characterization checkpoint: `7b9b626d`
   (`test: characterize shell foundation baseline`).
+- Published SF3.1 product checkpoint: `336fa3de`
+  (`feat: add keyboard shell resize routing`).
 - Exact remote SHA equality was verified for CyPack `feat/native-fm` and fork
   `master` at the artifact checkpoint.
 - Approved product program: SF0-SF6 followed by FM1-FM5; Apps/Desktop remains
   a later independent program.
-- Current phase: SF0-SF2 closed through I14. SF3.1 begins at I2-I6 with a
-  fresh graph/drift and characterization pass; transactional divider capture
-  and preview are the next behavior-specific RED slice.
+- Current phase: SF0-SF2 and SF3.1 closed through I14. SF3.2 begins with a
+  fresh graph/drift pass and the behavior-specific RED
+  `collapse_remembers_last_committed_width`.
 - Published SF2.4 RED/GREEN: `2a440478` / `07133b8b`; both CyPack refs equal
   exact SHA `07133b8b9e9cf10b9b3dea0febe22a8389457164`.
-- Current single-worker graph: 20,018 nodes / 91,918 edges. CLI and built-in
-  MCP status/search/snippet prove current by-value `compute_shell_view`, its
-  failure characterizations, `miller_layout`, and the SF3.1 RED task; no
-  process was restarted.
+- Current single-worker CLI graph: 20,132 nodes / 93,587 edges. Fresh searches
+  prove `handle_shell_resize_key`, both keyboard-step reducer symbols, and
+  `miller_layout`. The built-in transport remains stale at 20,118 / 93,603 and
+  was not restarted.
 - Published CyPack M3 evidence checkpoint: `e9f2fe0`.
 - Verified M2.1 chain: RED `dab1e20`; GREEN product head `0ae6175`.
 - M3.0 evidence is published with exact SHA equality to CyPack
@@ -97,15 +99,15 @@
 
 ## Active Next Increment
 
-- Begin SF3.1 at I2-I6. Trace and characterize existing divider drag, capture,
-  persistence-dirty, and PTY-resize ownership before changing production code.
-- Then write compile-valid RED tests
-  `divider_down_captures_original_constraints` and
-  `drag_preview_clamps_without_dirty_or_pty_resize`, and require missing-
-  transaction behavior assertions to fail. Planned RED commit:
-  `test: define transactional shell resize`.
-- Preserve the SF2 cached-view and SF1 characterization baselines while adding
-  the smallest bounded capture/preview state in atomic RED/GREEN slices.
+- Begin SF3.2 with a fresh ownership/drift pass, then write compile-valid RED
+  `collapse_remembers_last_committed_width`.
+- Expected: collapse remembers only the last committed bounded width, emits
+  exactly one revision/dirty transition, and repeated collapse is inert.
+- After collapse/restore closes, write separate owning-viewport REDs for
+  horizontal/vertical scrolling; do not combine scroll or snapshot v4
+  production into the first collapse slice.
+- Preserve the SF1/SF2 baselines and SF3.1 zero-preview-effect contract in
+  atomic RED/GREEN slices.
 - Execute SF3-SF6 and then FM1-FM5 sequentially through the approved child
   plans. Product, continuity, and tooling concerns remain separate.
 

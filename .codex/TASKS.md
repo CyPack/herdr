@@ -99,17 +99,31 @@ Authoritative plans:
 Progress evidence:
 `.codex/evidence/shell-foundation-sf2-geometry-progress.md`.
 
-### SF3 — Resize / Collapse / Scroll / Persistence (SF3.1 active)
+### SF3 — Resize / Collapse / Scroll / Persistence (SF3.2 active)
 
-- [ ] Complete the SF3.1 I2-I6 graph/drift and characterization pass for
+- [x] Complete the SF3.1 I2-I6 graph/drift and characterization pass for
   divider capture, preview, persistence dirtying, and PTY resize ownership.
-- [ ] RED `divider_down_captures_original_constraints` and
-  `drag_preview_clamps_without_dirty_or_pty_resize` with compile-valid missing-
-  behavior assertions; planned commit `test: define transactional shell resize`.
-- [ ] Add transactional divider preview/commit/cancel with zero preview disk/
-  PTY churn and at most one commit resize.
-- [ ] Add bounded collapse/restore and owning horizontal/vertical viewports.
-- [ ] Add snapshot v4 shell presentation state; migrate v3 sidebar width,
+- [x] Add the pure transactional divider reducer through RED/GREEN pairs
+  `368c4d3a` / `d89a7f94` and `b6570ee4` / `807cb76c`.
+- [x] Adapt the existing outer sidebar mouse divider with zero preview disk/
+  PTY churn, one commit boundary, terminal-resize cancellation, stale capture
+  rejection, and no-op commit handling. REDs `96a1660e`, `09944834`; GREEN
+  `61b915a9`.
+- [x] Route axis arrows, `h`/`l`, Enter, Escape, and inert keys through the
+  same transaction while preserving overlay-first ownership. REDs `4888c3f8`,
+  `4026c28b`, `960b6d5f`; GREEN `336fa3de`.
+- [x] Close SF3.1 full gates and fork-only publication. Fresh evidence is 8/8
+  keyboard/ownership, 119/119 broad, SF1 11/11, full Nextest 3264/3264 plus
+  only B0, Linux/Windows Clippy, Bun 17/17, Python 64/64, and fresh CLI graph
+  20,132 / 93,587. Evidence:
+  `.codex/evidence/shell-foundation-sf3-interaction-progress.md`.
+- [ ] SF3.2: start with RED `collapse_remembers_last_committed_width`, then
+  cover bounded restore, stage rejection, empty optional collapse, and exact
+  one-revision/one-dirty/no-op contracts before production collapse code.
+- [ ] SF3.2: add owning horizontal/vertical viewport REDs and reducers only
+  after collapse closes; scrolling must affect only the topmost owner and
+  clamp stale/zero-area offsets.
+- [ ] SF3.3: add snapshot v4 shell presentation state; migrate v3 sidebar width,
   preserve sidebar-section ownership, contain invalid shell data, reject future
   versions.
 - [ ] Close failure, migration, performance, full-gate, Git, and graph evidence.

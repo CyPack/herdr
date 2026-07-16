@@ -8,6 +8,8 @@
   (`docs: plan shell foundation and files workspace`).
 - Published SF1 characterization checkpoint: `7b9b626d`
   (`test: characterize shell foundation baseline`).
+- Published SF3.1 product checkpoint: `336fa3de`
+  (`feat: add keyboard shell resize routing`).
 - The artifact checkpoint was fast-forward published to both CyPack
   `feat/native-fm` and fork `master`; exact remote SHA equality was verified.
 - Published CyPack M3 evidence checkpoint: `e9f2fe0`
@@ -34,12 +36,29 @@
   `docs/superpowers/plans/2026-07-15-herdr-file-manager-post-shell-implementation.md`.
 - Plan review evidence:
   `.codex/evidence/shell-foundation-plan-review.md`.
-- SF0, SF1, and SF2 are closed. A0-A7 and delivery gates I0-I14 are complete
-  for the geometry phase. Named regions, bounded validation, typed templates,
-  deterministic track allocation, responsive degradation, one aggregate
-  cached `ShellView`, and generation-safe flattened semantic hits are live.
-  The next product slice is SF3.1 transactional divider resize; it starts with
-  a fresh I2-I6 drift/characterization pass before entering I7 RED.
+- SF0, SF1, SF2, and SF3.1 are closed. A0-A7 and delivery gates I0-I14 are
+  complete for transactional divider resize. Named regions, bounded
+  validation, typed templates, deterministic allocation, cached generation-
+  safe `ShellView`, and one shared mouse/keyboard resize transaction are live.
+  The next product slice is SF3.2 collapse/restore and scroll ownership; its
+  first micro RED is `collapse_remembers_last_committed_width` after a fresh
+  drift/ownership pass.
+- SF3.1 product chain is reducer RED/GREEN `368c4d3a` / `d89a7f94`, lifecycle
+  RED/GREEN `b6570ee4` / `807cb76c`, sidebar adapter REDs `96a1660e` and
+  `09944834` with GREEN `61b915a9`, then keyboard/ownership REDs `4888c3f8`,
+  `4026c28b`, and `960b6d5f` with GREEN `336fa3de`. At the product checkpoint,
+  both CyPack refs equal exact SHA
+  `336fa3ded217c49ceaed1d8876127a843562e152`.
+- Fresh SF3.1 closure is keyboard/ownership 8/8, broad shell/sidebar/input
+  119/119, frozen SF1 11/11, full Nextest 3264/3264 plus only the named B0
+  real-host skip, Linux/Windows Clippy, Bun 17/17, Python 64/64, fmt, diff,
+  and added-production-`unwrap()` clean. Evidence:
+  `.codex/evidence/shell-foundation-sf3-interaction-progress.md`.
+- Fresh single-worker CLI graph is 20,132 nodes / 93,587 edges and returns
+  `handle_shell_resize_key`, both keyboard-step reducer symbols, and
+  `miller_layout`. The already-running built-in MCP transport remains stale at
+  20,118 / 93,603 and was not restarted; its `ready` result is not accepted as
+  freshness evidence.
 - The SF2.4 RED/GREEN pair is `2a440478` / `07133b8b`. CyPack
   `feat/native-fm` and fork `master` both resolve to exact SHA
   `07133b8b9e9cf10b9b3dea0febe22a8389457164`. Fresh closure is cached-view
