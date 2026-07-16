@@ -148,10 +148,10 @@ impl ShellInteractionState {
             .is_some_and(|transaction| transaction.preview(pointer, bounds))
     }
 
-    pub(crate) fn preview_keyboard_resize(&mut self, delta: i16, bounds: ResizeBounds) -> bool {
+    pub(crate) fn preview_keyboard_resize_step(&mut self, step: i16, bounds: ResizeBounds) -> bool {
         self.resize
             .as_mut()
-            .is_some_and(|transaction| transaction.preview_keyboard_delta(delta, bounds))
+            .is_some_and(|transaction| transaction.preview_keyboard_step(step, bounds))
     }
 
     pub(crate) fn rebase_resize_generation(&mut self, generation: u64) {
@@ -207,6 +207,21 @@ impl ResizeTransaction {
     /// preview, so both paths share identical bounds and normalization.
     pub(crate) fn preview_keyboard_delta(&mut self, delta: i16, bounds: ResizeBounds) -> bool {
         self.preview_delta(i32::from(delta), bounds)
+    }
+
+    /// Apply one keyboard step relative to the current preview. Repeated key
+    /// presses therefore remain in the same bounded transaction while pointer
+    /// preview can keep using its original-relative coordinate delta.
+    fn preview_keyboard_step(&mut self, step: i16, bounds: ResizeBounds) -> bool {
+        let Some(total) = self.original_tracks[0].checked_add(self.original_tracks[1]) else {
+            return false;
+        };
+        let desired = i32::from(self.preview_tracks[0]) + i32::from(step);
+        let Some(tracks) = normalized_tracks(total, desired, bounds) else {
+            return false;
+        };
+        self.preview_tracks = tracks;
+        true
     }
 
     fn preview_delta(&mut self, delta: i32, bounds: ResizeBounds) -> bool {

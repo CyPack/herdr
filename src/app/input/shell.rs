@@ -1,3 +1,4 @@
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Position;
 
 use super::super::state::{AppState, DragState, DragTarget, SidebarWidthSource};
@@ -47,6 +48,24 @@ impl AppState {
         self.shell_interaction.preview_resize(pointer, bounds)
     }
 
+    pub(crate) fn handle_shell_resize_key(&mut self, key: KeyEvent) -> bool {
+        if !self.shell_resize_active() {
+            return false;
+        }
+
+        match key.code {
+            KeyCode::Right | KeyCode::Char('l') => self.preview_sidebar_resize_step(1),
+            KeyCode::Left | KeyCode::Char('h') => self.preview_sidebar_resize_step(-1),
+            KeyCode::Enter => {
+                self.commit_sidebar_resize();
+                self.clear_sidebar_resize_drag();
+            }
+            KeyCode::Esc => self.cancel_sidebar_resize(),
+            _ => {}
+        }
+        true
+    }
+
     pub(crate) fn commit_sidebar_resize(&mut self) {
         let generation = self
             .shell_interaction
@@ -54,6 +73,13 @@ impl AppState {
             .unwrap_or(self.view.shell.generation);
         let update = self.shell_interaction.commit_resize(generation);
         self.apply_sidebar_resize_update(update, SidebarWidthSource::Manual);
+    }
+
+    fn cancel_sidebar_resize(&mut self) {
+        let update = self.shell_interaction.cancel_resize();
+        debug_assert!(!update.marks_persistence_dirty());
+        debug_assert!(!update.requests_pty_resize());
+        self.clear_sidebar_resize_drag();
     }
 
     pub(crate) fn reset_sidebar_resize_to_preferred(&mut self) {
@@ -124,6 +150,17 @@ impl AppState {
 
     fn sidebar_resize_bounds(&self, total: u16) -> Option<ResizeBounds> {
         ResizeBounds::new(self.sidebar_min_width, self.sidebar_max_width, 1, total)
+    }
+
+    fn preview_sidebar_resize_step(&mut self, step: i16) {
+        let Some(total) = self.shell_interaction.resize_original_total() else {
+            return;
+        };
+        let Some(bounds) = self.sidebar_resize_bounds(total) else {
+            return;
+        };
+        self.shell_interaction
+            .preview_keyboard_resize_step(step, bounds);
     }
 
     fn apply_sidebar_resize_update(&mut self, update: ResizeUpdate, source: SidebarWidthSource) {
@@ -271,9 +308,7 @@ mod tests {
         state
     }
 
-    fn handle_shell_resize_key_for_test(_state: &mut AppState, _key: KeyEvent) -> bool {
-        // RED-only seam: SF3.1 routes focused divider keys through the same
-        // capture/preview/commit/cancel reducer as mouse input.
-        false
+    fn handle_shell_resize_key_for_test(state: &mut AppState, key: KeyEvent) -> bool {
+        state.handle_shell_resize_key(key)
     }
 }

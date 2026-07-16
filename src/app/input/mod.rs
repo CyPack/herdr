@@ -102,6 +102,13 @@ impl App {
             return;
         }
 
+        // An active shell divider capture owns keyboard input ahead of the
+        // visible surface. This keeps resize keys out of native apps and PTYs
+        // while preserving topmost modal ownership above.
+        if self.state.handle_shell_resize_key(key_event) {
+            return;
+        }
+
         // When the native file manager is open it captures all keyboard input,
         // ahead of the mode dispatch, so keys drive its navigation instead of
         // reaching the terminal underneath.
