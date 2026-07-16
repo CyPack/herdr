@@ -13,10 +13,34 @@ impl BuiltInAppId {
             Self::Files => 1,
         }
     }
+
+    pub(crate) const fn definition(self) -> AppDefinition {
+        AppDefinition {
+            id: self,
+            launch: LaunchPolicy::Singleton,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LaunchPolicy {
+    Singleton,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AppDefinition {
+    pub(crate) id: BuiltInAppId,
+    pub(crate) launch: LaunchPolicy,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum AppSurfaceRef {
+    TerminalWorkspace,
+    NativeFiles,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StageSurfaceView {
     TerminalWorkspace,
     NativeFiles,
 }
@@ -70,18 +94,34 @@ impl StageState {
             .map(|instance| instance.surface)
     }
 
+    /// Project the active Stage surface for render dispatch. The projection is
+    /// a pure read of typed Stage state: it can never own, create, resize, or
+    /// destroy terminal runtime state.
+    #[allow(dead_code)] // SF6 Files Stage rendering migration consumes this typed projection.
+    pub(crate) fn surface_view(&self) -> StageSurfaceView {
+        match self.active_surface() {
+            Some(AppSurfaceRef::NativeFiles) => StageSurfaceView::NativeFiles,
+            Some(AppSurfaceRef::TerminalWorkspace) | None => StageSurfaceView::TerminalWorkspace,
+        }
+    }
+
     pub(crate) fn activate_files(&mut self) -> Result<(), StageStateError> {
-        if self.active_surface() == Some(AppSurfaceRef::NativeFiles) {
-            return Ok(());
+        let definition = BuiltInAppId::Files.definition();
+        match definition.launch {
+            LaunchPolicy::Singleton => {
+                if self.active_surface() == Some(AppSurfaceRef::NativeFiles) {
+                    return Ok(());
+                }
+            }
         }
 
         let files_id = match self
             .instances()
-            .find(|instance| instance.id.app == BuiltInAppId::Files)
+            .find(|instance| instance.id.app == definition.id)
             .map(|instance| instance.id)
         {
             Some(id) => id,
-            None => self.next_instance_id(BuiltInAppId::Files)?,
+            None => self.next_instance_id(definition.id)?,
         };
         if self.instance(files_id).is_none() {
             self.insert_instance(AppInstance::built_in(files_id))?;
@@ -197,8 +237,8 @@ mod tests {
     };
 
     use super::{
-        AppInstance, AppInstanceId, AppSurfaceRef, BuiltInAppId, StageState, StageStateError,
-        MAX_BUILT_IN_INSTANCES,
+        AppInstance, AppInstanceId, AppSurfaceRef, BuiltInAppId, LaunchPolicy, StageState,
+        StageStateError, StageSurfaceView, MAX_BUILT_IN_INSTANCES,
     };
 
     #[test]
@@ -367,26 +407,23 @@ mod tests {
         let runtime_count = terminal_runtimes.len();
 
         assert_eq!(
-            stage_surface_view_for_test(&state),
-            TestStageSurfaceView::TerminalWorkspace
+            state.stage.surface_view(),
+            StageSurfaceView::TerminalWorkspace
         );
         assert_eq!(
-            launch_policy_for_test(BuiltInAppId::Terminal),
-            TestLaunchPolicy::Singleton
+            BuiltInAppId::Terminal.definition().launch,
+            LaunchPolicy::Singleton
         );
         assert_eq!(
-            launch_policy_for_test(BuiltInAppId::Files),
-            TestLaunchPolicy::Singleton
+            BuiltInAppId::Files.definition().launch,
+            LaunchPolicy::Singleton
         );
 
         state
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
             .expect("Files activation");
         let stage_after_open = state.stage;
-        assert_eq!(
-            stage_surface_view_for_test(&state),
-            TestStageSurfaceView::NativeFiles
-        );
+        assert_eq!(state.stage.surface_view(), StageSurfaceView::NativeFiles);
         assert_eq!(terminal_runtimes.len(), runtime_count);
         assert!(terminal_runtimes.get(&terminal_id).is_some());
 
@@ -399,8 +436,8 @@ mod tests {
 
         state.close_file_manager();
         assert_eq!(
-            stage_surface_view_for_test(&state),
-            TestStageSurfaceView::TerminalWorkspace
+            state.stage.surface_view(),
+            StageSurfaceView::TerminalWorkspace
         );
         assert_eq!(terminal_runtimes.len(), runtime_count);
         terminal_runtimes
@@ -425,8 +462,8 @@ mod tests {
         assert_eq!(state.previous_pane_focus, retained_focus);
         assert!(state.file_manager.is_none());
         assert_eq!(
-            stage_surface_view_for_test(&state),
-            TestStageSurfaceView::TerminalWorkspace
+            state.stage.surface_view(),
+            StageSurfaceView::TerminalWorkspace
         );
         assert_eq!(terminal_runtimes.len(), runtime_count);
         assert!(terminal_runtimes.get(&terminal_id).is_some());
@@ -438,31 +475,5 @@ mod tests {
             Some(&terminal_id),
             "stage lifecycle must not rebind pane/terminal identity"
         );
-    }
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum TestStageSurfaceView {
-        LegacyFileManagerCurtain,
-        TerminalWorkspace,
-        NativeFiles,
-    }
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum TestLaunchPolicy {
-        Unspecified,
-        Singleton,
-    }
-
-    fn stage_surface_view_for_test(_state: &AppState) -> TestStageSurfaceView {
-        // RED-only seam: production exposes no typed surface-view projection
-        // yet; render still keys the center surface off the legacy
-        // file-manager curtain marker instead of the typed Stage.
-        TestStageSurfaceView::LegacyFileManagerCurtain
-    }
-
-    fn launch_policy_for_test(_app: BuiltInAppId) -> TestLaunchPolicy {
-        // RED-only seam: production defines no AppDefinition launch policy
-        // for built-in apps yet.
-        TestLaunchPolicy::Unspecified
     }
 }
