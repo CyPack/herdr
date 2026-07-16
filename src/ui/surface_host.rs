@@ -192,6 +192,8 @@ mod tests {
             state::{AppState, PaneFocusTarget},
         },
         layout::PaneId,
+        terminal::{TerminalRuntime, TerminalRuntimeRegistry},
+        workspace::Workspace,
     };
 
     use super::{
@@ -318,5 +320,149 @@ mod tests {
         assert_eq!(state.stage, retained_stage);
         assert_eq!(state.previous_pane_focus, retained_focus);
         assert!(state.file_manager.is_none());
+    }
+
+    #[tokio::test]
+    async fn stage_surface_switch_does_not_destroy_terminal_runtime() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        struct FixtureRoot(std::path::PathBuf);
+
+        impl Drop for FixtureRoot {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "herdr-stage-runtime-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _fixture_root = FixtureRoot(root.clone());
+        std::fs::create_dir_all(&root).expect("create stage runtime fixture root");
+
+        let mut state = AppState::test_new();
+        let workspace = Workspace::test_new("one");
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace
+            .terminal_id(pane_id)
+            .expect("root pane terminal identity")
+            .clone();
+        state.workspaces = vec![workspace];
+        state.active = Some(0);
+        state.selected = 0;
+
+        let mut terminal_runtimes = TerminalRuntimeRegistry::new();
+        assert!(
+            terminal_runtimes
+                .insert(
+                    terminal_id.clone(),
+                    TerminalRuntime::test_with_screen_bytes(100, 30, b"RUNTIME_BEHIND_STAGE"),
+                )
+                .is_none(),
+            "fixture inserts exactly one runtime"
+        );
+        let runtime_count = terminal_runtimes.len();
+
+        assert_eq!(
+            stage_surface_view_for_test(&state),
+            TestStageSurfaceView::TerminalWorkspace
+        );
+        assert_eq!(
+            launch_policy_for_test(BuiltInAppId::Terminal),
+            TestLaunchPolicy::Singleton
+        );
+        assert_eq!(
+            launch_policy_for_test(BuiltInAppId::Files),
+            TestLaunchPolicy::Singleton
+        );
+
+        state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .expect("Files activation");
+        let stage_after_open = state.stage;
+        assert_eq!(
+            stage_surface_view_for_test(&state),
+            TestStageSurfaceView::NativeFiles
+        );
+        assert_eq!(terminal_runtimes.len(), runtime_count);
+        assert!(terminal_runtimes.get(&terminal_id).is_some());
+
+        state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .expect("singleton Files reactivation");
+        assert_eq!(state.stage, stage_after_open);
+        assert_eq!(terminal_runtimes.len(), runtime_count);
+        assert!(terminal_runtimes.get(&terminal_id).is_some());
+
+        state.close_file_manager();
+        assert_eq!(
+            stage_surface_view_for_test(&state),
+            TestStageSurfaceView::TerminalWorkspace
+        );
+        assert_eq!(terminal_runtimes.len(), runtime_count);
+        terminal_runtimes
+            .get(&terminal_id)
+            .expect("closing Files must keep the original terminal runtime")
+            .test_process_pty_bytes(b"still-usable");
+
+        state.previous_pane_focus = Some(PaneFocusTarget {
+            workspace_id: "prior-workspace".to_string(),
+            pane_id: PaneId::alloc(),
+        });
+        let retained_stage = state.stage;
+        let retained_focus = state.previous_pane_focus.clone();
+        assert_eq!(
+            state.try_open_file_manager_with(|focus| {
+                *focus = None;
+                None
+            }),
+            Err(FileManagerOpenError::PreparationFailed)
+        );
+        assert_eq!(state.stage, retained_stage);
+        assert_eq!(state.previous_pane_focus, retained_focus);
+        assert!(state.file_manager.is_none());
+        assert_eq!(
+            stage_surface_view_for_test(&state),
+            TestStageSurfaceView::TerminalWorkspace
+        );
+        assert_eq!(terminal_runtimes.len(), runtime_count);
+        assert!(terminal_runtimes.get(&terminal_id).is_some());
+
+        assert_eq!(state.workspaces.len(), 1);
+        assert_eq!(state.workspaces[0].tabs[0].root_pane, pane_id);
+        assert_eq!(
+            state.workspaces[0].terminal_id(pane_id),
+            Some(&terminal_id),
+            "stage lifecycle must not rebind pane/terminal identity"
+        );
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum TestStageSurfaceView {
+        LegacyFileManagerCurtain,
+        TerminalWorkspace,
+        NativeFiles,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum TestLaunchPolicy {
+        Unspecified,
+        Singleton,
+    }
+
+    fn stage_surface_view_for_test(_state: &AppState) -> TestStageSurfaceView {
+        // RED-only seam: production exposes no typed surface-view projection
+        // yet; render still keys the center surface off the legacy
+        // file-manager curtain marker instead of the typed Stage.
+        TestStageSurfaceView::LegacyFileManagerCurtain
+    }
+
+    fn launch_policy_for_test(_app: BuiltInAppId) -> TestLaunchPolicy {
+        // RED-only seam: production defines no AppDefinition launch policy
+        // for built-in apps yet.
+        TestLaunchPolicy::Unspecified
     }
 }
