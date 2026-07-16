@@ -2,10 +2,10 @@
 
 - Updated: 2026-07-16
 - Branch: `feat/native-fm`
-- Current verified product head: `f4f5e3cb` (`feat: route shell input through
-  semantic ownership`); matching RED `92777e23`. Prior heads: `944a9d4c`
-  (SF4.1-08 GREEN, RED `784fdc2e`) and test-stability `3c853a70` (parallel-load
-  process-exit suppression flake class closed in `src/terminal/state.rs`).
+- Current verified product head: `017ba97f` (`feat: block background mouse
+  routes under topmost overlays`); matching RED `41362e89`. Prior heads this
+  session: SF4.2-01 `92777e23`/`f4f5e3cb`, SF4.1-08 `784fdc2e`/`944a9d4c`,
+  and test-stability `3c853a70`.
 - Published SF0 planning artifact checkpoint: `32856f7`
   (`docs: plan shell foundation and files workspace`).
 - Published SF1 characterization checkpoint: `7b9b626d`
@@ -116,18 +116,19 @@
 - SF4.1 is CLOSED. Eight atomic RED/GREEN pairs end at `784fdc2e`/`944a9d4c`;
   detailed evidence is
   `.codex/evidence/shell-foundation-sf4-stage-progress.md`.
-- SF4.2-01 is GREEN: the table-driven
-  `shell_input_router_follows_frozen_precedence` (RED `92777e23`, GREEN
-  `f4f5e3cb`) froze the seven-tier precedence as pure `route_shell_input`,
-  and `App::handle_key` now selects its keyboard tier through
-  `AppState::shell_key_input_owner()` with preserved behavior.
-- Next RED: `overlay_blocks_every_background_mouse_action` from the recorded
-  reconnaissance in
-  `.codex/evidence/shell-foundation-sf4-input-router-progress.md` (unguarded
-  sidebar-divider double-click under `Mode::ContextMenu` and wheel
-  fall-through are the observed leak candidates). GREEN routes
-  `handle_mouse_without_agent_frame_action`'s overlay tier through the frozen
-  router before any background branch.
+- SF4.2-01 is GREEN (`92777e23`/`f4f5e3cb`): the seven-tier frozen precedence
+  is pure `route_shell_input`, and `App::handle_key` selects its keyboard
+  tier through `AppState::shell_key_input_owner()`.
+- SF4.2-02 is GREEN (`41362e89`/`017ba97f`): topmost blocking overlays now
+  own every background mouse route — pre-branches stay inert behind
+  `shell_mouse_input_owner()`, and one total early `Mode::ContextMenu` block
+  consumes wheel/drag fail-closed while preserving item dispatch, hover,
+  outside-close, and right-click re-targeting.
+- Next microtask: SF4.2-03 `overlay_blocks_background_keyboard_shortcut` —
+  FIRST verify RED-ability (keyboard may already block by construction); if
+  already green, record it as an explicit characterization with evidence
+  (SF1 precedent) and continue with SF4.2-04 capture ownership. See
+  `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one
   bounded focus/capture router shared by mouse and keyboard, and recovery

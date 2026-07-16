@@ -14,7 +14,7 @@ SF4.1 typed Stage closure (`944a9d4c`) and every earlier baseline stay frozen.
 | ID | Test | Expected result | Reason | Status |
 |---|---|---|---|---|
 | SF4.2-01 | `shell_input_router_follows_frozen_precedence` | Table-driven: overlay -> capture -> topmost hit -> focused component -> page -> global -> fail-closed, exactly one owner per row | Precedence must be a typed total authority, not implicit if-chain ordering | GREEN |
-| SF4.2-02 | `overlay_blocks_every_background_mouse_action` | Every active overlay kind consumes background-targeted mouse events with zero background action | Topmost blocking overlays prevent every background route (design spec) | PENDING RED |
+| SF4.2-02 | `overlay_blocks_every_background_mouse_action` | Every active overlay kind consumes background-targeted mouse events with zero background action | Topmost blocking overlays prevent every background route (design spec) | GREEN |
 | SF4.2-03 | `overlay_blocks_background_keyboard_shortcut` | No global/page shortcut acts while a blocking overlay owns focus | Keyboard parity for the same rule | PENDING |
 | SF4.2-04 | `capture_owns_move_and_up_outside_original_rect` | Active capture receives move/up even outside its origin rect | Only one owner captures a pointer gesture | PENDING |
 | SF4.2-05 | `focus_restores_after_overlay_close` | Closing an overlay restores the previous valid focus owner or template fallback | Deterministic focus restoration | PENDING |
@@ -76,13 +76,60 @@ Current mouse ownership is distributed, not total:
   full gesture-family coverage (right/middle/modified, drag, double-click
   timing) remains SF4.3 scope.
 
+## SF4.2-02 Atomic TDD Evidence
+
+- RED `41362e89` (`test: require overlay blocking for background mouse
+  actions`), run `e86799e4-9e32-49a8-9af8-3e87df750073`: the control phase
+  proved the fixture reaches real background targets (sidebar wheel moved the
+  selection without an overlay), then the overlay phase failed exactly on the
+  leak — a background sidebar wheel moved `selected` 1 -> 0 while the context
+  menu stayed open. The test also pins the divider contract: the outside
+  click that closes the menu must not prime a double-click gesture, and a
+  final control phase proves the normal divider double-click reset survives
+  (over-blocking guard).
+- GREEN `017ba97f` (`feat: block background mouse routes under topmost
+  overlays`):
+  - `AppState::shell_mouse_input_owner()` projects the mouse overlay tier
+    through the frozen router; `mouse_blocking_overlay_active()` classifies
+    all 23 modes exhaustively (Terminal/Prefix/Navigate/Copy/Resize are the
+    only non-overlay modes) so a new mode must choose a side explicitly.
+  - `handle_mouse_without_agent_frame_action` keeps every background
+    pre-branch (file-manager surface, divider gestures, URL clicks) inert
+    while a blocking overlay owns the mouse.
+  - `AppState::handle_mouse` gained one total early `Mode::ContextMenu`
+    ownership block: Moved hovers, left-down dispatches/closes, a
+    re-targeting right-click falls through to the shared open arms, and
+    every other gesture (wheel, drags, middle) is consumed fail-closed. The
+    old scattered ContextMenu branches were removed.
+- GREEN exact run `a7ffb0a9-dabc-4e86-9170-a74e1e29a2fa`: 1/1 with both
+  control phases. Broad input/menu/FM/sidebar regressions: 555/555, run
+  `e9d07eac-8437-4dfc-84f7-1ef2e77b2cde`.
+- Full Nextest: 3,302/3,302 passed, one named B0 skip, zero retry; fmt,
+  Linux all-target Clippy, canonical Windows MSVC bin Clippy with
+  `-D warnings`, Bun 5/5 + 12/12, Python 64/64, diff and
+  added-production-`unwrap()` checks clean.
+- File-boundary note: the SF4.2 plan listed `mouse.rs` only implicitly
+  ("subject to graph/source confirmation"); the source trace proved
+  ContextMenu mouse ownership lives there, so the edit is inside the SF4.2
+  semantic boundary.
+- Publication: both CyPack refs equal exact SHA
+  `017ba97f26ce111070f83ecf3c9306abfc756dcc`; `upstream` untouched. Fresh
+  sequential graph: 20,421 nodes / 94,238 edges with current
+  `shell_mouse_input_owner`, `mouse_blocking_overlay_active`, and the new
+  blocking test.
+
 ## Exact Next Microtask
 
-Write the compile-valid behavior RED `overlay_blocks_every_background_mouse_action`
-from the reconnaissance above. It must drive real background targets under
-each active overlay kind and fail on an observed background action (for
-example the unguarded divider double-click reset), never on setup. GREEN
-routes `handle_mouse_without_agent_frame_action`'s overlay tier through the
-frozen router before any background branch runs. Do not start SF4.3 gesture
-coverage, SF5 AppDock, SF6 Files migration, or change-pipeline T3.1 before
-SF4.2 closes.
+SF4.2-03 `overlay_blocks_background_keyboard_shortcut`: FIRST verify
+RED-ability. The keyboard chain may already block by construction — every
+overlay mode's key handler consumes unknown keys, the router's overlay tier
+precedes capture, and the modal paste shortcut is intended behavior. If no
+failing behavior exists, record the evidence and add the test as an explicit
+characterization with justification (SF1 precedent) instead of manufacturing
+an invalid RED; then continue with SF4.2-04 capture ownership. Remaining
+in-dispatch wheel leaks for non-ContextMenu overlay modes (Rename*/
+ConfirmClose/worktree modals) are covered by the pre-branch gating for
+mod.rs paths but their `state.handle_mouse` wheel arms still act only behind
+`in_sidebar`/pane guards — the SF4.3 gesture matrix owns the exhaustive
+sweep. Do not start SF4.3, SF5, SF6, or change-pipeline T3.1 before SF4.2
+closes.
