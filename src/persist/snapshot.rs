@@ -653,6 +653,95 @@ mod tests {
         })
     }
 
+    fn valid_v4_shell_json() -> serde_json::Value {
+        serde_json::json!({
+            "schema_version": 1,
+            "template": "DockSidebarStage",
+            "root": {
+                "Split": {
+                    "direction": "Horizontal",
+                    "children": [
+                        {
+                            "size": "Dynamic",
+                            "node": { "Slot": { "region": "AppDock" } }
+                        },
+                        {
+                            "size": "Dynamic",
+                            "node": { "Slot": { "region": "LeftPanel" } }
+                        },
+                        {
+                            "size": "Fill",
+                            "node": { "Slot": { "region": "WorkspaceStage" } }
+                        }
+                    ]
+                }
+            },
+            "region_constraints": {
+                "AppDock": {
+                    "Resizable": { "min": 3, "preferred": 5, "max": 9 }
+                },
+                "LeftPanel": {
+                    "Resizable": { "min": 4, "preferred": 31, "max": 40 }
+                },
+                "WorkspaceStage": { "Fill": { "weight": 1 } }
+            },
+            "component_placements": [
+                { "component": "AppDock", "region": "AppDock" },
+                { "component": "AgentSidebar", "region": "LeftPanel" },
+                { "component": "WorkspaceStage", "region": "WorkspaceStage" }
+            ],
+            "collapse_restore_widths": {
+                "AppDock": 5,
+                "LeftPanel": 31
+            },
+            "pinned_dock_order": ["Terminal", "Files"]
+        })
+    }
+
+    fn v4_session_with_shell_json(
+        shell: serde_json::Value,
+        workspace_id: &str,
+        sidebar_width: u16,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "version": 4,
+            "workspaces": [current_workspace_json(workspace_id)],
+            "active": 0,
+            "selected": 0,
+            "shell": shell,
+            "sidebar_width": sidebar_width,
+            "sidebar_section_split": 0.4
+        })
+    }
+
+    fn assert_compatible_shell_fallback(
+        restored: &SessionSnapshot,
+        workspace_id: &str,
+        sidebar_width: u16,
+    ) {
+        assert_eq!(restored.workspaces.len(), 1);
+        assert_eq!(restored.workspaces[0].id.as_deref(), Some(workspace_id));
+        assert_eq!(restored.active, Some(0));
+        assert_eq!(restored.selected, 0);
+        assert_eq!(restored.sidebar_width, Some(sidebar_width));
+        assert_eq!(restored.sidebar_section_split, Some(0.4));
+
+        let encoded = serde_json::to_value(restored).unwrap();
+        let expected_width = Some(u64::from(sidebar_width));
+        assert_eq!(
+            encoded
+                .pointer("/shell/region_constraints/LeftPanel/Resizable/preferred")
+                .and_then(serde_json::Value::as_u64),
+            expected_width
+        );
+        assert_eq!(
+            encoded
+                .pointer("/shell/collapse_restore_widths/LeftPanel")
+                .and_then(serde_json::Value::as_u64),
+            expected_width
+        );
+    }
+
     fn capture_from_state(state: &AppState) -> SessionSnapshot {
         let terminal_runtimes = TerminalRuntimeRegistry::new();
         capture_from_state_with_runtimes(state, &terminal_runtimes)
@@ -895,48 +984,7 @@ mod tests {
 
     #[test]
     fn v4_shell_round_trip_is_idempotent() {
-        let shell = serde_json::json!({
-            "schema_version": 1,
-            "template": "DockSidebarStage",
-            "root": {
-                "Split": {
-                    "direction": "Horizontal",
-                    "children": [
-                        {
-                            "size": "Dynamic",
-                            "node": { "Slot": { "region": "AppDock" } }
-                        },
-                        {
-                            "size": "Dynamic",
-                            "node": { "Slot": { "region": "LeftPanel" } }
-                        },
-                        {
-                            "size": "Fill",
-                            "node": { "Slot": { "region": "WorkspaceStage" } }
-                        }
-                    ]
-                }
-            },
-            "region_constraints": {
-                "AppDock": {
-                    "Resizable": { "min": 3, "preferred": 5, "max": 9 }
-                },
-                "LeftPanel": {
-                    "Resizable": { "min": 4, "preferred": 31, "max": 40 }
-                },
-                "WorkspaceStage": { "Fill": { "weight": 1 } }
-            },
-            "component_placements": [
-                { "component": "AppDock", "region": "AppDock" },
-                { "component": "AgentSidebar", "region": "LeftPanel" },
-                { "component": "WorkspaceStage", "region": "WorkspaceStage" }
-            ],
-            "collapse_restore_widths": {
-                "AppDock": 5,
-                "LeftPanel": 31
-            },
-            "pinned_dock_order": ["Terminal", "Files"]
-        });
+        let shell = valid_v4_shell_json();
         let input = serde_json::json!({
             "version": 4,
             "workspaces": [],
@@ -961,42 +1009,77 @@ mod tests {
 
     #[test]
     fn invalid_v4_shell_falls_back_without_losing_workspaces() {
-        let input = serde_json::json!({
-            "version": 4,
-            "workspaces": [current_workspace_json("w-preserved")],
-            "active": 0,
-            "selected": 0,
-            "shell": {
+        let input = v4_session_with_shell_json(
+            serde_json::json!({
                 "schema_version": 1,
                 "template": "DockSidebarStage",
                 "root": { "Slot": { "region": "NotARegion" } }
-            },
-            "sidebar_width": 29,
-            "sidebar_section_split": 0.4
-        });
+            }),
+            "w-preserved",
+            29,
+        );
 
         let restored = parse_snapshot(&input.to_string())
             .expect("invalid shell preferences must not discard valid session data");
-        assert_eq!(restored.workspaces.len(), 1);
-        assert_eq!(restored.workspaces[0].id.as_deref(), Some("w-preserved"));
-        assert_eq!(restored.active, Some(0));
-        assert_eq!(restored.selected, 0);
-        assert_eq!(restored.sidebar_width, Some(29));
-        assert_eq!(restored.sidebar_section_split, Some(0.4));
+        assert_compatible_shell_fallback(&restored, "w-preserved", 29);
+    }
 
-        let encoded = serde_json::to_value(&restored).unwrap();
-        assert_eq!(
-            encoded
-                .pointer("/shell/region_constraints/LeftPanel/Resizable/preferred")
-                .and_then(serde_json::Value::as_u64),
-            Some(29)
-        );
-        assert_eq!(
-            encoded
-                .pointer("/shell/collapse_restore_widths/LeftPanel")
-                .and_then(serde_json::Value::as_u64),
-            Some(29)
-        );
+    #[test]
+    fn over_limit_v4_shell_falls_back_safely() {
+        let children = (0..9)
+            .map(|_| {
+                serde_json::json!({
+                    "size": "Fill",
+                    "node": { "Slot": { "region": "WorkspaceStage" } }
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut shell = valid_v4_shell_json();
+        shell["root"] = serde_json::json!({
+            "Split": {
+                "direction": "Horizontal",
+                "children": children
+            }
+        });
+        let input = v4_session_with_shell_json(shell, "w-over-limit", 27);
+
+        let restored = parse_snapshot(&input.to_string())
+            .expect("over-limit shell must fall back without losing the session");
+        assert_compatible_shell_fallback(&restored, "w-over-limit", 27);
+    }
+
+    #[test]
+    fn duplicate_or_unknown_component_placement_falls_back_safely() {
+        let duplicate = serde_json::json!([
+            { "component": "AppDock", "region": "AppDock" },
+            { "component": "AppDock", "region": "LeftPanel" }
+        ]);
+        let unknown = serde_json::json!([
+            { "component": "FutureComponent", "region": "AppDock" }
+        ]);
+
+        for (label, placements, width) in [("duplicate", duplicate, 30), ("unknown", unknown, 31)] {
+            let mut shell = valid_v4_shell_json();
+            shell["component_placements"] = placements;
+            let workspace_id = format!("w-{label}");
+            let input = v4_session_with_shell_json(shell, &workspace_id, width);
+
+            let restored = parse_snapshot(&input.to_string()).unwrap_or_else(|error| {
+                panic!("{label} placement must fall back without session loss: {error}")
+            });
+            assert_compatible_shell_fallback(&restored, &workspace_id, width);
+        }
+    }
+
+    #[test]
+    fn unknown_template_falls_back_safely() {
+        let mut shell = valid_v4_shell_json();
+        shell["template"] = serde_json::json!("FutureWorkspace");
+        let input = v4_session_with_shell_json(shell, "w-unknown-template", 28);
+
+        let restored = parse_snapshot(&input.to_string())
+            .expect("unknown shell template must not discard valid session data");
+        assert_compatible_shell_fallback(&restored, "w-unknown-template", 28);
     }
 
     #[test]
