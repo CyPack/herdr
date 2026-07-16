@@ -17,7 +17,9 @@
 
 use ratatui::layout::{Constraint, Layout, Rect};
 
-#[cfg(test)]
+// SF3.1 lands the pure reducer before the input adapter consumes it in the
+// next test-first slice.
+#[allow(dead_code)]
 mod interaction;
 mod layout;
 mod model;

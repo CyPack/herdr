@@ -1,17 +1,121 @@
+use ratatui::layout::Position;
+
+use super::{RegionId, ShellDirection};
+
+/// Stable identity for one divider between adjacent shell regions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DividerId {
+    leading: RegionId,
+    trailing: RegionId,
+    axis: ShellDirection,
+}
+
+impl DividerId {
+    pub(crate) fn new(leading: RegionId, trailing: RegionId, axis: ShellDirection) -> Option<Self> {
+        (leading != trailing).then_some(Self {
+            leading,
+            trailing,
+            axis,
+        })
+    }
+}
+
+/// Valid min/max constraints for the two tracks adjacent to a divider.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ResizeBounds {
+    leading_min: u16,
+    leading_max: u16,
+    trailing_min: u16,
+    trailing_max: u16,
+}
+
+impl ResizeBounds {
+    pub(crate) fn new(
+        leading_min: u16,
+        leading_max: u16,
+        trailing_min: u16,
+        trailing_max: u16,
+    ) -> Option<Self> {
+        (leading_min <= leading_max && trailing_min <= trailing_max).then_some(Self {
+            leading_min,
+            leading_max,
+            trailing_min,
+            trailing_max,
+        })
+    }
+}
+
+/// Pure transient state for one bounded divider gesture.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ResizeTransaction {
+    divider: DividerId,
+    view_generation: u64,
+    pointer_origin: Position,
+    original_tracks: [u16; 2],
+    preview_tracks: [u16; 2],
+}
+
+impl ResizeTransaction {
+    pub(crate) fn begin(
+        divider: DividerId,
+        view_generation: u64,
+        pointer_origin: Position,
+        original_tracks: [u16; 2],
+    ) -> Option<Self> {
+        let _total = original_tracks[0].checked_add(original_tracks[1])?;
+        if original_tracks.contains(&0) {
+            return None;
+        }
+        Some(Self {
+            divider,
+            view_generation,
+            pointer_origin,
+            original_tracks,
+            preview_tracks: original_tracks,
+        })
+    }
+
+    /// Update only the transient tracks. No effect adapter is available here,
+    /// so preview cannot dirty persistence or resize a terminal runtime.
+    pub(crate) fn preview(&mut self, pointer: Position, bounds: ResizeBounds) -> bool {
+        let total = self.original_tracks[0] + self.original_tracks[1];
+        let leading_lower = bounds
+            .leading_min
+            .max(total.saturating_sub(bounds.trailing_max));
+        let leading_upper = bounds
+            .leading_max
+            .min(total.saturating_sub(bounds.trailing_min));
+        if leading_lower > leading_upper {
+            return false;
+        }
+
+        let (pointer_now, pointer_origin) = match self.divider.axis {
+            ShellDirection::Horizontal => (pointer.x, self.pointer_origin.x),
+            ShellDirection::Vertical => (pointer.y, self.pointer_origin.y),
+        };
+        let desired =
+            i32::from(self.original_tracks[0]) + i32::from(pointer_now) - i32::from(pointer_origin);
+        let leading = desired.clamp(i32::from(leading_lower), i32::from(leading_upper)) as u16;
+        self.preview_tracks = [leading, total.saturating_sub(leading)];
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use ratatui::layout::Position;
-
-    use super::super::RegionId;
+    use super::*;
 
     #[test]
     fn divider_down_captures_original_constraints() {
-        let divider = TestDividerId {
-            leading: RegionId::LeftPanel,
-            trailing: RegionId::WorkspaceStage,
-        };
+        let divider = DividerId::new(
+            RegionId::LeftPanel,
+            RegionId::WorkspaceStage,
+            ShellDirection::Horizontal,
+        )
+        .expect("distinct adjacent regions form a divider");
 
-        let transaction = begin_resize_for_test(divider, 7, Position::new(25, 5), [26, 54]);
+        let transaction = ResizeTransaction::begin(divider, 7, Position::new(25, 5), [26, 54])
+            .expect("non-zero normalized tracks start a transaction");
 
         assert_eq!(
             (
@@ -27,19 +131,18 @@ mod tests {
 
     #[test]
     fn drag_preview_clamps_without_dirty_or_pty_resize() {
-        let mut transaction = TestResizeTransaction {
-            divider: TestDividerId {
-                leading: RegionId::LeftPanel,
-                trailing: RegionId::WorkspaceStage,
-            },
-            view_generation: 7,
-            pointer_origin: Position::new(25, 5),
-            original_tracks: [26, 54],
-            preview_tracks: [26, 54],
-        };
-        let mut effects = TestResizeEffects::default();
+        let divider = DividerId::new(
+            RegionId::LeftPanel,
+            RegionId::WorkspaceStage,
+            ShellDirection::Horizontal,
+        )
+        .expect("distinct adjacent regions form a divider");
+        let mut transaction = ResizeTransaction::begin(divider, 7, Position::new(25, 5), [26, 54])
+            .expect("non-zero normalized tracks start a transaction");
+        let bounds = ResizeBounds::new(4, 40, 1, 80).expect("ordered track bounds");
+        let effects = TestResizeEffects::default();
 
-        preview_resize_for_test(&mut transaction, Position::new(99, 5), 4, 40, &mut effects);
+        assert!(transaction.preview(Position::new(99, 5), bounds));
 
         assert_eq!(
             (
@@ -51,58 +154,9 @@ mod tests {
         );
     }
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    struct TestDividerId {
-        leading: RegionId,
-        trailing: RegionId,
-    }
-
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    struct TestResizeTransaction {
-        divider: TestDividerId,
-        view_generation: u64,
-        pointer_origin: Position,
-        original_tracks: [u16; 2],
-        preview_tracks: [u16; 2],
-    }
-
     #[derive(Default)]
     struct TestResizeEffects {
         persistence_dirty: usize,
         pty_resize_requests: usize,
-    }
-
-    fn begin_resize_for_test(
-        divider: TestDividerId,
-        _view_generation: u64,
-        _pointer_origin: Position,
-        original_tracks: [u16; 2],
-    ) -> TestResizeTransaction {
-        // RED-only seam: SF3.1 must capture the current generation, pointer,
-        // and committed normalized tracks instead of manufacturing defaults.
-        let total = original_tracks[0].saturating_add(original_tracks[1]);
-        TestResizeTransaction {
-            divider,
-            view_generation: 0,
-            pointer_origin: Position::new(0, 0),
-            original_tracks: [0, total],
-            preview_tracks: [0, total],
-        }
-    }
-
-    fn preview_resize_for_test(
-        transaction: &mut TestResizeTransaction,
-        pointer: Position,
-        _leading_min: u16,
-        _leading_max: u16,
-        effects: &mut TestResizeEffects,
-    ) {
-        // RED-only seam: SF3.1 replaces this eager, unclamped mutation with a
-        // pure bounded preview that emits no persistence or PTY effects.
-        let total = transaction.original_tracks[0].saturating_add(transaction.original_tracks[1]);
-        let leading = pointer.x.min(total);
-        transaction.preview_tracks = [leading, total.saturating_sub(leading)];
-        effects.persistence_dirty += 1;
-        effects.pty_resize_requests += 1;
     }
 }
