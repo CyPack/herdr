@@ -59,12 +59,13 @@ Priority is mandatory:
 1. P0 ACTIVE: SF4.2 focus scopes, capture, and semantic input precedence.
    SF4.2-01 (`f4f5e3cb`), SF4.2-02 (`017ba97f`), SF4.2-03 (`efe6446b`),
    SF4.2-04 (`119e4a2d`, capture-ownership characterization), and SF4.2-05
-   (`5eb63763` scoped core + `3880c66b` full entry sweep, CLOSED), and
+   (`5eb63763` scoped core + `3880c66b` full entry sweep, CLOSED),
    SF4.2-06 (`3580ff19`, inert-region characterization with the adversarial
-   collapsed-divider guard pin) are GREEN. Next: SF4.2-07 stale hit
-   generation (wire `ShellView::hit_at` into the mouse context builder's
-   topmost-hit tier), then SF4.2-08 hidden-terminal blocking, and the
-   SF4.2 closure gate. See
+   collapsed-divider guard pin), and SF4.2-07 (`c6b024ce`, topmost-hit tier
+   resolved against the exact current `ShellView` generation) are GREEN.
+   Next: SF4.2-08 hidden-terminal blocking
+   (`files_stage_blocks_hidden_terminal_input`), then the SF4.2 closure
+   gate. See
    `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
 2. P0 NEXT: SF4.3 -> SF4.4 -> SF5 -> SF6 -> FM1 -> FM2 -> FM3 -> FM4
    -> FM5.
@@ -80,12 +81,10 @@ continuity, and pipeline files in one commit.
 ## Current Verified Truth
 
 - Branch: `feat/native-fm`.
-- Verified head: `3580ff19`
-  (`test: freeze inert region focus exclusion`, SF4.2-06 characterization).
-- Latest product GREEN: `3880c66b`
-  (`feat: wire every overlay entry through focus remembering`); its RED is
-  `27f8699f` (`test: require copy session restore after context menu
-  close`).
+- Verified product head: `c6b024ce`
+  (`feat: resolve mouse hits against current shell generation`).
+- Matching RED: `bb3ac54d`
+  (`test: require current generation hit resolution`).
 - Separate test-stability commit `3c853a70` closed the parallel-load
   process-exit suppression flake class in `src/terminal/state.rs`.
 - SF0-SF3 are closed. SF4.1 is CLOSED with 8/8 behavior slices GREEN.
@@ -102,7 +101,7 @@ continuity, and pipeline files in one commit.
   - `784fdc2e` / `944a9d4c`: stage switches preserve terminal runtime
     (`AppDefinition`/`LaunchPolicy` + pure `StageState::surface_view()`).
 - Next test is not yet written:
-  `stale_hit_generation_fails_closed` (SF4.2-07, `hit_at` wiring).
+  `files_stage_blocks_hidden_terminal_input` (SF4.2-08).
 - Legacy `AppState.file_manager: Option<FmState>` curtain still renders. Do
   not remove it until SF6.
 - `previous_pane_focus` is existing pane history, not the new SF4.2 focus
@@ -110,13 +109,13 @@ continuity, and pipeline files in one commit.
   seam, never persisted.
 - Protocol remains 16. SF4.1 and SF4.2 stayed client-local presentation
   state.
-- Full current gate: Nextest 3,307/3,307 passed plus one named B0 skip
+- Full current gate: Nextest 3,308/3,308 passed plus one named B0 skip
   (`--no-fail-fast`), Linux all-target Clippy, Windows MSVC bin Clippy, fmt,
   diff and added-production-`unwrap()` clean (Bun 5/5 + 12/12 and Python
   64/64 last verified at the SF4.2-01 gate; rerun them at the SF4.2 closure
   gate).
 - Both CyPack refs equal exact SHA
-  `3580ff1986e524a67a6ff7c33bd6056afe75c2ea`.
+  `c6b024ced8116d88eaf04d1a660d41cd7a86afeb`.
 - User-owned `.superpowers/` is untracked and must never be staged or edited.
 
 ## Mandatory Git and Remote Audit

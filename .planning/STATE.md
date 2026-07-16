@@ -151,11 +151,17 @@
   containment in `hit_at`, collapsed-divider guard, degenerate toggle
   rects); the test freezes Hidden/zero-area inertness, compact-rail
   interactivity, and pins the previously unpinned adversarial
-  collapsed-divider guard. Current verified head: `3580ff19`.
-- Next microtask: SF4.2-07 stale hit generation
-  (`stale_hit_generation_fails_closed`, wire `ShellView::hit_at` into the
-  mouse context builder's topmost-hit tier), then SF4.2-08 hidden-terminal
-  blocking, SF4.2 closure gate. See
+  collapsed-divider guard.
+- SF4.2-07 is GREEN (`bb3ac54d`/`c6b024ce`): `shell_mouse_input_owner`
+  takes the event position and resolves the topmost-hit tier through the
+  new crate seam `ShellView::region_hit_at` against the EXACT current
+  generation — old coordinates re-resolve to their current owner and never
+  grant vanished authority; the single caller still consumes only the
+  overlay comparison, so dispatch stays bit-identical until SF4.3/SF6
+  consume semantic targets. Current verified head: `c6b024ce`.
+- Next microtask: SF4.2-08 hidden-terminal blocking
+  (`files_stage_blocks_hidden_terminal_input`), then the SF4.2 closure
+  gate. See
   `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one
