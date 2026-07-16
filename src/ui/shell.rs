@@ -1112,6 +1112,39 @@ mod tests {
     }
 
     #[test]
+    fn committed_collapse_revision_invalidates_shell_geometry_once() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![crate::workspace::Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        let area = Rect::new(0, 0, 100, 24);
+
+        crate::ui::compute_view(&mut app, area);
+        let initial_generation = app.view.shell.generation;
+
+        assert!(app.set_sidebar_collapsed(true));
+        crate::ui::compute_view(&mut app, area);
+        let collapsed_generation = app.view.shell.generation;
+        assert_eq!(collapsed_generation, initial_generation + 1);
+        assert_eq!(app.view.shell.geometry_key.collapse_revision, 1);
+        assert_eq!((app.active, app.selected), (Some(0), 0));
+
+        assert!(!app.set_sidebar_collapsed(true));
+        crate::ui::compute_view(&mut app, area);
+        assert_eq!(app.view.shell.generation, collapsed_generation);
+
+        assert!(app.set_sidebar_collapsed(false));
+        crate::ui::compute_view(&mut app, area);
+        assert_eq!(app.view.shell.generation, collapsed_generation + 1);
+        assert_eq!(
+            app.view.shell.geometry_key.collapse_revision,
+            app.shell_presentation.left_panel_collapse_revision()
+        );
+        assert_eq!(app.view.shell.geometry_key.collapse_revision, 2);
+        assert_eq!((app.active, app.selected), (Some(0), 0));
+    }
+
+    #[test]
     fn flattened_hits_are_complete_disjoint_and_in_bounds() {
         let layout = ShellLayout::default();
         let area = Rect::new(10, 20, 80, 24);
