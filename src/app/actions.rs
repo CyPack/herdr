@@ -356,8 +356,9 @@ impl AppState {
             .unwrap_or_else(|| {
                 std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
             });
-        self.file_manager = Some(crate::fm::FmState::new(cwd));
-        self.stage.activate_files();
+        if self.stage.activate_files().is_ok() {
+            self.file_manager = Some(crate::fm::FmState::new(cwd));
+        }
     }
 
     /// Open the blocking single-file picker for the exact focused agent. This
