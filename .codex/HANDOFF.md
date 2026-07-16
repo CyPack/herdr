@@ -1,4 +1,688 @@
-# SESSION HANDOFF — Herdr Native FM — 2026-07-16
+# SESSION HANDOFF — Herdr Shell Foundation / Native FM — 2026-07-16
+
+> AUTHORITATIVE CURRENT CHECKPOINT. This section supersedes every lower
+> historical "next action" statement. The prior handoff is preserved after the
+> current checkpoint as an evidence appendix; do not resume from its stale
+> SF3/SF4-start pointer.
+
+## 0. EXECUTIVE STATE
+
+- Repository: `/home/ayaz/projects/herdr`
+- Branch: `feat/native-fm`
+- Acting identity: CyPack external contributor; `origin` is the writable
+  `CyPack/herdr` fork and `upstream` is read-only.
+- Current verified product head: `f0f32075`
+  (`feat: roll back failed files stage opens`).
+- Matching observed behavior RED: `056f0879`
+  (`test: require files open rollback`).
+- Program: 7 Shell Foundation phases SF0-SF6 plus 5 FM phases FM1-FM5.
+- Closed phases: SF0, SF1, SF2, SF3.
+- Active phase: SF4 SurfaceHost and input router.
+- Active microphase: SF4.1 typed Stage state/lifecycle, 7 of 8 approved
+  behavior slices GREEN.
+- Immediate next microtask: compile-valid behavior RED
+  `stage_surface_switch_does_not_destroy_terminal_runtime`.
+- Product tree: clean at `f0f32075`; only the user-owned untracked
+  `.superpowers/` tree exists and must remain untouched/unstaged.
+- Full exact-head gate: 3,299/3,299 Rust tests passed, one named B0 real-host
+  probe skipped, zero retry; Linux/Windows Clippy, Bun 17/17, Python 64/64,
+  fmt/diff/added-production-unwrap checks passed.
+- Fresh sequential Codebase Memory store: 20,340 nodes / 93,429 edges with
+  current `AppState.try_open_file_manager_with` and `miller_layout` source.
+- Current Codex built-in MCP channel is stale at 20,291 / 94,542 and lacks the
+  new symbol. Do not restart any proxy/process; a fresh session must verify the
+  built-in channel against the current symbol before trusting it.
+- Stable Herdr process/socket, installed binary, user terminal/editor/browser,
+  and every user process were untouched.
+
+## 1. NORTH-STAR MISSION
+
+Herdr is not merely a terminal multiplexer. The product mission is to provide
+a desktop/workspace-class UX from a terminal while retaining server/runtime
+truth, SSH efficiency, deterministic Ratatui rendering, and native or
+terminal-hosted app surfaces.
+
+The approved architecture direction is:
+
+```text
+Thin bounded Shell Foundation
+  -> typed Workspace Stage and fail-closed input ownership
+  -> icon-only AppDock
+  -> Files as the first native Stage surface
+  -> Finder-like bounded Miller UX continuation
+  -> later, separately authorized Apps/Desktop expansion
+```
+
+The outer shell has named semantic regions. Their contents may use bounded
+split containers, fixed/resizable/fill tracks, collapse/expand, scroll
+viewports, focus scopes, overlay ownership, and reusable page templates.
+Foundation v0 is deliberately not a free-form window manager, visual editor,
+arbitrary plugin layout DSL, floating-window system, or per-component render
+loop.
+
+Files is the first real native app consumer. It must cease being a curtain in
+front of live terminals and become the Stage owner while terminal runtimes stay
+alive, hidden input stays inert, Agent Sidebar remains independent, and the
+Stage can restore the previous surface on close or failure.
+
+Performance mission: layout computation remains bounded and deterministic;
+render remains pure; shell state stays client-side; identical frames remain
+skippable; retained PTY dirty-row patching and bounded render queues remain
+intact; preview drag produces no disk/PTY/filesystem churn; no new network
+layout protocol is introduced without separate evidence and authorization.
+
+## 2. AUTHORITATIVE SOURCE ORDER
+
+The next agent must treat this order as mandatory, not advisory:
+
+1. `AGENTS.md` completely.
+2. `CLAUDE.md` completely; currently byte-equivalent project rules, but still
+   read it independently.
+3. Project skill `$herdr-native-fm` and every mandatory lesson:
+   `lessons/errors.md`, `lessons/golden-paths.md`, `lessons/edge-cases.md`, and
+   `/home/ayaz/.codex/skills/_shared/common-errors.md`.
+4. `.codex/BOOTSTRAP.md`.
+5. `.codex/CURRENT.md`.
+6. `.codex/TASKS.md`.
+7. `.codex/CHANGE-PIPELINE-TASKS.md`.
+8. This `.codex/HANDOFF.md` current checkpoint and relevant historical
+   evidence sections.
+9. `.codex/MEMORY.md` for stable decisions and operational lessons.
+10. `.planning/STATE.md`.
+11. Approved design and execution plans:
+    - `docs/superpowers/specs/2026-07-15-herdr-shell-foundation-v0-design.md`
+    - `docs/superpowers/plans/2026-07-15-herdr-shell-file-manager-program-plan.md`
+    - `docs/superpowers/plans/2026-07-15-herdr-shell-foundation-v0-implementation.md`
+    - `docs/superpowers/plans/2026-07-15-herdr-file-manager-post-shell-implementation.md`
+12. Current SF4 evidence:
+    `.codex/evidence/shell-foundation-sf4-stage-progress.md`.
+13. `.local/ISOLATED-DEV-TEST.md` before any manual runtime test.
+
+`rust-dev` is mandated by the project skill, but
+`/home/ayaz/.codex/skills/rust-dev` currently resolves to a missing canonical
+Claude target. Do not claim it loaded. Report the tooling gap and follow the
+tracked Rust rules, Herdr lessons, TDD protocol, and existing code patterns.
+Do not repair global skill links unless the user separately authorizes that
+out-of-repository tooling change.
+
+Use `$ratatui-design-intelligence` only when the task genuinely requires new
+reference/design comparison. Its output is evidence, not product-code
+authority. The non-product `herdr-change-pipeline` skill is not implemented
+yet; T3.1 is its next RED task when that lane is unpaused.
+
+## 3. REQUIRED SESSION BOOTSTRAP TRIGGERS
+
+Immediately after reading the sources, the next agent must create/update its
+in-session task list. It must ingest every unchecked task from both canonical
+registries; it may group them for display but may not drop, silently merge, or
+renumber them. At most one product microtask is in progress. The first active
+item is SF4.1-08; every later task stays pending.
+
+Required read-only start commands:
+
+```bash
+git status --short --branch
+git log --oneline -12
+git remote -v
+git rev-parse HEAD
+git ls-remote origin refs/heads/feat/native-fm refs/heads/master
+```
+
+Never print credential-bearing MCP config or broad process arguments. Never
+use `git add -A`, force push, push `upstream`, open an upstream issue/PR, reset
+or discard user changes, or touch `.superpowers/`.
+
+## 4. CODEBASE MEMORY / ARCHITECTURE-FIRST PROTOCOL
+
+Graph discovery precedes source grep for code symbols and relationships:
+
+1. Call `index_status(project="home-ayaz-projects-herdr")`.
+2. Search current `AppState.try_open_file_manager_with` and `miller_layout`.
+3. Read the exact new transaction source with `get_code_snippet`.
+4. Locate the frozen terminal-runtime preservation fixture and trace its
+   runtime calls before editing.
+5. Use `trace_path` for callers/callees/data flow and `get_architecture` for
+   ownership boundaries; use grep only after graph discovery or for literal,
+   config, and documentation searches.
+6. Reject `ready` alone. If the built-in channel still returns 20,291 / 94,542
+   or cannot find the transaction, label it stale.
+7. Do not restart/kill the proxy or user processes. The proven safe refresh is:
+
+```bash
+CBM_WORKERS=1 codebase-memory-mcp cli index_repository \
+  '{"repo_path":"/home/ayaz/projects/herdr","mode":"fast","persistence":false}'
+```
+
+8. Prove refresh with CLI/built-in status, current symbol search, and exact
+   snippet. Record node/edge counts and which transport supplied the evidence.
+
+The graph is an architecture map, not authority to mutate unrelated code.
+Classify every new fact as shared runtime/server truth or client/TUI
+presentation state before adding it.
+
+## 5. CURRENT ARCHITECTURE AND OWNERSHIP
+
+- `AppState` remains pure client/application data; terminal runtime ownership
+  is separate.
+- `src/ui/surface_host.rs` owns bounded typed Stage presentation identity:
+  `BuiltInAppId`, `AppInstanceId`, `AppInstance`, `AppSurfaceRef`, and
+  `StageState`.
+- Stage storage is a fixed array capped at 16 built-in instances. Generation is
+  checked `u32`; exhaustion and capacity overflow fail without mutation.
+- Terminal is the default singleton instance. Files activation records the
+  previous surface. Files reactivation is idempotent. Close removes Files and
+  restores Terminal.
+- `AppState::try_open_file_manager_with` snapshots Stage and existing pane-
+  focus history, activates Files, and commits prepared `FmState` only on
+  success. Preparation failure restores exact Stage/focus and does not clear a
+  pending sidebar navigation request. Success clears that stale request once.
+- Existing `previous_pane_focus` is pane-navigation history, not a completed
+  SF4 focus-scope model. SF4.2 owns new focus routing; do not overload this
+  field speculatively.
+- `AppState.file_manager: Option<FmState>` and the legacy Files curtain still
+  render today. SF6, not SF4.1, removes that curtain and migrates Files to the
+  Stage surface.
+- `TerminalRuntimeRegistry` and server-owned terminal facts must remain alive
+  and independent of Stage presentation. The pending eighth SF4.1 test freezes
+  this bridge.
+- Render is pure. Filesystem reads, watcher work, preview decoding/highlighting,
+  file operations, and runtime mutation stay in state refresh/App worker paths.
+- Protocol remains version 16. SF4.1 adds no protocol, server, pane, tab,
+  workspace, terminal, process, watcher, dependency, or persistence identity.
+
+## 6. SF4.1 ATOMIC HISTORY AND CURRENT TEST EVIDENCE
+
+| Slice | RED | GREEN | State |
+|---|---|---|---|
+| default terminal Stage | `557bcc77` | `6a18f0c7` | closed |
+| Files activation history | `f22bdac4` | `b9180de3` | closed |
+| singleton reactivation | `96e6cddb` | `d20403d0` | closed |
+| 16-instance bound | `27ad2a79` | `e8ef80ac` | closed |
+| generation exhaustion | `207c9da3` | `f31ab28a` | closed |
+| close restoration | `a5e5bace` | `e1c82036` | closed |
+| failed-open rollback | `056f0879` | `f0f32075` | closed |
+| terminal runtime preservation | not written | not written | NEXT |
+
+The seventh RED run
+`7df14514-5602-42d2-962e-fd5803c038b4` compiled, ran 1 test, and failed only
+on the missing Stage restoration assertion. The final Stage run
+`6fed21bd-e1aa-46f7-90a4-b617e0b7b0a6` passed 7/7. Open/cwd/render passed 3/3
+in `b8487190-8d24-4ceb-b2c5-e7c0556e70ef`; close authority passed 1/1 in
+`10da9a43-b851-489a-b907-b2526439c696`; toggle passed 2/2 in
+`6d747dc5-b2e2-4069-bfd6-5f875c477849`.
+
+Full repository verification at `f0f32075`:
+
+- Nextest `a9d9e8b1-7a9f-403f-9d34-499d0f13a612`: 3,299/3,299 passed,
+  one named B0 host probe skipped, zero retry.
+- Linux all-target Clippy with `-D warnings`: PASS.
+- Canonical Windows MSVC bin Clippy with `LIBGHOSTTY_VT_SIMD=false`: PASS.
+- Bun integration 5/5 and marketplace 12/12: PASS.
+- Python maintenance 64/64: PASS.
+- Fmt, diff, added-production-`unwrap()`, and residue boundaries: PASS.
+
+One Nextest expression selected zero tests (`85af8790-...`) and was explicitly
+rejected as evidence. Compile/setup/filter/zero-test failures are never RED.
+
+## 7. PRIORITY AND DEPENDENCY MODEL
+
+- **P0 ACTIVE:** SF4.1-08 terminal runtime preservation, then SF4.1 closure.
+- **P0 NEXT:** SF4.2 focus/input precedence -> SF4.3 overlay/background
+  blocking -> SF4.4 pure surface projection and SF4 closure.
+- **P0 AFTER SF4:** SF5 AppDock -> SF6 Files native Stage migration -> FM1 ->
+  FM2 -> FM3 -> FM4 -> FM5.
+- **P1 PAUSED:** non-product change-pipeline T3.1-T10.9. Unpause only after the
+  current sequential product phase closes; never mix files/commits.
+- **P2 LATER / NEW AUTHORIZATION:** Apps/Desktop expansion, real TopBar/
+  BottomBar/RightPanel consumers, btop/Music/terminal app definitions, app
+  catalog/launcher and broader layout customization.
+- **P3 TRIGGER-GATED NO-GO:** arbitrary S5 ComponentRegistry and S7 popup
+  ownership stack. Implement only after their concrete independent triggers.
+- **Explicitly out of scope:** visual layout editor, arbitrary user JSON/TOML
+  layout DSL, free redocking, floating windows, unbounded Miller history,
+  component-owned render loops, and a new network/layout protocol.
+
+No lower-priority task may preempt P0 merely because it is easier. A blocker
+does not authorize jumping lanes; record it and request user direction if safe
+in-scope alternatives are exhausted.
+
+## 8. COMPLETE UNCHECKED TASK INVENTORY — 128 ITEMS
+
+The two blocks below are generated from the canonical registries and are part
+of this handoff. Count at handoff creation: 39 product-program items plus 89
+change-pipeline items. The next agent must recount after reading; any mismatch
+means registry drift and must be reconciled before code.
+
+### 8.1 Product / Shell / FM / Deferred Registry — exact unchecked items
+
+<!-- PRODUCT_OPEN_TASKS_START -->
+- [ ] RED/GREEN `stage_surface_switch_does_not_destroy_terminal_runtime`.
+  The test must extend the frozen SF1 runtime fixture, fail for missing typed
+  Stage/runtime-preservation behavior rather than setup, and prove switch,
+  reactivation, close, and failure leave terminal runtime count/identity alive.
+- [ ] Complete the minimum `AppDefinition`/launch-policy and typed surface-view
+  model required by the eight approved SF4.1 contracts. Do not render AppDock,
+  migrate Files, add focus scopes, or create protocol/runtime identities here.
+- [ ] Close SF4.1 with exact 8/8, frozen SF1 11/11, broad Stage/open/close/
+  toggle/runtime regressions, full direct `just check`, Linux/Windows Clippy,
+  diff/unwrap/residue audit, atomic publication, remote-SHA equality, and fresh
+  graph symbols.
+- [ ] RED-test focus scope entry/restore, active capture, topmost semantic hit,
+  page/global shortcut precedence, stale generation rejection, and no-owner
+  fallback before adding router production state.
+- [ ] Add one bounded focus/capture router shared by mouse and keyboard. It
+  must route overlay -> capture -> active Stage surface -> shell/page -> global
+  and never infer authority from paint output or stale coordinates.
+- [ ] Prove terminal resize, surface close/failure, focus target disappearance,
+  hidden/zero regions, and capture cancellation restore one valid owner without
+  replay, duplicate action, or stuck capture.
+- [ ] RED-test every active overlay/context/modal path against Files, shell,
+  dock placeholder geometry, and terminal input. Topmost owner must consume the
+  event even when disabled or stale; no event may fall through to a hidden
+  terminal or background surface.
+- [ ] Make background hit areas, cursor ownership, scroll ownership, and raw
+  terminal input inert whenever a topmost overlay or another Stage surface owns
+  the interaction.
+- [ ] Cover right/middle/modified mouse, double-click timing, wheel, drag,
+  keyboard prefix/global keys, stale frame generations, close/reopen, and tiny
+  terminal failure paths.
+- [ ] Split cached shell geometry projection from typed active-surface
+  projection without moving filesystem, worker, PTY, or runtime work into
+  render.
+- [ ] Prove identical active state skips network frame production; terminal
+  dirty-row retained patching and bounded render queue behavior remain frozen;
+  switching Stage visibility does not destroy or resize hidden terminal runtime
+  on every input/render event.
+- [ ] Close SF4 UI/input/failure/performance/platform/full-gate/Git/graph
+  evidence before starting SF5. Product and change-pipeline commits remain
+  separate.
+- [ ] Render icon-only Terminal/Files dock at preferred 5, min 3, max 9 cells.
+- [ ] Add stable active/running/disabled targets, singleton activation, bounded
+  right-click name popover, overlay blocking, resize/collapse, and tiny-terminal
+  behavior.
+- [ ] Close UI/input/failure/performance/full-gate/Git/graph evidence.
+- [ ] Replace the terminal curtain branch with typed `NativeFiles` Stage
+  projection/render while preserving AppDock/LeftPanel independence.
+- [ ] Preserve `FmState`, watcher, text/image workers, operations, selection,
+  context menus, agent handoff, and all failure/recovery semantics.
+- [ ] Prove singleton open/reactivate/close/failure restores previous Stage and
+  focus; terminal process stays alive but hidden input/hits/cursor are absent.
+- [ ] Close snapshot, render queue, retained PTY, isolated runtime, performance,
+  full-gate, Git, remote-SHA, and graph evidence.
+- [ ] Add logical history <=32, resident directory projections <=5, and at
+  most five visible complete columns.
+- [ ] Add native horizontal wheel, Shift+wheel, and bounded header navigation;
+  clamp after path/cache/terminal shrink and clear stale hits.
+- [ ] Prove close/reopen reset, inaccessible ancestors, render purity, resource
+  bounds, full gates, publication, and graph freshness.
+- [ ] Reuse the Shell resize transaction for min 16/preferred 28/max 64 column
+  widths.
+- [ ] Prove preview causes zero persistence/PTY/filesystem/image-target churn;
+  commit updates one revision and at most one final image target.
+- [ ] Close stale divider, terminal resize, cancel, 1,000-move bound,
+  cross-layer/full/performance/Git/graph gates.
+- [ ] Generate stable column/directory/entry/generation row targets for every
+  rendered directory column.
+- [ ] Route plain/right/double/wheel gestures in parent/current/preview/ancestor
+  columns; keep Ctrl/Shift operation authority current-directory-only.
+- [ ] Revalidate non-current paths before mutation; consume stale/reordered/
+  deleted/evicted targets without replay or side effect.
+- [ ] Close overlay/background-blocking, context/operation/selection, isolated
+  SGR mouse, full-gate, Git, and graph evidence.
+- [ ] Append one child segment on directory selection, truncate descendants on
+  ancestor branch change, and replace deeper chain with file preview.
+- [ ] Restore exact child focus/cursor/viewport; handle missing/hidden/reordered/
+  deleted/root/inaccessible paths deterministically.
+- [ ] Preserve all N2.1 tests, chain <=32, resident <=5, watcher generations,
+  close/reopen reset, adversarial 10,000-action invariants, and performance.
+- [ ] Close full gates, isolated deep-navigation proof, publication, and graph.
+- [ ] Measure inline final column, Shell RightPanel, and adaptive hybrid across
+  terminal/path/Unicode/preview/failure/focus/performance fixtures.
+- [ ] Record raw evidence and explicit GO/NO-GO. A NO-GO keeps inline preview;
+  a GO requiring product code must receive a separate approved micro plan.
+- [ ] Commit the evidence/decision independently. Do not expand into
+  Apps/Desktop or speculative RightPanel consumers.
+- [ ] Implement and verify `herdr-change-pipeline`, adapters, pilots, Git
+  publication, and graph refresh; paused at T3.1 while the sequential active
+  product lane closes its current phase.
+- [ ] S5 ComponentRegistry only when a second real component/page proves the
+  abstraction; do not build a speculative registry.
+- [ ] S7 popup stack with ownership, focus, close ordering, and nested popup
+  tests.
+<!-- PRODUCT_OPEN_TASKS_END -->
+
+### 8.2 Non-Product Change Pipeline — exact unchecked items
+
+<!-- PIPELINE_OPEN_TASKS_START -->
+- [ ] **T3.1** Write RED `TP-CHG-MODULE` tests for module identity, version,
+  directories, required documents, and default authorization=false.
+- [ ] **T3.2** Create `.codex/skills/herdr-change-pipeline/` with `SKILL.md`,
+  `README.md`, `AGENTS.md`, `module.json`, `assets/`, `references/`, `scripts/`,
+  `tests/`, `evals/`, `lessons/`, and `cartography/`.
+- [ ] **T3.3** Implement minimal manifest/schema validation and deterministic
+  diagnostics until scaffold tests pass.
+- [ ] **T3.4** Document skill routing, output ownership, resume behavior,
+  source-of-truth order, and the separation from Ratatui reference research.
+- [ ] **T3.5** Add errors, golden paths, edge cases, and shared-error routing.
+- [ ] **T3.6** Verify the scaffold independently of Herdr product compilation.
+- [ ] **T4.A0.1** RED-test every intake mode and reject unknown/ambiguous modes.
+- [ ] **T4.A0.2** Model goals, inputs, evidence sources, current-work state,
+  product authorization=false, and mode-conditional artifacts.
+- [ ] **T4.A0.3** Implement `mid_flight_adoption` metadata: existing branch,
+  commits, diffs, tests, known debt, current failures, and preserved evidence.
+- [ ] **T4.A0.4** Block rather than fabricate when mandatory MCP/source evidence
+  is unavailable.
+- [ ] **T4.A1.1** RED-test missing actors, scenarios, success criteria, and
+  explicit non-goals.
+- [ ] **T4.A1.2** Emit measurable target behavior and acceptance boundaries for
+  features, bugs, pages, layouts, runtime work, and composite requests.
+- [ ] **T4.A2.1** RED-test orphan nodes, illegal level jumps, missing ownership,
+  and missing failure/recovery leaves.
+- [ ] **T4.A2.2** Implement the canonical chain: initiative -> experience/
+  workflow -> page -> region/layout -> component -> interaction/behavior ->
+  state transition -> failure/recovery.
+- [ ] **T4.A2.3** Preserve parent/child traceability and stable identifiers.
+- [ ] **T4.A3.1** RED-test omitted required dimensions, duplicate ownership,
+  unresolved contradictions, and unjustified conditional omissions.
+- [ ] **T4.A3.2** Cover product; behavior; page/input; layout/capability;
+  component/tokens; data authority; runtime/API/event/PTY; failure/security/
+  resources; persistence/migration; platform/accessibility; performance; and
+  integration/license dimensions.
+- [ ] **T4.A3.3** Record evidence, confidence, conflicts, and dependency edges.
+- [ ] **T4.A4.1** RED-test single-option conclusions without explicit
+  justification and visual-only pattern matching.
+- [ ] **T4.A4.2** Produce alternative concepts, reusable patterns, rejected
+  options, tradeoffs, capability fallbacks, and reversibility notes.
+- [ ] **T4.A5.1** RED-test stale/absent graph evidence and `ready`-only
+  freshness claims.
+- [ ] **T4.A5.2** Map current owners, call/data paths, protocol/persistence
+  boundaries, existing tests, and reuse candidates.
+- [ ] **T4.A5.3** Emit current-versus-target architectural and functional fit.
+- [ ] **T4.A6.1** RED-test unresolved conflicts and unsupported go decisions.
+- [ ] **T4.A6.2** Select target architecture, behavior, data flow, fallbacks,
+  budgets, and `go`, `conditional_go`, `no_go`, or `blocked` status.
+- [ ] **T4.A7.1** RED-test incomplete traceability, missing decision evidence,
+  conditional gaps, and mutable handoff fields.
+- [ ] **T4.A7.2** Emit and validate immutable `change-intent-package.json`.
+- [ ] **T4.A7.3** Prove native, reference-adapted, composite, no-go, blocked,
+  and mid-flight packages through fixtures/evals.
+- [ ] **T4.A7.4** Verify that A7 readiness still grants no product mutation.
+- [ ] **T5.I0** Reject absent/invalid handoff, unapproved target, stale current
+  state, or missing product authorization; accept mid-flight evidence only
+  after provenance and current-phase classification.
+- [ ] **T5.I1** Generate PRD, authority checklist, risk register, non-goals,
+  rollback, compatibility, and migration obligations.
+- [ ] **T5.I2** Refresh graph/repository evidence and detect drift between A7
+  handoff and the live target.
+- [ ] **T5.I3** Freeze current behavior, target behavior, semantic diff,
+  retained behavior, change strategy, and ownership impact.
+- [ ] **T5.I4** Build the test-point catalog with `what`, `current`, `expected`,
+  `diff`, `result`, and `reason` for every applicable obligation.
+- [ ] **T5.I5** Produce dependency-ordered implementation slices, test slices,
+  commit boundaries, rollback points, and owned file sets.
+- [ ] **T5.I6** Capture characterization evidence before moving behavior or
+  architecture.
+- [ ] **T5.I7** Require an observed behavior-specific RED; reject compile,
+  environment, setup, flaky, or already-green false REDs.
+- [ ] **T5.I8** Implement the minimum GREEN change and preserve exact command
+  output as evidence.
+- [ ] **T5.I9** Refactor only behind green tests; enforce local ownership and
+  invariants.
+- [ ] **T5.I10** Run cross-layer and cross-feature tests across all applicable
+  families.
+- [ ] **T5.I11** Verify failure, recovery, security, resources, capability
+  negotiation, and degraded behavior.
+- [ ] **T5.I12** Verify declared latency, allocation, throughput, memory, queue,
+  and terminal-render budgets with calibrated fixtures.
+- [ ] **T5.I13** Run complete repository, platform, protocol, migration,
+  dependency, docs, and release-cadence gates applicable to the change.
+- [ ] **T5.I14** Audit evidence, targeted staging, atomic commits, allowed
+  publication, remote SHA, graph reindex, and current-symbol freshness.
+- [ ] **T6.1** Server/runtime truth versus TUI/client projection.
+- [ ] **T6.2** Snapshot/event ordering, revision, replay, duplicate, gap, and
+  slow-subscriber behavior.
+- [ ] **T6.3** PTY/terminal chunk boundaries, UTF-8/ANSI splits, queue pressure,
+  resize, EOF, detach/reattach, and multi-pane throughput.
+- [ ] **T6.4** Plugin host timeouts, crashes, output bounds, process cleanup,
+  malformed data, version compatibility, and path confinement.
+- [ ] **T6.5** Page/layout/component keyboard, mouse, focus, modal, resize,
+  Unicode, narrow viewport, empty/loading/error, and terminal fallback states.
+- [ ] **T6.6** Persistence interruption, corruption, migration, disk-full,
+  concurrent owner, quota, and large-scrollback behavior.
+- [ ] **T6.7** Platform isolation and Linux/macOS/Windows policy differences.
+- [ ] **T6.8** Performance regression, slow-client isolation, soak, task leak,
+  zombie process, and chaos behavior.
+- [ ] **T6.9** Backward/forward protocol, old/new client, old/new plugin, and
+  old persisted-state compatibility.
+- [ ] **T7.1** P14 Ratatui/reference-project adapter.
+- [ ] **T7.2** Native feature fixture.
+- [ ] **T7.3** Mid-flight file-manager feature plus bugfix fixture.
+- [ ] **T7.4** Page and interaction-flow fixture.
+- [ ] **T7.5** Responsive layout and tiling fixture.
+- [ ] **T7.6** Design-system/component/token fixture.
+- [ ] **T7.7** Runtime capability and protocol fixture.
+- [ ] **T7.8** Composite multi-dimension conflict fixture.
+- [ ] **T7.9** Explicit no-go and blocked-MCP fixtures.
+- [ ] **T7.10** Unauthorized delivery fixture proving I0 rejection.
+- [ ] **T7.11** Verify that native mode invents no repository/source/license and
+  reference mode omits no source/provenance/license obligations.
+- [ ] **T8.1** Focused schema/validator unit tests.
+- [ ] **T8.2** Complete tests for both skills and all negative fixtures.
+- [ ] **T8.3** JSON parse, schema, stable-ID, version, and deterministic-output
+  checks.
+- [ ] **T8.4** Skill validation, README/AGENTS/SKILL consistency, and lesson
+  format checks.
+- [ ] **T8.5** Eval coverage for A0-A7, I0-I14, adapters, mid-flight adoption,
+  blocked, no-go, and unauthorized paths.
+- [ ] **T8.6** Legacy P0-P14 backward-compatibility verification.
+- [ ] **T8.7** Product isolation and exact diff-boundary verification.
+- [ ] **T8.8** Placeholder, whitespace, broken-link, and untracked-artifact
+  scans.
+- [ ] **T8.9** Proportional `just check` or documented exact equivalent.
+- [ ] **T9.1** Preserve each baseline, RED, GREEN, refactor, governance, fixture,
+  and evidence concern in reviewable atomic commits.
+- [ ] **T9.2** Target-stage only the declared owned files and verify the staged
+  name list before every commit.
+- [ ] **T9.3** Fetch and prove fast-forward ancestry before any authorized push.
+- [ ] **T9.4** Push only the permitted CyPack feature branch/ref; never
+  `upstream`, never force.
+- [ ] **T9.5** Verify exact local/remote SHA equality after publication.
+- [ ] **T9.6** Reindex Codebase Memory after committed implementation changes.
+- [ ] **T9.7** Record node/edge counts and query current pipeline/module symbols;
+  never infer freshness from `ready` alone.
+- [ ] **T10.1** Run one native page/feature request through A0-A7 without
+  product mutation.
+- [ ] **T10.2** Run one reference project through P0-P14 -> adapter -> A7.
+- [ ] **T10.3** Run one mid-flight file-manager feature/bugfix adoption and
+  prove existing evidence preservation plus remaining-gate enforcement.
+- [ ] **T10.4** Run one composite conflict to a justified conditional-go/no-go.
+- [ ] **T10.5** Prove unauthorized I0 rejection and blocked-MCP truthfulness.
+- [ ] **T10.6** If separately authorized, run one non-product fixture through
+  I14 before using the pipeline on Herdr product code.
+- [ ] **T10.7** Record new errors, golden paths, edge cases, and any cross-skill
+  lessons in the required tables.
+- [ ] **T10.8** Update this registry, `.codex/CURRENT.md`, `.codex/TASKS.md`, and
+  handoff state with exact final evidence and next action.
+- [ ] **T10.9** Perform final self-review: requirements, tests, failure paths,
+  Git state, publication state, graph freshness, and remaining blockers.
+<!-- PIPELINE_OPEN_TASKS_END -->
+
+## 9. EXACT NEXT MICROTASK CONTRACT
+
+Before production code, announce these test points with expected result and
+reason:
+
+1. `stage_surface_switch_does_not_destroy_terminal_runtime`
+   - Test: a test-owned terminal runtime exists before Stage Files activation;
+     activation/reactivation/close/failure transitions occur.
+   - Expected: exact terminal runtime identity/count and its state remain
+     present; Stage presentation changes only.
+   - Reason: Files must become an app surface, not the owner/destructor of a
+     running terminal.
+2. Failure-path companion within the same fixture, if required by existing
+   seams.
+   - Test: injected Files preparation/activation failure after a live terminal.
+   - Expected: Terminal Stage/focus/runtime remain exactly usable, no Files FM
+     state or duplicate instance survives.
+   - Reason: a partial open must not strand or destroy the user's active app.
+3. Resource boundary.
+   - Test: repeated activation/reactivation/close does not create a runtime,
+     pane, terminal ID, process, worker, watcher, queue, or protocol field.
+   - Expected: only bounded client-local Stage state changes.
+   - Reason: SF4.1 is presentation identity, not runtime orchestration.
+
+Use Codebase Memory to find the exact frozen SF1 fixture. If a Tokio runtime is
+needed, follow an existing `#[tokio::test]` pattern; a reactor panic is setup
+failure, not RED. The RED commit must contain only the new compile-valid test
+and minimum test seam. Proposed message:
+`test: require terminal runtime preservation across stage switches`.
+
+After observed RED, implement the minimum GREEN. Proposed message:
+`feat: preserve terminal runtime across stage switches`.
+
+## 10. FILE OWNERSHIP AND COMMIT BOUNDARY
+
+Likely SF4.1-08 owned files, subject to graph/source confirmation:
+
+- `src/ui/surface_host.rs`: typed Stage contract/tests.
+- The existing SF1 runtime characterization file only if extending its exact
+  test-owned fixture is required.
+- `src/app/state.rs` or `src/app/actions.rs` only when the observed RED proves a
+  missing product bridge.
+- `src/app/mod.rs`/`src/ui.rs` only if the minimum typed view model truly
+  requires module wiring.
+
+Forbidden in this microtask: AppDock render, Files render migration, focus
+router, mouse routing, watcher/preview/operation changes, protocol/persistence,
+dependencies, docs/website, change-pipeline module, `.superpowers/`, stable
+runtime tooling, and unrelated refactors.
+
+Every concern has separate targeted staging. RED and GREEN are separate atomic
+commits but are never pushed as a RED-only remote tip. Continuity/evidence is a
+separate docs commit after fresh product verification.
+
+## 11. GIT PUBLICATION PROTOCOL
+
+1. Inspect status/diff; preserve user changes.
+2. Stage only named owned files with `git add -- <paths>`.
+3. Run `git diff --cached --check` and inspect staged names/stat.
+4. Use lowercase conventional commits, no emoji, no AI co-author.
+5. Run proportional gates after GREEN and complete direct `just check` before
+   phase closure/publication. `just` is currently absent; execute lowercase
+   `justfile` commands directly.
+6. `git fetch origin feat/native-fm master`.
+7. Prove both remote refs are ancestors of local HEAD. Never rewrite history.
+8. Push sequentially only to CyPack:
+
+```bash
+git push origin HEAD:feat/native-fm
+git push origin HEAD:master
+```
+
+9. Verify both exact remote SHAs equal local HEAD.
+10. Never push `upstream`, force, or publish a RED-only tip.
+
+Standing user authorization covers these targeted atomic commits and CyPack-
+only fast-forward pushes; do not repeatedly ask for commit-message alignment.
+
+## 12. SAFETY / FAILURE / NON-HAPPY-PATH RULES
+
+- Never kill, restart, or signal user processes.
+- Never touch installed stable Herdr or its stable/inherited socket.
+- Manual runtime tests use `.local/ISOLATED-DEV-TEST.md`, cleared Herdr socket
+  and identity variables, unique throwaway XDG roots, semantic exit, exact
+  test-owned PID/resource cleanup, and residue proof.
+- Do not run a debug binary against inherited `HERDR_SOCKET_PATH` or
+  `HERDR_CLIENT_SOCKET_PATH`.
+- No production `unwrap()`; log with `tracing`; platform behavior remains in
+  `src/platform/` or compile-gated according to project rules.
+- Render never reads the filesystem or mutates App/runtime state.
+- Input never derives destructive authority from labels, glyphs, painted
+  buffers, or stale coordinates.
+- Overlay/topmost ownership consumes input; disabled/stale targets do not fall
+  through to background terminal actions.
+- Runtime/session facts stay server-owned; Stage/focus/hits/layout remain TUI
+  presentation state unless evidence proves otherwise.
+- Every filesystem operation retains execution-time TOCTOU revalidation,
+  bounded worker ownership, explicit partial failure, and recovery evidence.
+- Compile/setup/environment/filter/flaky failures are not RED. A passing test
+  written before production may be characterization but not missing-behavior
+  RED.
+- No completion claim without fresh command output and explicit exit status.
+
+## 13. ENVIRONMENT AND TOOLING FACTS
+
+- `just`: absent; use the exact direct recipe.
+- Rust tests: Cargo Nextest; total at this checkpoint is 3,300 inventory items
+  with 3,299 run and one intentionally skipped B0 real-host probe.
+- Windows canonical lint:
+  `LIBGHOSTTY_VT_SIMD=false cargo clippy --bin herdr --locked --target x86_64-pc-windows-msvc -- -D warnings`.
+- `RIPGREP_CONFIG_PATH` may point to a missing file; use
+  `env -u RIPGREP_CONFIG_PATH rg ...`.
+- Codebase Memory native parallel extraction has a known
+  `munmap_chunk(): invalid pointer` failure. Use `CBM_WORKERS=1` sequential CLI
+  refresh; do not restart the MCP proxy.
+- Long `exec_command` jobs may return a live `session_id`; poll until explicit
+  `exit_code`. Never infer completion from an orchestration wrapper ending.
+- The current Codex built-in graph channel may remain stale until a fresh
+  session; use truthful CLI-labelled evidence when necessary.
+
+## 14. COMPLETE PROGRAM OUTCOME ORDER
+
+1. Close SF4.1 runtime-preserving typed Stage.
+2. Close SF4.2 focus and capture ownership.
+3. Close SF4.3 overlay/background blocking.
+4. Close SF4.4 pure surface projection and retained-render performance.
+5. Build SF5 icon-only bounded AppDock.
+6. Migrate Files in SF6 without losing any existing FM capability/failure
+   semantics.
+7. Add FM1 bounded horizontal history/viewport.
+8. Add FM2 transactional column resize.
+9. Add FM3 all-column stable mouse ownership.
+10. Add FM4 Finder-like bounded path-stable navigation.
+11. Make FM5 evidence-based preview/Inspector placement GO/NO-GO.
+12. Only then request/confirm Apps/Desktop expansion scope.
+
+## 15. NEXT-SESSION COPY/PASTE TRIGGER
+
+The canonical copy/paste prompt is `.codex/NEXT-SESSION-PROMPT.md`. Start with:
+
+```bash
+herdr-codex
+```
+
+Then paste the complete prompt. It orders skill/lesson loading, graph-first
+architecture reconstruction, exact 128-task ingestion, Git state verification,
+test-point declaration, TDD, safe publication, and handoff maintenance.
+
+## 16. HANDOFF ACCEPTANCE CHECKLIST
+
+The next agent has not completed onboarding until it can state all of these
+without guessing:
+
+- current local and remote SHAs;
+- why SF4.1 is 7/8 rather than complete;
+- the next exact RED and why compile/setup failure is invalid;
+- Stage versus terminal-runtime ownership;
+- product, pipeline, deferred, and later-program priorities;
+- exact unchecked task count after recount;
+- current graph count and a current-symbol snippet;
+- why the built-in MCP channel may be stale;
+- direct `just check` equivalent;
+- stable runtime and `.superpowers/` safety boundaries;
+- allowed commit/push refs and forbidden upstream actions.
+
+If any answer is missing, stop before editing and finish the relevant read/
+graph/Git inspection. Do not ask the user to reconstruct information already
+present in these canonical files.
+
+## 17. HISTORICAL HANDOFF APPENDIX
+
+Everything below preserves prior-session evidence and commit history. Its old
+"next action" and environment counts are historical unless repeated in the
+authoritative checkpoint above.
+
+# HISTORICAL SESSION HANDOFF — Herdr Native FM — 2026-07-16
 
 ## 1. SONRAKI ADIM
 

@@ -3,7 +3,11 @@
 Follow this sequence before changing code.
 
 1. Read `/home/ayaz/projects/herdr/AGENTS.md` and `CLAUDE.md` completely. The active account is `CyPack`, so external-contributor guardrails apply.
-2. Read `.codex/CURRENT.md`, then `.codex/TASKS.md`. Use `.codex/HANDOFF.md` for full context.
+2. Read `.codex/CURRENT.md`, `.codex/TASKS.md`,
+   `.codex/CHANGE-PIPELINE-TASKS.md`, and `.codex/HANDOFF.md` in that order.
+   Recount every unchecked item and create the in-session task list without
+   summarizing tasks away. `.codex/NEXT-SESSION-PROMPT.md` is the canonical
+   copy/paste trigger.
 3. Load the project skill `$herdr-native-fm`. Load `rust-dev` plus its lessons before Rust edits.
 4. Call codebase-memory `index_status(project="home-ayaz-projects-herdr")`. Test freshness with `miller_layout` or another recent symbol. Use graph discovery before grep for code.
 5. Run:
@@ -27,5 +31,8 @@ Follow this sequence before changing code.
 ## First Action in a Fresh CLI Session
 
 Verify Git and graph freshness against `.codex/CURRENT.md`, then resume the
-first unchecked microtask in `.codex/TASKS.md`. Preserve atomic commit concerns
-and push only the CyPack fork after fresh evidence.
+first priority-eligible unchecked microtask in `.codex/TASKS.md`. At the
+2026-07-16 checkpoint that is SF4.1
+`stage_surface_switch_does_not_destroy_terminal_runtime`; the non-product
+change-pipeline queue is paused. Preserve atomic commit concerns and push only
+the CyPack fork after fresh evidence.

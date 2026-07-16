@@ -141,16 +141,83 @@ Progress evidence:
   `90be689359988424b2a7c6206ff45a3207422196`. Evidence:
   `.codex/evidence/shell-foundation-sf3-persistence.md`.
 
-### SF4 — SurfaceHost and Input Router
+### SF4 — SurfaceHost and Input Router (P0 ACTIVE)
 
-- [ ] Add typed client-local Terminal/Files Stage surface state without new
-  runtime/protocol identity.
-- [ ] Add focus scope, active capture, topmost hit, page/global shortcut, and
-  fail-closed precedence.
-- [ ] Prove overlays block every background action and hidden terminal input is
-  inert while Files owns Stage.
-- [ ] Split shell projection from active-surface projection and preserve pure
-  deterministic render/retained PTY behavior.
+#### SF4.1 — Typed Stage State and Lifecycle (7/8 behavior slices GREEN)
+
+- [x] Graph-first inventory the legacy terminal/Files curtain, workspace/tab
+  identity, `FmState`, terminal runtime registry, and input ownership. Keep the
+  new identity client-local; add no server, protocol, pane, tab, workspace, or
+  terminal identity.
+- [x] RED/GREEN `stage_starts_on_terminal_workspace`: `557bcc77` /
+  `6a18f0c7`.
+- [x] RED/GREEN `activating_files_records_previous_surface`: `f22bdac4` /
+  `b9180de3`.
+- [x] RED/GREEN `reactivating_singleton_files_keeps_one_surface`: `96e6cddb`
+  / `d20403d0`.
+- [x] RED/GREEN `stage_rejects_more_than_sixteen_builtin_instances`:
+  `27ad2a79` / `e8ef80ac`; fixed-capacity storage is 16 and overflow is typed.
+- [x] RED/GREEN `instance_generation_exhaustion_fails_without_aliasing`:
+  `207c9da3` / `f31ab28a`; generation uses checked arithmetic and no state
+  mutates on exhaustion.
+- [x] RED/GREEN `closing_files_restores_previous_terminal_surface`:
+  `a5e5bace` / `e1c82036`; Files instance removal and terminal restoration are
+  deterministic.
+- [x] RED/GREEN `failed_files_open_restores_previous_surface_and_focus`:
+  `056f0879` / `f0f32075`; preparation failure restores exact Stage/focus,
+  leaves FM closed, and clears stale sidebar navigation only on success.
+- [ ] RED/GREEN `stage_surface_switch_does_not_destroy_terminal_runtime`.
+  The test must extend the frozen SF1 runtime fixture, fail for missing typed
+  Stage/runtime-preservation behavior rather than setup, and prove switch,
+  reactivation, close, and failure leave terminal runtime count/identity alive.
+- [ ] Complete the minimum `AppDefinition`/launch-policy and typed surface-view
+  model required by the eight approved SF4.1 contracts. Do not render AppDock,
+  migrate Files, add focus scopes, or create protocol/runtime identities here.
+- [ ] Close SF4.1 with exact 8/8, frozen SF1 11/11, broad Stage/open/close/
+  toggle/runtime regressions, full direct `just check`, Linux/Windows Clippy,
+  diff/unwrap/residue audit, atomic publication, remote-SHA equality, and fresh
+  graph symbols.
+
+Progress evidence:
+`.codex/evidence/shell-foundation-sf4-stage-progress.md`.
+
+#### SF4.2 — Focus Scope and Input Precedence
+
+- [ ] RED-test focus scope entry/restore, active capture, topmost semantic hit,
+  page/global shortcut precedence, stale generation rejection, and no-owner
+  fallback before adding router production state.
+- [ ] Add one bounded focus/capture router shared by mouse and keyboard. It
+  must route overlay -> capture -> active Stage surface -> shell/page -> global
+  and never infer authority from paint output or stale coordinates.
+- [ ] Prove terminal resize, surface close/failure, focus target disappearance,
+  hidden/zero regions, and capture cancellation restore one valid owner without
+  replay, duplicate action, or stuck capture.
+
+#### SF4.3 — Overlay and Hidden-Background Blocking
+
+- [ ] RED-test every active overlay/context/modal path against Files, shell,
+  dock placeholder geometry, and terminal input. Topmost owner must consume the
+  event even when disabled or stale; no event may fall through to a hidden
+  terminal or background surface.
+- [ ] Make background hit areas, cursor ownership, scroll ownership, and raw
+  terminal input inert whenever a topmost overlay or another Stage surface owns
+  the interaction.
+- [ ] Cover right/middle/modified mouse, double-click timing, wheel, drag,
+  keyboard prefix/global keys, stale frame generations, close/reopen, and tiny
+  terminal failure paths.
+
+#### SF4.4 — Surface Projection, Pure Render, and Closure
+
+- [ ] Split cached shell geometry projection from typed active-surface
+  projection without moving filesystem, worker, PTY, or runtime work into
+  render.
+- [ ] Prove identical active state skips network frame production; terminal
+  dirty-row retained patching and bounded render queue behavior remain frozen;
+  switching Stage visibility does not destroy or resize hidden terminal runtime
+  on every input/render event.
+- [ ] Close SF4 UI/input/failure/performance/platform/full-gate/Git/graph
+  evidence before starting SF5. Product and change-pipeline commits remain
+  separate.
 
 ### SF5 — AppDock
 

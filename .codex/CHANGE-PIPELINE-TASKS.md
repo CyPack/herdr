@@ -65,8 +65,12 @@ pipeline.
 Legend: `[x]` complete with evidence; `[ ]` pending; `ACTIVE` is the next
 single permitted action.
 
-- Active macro: **T3 — `herdr-change-pipeline` module scaffold**.
-- Active micro: **T3.1 — RED module identity and authority contracts**.
+- Cross-program priority: **P0 is the sequential product lane, currently
+  SF4.1**. This non-product lane is **P1 PAUSED** until the current product
+  phase closes; it must not be interleaved with an SF4 product commit.
+- Next macro when unpaused: **T3 — `herdr-change-pipeline` module scaffold**.
+- Next micro when unpaused: **T3.1 — RED module identity and authority
+  contracts**.
 - Completed: **T2 — Ratatui Design Intelligence v2.1**, with 59/59 tests,
   15 phases/101 jobs, both validators, JSON parse, and skill validation green.
 - Product-code authorization: **false**.

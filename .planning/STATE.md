@@ -2,6 +2,8 @@
 
 - Updated: 2026-07-16
 - Branch: `feat/native-fm`
+- Current verified product head: `f0f32075` (`feat: roll back failed files
+  stage opens`); matching RED `056f0879`.
 - Published SF0 planning artifact checkpoint: `32856f7`
   (`docs: plan shell foundation and files workspace`).
 - Published SF1 characterization checkpoint: `7b9b626d`
@@ -16,17 +18,18 @@
   `master` at product SHA `90be689359988424b2a7c6206ff45a3207422196`.
 - Approved product program: SF0-SF6 followed by FM1-FM5; Apps/Desktop remains
   a later independent program.
-- Current phase: SF0-SF3 closed through I14. SF4.1 begins with graph/drift
-  analysis of existing terminal/Files surface, tab/workspace, `FmState`, input,
-  and runtime ownership, then behavior RED
-  `stage_starts_on_terminal_workspace`.
+- Current phase: SF0-SF3 closed through I14. SF4.1 is ACTIVE with 7/8 typed
+  Stage behavior slices GREEN: default, activation history, singleton,
+  16-instance bound, checked generation exhaustion, close restoration, and
+  failed-open Stage/focus rollback. The next behavior RED is
+  `stage_surface_switch_does_not_destroy_terminal_runtime`.
 - Published SF2.4 RED/GREEN: `2a440478` / `07133b8b`; both CyPack refs equal
   exact SHA `07133b8b9e9cf10b9b3dea0febe22a8389457164`.
-- Current sequential graph: 20,291 nodes / 94,542 edges. Fresh exact search and
-  snippets prove `miller_layout`, `ShellSnapshotV1`,
-  `SessionSnapshot.restored_left_panel_preference`, and
-  `ShellPresentationState.from_restored_left_panel`; freshness was not inferred
-  from status alone.
+- Current sequential CLI graph: 20,340 nodes / 93,429 edges. Fresh exact search
+  and snippet prove `AppState.try_open_file_manager_with` plus
+  `miller_layout`; freshness was not inferred from status alone. The already-
+  open built-in MCP channel remains stale at 20,291 / 94,542 and was not
+  restarted.
 - Published CyPack M3 evidence checkpoint: `e9f2fe0`.
 - Verified M2.1 chain: RED `dab1e20`; GREEN product head `0ae6175`.
 - M3.0 evidence is published with exact SHA equality to CyPack
@@ -105,20 +108,21 @@
 
 ## Active Next Increment
 
-- Begin SF4.1 with graph-first ownership/drift analysis of the existing
-  terminal/Files swap, workspace/tab identities, `FmState`, focus/input
-  precedence, and terminal runtime preservation.
-- First RED: `stage_starts_on_terminal_workspace` proves the new typed
-  client-local Stage state starts on the existing terminal surface without
-  creating a protocol/runtime identity or changing render behavior.
-- Then add activation, bounded singleton/generation failure, close/failure
-  restoration, and terminal-runtime preservation through separate RED/GREEN
-  slices.
-- Preserve frozen SF1 and complete SF2/SF3 baselines; do not mix AppDock render,
-  Files Stage migration, or the broader input router into the first SF4.1 state
-  slice.
-- Execute SF3-SF6 and then FM1-FM5 sequentially through the approved child
-  plans. Product, continuity, and tooling concerns remain separate.
+- Remain in SF4.1. Seven atomic RED/GREEN pairs are closed through
+  `056f0879`/`f0f32075`; detailed evidence is
+  `.codex/evidence/shell-foundation-sf4-stage-progress.md`.
+- Next RED: `stage_surface_switch_does_not_destroy_terminal_runtime`. Extend
+  the frozen SF1 test-owned runtime fixture; require an assertion failure for
+  missing typed Stage/runtime preservation, never compile/setup/reactor/filter
+  failure.
+- Minimal GREEN must preserve exact terminal runtime identity/count through
+  Files activation, reactivation, close, and failure. It may complete only the
+  `AppDefinition`/launch-policy and typed surface-view model required by SF4.1.
+- Preserve frozen SF1 and complete SF2/SF3 baselines. Do not mix SF4.2 focus
+  routing, SF5 AppDock render, SF6 Files rendering migration, FM1 history, or
+  change-pipeline T3.1 into this increment.
+- After SF4.1 full closure, execute SF4.2-SF6 and FM1-FM5 sequentially through
+  the approved plans. Product, continuity, and tooling commits remain separate.
 
 The separate non-product change-pipeline lane has completed T0-T2. Ratatui
 Design Intelligence v2.1 is locally committed (`7622dde` through `2517353`)

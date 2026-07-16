@@ -4,6 +4,13 @@
 
 - Path: `/home/ayaz/projects/herdr`
 - Branch: `feat/native-fm`
+- Current verified SF4.1 product head: `f0f32075`
+  (`feat: roll back failed files stage opens`). It closes the seventh of eight
+  typed Stage behavior slices; its RED is `056f0879`
+  (`test: require files open rollback`).
+- SF4.1 is in progress, not phase-complete. The working tree is product-clean;
+  user-owned untracked `.superpowers/` remains untouched. Continuity files are
+  being updated as a separate concern.
 - Published SF0 planning artifact checkpoint: `32856f7`
   (`docs: plan shell foundation and files workspace`).
 - Published SF1 characterization checkpoint: `7b9b626d`
@@ -14,9 +21,11 @@
   (`feat: add bounded shell scroll ownership`).
 - Published SF3.3 product checkpoint: `90be6893`
   (`feat: persist shell collapse preference`).
-- The current product checkpoint was fast-forward published to both CyPack
-  `feat/native-fm` and fork `master`; exact remote SHA equality was verified at
-  `90be689359988424b2a7c6206ff45a3207422196`.
+- The prior closed-phase SF3.3 product checkpoint was fast-forward published to
+  both CyPack `feat/native-fm` and fork `master`; exact remote SHA equality was
+  verified at `90be689359988424b2a7c6206ff45a3207422196`. The current SF4.1
+  publication unit is the later atomic chain through `f0f32075` plus this
+  continuity checkpoint.
 - Published CyPack M3 evidence checkpoint: `e9f2fe0`
   (`docs: close general UI interface evaluation`).
 - Verified M2.1 chain: RED `dab1e20`; GREEN `0ae6175`
@@ -47,9 +56,24 @@
   cached generation-safe `ShellView`, shared mouse/keyboard resize and collapse
   transitions, fail-closed two-axis viewport ownership, legacy v3 migration,
   contained invalid shell preferences, and committed collapse round-trip are
-  live. The next product slice is SF4.1 typed client-local Stage surface state;
-  begin with graph/drift analysis and the compile-valid behavior RED
-  `stage_starts_on_terminal_workspace`.
+  live. SF4.1 typed client-local Stage state is now 7/8 behavior slices GREEN.
+  The exact atomic pairs are default `557bcc77`/`6a18f0c7`, activation history
+  `f22bdac4`/`b9180de3`, singleton `96e6cddb`/`d20403d0`, capacity
+  `27ad2a79`/`e8ef80ac`, generation exhaustion `207c9da3`/`f31ab28a`, close
+  restoration `a5e5bace`/`e1c82036`, and failed-open rollback
+  `056f0879`/`f0f32075`. The next product slice remains SF4.1 and begins with
+  compile-valid behavior RED `stage_surface_switch_does_not_destroy_terminal_runtime`.
+- Fresh exact-head closure at `f0f32075`: Stage 7/7; open/cwd/render 3/3;
+  close-authority 1/1; toggle 2/2; full Nextest 3,299/3,299 plus only the named
+  B0 real-host skip; Linux all-target and canonical Windows MSVC bin Clippy;
+  Bun 17/17; Python 64/64; fmt/diff/added-production-unwrap clean. Evidence:
+  `.codex/evidence/shell-foundation-sf4-stage-progress.md`.
+- The sequential Codebase Memory refresh completed with zero extraction errors
+  at 20,340 nodes / 93,429 edges and returns current
+  `AppState.try_open_file_manager_with`, its exact source, and `miller_layout`.
+  The already-open built-in MCP channel still exposes the prior 20,291 / 94,542
+  snapshot and must not be trusted from `ready` alone; no proxy/process was
+  restarted.
 - SF3.1 product chain is reducer RED/GREEN `368c4d3a` / `d89a7f94`, lifecycle
   RED/GREEN `b6570ee4` / `807cb76c`, sidebar adapter REDs `96a1660e` and
   `09944834` with GREEN `61b915a9`, then keyboard/ownership REDs `4888c3f8`,
@@ -1079,24 +1103,32 @@
 
 ## Exact Next Action
 
-1. Begin SF3.1 at delivery gates I2-I6: graph-first trace the existing sidebar
-   divider drag, mouse-capture, persistence-dirty, and PTY-resize seams; name
-   the protected legacy behavior and verify the current characterization set.
-2. Enter I7 only after that drift pass. Add compile-valid RED contracts
-   `divider_down_captures_original_constraints` and
-   `drag_preview_clamps_without_dirty_or_pty_resize`; run them and require
-   missing resize-transaction behavior assertions to fail. Compile/setup
-   errors are not RED evidence. The planned RED commit is
-   `test: define transactional shell resize`.
-3. After valid RED evidence, implement only the smallest bounded transaction
-   state needed for capture and preview. Preview must not write persistence or
-   resize a PTY; production code waits until the behavior RED is observed.
-4. Execute phases sequentially through the approved child plans. Do not mix
-   tooling T3.1, Apps/Desktop, S5 registry, S7 popup stack, or unrelated
-   refactors into a product commit.
-5. Preserve targeted staging, atomic RED/GREEN/refactor commits, direct full
-   `just check` equivalent, isolated runtime safety, CyPack-only FF writes, and
-   post-publication exact-symbol graph freshness at every phase.
+1. Stay in SF4.1. Use Codebase Memory first to locate the frozen SF1 terminal-
+   runtime preservation fixture and current typed Stage seams. The new session
+   must distrust a `ready`-only built-in result until it returns current
+   `AppState.try_open_file_manager_with` source plus `miller_layout`.
+2. Write compile-valid behavior RED
+   `stage_surface_switch_does_not_destroy_terminal_runtime`. It must extend a
+   test-owned runtime fixture, switch Terminal -> Files -> Terminal (including
+   failure/close as applicable), and fail only on a missing behavior assertion.
+   Compile, Tokio-reactor, filter, environment, zero-test, and setup failures do
+   not count as RED evidence.
+3. Commit the RED atomically, then implement the smallest GREEN that preserves
+   exact terminal runtime identity/count while Stage presentation changes. Add
+   no AppDock render, Files Stage rendering migration, focus router, protocol
+   field, server identity, watcher, process, or filesystem work.
+4. Finish only the minimum `AppDefinition`/launch-policy and typed surface-view
+   model demanded by the eight SF4.1 tests. Close SF4.1 with exact 8/8, frozen
+   SF1 11/11, broad regressions, the full direct `just check` recipe, Git/remote
+   SHA, and fresh graph evidence before entering SF4.2.
+5. Then execute SF4.2 focus/input precedence, SF4.3 overlay/background
+   blocking, SF4.4 pure surface projection, SF5 AppDock, SF6 Files migration,
+   and FM1-FM5 strictly in dependency order. Keep tooling T3.1 paused until the
+   current sequential product phase closes; do not activate Apps/Desktop, S5
+   registry, S7 popup stack, or unrelated refactors.
+6. Preserve targeted staging, atomic RED/GREEN/refactor commits, isolated
+   runtime safety, CyPack-only fast-forward writes, no RED-only publication,
+   and post-publication exact-symbol graph freshness at every phase.
 
 ## Verified B2.0 Dependency Decision
 
