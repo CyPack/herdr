@@ -638,6 +638,30 @@ mod tests {
         );
     }
 
+    // SF4.2-06 companion characterization: the collapsed-sidebar guard inside
+    // `on_sidebar_divider` is load-bearing but was previously unpinned. The
+    // adversarial fixture keeps a stale non-zero sidebar rect in the view so
+    // ONLY the collapse guard stands between hidden geometry and a resize
+    // capture; deleting that guard must fail this test.
+    #[test]
+    fn collapsed_sidebar_exposes_no_divider_capture() {
+        let mut state = AppState::test_new();
+        state.view.sidebar_rect = ratatui::layout::Rect::new(0, 0, 26, 24);
+        let divider_col = 25;
+
+        state.sidebar_collapsed = false;
+        assert!(
+            state.on_sidebar_divider(divider_col, 5),
+            "control: the probe must hit the live divider column"
+        );
+
+        state.sidebar_collapsed = true;
+        assert!(
+            !state.on_sidebar_divider(divider_col, 5),
+            "a collapsed sidebar must never expose divider capture authority"
+        );
+    }
+
     // SF4.2-04 characterization: an active divider capture already owns every
     // move/up event through `DragState`, independent of coordinates. This is
     // GREEN by intent (SF1 precedent): drag routing never re-resolves rects,

@@ -1201,6 +1201,70 @@ mod tests {
         );
     }
 
+    // SF4.2-06 characterization: valid RED was refuted with source evidence
+    // (`flatten_region_hits` drops every empty rect before a hit can exist,
+    // and `hit_at` requires both an exact generation and containment), so
+    // this test freezes the inert-region contract end-to-end: hidden or
+    // zero-area geometry must never expose a focusable shell target, while
+    // the visible compact rail must keep its hit authority.
+    #[test]
+    fn collapsed_or_inert_region_cannot_receive_focus() {
+        let layout = ShellLayout::default();
+        let area = Rect::new(0, 0, 80, 24);
+
+        // Control: the expanded sidebar owns its position and proves the
+        // probe coordinates hit real targets.
+        let expanded = compute_shell_view_for_test(&layout, area, 26, None);
+        assert_eq!(
+            shell_hit_for_test(&expanded, expanded.generation, 5, 5),
+            Some(RegionId::LeftPanel),
+            "control: the expanded sidebar must own its own geometry"
+        );
+
+        // Hidden collapse (zero width): the LeftPanel exposes no hit target,
+        // and its former position belongs to the current WorkspaceStage.
+        let hidden_key = ShellGeometryKey::new(area, 0, 0, 1);
+        let resolver = legacy_sidebar_resolver(0);
+        let hidden = compute_shell_view(&layout, hidden_key, expanded.clone(), &resolver);
+        assert!(
+            hidden.hits.iter().all(|hit| {
+                hit.target != super::view::ShellHitTarget::Region(RegionId::LeftPanel)
+            }),
+            "a zero-width collapsed region must expose no hit target"
+        );
+        assert_eq!(
+            shell_hit_for_test(&hidden, hidden.generation, 5, 5),
+            Some(RegionId::WorkspaceStage),
+            "the former sidebar position must resolve to its current owner"
+        );
+        assert_eq!(
+            shell_hit_for_test(&hidden, expanded.generation, 5, 5),
+            None,
+            "the pre-collapse generation must not resolve any target"
+        );
+
+        // Compact rail: visible collapsed geometry keeps its hit authority,
+        // so inertness cannot over-apply to a real on-screen affordance.
+        let compact_key = ShellGeometryKey::new(area, 0, 4, 2);
+        let rail_resolver = legacy_sidebar_resolver(4);
+        let compact = compute_shell_view(&layout, compact_key, hidden, &rail_resolver);
+        assert_eq!(
+            shell_hit_for_test(&compact, compact.generation, 2, 5),
+            Some(RegionId::LeftPanel),
+            "the visible compact rail must stay interactive"
+        );
+
+        // Zero-area outer geometry: no region can expose any target.
+        let zero_key = ShellGeometryKey::new(Rect::ZERO, 0, 26, 3);
+        let full_resolver = legacy_sidebar_resolver(26);
+        let zero = compute_shell_view(&layout, zero_key, compact, &full_resolver);
+        assert!(
+            zero.hits.is_empty(),
+            "zero-area geometry must expose no hit list at all"
+        );
+        assert_eq!(shell_hit_for_test(&zero, zero.generation, 0, 0), None);
+    }
+
     #[test]
     fn stale_shell_hit_generation_is_rejected() {
         let rect = Rect::new(0, 0, 5, 10);
