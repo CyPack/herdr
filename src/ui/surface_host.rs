@@ -127,6 +127,11 @@ mod tests {
         MAX_BUILT_IN_INSTANCES,
     };
 
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct TestGenerationAllocator {
+        last: u32,
+    }
+
     #[test]
     fn stage_starts_on_terminal_workspace() {
         let state = AppState::test_new();
@@ -187,5 +192,27 @@ mod tests {
             Err(StageStateError::BuiltInInstanceCapacityReached)
         );
         assert_eq!(stage, retained);
+    }
+
+    #[test]
+    fn instance_generation_exhaustion_fails_without_aliasing() {
+        let mut allocator = TestGenerationAllocator { last: u32::MAX };
+        let retained = allocator;
+
+        assert_eq!(
+            allocate_next_generation_for_test(&mut allocator),
+            Err("instance generation exhausted")
+        );
+        assert_eq!(allocator, retained);
+    }
+
+    fn allocate_next_generation_for_test(
+        allocator: &mut TestGenerationAllocator,
+    ) -> Result<u32, &'static str> {
+        // RED-only seam: wrapping would alias generation zero after exhaustion.
+        // SF4.1 replaces it with checked allocation before any state mutation.
+        let generation = allocator.last.wrapping_add(1);
+        allocator.last = generation;
+        Ok(generation)
     }
 }
