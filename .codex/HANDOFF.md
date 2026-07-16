@@ -11,10 +11,12 @@
 - Branch: `feat/native-fm`
 - Acting identity: CyPack external contributor; `origin` is the writable
   `CyPack/herdr` fork and `upstream` is read-only.
-- Current verified product head: `3880c66b`
-  (`feat: wire every overlay entry through focus remembering`).
-- Matching observed behavior RED: `27f8699f`
-  (`test: require copy session restore after context menu close`).
+- Current verified head: `3580ff19`
+  (`test: freeze inert region focus exclusion`, SF4.2-06 characterization).
+- Latest product GREEN: `3880c66b`
+  (`feat: wire every overlay entry through focus remembering`), RED
+  `27f8699f` (`test: require copy session restore after context menu
+  close`).
 - Prior closed heads this session: SF4.2-05 scoped core `8b1882eb`/`5eb63763`,
   SF4.2-04 characterization `119e4a2d`, SF4.2-03 `bb6f8970`/`efe6446b`,
   SF4.2-02 `41362e89`/`017ba97f`, SF4.2-01 `92777e23`/`f4f5e3cb`, SF4.1-08
@@ -29,19 +31,24 @@
   `enter_overlay_mode` + validity-filtered `leave_modal`; SF4.2-05b sweep
   wired EVERY production overlay entry — 24 call sites — with a structural
   zero-remaining-direct-assignment proof and a ContextMenu-from-Copy row
-  keeping a live copy session through an overlay episode) are GREEN.
-- Immediate next microtask: SF4.2-06 —
-  `collapsed_or_inert_region_cannot_receive_focus` (inert/collapsed regions
-  expose no focusable target). See
+  keeping a live copy session through an overlay episode) are GREEN. Slice
+  06 (inert regions) is GREEN as a characterization (`3580ff19`): valid RED
+  was refuted with source evidence (`flatten_region_hits` empty-rect filter,
+  `hit_at` generation+containment, `on_sidebar_divider` collapse guard,
+  degenerate toggle rects), so the test freezes Hidden/zero-area inertness,
+  compact-rail interactivity, and the previously unpinned adversarial
+  collapsed-divider guard.
+- Immediate next microtask: SF4.2-07 — `stale_hit_generation_fails_closed`
+  (wire `ShellView::hit_at` into the mouse context builder's topmost-hit
+  tier). See
   `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
-- Product tree: clean at `3880c66b`; only the user-owned untracked
+- Product tree: clean at `3580ff19`; only the user-owned untracked
   `.superpowers/` tree exists and must remain untouched/unstaged.
-- Full exact-head gate: 3,305/3,305 Rust tests passed (`--no-fail-fast`, run
-  `739e220a`), one named B0 real-host probe skipped, zero retry; Linux
-  all-target and Windows MSVC bin Clippy, fmt/diff/added-production-unwrap
-  checks passed.
+- Full exact-head gate: 3,307/3,307 Rust tests passed (`--no-fail-fast`),
+  one named B0 real-host probe skipped, zero retry; Linux all-target and
+  Windows MSVC bin Clippy, fmt/diff/added-production-unwrap checks passed.
 - Both CyPack refs (`feat/native-fm`, fork `master`) equal exact SHA
-  `3880c66b1d3b58771f3f1dfc6aebc2ace6c396c7` at the product checkpoint;
+  `3580ff1986e524a67a6ff7c33bd6056afe75c2ea` at this checkpoint;
   `upstream` untouched.
 - Fresh sequential Codebase Memory store refreshed post-publication with
   current `blocking_overlay_active`, `shell_mouse_input_owner`,

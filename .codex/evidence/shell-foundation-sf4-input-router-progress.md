@@ -18,7 +18,7 @@ SF4.1 typed Stage closure (`944a9d4c`) and every earlier baseline stay frozen.
 | SF4.2-03 | `overlay_blocks_background_keyboard_shortcut` | No background capture/shortcut acts while a blocking overlay owns focus | Keyboard parity for the same rule | GREEN |
 | SF4.2-04 | `capture_owns_move_and_up_outside_original_rect` | Active capture receives move/up even outside its origin rect | Only one owner captures a pointer gesture | GREEN (characterization) |
 | SF4.2-05 | `focus_restores_after_overlay_close` | Closing an overlay restores the previous valid focus owner or template fallback | Deterministic focus restoration | GREEN (SF4.2-05b done: every production overlay entry wired) |
-| SF4.2-06 | `collapsed_or_inert_region_cannot_receive_focus` | Collapsed/zero regions expose no focusable target | Hidden geometry must not own input | PENDING |
+| SF4.2-06 | `collapsed_or_inert_region_cannot_receive_focus` | Collapsed/zero regions expose no focusable target | Hidden geometry must not own input | GREEN (characterization) |
 | SF4.2-07 | `stale_hit_generation_fails_closed` | A hit resolved against a non-current `ShellView` generation is consumed inert | Old coordinates must never become authority | PENDING |
 | SF4.2-08 | `files_stage_blocks_hidden_terminal_input` | With Files active, no event reaches hidden terminal targets | Fixes the reported curtain/input leak class | PENDING |
 
@@ -285,11 +285,48 @@ Approved GREEN design (production-grade, NOT a one-field hack):
   `feat/native-fm` == `master` == exact SHA
   `3880c66b1d3b58771f3f1dfc6aebc2ace6c396c7`; `upstream` untouched.
 
+## SF4.2-06 Evidence (characterization — valid RED refuted with source proof)
+
+- RED-ability was investigated BEFORE writing the test and refuted at every
+  candidate seam: `flatten_region_hits` drops every empty rect before a hit
+  can exist (`src/ui/shell/view.rs:161`, `!rect.is_empty()`); `hit_at`
+  requires exact generation plus containment (`view.rs:87-96`);
+  `on_sidebar_divider` fails closed for collapsed state before any rect math
+  (`src/app/input/sidebar.rs:460`) and additionally requires
+  `sidebar.width > 0`; both sidebar toggle rects return `Rect::default()`
+  for degenerate areas (`src/ui/sidebar.rs:1800-1820`). No reachable state
+  produces a hidden focusable target, so per the SF1/SF4.2-04 precedent the
+  slice landed as one `test:` characterization commit `3580ff19`
+  (`test: freeze inert region focus exclusion`).
+- `collapsed_or_inert_region_cannot_receive_focus` (`src/ui/shell.rs`)
+  freezes four rows end-to-end through the real
+  `compute_shell_view`/`hit_at` path: expanded control (probe proves it hits
+  the live sidebar), Hidden collapse (no LeftPanel hit; the former sidebar
+  position resolves to the CURRENT WorkspaceStage; the pre-collapse
+  generation resolves nothing), compact 4-cell rail (visible collapsed
+  geometry KEEPS hit authority — over-inerting guard), and zero-area outer
+  geometry (empty hit list, `hit_at` always None).
+- Companion `collapsed_sidebar_exposes_no_divider_capture`
+  (`src/app/input/shell.rs`) pins the previously UNPINNED collapse guard
+  with an adversarial stale non-zero `view.sidebar_rect`: the control row
+  proves the probe hits the live divider column, the collapsed row proves
+  only the guard denies capture authority — deleting the guard now fails a
+  test.
+- Gates: exact 2/2 (run `f3cad287`); full Nextest `--no-fail-fast`
+  3,307/3,307 plus only the named B0 skip; fmt, Linux all-target Clippy,
+  Windows MSVC bin Clippy clean with `-D warnings`; `git diff --check` and
+  added-production-`unwrap()` clean (test-only commit, zero production
+  lines).
+- Publication: FF pushes to CyPack only; both refs equal exact SHA
+  `3580ff1986e524a67a6ff7c33bd6056afe75c2ea`; `upstream` untouched.
+
 ## Exact Next Microtask
 
-SF4.2-06: `collapsed_or_inert_region_cannot_receive_focus` — collapsed or
-zero-area regions must expose no focusable target. Then SF4.2-07 stale hit
-generation (wire `ShellView::hit_at` into the mouse context builder),
-SF4.2-08 hidden-terminal blocking, then the SF4.2 closure gate (full direct
-`just check` equivalent, Bun/Python, broad regressions, publication, graph).
-Do not start SF4.3, SF5, SF6, or change-pipeline T3.1 before SF4.2 closes.
+SF4.2-07: `stale_hit_generation_fails_closed` — wire `ShellView::hit_at`
+into the mouse context builder (`shell_mouse_input_owner` topmost-hit tier)
+so a hit resolved against a non-current generation is consumed inert; the
+`#[allow(dead_code)]` on `hit_at` names this consumption. Then SF4.2-08
+hidden-terminal blocking, then the SF4.2 closure gate (full direct
+`just check` equivalent, Bun/Python, broad regressions, publication,
+graph). Do not start SF4.3, SF5, SF6, or change-pipeline T3.1 before SF4.2
+closes.

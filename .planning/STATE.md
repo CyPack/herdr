@@ -146,9 +146,15 @@
   through an overlay episode. Direct exits that bypass `leave_modal` skip
   the restore nicety but cannot produce stale restores (recorded as an
   SF4.3 candidate). Current verified product head: `3880c66b`.
-- Next microtask: SF4.2-06 inert regions
-  (`collapsed_or_inert_region_cannot_receive_focus`), then SF4.2-07 stale
-  hit generation (`ShellView::hit_at` wiring), SF4.2-08 hidden-terminal
+- SF4.2-06 is GREEN as a characterization (`3580ff19`): valid RED was
+  refuted with source evidence (empty-rect hit filter, generation +
+  containment in `hit_at`, collapsed-divider guard, degenerate toggle
+  rects); the test freezes Hidden/zero-area inertness, compact-rail
+  interactivity, and pins the previously unpinned adversarial
+  collapsed-divider guard. Current verified head: `3580ff19`.
+- Next microtask: SF4.2-07 stale hit generation
+  (`stale_hit_generation_fails_closed`, wire `ShellView::hit_at` into the
+  mouse context builder's topmost-hit tier), then SF4.2-08 hidden-terminal
   blocking, SF4.2 closure gate. See
   `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
