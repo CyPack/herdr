@@ -63,6 +63,7 @@ use self::{
     },
     mouse::MouseAction,
     settings::SettingsAction,
+    shell::ShellInputOwner,
 };
 use super::state::{AppState, Mode};
 use super::App;
@@ -81,54 +82,64 @@ impl App {
             return;
         }
 
-        // An open context menu owns keyboard focus even when its native-FM
-        // surface remains visible underneath it.
-        if self.state.mode == Mode::ContextMenu {
-            self.handle_context_menu_key_via_api(key_event);
-            return;
-        }
-
-        // The delete modal owns focus ahead of the native-FM capture below.
-        // Otherwise confirmation keys would be interpreted as navigation in
-        // the still-visible file manager.
-        if self.state.mode == Mode::ConfirmFileDelete {
-            self.handle_file_manager_delete_confirmation_key(key_event);
-            return;
-        }
-
-        // The file Rename text modal owns focus ahead of native-FM capture.
-        if self.state.mode == Mode::RenameFile {
-            self.handle_rename_key_via_api(key_event);
-            return;
-        }
-
-        // An active shell divider capture owns keyboard input ahead of the
-        // visible surface. This keeps resize keys out of native apps and PTYs
-        // while preserving topmost modal ownership above.
-        if self.state.handle_shell_resize_key(key_event) {
-            return;
-        }
-
-        // When the native file manager is open it captures all keyboard input,
-        // ahead of the mode dispatch, so keys drive its navigation instead of
-        // reaching the terminal underneath.
-        if self.state.file_manager.is_some() {
-            if file_manager::handle_file_manager_key(&mut self.state, key_event)
-                == file_manager::FileManagerKeyDispatch::CancelOperation
-            {
-                let _ = self.cancel_file_manager_operation();
+        // One frozen precedence resolves the keyboard owner: topmost overlay
+        // -> active capture -> focused component -> global dispatch. The
+        // router is the single ordering authority; each arm below only
+        // dispatches within the tier it was granted.
+        match self.state.shell_key_input_owner() {
+            ShellInputOwner::TopmostOverlay => {
+                // An open context menu, delete confirmation, or file rename
+                // modal owns keyboard focus even when its native-FM surface
+                // remains visible underneath it.
+                match self.state.mode {
+                    Mode::ContextMenu => self.handle_context_menu_key_via_api(key_event),
+                    Mode::ConfirmFileDelete => {
+                        self.handle_file_manager_delete_confirmation_key(key_event)
+                    }
+                    Mode::RenameFile => self.handle_rename_key_via_api(key_event),
+                    _ => debug_assert!(
+                        false,
+                        "topmost overlay keyboard ownership requires an overlay mode"
+                    ),
+                }
             }
-            if self.state.file_manager.is_none() {
-                self.last_file_manager_click = None;
+            ShellInputOwner::ActiveCapture => {
+                // An active shell divider capture owns keyboard input ahead of
+                // the visible surface. This keeps resize keys out of native
+                // apps and PTYs while preserving topmost modal ownership above.
+                let handled = self.state.handle_shell_resize_key(key_event);
+                debug_assert!(handled, "an active capture must consume every key");
             }
-            return;
+            ShellInputOwner::FocusedComponent => {
+                // When the native file manager is open it captures all
+                // keyboard input, ahead of the mode dispatch, so keys drive
+                // its navigation instead of reaching the terminal underneath.
+                if self.state.file_manager.is_some() {
+                    if file_manager::handle_file_manager_key(&mut self.state, key_event)
+                        == file_manager::FileManagerKeyDispatch::CancelOperation
+                    {
+                        let _ = self.cancel_file_manager_operation();
+                    }
+                    if self.state.file_manager.is_none() {
+                        self.last_file_manager_click = None;
+                    }
+                } else {
+                    file_manager::handle_agent_attachment_picker_key(&mut self.state, key_event);
+                }
+            }
+            ShellInputOwner::GlobalShortcut => self.handle_global_key_dispatch(key).await,
+            ShellInputOwner::TopmostHit(_) | ShellInputOwner::PageShortcut => {
+                // Keyboard routing produces no positional or page owner in
+                // v0; consume fail-closed rather than acting for a tier the
+                // context builder cannot grant.
+                debug_assert!(false, "keyboard routing has no positional or page owner");
+            }
+            ShellInputOwner::FailClosed => {}
         }
+    }
 
-        if self.state.mode == Mode::AttachFile {
-            file_manager::handle_agent_attachment_picker_key(&mut self.state, key_event);
-            return;
-        }
-
+    async fn handle_global_key_dispatch(&mut self, key: TerminalKey) {
+        let key_event = key.as_key_event();
         match self.state.mode {
             Mode::Terminal => self.handle_terminal_key(key).await,
             Mode::Prefix => self.handle_prefix_key(key),
