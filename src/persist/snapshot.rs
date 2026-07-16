@@ -706,6 +706,60 @@ mod tests {
     }
 
     #[test]
+    fn v3_snapshot_migrates_sidebar_width_into_left_panel() {
+        let json = serde_json::json!({
+            "version": 3,
+            "workspaces": [],
+            "active": null,
+            "selected": 0,
+            "sidebar_width": 34,
+            "sidebar_section_split": 0.4
+        })
+        .to_string();
+
+        let restored = parse_snapshot(&json).unwrap();
+        let encoded = serde_json::to_value(&restored).unwrap();
+        let shell = encoded
+            .get("shell")
+            .expect("v3 migration must derive a bounded shell snapshot");
+
+        assert_eq!(
+            shell
+                .pointer("/region_constraints/LeftPanel/Resizable/preferred")
+                .and_then(serde_json::Value::as_u64),
+            Some(34)
+        );
+        assert_eq!(
+            shell
+                .pointer("/collapse_restore_widths/LeftPanel")
+                .and_then(serde_json::Value::as_u64),
+            Some(34)
+        );
+    }
+
+    #[test]
+    fn v3_sidebar_section_split_remains_sidebar_owned() {
+        let json = serde_json::json!({
+            "version": 3,
+            "workspaces": [],
+            "active": null,
+            "selected": 0,
+            "sidebar_width": 34,
+            "sidebar_section_split": 0.4
+        })
+        .to_string();
+
+        let restored = parse_snapshot(&json).unwrap();
+        assert_eq!(restored.sidebar_section_split, Some(0.4));
+
+        let encoded = serde_json::to_value(&restored).unwrap();
+        let shell = encoded
+            .get("shell")
+            .expect("v3 migration must derive a bounded shell snapshot");
+        assert!(shell.get("sidebar_section_split").is_none());
+    }
+
+    #[test]
     fn old_snapshot_defaults_sidebar_fields() {
         let json = serde_json::json!({
             "version": SNAPSHOT_VERSION,
