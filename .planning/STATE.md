@@ -174,10 +174,15 @@
   are gated behind `stage.surface_view() == TerminalWorkspace` on desktop
   AND mobile; `surface_view()`'s dead-code allow was removed with its
   named consumption condition satisfied; full suite 3,310/3,310 with zero
-  regressions from the split. Current verified head: `acc82ffd`.
-- Next microtask: SF4.3-02 `hidden_surface_has_no_stale_hits_or_cursor`
-  (verify RED-ability first), then 03/04 render purity, 05 retained path,
-  06 SurfaceHost typed renderer, SF4.3 closure gate. See
+  regressions from the split.
+- SF4.3-02 is GREEN (`bb5a6899`/`1bc69cf5`): the surface-switch
+  transactions retire the hidden surface's projected view geometry in the
+  same mutation (open: pane/split/agent-frame; close: Files
+  row/action/header/action-bar), closing the stale window between a
+  switch and the next compute. Current verified head: `1bc69cf5`.
+- Next microtask: SF4.3-03/04 render purity rows (verify RED-ability
+  first — likely characterizations), then 05 retained path, 06
+  SurfaceHost typed renderer, SF4.3 closure gate. See
   `.codex/evidence/shell-foundation-sf4-surface-projection-progress.md`.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one

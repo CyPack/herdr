@@ -9,7 +9,7 @@ Plan contract: `docs/superpowers/plans/2026-07-15-herdr-shell-foundation-v0-impl
 | ID | Test | Expected result | Reason | Status |
 |---|---|---|---|---|
 | SF4.3-01 | `active_surface_alone_populates_stage_hits` | Exactly one stage surface owns projected hit geometry per frame (terminal pane/split only under `TerminalWorkspace`; Files geometry only under `NativeFiles`) | Hidden surfaces must not project hit rectangles or side effects | GREEN |
-| SF4.3-02 | `hidden_surface_has_no_stale_hits_or_cursor` | Switching surfaces leaves no stale view artifacts (rects/cursor) from the hidden surface | Stale geometry = invisible interactive surface | PENDING |
+| SF4.3-02 | `hidden_surface_has_no_stale_hits_or_cursor` | Switching surfaces leaves no stale view artifacts (rects/cursor) from the hidden surface | Stale geometry = invisible interactive surface | GREEN |
 | SF4.3-03 | `surface_render_is_deterministic_for_identical_state` | Identical state renders byte-identical buffers | Render purity contract | PENDING |
 | SF4.3-04 | `surface_render_does_not_mutate_app_state` | Render leaves `AppState` bit-identical | "Never mutate state during render" | PENDING |
 | SF4.3-05 | `terminal_dirty_row_keeps_retained_path_with_static_shell` | A dirty terminal row under a static shell keeps the cached `ShellView` generation (cheap path) | Every PTY row must not re-solve the shell | PENDING |
@@ -59,12 +59,45 @@ Plan contract: `docs/superpowers/plans/2026-07-15-herdr-shell-foundation-v0-impl
 - Publication: FF pushes to CyPack only; both refs equal exact SHA
   `acc82ffdd272885150278dc0ce941828e4db68cd`; `upstream` untouched.
 
+## SF4.3-02 Atomic TDD Evidence
+
+- RED-ability verified first: `try_open_file_manager_with` and
+  `close_file_manager` cleared domain state but NOT view projections, so
+  the window between a surface switch and the next compute carried stale
+  hit rectangles for the hidden surface. Concrete hazard found during
+  recon: the `[+]` agent-attachment pre-branch checks only the view rect
+  at its INPUT site (its FM guard is compute-level), so a stale `[+]`
+  rectangle in that window could open the picker while Files owns the
+  stage.
+- RED `bb5a6899` (`test: require stale projection retirement on surface
+  switch`): failed exactly at "the switch itself must retire stale pane
+  hit geometry" — after opening Files without an intervening compute,
+  `view.pane_infos` still carried the prior terminal frame. Control rows
+  prove both surfaces project geometry when computed; the close direction
+  pins Files row/action/header/action-bar retirement. There is no
+  dedicated view cursor field — terminal cursor placement derives from
+  `pane_infos`, so its retirement is covered structurally.
+- GREEN `1bc69cf5` (`feat: retire hidden surface projection on stage
+  switch`): the open transaction retires `pane_infos`, `split_borders`,
+  and both agent frame action areas in the same mutation that activates
+  Files; the close transaction retires the Files row/row-action/header
+  geometry and the action-bar model. Sidebar Files-tab rows are
+  deliberately NOT retired (they belong to the sidebar tab, not the stage
+  surface).
+- Gates: exact 1/1 (run `681916e4`); full Nextest `--no-fail-fast`
+  3,311/3,311 plus only the named B0 skip, zero regressions; fmt, Linux
+  all-target and Windows MSVC bin Clippy clean with `-D warnings`; diff
+  and added-production-`unwrap()` clean.
+- Publication: FF pushes to CyPack only; both refs equal exact SHA
+  `1bc69cf5d8f1118468d4a1adffd3b33956ebcf14`; `upstream` untouched.
+
 ## Exact Next Microtask
 
-SF4.3-02: `hidden_surface_has_no_stale_hits_or_cursor` — verify
-RED-ability first (candidate artifacts: view cursor/selection projections
-carried across a surface switch WITHOUT an intervening compute; FM
-geometry immediately after close before recompute; copy-mode search
-geometry sync under NativeFiles). Then SF4.3-03/04 render purity rows,
-SF4.3-05 retained path, SF4.3-06 SurfaceHost typed renderer selection,
-and the SF4.3 closure gate. Do not start SF5 before SF4.3 closes.
+SF4.3-03: `surface_render_is_deterministic_for_identical_state` and
+SF4.3-04: `surface_render_does_not_mutate_app_state` — verify RED-ability
+first (render already takes `&AppState`; these are LIKELY
+characterizations pinning purity, per the SF1 precedent — confirm by
+source inspection of the render entry and any interior mutability before
+writing). Then SF4.3-05 retained path, SF4.3-06 SurfaceHost typed
+renderer selection, and the SF4.3 closure gate. Do not start SF5 before
+SF4.3 closes.

@@ -60,9 +60,10 @@ Priority is mandatory:
    SF4.2 is CLOSED 8/8 at `20f659c1` (closure gate incl. Bun/Python;
    evidence `shell-foundation-sf4-input-router-progress.md`). SF4.3-01
    (`7796d855`/`acc82ffd`, surface-exclusive stage hit geometry on
-   desktop AND mobile) is GREEN. Next: SF4.3-02
-   `hidden_surface_has_no_stale_hits_or_cursor` (verify RED-ability
-   first), then 03/04 render purity, 05 retained path, 06 SurfaceHost
+   desktop AND mobile) and SF4.3-02 (`bb5a6899`/`1bc69cf5`, stale
+   projection retirement inside the switch transactions) are GREEN.
+   Next: SF4.3-03/04 render purity rows (verify RED-ability first —
+   likely characterizations), then 05 retained path, 06 SurfaceHost
    typed renderer selection, closure gate. Evidence:
    `.codex/evidence/shell-foundation-sf4-surface-projection-progress.md`.
 2. P0 NEXT: SF4.3 -> SF4.4 -> SF5 -> SF6 -> FM1 -> FM2 -> FM3 -> FM4
@@ -79,10 +80,10 @@ continuity, and pipeline files in one commit.
 ## Current Verified Truth
 
 - Branch: `feat/native-fm`.
-- Verified product head: `acc82ffd`
-  (`feat: grant stage hit geometry to active surface only`, SF4.3-01).
-- Matching RED: `7796d855`
-  (`test: require exclusive stage surface hit geometry`).
+- Verified product head: `1bc69cf5`
+  (`feat: retire hidden surface projection on stage switch`, SF4.3-02).
+- Matching RED: `bb5a6899`
+  (`test: require stale projection retirement on surface switch`).
 - Separate test-stability commit `3c853a70` closed the parallel-load
   process-exit suppression flake class in `src/terminal/state.rs`.
 - SF0-SF3 are closed. SF4.1 is CLOSED with 8/8 behavior slices GREEN.
@@ -98,9 +99,10 @@ continuity, and pipeline files in one commit.
   - `056f0879` / `f0f32075`: failed open restores exact Stage/focus.
   - `784fdc2e` / `944a9d4c`: stage switches preserve terminal runtime
     (`AppDefinition`/`LaunchPolicy` + pure `StageState::surface_view()`).
-- Next test is not yet written:
-  `hidden_surface_has_no_stale_hits_or_cursor` (SF4.3-02 — verify
-  RED-ability BEFORE writing; candidates recorded in the SF4.3 evidence).
+- Next tests are not yet written:
+  `surface_render_is_deterministic_for_identical_state` and
+  `surface_render_does_not_mutate_app_state` (SF4.3-03/04 — verify
+  RED-ability BEFORE writing; likely characterizations).
 - Legacy `AppState.file_manager: Option<FmState>` curtain still renders. Do
   not remove it until SF6.
 - `previous_pane_focus` is existing pane history, not the new SF4.2 focus
@@ -108,14 +110,13 @@ continuity, and pipeline files in one commit.
   seam, never persisted.
 - Protocol remains 16. SF4.1 and SF4.2 stayed client-local presentation
   state.
-- Full current gate: Nextest 3,310/3,310 passed plus one named B0 skip
-  (`--no-fail-fast`, zero regressions from the projection split), Linux
-  all-target Clippy, Windows MSVC bin Clippy, fmt, diff and
-  added-production-`unwrap()` clean (Bun 5/5 + 12/12 and Python 64/64
-  last verified at the SF4.2 closure gate `20f659c1`; rerun at the SF4.3
-  closure gate).
+- Full current gate: Nextest 3,311/3,311 passed plus one named B0 skip
+  (`--no-fail-fast`, zero regressions), Linux all-target Clippy, Windows
+  MSVC bin Clippy, fmt, diff and added-production-`unwrap()` clean (Bun
+  5/5 + 12/12 and Python 64/64 last verified at the SF4.2 closure gate
+  `20f659c1`; rerun at the SF4.3 closure gate).
 - Both CyPack refs equal exact SHA
-  `acc82ffdd272885150278dc0ce941828e4db68cd`.
+  `1bc69cf5d8f1118468d4a1adffd3b33956ebcf14`.
 - User-owned `.superpowers/` is untracked and must never be staged or edited.
 
 ## Mandatory Git and Remote Audit

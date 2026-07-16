@@ -11,9 +11,10 @@
 - Branch: `feat/native-fm`
 - Acting identity: CyPack external contributor; `origin` is the writable
   `CyPack/herdr` fork and `upstream` is read-only.
-- Current verified product head: `acc82ffd`
-  (`feat: grant stage hit geometry to active surface only`, SF4.3-01),
-  RED `7796d855` (`test: require exclusive stage surface hit geometry`).
+- Current verified product head: `1bc69cf5`
+  (`feat: retire hidden surface projection on stage switch`, SF4.3-02),
+  RED `bb5a6899`. Prior: SF4.3-01 `7796d855`/`acc82ffd`
+  (surface-exclusive stage hit geometry).
 - SF4.2 closed 8/8 at `20f659c1`; SF4.3 is now the ACTIVE microphase with
   slice 01 GREEN (surface-exclusive hit geometry: pane/split projection
   and `rt.resize` side effects gated behind
@@ -54,20 +55,27 @@
   proven already closed by recon plus an 8-kind event matrix through the
   full production `App::handle_mouse` with a control phase proving the
   same press reaches the live terminal once Files closes.
-- Immediate next microtask: SF4.3-02
-  (`hidden_surface_has_no_stale_hits_or_cursor`) — verify RED-ability
-  first; then 03/04 render purity, 05 retained path, 06 SurfaceHost typed
+- SF4.3-02 (`bb5a6899`/`1bc69cf5`): the surface-switch transactions now
+  retire the hidden surface's projected view geometry in the same
+  mutation (open retires pane/split/agent-frame projections; close
+  retires Files row/action/header/action-bar), closing the stale-window
+  between a switch and the next compute — including the stale-`[+]`
+  hazard whose FM guard was compute-level only.
+- Immediate next microtask: SF4.3-03/04 render purity rows
+  (`surface_render_is_deterministic_for_identical_state`,
+  `surface_render_does_not_mutate_app_state`) — verify RED-ability first
+  (likely characterizations); then 05 retained path, 06 SurfaceHost typed
   renderer, SF4.3 closure gate. See
   `.codex/evidence/shell-foundation-sf4-surface-projection-progress.md`.
-- Product tree: clean at `acc82ffd`; only the user-owned untracked
+- Product tree: clean at `1bc69cf5`; only the user-owned untracked
   `.superpowers/` tree exists and must remain untouched/unstaged.
-- Full exact-head gate: 3,310/3,310 Rust tests (`--no-fail-fast`, zero
-  regressions from the projection split), one named B0 real-host probe
-  skipped; Linux all-target and Windows MSVC bin Clippy;
-  fmt/diff/added-production-unwrap checks passed (Bun 5/5 + 12/12 and
-  Python 64/64 last verified at the SF4.2 closure gate `20f659c1`).
+- Full exact-head gate: 3,311/3,311 Rust tests (`--no-fail-fast`, zero
+  regressions), one named B0 real-host probe skipped; Linux all-target
+  and Windows MSVC bin Clippy; fmt/diff/added-production-unwrap checks
+  passed (Bun 5/5 + 12/12 and Python 64/64 last verified at the SF4.2
+  closure gate `20f659c1`).
 - Both CyPack refs (`feat/native-fm`, fork `master`) equal exact SHA
-  `acc82ffdd272885150278dc0ce941828e4db68cd` at this checkpoint;
+  `1bc69cf5d8f1118468d4a1adffd3b33956ebcf14` at this checkpoint;
   `upstream` untouched.
 - Fresh sequential Codebase Memory store refreshed post-publication with
   current `blocking_overlay_active`, `shell_mouse_input_owner`,
