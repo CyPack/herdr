@@ -95,6 +95,75 @@ pub(crate) struct CollapseUpdate {
     mark_persistence_dirty: bool,
 }
 
+/// Axis owned by one bounded scroll viewport.
+// SF3.2 establishes the pure primitive before SF4 attaches real input-router consumers.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ScrollAxis {
+    Horizontal,
+    Vertical,
+}
+
+/// Stable client-local identity for a viewport inside a named region. `slot`
+/// permits more than one bounded component viewport without coupling identity
+/// to its current rectangle or tree position.
+// SF3.2 establishes the pure primitive before SF4 attaches real input-router consumers.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ScrollViewportId {
+    region: RegionId,
+    slot: u8,
+}
+
+/// Two-dimensional content offset, independent from derived terminal geometry.
+// SF3.2 establishes the pure primitive before SF4 attaches real input-router consumers.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ScrollOffset {
+    horizontal: usize,
+    vertical: usize,
+}
+
+/// Derived viewport/content extents for one compute generation. Zero viewport
+/// extent deliberately yields a zero maximum offset.
+// SF3.2 establishes the pure primitive before SF4 attaches real input-router consumers.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ScrollViewportMetrics {
+    viewport_width: u16,
+    viewport_height: u16,
+    content_width: usize,
+    content_height: usize,
+}
+
+/// Committed client-local offset for one viewport. It owns no geometry, input
+/// handle, runtime resource, or render loop.
+// SF3.2 establishes the pure primitive before SF4 attaches real input-router consumers.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ScrollViewportState {
+    id: ScrollViewportId,
+    offset: ScrollOffset,
+}
+
+/// One already-hit-tested scroll owner. The router receives these bottom to
+/// top and never falls through the final owner.
+// SF3.2 establishes the pure primitive before SF4 attaches real input-router consumers.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ScrollOwner {
+    id: ScrollViewportId,
+    metrics: ScrollViewportMetrics,
+}
+
+// SF3.2 establishes the pure primitive before SF4 attaches real input-router consumers.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ScrollDecision {
+    Unhandled,
+    Consumed { changed: bool },
+}
+
 /// Aggregate committed shell presentation preferences. AppState owns one of
 /// these rather than accumulating region-specific fields at its top level.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -169,6 +238,130 @@ impl CollapseUpdate {
     pub(crate) const fn marks_persistence_dirty(self) -> bool {
         self.mark_persistence_dirty
     }
+}
+
+// SF3.2 establishes the pure primitive before SF4 attaches real input-router consumers.
+#[allow(dead_code)]
+impl ScrollViewportId {
+    pub(crate) const fn new(region: RegionId, slot: u8) -> Self {
+        Self { region, slot }
+    }
+}
+
+// SF3.2 establishes the pure primitive before SF4 attaches real input-router consumers.
+#[allow(dead_code)]
+impl ScrollOffset {
+    pub(crate) const fn new(horizontal: usize, vertical: usize) -> Self {
+        Self {
+            horizontal,
+            vertical,
+        }
+    }
+}
+
+// SF3.2 establishes the pure primitive before SF4 attaches real input-router consumers.
+#[allow(dead_code)]
+impl ScrollViewportMetrics {
+    pub(crate) const fn new(
+        viewport_width: u16,
+        viewport_height: u16,
+        content_width: usize,
+        content_height: usize,
+    ) -> Self {
+        Self {
+            viewport_width,
+            viewport_height,
+            content_width,
+            content_height,
+        }
+    }
+
+    fn max_offset(self, axis: ScrollAxis) -> usize {
+        let (viewport, content) = match axis {
+            ScrollAxis::Horizontal => (usize::from(self.viewport_width), self.content_width),
+            ScrollAxis::Vertical => (usize::from(self.viewport_height), self.content_height),
+        };
+        if viewport == 0 {
+            0
+        } else {
+            content.saturating_sub(viewport)
+        }
+    }
+}
+
+// SF3.2 establishes the pure primitive before SF4 attaches real input-router consumers.
+#[allow(dead_code)]
+impl ScrollViewportState {
+    pub(crate) const fn new(id: ScrollViewportId) -> Self {
+        Self::with_offset(id, ScrollOffset::new(0, 0))
+    }
+
+    const fn with_offset(id: ScrollViewportId, offset: ScrollOffset) -> Self {
+        Self { id, offset }
+    }
+
+    pub(crate) fn reconcile(&mut self, metrics: ScrollViewportMetrics) -> bool {
+        let before = self.offset;
+        self.offset.horizontal = self
+            .offset
+            .horizontal
+            .min(metrics.max_offset(ScrollAxis::Horizontal));
+        self.offset.vertical = self
+            .offset
+            .vertical
+            .min(metrics.max_offset(ScrollAxis::Vertical));
+        self.offset != before
+    }
+
+    pub(crate) fn scroll_by(
+        &mut self,
+        axis: ScrollAxis,
+        delta: i32,
+        metrics: ScrollViewportMetrics,
+    ) -> ScrollDecision {
+        let before = self.offset;
+        self.reconcile(metrics);
+        let max_offset = metrics.max_offset(axis);
+        let offset = match axis {
+            ScrollAxis::Horizontal => &mut self.offset.horizontal,
+            ScrollAxis::Vertical => &mut self.offset.vertical,
+        };
+        *offset = if delta < 0 {
+            offset.saturating_sub(delta.unsigned_abs() as usize)
+        } else {
+            offset.saturating_add(delta as usize).min(max_offset)
+        };
+        ScrollDecision::Consumed {
+            changed: self.offset != before,
+        }
+    }
+}
+
+// SF3.2 establishes the pure primitive before SF4 attaches real input-router consumers.
+#[allow(dead_code)]
+impl ScrollOwner {
+    pub(crate) const fn new(id: ScrollViewportId, metrics: ScrollViewportMetrics) -> Self {
+        Self { id, metrics }
+    }
+}
+
+/// Route to exactly the final (topmost) owner. A stale top owner is consumed
+/// inert so background surfaces can never inherit its input.
+// SF3.2 establishes the pure primitive before SF4 attaches real input-router consumers.
+#[allow(dead_code)]
+pub(crate) fn route_scroll_to_topmost(
+    states: &mut [ScrollViewportState],
+    owners: &[ScrollOwner],
+    axis: ScrollAxis,
+    delta: i32,
+) -> ScrollDecision {
+    let Some(owner) = owners.last() else {
+        return ScrollDecision::Unhandled;
+    };
+    let Some(state) = states.iter_mut().find(|state| state.id == owner.id) else {
+        return ScrollDecision::Consumed { changed: false };
+    };
+    state.scroll_by(axis, delta, owner.metrics)
 }
 
 impl RegionCollapseState {
@@ -959,121 +1152,41 @@ mod tests {
         persistence_dirty: usize,
     }
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum TestScrollAxis {
-        Horizontal,
-        Vertical,
-    }
-
-    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-    struct TestScrollOffset {
-        horizontal: usize,
-        vertical: usize,
-    }
-
-    impl TestScrollOffset {
-        const fn new(horizontal: usize, vertical: usize) -> Self {
-            Self {
-                horizontal,
-                vertical,
-            }
-        }
-    }
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    struct TestScrollViewportId {
-        region: RegionId,
-        slot: u8,
-    }
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    struct TestScrollViewportMetrics {
-        viewport_width: u16,
-        viewport_height: u16,
-        content_width: usize,
-        content_height: usize,
-    }
-
-    impl TestScrollViewportMetrics {
-        const fn new(
-            viewport_width: u16,
-            viewport_height: u16,
-            content_width: usize,
-            content_height: usize,
-        ) -> Self {
-            Self {
-                viewport_width,
-                viewport_height,
-                content_width,
-                content_height,
-            }
-        }
-    }
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    struct TestScrollViewportState {
-        id: TestScrollViewportId,
-        offset: TestScrollOffset,
-    }
-
-    impl TestScrollViewportState {
-        const fn new(id: TestScrollViewportId) -> Self {
-            Self::with_offset(id, TestScrollOffset::new(0, 0))
-        }
-
-        const fn with_offset(id: TestScrollViewportId, offset: TestScrollOffset) -> Self {
-            Self { id, offset }
-        }
-    }
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    struct TestScrollOwner {
-        id: TestScrollViewportId,
-        metrics: TestScrollViewportMetrics,
-    }
-
-    impl TestScrollOwner {
-        const fn new(id: TestScrollViewportId, metrics: TestScrollViewportMetrics) -> Self {
-            Self { id, metrics }
-        }
-    }
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum TestScrollDecision {
-        Unhandled,
-        Consumed { changed: bool },
-    }
+    type TestScrollAxis = ScrollAxis;
+    type TestScrollOffset = ScrollOffset;
+    type TestScrollViewportId = ScrollViewportId;
+    type TestScrollViewportMetrics = ScrollViewportMetrics;
+    type TestScrollViewportState = ScrollViewportState;
+    type TestScrollOwner = ScrollOwner;
+    type TestScrollDecision = ScrollDecision;
 
     const fn scroll_viewport_id(region: RegionId, slot: u8) -> TestScrollViewportId {
-        TestScrollViewportId { region, slot }
+        ScrollViewportId::new(region, slot)
     }
 
     fn scroll_for_test(
-        _state: &mut TestScrollViewportState,
-        _axis: TestScrollAxis,
-        _delta: i32,
-        _metrics: TestScrollViewportMetrics,
+        state: &mut TestScrollViewportState,
+        axis: TestScrollAxis,
+        delta: i32,
+        metrics: TestScrollViewportMetrics,
     ) -> TestScrollDecision {
-        // RED-only seam: the bounded viewport reducer does not exist yet.
-        TestScrollDecision::Unhandled
+        state.scroll_by(axis, delta, metrics)
     }
 
     fn reconcile_scroll_for_test(
-        _state: &mut TestScrollViewportState,
-        _metrics: TestScrollViewportMetrics,
+        state: &mut TestScrollViewportState,
+        metrics: TestScrollViewportMetrics,
     ) -> bool {
-        // RED-only seam: stale offsets are not normalized by a shared reducer.
-        false
+        state.reconcile(metrics)
     }
 
     fn route_scroll_for_test(
-        _states: &mut [TestScrollViewportState],
-        _owners: &[TestScrollOwner],
-        _axis: TestScrollAxis,
-        _delta: i32,
+        states: &mut [TestScrollViewportState],
+        owners: &[TestScrollOwner],
+        axis: TestScrollAxis,
+        delta: i32,
     ) -> TestScrollDecision {
-        // RED-only seam: topmost scroll ownership has no shared router.
-        TestScrollDecision::Unhandled
+        route_scroll_to_topmost(states, owners, axis, delta)
     }
 
     fn collapse_for_test(
