@@ -285,7 +285,16 @@ struct RawSessionSnapshot {
 fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> {
     let shell = if raw.version == SNAPSHOT_VERSION {
         match raw.shell {
-            Some(value) => Some(ShellSnapshotV1::from_value(value)?),
+            Some(value) => Some(match ShellSnapshotV1::from_value(value) {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "invalid shell snapshot; using compatibility preferences"
+                    );
+                    ShellSnapshotV1::from_legacy_sidebar_width(raw.sidebar_width)
+                }
+            }),
             None => Some(ShellSnapshotV1::from_legacy_sidebar_width(
                 raw.sidebar_width,
             )),
