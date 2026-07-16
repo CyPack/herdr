@@ -186,7 +186,10 @@ impl Default for StageState {
 
 #[cfg(test)]
 mod tests {
-    use crate::app::state::AppState;
+    use crate::{
+        app::state::{AppState, PaneFocusTarget},
+        layout::PaneId,
+    };
 
     use super::{
         AppInstance, AppInstanceId, AppSurfaceRef, BuiltInAppId, StageState, StageStateError,
@@ -290,5 +293,33 @@ mod tests {
                 .all(|instance| instance.id.app != BuiltInAppId::Files),
             "closed Files must not leave a resident instance"
         );
+    }
+
+    #[test]
+    fn failed_files_open_restores_previous_surface_and_focus() {
+        let mut state = AppState::test_new();
+        state.previous_pane_focus = Some(PaneFocusTarget {
+            workspace_id: "prior-workspace".to_string(),
+            pane_id: PaneId::alloc(),
+        });
+        let retained_stage = state.stage;
+        let retained_focus = state.previous_pane_focus.clone();
+
+        assert_eq!(
+            fail_files_open_for_test(&mut state),
+            Err("Files preparation failed")
+        );
+        assert_eq!(state.stage, retained_stage);
+        assert_eq!(state.previous_pane_focus, retained_focus);
+        assert!(state.file_manager.is_none());
+    }
+
+    fn fail_files_open_for_test(state: &mut AppState) -> Result<(), &'static str> {
+        state
+            .stage
+            .activate_files()
+            .expect("RED seam activates Files before preparation");
+        state.previous_pane_focus = None;
+        Err("Files preparation failed")
     }
 }
