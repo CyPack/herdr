@@ -300,12 +300,101 @@ mod tests {
         );
     }
 
+    #[test]
+    fn sidebar_collapse_adapter_remembers_committed_width_and_marks_dirty_once() {
+        let mut state = state_for_sidebar_collapse();
+        state.mode = super::super::super::state::Mode::Navigate;
+
+        let changed = set_sidebar_collapsed_for_test(&mut state, true);
+
+        assert_eq!(
+            (
+                changed,
+                state.sidebar_collapsed,
+                state.sidebar_width,
+                sidebar_collapse_snapshot_for_test(&state),
+                state.session_dirty,
+                state.mode,
+            ),
+            (
+                true,
+                true,
+                32,
+                (32, 1),
+                true,
+                super::super::super::state::Mode::Navigate,
+            )
+        );
+    }
+
+    #[test]
+    fn repeated_sidebar_collapse_intent_is_inert() {
+        let mut state = state_for_sidebar_collapse();
+        assert!(set_sidebar_collapsed_for_test(&mut state, true));
+        state.session_dirty = false;
+
+        let changed = set_sidebar_collapsed_for_test(&mut state, true);
+
+        assert_eq!(
+            (
+                changed,
+                sidebar_collapse_snapshot_for_test(&state),
+                state.session_dirty,
+            ),
+            (false, (32, 1), false)
+        );
+    }
+
+    #[test]
+    fn sidebar_expand_adapter_clamps_restore_after_terminal_shrink() {
+        let mut state = state_for_sidebar_collapse();
+        assert!(set_sidebar_collapsed_for_test(&mut state, true));
+        state.session_dirty = false;
+        state.view.shell.area.width = 27;
+
+        let changed = set_sidebar_collapsed_for_test(&mut state, false);
+
+        assert_eq!(
+            (
+                changed,
+                state.sidebar_collapsed,
+                state.sidebar_width,
+                sidebar_collapse_snapshot_for_test(&state),
+                state.session_dirty,
+            ),
+            (true, false, 26, (26, 2), true)
+        );
+    }
+
     fn state_with_sidebar_capture() -> AppState {
         let mut state = AppState::test_new();
         crate::ui::compute_view(&mut state, Rect::new(0, 0, 106, 40));
         assert!(state.begin_sidebar_resize(Position::new(25, 5)));
         state.session_dirty = false;
         state
+    }
+
+    fn state_for_sidebar_collapse() -> AppState {
+        let mut state = AppState::test_new();
+        state.sidebar_width = 32;
+        crate::ui::compute_view(&mut state, Rect::new(0, 0, 106, 40));
+        state.session_dirty = false;
+        state
+    }
+
+    fn set_sidebar_collapsed_for_test(state: &mut AppState, collapsed: bool) -> bool {
+        // RED-only seam: existing direct toggles do not own retained width,
+        // revision, or persistence effects through the shared reducer.
+        if state.sidebar_collapsed == collapsed {
+            return false;
+        }
+        state.sidebar_collapsed = collapsed;
+        true
+    }
+
+    fn sidebar_collapse_snapshot_for_test(_state: &AppState) -> (u16, u64) {
+        // RED-only absence of aggregate shell presentation state.
+        (0, 0)
     }
 
     fn handle_shell_resize_key_for_test(state: &mut AppState, key: KeyEvent) -> bool {
