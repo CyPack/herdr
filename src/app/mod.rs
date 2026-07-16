@@ -612,6 +612,7 @@ impl App {
             previous_pane_focus: None,
             selected,
             mode,
+            overlay_return_mode: None,
             file_manager: None,
             stage: Default::default(),
             agent_attachment_picker: None,
@@ -1357,6 +1358,10 @@ impl App {
         if self.state.product_announcement.is_some() {
             self.state.mode = Mode::ProductAnnouncement;
         } else {
+            // This exit bypasses `leave_modal`, so drop any remembered
+            // pre-overlay focus owner instead of letting it restore later
+            // from an unrelated overlay close.
+            self.state.overlay_return_mode = None;
             self.state.mode = if self.state.active.is_some() {
                 Mode::Terminal
             } else {

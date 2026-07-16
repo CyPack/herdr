@@ -2089,6 +2089,10 @@ pub struct AppState {
     pub(crate) previous_pane_focus: Option<PaneFocusTarget>,
     pub selected: usize,
     pub mode: Mode,
+    /// The non-default focus owner (`Resize`/`Copy`) remembered when a
+    /// blocking overlay opened, restored by `leave_modal` while still valid.
+    /// Client-local transient presentation state — never persisted.
+    pub(crate) overlay_return_mode: Option<Mode>,
     /// When `Some`, the native file manager is open and its directory list
     /// replaces the terminal panes in the center area. `None` = closed (the
     /// panes render as usual). Client-side presentation state (v1 TUI-only,
@@ -2587,6 +2591,7 @@ impl AppState {
             previous_pane_focus: None,
             selected: 0,
             mode: Mode::Navigate,
+            overlay_return_mode: None,
             file_manager: None,
             stage: Default::default(),
             agent_attachment_picker: None,

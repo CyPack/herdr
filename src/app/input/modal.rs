@@ -97,12 +97,12 @@ pub(super) fn global_menu_actions(state: &AppState) -> Vec<GlobalMenuAction> {
 
 pub(super) fn open_global_menu(state: &mut AppState) {
     state.global_menu = MenuListState::new(0);
-    state.mode = Mode::GlobalMenu;
+    state.enter_overlay_mode(Mode::GlobalMenu);
 }
 
 pub(super) fn open_keybind_help(state: &mut AppState) {
     state.keybind_help.scroll = 0;
-    state.mode = Mode::KeybindHelp;
+    state.enter_overlay_mode(Mode::KeybindHelp);
 }
 
 fn open_update_release_notes(state: &mut AppState) {
@@ -360,11 +360,22 @@ pub(super) fn open_new_tab_dialog(state: &mut AppState) {
 }
 
 pub(super) fn leave_modal(state: &mut AppState) {
-    if state.active.is_some() {
-        state.mode = Mode::Terminal;
+    // Restore the remembered pre-overlay focus owner while it is still
+    // valid; otherwise fall back to the template default. The value is
+    // consumed either way so it can never restore a long-dead owner.
+    let restored = state
+        .overlay_return_mode
+        .take()
+        .filter(|owner| match owner {
+            Mode::Resize => state.active.is_some(),
+            Mode::Copy => state.copy_mode.is_some(),
+            _ => false,
+        });
+    state.mode = restored.unwrap_or(if state.active.is_some() {
+        Mode::Terminal
     } else {
-        state.mode = Mode::Navigate;
-    }
+        Mode::Navigate
+    });
 }
 
 pub(super) const ONBOARDING_WELCOME_ACTIONS: &[ModalActionSpec<ModalAction>] = &[ModalActionSpec {

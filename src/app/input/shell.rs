@@ -94,6 +94,18 @@ impl AppState {
         })
     }
 
+    /// Enter a blocking overlay while remembering the current non-default
+    /// focus owner (`Resize`/`Copy`) so `leave_modal` can restore it. An
+    /// overlay-to-overlay transition preserves the original remembered owner;
+    /// entering from a default owner clears any stale value by construction.
+    pub(crate) fn enter_overlay_mode(&mut self, overlay: Mode) {
+        if !self.blocking_overlay_active() {
+            self.overlay_return_mode =
+                matches!(self.mode, Mode::Resize | Mode::Copy).then_some(self.mode);
+        }
+        self.mode = overlay;
+    }
+
     /// Every mode whose surface is a topmost blocking overlay for mouse and
     /// keyboard routing. The match is exhaustive so a new mode must choose a
     /// side explicitly instead of silently leaking background input.
