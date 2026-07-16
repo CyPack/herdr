@@ -388,8 +388,10 @@ impl App {
         // pre-branch (file manager surface, divider gestures, URL clicks)
         // stays inert. The overlay's own interactions live in the
         // mode-guarded state dispatch below.
-        let blocking_overlay =
-            self.state.shell_mouse_input_owner() == ShellInputOwner::TopmostOverlay;
+        let blocking_overlay = self
+            .state
+            .shell_mouse_input_owner(ratatui::layout::Position::new(mouse.column, mouse.row))
+            == ShellInputOwner::TopmostOverlay;
 
         if !blocking_overlay {
             match self.handle_file_manager_mouse(mouse) {

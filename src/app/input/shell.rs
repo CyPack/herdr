@@ -78,16 +78,22 @@ impl AppState {
         })
     }
 
-    /// Project current mouse ownership into the frozen router. v0 populates
-    /// the overlay tier only: the capture, positional-hit, and
-    /// focused-component tiers arrive with the later SF4.2 capture and
-    /// stale-generation slices, so unrouted events stay with the existing
-    /// mode-guarded global dispatch.
-    pub(crate) fn shell_mouse_input_owner(&self) -> ShellInputOwner {
+    /// Project current mouse ownership into the frozen router. The overlay
+    /// tier and the positional-hit tier are live: the hit resolves ONLY
+    /// against the exact current `ShellView` generation, so coordinates from
+    /// vanished geometry re-resolve to their current owner. Mouse captures
+    /// stay routed through `DragState` (frozen by the SF4.2-04
+    /// characterization), and the focused-component tier arrives with the
+    /// SF4.2-08 hidden-terminal slice, so unrouted events remain with the
+    /// existing mode-guarded global dispatch.
+    pub(crate) fn shell_mouse_input_owner(&self, position: Position) -> ShellInputOwner {
         route_shell_input(ShellInputRouteContext {
             topmost_overlay: self.blocking_overlay_active(),
             active_capture: false,
-            topmost_hit: None,
+            topmost_hit: self
+                .view
+                .shell
+                .region_hit_at(self.view.shell.generation, position),
             focused_component: false,
             page_shortcut: false,
             global_shortcut: true,
@@ -697,11 +703,8 @@ mod tests {
         );
     }
 
-    // Test-local seam mirroring today's production mouse context builder
-    // exactly; the SF4.2-07 GREEN replaces this with the position-taking
-    // production `shell_mouse_input_owner` (SF4.2-01 seam precedent).
-    fn shell_mouse_owner_at(state: &AppState, _position: Position) -> ShellInputOwner {
-        state.shell_mouse_input_owner()
+    fn shell_mouse_owner_at(state: &AppState, position: Position) -> ShellInputOwner {
+        state.shell_mouse_input_owner(position)
     }
 
     // SF4.2-06 companion characterization: the collapsed-sidebar guard inside

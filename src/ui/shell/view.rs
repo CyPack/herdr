@@ -83,7 +83,6 @@ impl Default for ShellView {
 impl ShellView {
     /// Resolve only a hit from this exact geometry generation. SF4 wires this
     /// pure seam into the topmost input router.
-    #[allow(dead_code)]
     pub(super) fn hit_at(&self, generation: u64, position: Position) -> Option<ShellHitTarget> {
         if generation != self.generation {
             return None;
@@ -93,6 +92,16 @@ impl ShellView {
             .rev()
             .find(|hit| hit.generation == generation && hit.rect.contains(position))
             .map(|hit| hit.target)
+    }
+
+    /// Crate-visible region projection of `hit_at` for the shell input
+    /// router: a region is positional authority only against the exact
+    /// current generation, so stale coordinates resolve to nothing.
+    pub(crate) fn region_hit_at(&self, generation: u64, position: Position) -> Option<RegionId> {
+        self.hit_at(generation, position)
+            .map(|target| match target {
+                ShellHitTarget::Region(region) => region,
+            })
     }
 }
 
