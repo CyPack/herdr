@@ -27,7 +27,19 @@ impl Default for StageState {
 mod tests {
     use crate::app::state::AppState;
 
-    use super::AppSurfaceRef;
+    use super::{AppSurfaceRef, StageState};
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum TestSurfaceRef {
+        TerminalWorkspace,
+        NativeFiles,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct TestStageActivation {
+        active: TestSurfaceRef,
+        previous: Option<TestSurfaceRef>,
+    }
 
     #[test]
     fn stage_starts_on_terminal_workspace() {
@@ -37,5 +49,33 @@ mod tests {
             state.stage.active_surface(),
             AppSurfaceRef::TerminalWorkspace
         );
+    }
+
+    #[test]
+    fn activating_files_records_previous_surface() {
+        let stage = StageState::default();
+
+        let activated = activate_files_for_test(&stage);
+
+        assert_eq!(
+            (activated.active, activated.previous),
+            (
+                TestSurfaceRef::NativeFiles,
+                Some(TestSurfaceRef::TerminalWorkspace),
+            )
+        );
+    }
+
+    fn activate_files_for_test(stage: &StageState) -> TestStageActivation {
+        let current = match stage.active_surface() {
+            AppSurfaceRef::TerminalWorkspace => TestSurfaceRef::TerminalWorkspace,
+        };
+
+        // RED-only seam: SF4.1 must atomically retain the displaced surface
+        // and activate NativeFiles instead of leaving the current Stage inert.
+        TestStageActivation {
+            active: current,
+            previous: None,
+        }
     }
 }
