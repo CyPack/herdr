@@ -8,19 +8,20 @@
   (`test: characterize shell foundation baseline`).
 - Published SF3.1 product checkpoint: `336fa3de`
   (`feat: add keyboard shell resize routing`).
+- Published SF3.2 product checkpoint: `45a2e87e`
+  (`feat: add bounded shell scroll ownership`).
 - Exact remote SHA equality was verified for CyPack `feat/native-fm` and fork
   `master` at the artifact checkpoint.
 - Approved product program: SF0-SF6 followed by FM1-FM5; Apps/Desktop remains
   a later independent program.
-- Current phase: SF0-SF2 and SF3.1 closed through I14. SF3.2 begins with a
-  fresh graph/drift pass and the behavior-specific RED
-  `collapse_remembers_last_committed_width`.
+- Current phase: SF0-SF2, SF3.1, and SF3.2 closed through I14. SF3.3 begins
+  with a graph/drift pass over snapshot parse/migrate/save/restore ownership,
+  then a behavior-specific v3-to-shell-presentation migration RED.
 - Published SF2.4 RED/GREEN: `2a440478` / `07133b8b`; both CyPack refs equal
   exact SHA `07133b8b9e9cf10b9b3dea0febe22a8389457164`.
-- Current single-worker CLI graph: 20,132 nodes / 93,587 edges. Fresh searches
-  prove `handle_shell_resize_key`, both keyboard-step reducer symbols, and
-  `miller_layout`. The built-in transport remains stale at 20,118 / 93,603 and
-  was not restarted.
+- Current single-worker graph: 20,236 nodes / 94,402 edges. Fresh exact search
+  and snippets prove `route_scroll_to_topmost`, `set_sidebar_collapsed`, and
+  `miller_layout`; freshness was not inferred from status alone.
 - Published CyPack M3 evidence checkpoint: `e9f2fe0`.
 - Verified M2.1 chain: RED `dab1e20`; GREEN product head `0ae6175`.
 - M3.0 evidence is published with exact SHA equality to CyPack
@@ -99,15 +100,16 @@
 
 ## Active Next Increment
 
-- Begin SF3.2 with a fresh ownership/drift pass, then write compile-valid RED
-  `collapse_remembers_last_committed_width`.
-- Expected: collapse remembers only the last committed bounded width, emits
-  exactly one revision/dirty transition, and repeated collapse is inert.
-- After collapse/restore closes, write separate owning-viewport REDs for
-  horizontal/vertical scrolling; do not combine scroll or snapshot v4
-  production into the first collapse slice.
-- Preserve the SF1/SF2 baselines and SF3.1 zero-preview-effect contract in
-  atomic RED/GREEN slices.
+- Begin SF3.3 with graph-first ownership/drift analysis of `SessionSnapshot`,
+  `parse_snapshot`, `migrate_snapshot`, save projection, and restore
+  application.
+- First RED: a v3 snapshot derives bounded shell-presentation defaults from
+  its existing sidebar facts while preserving sidebar-section and unrelated
+  session state.
+- Then add snapshot v4 round-trip, invalid shell containment, and future-
+  version rejection through separate RED/GREEN slices.
+- Preserve SF1/SF2 and the complete SF3.1/SF3.2 behavior baselines; do not mix
+  persistence production with SF4 input/surface work.
 - Execute SF3-SF6 and then FM1-FM5 sequentially through the approved child
   plans. Product, continuity, and tooling concerns remain separate.
 

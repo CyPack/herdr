@@ -99,7 +99,7 @@ Authoritative plans:
 Progress evidence:
 `.codex/evidence/shell-foundation-sf2-geometry-progress.md`.
 
-### SF3 — Resize / Collapse / Scroll / Persistence (SF3.2 active)
+### SF3 — Resize / Collapse / Scroll / Persistence (SF3.3 active)
 
 - [x] Complete the SF3.1 I2-I6 graph/drift and characterization pass for
   divider capture, preview, persistence dirtying, and PTY resize ownership.
@@ -117,12 +117,17 @@ Progress evidence:
   only B0, Linux/Windows Clippy, Bun 17/17, Python 64/64, and fresh CLI graph
   20,132 / 93,587. Evidence:
   `.codex/evidence/shell-foundation-sf3-interaction-progress.md`.
-- [ ] SF3.2: start with RED `collapse_remembers_last_committed_width`, then
+- [x] SF3.2: start with RED `collapse_remembers_last_committed_width`, then
   cover bounded restore, stage rejection, empty optional collapse, and exact
   one-revision/one-dirty/no-op contracts before production collapse code.
-- [ ] SF3.2: add owning horizontal/vertical viewport REDs and reducers only
+- [x] SF3.2: add owning horizontal/vertical viewport REDs and reducers only
   after collapse closes; scrolling must affect only the topmost owner and
   clamp stale/zero-area offsets.
+- [x] Close SF3.2 full gates and fork-only publication. Product chain ends at
+  `45a2e87e`; fresh evidence is scroll 6/6, broad shell/sidebar/input 202/202,
+  SF1 11/11, full Nextest 3281/3281 plus only B0, Linux/Windows Clippy,
+  Bun 17/17, Python 64/64, and graph 20,236 / 94,402. Evidence:
+  `.codex/evidence/shell-foundation-sf3-collapse-scroll-progress.md`.
 - [ ] SF3.3: add snapshot v4 shell presentation state; migrate v3 sidebar width,
   preserve sidebar-section ownership, contain invalid shell data, reject future
   versions.

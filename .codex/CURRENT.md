@@ -10,6 +10,8 @@
   (`test: characterize shell foundation baseline`).
 - Published SF3.1 product checkpoint: `336fa3de`
   (`feat: add keyboard shell resize routing`).
+- Published SF3.2 product checkpoint: `45a2e87e`
+  (`feat: add bounded shell scroll ownership`).
 - The artifact checkpoint was fast-forward published to both CyPack
   `feat/native-fm` and fork `master`; exact remote SHA equality was verified.
 - Published CyPack M3 evidence checkpoint: `e9f2fe0`
@@ -36,13 +38,13 @@
   `docs/superpowers/plans/2026-07-15-herdr-file-manager-post-shell-implementation.md`.
 - Plan review evidence:
   `.codex/evidence/shell-foundation-plan-review.md`.
-- SF0, SF1, SF2, and SF3.1 are closed. A0-A7 and delivery gates I0-I14 are
-  complete for transactional divider resize. Named regions, bounded
-  validation, typed templates, deterministic allocation, cached generation-
-  safe `ShellView`, and one shared mouse/keyboard resize transaction are live.
-  The next product slice is SF3.2 collapse/restore and scroll ownership; its
-  first micro RED is `collapse_remembers_last_committed_width` after a fresh
-  drift/ownership pass.
+- SF0, SF1, SF2, SF3.1, and SF3.2 are closed. A0-A7 and delivery gates I0-I14
+  are complete for transactional divider resize plus collapse/scroll. Named
+  regions, bounded validation, typed templates, deterministic allocation,
+  cached generation-safe `ShellView`, shared mouse/keyboard resize and collapse
+  transitions, and fail-closed two-axis viewport ownership are live. The next
+  product slice is SF3.3 snapshot-v4 persistence; begin with a graph/drift pass
+  and a compile-valid v3-to-shell-presentation migration RED.
 - SF3.1 product chain is reducer RED/GREEN `368c4d3a` / `d89a7f94`, lifecycle
   RED/GREEN `b6570ee4` / `807cb76c`, sidebar adapter REDs `96a1660e` and
   `09944834` with GREEN `61b915a9`, then keyboard/ownership REDs `4888c3f8`,
@@ -54,6 +56,18 @@
   real-host skip, Linux/Windows Clippy, Bun 17/17, Python 64/64, fmt, diff,
   and added-production-`unwrap()` clean. Evidence:
   `.codex/evidence/shell-foundation-sf3-interaction-progress.md`.
+- SF3.2 closes through collapse reducer RED/GREEN `deb8ca45` / `08a7d42b`,
+  adapter/routing REDs `71d79894` and `a316422e` with GREEN `0ede6fd8`,
+  monotonic cache RED/GREEN `5b007728` / `79e50983`, and scroll REDs
+  `3faca061`, `d833081c` with GREEN `45a2e87e`. Both CyPack refs equal exact
+  SHA `45a2e87ec0b69b14c2a19348d09f85a2c7568191`.
+- Fresh SF3.2 closure is scroll 6/6, broad shell/sidebar/input 202/202, frozen
+  SF1 11/11, full Nextest 3281/3281 plus only the named B0 skip,
+  Linux/Windows Clippy, Bun 17/17, Python 64/64, fmt/diff/production-unwrap/
+  residue clean. The fresh single-worker graph is 20,236 nodes / 94,402 edges
+  and exact source returns `route_scroll_to_topmost`, `set_sidebar_collapsed`,
+  and `miller_layout`. Evidence:
+  `.codex/evidence/shell-foundation-sf3-collapse-scroll-progress.md`.
 - Fresh single-worker CLI graph is 20,132 nodes / 93,587 edges and returns
   `handle_shell_resize_key`, both keyboard-step reducer symbols, and
   `miller_layout`. The already-running built-in MCP transport remains stale at

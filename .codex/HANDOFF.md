@@ -3,35 +3,32 @@
 ## 1. SONRAKI ADIM
 
 The user explicitly approved the bounded twelve-phase product program: SF0-SF6
-then FM1-FM5; Apps/Desktop remains later. SF0, SF1, SF2, and SF3.1 are closed.
-SF3.1 adds one pure transient resize transaction shared by the outer sidebar
-mouse divider and focused keyboard input. Preview changes only projected shell
-geometry; it produces zero persistence and PTY effects. Changed commit marks
-dirty once and requests at most one high-level resize. Cancel, terminal-area
-drift, stale capture, no movement, and no capture are effect-free.
+then FM1-FM5; Apps/Desktop remains later. SF0, SF1, SF2, SF3.1, and SF3.2 are
+closed. SF3.2 adds committed bounded collapse/restore state, routes the existing
+mouse and both keyboard sidebar toggles through one adapter, keys geometry by a
+monotonic collapse revision, and establishes a pure horizontal/vertical scroll
+reducer whose topmost owner consumes boundary and stale input fail-closed.
 
-The published SF3.1 chain is reducer `368c4d3a` through `807cb76c`, sidebar
-adapter `96a1660e` through `61b915a9`, and keyboard/ownership `4888c3f8`
-through `336fa3de`. At the product checkpoint, CyPack `feat/native-fm` and fork
-`master` both resolve to exact SHA
-`336fa3ded217c49ceaed1d8876127a843562e152`.
+The published SF3.2 chain is collapse RED/GREEN `deb8ca45` / `08a7d42b`,
+adapter/routing REDs `71d79894`, `a316422e` with GREEN `0ede6fd8`, monotonic
+cache RED/GREEN `5b007728` / `79e50983`, and scroll REDs `3faca061`, `d833081c`
+with GREEN `45a2e87e`. CyPack `feat/native-fm` and fork `master` both resolve
+to exact SHA `45a2e87ec0b69b14c2a19348d09f85a2c7568191`.
 
-Fresh closure is keyboard/ownership 8/8, broad shell/sidebar/input 119/119,
-frozen SF1 11/11, full Nextest 3264/3264 plus only the named B0 real-host skip,
-Linux/Windows Clippy, Bun 17/17, Python 64/64, fmt/diff/production-unwrap
-clean. The fresh single-worker CLI graph is 20,132 nodes / 93,587 edges and
-returns the current key route, both keyboard-step reducer symbols, and
-`miller_layout`. The built-in transport remains stale at 20,118 / 93,603; it
-was not restarted and its `ready` flag was not treated as freshness evidence.
-Full evidence is
-`.codex/evidence/shell-foundation-sf3-interaction-progress.md`.
+Fresh closure is scroll 6/6, broad shell/sidebar/input 202/202, frozen SF1
+11/11, full Nextest 3281/3281 plus only the named B0 real-host skip,
+Linux/Windows Clippy, Bun 17/17, Python 64/64, and fmt/diff/production-unwrap/
+residue clean. The fresh single-worker graph is 20,236 nodes / 94,402 edges;
+exact search and snippets return `route_scroll_to_topmost`,
+`set_sidebar_collapsed`, and `miller_layout`. Full evidence is
+`.codex/evidence/shell-foundation-sf3-collapse-scroll-progress.md`.
 
-The immediate action is SF3.2: refresh drift/ownership, then write the smallest
-compile-valid behavior RED `collapse_remembers_last_committed_width`. Expected:
-collapse stores the last committed bounded width and makes exactly one
-revision/dirty transition; repeated collapse is inert. Collapse production
-code, scroll reducers, and snapshot v4 must each wait for their own matching
-behavior RED.
+The immediate action is SF3.3: graph-first trace `SessionSnapshot`,
+`parse_snapshot`, `migrate_snapshot`, save projection, and restore application.
+Then write the smallest compile-valid behavior RED requiring a v3 snapshot to
+derive bounded shell-presentation defaults from its existing sidebar facts
+without losing sidebar-section or unrelated session state. Do not add snapshot
+v4 product code before that assertion RED.
 
 The previous S6/dynamic-N2 NO-GO was valid when no real consumer/demand
 existed. New explicit AppDock/WorkspaceStage/Files, resize/collapse/overlay,
@@ -68,6 +65,12 @@ commits. Never touch stable Herdr/socket/processes or stage `.superpowers/`.
 
 ## 5. BU CODEX OTURUMUNDA TAMAMLANANLAR
 
+- Closed SF3.2 through ten atomic product commits ending at `45a2e87e`:
+  bounded collapse/restore, shared input adapter, monotonic cache revision, and
+  fail-closed two-axis topmost scroll ownership.
+- Ran fresh phase closure: scroll 6/6, broad 202/202, SF1 11/11, full
+  3281/3281 plus only B0, Linux/Windows Clippy, Bun 17/17, Python 64/64, and
+  graph 20,236 / 94,402. Stable runtime/socket/processes were untouched.
 - User approved the detailed T1 plans and opened T2 execution.
 - Preserved the 28-file Ratatui intelligence baseline, then implemented v2.1
   through separate identity, cross-stack, phase/run, and governance RED/GREEN
