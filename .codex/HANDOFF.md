@@ -11,34 +11,37 @@
 - Branch: `feat/native-fm`
 - Acting identity: CyPack external contributor; `origin` is the writable
   `CyPack/herdr` fork and `upstream` is read-only.
-- Current verified product head: `5eb63763`
-  (`feat: restore previous focus owner after overlay close`).
-- Matching observed behavior RED: `8b1882eb`
-  (`test: require focus restore after overlay close`).
-- Prior closed heads this session: SF4.2-04 characterization `119e4a2d`,
-  SF4.2-03 `bb6f8970`/`efe6446b`, SF4.2-02 `41362e89`/`017ba97f`, SF4.2-01
-  `92777e23`/`f4f5e3cb`, SF4.1-08 `784fdc2e`/`944a9d4c`, and test-stability
-  `3c853a70`.
+- Current verified product head: `3880c66b`
+  (`feat: wire every overlay entry through focus remembering`).
+- Matching observed behavior RED: `27f8699f`
+  (`test: require copy session restore after context menu close`).
+- Prior closed heads this session: SF4.2-05 scoped core `8b1882eb`/`5eb63763`,
+  SF4.2-04 characterization `119e4a2d`, SF4.2-03 `bb6f8970`/`efe6446b`,
+  SF4.2-02 `41362e89`/`017ba97f`, SF4.2-01 `92777e23`/`f4f5e3cb`, SF4.1-08
+  `784fdc2e`/`944a9d4c`, and test-stability `3c853a70`.
 - Program: 7 Shell Foundation phases SF0-SF6 plus 5 FM phases FM1-FM5.
 - Closed phases: SF0, SF1, SF2, SF3, and microphase SF4.1 (8/8 slices GREEN).
 - Active phase: SF4 SurfaceHost and input router.
 - Active microphase: SF4.2; slices 01 (frozen seven-tier router), 02 (overlay
   mouse blocking), 03 (overlay keyboard ownership over captures, shared
   exhaustive `blocking_overlay_active()` classifier), 04 (capture-ownership
-  characterization), and 05 in scoped form (focus restore:
-  `overlay_return_mode` + `enter_overlay_mode` + validity-filtered
-  `leave_modal`; GlobalMenu/KeybindHelp wired, all exits audited) are GREEN.
-- Immediate next microtask: SF4.2-05b — wire the remaining overlay entry
-  inventory through `enter_overlay_mode` (exact sites in the evidence file)
-  and extend the RED with a ContextMenu-from-Copy row. See
+  characterization), and 05 CLOSED (focus restore: `overlay_return_mode` +
+  `enter_overlay_mode` + validity-filtered `leave_modal`; SF4.2-05b sweep
+  wired EVERY production overlay entry — 24 call sites — with a structural
+  zero-remaining-direct-assignment proof and a ContextMenu-from-Copy row
+  keeping a live copy session through an overlay episode) are GREEN.
+- Immediate next microtask: SF4.2-06 —
+  `collapsed_or_inert_region_cannot_receive_focus` (inert/collapsed regions
+  expose no focusable target). See
   `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
-- Product tree: clean at `5eb63763`; only the user-owned untracked
+- Product tree: clean at `3880c66b`; only the user-owned untracked
   `.superpowers/` tree exists and must remain untouched/unstaged.
-- Full exact-head gate: 3,305/3,305 Rust tests passed, one named B0 real-host
-  probe skipped, zero retry; Linux all-target and Windows MSVC bin Clippy,
-  fmt/diff/added-production-unwrap checks passed.
+- Full exact-head gate: 3,305/3,305 Rust tests passed (`--no-fail-fast`, run
+  `739e220a`), one named B0 real-host probe skipped, zero retry; Linux
+  all-target and Windows MSVC bin Clippy, fmt/diff/added-production-unwrap
+  checks passed.
 - Both CyPack refs (`feat/native-fm`, fork `master`) equal exact SHA
-  `5eb63763ca5bbd00b3d7c100207462a3c8b18b02` at the product checkpoint;
+  `3880c66b1d3b58771f3f1dfc6aebc2ace6c396c7` at the product checkpoint;
   `upstream` untouched.
 - Fresh sequential Codebase Memory store refreshed post-publication with
   current `blocking_overlay_active`, `shell_mouse_input_owner`,

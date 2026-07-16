@@ -17,7 +17,7 @@ SF4.1 typed Stage closure (`944a9d4c`) and every earlier baseline stay frozen.
 | SF4.2-02 | `overlay_blocks_every_background_mouse_action` | Every active overlay kind consumes background-targeted mouse events with zero background action | Topmost blocking overlays prevent every background route (design spec) | GREEN |
 | SF4.2-03 | `overlay_blocks_background_keyboard_shortcut` | No background capture/shortcut acts while a blocking overlay owns focus | Keyboard parity for the same rule | GREEN |
 | SF4.2-04 | `capture_owns_move_and_up_outside_original_rect` | Active capture receives move/up even outside its origin rect | Only one owner captures a pointer gesture | GREEN (characterization) |
-| SF4.2-05 | `focus_restores_after_overlay_close` | Closing an overlay restores the previous valid focus owner or template fallback | Deterministic focus restoration | GREEN (GlobalMenu/KeybindHelp wired; ContextMenu wiring = SF4.2-05b) |
+| SF4.2-05 | `focus_restores_after_overlay_close` | Closing an overlay restores the previous valid focus owner or template fallback | Deterministic focus restoration | GREEN (SF4.2-05b done: every production overlay entry wired) |
 | SF4.2-06 | `collapsed_or_inert_region_cannot_receive_focus` | Collapsed/zero regions expose no focusable target | Hidden geometry must not own input | PENDING |
 | SF4.2-07 | `stale_hit_generation_fails_closed` | A hit resolved against a non-current `ShellView` generation is consumed inert | Old coordinates must never become authority | PENDING |
 | SF4.2-08 | `files_stage_blocks_hidden_terminal_input` | With Files active, no event reaches hidden terminal targets | Fixes the reported curtain/input leak class | PENDING |
@@ -242,13 +242,54 @@ Approved GREEN design (production-grade, NOT a one-field hack):
   Clippy clean; zero added production `unwrap()`. Both CyPack refs equal
   exact SHA `5eb63763ca5bbd00b3d7c100207462a3c8b18b02`.
 
+## SF4.2-05b Atomic TDD Evidence (full entry sweep — SF4.2-05 now CLOSED)
+
+- RED `27f8699f` (`test: require copy session restore after context menu
+  close`), run `acc45dd5` follow-up: the new ContextMenu-from-Copy row
+  failed exactly at the target assertion (`Terminal` versus `Copy`,
+  shell.rs:630) with a live `copy_mode` fixture, entered through the real
+  production entry `open_project_new_chat_menu` and closed through the real
+  `leave_modal` (via the test Esc dispatcher that mirrors
+  `handle_context_menu_key_via_api`). The three existing rows stayed green.
+- GREEN `3880c66b` (`feat: wire every overlay entry through focus
+  remembering`): all 22 remaining production overlay entries now call
+  `enter_overlay_mode` — ContextMenu x5 (`mouse.rs` workspace/tab/pane
+  right-click arms, FM file menu in `input/file_manager.rs`, project
+  new-chat menu in `input/sidebar.rs` — an entry the original inventory had
+  missed and this sweep found), Rename family x5 (`modal.rs`
+  workspace/tab/pane/new-tab + `file_rename.rs` RenameFile), Confirm family
+  x4 (`file_delete_confirmation.rs`, `open_confirm_close`,
+  `confirm_implicit_worktree_group_close`, ConfirmRemoveWorktree), worktree
+  dialogs x3 (NewLinked + OpenExisting x2), full-screen overlays x5
+  (ProductAnnouncement chain, Settings, AttachFile, Navigator, ReleaseNotes
+  chain). 22 insertions / 22 deletions — the mode transition itself is
+  unchanged at every site.
+- Structural completeness proof: a sweep over every overlay `Mode` variant
+  (short and full `crate::app::Mode::` paths, test modules excluded by
+  `mod tests` boundary) finds ZERO remaining production direct overlay
+  assignments; the six remaining full-path assignments all set
+  `Mode::Terminal` (exits, not entries). The stale-restore hazard is now
+  closed by construction: every entry refreshes `overlay_return_mode`.
+- Consciously out of scope (recorded, not hidden): direct-exit paths that
+  bypass `leave_modal` (worktree accept flows,
+  `close_agent_attachment_picker`, `close_files` context-menu teardown in
+  `actions.rs`) do not restore a Resize/Copy owner — they cannot produce a
+  stale restore (next entry overwrites), they only skip the nicety. Exit
+  normalization onto `leave_modal` is a candidate follow-up for SF4.3.
+- GREEN full gate: focused 1/1 (run `912ce012`); full Nextest
+  `--no-fail-fast` 3,305/3,305 passed + only the named B0 skip, zero
+  regressions (run `739e220a`); `cargo fmt --check`, Linux all-target
+  Clippy, Windows MSVC bin Clippy all clean with `-D warnings`;
+  `git diff --check` clean; zero added production `unwrap()`.
+- Publication: FF-proof for both refs, sequential pushes to CyPack only;
+  `feat/native-fm` == `master` == exact SHA
+  `3880c66b1d3b58771f3f1dfc6aebc2ace6c396c7`; `upstream` untouched.
+
 ## Exact Next Microtask
 
-SF4.2-05b: wire the remaining overlay entry inventory through
-`enter_overlay_mode` (sites recorded above with exact lines), extending the
-RED with a ContextMenu-from-Copy row. Then SF4.2-06 inert regions, SF4.2-07
-stale hit generation (wire `ShellView::hit_at` into the mouse context
-builder), SF4.2-08 hidden-terminal blocking, then the SF4.2 closure gate
-(full direct `just check`, Bun/Python, broad regressions, publication,
-graph). Do not start SF4.3, SF5, SF6, or change-pipeline T3.1 before SF4.2
-closes.
+SF4.2-06: `collapsed_or_inert_region_cannot_receive_focus` — collapsed or
+zero-area regions must expose no focusable target. Then SF4.2-07 stale hit
+generation (wire `ShellView::hit_at` into the mouse context builder),
+SF4.2-08 hidden-terminal blocking, then the SF4.2 closure gate (full direct
+`just check` equivalent, Bun/Python, broad regressions, publication, graph).
+Do not start SF4.3, SF5, SF6, or change-pipeline T3.1 before SF4.2 closes.

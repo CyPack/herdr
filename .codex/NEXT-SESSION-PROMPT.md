@@ -57,12 +57,11 @@ non-product pipeline paused.
 Priority is mandatory:
 
 1. P0 ACTIVE: SF4.2 focus scopes, capture, and semantic input precedence.
-   SF4.2-01 (`f4f5e3cb`), SF4.2-02 (`017ba97f`), SF4.2-03 (`efe6446b`), and
-   SF4.2-04 (`119e4a2d`, capture-ownership characterization) are GREEN.
-   SF4.2-05 is GREEN in scoped form (`5eb63763`). Next: SF4.2-05b — wire
-   the remaining overlay entry inventory through `enter_overlay_mode`
-   (exact sites in the evidence file) and extend the RED with a
-   ContextMenu-from-Copy row; then SF4.2-06 inert regions, SF4.2-07 stale
+   SF4.2-01 (`f4f5e3cb`), SF4.2-02 (`017ba97f`), SF4.2-03 (`efe6446b`),
+   SF4.2-04 (`119e4a2d`, capture-ownership characterization), and SF4.2-05
+   (`5eb63763` scoped core + `3880c66b` full entry sweep, CLOSED) are
+   GREEN. Next: SF4.2-06 inert regions
+   (`collapsed_or_inert_region_cannot_receive_focus`); then SF4.2-07 stale
    hit generation (`ShellView::hit_at` wiring), SF4.2-08 hidden-terminal
    blocking, and the SF4.2 closure gate. See
    `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
@@ -80,14 +79,15 @@ continuity, and pipeline files in one commit.
 ## Current Verified Truth
 
 - Branch: `feat/native-fm`.
-- Verified product head: `944a9d4c`
-  (`feat: preserve terminal runtime across stage switches`).
-- Matching RED: `784fdc2e`
-  (`test: require terminal runtime preservation across stage switches`).
+- Verified product head: `3880c66b`
+  (`feat: wire every overlay entry through focus remembering`).
+- Matching RED: `27f8699f`
+  (`test: require copy session restore after context menu close`).
 - Separate test-stability commit `3c853a70` closed the parallel-load
   process-exit suppression flake class in `src/terminal/state.rs`.
 - SF0-SF3 are closed. SF4.1 is CLOSED with 8/8 behavior slices GREEN.
-- SF4 remains active; SF4.2 is the active microphase.
+- SF4 remains active; SF4.2 is the active microphase with slices 01-05
+  GREEN (05 fully closed by the `3880c66b` entry sweep) and 06-08 pending.
 - Closed SF4.1 pairs:
   - `557bcc77` / `6a18f0c7`: default Terminal Stage.
   - `f22bdac4` / `b9180de3`: Files activation history.
@@ -99,18 +99,21 @@ continuity, and pipeline files in one commit.
   - `784fdc2e` / `944a9d4c`: stage switches preserve terminal runtime
     (`AppDefinition`/`LaunchPolicy` + pure `StageState::surface_view()`).
 - Next test is not yet written:
-  `shell_input_router_follows_frozen_precedence` (SF4.2, table-driven).
+  `collapsed_or_inert_region_cannot_receive_focus` (SF4.2-06).
 - Legacy `AppState.file_manager: Option<FmState>` curtain still renders. Do
   not remove it until SF6.
 - `previous_pane_focus` is existing pane history, not the new SF4.2 focus
-  router.
-- Protocol remains 16. SF4.1 stayed client-local presentation state.
-- Full current gate: Nextest 3,300/3,300 passed plus one named B0 skip (run
-  `5694bdd6-c22f-46ce-86b7-c496aea6e39c`), Linux all-target Clippy, Windows
-  MSVC bin Clippy, Bun 5/5 + 12/12, Python 64/64, fmt, diff and
-  added-production-`unwrap()` clean.
+  router; `overlay_return_mode` is the client-local overlay focus-restore
+  seam, never persisted.
+- Protocol remains 16. SF4.1 and SF4.2 stayed client-local presentation
+  state.
+- Full current gate: Nextest 3,305/3,305 passed plus one named B0 skip (run
+  `739e220a-0e2a-4758-ab9e-51594a66218e`, `--no-fail-fast`), Linux
+  all-target Clippy, Windows MSVC bin Clippy, fmt, diff and
+  added-production-`unwrap()` clean (Bun 5/5 + 12/12 and Python 64/64 last
+  verified at the SF4.2-01 gate; rerun them at the SF4.2 closure gate).
 - Both CyPack refs equal exact SHA
-  `944a9d4cf4ecb92f97e9be80b18060db6c5ffb4d`.
+  `3880c66b1d3b58771f3f1dfc6aebc2ace6c396c7`.
 - User-owned `.superpowers/` is untracked and must never be staged or edited.
 
 ## Mandatory Git and Remote Audit

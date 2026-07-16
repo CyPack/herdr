@@ -1,5 +1,12 @@
 # Current State — 2026-07-16
 
+> STALE-HEAD NOTICE (2026-07-16, later session): the sections below stop at
+> the SF4.1 mid-phase checkpoint (`f0f32075`). The live executive state is
+> `.codex/HANDOFF.md` section 0 and `.codex/NEXT-SESSION-PROMPT.md`
+> (canonical entry): SF4.1 is CLOSED 8/8, SF4.2 slices 01-05 are GREEN
+> (05 closed by the full overlay-entry sweep `3880c66b`), and the next
+> microtask is SF4.2-06. Do not resume from this file's older pointers.
+
 ## Repository
 
 - Path: `/home/ayaz/projects/herdr`

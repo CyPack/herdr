@@ -134,16 +134,22 @@
   coordinate re-resolution; every left-down clears selection before a
   capture can begin), so the test freezes capture ownership outside the
   origin rect end-to-end (SF1 precedent).
-- SF4.2-05 is GREEN in scoped form (`8b1882eb`/`5eb63763`): `leave_modal`
-  now consumes `overlay_return_mode` and restores a still-valid
-  `Resize`/`Copy` owner; `enter_overlay_mode()` wires GlobalMenu/KeybindHelp
-  with all exits audited (the one direct exit in `dismiss_release_notes`
-  drops the value explicitly). Current verified product head: `5eb63763`.
-- Next microtask: SF4.2-05b — wire the remaining overlay entry inventory
-  through `enter_overlay_mode` (exact sites in the evidence file), extend
-  the RED with a ContextMenu-from-Copy row. Then SF4.2-06 inert regions,
-  SF4.2-07 stale hit generation (`ShellView::hit_at` wiring), SF4.2-08
-  hidden-terminal blocking, SF4.2 closure gate. See
+- SF4.2-05 is GREEN and CLOSED (`8b1882eb`/`5eb63763` scoped core, then
+  `27f8699f`/`3880c66b` full sweep): `leave_modal` consumes
+  `overlay_return_mode` and restores a still-valid `Resize`/`Copy` owner;
+  EVERY production overlay entry (24 call sites, ContextMenu x5 including a
+  project new-chat menu the original inventory missed, Rename x5, Confirm
+  x4, worktree dialogs x3, full-screen overlays x5 plus
+  GlobalMenu/KeybindHelp) now goes through `enter_overlay_mode`, with a
+  structural sweep proving zero direct overlay assignments remain in
+  production. The ContextMenu-from-Copy row keeps a live copy session
+  through an overlay episode. Direct exits that bypass `leave_modal` skip
+  the restore nicety but cannot produce stale restores (recorded as an
+  SF4.3 candidate). Current verified product head: `3880c66b`.
+- Next microtask: SF4.2-06 inert regions
+  (`collapsed_or_inert_region_cannot_receive_focus`), then SF4.2-07 stale
+  hit generation (`ShellView::hit_at` wiring), SF4.2-08 hidden-terminal
+  blocking, SF4.2 closure gate. See
   `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one
