@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 use ratatui::layout::Direction;
@@ -6,10 +6,46 @@ use serde::{Deserialize, Serialize};
 
 use crate::layout::Node;
 use crate::terminal::TerminalRuntimeRegistry;
+use crate::ui::shell::{RegionId, TrackPolicy};
 use crate::workspace::Workspace;
 
 /// Current snapshot format version.
 pub(super) const SNAPSHOT_VERSION: u32 = 3;
+
+const LEGACY_LEFT_PANEL_MIN_WIDTH: u16 = 4;
+const LEGACY_LEFT_PANEL_DEFAULT_WIDTH: u16 = 26;
+const LEGACY_LEFT_PANEL_MAX_WIDTH: u16 = 40;
+
+/// Versioned, client-local shell preferences embedded in a session snapshot.
+///
+/// SF3.3 grows this bounded DTO test-first. It deliberately excludes runtime,
+/// focus, hover, capture, computed geometry, and worker state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShellSnapshotV1 {
+    #[serde(default)]
+    pub(crate) region_constraints: BTreeMap<RegionId, TrackPolicy>,
+    #[serde(default)]
+    pub(crate) collapse_restore_widths: BTreeMap<RegionId, u16>,
+}
+
+impl ShellSnapshotV1 {
+    fn from_legacy_sidebar_width(sidebar_width: Option<u16>) -> Self {
+        let preferred = sidebar_width
+            .unwrap_or(LEGACY_LEFT_PANEL_DEFAULT_WIDTH)
+            .clamp(LEGACY_LEFT_PANEL_MIN_WIDTH, LEGACY_LEFT_PANEL_MAX_WIDTH);
+        Self {
+            region_constraints: BTreeMap::from([(
+                RegionId::LeftPanel,
+                TrackPolicy::Resizable {
+                    min: LEGACY_LEFT_PANEL_MIN_WIDTH,
+                    preferred,
+                    max: LEGACY_LEFT_PANEL_MAX_WIDTH,
+                },
+            )]),
+            collapse_restore_widths: BTreeMap::from([(RegionId::LeftPanel, preferred)]),
+        }
+    }
+}
 
 /// Serializable snapshot of the entire herdr session.
 #[derive(Serialize, Deserialize)]
@@ -20,6 +56,8 @@ pub struct SessionSnapshot {
     pub workspaces: Vec<WorkspaceSnapshot>,
     pub active: Option<usize>,
     pub selected: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell: Option<ShellSnapshotV1>,
     #[serde(default)]
     pub sidebar_width: Option<u16>,
     #[serde(default)]
@@ -177,6 +215,8 @@ struct RawSessionSnapshot {
     #[serde(default)]
     selected: usize,
     #[serde(default)]
+    shell: Option<serde_json::Value>,
+    #[serde(default)]
     sidebar_width: Option<u16>,
     #[serde(default)]
     sidebar_section_split: Option<f32>,
@@ -185,6 +225,9 @@ struct RawSessionSnapshot {
 }
 
 fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> {
+    // Snapshot v3 and older never grant authority to a shell payload. Keeping
+    // it raw here lets the v4 slice validate or contain it independently.
+    let _raw_shell = raw.shell;
     Ok(SessionSnapshot {
         version: raw.version,
         workspaces: raw
@@ -194,6 +237,9 @@ fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> 
             .collect::<Result<Vec<_>, _>>()?,
         active: raw.active,
         selected: raw.selected,
+        shell: Some(ShellSnapshotV1::from_legacy_sidebar_width(
+            raw.sidebar_width,
+        )),
         sidebar_width: raw.sidebar_width,
         sidebar_section_split: raw.sidebar_section_split,
         collapsed_space_keys: raw.collapsed_space_keys,
@@ -268,6 +314,9 @@ pub fn capture(
             .collect(),
         active,
         selected,
+        shell: Some(ShellSnapshotV1::from_legacy_sidebar_width(Some(
+            sidebar_width,
+        ))),
         sidebar_width: Some(sidebar_width),
         sidebar_section_split: Some(sidebar_section_split),
         collapsed_space_keys,
@@ -563,6 +612,7 @@ mod tests {
             workspaces: vec![],
             active: None,
             selected: 0,
+            shell: None,
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
@@ -648,6 +698,7 @@ mod tests {
             }],
             active: Some(0),
             selected: 0,
+            shell: None,
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
@@ -1257,6 +1308,7 @@ mod tests {
             }],
             active: Some(0),
             selected: 0,
+            shell: None,
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),

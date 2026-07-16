@@ -33,6 +33,7 @@ pub(crate) use interaction::{
 pub(crate) use layout::ResponsiveDegradation;
 pub(crate) use model::{
     RegionId, RegionRects, RegionSize, ShellChild, ShellDirection, ShellLayout, ShellNode,
+    TrackPolicy,
 };
 pub(crate) use view::{compute_empty_shell_view, compute_shell_view, ShellGeometryKey, ShellView};
 
