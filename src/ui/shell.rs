@@ -20,10 +20,13 @@ use ratatui::layout::{Constraint, Layout, Rect};
 mod layout;
 mod model;
 mod template;
+mod view;
 
+pub(crate) use layout::ResponsiveDegradation;
 pub(crate) use model::{
     RegionId, RegionRects, RegionSize, ShellChild, ShellDirection, ShellLayout, ShellNode,
 };
+pub(crate) use view::{compute_empty_shell_view, compute_shell_view, ShellGeometryKey, ShellView};
 
 impl Default for ShellLayout {
     /// Today's outer shell: a horizontal split of the frame into the left
@@ -54,22 +57,30 @@ impl ShellLayout {
     /// Resolve every region's rect within `area`. `resolve_dynamic` supplies the
     /// cell count for [`RegionSize::Dynamic`] children (today: the runtime
     /// sidebar width for `LeftPanel`). Pure and deterministic.
+    #[cfg(test)]
     pub fn compute_regions(
         &self,
         area: Rect,
         resolve_dynamic: impl Fn(RegionId) -> u16,
     ) -> RegionRects {
+        self.compute_projection(area, &resolve_dynamic).0
+    }
+
+    fn compute_projection(
+        &self,
+        area: Rect,
+        resolve_dynamic: &impl Fn(RegionId) -> u16,
+    ) -> (RegionRects, ResponsiveDegradation) {
         if !self.tracks.is_empty() {
             let Some(solved) = self.solve_tracked(area, &resolve_dynamic) else {
-                return RegionRects::default();
+                return (RegionRects::default(), ResponsiveDegradation::TooSmall);
             };
-            let (regions, _degradation) = solved.into_parts();
-            return regions;
+            return solved.into_parts();
         }
 
         let mut rects = RegionRects::default();
-        layout_node(&self.root, area, &resolve_dynamic, &mut rects);
-        rects
+        layout_node(&self.root, area, resolve_dynamic, &mut rects);
+        (rects, ResponsiveDegradation::Workspace)
     }
 
     fn solve_tracked(
@@ -1046,37 +1057,40 @@ mod tests {
 
     #[test]
     fn unchanged_geometry_key_reuses_shell_generation() {
+        let resolver_calls = std::cell::Cell::new(0);
         let layout = ShellLayout::default();
         let area = Rect::new(0, 0, 80, 24);
-        let previous = TestShellView {
+        let previous = ShellView {
             generation: 7,
-            key: TestShellGeometryKey {
-                area,
-                constraints_revision: 26,
-            },
+            area,
             regions: layout.compute_regions(area, legacy_sidebar_resolver(26)),
             hits: Vec::new(),
+            degradation: ResponsiveDegradation::Workspace,
+            geometry_key: ShellGeometryKey::new(area, 0, 26, 0),
         };
 
-        let current = compute_shell_view_for_test(&layout, area, 26, Some(&previous));
+        let current = compute_shell_view(&layout, previous.geometry_key, previous.clone(), &|_| {
+            resolver_calls.set(resolver_calls.get() + 1);
+            26
+        });
 
         assert_eq!(current.generation, 7);
-        assert_eq!(current.key, previous.key);
+        assert_eq!(current.geometry_key, previous.geometry_key);
         assert_eq!(current.regions, previous.regions);
+        assert_eq!(resolver_calls.get(), 0);
     }
 
     #[test]
     fn area_or_constraint_change_advances_shell_generation_once() {
         let layout = ShellLayout::default();
         let area = Rect::new(0, 0, 80, 24);
-        let previous = TestShellView {
+        let previous = ShellView {
             generation: 7,
-            key: TestShellGeometryKey {
-                area,
-                constraints_revision: 26,
-            },
+            area,
             regions: layout.compute_regions(area, legacy_sidebar_resolver(26)),
             hits: Vec::new(),
+            degradation: ResponsiveDegradation::Workspace,
+            geometry_key: ShellGeometryKey::new(area, 0, 26, 0),
         };
 
         let area_changed =
@@ -1096,8 +1110,14 @@ mod tests {
         let view = compute_shell_view_for_test(&layout, area, 26, None);
 
         assert_eq!(view.hits.len(), 2);
-        assert_eq!(view.hits[0].region, RegionId::LeftPanel);
-        assert_eq!(view.hits[1].region, RegionId::WorkspaceStage);
+        assert_eq!(
+            view.hits[0].target,
+            super::view::ShellHitTarget::Region(RegionId::LeftPanel)
+        );
+        assert_eq!(
+            view.hits[1].target,
+            super::view::ShellHitTarget::Region(RegionId::WorkspaceStage)
+        );
         assert_eq!(view.hits[0].generation, view.generation);
         assert_eq!(view.hits[1].generation, view.generation);
         assert_eq!(view.hits[0].rect.intersection(area), view.hits[0].rect);
@@ -1112,18 +1132,17 @@ mod tests {
     #[test]
     fn stale_shell_hit_generation_is_rejected() {
         let rect = Rect::new(0, 0, 5, 10);
-        let view = TestShellView {
+        let view = ShellView {
             generation: 9,
-            key: TestShellGeometryKey {
-                area: rect,
-                constraints_revision: 5,
-            },
+            area: rect,
             regions: RegionRects::default(),
-            hits: vec![TestShellHitArea {
+            hits: vec![super::view::ShellHitArea {
                 generation: 9,
-                region: RegionId::AppDock,
+                target: super::view::ShellHitTarget::Region(RegionId::AppDock),
                 rect,
             }],
+            degradation: ResponsiveDegradation::Workspace,
+            geometry_key: ShellGeometryKey::new(rect, 0, 5, 0),
         };
 
         assert_eq!(shell_hit_for_test(&view, 9, 2, 2), Some(RegionId::AppDock));
@@ -1143,59 +1162,75 @@ mod tests {
         assert_eq!(view.regions.get(RegionId::WorkspaceStage), legacy_center);
     }
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    struct TestShellGeometryKey {
-        area: Rect,
-        constraints_revision: u64,
+    #[test]
+    fn mobile_empty_projection_clears_hits_once_and_reuses_generation() {
+        let layout = ShellLayout::default();
+        let desktop_area = Rect::new(0, 0, 80, 24);
+        let desktop = compute_shell_view_for_test(&layout, desktop_area, 26, None);
+        assert!(!desktop.hits.is_empty());
+        let desktop_generation = desktop.generation;
+
+        let mobile_key = ShellGeometryKey::new(Rect::new(0, 0, 30, 20), 2, 0, 0);
+        let mobile = compute_empty_shell_view(mobile_key, desktop);
+        assert_eq!(mobile.generation, desktop_generation + 1);
+        assert_eq!(mobile.area, mobile_key.area);
+        assert_eq!(mobile.regions, RegionRects::default());
+        assert!(mobile.hits.is_empty());
+
+        let mobile_generation = mobile.generation;
+        let repeated = compute_empty_shell_view(mobile_key, mobile);
+        assert_eq!(repeated.generation, mobile_generation);
+        assert!(repeated.hits.is_empty());
     }
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    struct TestShellHitArea {
-        generation: u64,
-        region: RegionId,
-        rect: Rect,
-    }
+    #[test]
+    fn generation_exhaustion_keeps_geometry_but_clears_hit_authority() {
+        let layout = ShellLayout::default();
+        let old_area = Rect::new(0, 0, 80, 24);
+        let previous = ShellView {
+            generation: u64::MAX,
+            area: old_area,
+            regions: layout.compute_regions(old_area, legacy_sidebar_resolver(26)),
+            hits: vec![super::view::ShellHitArea {
+                generation: u64::MAX,
+                target: super::view::ShellHitTarget::Region(RegionId::LeftPanel),
+                rect: Rect::new(0, 0, 26, 24),
+            }],
+            degradation: ResponsiveDegradation::Workspace,
+            geometry_key: ShellGeometryKey::new(old_area, 0, 26, 0),
+        };
+        let new_area = Rect::new(0, 0, 81, 24);
 
-    #[derive(Clone, Debug, PartialEq)]
-    struct TestShellView {
-        generation: u64,
-        key: TestShellGeometryKey,
-        regions: RegionRects,
-        hits: Vec<TestShellHitArea>,
+        let current = compute_shell_view_for_test(&layout, new_area, 26, Some(&previous));
+
+        assert_eq!(current.generation, u64::MAX);
+        assert_eq!(current.area, new_area);
+        assert_eq!(current.regions.get(RegionId::LeftPanel).width, 26);
+        assert_eq!(current.regions.get(RegionId::WorkspaceStage).width, 55);
+        assert!(current.hits.is_empty());
+        assert_eq!(shell_hit_for_test(&current, u64::MAX, 2, 2), None);
     }
 
     fn compute_shell_view_for_test(
         layout: &ShellLayout,
         area: Rect,
         sidebar_width: u16,
-        _previous: Option<&TestShellView>,
-    ) -> TestShellView {
-        // RED-only seam: SF2.4 replaces the zero generation and empty hit list
-        // with the production cache/generation/flattening projection.
-        TestShellView {
-            generation: 0,
-            key: TestShellGeometryKey {
-                area,
-                constraints_revision: u64::from(sidebar_width),
-            },
-            regions: layout.compute_regions(area, legacy_sidebar_resolver(sidebar_width)),
-            hits: Vec::new(),
-        }
+        previous: Option<&ShellView>,
+    ) -> ShellView {
+        let resolver = legacy_sidebar_resolver(sidebar_width);
+        compute_shell_view(
+            layout,
+            ShellGeometryKey::new(area, 0, u64::from(sidebar_width), 0),
+            previous.cloned().unwrap_or_default(),
+            &resolver,
+        )
     }
 
-    fn shell_hit_for_test(
-        view: &TestShellView,
-        _generation: u64,
-        x: u16,
-        y: u16,
-    ) -> Option<RegionId> {
-        // RED-only seam: SF2.4 must reject a generation mismatch before hit
-        // testing the current geometry.
-        let position = ratatui::layout::Position::new(x, y);
-        view.hits
-            .iter()
-            .find(|hit| hit.rect.contains(position))
-            .map(|hit| hit.region)
+    fn shell_hit_for_test(view: &ShellView, generation: u64, x: u16, y: u16) -> Option<RegionId> {
+        view.hit_at(generation, ratatui::layout::Position::new(x, y))
+            .map(|target| match target {
+                super::view::ShellHitTarget::Region(region) => region,
+            })
     }
 
     fn legacy_sidebar_resolver(sidebar_width: u16) -> impl Fn(RegionId) -> u16 {

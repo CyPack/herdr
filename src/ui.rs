@@ -63,7 +63,7 @@ pub(crate) use self::scrollbar::{
     scrollbar_offset_from_row, scrollbar_thumb_grab_offset, should_show_scrollbar,
 };
 use self::settings::render_settings_overlay;
-use self::shell::{RegionId, ShellLayout};
+use self::shell::{RegionId, ShellGeometryKey, ShellLayout};
 use self::sidebar::{render_sidebar, render_sidebar_collapsed};
 use self::status::{
     copy_feedback_rect, render_config_diagnostic, render_copy_feedback, render_toast_notification,
@@ -113,6 +113,8 @@ use crate::app::{AppState, Mode};
 use crate::terminal::TerminalRuntimeRegistry;
 
 const COLLAPSED_WIDTH: u16 = 4; // num + space + dot + separator
+const LEGACY_DESKTOP_SHELL_LAYOUT_REVISION: u64 = 1;
+const MOBILE_EMPTY_SHELL_LAYOUT_REVISION: u64 = 2;
 
 // Braille spinner frames — smooth rotation
 const SPINNERS: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -247,15 +249,24 @@ fn compute_view_internal(
     // encodes exactly today's `sidebar | main` layout, so this stays
     // behavior-identical to `Layout::horizontal([Length(sidebar_w), Min(1)])`
     // while making the regions individually addressable for future composition.
-    let shell_regions = ShellLayout::default().compute_regions(area, |region| {
-        if region == RegionId::LeftPanel {
-            sidebar_w
-        } else {
-            0
-        }
-    });
-    let sidebar_area = shell_regions.get(RegionId::LeftPanel);
-    let main_area = shell_regions.get(RegionId::CenterContent);
+    let shell_layout = ShellLayout::default();
+    let shell_key = ShellGeometryKey::new(
+        area,
+        LEGACY_DESKTOP_SHELL_LAYOUT_REVISION,
+        u64::from(sidebar_w),
+        u64::from(app.sidebar_collapsed),
+    );
+    let previous_shell_view = std::mem::take(&mut app.view.shell);
+    let shell_view =
+        shell::compute_shell_view(&shell_layout, shell_key, previous_shell_view, &|region| {
+            if region == RegionId::LeftPanel {
+                sidebar_w
+            } else {
+                0
+            }
+        });
+    let sidebar_area = shell_view.regions.get(RegionId::LeftPanel);
+    let main_area = shell_view.regions.get(RegionId::CenterContent);
 
     let (tab_bar_rect, terminal_area) = app
         .active
@@ -390,7 +401,7 @@ fn compute_view_internal(
 
     app.view = crate::app::ViewState {
         layout: ViewLayout::Desktop,
-        regions: shell_regions,
+        shell: shell_view,
         sidebar_rect: sidebar_area,
         workspace_card_areas,
         sidebar_tab_hit_areas,
@@ -488,12 +499,16 @@ fn compute_mobile_view(
         .as_ref()
         .map(|_| mobile_toast_banner_rect(area, app.config_diagnostic.is_some()))
         .unwrap_or_default();
+    let shell_view = shell::compute_empty_shell_view(
+        ShellGeometryKey::new(area, MOBILE_EMPTY_SHELL_LAYOUT_REVISION, 0, 0),
+        std::mem::take(&mut app.view.shell),
+    );
 
     app.view = crate::app::ViewState {
         layout: ViewLayout::Mobile,
         // Mobile keeps its own header/terminal split; named shell regions are a
         // desktop concept for now, so leave the region map empty.
-        regions: shell::RegionRects::default(),
+        shell: shell_view,
         sidebar_rect: Rect::default(),
         workspace_card_areas: Vec::new(),
         sidebar_tab_hit_areas: Vec::new(),
@@ -787,7 +802,7 @@ mod tests {
     use ratatui::style::Color;
     use ratatui::{backend::TestBackend, Terminal};
 
-    // S2 integration: `compute_view` populates `view.regions` from the shell tree
+    // S2 integration: `compute_view` populates `view.shell.regions` from the shell tree
     // consistently with the established `sidebar_rect`/main-area geometry — the
     // named-region map is the same outer split, just addressable by `RegionId`.
     #[test]
@@ -801,8 +816,8 @@ mod tests {
         let frame = Rect::new(0, 0, 100, 30);
         compute_view(&mut app, frame);
 
-        let left = app.view.regions.get(RegionId::LeftPanel);
-        let center = app.view.regions.get(RegionId::CenterContent);
+        let left = app.view.shell.regions.get(RegionId::LeftPanel);
+        let center = app.view.shell.regions.get(RegionId::CenterContent);
 
         // LeftPanel is exactly the sidebar; CenterContent is the rest of the frame.
         assert_eq!(left, app.view.sidebar_rect);
@@ -819,8 +834,14 @@ mod tests {
             center.y + center.height
         );
         // Reserved regions are not laid out yet.
-        assert_eq!(app.view.regions.get(RegionId::RightPanel), Rect::default());
-        assert_eq!(app.view.regions.get(RegionId::TopBar), Rect::default());
+        assert_eq!(
+            app.view.shell.regions.get(RegionId::RightPanel),
+            Rect::default()
+        );
+        assert_eq!(
+            app.view.shell.regions.get(RegionId::TopBar),
+            Rect::default()
+        );
     }
 
     // Mobile keeps its own header/terminal split; the named shell regions stay
@@ -837,9 +858,12 @@ mod tests {
         compute_view(&mut app, Rect::new(0, 0, 30, 20));
 
         assert_eq!(app.view.layout, ViewLayout::Mobile);
-        assert_eq!(app.view.regions.get(RegionId::LeftPanel), Rect::default());
         assert_eq!(
-            app.view.regions.get(RegionId::CenterContent),
+            app.view.shell.regions.get(RegionId::LeftPanel),
+            Rect::default()
+        );
+        assert_eq!(
+            app.view.shell.regions.get(RegionId::CenterContent),
             Rect::default()
         );
     }
