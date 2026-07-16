@@ -57,12 +57,14 @@ non-product pipeline paused.
 Priority is mandatory:
 
 1. P0 ACTIVE: SF4.2 focus scopes, capture, and semantic input precedence.
-   SF4.2-01 (`f4f5e3cb`), SF4.2-02 (`017ba97f`), and SF4.2-03 (`efe6446b`,
-   overlay keyboard ownership over captures) are GREEN. Next: SF4.2-04
-   `capture_owns_move_and_up_outside_original_rect` — FIRST verify
-   RED-ability against the existing SF3 drag path (if already held, record a
-   characterization per the SF1 precedent and continue with SF4.2-05 focus
-   restore). See
+   SF4.2-01 (`f4f5e3cb`), SF4.2-02 (`017ba97f`), SF4.2-03 (`efe6446b`), and
+   SF4.2-04 (`119e4a2d`, capture-ownership characterization) are GREEN.
+   Next: SF4.2-05 `focus_restores_after_overlay_close` — FIRST verify
+   RED-ability (candidate gap: overlay opened from `Mode::Resize` closes
+   into Terminal — defect or accepted template fallback per spec?), then
+   SF4.2-06 inert regions, SF4.2-07 stale hit generation
+   (`ShellView::hit_at` wiring), SF4.2-08 hidden-terminal blocking, and the
+   SF4.2 closure gate. See
    `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
 2. P0 NEXT: SF4.3 -> SF4.4 -> SF5 -> SF6 -> FM1 -> FM2 -> FM3 -> FM4
    -> FM5.

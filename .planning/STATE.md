@@ -129,10 +129,17 @@
   input ahead of the active capture and the focused FM through one shared
   exhaustive `blocking_overlay_active()` classifier; `AttachFile` joined the
   overlay tier; one unrealistic Onboarding-mode fixture was corrected.
-- Next microtask: SF4.2-04 `capture_owns_move_and_up_outside_original_rect`
-  — FIRST verify RED-ability against the existing SF3 drag path; if the
-  behavior already holds, record an explicit characterization (SF1
-  precedent) and continue with SF4.2-05 focus restore. See
+- SF4.2-04 is GREEN as an explicit characterization (`119e4a2d`): valid RED
+  was refuted with source evidence (drag/up route by `DragState` without
+  coordinate re-resolution; every left-down clears selection before a
+  capture can begin), so the test freezes capture ownership outside the
+  origin rect end-to-end (SF1 precedent).
+- Next microtask: SF4.2-05 `focus_restores_after_overlay_close` — FIRST
+  verify RED-ability (candidate gap: an overlay opened from `Mode::Resize`
+  closes into Terminal, dropping the prior owner — defect or accepted
+  template fallback per spec?). Then SF4.2-06 inert regions, SF4.2-07 stale
+  hit generation (`ShellView::hit_at` wiring), SF4.2-08 hidden-terminal
+  blocking, SF4.2 closure gate. See
   `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one

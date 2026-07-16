@@ -22,21 +22,22 @@
 - Closed phases: SF0, SF1, SF2, SF3, and microphase SF4.1 (8/8 slices GREEN).
 - Active phase: SF4 SurfaceHost and input router.
 - Active microphase: SF4.2; slices 01 (frozen seven-tier router), 02 (overlay
-  mouse blocking), and 03 (overlay keyboard ownership over captures, shared
-  exhaustive `blocking_overlay_active()` classifier) are GREEN.
-- Immediate next microtask: SF4.2-04
-  `capture_owns_move_and_up_outside_original_rect` — FIRST verify
-  RED-ability against the existing SF3 drag path; if the behavior already
-  holds, record an explicit characterization (SF1 precedent) and continue
-  with SF4.2-05 focus restore. See
+  mouse blocking), 03 (overlay keyboard ownership over captures, shared
+  exhaustive `blocking_overlay_active()` classifier), and 04 (capture
+  ownership outside the origin rect — explicit characterization `119e4a2d`,
+  valid-RED refuted with source evidence) are GREEN.
+- Immediate next microtask: SF4.2-05 `focus_restores_after_overlay_close` —
+  FIRST verify RED-ability (candidate gap: overlay opened from
+  `Mode::Resize` closes into Terminal — defect or accepted template
+  fallback per spec?). See
   `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
-- Product tree: clean at `efe6446b`; only the user-owned untracked
+- Product tree: clean at `119e4a2d`; only the user-owned untracked
   `.superpowers/` tree exists and must remain untouched/unstaged.
-- Full exact-head gate: 3,303/3,303 Rust tests passed, one named B0 real-host
+- Full exact-head gate: 3,304/3,304 Rust tests passed, one named B0 real-host
   probe skipped, zero retry; Linux/Windows Clippy, Bun 5/5 + 12/12, Python
   64/64, fmt/diff/added-production-unwrap checks passed.
 - Both CyPack refs (`feat/native-fm`, fork `master`) equal exact SHA
-  `efe6446bc77495176e061c5d3231d28b7bc5fe04`; `upstream` untouched.
+  `119e4a2d5026af2c4f4e2e23a9aaa27ac2134804`; `upstream` untouched.
 - Fresh sequential Codebase Memory store refreshed post-publication with
   current `blocking_overlay_active`, `shell_mouse_input_owner`,
   `route_shell_input`, and `miller_layout` source.

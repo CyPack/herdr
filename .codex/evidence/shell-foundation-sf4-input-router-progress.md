@@ -16,7 +16,7 @@ SF4.1 typed Stage closure (`944a9d4c`) and every earlier baseline stay frozen.
 | SF4.2-01 | `shell_input_router_follows_frozen_precedence` | Table-driven: overlay -> capture -> topmost hit -> focused component -> page -> global -> fail-closed, exactly one owner per row | Precedence must be a typed total authority, not implicit if-chain ordering | GREEN |
 | SF4.2-02 | `overlay_blocks_every_background_mouse_action` | Every active overlay kind consumes background-targeted mouse events with zero background action | Topmost blocking overlays prevent every background route (design spec) | GREEN |
 | SF4.2-03 | `overlay_blocks_background_keyboard_shortcut` | No background capture/shortcut acts while a blocking overlay owns focus | Keyboard parity for the same rule | GREEN |
-| SF4.2-04 | `capture_owns_move_and_up_outside_original_rect` | Active capture receives move/up even outside its origin rect | Only one owner captures a pointer gesture | PENDING |
+| SF4.2-04 | `capture_owns_move_and_up_outside_original_rect` | Active capture receives move/up even outside its origin rect | Only one owner captures a pointer gesture | GREEN (characterization) |
 | SF4.2-05 | `focus_restores_after_overlay_close` | Closing an overlay restores the previous valid focus owner or template fallback | Deterministic focus restoration | PENDING |
 | SF4.2-06 | `collapsed_or_inert_region_cannot_receive_focus` | Collapsed/zero regions expose no focusable target | Hidden geometry must not own input | PENDING |
 | SF4.2-07 | `stale_hit_generation_fails_closed` | A hit resolved against a non-current `ShellView` generation is consumed inert | Old coordinates must never become authority | PENDING |
@@ -154,14 +154,41 @@ Current mouse ownership is distributed, not total:
 - Publication: both CyPack refs equal exact SHA
   `efe6446bc77495176e061c5d3231d28b7bc5fe04`; `upstream` untouched.
 
+## SF4.2-04 Characterization Evidence (valid-RED impossible — recorded)
+
+- RED-ability was investigated first and refuted with source evidence: the
+  `Drag(Left)`/`Up(Left)` arms route by `DragState::SidebarDivider` with no
+  coordinate re-resolution (`preview_sidebar_resize` at any position;
+  `drag.take()` commit on any Up), pane forwarding is gated on
+  `drag.is_none()`, and the theoretical selection-before-capture ordering
+  hole is unreachable because every `Down(MouseButton::Left)` clears the
+  selection (`src/app/input/mouse.rs` line ~256) before a capture can begin
+  and selections are only anchored by pane downs.
+- Test-only commit `119e4a2d`
+  (`test: characterize capture ownership outside origin rect`), first run
+  GREEN `9720468f-aace-4923-acdf-3b419acdf4d0` (SF1 precedent: the
+  characterization freezes existing behavior). It proves end-to-end through
+  `AppState::handle_mouse`: divider down begins the capture, drags over the
+  pane area (preview 31), over sidebar workspace rows (min-clamp 18, no
+  selection/press/reorder movement), and to the far corner (max-clamp 36)
+  all stay capture-owned, and an Up far outside the origin rect commits
+  exactly once (width 36, capture closed, one dirty mark).
+- Full Nextest after the characterization: 3,304/3,304 plus only the named
+  B0 skip; fmt and Linux/Windows Clippy clean. Both CyPack refs equal exact
+  SHA `119e4a2d5026af2c4f4e2e23a9aaa27ac2134804`.
+
 ## Exact Next Microtask
 
-SF4.2-04 `capture_owns_move_and_up_outside_original_rect`: FIRST verify
-RED-ability against the existing SF3 drag path — `preview_sidebar_resize`
-may already own move/up outside the divider rect through `DragState`;
-if the behavior already holds, record it as an explicit characterization
-(SF1 precedent) and continue with SF4.2-05 focus restore. Remaining
-in-dispatch wheel arms for non-ContextMenu overlay modes act only behind
-`in_sidebar`/pane guards — the SF4.3 gesture matrix owns the exhaustive
-sweep. Do not start SF4.3, SF5, SF6, or change-pipeline T3.1 before SF4.2
+SF4.2-05 `focus_restores_after_overlay_close`: FIRST verify RED-ability.
+Analysis so far: `leave_modal` restores Terminal/Navigate; the FM tier and
+the capture tier resume by construction after an overlay closes (the
+capture case is already pinned by `overlay_blocks_background_keyboard_shortcut`).
+Candidate genuine gap: an overlay opened FROM `Mode::Resize` (right-click
+pane while resizing is reachable) closes into `Mode::Terminal`, dropping the
+prior Resize owner — decide whether the spec's "previous valid focus owner
+or the template fallback" makes that a defect or an accepted fallback, then
+RED or characterize accordingly. Afterwards: SF4.2-06 inert regions,
+SF4.2-07 stale hit generation (wire `ShellView::hit_at` into the mouse
+context builder), SF4.2-08 hidden-terminal blocking, then the SF4.2 closure
+gate. Do not start SF4.3, SF5, SF6, or change-pipeline T3.1 before SF4.2
 closes.
