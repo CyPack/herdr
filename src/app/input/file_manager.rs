@@ -873,6 +873,106 @@ mod tests {
         app
     }
 
+    // SF4.2-08: with the Files surface covering the workspace stage, no
+    // mouse event inside the covered center may reach the hidden terminal —
+    // no selection anchor, no pane focus, no context/terminal side effect —
+    // and the keyboard tier belongs to the focused file manager. The control
+    // phase proves the SAME press reaches the live terminal once the Files
+    // surface closes, so the seal cannot pass vacuously.
+    #[test]
+    fn files_stage_blocks_hidden_terminal_input() {
+        let td = TempDir::new("files-stage-input-seal");
+        td.file("00.txt");
+        td.file("01.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 60, 16));
+
+        let center = app.state.view.terminal_area;
+        let probe = (
+            center.x + center.width.saturating_sub(2),
+            center.y + center.height.saturating_sub(2),
+        );
+        let on_fm_control = app
+            .state
+            .view
+            .file_manager_row_areas
+            .iter()
+            .map(|row| row.rect)
+            .chain(
+                app.state
+                    .view
+                    .file_manager_header_action_areas
+                    .iter()
+                    .map(|area| area.rect),
+            )
+            .any(|rect| {
+                probe.0 >= rect.x
+                    && probe.0 < rect.x.saturating_add(rect.width)
+                    && probe.1 >= rect.y
+                    && probe.1 < rect.y.saturating_add(rect.height)
+            });
+        assert!(
+            !on_fm_control,
+            "fixture: the probe must target covered terrain, not an FM control"
+        );
+
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+            MouseEventKind::Moved,
+            MouseEventKind::ScrollUp,
+            MouseEventKind::ScrollDown,
+            MouseEventKind::Down(MouseButton::Middle),
+            MouseEventKind::Down(MouseButton::Right),
+        ] {
+            app.handle_mouse(mouse(kind, probe.0, probe.1));
+            assert!(
+                app.state.selection.is_none(),
+                "{kind:?} must not anchor a hidden terminal selection"
+            );
+            assert!(
+                app.state.file_manager.is_some(),
+                "{kind:?} must not close the Files surface"
+            );
+            assert_eq!(
+                app.state.mode,
+                Mode::Terminal,
+                "{kind:?} must not change the mode"
+            );
+        }
+        assert!(
+            app.state.context_menu.is_none(),
+            "a non-row right-click must not open a menu"
+        );
+        assert_eq!(
+            app.state.shell_key_input_owner(),
+            super::super::shell::ShellInputOwner::FocusedComponent,
+            "the open Files surface owns the keyboard tier"
+        );
+
+        // Control: once the Files surface closes, the SAME press reaches the
+        // live terminal and anchors a selection.
+        app.state.file_manager = None;
+        compute_view(&mut app.state, Rect::new(0, 0, 60, 16));
+        assert!(
+            app.state.pane_at(probe.0, probe.1).is_some(),
+            "control fixture: the probe must sit on the live pane"
+        );
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            probe.0,
+            probe.1,
+        ));
+        assert!(
+            app.state.selection.is_some(),
+            "control: the same press must reach the live terminal"
+        );
+    }
+
     fn runtime_app_with_fm(fm: FmState) -> crate::app::App {
         let mut app = super::super::app_for_mouse_test();
         app.state.file_manager = Some(fm);
