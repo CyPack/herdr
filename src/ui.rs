@@ -20,8 +20,7 @@ mod settings;
 pub(crate) mod shell;
 mod sidebar;
 mod status;
-#[cfg(test)]
-mod surface_host;
+pub(crate) mod surface_host;
 mod tabs;
 mod text;
 mod widgets;

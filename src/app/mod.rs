@@ -613,6 +613,7 @@ impl App {
             selected,
             mode,
             file_manager: None,
+            stage: Default::default(),
             agent_attachment_picker: None,
             request_agent_attachment_delivery: None,
             file_manager_clipboard: Vec::new(),

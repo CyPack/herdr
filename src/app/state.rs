@@ -2094,6 +2094,10 @@ pub struct AppState {
     /// panes render as usual). Client-side presentation state (v1 TUI-only,
     /// per the runtime/client boundary), swapped in like `SidebarTab` content.
     pub file_manager: Option<crate::fm::FmState>,
+    /// Typed client-local owner of the active WorkspaceStage surface. It does
+    /// not create or replace server, workspace, tab, pane, or terminal IDs.
+    #[allow(dead_code)] // SF4.2/SF4.3 consume this state after lifecycle contracts close.
+    pub(crate) stage: crate::ui::surface_host::StageState,
     /// Blocking client-local picker that keeps terminal panes in the base
     /// layer. It owns no watcher, worker, process, pane, or server state.
     pub agent_attachment_picker: Option<AgentAttachmentPickerState>,
@@ -2585,6 +2589,7 @@ impl AppState {
             selected: 0,
             mode: Mode::Navigate,
             file_manager: None,
+            stage: Default::default(),
             agent_attachment_picker: None,
             request_agent_attachment_delivery: None,
             file_manager_clipboard: Vec::new(),
