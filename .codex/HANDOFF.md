@@ -9,7 +9,18 @@ FIP-G.1 ve FIP-G.2 KAPANDI (2026-07-18). Onaylı code-level TDD planı:
 (commit `dd81ef59`; 29 görev; 57 benzersiz `TP-FIP-*` ID eşlendi — eski "55"
 sayımı iki E2E ID'sini dışlıyordu, hiçbir ID atlanmadı).
 
-FIP-0 fazı (Task 1-5) 2026-07-18 oturumunda KAPANDI: baseline 3,443/3,443 (run df00a924), exporter, Playwright 1.54.1+Chromium 139 harness, 7/7 görsel self-test, mutation kanıtı. İlk priority-eligible iş **FIP-1.1** (plan Task 6), ardından plan sırası. Rust implementasyonu başlamadan önce kırık global `rust-dev`
+FIP-0 fazı (Task 1-5) 2026-07-18 oturumunda KAPANDI: baseline 3,443/3,443 (run df00a924), exporter, Playwright 1.54.1+Chromium 139 harness, 7/7 görsel self-test, mutation kanıtı. FIP-1 Rust+görsel tarafı KAPANDI (2026-07-18): NAV-01..04/08 RED/GREEN
+zinciri (`3680c09b`→`17487a7b`→`584ef59e`→`7e736472`→`0fc16895`→modifier-gate
+fix→VIS-01 `2dcfffa4`); ctrl-click activation sızıntısı bulunup kapatıldı; full
+suite 3,454/3,454 + 1 skip; görsel suite 9/9. `TP-FIP-E2E-01` FIP-6.3 final
+koşumuna açıkça devredildi. İlk priority-eligible iş **FIP-2.1**.
+KULLANICI DİREKTİFİ (2026-07-18): FIP-2 kapandıktan sonra, Excalidraw
+mockup'ındaki zengin layout'u kolay/hızlı/production-grade kurmayı sağlayan
+CUSTOM LAYOUT ALTYAPISI programı tasarlanacak (kendi brainstorm→design→plan
+kapısıyla). 1. öncelik: yazi/superfile'ı aşan file manager. Mockup dökümü:
+`.local/prd/custom-layout-target-mockup.md`; temel:
+`docs/superpowers/specs/2026-07-17-herdr-custom-layout-architecture-guide.md`.
+FIP-3..6 kuyruğu silinmedi; sıralama kararı bu direktifle güncellendi. Rust implementasyonu başlamadan önce kırık global `rust-dev`
 skill symlink'i (`~/.codex/skills/rust-dev` → eksik `~/.claude/skills/rust-dev`)
 onarılmalı; herdr-lokal HP1-HP10 kataloğu mevcut ve önceliklidir.
 
@@ -32,12 +43,12 @@ drag-and-drop kapsam dışı.
 - Eski SF0-SF6 + FM1-FM5 programı tamam ve yayınlıdır; yeniden uygulanmaz.
 - Yeni aktif program Files Interaction Polish’tir.
 - Açık görev envanteri (FIP-G.1/G.2 kapanışı sonrası):
-  - `.codex/TASKS.md`: 46
+  - `.codex/TASKS.md`: 41
   - `.codex/CHANGE-PIPELINE-TASKS.md`: 89
-  - toplam: 135
-- Sadece FIP-1.1 in-progress yapılabilir; diğer 134 görev pending/paused kalır.
+  - toplam: 130
+- Sadece FIP-2.1 in-progress yapılabilir; diğer 129 görev pending/paused kalır.
 - Fresh continuity gates (2026-07-18 planning-gate closure):
-  - exact task copy 135/135;
+  - exact task copy 130/130;
   - 57 unique `TP-FIP-*` (fresh deterministic count; the earlier "55" excluded
     the two E2E IDs — all 57 are mapped in the implementation plan);
   - Nextest run `4da2ee18-b784-4c38-aaab-98a2e8787511`,
@@ -316,30 +327,20 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 46 ve
-89, toplam 135’tir. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 41 ve
+89, toplam 130’dur. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 46 unchecked
-
-- [ ] **FIP-1.1 RED** Pin that a primary click on the visible default-sidebar
-  Files tab opens the Native Files Stage.
-
-- [ ] **FIP-1.2 GREEN** Converge the sidebar route on the existing bounded
-  Files activation seam without duplicating Stage/runtime ownership.
-
-- [ ] **FIP-1.3 RED** Pin that Spaces/Projects restore Terminal Stage while
-  preserving exact pane, terminal, and runtime identity.
-
-- [ ] **FIP-1.4 GREEN** Implement the symmetric client-local Stage transition.
-
-- [ ] **FIP-1.5** Cover overlay/capture precedence, modified/middle/release-only
-  clicks, collapsed/tiny sidebar, stale path/generation, and singleton reopen.
+### Source: `.codex/TASKS.md` — 41 unchecked
 
 - [ ] **FIP-1.6** Add Playwright `TP-FIP-VIS-01` plus isolated real-mouse
   `TP-FIP-E2E-01` evidence without touching the stable Herdr socket.
+  PARTIAL 2026-07-18: `TP-FIP-VIS-01` is GREEN (deterministic exported
+  fixtures, both stage snapshots approved, visual suite 9/9). The isolated
+  real-mouse `TP-FIP-E2E-01` smoke is explicitly deferred to the FIP-6.3
+  closure run on the final build; do not claim it before that run.
 
 - [ ] **FIP-2.1 RED** Pin that entering a nonzero child keeps that exact child
   highlighted in the departing/resident column rather than row zero.

@@ -15,8 +15,12 @@
 - Excluded scope: drag-and-drop, auto-submit/Enter, implicit Claude split/chat,
   protocol/runtime ownership expansion, speculative ComponentRegistry, popup
   framework, Apps/Desktop, and unrelated change-pipeline implementation.
-- Open registry: 46 product items plus 89 paused non-product items = 135.
-  FIP-0 closed 2026-07-18 (baseline + Playwright Chromium harness green 7/7); only FIP-1.1 is priority eligible; S5/S7 remain trigger-gated.
+- Open registry: 41 product items plus 89 paused non-product items = 130.
+  FIP-0 and FIP-1 (Rust+VIS; E2E-01 deferred to FIP-6.3) closed 2026-07-18;
+  only FIP-2.1 is priority eligible. USER DIRECTIVE 2026-07-18: after FIP-2,
+  design the custom-layout infrastructure program (mockup:
+  .local/prd/custom-layout-target-mockup.md); priority #1 is an FM better
+  than yazi/superfile; S5/S7 remain trigger-gated.
 - Local design chain: `fc76f648` -> `f097f6c7`; both CyPack refs were still at
   `b7d4217c` before this handoff publication.
 - Canonical graph project: `home-ayaz-projects-herdr`; final single-worker CLI

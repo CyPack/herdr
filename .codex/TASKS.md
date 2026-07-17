@@ -47,17 +47,21 @@ then the plan's Tasks 2-29 in order.
 
 ### FIP-1 — Visible Files Navigation and Mouse Ownership
 
-- [ ] **FIP-1.1 RED** Pin that a primary click on the visible default-sidebar
+- [x] **FIP-1.1 RED** Pin that a primary click on the visible default-sidebar
   Files tab opens the Native Files Stage.
-- [ ] **FIP-1.2 GREEN** Converge the sidebar route on the existing bounded
+- [x] **FIP-1.2 GREEN** Converge the sidebar route on the existing bounded
   Files activation seam without duplicating Stage/runtime ownership.
-- [ ] **FIP-1.3 RED** Pin that Spaces/Projects restore Terminal Stage while
+- [x] **FIP-1.3 RED** Pin that Spaces/Projects restore Terminal Stage while
   preserving exact pane, terminal, and runtime identity.
-- [ ] **FIP-1.4 GREEN** Implement the symmetric client-local Stage transition.
-- [ ] **FIP-1.5** Cover overlay/capture precedence, modified/middle/release-only
+- [x] **FIP-1.4 GREEN** Implement the symmetric client-local Stage transition.
+- [x] **FIP-1.5** Cover overlay/capture precedence, modified/middle/release-only
   clicks, collapsed/tiny sidebar, stale path/generation, and singleton reopen.
 - [ ] **FIP-1.6** Add Playwright `TP-FIP-VIS-01` plus isolated real-mouse
   `TP-FIP-E2E-01` evidence without touching the stable Herdr socket.
+  PARTIAL 2026-07-18: `TP-FIP-VIS-01` is GREEN (deterministic exported
+  fixtures, both stage snapshots approved, visual suite 9/9). The isolated
+  real-mouse `TP-FIP-E2E-01` smoke is explicitly deferred to the FIP-6.3
+  closure run on the final build; do not claim it before that run.
 
 ### FIP-2 — Miller Stable Child Focus
 
