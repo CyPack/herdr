@@ -1446,22 +1446,30 @@ mod tests {
     // TP-C6.4-EMPTY-ERROR: reload refreshes failure state and can recover when
     // the same exact cwd path becomes a readable directory again.
     #[test]
-    fn reload_refreshes_and_recovers_current_directory_status() {
+    fn missing_current_path_has_defined_recovery() {
         let td = TempDir::new("directory-status-reload");
         let cwd = td.root.join("cwd");
         fs::create_dir(&cwd).expect("create cwd fixture");
         let mut state = FmState::new(&cwd);
         assert_eq!(state.cwd_status, FmDirectoryStatus::Available);
+        let initial_directory_generation = state.directory_generation;
 
         fs::remove_dir(&cwd).expect("remove cwd fixture");
         state.reload();
         assert_eq!(state.cwd_status, FmDirectoryStatus::Missing);
         assert!(state.entries.is_empty());
         assert_eq!(state.cursor, 0);
+        assert_eq!(state.cwd, cwd);
+        assert_eq!(state.miller.focused_directory, cwd);
+        assert!(state.directory_generation > initial_directory_generation);
+        state.miller.assert_miller_invariants_for_test();
 
         fs::create_dir(&cwd).expect("recreate cwd fixture");
         state.reload();
         assert_eq!(state.cwd_status, FmDirectoryStatus::Available);
+        assert_eq!(state.cwd, cwd);
+        assert_eq!(state.miller.focused_directory, cwd);
+        state.miller.assert_miller_invariants_for_test();
     }
 
     // T-A1.2d: a symlink to a directory is listed and sorted as a directory.
@@ -2052,7 +2060,7 @@ mod tests {
 
     // TP-A3.1: entering a selected directory reads its contents, cursor at top.
     #[test]
-    fn enter_descends_into_selected_directory() {
+    fn enter_directory_appends_segment_and_focuses_child() {
         let td = TempDir::new("enter");
         td.dir("sub");
         td.file("top.txt");
@@ -2060,12 +2068,20 @@ mod tests {
         let mut st = FmState::new(&td.root);
         // Directories sort first, so "sub" is selected at the top.
         assert_eq!(st.selected().map(|e| e.name.as_str()), Some("sub"));
+        let chain_len = st.miller.chain.len();
 
         st.enter();
 
         assert_eq!(st.cwd, td.root.join("sub"));
         assert_eq!(st.cursor, 0);
         assert!(st.entries.iter().any(|e| e.name == "child.txt"));
+        assert_eq!(st.miller.chain.len(), chain_len + 1);
+        assert_eq!(st.miller.focused_directory, st.cwd);
+        assert_eq!(
+            st.miller.chain.back().map(|segment| &segment.directory),
+            Some(&st.cwd)
+        );
+        st.miller.assert_miller_invariants_for_test();
     }
 
     // TP-FM4-PURE-REQUEST: input first creates an immutable, generation-bound
@@ -2456,6 +2472,58 @@ mod tests {
             before.multi_selection_anchor()
         );
         assert_eq!(state.miller, before.miller);
+    }
+
+    // P5 REAL I/O FAILURE: the selected directory remains a valid projected
+    // row while its permissions change before preparation. A denied open must
+    // preserve the last valid current directory and every branch/generation
+    // authority. The permission is restored before assertions/cleanup.
+    #[cfg(unix)]
+    #[test]
+    fn permission_denied_child_projects_error_without_chain_corruption() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let td = TempDir::new("enter-permission-denied-child");
+        td.dir("child");
+        td.file("child/inside.txt");
+        td.file("sibling.txt");
+        let child = td.root.join("child");
+        let mut state = FmState::new(&td.root);
+        let child_index = state
+            .entries
+            .iter()
+            .position(|entry| entry.path == child)
+            .expect("prepared child");
+        assert!(state.replace_selection(child_index));
+        let before = state.clone();
+
+        fs::set_permissions(&child, fs::Permissions::from_mode(0o000))
+            .expect("deny child directory access");
+        state.enter();
+        fs::set_permissions(&child, fs::Permissions::from_mode(0o700))
+            .expect("restore child directory access");
+
+        assert_eq!(state.cwd, before.cwd);
+        assert_eq!(state.entries, before.entries);
+        assert_eq!(state.cursor, before.cursor);
+        assert_eq!(state.viewport_start, before.viewport_start);
+        assert_eq!(state.cwd_status, before.cwd_status);
+        assert_eq!(state.cwd_writable, before.cwd_writable);
+        assert_eq!(state.directory_generation, before.directory_generation);
+        assert_eq!(state.parent, before.parent);
+        assert_eq!(state.preview, before.preview);
+        assert_eq!(state.preview_viewport_start, before.preview_viewport_start);
+        assert_eq!(state.preview_generation, before.preview_generation);
+        assert_eq!(
+            state.multi_selection_paths(),
+            before.multi_selection_paths()
+        );
+        assert_eq!(
+            state.multi_selection_anchor(),
+            before.multi_selection_anchor()
+        );
+        assert_eq!(state.miller, before.miller);
+        state.miller.assert_miller_invariants_for_test();
     }
 
     // TP-A3.2: entering a file selection is a no-op.
