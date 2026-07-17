@@ -7,6 +7,7 @@
                      // consume every projected render/input identity.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use ratatui::layout::Rect;
 
@@ -102,8 +103,28 @@ impl MillerColumnKind {
 /// One bounded visible row projected from already-prepared entries. Only the
 /// visible exact path identities are cloned; complete directory vectors remain
 /// singly owned by `FmState` or the resident cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MillerRowColumnKind {
+    ResidentDirectory,
+    PreparedParent,
+    Current,
+    Preview,
+}
+
+/// Generation-safe identity and geometry for one actionable Miller row.
+///
+/// Directory identity is shared across rows in the same column through an
+/// `Arc`; this keeps the snapshot self-authenticating without cloning the same
+/// potentially long path once per visible terminal row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MillerRowView {
+    pub files_generation: u32,
+    pub model_revision: u64,
+    pub projection_index: usize,
+    pub chain_index: Option<usize>,
+    pub source_generation: u64,
+    pub column_kind: MillerRowColumnKind,
+    pub directory_path: Arc<PathBuf>,
     pub entry_index: usize,
     pub entry_path: PathBuf,
     pub rect: Rect,
@@ -292,6 +313,22 @@ pub(crate) fn project_miller_view(
                 FmPreview::Directory(entries) => (entries.as_slice(), None, 0),
                 FmPreview::None | FmPreview::File(_) => (&[][..], None, 0),
             };
+            let rows = source_path.as_ref().map_or_else(Vec::new, |directory| {
+                project_visible_rows(
+                    content_rect,
+                    entries,
+                    viewport_start,
+                    MillerRowAuthority {
+                        files_generation,
+                        model_revision: file_manager.miller.revision,
+                        projection_index: column.chain_index,
+                        chain_index: None,
+                        source_generation: file_manager.preview_generation,
+                        column_kind: MillerRowColumnKind::Preview,
+                        directory_path: Arc::new(directory.clone()),
+                    },
+                )
+            });
             columns.push(MillerColumnView {
                 projection_index: column.chain_index,
                 kind: MillerColumnKind::Preview {
@@ -303,7 +340,7 @@ pub(crate) fn project_miller_view(
                 content_rect,
                 cursor,
                 viewport_start,
-                rows: project_visible_rows(content_rect, entries, viewport_start),
+                rows,
             });
             continue;
         }
@@ -312,48 +349,70 @@ pub(crate) fn project_miller_view(
             continue;
         };
         let directory = segment.directory.clone();
-        let (kind, entries, cursor, viewport_start) = if directory == file_manager.cwd {
-            (
-                MillerColumnKind::Current {
-                    chain_index: column.chain_index,
-                    directory,
-                    generation: file_manager.preview_generation,
-                },
-                file_manager.entries.as_slice(),
-                (!file_manager.entries.is_empty()).then_some(file_manager.cursor),
-                file_manager.viewport_start,
-            )
-        } else if let Some(resident) = file_manager
-            .miller
-            .resident_projection_for_directory(&directory)
-        {
-            (
-                MillerColumnKind::Directory {
-                    chain_index: column.chain_index,
-                    directory,
-                    source: MillerDirectorySource::Resident(resident.id.clone()),
-                },
-                resident.entries.as_slice(),
-                (!resident.entries.is_empty()).then_some(segment.cursor),
-                segment.viewport_start,
-            )
-        } else if file_manager
-            .cwd
-            .parent()
-            .is_some_and(|parent| parent == directory)
-        {
-            match file_manager.parent.as_ref() {
-                Some(parent) => (
+        let row_directory_path = Arc::new(directory.clone());
+        let (kind, entries, cursor, viewport_start, source_generation, row_column_kind) =
+            if directory == file_manager.cwd {
+                (
+                    MillerColumnKind::Current {
+                        chain_index: column.chain_index,
+                        directory,
+                        generation: file_manager.preview_generation,
+                    },
+                    file_manager.entries.as_slice(),
+                    (!file_manager.entries.is_empty()).then_some(file_manager.cursor),
+                    file_manager.viewport_start,
+                    file_manager.preview_generation,
+                    MillerRowColumnKind::Current,
+                )
+            } else if let Some(resident) = file_manager
+                .miller
+                .resident_projection_for_directory(&directory)
+            {
+                (
                     MillerColumnKind::Directory {
                         chain_index: column.chain_index,
                         directory,
-                        source: MillerDirectorySource::PreparedParent,
+                        source: MillerDirectorySource::Resident(resident.id.clone()),
                     },
-                    parent.entries.as_slice(),
-                    parent.cursor,
+                    resident.entries.as_slice(),
+                    (!resident.entries.is_empty()).then_some(segment.cursor),
                     segment.viewport_start,
-                ),
-                None => (
+                    resident.id.generation,
+                    MillerRowColumnKind::ResidentDirectory,
+                )
+            } else if file_manager
+                .cwd
+                .parent()
+                .is_some_and(|parent| parent == directory)
+            {
+                match file_manager.parent.as_ref() {
+                    Some(parent) => (
+                        MillerColumnKind::Directory {
+                            chain_index: column.chain_index,
+                            directory,
+                            source: MillerDirectorySource::PreparedParent,
+                        },
+                        parent.entries.as_slice(),
+                        parent.cursor,
+                        segment.viewport_start,
+                        file_manager.preview_generation,
+                        MillerRowColumnKind::PreparedParent,
+                    ),
+                    None => (
+                        MillerColumnKind::Directory {
+                            chain_index: column.chain_index,
+                            directory,
+                            source: MillerDirectorySource::Unavailable,
+                        },
+                        &[][..],
+                        None,
+                        0,
+                        file_manager.preview_generation,
+                        MillerRowColumnKind::PreparedParent,
+                    ),
+                }
+            } else {
+                (
                     MillerColumnKind::Directory {
                         chain_index: column.chain_index,
                         directory,
@@ -362,20 +421,24 @@ pub(crate) fn project_miller_view(
                     &[][..],
                     None,
                     0,
-                ),
-            }
-        } else {
-            (
-                MillerColumnKind::Directory {
-                    chain_index: column.chain_index,
-                    directory,
-                    source: MillerDirectorySource::Unavailable,
-                },
-                &[][..],
-                None,
-                0,
-            )
-        };
+                    0,
+                    MillerRowColumnKind::ResidentDirectory,
+                )
+            };
+        let rows = project_visible_rows(
+            content_rect,
+            entries,
+            viewport_start,
+            MillerRowAuthority {
+                files_generation,
+                model_revision: file_manager.miller.revision,
+                projection_index: column.chain_index,
+                chain_index: Some(column.chain_index),
+                source_generation,
+                column_kind: row_column_kind,
+                directory_path: row_directory_path,
+            },
+        );
         columns.push(MillerColumnView {
             projection_index: column.chain_index,
             kind,
@@ -383,7 +446,7 @@ pub(crate) fn project_miller_view(
             content_rect,
             cursor,
             viewport_start,
-            rows: project_visible_rows(content_rect, entries, viewport_start),
+            rows,
         });
     }
 
@@ -431,6 +494,7 @@ fn project_visible_rows(
     content: Rect,
     entries: &[crate::fm::FileEntry],
     viewport_start: usize,
+    authority: MillerRowAuthority,
 ) -> Vec<MillerRowView> {
     let visible_rows = content.height as usize;
     if content.width == 0 || visible_rows == 0 || entries.is_empty() {
@@ -442,6 +506,13 @@ fn project_visible_rows(
         .map(|offset| {
             let entry_index = start + offset;
             MillerRowView {
+                files_generation: authority.files_generation,
+                model_revision: authority.model_revision,
+                projection_index: authority.projection_index,
+                chain_index: authority.chain_index,
+                source_generation: authority.source_generation,
+                column_kind: authority.column_kind,
+                directory_path: Arc::clone(&authority.directory_path),
                 entry_index,
                 entry_path: entries[entry_index].path.clone(),
                 rect: Rect::new(
@@ -453,6 +524,17 @@ fn project_visible_rows(
             }
         })
         .collect()
+}
+
+#[derive(Debug, Clone)]
+struct MillerRowAuthority {
+    files_generation: u32,
+    model_revision: u64,
+    projection_index: usize,
+    chain_index: Option<usize>,
+    source_generation: u64,
+    column_kind: MillerRowColumnKind,
+    directory_path: Arc<PathBuf>,
 }
 
 /// Compute the bounded horizontal viewport: starting at `first_visible`
@@ -702,21 +784,72 @@ mod tests {
             .filter(|column| !column.rows.is_empty())
         {
             for row in &column.rows {
-                let identity = format!("{row:?}");
-                for required in [
-                    "files_generation: 9",
-                    "model_revision: 1",
-                    "source_generation:",
-                    "column_kind:",
-                    "directory_path:",
-                ] {
-                    assert!(
-                        identity.contains(required),
-                        "projected row lacks `{required}` authority: {identity}"
-                    );
-                }
+                assert_eq!(row.files_generation, 9);
+                assert_eq!(row.model_revision, 1);
+                assert_eq!(row.projection_index, column.projection_index);
+                assert_eq!(row.rect.intersection(column.content_rect), row.rect);
             }
         }
+        let resident_row = &snapshot.columns[1].rows[0];
+        assert_eq!(
+            (
+                resident_row.chain_index,
+                resident_row.source_generation,
+                resident_row.column_kind,
+                resident_row.directory_path.as_ref(),
+            ),
+            (
+                Some(1),
+                42,
+                MillerRowColumnKind::ResidentDirectory,
+                &resident,
+            )
+        );
+        let parent_row = &snapshot.columns[2].rows[0];
+        assert_eq!(
+            (
+                parent_row.chain_index,
+                parent_row.source_generation,
+                parent_row.column_kind,
+                parent_row.directory_path.as_ref(),
+            ),
+            (
+                Some(2),
+                file_manager.preview_generation,
+                MillerRowColumnKind::PreparedParent,
+                &parent,
+            )
+        );
+        let current_row = &snapshot.columns[3].rows[0];
+        assert_eq!(
+            (
+                current_row.chain_index,
+                current_row.source_generation,
+                current_row.column_kind,
+                current_row.directory_path.as_ref(),
+            ),
+            (
+                Some(3),
+                file_manager.preview_generation,
+                MillerRowColumnKind::Current,
+                &current,
+            )
+        );
+        let preview_row = &snapshot.columns[4].rows[0];
+        assert_eq!(
+            (
+                preview_row.chain_index,
+                preview_row.source_generation,
+                preview_row.column_kind,
+                preview_row.directory_path.as_ref(),
+            ),
+            (
+                None,
+                file_manager.preview_generation,
+                MillerRowColumnKind::Preview,
+                &current.join("current-7.txt"),
+            )
+        );
     }
 
     // FM1.3: the nine plan widths — at most five columns, every visible
