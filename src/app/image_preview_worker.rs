@@ -257,6 +257,10 @@ impl super::App {
     }
 
     pub(super) fn sync_image_preview_worker(&mut self) -> bool {
+        if self.state.view.file_manager_miller.resize_preview_active {
+            return false;
+        }
+
         let target = self.state.file_manager.as_ref().and_then(|file_manager| {
             let FmPreview::File(FmFilePreview::Image(preview)) = &file_manager.preview else {
                 return None;
@@ -363,11 +367,11 @@ mod tests {
     use crate::fm::{FmFilePreview, FmImagePreviewState, FmPreview, FmState};
     use crate::kitty_graphics::HostCellSize;
     use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
-    use ratatui::layout::Rect;
+    use ratatui::layout::{Position, Rect};
     use std::io::Cursor;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::Arc;
+    use std::sync::{mpsc, Arc};
     use std::time::{Duration, Instant};
     use tokio::sync::Notify;
 
@@ -526,6 +530,27 @@ mod tests {
         }
     }
 
+    fn wait_for_worker_result_generation(app: &crate::app::App, generation: u64) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let has_result = {
+                let (state, _) = &*app.image_preview_worker.shared;
+                lock_image_state(state)
+                    .result
+                    .as_ref()
+                    .is_some_and(|result| result.generation == generation)
+            };
+            if has_result {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for image worker generation {generation}"
+            );
+            std::thread::yield_now();
+        }
+    }
+
     fn wait_for_ready(app: &mut crate::app::App) -> (ImagePreviewTarget, u32, u32) {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -588,5 +613,160 @@ mod tests {
         app.state.file_manager = None;
         assert!(!app.sync_image_preview_worker());
         assert!(app.state.file_manager.is_none());
+    }
+
+    #[test]
+    fn stale_precommit_image_completion_is_rejected() {
+        let temp = TempDir::new("stale-precommit");
+        std::fs::write(temp.root.join("sample.png"), encoded_png(160, 80))
+            .expect("write PNG fixture");
+        let mut app = test_app();
+        app.image_preview_cell_size = HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        app.state
+            .try_open_file_manager_with(|_| Some(FmState::new(&temp.root)))
+            .expect("Files activation");
+
+        let (started_tx, started_rx) = mpsc::channel::<ImagePreviewTarget>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        app.image_preview_worker =
+            ImagePreviewWorker::with_processor(app.render_notify.clone(), move |_path, target| {
+                started_tx
+                    .send(target)
+                    .map_err(|_| ImagePreviewError::DecodeFailed)?;
+                release_rx
+                    .recv_timeout(Duration::from_secs(2))
+                    .map_err(|_| ImagePreviewError::DecodeFailed)?;
+                let marker = u8::try_from(target.width_px % 256).expect("target marker");
+                Ok(PreparedImagePreview {
+                    width: 1,
+                    height: 1,
+                    data_fingerprint: u64::from(target.width_px)
+                        .wrapping_shl(32)
+                        .wrapping_add(u64::from(target.height_px)),
+                    rgba: vec![marker, marker, marker, 0xff],
+                })
+            });
+
+        let frame = Rect::new(0, 0, 90, 16);
+        crate::ui::compute_view(&mut app.state, frame);
+        assert!(
+            app.sync_image_preview_worker(),
+            "the initial committed target starts generation one"
+        );
+        let original_target = started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first image job starts");
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .get(1)
+            .expect("three-column projection exposes the preview divider")
+            .clone();
+        assert!(
+            app.begin_miller_resize_capture(divider.rect.x, divider.rect.y),
+            "the typed divider starts capture"
+        );
+        let bounds = crate::ui::shell::ResizeBounds::new(
+            crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
+            crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
+            crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
+            crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
+        );
+        assert!(
+            bounds.is_some_and(|bounds| app.state.shell_interaction.preview_resize(
+                Position::new(divider.rect.x.saturating_add(4), u16::MAX),
+                bounds,
+            )),
+            "the typed transaction accepts an out-of-area preview move"
+        );
+        crate::ui::compute_view(&mut app.state, frame);
+        assert!(
+            app.state.view.file_manager_miller.resize_preview_active,
+            "precondition: transient geometry owns the projection"
+        );
+
+        release_tx.send(()).expect("finish the precommit job");
+        wait_for_worker_result_generation(&app, 1);
+        assert!(
+            !app.sync_image_preview_worker(),
+            "preview geometry cannot apply or replace the completed old job"
+        );
+        assert_eq!(
+            current_image_state(&app),
+            &FmImagePreviewState::Loading {
+                target: original_target,
+            },
+            "the precommit completion remains unapplied"
+        );
+
+        assert!(
+            app.commit_miller_resize(),
+            "the valid typed transaction commits exactly once"
+        );
+        assert!(
+            !app.sync_image_preview_worker(),
+            "release alone cannot expose stale geometry before committed compute"
+        );
+
+        crate::ui::compute_view(&mut app.state, frame);
+        assert!(
+            !app.state.view.file_manager_miller.resize_preview_active,
+            "the committed projection re-enables target synchronization"
+        );
+        assert!(
+            app.sync_image_preview_worker(),
+            "the committed target starts exactly one replacement generation"
+        );
+        let committed_target = started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("committed image job starts");
+        assert_ne!(
+            committed_target, original_target,
+            "the exercised divider must change the image target"
+        );
+        assert_eq!(
+            app.image_preview_worker.slot.generation, 2,
+            "one precommit and one committed target are the only generations"
+        );
+        assert!(
+            !app.sync_image_preview_worker(),
+            "draining the stale result cannot mutate the new Loading state"
+        );
+        assert_eq!(
+            current_image_state(&app),
+            &FmImagePreviewState::Loading {
+                target: committed_target,
+            },
+            "generation one cannot overwrite generation two"
+        );
+
+        release_tx.send(()).expect("finish the committed job");
+        wait_for_worker_result_generation(&app, 2);
+        assert!(
+            app.sync_image_preview_worker(),
+            "only the committed generation may become Ready"
+        );
+        let FmImagePreviewState::Ready { target, prepared } = current_image_state(&app) else {
+            panic!("committed image result must become Ready");
+        };
+        assert_eq!(*target, committed_target);
+        assert_eq!(
+            prepared.data_fingerprint,
+            u64::from(committed_target.width_px)
+                .wrapping_shl(32)
+                .wrapping_add(u64::from(committed_target.height_px))
+        );
+        assert!(
+            !app.sync_image_preview_worker(),
+            "the committed Ready target remains stable"
+        );
     }
 }

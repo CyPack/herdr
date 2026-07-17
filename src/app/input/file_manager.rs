@@ -1922,6 +1922,12 @@ mod tests {
         );
         let authoritative_revision = file_manager.miller.revision;
 
+        compute_view(&mut app.state, Rect::new(0, 0, 86, 16));
+        assert!(
+            !app.state.view.file_manager_miller.resize_preview_active,
+            "a model-stale transaction cannot freeze background worker synchronization"
+        );
+
         assert_eq!(
             app.handle_file_manager_mouse(mouse(
                 MouseEventKind::Up(MouseButton::Left),

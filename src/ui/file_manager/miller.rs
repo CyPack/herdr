@@ -161,6 +161,11 @@ pub(crate) struct MillerViewSnapshot {
     /// `None` means no Files instance has authority over these rects.
     pub files_generation: Option<u32>,
     pub model_revision: u64,
+    /// `true` only when this frame applied a live, generation-valid resize
+    /// transaction. Background image work must not chase this transient
+    /// geometry; the first committed frame clears the flag and resynchronizes
+    /// the target exactly once.
+    pub resize_preview_active: bool,
     pub focused_chain_index: Option<usize>,
     /// Inclusive horizontal origin bounds for input against this exact frame.
     /// The lower bound is the fullest complete window containing focus; the
@@ -296,7 +301,7 @@ pub(crate) fn project_miller_view_with_resize_preview(
     } else {
         focused_chain_index
     };
-    apply_resize_preview_widths(
+    let resize_preview_active = apply_resize_preview_widths(
         &mut preferred_widths,
         file_manager,
         files_generation,
@@ -494,6 +499,7 @@ pub(crate) fn project_miller_view_with_resize_preview(
     MillerViewSnapshot {
         files_generation: Some(files_generation),
         model_revision: file_manager.miller.revision,
+        resize_preview_active,
         focused_chain_index: Some(focused_chain_index),
         first_visible_min,
         first_visible_max,
@@ -508,15 +514,15 @@ fn apply_resize_preview_widths(
     file_manager: &FmState,
     files_generation: u32,
     resize_preview: Option<(&crate::ui::shell::MillerDividerId, [u16; 2])>,
-) {
+) -> bool {
     let Some((divider, tracks)) = resize_preview else {
-        return;
+        return false;
     };
     if divider.files_generation() != files_generation
         || divider.model_revision() != file_manager.miller.revision
         || divider.axis() != crate::ui::shell::ShellDirection::Horizontal
     {
-        return;
+        return false;
     }
     let leading_index = divider.leading().projection_index();
     let trailing_index = divider.trailing().projection_index();
@@ -525,12 +531,13 @@ fn apply_resize_preview_widths(
         || !miller_resize_column_is_live(divider.leading(), file_manager)
         || !miller_resize_column_is_live(divider.trailing(), file_manager)
     {
-        return;
+        return false;
     }
     preferred_widths[leading_index] =
         tracks[0].clamp(MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_MAX_WIDTH);
     preferred_widths[trailing_index] =
         tracks[1].clamp(MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_MAX_WIDTH);
+    true
 }
 
 pub(crate) fn miller_resize_column_is_live(
