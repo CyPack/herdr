@@ -1206,6 +1206,69 @@ mod tests {
         );
     }
 
+    #[test]
+    fn current_legacy_row_adapter_derives_from_snapshot_column() {
+        let cwd = std::env::current_dir().expect("current directory");
+        let mut file_manager = crate::fm::FmState::new(cwd.clone());
+        let mut directories = (0..4)
+            .map(|index| std::path::PathBuf::from(format!("/virtual/ancestor-{index}")))
+            .collect::<Vec<_>>();
+        directories.push(cwd.clone());
+        file_manager.miller.chain = directories
+            .iter()
+            .cloned()
+            .map(crate::fm::miller::MillerPathSegment::new)
+            .collect();
+        file_manager.miller.focused_directory = cwd.clone();
+
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.mobile_width_threshold = 0;
+        app.sidebar_collapsed = true;
+        app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
+        app.try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+
+        compute_view(&mut app, Rect::new(0, 0, 115, 16));
+
+        let current_column = app
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .find(|column| column.directory == cwd)
+            .expect("current column projected");
+        let current_content = Rect::new(
+            current_column.rect.x,
+            current_column.rect.y.saturating_add(1),
+            current_column.rect.width,
+            current_column.rect.height.saturating_sub(1),
+        );
+        assert!(
+            !app.view.file_manager_row_areas.is_empty(),
+            "the repository cwd fixture must expose visible current rows"
+        );
+        assert!(
+            app.view
+                .file_manager_row_areas
+                .iter()
+                .all(|row| row.rect.intersection(current_content) == row.rect),
+            "current row rects must derive from the snapshot current content rect: \
+             current={current_content:?}, rows={:?}",
+            app.view.file_manager_row_areas
+        );
+        assert!(
+            app.view
+                .file_manager_row_action_areas
+                .iter()
+                .all(|action| action.rect.intersection(current_content) == action.rect),
+            "current action rects must stay inside the same snapshot current content rect"
+        );
+    }
+
     // P1 RED: the pure FM1.3 geometry exists, but production `compute_view`
     // must consume it and persist the clamped horizontal origin. This uses a
     // prepared in-memory logical chain; compute is forbidden from loading any
