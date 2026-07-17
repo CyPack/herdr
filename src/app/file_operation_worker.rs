@@ -1927,7 +1927,9 @@ mod tests {
             .expect("second selection row");
         assert!(file_manager.replace_selection(first_idx));
         assert!(file_manager.toggle_selection(second_idx));
-        app.state.file_manager = Some(file_manager);
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
         let before_first = fs::read(&first).expect("read first before copy action");
         let before_second = fs::read(&second).expect("read second before copy action");
 
@@ -1977,7 +1979,9 @@ mod tests {
             .expect("context-open directory row");
         assert!(file_manager.replace_selection(entry_idx));
         let mut app = test_app();
-        app.state.file_manager = Some(file_manager);
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
         app.state.request_file_manager_context_action = Some(FileManagerContextActionIntent {
             action: FileManagerContextMenuAction::Open,
             paths: vec![directory.clone()],
@@ -2003,7 +2007,9 @@ mod tests {
         let mut file_manager = crate::fm::FmState::new(&td.root);
         assert!(file_manager.replace_selection(0));
         let mut app = test_app();
-        app.state.file_manager = Some(file_manager);
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
         app.state.request_file_manager_context_action = Some(FileManagerContextActionIntent {
             action: FileManagerContextMenuAction::Compress,
             paths: vec![selected.clone()],
@@ -2043,7 +2049,9 @@ mod tests {
         );
         let mut app = test_app();
         app.file_operation_worker = worker;
-        app.state.file_manager = Some(crate::fm::FmState::new(&destination));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&destination)))
+            .expect("Files activation");
         app.state.file_manager_clipboard = vec![source.clone()];
 
         assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
@@ -2142,7 +2150,9 @@ mod tests {
         // the realistic open-FM state, which only exists outside onboarding.
         app.state.mode = crate::app::state::Mode::Terminal;
         app.file_operation_worker = worker;
-        app.state.file_manager = Some(crate::fm::FmState::new(&destination));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&destination)))
+            .expect("Files activation");
         app.state.file_manager_clipboard = vec![source.clone()];
 
         assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
@@ -2284,7 +2294,9 @@ mod tests {
         );
         let mut app = test_app();
         app.file_operation_worker = worker;
-        app.state.file_manager = Some(crate::fm::FmState::new(&old_destination));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&old_destination)))
+            .expect("Files activation");
         app.state.file_manager_clipboard = vec![source];
         assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
         started_rx
@@ -2292,7 +2304,9 @@ mod tests {
             .expect("stale operation started");
 
         app.state.file_manager = None;
-        app.state.file_manager = Some(crate::fm::FmState::new(&reopened_destination));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&reopened_destination)))
+            .expect("Files activation");
         release_tx.send(()).expect("release stale operation");
         let deadline = Instant::now() + Duration::from_secs(5);
         while app
@@ -2326,7 +2340,9 @@ mod tests {
         let mut file_manager = crate::fm::FmState::new(&td.root);
         assert!(file_manager.replace_selection(0));
         let mut app = test_app();
-        app.state.file_manager = Some(file_manager);
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
         app.state.request_file_manager_context_action = Some(FileManagerContextActionIntent {
             action: FileManagerContextMenuAction::Copy,
             paths: vec![source.clone()],
@@ -2350,7 +2366,9 @@ mod tests {
         let mut app = test_app();
         let mut file_manager = crate::fm::FmState::new(&td.root);
         assert!(file_manager.replace_selection(0));
-        app.state.file_manager = Some(file_manager);
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
         app.state.request_file_manager_context_action = Some(FileManagerContextActionIntent {
             action: FileManagerContextMenuAction::Rename,
             paths: vec![source.clone()],
@@ -2411,7 +2429,9 @@ mod tests {
         let mut app = test_app();
         let mut file_manager = crate::fm::FmState::new(&td.root);
         assert!(file_manager.replace_selection(0));
-        app.state.file_manager = Some(file_manager);
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
         app.state.request_file_manager_delete = Some(FileManagerDeleteRequest {
             kind: FileManagerDeleteKind::Permanent,
             paths: vec![source.clone()],
@@ -2470,7 +2490,9 @@ mod tests {
         let source = td.root.join("selected.txt");
         fs::write(&source, b"selected").expect("write trash busy fixture");
         let mut app = test_app();
-        app.state.file_manager = Some(crate::fm::FmState::new(&td.root));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files activation");
         app.state.file_manager_operation = Some(FileManagerOperationState {
             generation: 41,
             kind: FileManagerOperationKind::Copy,
@@ -2598,7 +2620,9 @@ mod tests {
         app.file_operation_worker = worker;
         let mut file_manager = crate::fm::FmState::new(&td.root);
         assert!(file_manager.replace_selection(0));
-        app.state.file_manager = Some(file_manager);
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
         app.state.request_file_manager_delete = Some(FileManagerDeleteRequest {
             kind: FileManagerDeleteKind::Trash,
             paths: vec![source.clone()],
@@ -2652,7 +2676,9 @@ mod tests {
         app.file_operation_worker = worker;
         let mut file_manager = crate::fm::FmState::new(&td.root);
         assert!(file_manager.replace_selection(0));
-        app.state.file_manager = Some(file_manager);
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
         app.state.request_file_manager_delete = Some(FileManagerDeleteRequest {
             kind: FileManagerDeleteKind::Permanent,
             paths: vec![source.clone()],
@@ -2729,7 +2755,9 @@ mod tests {
         );
         let mut app = test_app();
         app.file_operation_worker = worker;
-        app.state.file_manager = Some(crate::fm::FmState::new(&destination));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&destination)))
+            .expect("Files activation");
         app.state.file_manager_clipboard = vec![first.clone(), second.clone()];
 
         assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
@@ -2837,7 +2865,9 @@ mod tests {
         let mut app = test_app();
         app.file_operation_worker =
             FileOperationWorker::disconnected_after_progress_for_test(failed_generation, 0, 1);
-        app.state.file_manager = Some(crate::fm::FmState::new(&destination));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&destination)))
+            .expect("Files activation");
         app.state.file_manager_operation = Some(FileManagerOperationState {
             generation: failed_generation,
             kind: FileManagerOperationKind::Copy,
@@ -2933,7 +2963,9 @@ mod tests {
         let mut app = test_app();
         let mut file_manager = crate::fm::FmState::new(&td.root);
         assert!(file_manager.replace_selection(0));
-        app.state.file_manager = Some(file_manager);
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
         app.state.request_file_manager_rename = Some(crate::app::state::FileManagerRenameRequest {
             source_path: source.clone(),
             new_name: "renamed.txt".to_string(),
@@ -3002,7 +3034,9 @@ mod tests {
         let source = td.root.join("selected.txt");
         fs::write(&source, b"selected").expect("write fail-closed source");
         let mut app = test_app();
-        app.state.file_manager = Some(crate::fm::FmState::new(&td.root));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files activation");
 
         app.state.file_manager_operation = Some(FileManagerOperationState {
             generation: 91,
@@ -3083,7 +3117,9 @@ mod tests {
         );
         let mut app = test_app();
         app.file_operation_worker = worker;
-        app.state.file_manager = Some(crate::fm::FmState::new(&old_directory));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&old_directory)))
+            .expect("Files activation");
         app.state.request_file_manager_rename = Some(crate::app::state::FileManagerRenameRequest {
             source_path: source.clone(),
             new_name: "renamed.txt".to_string(),
@@ -3094,7 +3130,9 @@ mod tests {
             .expect("rename worker started");
 
         app.state.file_manager = None;
-        app.state.file_manager = Some(crate::fm::FmState::new(&reopened_directory));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&reopened_directory)))
+            .expect("Files activation");
         release_tx.send(()).expect("release rename worker");
         let deadline = Instant::now() + Duration::from_secs(5);
         while app
@@ -3193,7 +3231,9 @@ mod tests {
         assert!(file_manager.replace_selection(alpha_index));
         assert!(file_manager.toggle_selection(beta_index));
         let mut app = test_app();
-        app.state.file_manager = Some(file_manager);
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
         app.state.request_file_manager_bulk_rename =
             Some(crate::app::state::FileManagerBulkRenameRequest {
                 mappings: vec![
@@ -3322,7 +3362,9 @@ mod tests {
         assert!(file_manager.toggle_selection(beta_index));
         let mut app = test_app();
         app.file_operation_worker = worker;
-        app.state.file_manager = Some(file_manager);
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
         app.state.request_file_manager_bulk_rename =
             Some(crate::app::state::FileManagerBulkRenameRequest {
                 mappings: vec![

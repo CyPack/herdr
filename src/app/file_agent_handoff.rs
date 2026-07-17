@@ -655,7 +655,9 @@ mod tests {
             .set_agent_name("handoff-target".into());
         app.state.active = Some(0);
         app.state.selected = 0;
-        app.state.file_manager = Some(crate::fm::FmState::new(root));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(root)))
+            .expect("Files activation");
         let (runtime, receiver) =
             crate::terminal::TerminalRuntime::test_with_channel_capacity(80, 24, channel_capacity);
         app.terminal_runtimes.insert(terminal_id.clone(), runtime);
@@ -758,7 +760,9 @@ mod tests {
         app.state.ensure_test_terminals();
         app.state.active = Some(0);
         app.state.selected = 0;
-        app.state.file_manager = Some(crate::fm::FmState::new(root));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(root)))
+            .expect("Files activation");
         (app, source_pane_id, source_terminal_id)
     }
 
@@ -972,7 +976,9 @@ mod tests {
             before_panes
         );
 
-        app.state.file_manager = Some(crate::fm::FmState::new(&fixture.root));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&fixture.root)))
+            .expect("Files activation");
         let request = prepare_claude_split(&mut app, &path);
         let owned = app
             .launch_file_manager_claude_split(&request, &[running_test_command().to_string()])

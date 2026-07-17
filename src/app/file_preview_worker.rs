@@ -495,7 +495,9 @@ mod tests {
         std::fs::write(td.root.join("sample.rs"), "pub fn main() {}\n")
             .expect("write Rust preview fixture");
         let mut app = test_app();
-        app.state.file_manager = Some(crate::fm::FmState::new(&td.root));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files activation");
 
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -554,7 +556,9 @@ mod tests {
         );
         let mut app = test_app();
         app.file_preview_worker = worker;
-        app.state.file_manager = Some(crate::fm::FmState::new(&td.root));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files activation");
 
         assert!(!app.sync_file_preview_worker());
         first_started_rx
@@ -634,7 +638,9 @@ mod tests {
         let shared = worker.shared.clone();
         let mut app = test_app();
         app.file_preview_worker = worker;
-        app.state.file_manager = Some(crate::fm::FmState::new(&td.root));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files activation");
 
         assert!(!app.sync_file_preview_worker());
         started_rx
@@ -672,7 +678,9 @@ mod tests {
         std::fs::write(second.root.join("second.py"), "def second():\n    pass\n")
             .expect("write second fixture");
         let mut app = test_app();
-        app.state.file_manager = Some(crate::fm::FmState::new(&first.root));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&first.root)))
+            .expect("Files activation");
 
         let first_deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -700,7 +708,9 @@ mod tests {
 
         app.state.file_manager = None;
         assert!(!app.sync_file_preview_worker());
-        app.state.file_manager = Some(crate::fm::FmState::new(&second.root));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&second.root)))
+            .expect("Files activation");
 
         let second_deadline = Instant::now() + Duration::from_secs(5);
         loop {

@@ -546,7 +546,9 @@ mod tests {
             width_px: 8,
             height_px: 16,
         };
-        app.state.file_manager = Some(FmState::new(&temp.root));
+        app.state
+            .try_open_file_manager_with(|_| Some(FmState::new(&temp.root)))
+            .expect("Files activation");
 
         assert!(
             app.sync_image_preview_worker(),

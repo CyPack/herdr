@@ -254,7 +254,9 @@ mod tests {
             api_rx,
             crate::api::EventHub::default(),
         );
-        app.state.file_manager = Some(crate::fm::FmState::new(&td.root));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files activation");
         (td, app, source)
     }
 
@@ -412,7 +414,9 @@ mod tests {
             api_rx,
             crate::api::EventHub::default(),
         );
-        app.state.file_manager = Some(crate::fm::FmState::new(&td.root));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files activation");
 
         assert!(!app.open_file_manager_row_rename(source.clone()));
         assert_ne!(app.state.mode, Mode::RenameFile);

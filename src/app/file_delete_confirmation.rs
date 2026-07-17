@@ -164,7 +164,9 @@ mod tests {
             api_rx,
             crate::api::EventHub::default(),
         );
-        app.state.file_manager = Some(crate::fm::FmState::new(root));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(root)))
+            .expect("Files activation");
         app
     }
 
@@ -395,7 +397,9 @@ mod tests {
         open_header_delete_confirmation(&mut app);
 
         app.state.file_manager = None;
-        app.state.file_manager = Some(crate::fm::FmState::new(&second.root));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&second.root)))
+            .expect("Files activation");
         select_all(&mut app);
         app.handle_file_manager_delete_confirmation_key(key(KeyCode::Char('t')));
 

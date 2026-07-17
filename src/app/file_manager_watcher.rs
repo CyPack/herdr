@@ -727,7 +727,9 @@ mod tests {
         std::fs::write(&source, b"payload").expect("write reconcile source");
 
         let mut app = test_app();
-        app.state.file_manager = Some(crate::fm::FmState::new(&destination));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&destination)))
+            .expect("Files activation");
         let now = Instant::now();
         assert!(!app.sync_file_manager_watcher_at(now));
         let watcher_generation = app.file_manager_watcher.generation();
@@ -819,7 +821,9 @@ mod tests {
 
         let mut app = test_app();
         app.file_operation_worker = worker;
-        app.state.file_manager = Some(crate::fm::FmState::new(&destination));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&destination)))
+            .expect("Files activation");
         let now = Instant::now();
         assert!(!app.sync_file_manager_watcher_at(now));
         let watcher_generation = app.file_manager_watcher.generation();
@@ -887,7 +891,9 @@ mod tests {
         std::fs::write(&source, b"payload").expect("write source");
 
         let mut app = test_app();
-        app.state.file_manager = Some(crate::fm::FmState::new(&destination));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&destination)))
+            .expect("Files activation");
         let now = Instant::now();
         assert!(!app.sync_file_manager_watcher_at(now));
         let watcher_generation = app.file_manager_watcher.generation();
@@ -963,7 +969,9 @@ mod tests {
 
         let mut app = test_app();
         app.file_operation_worker = worker;
-        app.state.file_manager = Some(crate::fm::FmState::new(&destination));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&destination)))
+            .expect("Files activation");
         let now = Instant::now();
         assert!(!app.sync_file_manager_watcher_at(now));
         let prior_watcher_generation = app.file_manager_watcher.generation();
@@ -975,7 +983,9 @@ mod tests {
 
         app.state.file_manager = None;
         assert!(!app.sync_file_manager_watcher_at(now));
-        app.state.file_manager = Some(crate::fm::FmState::new(&destination));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&destination)))
+            .expect("Files activation");
         assert!(!app.sync_file_manager_watcher_at(now));
         assert!(app.file_manager_watcher.generation() > prior_watcher_generation);
         let reopened_generation = app
@@ -1024,7 +1034,9 @@ mod tests {
         std::fs::write(&source, b"payload").expect("write source");
 
         let mut app = test_app();
-        app.state.file_manager = Some(crate::fm::FmState::new(&destination));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&destination)))
+            .expect("Files activation");
         let now = Instant::now();
         assert!(!app.sync_file_manager_watcher_at(now));
         app.file_manager_watcher.mode = FileManagerWatcherMode::PollingFallback;
@@ -1078,7 +1090,9 @@ mod tests {
         assert!(file_manager.replace_selection(old_index));
 
         let mut app = test_app();
-        app.state.file_manager = Some(file_manager);
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
         let now = Instant::now();
         assert!(!app.sync_file_manager_watcher_at(now));
         let watcher_generation = app.file_manager_watcher.generation();
@@ -1113,7 +1127,9 @@ mod tests {
         assert!(!app.sync_file_manager_watcher());
         assert!(!app.file_manager_watcher.has_backend());
 
-        app.state.file_manager = Some(crate::fm::FmState::new(&first.root));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&first.root)))
+            .expect("Files activation");
         assert!(!app.sync_file_manager_watcher());
         assert_eq!(
             app.file_manager_watcher.watched_dir(),
@@ -1125,7 +1141,9 @@ mod tests {
         assert!(!app.sync_file_manager_watcher());
         assert_eq!(app.file_manager_watcher.generation(), first_generation);
 
-        app.state.file_manager = Some(crate::fm::FmState::new(&second.root));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&second.root)))
+            .expect("Files activation");
         assert!(!app.sync_file_manager_watcher());
         assert_eq!(
             app.file_manager_watcher.watched_dir(),
@@ -1144,7 +1162,9 @@ mod tests {
         let td = TempDir::new("missing");
         let missing = td.root.join("does-not-exist");
         let mut app = test_app();
-        app.state.file_manager = Some(crate::fm::FmState::new(&missing));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&missing)))
+            .expect("Files activation");
 
         assert!(!app.sync_file_manager_watcher());
         assert_eq!(
@@ -1203,7 +1223,9 @@ mod tests {
         let td = TempDir::new("poll-converge");
         let missing = td.root.join("appears-later");
         let mut app = test_app();
-        app.state.file_manager = Some(crate::fm::FmState::new(&missing));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&missing)))
+            .expect("Files activation");
         let started_at = Instant::now();
 
         assert!(!app.sync_file_manager_watcher_at(started_at));
@@ -1282,7 +1304,9 @@ mod tests {
         let td = TempDir::new("real-fs");
         std::fs::write(td.root.join("anchor.txt"), b"anchor").expect("write anchor");
         let mut app = test_app();
-        app.state.file_manager = Some(crate::fm::FmState::new(&td.root));
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files activation");
         assert!(!app.sync_file_manager_watcher());
         assert!(app.file_manager_watcher.has_backend());
 

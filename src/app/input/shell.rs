@@ -66,13 +66,18 @@ impl AppState {
     /// Project current keyboard ownership into the frozen router. Keyboard
     /// events carry no position, so the hit tier stays empty; v0 has no
     /// page/template shortcut owner yet, so remaining keys belong to the
-    /// global application dispatch.
+    /// global application dispatch. The focused component derives from the
+    /// TYPED stage authority AND live Files domain state, so a divergent
+    /// legacy boolean can never grant keyboard focus to a hidden surface.
     pub(crate) fn shell_key_input_owner(&self) -> ShellInputOwner {
+        let files_surface_focused = self.stage.surface_view()
+            == crate::ui::surface_host::StageSurfaceView::NativeFiles
+            && self.file_manager.is_some();
         route_shell_input(ShellInputRouteContext {
             topmost_overlay: self.blocking_overlay_active(),
             active_capture: self.shell_resize_active(),
             topmost_hit: None,
-            focused_component: self.file_manager.is_some(),
+            focused_component: files_surface_focused,
             page_shortcut: false,
             global_shortcut: true,
         })

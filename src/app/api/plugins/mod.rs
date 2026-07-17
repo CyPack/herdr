@@ -1932,7 +1932,9 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
         std::fs::write(&selected, b"selected").expect("write plugin selected file");
         let mut file_manager = crate::fm::FmState::new(&files_root);
         assert!(file_manager.replace_selection(0));
-        app.state.file_manager = Some(file_manager);
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
         app.state.request_file_manager_context_action =
             Some(crate::app::state::FileManagerContextActionIntent {
                 action: crate::app::state::FileManagerContextMenuAction::Plugin {

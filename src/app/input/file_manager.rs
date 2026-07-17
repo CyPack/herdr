@@ -235,7 +235,11 @@ impl App {
         &mut self,
         mouse: MouseEvent,
     ) -> FileManagerMouseDispatch {
-        if self.state.file_manager.is_none() {
+        // The TYPED stage authority owns Files mouse routing: a hidden Files
+        // surface (or a divergent legacy boolean) receives nothing.
+        if self.state.stage.surface_view() != crate::ui::surface_host::StageSurfaceView::NativeFiles
+            || self.state.file_manager.is_none()
+        {
             self.last_file_manager_click = None;
             return FileManagerMouseDispatch::NotHandled;
         }
@@ -869,7 +873,8 @@ mod tests {
 
     fn app_with_fm(fm: FmState) -> AppState {
         let mut app = AppState::test_new();
-        app.file_manager = Some(fm);
+        app.try_open_file_manager_with(|_| Some(fm))
+            .expect("Files activation");
         app
     }
 
@@ -1018,7 +1023,7 @@ mod tests {
 
         // Control: once the Files surface closes, the SAME press reaches the
         // live terminal and anchors a selection.
-        app.state.file_manager = None;
+        app.state.close_file_manager();
         compute_view(&mut app.state, Rect::new(0, 0, 60, 16));
         assert!(
             app.state.pane_at(probe.0, probe.1).is_some(),
@@ -1433,7 +1438,9 @@ mod tests {
 
         handle_file_manager_key(&mut app.state, key(KeyCode::Esc));
         assert!(app.state.file_manager.is_none());
-        app.state.file_manager = Some(FmState::new(&td.root));
+        app.state
+            .try_open_file_manager_with(|_| Some(FmState::new(&td.root)))
+            .expect("Files activation");
         let fm = app.state.file_manager.as_ref().expect("reopened fm");
         assert_eq!(fm.cursor, 0);
         assert!(fm.multi_selection_paths().is_empty());
