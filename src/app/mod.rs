@@ -1746,17 +1746,16 @@ impl App {
                         crossterm::event::KeyEventKind::Press => {
                             if self.state.mode == Mode::Terminal {
                                 self.suppressed_repeat_keys.remove(&key_id);
-                                self.handle_terminal_key_headless(key);
                             } else {
                                 self.suppressed_repeat_keys.insert(key_id);
-                                self.handle_non_terminal_key_headless(key);
                             }
+                            self.handle_key_headless(key);
                         }
                         crossterm::event::KeyEventKind::Repeat => {
                             if self.state.mode == Mode::Terminal
                                 && !self.suppressed_repeat_keys.contains(&key_id)
                             {
-                                self.handle_terminal_key_headless(key);
+                                self.handle_key_headless(key);
                             }
                             // Repeats in non-terminal modes are ignored
                             // (same as monolithic behavior).

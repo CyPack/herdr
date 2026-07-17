@@ -107,39 +107,13 @@ impl App {
                 // the visible surface. Target-specific handlers keep resize
                 // keys out of native apps and PTYs while preserving topmost
                 // modal ownership above.
-                let handled = if self.state.shell_resize_active() {
-                    self.state.handle_shell_resize_key(key_event)
-                } else {
-                    self.handle_miller_resize_key(key_event)
-                };
-                debug_assert!(handled, "an active capture must consume every key");
+                self.handle_active_capture_key(key_event);
             }
             ShellInputOwner::FocusedComponent => {
                 // When the native file manager is open it captures all
                 // keyboard input, ahead of the mode dispatch, so keys drive
                 // its navigation instead of reaching the terminal underneath.
-                if self.state.file_manager.is_some() {
-                    match file_manager::handle_file_manager_key(&mut self.state, key_event) {
-                        file_manager::FileManagerKeyDispatch::CancelOperation => {
-                            let _ = self.cancel_file_manager_operation();
-                        }
-                        file_manager::FileManagerKeyDispatch::Navigate(request) => {
-                            let _ = self.execute_file_manager_navigation(request);
-                        }
-                        file_manager::FileManagerKeyDispatch::Refresh(request) => {
-                            let _ = self.execute_file_manager_current_refresh(request);
-                        }
-                        file_manager::FileManagerKeyDispatch::Consumed => {}
-                    }
-                    if self.state.file_manager.is_none() {
-                        self.last_file_manager_click = None;
-                    }
-                } else {
-                    debug_assert!(
-                        false,
-                        "focused component keyboard ownership requires an open file manager"
-                    );
-                }
+                self.handle_focused_file_manager_key(key_event);
             }
             ShellInputOwner::GlobalShortcut => self.handle_global_key_dispatch(key).await,
             ShellInputOwner::TopmostHit(_) | ShellInputOwner::PageShortcut => {
@@ -149,6 +123,70 @@ impl App {
                 debug_assert!(false, "keyboard routing has no positional or page owner");
             }
             ShellInputOwner::FailClosed => {}
+        }
+    }
+
+    pub(super) fn handle_key_headless(&mut self, key: TerminalKey) {
+        let key_event = key.as_key_event();
+        if modal_paste_target_active(&self.state) && is_modal_paste_shortcut(&key_event) {
+            if let Some(text) = crate::platform::read_clipboard_text() {
+                self.paste_into_active_text_input(&text);
+            }
+            return;
+        }
+
+        match self.state.shell_key_input_owner() {
+            ShellInputOwner::TopmostOverlay => self.handle_non_terminal_key_headless(key),
+            ShellInputOwner::ActiveCapture => self.handle_active_capture_key(key_event),
+            ShellInputOwner::FocusedComponent => {
+                self.handle_focused_file_manager_key(key_event);
+            }
+            ShellInputOwner::GlobalShortcut => {
+                if self.state.mode == Mode::Terminal {
+                    self.handle_terminal_key_headless(key);
+                } else {
+                    self.handle_non_terminal_key_headless(key);
+                }
+            }
+            ShellInputOwner::TopmostHit(_) | ShellInputOwner::PageShortcut => {
+                debug_assert!(false, "keyboard routing has no positional or page owner");
+            }
+            ShellInputOwner::FailClosed => {}
+        }
+    }
+
+    fn handle_active_capture_key(&mut self, key_event: KeyEvent) {
+        let handled = if self.state.shell_resize_active() {
+            self.state.handle_shell_resize_key(key_event)
+        } else {
+            self.handle_miller_resize_key(key_event)
+        };
+        debug_assert!(handled, "an active capture must consume every key");
+    }
+
+    fn handle_focused_file_manager_key(&mut self, key_event: KeyEvent) {
+        if self.state.file_manager.is_none() {
+            debug_assert!(
+                false,
+                "focused component keyboard ownership requires an open file manager"
+            );
+            return;
+        }
+
+        match file_manager::handle_file_manager_key(&mut self.state, key_event) {
+            file_manager::FileManagerKeyDispatch::CancelOperation => {
+                let _ = self.cancel_file_manager_operation();
+            }
+            file_manager::FileManagerKeyDispatch::Navigate(request) => {
+                let _ = self.execute_file_manager_navigation(request);
+            }
+            file_manager::FileManagerKeyDispatch::Refresh(request) => {
+                let _ = self.execute_file_manager_current_refresh(request);
+            }
+            file_manager::FileManagerKeyDispatch::Consumed => {}
+        }
+        if self.state.file_manager.is_none() {
+            self.last_file_manager_click = None;
         }
     }
 
