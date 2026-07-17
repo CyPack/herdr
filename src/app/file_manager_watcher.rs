@@ -573,6 +573,38 @@ mod tests {
         )
     }
 
+    #[test]
+    fn watcher_profile_counts_only_real_target_rebinds() {
+        let td = TempDir::new("watcher-profile");
+        let second = td.root.join("second");
+        std::fs::create_dir_all(&second).expect("create second watched directory");
+        let mut watcher = NativeFileManagerWatcher::new(Arc::new(Notify::new()));
+        let now = Instant::now();
+
+        let (_, profile) = crate::render_prof::observe_for_test(|| {
+            assert!(matches!(
+                watcher.sync(Some(&td.root), now),
+                FmWatcherSync::Started { .. }
+            ));
+            assert_eq!(
+                watcher.sync(Some(&td.root), now),
+                FmWatcherSync::Unchanged,
+                "an unchanged target cannot rebind the backend"
+            );
+            assert!(matches!(
+                watcher.sync(Some(&second), now),
+                FmWatcherSync::Started { .. }
+            ));
+            assert_eq!(watcher.sync(None, now), FmWatcherSync::Stopped);
+        });
+
+        assert_eq!(
+            profile.counter("fm.watcher.rebound"),
+            2,
+            "only the two Started generations count as watcher rebinds"
+        );
+    }
+
     // TP-C6.1-NAV/LIFECYCLE: scheduled navigation revalidates exact current
     // model authority and directory type, consumes once, and never replaces a
     // live FM projection for stale/missing/file targets.

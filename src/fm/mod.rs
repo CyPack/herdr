@@ -1334,6 +1334,28 @@ mod tests {
         state
     }
 
+    #[test]
+    fn directory_read_profile_counts_success_and_failure_without_path_labels() {
+        let td = TempDir::new("directory-read-profile");
+        td.file("visible.txt");
+        let missing = td.root.join("missing");
+
+        let ((available, unavailable), profile) = crate::render_prof::observe_for_test(|| {
+            (
+                read_directory_snapshot(&td.root, false),
+                read_directory_snapshot(&missing, false),
+            )
+        });
+
+        assert_eq!(available.status, FmDirectoryStatus::Available);
+        assert_eq!(available.entries.len(), 1);
+        assert_eq!(unavailable.status, FmDirectoryStatus::Missing);
+        assert!(unavailable.entries.is_empty());
+        assert_eq!(profile.counter("fm.filesystem.read"), 2);
+        assert_eq!(profile.counter("fm.filesystem.read_success"), 1);
+        assert_eq!(profile.counter("fm.filesystem.read_failure"), 1);
+    }
+
     // TP-FM3-DIRECTORY-GENERATION: cursor/preview movement must not retire a
     // second click from the same prepared directory snapshot, while any
     // filesystem reload must retire every prior current/parent row target.
