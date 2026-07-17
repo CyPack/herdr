@@ -1914,6 +1914,116 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn miller_resize_keyboard_preview_and_enter_commit_once() {
+        let td = TempDir::new("fm3-divider-keyboard-commit");
+        td.file("00.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 86, 16));
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .first()
+            .expect("current Files projection exposes a divider")
+            .clone();
+        let leading_chain_index = app.state.view.file_manager_miller.columns[divider.left_column]
+            .kind
+            .chain_index()
+            .expect("leading projected column belongs to the Miller chain");
+        let original_tracks = [
+            app.state.view.file_manager_miller.columns[divider.left_column]
+                .rect
+                .width,
+            app.state.view.file_manager_miller.columns[divider.right_column]
+                .rect
+                .width,
+        ];
+        let (before_revision, before_widths, before_overrides) = {
+            let file_manager = app.state.file_manager.as_ref().expect("open FM");
+            (
+                file_manager.miller.revision,
+                file_manager
+                    .miller
+                    .chain
+                    .iter()
+                    .map(|segment| segment.preferred_width)
+                    .collect::<Vec<_>>(),
+                file_manager.trio_overrides,
+            )
+        };
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                divider.rect.x,
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+
+        for code in [KeyCode::Right, KeyCode::Char('l')] {
+            app.handle_key(crate::input::TerminalKey::new(code, KeyModifiers::NONE))
+                .await;
+        }
+        assert_eq!(
+            app.state.shell_interaction.resize_preview_tracks(),
+            Some([original_tracks[0] + 2, original_tracks[1] - 2]),
+            "keyboard steps share the transient Miller preview reducer"
+        );
+        let file_manager = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(
+            (
+                file_manager.miller.revision,
+                file_manager
+                    .miller
+                    .chain
+                    .iter()
+                    .map(|segment| segment.preferred_width)
+                    .collect::<Vec<_>>(),
+                file_manager.trio_overrides,
+            ),
+            (before_revision, before_widths.clone(), before_overrides),
+            "keyboard preview cannot mutate committed model state"
+        );
+
+        app.handle_key(crate::input::TerminalKey::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        ))
+        .await;
+
+        assert!(
+            app.state.file_manager.is_some(),
+            "Enter commits the gesture without closing Files"
+        );
+        assert!(
+            !app.state.shell_interaction.miller_resize_active(),
+            "Enter retires Miller capture authority"
+        );
+        let file_manager = app.state.file_manager.as_ref().expect("Files remains open");
+        let mut expected_widths = before_widths;
+        expected_widths[leading_chain_index] = original_tracks[0] + 2;
+        assert_eq!(
+            (
+                file_manager.miller.revision,
+                file_manager
+                    .miller
+                    .chain
+                    .iter()
+                    .map(|segment| segment.preferred_width)
+                    .collect::<Vec<_>>(),
+                file_manager.trio_overrides,
+            ),
+            (before_revision + 1, expected_widths, before_overrides),
+            "Enter performs exactly one final model commit"
+        );
+    }
+
     // FM2.2 end-to-end: pressing a trio divider and dragging resizes the
     // column through the clamped commit seam; release ends the capture; the
     // committed width survives recompute and clamps to the frozen 16..=64
