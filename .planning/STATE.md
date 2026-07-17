@@ -209,10 +209,18 @@
   SF5 PHASE CLOSED with the full gate (Rust 3,329/3,329 + B0 skip, Bun
   5/5 + 12/12, Python 64/64, both Clippy targets). Current verified head:
   `d031ef26`.
-- Next microtask: SF6.1 — move the Files render projection out of the
-  terminal curtain onto the Workspace Stage, then SF6.2 lifecycle/input
-  migration, SF6.3 closure, then FM1/FM2 (the custom-layout target). See
-  `.codex/evidence/shell-foundation-sf5-app-dock-progress.md`.
+- SF6.1 is CLOSED (`8a256d37`/`8472f14b`): active NativeFiles owns the
+  COMPLETE WorkspaceStage — the tab-bar row (terminal-app chrome) is no
+  longer carved out, `terminal_area == stage`, the SF1 curtain
+  characterization was replaced by the target stage test, and the two
+  fixtures pinning the old curtain arithmetic were migrated to the frozen
+  stage geometry. Full suite 3,329/3,329. Current verified head:
+  `8472f14b`.
+- Next microtask: SF6.2 lifecycle/input authority migration (typed
+  `AppSurfaceRef::NativeFiles` routing RED; other catalog rows verified
+  for RED-ability against SF4.x/C4-C6 coverage first), then SF6.3, then
+  FM1/FM2. See
+  `.codex/evidence/shell-foundation-sf6-files-stage-progress.md`.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one
   bounded focus/capture router shared by mouse and keyboard, and recovery

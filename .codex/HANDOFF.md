@@ -11,9 +11,9 @@
 - Branch: `feat/native-fm`
 - Acting identity: CyPack external contributor; `origin` is the writable
   `CyPack/herdr` fork and `upstream` is read-only.
-- Current verified product head: `d031ef26`
-  (`feat: activate dock apps with bounded name popover`, SF5.2 CLOSED —
-  SF5 PHASE CLOSED), RED `406db487`. Prior: SF5.1 `64d5dd5e`/`cb0c77fd`.
+- Current verified product head: `8472f14b`
+  (`feat: host Files in the native workspace stage`, SF6.1 CLOSED), RED
+  `8a256d37`. Prior: SF5 phase closed at `d031ef26`.
   SF4 fully closed at `f973740e` (4.1 8/8, 4.2 8/8, 4.3 6/6); the SF4
   registry entries in `.codex/TASKS.md` were reconciled at `5349bb85`,
   and the custom-layout architecture guide lives locally at
@@ -69,18 +69,23 @@
   dock terrain, `ContextMenuKind::AppDock` popover through
   `enter_overlay_mode` (SF4.2 blocking/restore free), SF3 region-generic
   `ResizeTransaction` pinned for dock 3..=9 bounds.
-- Immediate next microtask: SF6.1 — move Files render out of the terminal
-  curtain onto the Workspace Stage (recon the plan catalog + curtain seams
-  first). See
-  `.codex/evidence/shell-foundation-sf5-app-dock-progress.md`.
-- Product tree: clean at `d031ef26`; only the user-owned untracked
+- SF6.1: Files now owns the COMPLETE WorkspaceStage while active — no
+  tab-bar carve-out (terminal-app chrome), `terminal_area == stage`, the
+  SF1 curtain characterization was replaced by
+  `files_renders_as_native_workspace_stage_surface`, and exactly two
+  old-arithmetic fixtures were migrated to the frozen stage geometry.
+- Immediate next microtask: SF6.2 — lifecycle/input authority migration
+  (typed `AppSurfaceRef::NativeFiles` routing; most catalog rows already
+  delivered by SF4.x/C4-C6 — verify RED-ability per row). See
+  `.codex/evidence/shell-foundation-sf6-files-stage-progress.md`.
+- Product tree: clean at `8472f14b`; only the user-owned untracked
   `.superpowers/` tree exists and must remain untouched/unstaged.
-- Full exact-head SF5 CLOSURE gate: 3,329/3,329 Rust tests
-  (`--no-fail-fast`), one named B0 real-host probe skipped; Linux
-  all-target and Windows MSVC bin Clippy; Bun 5/5 + 12/12; Python 64/64;
-  fmt/diff/added-production-unwrap checks passed.
+- Full exact-head gate: 3,329/3,329 Rust tests (`--no-fail-fast`), one
+  named B0 real-host probe skipped; Linux all-target and Windows MSVC bin
+  Clippy; fmt/diff/added-production-unwrap checks passed (Bun 5/5 + 12/12
+  and Python 64/64 last verified at the SF5 closure gate `d031ef26`).
 - Both CyPack refs (`feat/native-fm`, fork `master`) equal exact SHA
-  `d031ef26d65b26967ac758a28da9dc478d996ae0` at this checkpoint;
+  `8472f14b057e4e83180fe1a37cd8983d853f563d` at this checkpoint;
   `upstream` untouched.
 - Fresh sequential Codebase Memory store refreshed post-publication with
   current `blocking_overlay_active`, `shell_mouse_input_owner`,
