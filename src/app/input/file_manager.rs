@@ -616,12 +616,14 @@ mod tests {
     };
     use crate::app::Mode;
     use crate::fm::{FmState, MAX_MULTI_SELECTION_PATHS};
+    use crate::kitty_graphics::HostCellSize;
     use crate::ui::compute_view;
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::layout::Rect;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{Duration, Instant};
 
     fn unique() -> u64 {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -654,6 +656,36 @@ mod tests {
     impl Drop for TempDir {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn image_preview_ready(app: &crate::app::App) -> bool {
+        matches!(
+            app.state
+                .file_manager
+                .as_ref()
+                .map(|file_manager| &file_manager.preview),
+            Some(crate::fm::FmPreview::File(crate::fm::FmFilePreview::Image(
+                crate::fm::FmImagePreview {
+                    state: crate::fm::FmImagePreviewState::Ready { .. },
+                    ..
+                }
+            )))
+        )
+    }
+
+    fn wait_for_image_preview_ready(app: &mut crate::app::App) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let _ = app.sync_image_preview_worker();
+            if image_preview_ready(app) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for the image preview worker"
+            );
+            std::thread::yield_now();
         }
     }
 
@@ -1609,6 +1641,227 @@ mod tests {
             after_revision,
             "a repeated mouse-up cannot duplicate the commit"
         );
+    }
+
+    #[test]
+    fn miller_resize_1000_moves_has_bounded_side_effects() {
+        let td = TempDir::new("fm3-divider-bounded-effects");
+        let image_path = td.root.join("00.png");
+        image::RgbaImage::from_pixel(160, 80, image::Rgba([0x2a, 0x6f, 0xb0, 0xff]))
+            .save(&image_path)
+            .expect("write PNG fixture");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.image_preview_cell_size = HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        let frame = Rect::new(0, 0, 90, 16);
+        compute_view(&mut app.state, frame);
+
+        assert!(
+            app.sync_image_preview_worker(),
+            "precondition: pending image preview starts one worker target"
+        );
+        wait_for_image_preview_ready(&mut app);
+        assert!(
+            !app.sync_image_preview_worker(),
+            "precondition: the ready image target is stable"
+        );
+        assert!(
+            !app.sync_file_preview_worker(),
+            "an image selection owns no text-highlight request"
+        );
+
+        let now = Instant::now();
+        assert!(
+            !app.sync_file_manager_watcher_at(now),
+            "binding an unchanged watcher must not refresh Files"
+        );
+        let watcher_before = app
+            .file_manager_watcher_reconcile_snapshot_for_test(&td.root)
+            .expect("current Files cwd has one watcher generation");
+        let image_worker_generation_before = app.image_preview_worker_generation_for_test();
+        let text_worker_generation_before = app.file_preview_worker_generation_for_test();
+        let model_before = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .miller
+            .clone();
+        let dirty_before = app.state.session_dirty;
+        assert!(
+            !dirty_before,
+            "fixture starts without a persistence request"
+        );
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .get(1)
+            .expect("three-column projection exposes the preview divider")
+            .clone();
+        assert_eq!(
+            (divider.left_column, divider.right_column),
+            (1, 2),
+            "the exercised divider controls the current/image-preview pair"
+        );
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                divider.rect.x,
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+
+        for step in 0..1_000 {
+            let drag_x = match step % 4 {
+                0 => divider.rect.x.saturating_add(4),
+                1 => u16::MAX,
+                2 => 0,
+                _ => divider.rect.x.saturating_add(8),
+            };
+            let drag_y = if step % 2 == 0 {
+                divider.rect.y
+            } else {
+                u16::MAX
+            };
+            assert_eq!(
+                app.handle_file_manager_mouse(mouse(
+                    MouseEventKind::Drag(MouseButton::Left),
+                    drag_x,
+                    drag_y,
+                )),
+                FileManagerMouseDispatch::Consumed,
+                "active capture owns bounded and out-of-area move {step}"
+            );
+            compute_view(&mut app.state, frame);
+            assert!(
+                !app.sync_file_manager_watcher_at(now),
+                "preview move {step} cannot reconcile or reload Files"
+            );
+            assert!(
+                !app.sync_file_preview_worker(),
+                "preview move {step} cannot submit text-highlight work"
+            );
+            assert!(
+                !app.sync_image_preview_worker(),
+                "preview move {step} cannot submit or replace image work"
+            );
+            assert_eq!(
+                app.image_preview_worker_generation_for_test(),
+                image_worker_generation_before,
+                "preview move {step} keeps the image target generation stable"
+            );
+            assert_eq!(
+                app.file_preview_worker_generation_for_test(),
+                text_worker_generation_before,
+                "preview move {step} keeps the text target generation stable"
+            );
+            assert_eq!(
+                app.state.file_manager.as_ref().expect("open FM").miller,
+                model_before,
+                "preview move {step} cannot mutate the Miller model"
+            );
+            assert_eq!(
+                app.state.session_dirty, dirty_before,
+                "preview move {step} cannot request persistence"
+            );
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .miller
+                .assert_miller_invariants_for_test();
+        }
+
+        assert_eq!(
+            app.file_manager_watcher_reconcile_snapshot_for_test(&td.root),
+            Some(watcher_before),
+            "1,000 preview moves cannot rebind or reconcile the watcher"
+        );
+        let committed_x = divider.rect.x.saturating_add(8);
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Up(MouseButton::Left),
+                committed_x,
+                u16::MAX,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert!(
+            !app.state.shell_interaction.miller_resize_active(),
+            "mouse-up retires the capture"
+        );
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .miller
+                .revision,
+            model_before.revision + 1,
+            "mouse-up commits exactly one Miller revision"
+        );
+        assert_eq!(
+            app.state.session_dirty, dirty_before,
+            "client-local Miller width is not persisted"
+        );
+
+        assert!(
+            !app.sync_image_preview_worker(),
+            "the stale transient snapshot cannot start post-release image work"
+        );
+        assert_eq!(
+            app.image_preview_worker_generation_for_test(),
+            image_worker_generation_before,
+            "post-release worker refresh waits for committed geometry"
+        );
+
+        compute_view(&mut app.state, frame);
+        assert!(
+            app.sync_image_preview_worker(),
+            "fresh committed geometry starts one final image target"
+        );
+        assert_eq!(
+            app.image_preview_worker_generation_for_test(),
+            image_worker_generation_before + 1,
+            "commit refreshes the active image target exactly once"
+        );
+        wait_for_image_preview_ready(&mut app);
+        assert!(
+            !app.sync_image_preview_worker(),
+            "the committed ready target remains stable"
+        );
+        assert_eq!(
+            app.image_preview_worker_generation_for_test(),
+            image_worker_generation_before + 1
+        );
+        assert_eq!(
+            app.file_preview_worker_generation_for_test(),
+            text_worker_generation_before
+        );
+        assert!(
+            !app.sync_file_manager_watcher_at(now),
+            "commit cannot trigger a filesystem refresh"
+        );
+        assert_eq!(
+            app.file_manager_watcher_reconcile_snapshot_for_test(&td.root),
+            Some(watcher_before),
+            "commit cannot rebind or reconcile the watcher"
+        );
+        app.state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .miller
+            .assert_miller_invariants_for_test();
     }
 
     #[test]

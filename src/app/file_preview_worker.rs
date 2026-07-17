@@ -250,6 +250,11 @@ fn lock_state(state: &Mutex<FilePreviewWorkerState>) -> MutexGuard<'_, FilePrevi
 }
 
 impl super::App {
+    #[cfg(test)]
+    pub(in crate::app) fn file_preview_worker_generation_for_test(&self) -> u64 {
+        self.file_preview_worker.slot.generation
+    }
+
     pub(super) fn sync_file_preview_worker(&mut self) -> bool {
         let target = self.state.file_manager.as_ref().and_then(|file_manager| {
             let selected_path = file_manager.selected()?.path.clone();

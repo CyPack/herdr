@@ -251,6 +251,11 @@ fn lock_image_state(
 }
 
 impl super::App {
+    #[cfg(test)]
+    pub(in crate::app) fn image_preview_worker_generation_for_test(&self) -> u64 {
+        self.image_preview_worker.slot.generation
+    }
+
     pub(super) fn sync_image_preview_worker(&mut self) -> bool {
         let target = self.state.file_manager.as_ref().and_then(|file_manager| {
             let FmPreview::File(FmFilePreview::Image(preview)) = &file_manager.preview else {

@@ -342,6 +342,14 @@ impl NativeFileManagerWatcher {
 }
 
 impl super::App {
+    #[cfg(test)]
+    pub(in crate::app) fn file_manager_watcher_reconcile_snapshot_for_test(
+        &self,
+        directory: &Path,
+    ) -> Option<(u64, u64)> {
+        self.file_manager_watcher.reconcile_snapshot(directory)
+    }
+
     fn active_files_generation(&self) -> Option<u32> {
         (self.state.stage.surface_view() == crate::ui::surface_host::StageSurfaceView::NativeFiles)
             .then(|| self.state.stage.active_instance_generation())
