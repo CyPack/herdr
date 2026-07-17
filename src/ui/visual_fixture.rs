@@ -100,6 +100,67 @@ mod tests {
     use ratatui::widgets::Paragraph;
     use ratatui::Terminal;
 
+    fn write_fixture(dir: &std::path::Path, fixture: CellFixture) {
+        let path = dir.join(format!("{}.json", fixture.name));
+        let json = serde_json::to_string(&fixture).expect("serialize fixture");
+        std::fs::write(path, json).expect("write fixture");
+    }
+
+    // Exports the real UI states consumed by the Playwright Chromium specs.
+    // Only an explicit run writes fixtures, and only into the caller-provided
+    // directory; ordinary unit runs never touch the filesystem.
+    #[test]
+    #[ignore = "exports visual fixtures; set HERDR_VISUAL_FIXTURE_DIR and run explicitly"]
+    fn write_visual_fixtures() {
+        let out_dir = std::path::PathBuf::from(
+            std::env::var("HERDR_VISUAL_FIXTURE_DIR")
+                .expect("HERDR_VISUAL_FIXTURE_DIR must point at the fixture output directory"),
+        );
+        std::fs::create_dir_all(&out_dir).expect("create fixture output dir");
+
+        let render_state = |app: &crate::app::state::AppState| {
+            let backend = TestBackend::new(120, 40);
+            let mut terminal = Terminal::new(backend).expect("test terminal");
+            terminal
+                .draw(|frame| crate::ui::render(app, frame))
+                .expect("render frame");
+            terminal.backend().buffer().clone()
+        };
+
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![crate::workspace::Workspace::test_new("vis")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = crate::app::state::Mode::Terminal;
+        app.mobile_width_threshold = 0;
+        crate::ui::compute_view(&mut app, Rect::new(0, 0, 120, 40));
+        write_fixture(
+            &out_dir,
+            export_cell_fixture("vis-01-terminal", &render_state(&app)),
+        );
+
+        // Fixed filesystem base so cwd labels stay identical across exports.
+        // The FM opens the INNER directory so the rendered parent column shows
+        // only the controlled base content, never the live /tmp listing.
+        let base = std::path::PathBuf::from("/tmp/herdr-vis01-root");
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("inner");
+        for dir in ["alpha", "beta"] {
+            std::fs::create_dir_all(root.join(dir)).expect("fixture dir");
+        }
+        for file in ["gamma.rs", "notes.txt"] {
+            std::fs::write(root.join(file), b"x").expect("fixture file");
+        }
+        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(root.clone())))
+            .expect("files stage must open for the fixture");
+        crate::ui::compute_view(&mut app, Rect::new(0, 0, 120, 40));
+        write_fixture(
+            &out_dir,
+            export_cell_fixture("vis-01-files", &render_state(&app)),
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn exported_fixture_serializes_every_cell_with_style() {
         let backend = TestBackend::new(4, 2);
