@@ -1835,6 +1835,85 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn miller_resize_escape_cancels_preview_without_closing_files() {
+        let td = TempDir::new("fm3-divider-escape-cancel");
+        td.file("00.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 86, 16));
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .first()
+            .expect("current Files projection exposes a divider")
+            .rect;
+        let before_model = {
+            let file_manager = app.state.file_manager.as_ref().expect("open FM");
+            (
+                file_manager.miller.revision,
+                file_manager
+                    .miller
+                    .chain
+                    .iter()
+                    .map(|segment| segment.preferred_width)
+                    .collect::<Vec<_>>(),
+                file_manager.trio_overrides,
+            )
+        };
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                divider.x,
+                divider.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Drag(MouseButton::Left),
+                divider.x + 4,
+                divider.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+
+        app.handle_key(crate::input::TerminalKey::new(
+            KeyCode::Esc,
+            KeyModifiers::NONE,
+        ))
+        .await;
+
+        assert!(
+            app.state.file_manager.is_some(),
+            "Escape cancels the gesture without closing Files"
+        );
+        assert!(
+            !app.state.shell_interaction.miller_resize_active(),
+            "Escape retires Miller capture authority"
+        );
+        let file_manager = app.state.file_manager.as_ref().expect("Files remains open");
+        assert_eq!(
+            (
+                file_manager.miller.revision,
+                file_manager
+                    .miller
+                    .chain
+                    .iter()
+                    .map(|segment| segment.preferred_width)
+                    .collect::<Vec<_>>(),
+                file_manager.trio_overrides,
+            ),
+            before_model,
+            "Escape cancellation cannot commit model or legacy widths"
+        );
+    }
+
     // FM2.2 end-to-end: pressing a trio divider and dragging resizes the
     // column through the clamped commit seam; release ends the capture; the
     // committed width survives recompute and clamps to the frozen 16..=64
