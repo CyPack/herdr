@@ -257,7 +257,8 @@ impl super::App {
                 return None;
             };
             let target = file_manager_image_target(
-                self.state.view.terminal_area,
+                &self.state.view.file_manager_miller,
+                file_manager,
                 self.image_preview_cell_size,
             )?;
             Some(ImagePreviewKey::new(
@@ -541,7 +542,7 @@ mod tests {
         std::fs::write(temp.root.join("sample.png"), encoded_png(160, 80))
             .expect("write PNG fixture");
         let mut app = test_app();
-        app.state.view.terminal_area = Rect::new(10, 5, 38, 10);
+        let frame = Rect::new(10, 5, 38, 10);
         app.image_preview_cell_size = HostCellSize {
             width_px: 8,
             height_px: 16,
@@ -549,6 +550,7 @@ mod tests {
         app.state
             .try_open_file_manager_with(|_| Some(FmState::new(&temp.root)))
             .expect("Files activation");
+        crate::ui::compute_view(&mut app.state, frame);
 
         assert!(
             app.sync_image_preview_worker(),
@@ -557,10 +559,10 @@ mod tests {
         assert_eq!(
             current_image_state(&app),
             &FmImagePreviewState::Loading {
-                target: target(96, 112),
+                target: target(128, 80),
             }
         );
-        assert_eq!(wait_for_ready(&mut app), (target(96, 112), 96, 48));
+        assert_eq!(wait_for_ready(&mut app), (target(128, 80), 128, 64));
 
         app.image_preview_cell_size = HostCellSize {
             width_px: 4,
@@ -573,10 +575,10 @@ mod tests {
         assert_eq!(
             current_image_state(&app),
             &FmImagePreviewState::Loading {
-                target: target(48, 56),
+                target: target(64, 40),
             }
         );
-        assert_eq!(wait_for_ready(&mut app), (target(48, 56), 48, 24));
+        assert_eq!(wait_for_ready(&mut app), (target(64, 40), 64, 32));
 
         app.state.file_manager = None;
         assert!(!app.sync_image_preview_worker());

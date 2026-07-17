@@ -146,6 +146,29 @@ pub(crate) struct MillerViewSnapshot {
     pub dividers: Vec<MillerDividerView>,
 }
 
+impl MillerViewSnapshot {
+    /// Exact prepared preview content rect for this frame. Generation and
+    /// selected-path checks make stale snapshots inert for both text and Kitty
+    /// consumers; no caller may reconstruct preview geometry independently.
+    pub(crate) fn preview_content_rect(&self, file_manager: &FmState) -> Option<Rect> {
+        self.columns.iter().find_map(|column| {
+            let MillerColumnKind::Preview {
+                source_path,
+                generation,
+                ..
+            } = &column.kind
+            else {
+                return None;
+            };
+            (*generation == file_manager.preview_generation
+                && source_path.as_ref() == file_manager.selected().map(|entry| &entry.path)
+                && column.content_rect.width > 0
+                && column.content_rect.height > 0)
+                .then_some(column.content_rect)
+        })
+    }
+}
+
 /// Project prepared Miller model state into a bounded frame snapshot.
 ///
 /// This function performs no filesystem work. At most five columns (including

@@ -31,6 +31,8 @@ use self::dialogs::{
     render_new_linked_worktree_overlay, render_open_existing_worktree_overlay,
     render_remove_worktree_overlay, render_rename_overlay,
 };
+#[cfg(test)]
+pub(crate) use self::file_manager::file_manager_preview_content_area_with;
 pub(crate) use self::file_manager::miller::MillerViewSnapshot;
 use self::file_manager::{
     agent_attachment_picker_visible_rows, compute_agent_attachment_picker_row_areas,
@@ -39,7 +41,6 @@ use self::file_manager::{
 };
 pub(crate) use self::file_manager::{
     compute_file_manager_action_bar_model, file_manager_column_widths, file_manager_divider_areas,
-    file_manager_preview_content_area_with,
 };
 use self::keybind_help::render_keybind_help_overlay;
 use self::menus::{

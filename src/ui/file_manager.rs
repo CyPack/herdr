@@ -255,11 +255,13 @@ pub(crate) fn file_manager_visible_rows_with(area: Rect, overrides: MillerTrioOv
 /// Pixel graphics and text rendering share this exact PREVIEW content seam.
 /// The top-level FM header and the PREVIEW panel title are intentionally
 /// excluded so host graphics cannot cover either label.
-#[allow(dead_code)] // Default-override seam kept for callers without overrides.
+#[cfg(test)]
+#[allow(dead_code)] // Legacy geometry characterization only.
 pub(crate) fn file_manager_preview_content_area(area: Rect) -> Option<Rect> {
     file_manager_preview_content_area_with(area, MillerTrioOverrides::default())
 }
 
+#[cfg(test)]
 pub(crate) fn file_manager_preview_content_area_with(
     area: Rect,
     overrides: MillerTrioOverrides,

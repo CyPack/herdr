@@ -84,26 +84,13 @@ struct HostPlacement {
     scrollback_offset: u32,
 }
 
-fn file_manager_image_geometry(
-    file_manager_area: Rect,
+fn image_geometry_for_content_area(
+    area: Rect,
     cell_size: HostCellSize,
-) -> Option<(Rect, ImagePreviewTarget)> {
-    file_manager_image_geometry_with(
-        file_manager_area,
-        cell_size,
-        crate::fm::miller::MillerTrioOverrides::default(),
-    )
-}
-
-fn file_manager_image_geometry_with(
-    file_manager_area: Rect,
-    cell_size: HostCellSize,
-    overrides: crate::fm::miller::MillerTrioOverrides,
 ) -> Option<(Rect, ImagePreviewTarget)> {
     if !cell_size.is_known() {
         return None;
     }
-    let area = crate::ui::file_manager_preview_content_area_with(file_manager_area, overrides)?;
     let width_px = u32::from(area.width).checked_mul(cell_size.width_px)?;
     let height_px = u32::from(area.height).checked_mul(cell_size.height_px)?;
     if width_px == 0 || height_px == 0 {
@@ -119,10 +106,24 @@ fn file_manager_image_geometry_with(
 }
 
 pub(crate) fn file_manager_image_target(
+    snapshot: &crate::ui::MillerViewSnapshot,
+    file_manager: &crate::fm::FmState,
+    cell_size: HostCellSize,
+) -> Option<ImagePreviewTarget> {
+    image_geometry_for_content_area(snapshot.preview_content_rect(file_manager)?, cell_size)
+        .map(|(_, target)| target)
+}
+
+#[cfg(test)]
+fn legacy_file_manager_image_target(
     file_manager_area: Rect,
     cell_size: HostCellSize,
 ) -> Option<ImagePreviewTarget> {
-    file_manager_image_geometry(file_manager_area, cell_size).map(|(_, target)| target)
+    let content_area = crate::ui::file_manager_preview_content_area_with(
+        file_manager_area,
+        crate::fm::miller::MillerTrioOverrides::default(),
+    )?;
+    image_geometry_for_content_area(content_area, cell_size).map(|(_, target)| target)
 }
 
 #[cfg(test)]
@@ -131,33 +132,20 @@ fn file_manager_image_placement(
     cell_size: HostCellSize,
     prepared: &PreparedImagePreview,
 ) -> Option<HostPlacement> {
-    file_manager_image_placement_with_data(file_manager_area, cell_size, prepared, true)
-}
-
-#[allow(dead_code)] // Default-override seam kept for callers without overrides.
-fn file_manager_image_placement_with_data(
-    file_manager_area: Rect,
-    cell_size: HostCellSize,
-    prepared: &PreparedImagePreview,
-    include_data: bool,
-) -> Option<HostPlacement> {
-    file_manager_image_placement_with_overrides(
+    let content_area = crate::ui::file_manager_preview_content_area_with(
         file_manager_area,
-        cell_size,
-        prepared,
-        include_data,
         crate::fm::miller::MillerTrioOverrides::default(),
-    )
+    )?;
+    file_manager_image_placement_in_content_area(content_area, cell_size, prepared, true)
 }
 
-fn file_manager_image_placement_with_overrides(
-    file_manager_area: Rect,
+fn file_manager_image_placement_in_content_area(
+    content_area: Rect,
     cell_size: HostCellSize,
     prepared: &PreparedImagePreview,
     include_data: bool,
-    overrides: crate::fm::miller::MillerTrioOverrides,
 ) -> Option<HostPlacement> {
-    let (area, target) = file_manager_image_geometry_with(file_manager_area, cell_size, overrides)?;
+    let (area, target) = image_geometry_for_content_area(content_area, cell_size)?;
     if prepared.width == 0
         || prepared.height == 0
         || prepared.width > target.width_px
@@ -236,25 +224,18 @@ fn collect_file_manager_image_placement(
     let crate::fm::FmImagePreviewState::Ready { target, prepared } = &preview.state else {
         return None;
     };
-    let overrides = app
-        .file_manager
-        .as_ref()
-        .map(|file_manager| file_manager.trio_overrides)
-        .unwrap_or_default();
-    if file_manager_image_geometry_with(app.view.terminal_area, cell_size, overrides)
-        .map(|(_, target)| target)?
+    let content_area = app
+        .view
+        .file_manager_miller
+        .preview_content_rect(file_manager)?;
+    if image_geometry_for_content_area(content_area, cell_size).map(|(_, target)| target)?
         != *target
     {
         return None;
     }
 
-    let mut placement = file_manager_image_placement_with_overrides(
-        app.view.terminal_area,
-        cell_size,
-        prepared,
-        false,
-        overrides,
-    )?;
+    let mut placement =
+        file_manager_image_placement_in_content_area(content_area, cell_size, prepared, false)?;
     let format_code = kitty_format_code(placement.placement.format);
     let signature = image_signature(&placement, format_code);
     let host_id = host_image_id(placement.pane_id, &placement.placement);
@@ -1286,12 +1267,12 @@ mod tests {
         };
 
         assert_eq!(
-            file_manager_image_target(Rect::new(10, 5, 24, 10), cells),
+            legacy_file_manager_image_target(Rect::new(10, 5, 24, 10), cells),
             None,
             "one-column layout has no preview slot"
         );
         assert_eq!(
-            file_manager_image_target(Rect::new(10, 5, 25, 10), cells),
+            legacy_file_manager_image_target(Rect::new(10, 5, 25, 10), cells),
             Some(ImagePreviewTarget {
                 width_px: 96,
                 height_px: 112,
@@ -1299,7 +1280,7 @@ mod tests {
             "two-column preview excludes the FM header, status, and PREVIEW title"
         );
         assert_eq!(
-            file_manager_image_target(Rect::new(10, 5, 38, 10), cells),
+            legacy_file_manager_image_target(Rect::new(10, 5, 38, 10), cells),
             Some(ImagePreviewTarget {
                 width_px: 96,
                 height_px: 112,
@@ -1307,17 +1288,17 @@ mod tests {
             "three-column preview consumes the same named preview content seam"
         );
         assert_eq!(
-            file_manager_image_target(Rect::new(10, 5, 38, 2), cells),
+            legacy_file_manager_image_target(Rect::new(10, 5, 38, 2), cells),
             None,
             "header-only preview column has no image content rows"
         );
         assert_eq!(
-            file_manager_image_target(Rect::new(10, 5, 38, 10), HostCellSize::default()),
+            legacy_file_manager_image_target(Rect::new(10, 5, 38, 10), HostCellSize::default()),
             None,
             "unknown host cell pixels cannot produce a decode target"
         );
         assert_eq!(
-            file_manager_image_target(
+            legacy_file_manager_image_target(
                 Rect::new(10, 5, 38, 10),
                 HostCellSize {
                     width_px: u32::MAX,
@@ -1370,7 +1351,11 @@ mod tests {
         };
 
         assert_eq!(
-            file_manager_image_target(frame, cells),
+            file_manager_image_target(
+                &app.view.file_manager_miller,
+                app.file_manager.as_ref().expect("open FM"),
+                cells,
+            ),
             Some(expected),
             "decode target must match the exact windowed preview content rect"
         );
@@ -1460,8 +1445,14 @@ mod tests {
             rgba: vec![0x11; 80 * 64 * 4],
         };
         let mut app = AppState::test_new();
+        app.workspaces = vec![crate::workspace::Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
         app.mode = Mode::Terminal;
-        app.view.terminal_area = Rect::new(10, 5, 38, 10);
+        app.mobile_width_threshold = 0;
+        app.sidebar_collapsed = true;
+        app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
+        let frame = Rect::new(10, 5, 38, 10);
         let mut file_manager = FmState::test_empty("/tmp");
         file_manager.cwd_writable = true;
         file_manager.preview = FmPreview::File(FmFilePreview::Image(FmImagePreview {
@@ -1469,14 +1460,16 @@ mod tests {
             generation: 1,
             state: FmImagePreviewState::Ready {
                 target: ImagePreviewTarget {
-                    width_px: 96,
+                    width_px: 128,
                     height_px: 112,
                 },
                 prepared: first,
             },
         }));
         file_manager.preview_generation = 1;
-        app.file_manager = Some(file_manager);
+        app.try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+        crate::ui::compute_view(&mut app, frame);
         let runtimes = TerminalRuntimeRegistry::new();
         let mut cache = HostGraphicsCache::default();
 
@@ -1489,7 +1482,7 @@ mod tests {
         assert!(first_text.contains("a=t,t=d,f=32,s=80,v=64"));
         assert!(first_text.contains("a=p"));
         assert!(first_text.contains("c=10,r=4"));
-        assert!(first_text.contains("\x1b[9;38H"));
+        assert!(first_text.contains("\x1b[9;36H"));
 
         let cached = collect_file_manager_image_placement(&app, cells, &cache.images)
             .expect("cached image placement metadata");
@@ -1513,7 +1506,7 @@ mod tests {
         preview.generation = 2;
         preview.state = FmImagePreviewState::Ready {
             target: ImagePreviewTarget {
-                width_px: 96,
+                width_px: 128,
                 height_px: 112,
             },
             prepared: PreparedImagePreview {
