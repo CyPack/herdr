@@ -24,6 +24,8 @@ mod status;
 pub(crate) mod surface_host;
 mod tabs;
 mod text;
+#[cfg(test)]
+pub(crate) mod visual_fixture;
 mod widgets;
 
 use self::dialogs::{
