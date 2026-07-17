@@ -4718,6 +4718,35 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[tokio::test]
+    async fn route_client_input_files_blocks_bracketed_paste_from_hidden_pane() {
+        let root = unique_temp_path("headless-files-paste");
+        std::fs::create_dir_all(&root).unwrap();
+
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) = TerminalRuntime::test_with_channel(80, 24);
+        workspace.tabs[0].runtimes.insert(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .unwrap();
+
+        app.route_client_input(b"\x1b[200~must-not-reach-hidden-pty\x1b[201~".to_vec());
+
+        assert!(app.state.file_manager.is_some());
+        assert!(
+            rx.try_recv().is_err(),
+            "headless Files-focused paste must not reach the hidden PTY"
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn route_client_input_prefix_tab_dispatches_global_last_pane() {
         let config: Config = toml::from_str(
