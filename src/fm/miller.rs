@@ -6,6 +6,8 @@
 //! resident at once (the active current column is never evicted; at most
 //! four unique non-current cached projections). Frozen interface source:
 //! the FM program plan "Frozen Interfaces and Bounds".
+#![allow(dead_code)] // FM1.2 App integration (FmState seeding/visits) and the
+                     // FM1.3 horizontal viewport consume this bounded model.
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -14,11 +16,8 @@ use super::{FileEntry, FmDirectoryStatus};
 
 pub(crate) const MAX_MILLER_HISTORY_DEPTH: usize = 32;
 pub(crate) const MAX_RESIDENT_MILLER_COLUMNS: usize = 5;
-#[allow(dead_code)] // FM1.3 horizontal geometry consumes the width bounds.
 pub(crate) const MILLER_COLUMN_MIN_WIDTH: u16 = 16;
-#[allow(dead_code)] // FM1.3 horizontal geometry consumes the width bounds.
 pub(crate) const MILLER_COLUMN_PREFERRED_WIDTH: u16 = 28;
-#[allow(dead_code)] // FM1.3 horizontal geometry consumes the width bounds.
 pub(crate) const MILLER_COLUMN_MAX_WIDTH: u16 = 64;
 
 /// Exact identity of one projected Miller column: the directory path plus a
@@ -96,7 +95,7 @@ impl MillerState {
         }
         // Nearest-first was built child->root; keep the NEAREST segments and
         // restore root->child chain order.
-        // RED stub: bound enforcement arrives with FM1.2.
+        segments.truncate(MAX_MILLER_HISTORY_DEPTH);
         segments.reverse();
 
         Self {
@@ -127,7 +126,11 @@ impl MillerState {
             self.chain
                 .push_back(MillerPathSegment::new(directory.clone()));
         }
-        // RED stub: chain trimming arrives with FM1.2.
+        while self.chain.len() > MAX_MILLER_HISTORY_DEPTH {
+            // Keep the NEAREST segments relative to the new focus: drop from
+            // the far (root) side, never the focused tail.
+            self.chain.pop_front();
+        }
 
         if let Some(projection) = previous_current {
             self.resident_non_current
@@ -136,7 +139,9 @@ impl MillerState {
         }
         self.resident_non_current
             .retain(|resident| resident.id.directory != directory);
-        // RED stub: cache eviction arrives with FM1.2.
+        while self.resident_non_current.len() >= MAX_RESIDENT_MILLER_COLUMNS {
+            self.resident_non_current.pop_front();
+        }
 
         self.focused_directory = directory;
         self.revision = self.revision.saturating_add(1);
