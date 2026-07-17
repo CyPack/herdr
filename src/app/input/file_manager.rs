@@ -1730,6 +1730,43 @@ mod tests {
         assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 0);
     }
 
+    // TP-FM1.3-HSCROLL-MODIFIERS: only the exact Shift+wheel gesture changes
+    // the horizontal window. Control/Alt and combined modifiers are consumed
+    // fail-closed and cannot accidentally become vertical list navigation.
+    #[test]
+    fn non_shift_modified_wheel_is_consumed_without_moving_any_axis() {
+        let td = TempDir::new("miller-wheel-modifiers");
+        for index in 0..3 {
+            td.file(&format!("{index:02}.txt"));
+        }
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let before = app.state.file_manager.as_ref().expect("open FM").clone();
+
+        for modifiers in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ] {
+            assert_eq!(
+                app.handle_file_manager_mouse(mouse_with_modifiers(
+                    MouseEventKind::ScrollDown,
+                    27,
+                    3,
+                    modifiers,
+                )),
+                FileManagerMouseDispatch::Consumed
+            );
+        }
+
+        let after = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(after.cursor, before.cursor);
+        assert_eq!(after.viewport_start, before.viewport_start);
+        assert_eq!(
+            after.miller.horizontal.first_visible,
+            before.miller.horizontal.first_visible
+        );
+    }
+
     // TP-FM1.3-HSCROLL: native horizontal wheel events and Shift+wheel move
     // ONLY the bounded Miller window. Current/preview remain visible after
     // every recompute, while vertical cursor/viewport, entries, selection,
