@@ -33,7 +33,9 @@ use self::dialogs::{
 };
 #[cfg(test)]
 pub(crate) use self::file_manager::file_manager_preview_content_area_with;
-pub(crate) use self::file_manager::miller::MillerViewSnapshot;
+#[cfg(test)]
+pub(crate) use self::file_manager::miller::project_miller_view;
+pub(crate) use self::file_manager::miller::{MillerRowColumnKind, MillerViewSnapshot};
 use self::file_manager::{
     agent_attachment_picker_visible_rows, compute_agent_attachment_picker_row_areas,
     compute_file_manager_header_action_areas, render_agent_attachment_picker, render_file_manager,
