@@ -1,0 +1,10 @@
+{
+  "name": "herdr-visual-tests",
+  "private": true,
+  "devDependencies": {
+    "@playwright/test": "1.54.1"
+  },
+  "scripts": {
+    "test": "playwright test"
+  }
+}
