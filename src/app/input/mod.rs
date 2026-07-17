@@ -233,6 +233,9 @@ impl App {
             self.paste_into_active_text_input(&text);
             return;
         }
+        if !self.visible_terminal_owns_paste() {
+            return;
+        }
 
         if let Some(ws_idx) = self.state.active {
             if let Some(rt) = self
@@ -242,6 +245,11 @@ impl App {
                 let _ = rt.send_paste(text).await;
             }
         }
+    }
+
+    pub(super) fn visible_terminal_owns_paste(&self) -> bool {
+        self.state.mode == Mode::Terminal
+            && self.state.shell_key_input_owner() == ShellInputOwner::GlobalShortcut
     }
 
     pub(crate) fn paste_into_active_text_input(&mut self, text: &str) -> bool {
@@ -1161,6 +1169,26 @@ mod tests {
         );
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn visible_terminal_surface_still_receives_paste() {
+        let mut app = test_app();
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (runtime, mut rx) = crate::terminal::TerminalRuntime::test_with_channel(80, 24);
+        workspace.insert_test_runtime(focused, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        app.handle_paste("visible-terminal-paste".into()).await;
+
+        assert_eq!(
+            rx.recv().await.unwrap(),
+            bytes::Bytes::from_static(b"visible-terminal-paste")
+        );
     }
 
     #[test]
