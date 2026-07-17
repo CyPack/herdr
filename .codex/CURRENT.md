@@ -1,5 +1,19 @@
 # Current State — 2026-07-17
 
+> CURRENT OVERRIDE — MILLER P7 VERIFIED: product head `d7997d0d`.
+> The isolated 240x80/80x24 matrix is complete with zero test residue and an
+> unchanged stable socket. It found and closed headless Files key/capture
+> routing and hidden-terminal paste leaks through RED/GREEN pairs
+> `714849bc`/`53f73f23` and `5844db41`/`d7997d0d`. Fresh gates are targeted
+> 245/245, input/platform 146/146, deterministic failure substitutions 10/10,
+> full Rust 3,443/3,443 plus one named skip, Linux/Windows Clippy, Bun 17/17,
+> and Python 64/64. Release p95 is 10us/14us compute and 1,153us/4,115us frame
+> at 120x40/240x80. Fresh CLI graph is 21,056/97,919 and contains both new
+> owner seams; the long-lived MCP remains stale at 21,041/97,701. Publication
+> is the only remaining P7 action. After publication, FM5 is the sole active
+> product-program decision. See
+> `.codex/evidence/miller-production-progress.md`.
+
 > CURRENT OVERRIDE — MILLER P6 CLOSED: verified product head `9e1d63bf`.
 > P0–P6 of the Miller production completion PRD are green. Fresh gates:
 > P6 18/18, targeted Miller 244/244, full Nextest 3,437/3,437 plus one

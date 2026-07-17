@@ -2,6 +2,24 @@
 
 - Updated: 2026-07-17
 - Branch: `feat/native-fm`
+- Current override: P7 implementation and verification are CLOSED at product
+  head `d7997d0d`; only the continuity commit and verified CyPack
+  fast-forward remain before P7 publication closure. FM5 is the next separate
+  evidence-only decision.
+- P7 physical matrix: unique throwaway XDG/socket, 240x80 and 80x24, 32-deep
+  path, both dividers, outside capture, resize cancellation, horizontal/plain
+  wheel, permission, Unicode, preview fallback, close/reopen, hidden-terminal
+  key/paste isolation, and zero residue. Stable socket remained
+  `21223953 600 1783871657`.
+- P7 gates: targeted 245/245; input/platform 146/146; deterministic
+  failure-substitution gate 10/10; full Nextest 3,443/3,443 plus one named
+  skip; Linux/Windows Clippy; Bun 17/17; Python 64/64.
+- Fresh release p95: compute 10us/14us; frame 1,153us/4,115us at
+  120x40/240x80.
+- Fresh CLI graph is 21,056/97,919 and proves `handle_key_headless`,
+  `visible_terminal_owns_paste`, their caller, and `miller_layout`. The
+  long-lived MCP channel remains stale at 21,041/97,701 and is not accepted
+  as current evidence.
 - Current override: P0–P6 of the Miller production completion PRD are CLOSED
   at verified product head `9e1d63bf`. Only P7 isolated runtime/platform/
   release closure remains.

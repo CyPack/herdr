@@ -2,6 +2,27 @@
 
 Updated: 2026-07-17 CEST
 
+## CURRENT OVERRIDE — FINISH P7 PUBLICATION, THEN FM5
+
+P0-P7 implementation and verification are closed at product head `d7997d0d`.
+Do not rerun the isolated runtime matrix unless new code changes its behavior.
+
+Exact next action:
+
+1. review and commit the P7 evidence/continuity unit;
+2. prove clean diff, stable socket, and CyPack fast-forward ancestry;
+3. publish only to CyPack `feat/native-fm` and `master`; verify exact refs;
+4. execute FM5 as an evidence-only A/B/C placement comparison;
+5. choose explicit GO/NO-GO; production RightPanel code requires a separately
+   approved TDD micro-plan.
+
+P7 gates: targeted 245/245, platform/input 146/146, deterministic failure
+substitutions 10/10, full Rust 3,443/3,443 plus one named skip,
+Linux/Windows Clippy, Bun 17/17, Python 64/64. Release p95 is
+10us/14us compute and 1,153us/4,115us frame at 120x40/240x80. Fresh CLI graph:
+21,056/97,919. The built-in MCP channel remains stale at 21,041/97,701 and
+must not be represented as fresh.
+
 ## CURRENT OVERRIDE — RESUME P7 ONLY
 
 P0–P6 of the Miller production completion PRD are closed at verified product

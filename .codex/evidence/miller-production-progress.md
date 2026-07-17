@@ -1,4 +1,4 @@
-# Miller Production Progress — P0–P6
+# Miller Production Progress — P0–P7
 
 Date: 2026-07-17
 
@@ -7,6 +7,121 @@ Branch: `feat/native-fm`
 Starting checkpoint: `cbac59bb`
 
 Verified P6 product head: `9e1d63bf`
+
+Verified P7 product head: `d7997d0d`
+
+## Current Override — P7 Verification Closed, Publication Pending
+
+This section supersedes the older P6-only next-phase statement below.
+
+P7 implementation and verification are closed at product head `d7997d0d`.
+The isolated physical matrix found two real server/client-path ownership bugs
+that unit-only P6 evidence had not exposed:
+
+- headless key routing used `Mode::Terminal` instead of the typed
+  `ShellInputOwner`, so Files-owned `q` and capture-owned Escape reached the
+  hidden PTY;
+- monolithic and headless bracketed paste paths also forwarded input to the
+  hidden PTY while Native Files was visible.
+
+Both defects were closed through independent RED/GREEN pairs:
+
+- `714849bc` / `53f73f23` — headless Files keyboard and capture ownership;
+- `5844db41` / `d7997d0d` — hidden-terminal paste isolation plus visible
+  terminal positive controls.
+
+### Isolated Physical Matrix
+
+The matrix used a unique throwaway XDG config/state/runtime root and socket, a
+test-owned foreground server, and a test-owned tmux shell/client. It unset
+`HERDR_ENV`, `HERDR_PANE_ID`, `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID`,
+`HERDR_SOCKET_PATH`, `HERDR_CLIENT_SOCKET_PATH`, `HERDR_SERVER_SOCKET`, and
+`HERDR_SESSION`. Stable Herdr and every user-owned process remained untouched.
+
+| Scenario | Fresh evidence | Result |
+|---|---|---|
+| Deep path / wide | Exactly 32 segments at 240x80; five columns and four Miller dividers; focused/current remained visible | PASS |
+| Deep path / narrow | 80x24 degraded to exactly CURRENT + PREVIEW with one divider; no overlap | PASS |
+| Horizontal input | Shift-wheel moved only `first_visible` where movement was possible and clamped at both ends; plain wheel changed only vertical row/preview state | PASS |
+| First divider | `x=55 -> 65`, outside release retained capture and committed the clamped preview | PASS |
+| Second divider | `x=84 -> 96`, left overshoot clamped back to `84`; unrelated divider positions did not move | PASS |
+| Resize-mid-drag | 240x80 -> 180x60 canceled the transaction, restored committed geometry, and made the old release inert | PASS |
+| Capture Escape | Raw client Escape restored the pre-drag width, kept Files open, retired capture, and did not reach the PTY | PASS |
+| Close/reopen | Raw `q` closed Files without entering the shell; reopen reset ephemeral width preferences; stale release was inert | PASS |
+| Paste isolation | Bracketed marker sent while Files was visible was absent from the retained shell after close | PASS |
+| Permission failure | Entering a mode-000 directory left Files active and preserved the deep current path/header | PASS |
+| Unicode / preview | CJK text rendered without overlap; text preview stayed bounded; image state used the non-Kitty `(Kitty graphics req.)` fallback without crash | PASS |
+| Terminal return | The retained terminal remained usable after Files close; hidden Files-owned key/paste input was absent | PASS |
+
+Some PRD risk cases require deterministic generation, watcher, overlay, or
+worker-state injection and were therefore not represented as misleading
+physical clicks. Their fresh exact substitution gate is run
+`f8373441-9190-4b97-a7cc-5e1b7c1da335`, 10/10:
+
+- overlay blocks every typed Miller-row gesture;
+- stale/reordered/deleted/evicted/reopened targets are inert;
+- renamed non-current targets are consumed without model mutation;
+- plain wheel changes only the hovered resident column;
+- terminal resize cancels the stale Miller transaction;
+- 1,000 preview moves remain bounded;
+- stale text-worker completion after scroll is rejected;
+- committed resize requests at most one image target;
+- the Files Stage blocks hidden-terminal input;
+- headless Files blocks bracketed paste.
+
+### Cleanup and Stable-Runtime Boundary
+
+- test client exited semantically; the Herdr client detached semantically; the
+  hosting test shell exited normally;
+- the test server stopped through `herdr server stop` and its foreground
+  process exited with code 0;
+- test sockets: 0; open file descriptors under the root: 0; throwaway root:
+  absent;
+- the permission fixture was restored before guarded deletion;
+- stable socket before and after:
+  inode `21223953`, mode `600`, mtime `1783871657`.
+
+### P7 Gates
+
+- headless owner/paste regression: 35/35;
+- input/platform normalization: 146/146, run
+  `dc7f12c9-adb4-4781-b974-26c39406052c`;
+- Miller/Files/Stage/watcher/preview/resize: 245/245, run
+  `8dff60f2-bd07-445f-b180-5508b43e8c08`;
+- deterministic physical-substitution gate: 10/10, run
+  `f8373441-9190-4b97-a7cc-5e1b7c1da335`;
+- release 1,000-move workload: 1/1, run
+  `4a4b59cd-cad8-4c8b-a4b9-aa0e0ffbde45`;
+- release performance workload: 1/1, run
+  `376e9530-90ea-4f82-8e4a-4ab50da48d6a`;
+- full Nextest: 3,443/3,443, one named real-host probe skipped, run
+  `8ea53580-4f2f-408d-8629-3a56748b0df1`;
+- Linux all-target Clippy and Windows MSVC bin Clippy: PASS;
+- Bun 5/5 + 12/12; Python 64/64; `cargo fmt --all -- --check`: PASS.
+
+Fresh release p95:
+
+| Metric | Result | Frozen budget |
+|---|---:|---:|
+| 120x40 compute p95 | 10 us | <= 500 us |
+| 240x80 compute p95 | 14 us | <= 500 us |
+| 120x40 full-frame p95 | 1,153 us | <= 8,000 us |
+| 240x80 full-frame p95 | 4,115 us | <= 16,000 us |
+
+### Graph Truth
+
+The safe sequential CLI refresh reparsed eight changed files with zero
+extraction errors and produced 21,056 nodes / 97,919 edges. Fresh CLI search
+and exact snippets prove `App::handle_key_headless`,
+`App::visible_terminal_owns_paste`, the inbound `src/app/mod.rs` caller, and
+the retained `miller_layout` symbol. The long-lived built-in MCP channel still
+serves the stale 21,041 / 97,701 store and returns zero results for both new
+symbols. It was not restarted and is not represented as fresh.
+
+P7 publication remains intentionally open until this continuity unit is
+committed, the final clean-diff/stable-socket checks pass, and both CyPack refs
+are proven fast-forwarded. FM5 remains a separate evidence-only placement
+decision and is not part of the Miller production-completion PRD.
 
 ## Current Override — P6 Closed, P7 Open
 

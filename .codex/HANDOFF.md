@@ -1,5 +1,37 @@
 # SESSION HANDOFF — Herdr Shell Foundation / Native FM — 2026-07-16
 
+## CURRENT OVERRIDE — MILLER PRODUCTION P7 VERIFIED — 2026-07-17
+
+This override supersedes every older next-action statement below.
+
+- Branch `feat/native-fm`; verified P7 product head `d7997d0d`.
+- P0-P7 implementation and verification are closed. The isolated physical
+  matrix used unique throwaway XDG/socket state, exercised 240x80 and 80x24,
+  and left zero socket/fd/root residue. Stable socket inode/mode/mtime stayed
+  `21223953 600 1783871657`.
+- The physical client path exposed two real hidden-PTY leaks. Atomic
+  RED/GREEN pairs `714849bc`/`53f73f23` and
+  `5844db41`/`d7997d0d` now route headless keys/capture through
+  `ShellInputOwner` and block paste unless the visible terminal owns input.
+- Fresh gates: owner/paste 35/35; platform/input 146/146; Miller targeted
+  245/245; deterministic failure substitutions 10/10; full Rust
+  3,443/3,443 plus one named real-host skip; both Clippy targets; Bun 17/17;
+  Python 64/64.
+- Fresh release p95: 10us/14us compute and 1,153us/4,115us full frame at
+  120x40/240x80.
+- Fresh sequential CLI graph: 21,056 nodes / 97,919 edges, zero extraction
+  errors, current owner seams and `miller_layout` present. The built-in MCP
+  remains stale at 21,041 / 97,701 and was not restarted.
+- Exact next action: commit this P7 evidence/continuity unit, run clean-diff
+  and stable-socket checks, fetch/prove fast-forward ancestry, push only
+  CyPack `feat/native-fm` and `master`, and verify exact remote refs.
+- After P7 publication, execute FM5 only: evidence fixtures and explicit
+  preview/Inspector placement GO/NO-GO. FM5 evidence cannot add production
+  RightPanel code.
+- Never push upstream. Never touch or stage `.superpowers/`.
+
+Canonical detail: `.codex/evidence/miller-production-progress.md`.
+
 ## CURRENT OVERRIDE — MILLER PRODUCTION P6 — 2026-07-17
 
 This override supersedes every older next-action statement below.
@@ -377,85 +409,18 @@ No lower-priority task may preempt P0 merely because it is easier. A blocker
 does not authorize jumping lanes; record it and request user direction if safe
 in-scope alternatives are exhausted.
 
-## 8. COMPLETE UNCHECKED TASK INVENTORY — 125 ITEMS
+## 8. COMPLETE UNCHECKED TASK INVENTORY — 97 ITEMS
 
 The two blocks below are generated from the canonical registries and are part
-of this handoff. Count after SF4.1 closure: 36 product-program items plus 89
+of this handoff. Current count: 8 product/deferred items plus 89
 change-pipeline items. The next agent must recount after reading; any mismatch
 means registry drift and must be reconciled before code.
 
 ### 8.1 Product / Shell / FM / Deferred Registry — exact unchecked items
 
 <!-- PRODUCT_OPEN_TASKS_START -->
-- [ ] RED-test focus scope entry/restore, active capture, topmost semantic hit,
-  page/global shortcut precedence, stale generation rejection, and no-owner
-  fallback before adding router production state.
-- [ ] Add one bounded focus/capture router shared by mouse and keyboard. It
-  must route overlay -> capture -> active Stage surface -> shell/page -> global
-  and never infer authority from paint output or stale coordinates.
-- [ ] Prove terminal resize, surface close/failure, focus target disappearance,
-  hidden/zero regions, and capture cancellation restore one valid owner without
-  replay, duplicate action, or stuck capture.
-- [ ] RED-test every active overlay/context/modal path against Files, shell,
-  dock placeholder geometry, and terminal input. Topmost owner must consume the
-  event even when disabled or stale; no event may fall through to a hidden
-  terminal or background surface.
-- [ ] Make background hit areas, cursor ownership, scroll ownership, and raw
-  terminal input inert whenever a topmost overlay or another Stage surface owns
-  the interaction.
-- [ ] Cover right/middle/modified mouse, double-click timing, wheel, drag,
-  keyboard prefix/global keys, stale frame generations, close/reopen, and tiny
-  terminal failure paths.
-- [ ] Split cached shell geometry projection from typed active-surface
-  projection without moving filesystem, worker, PTY, or runtime work into
-  render.
-- [ ] Prove identical active state skips network frame production; terminal
-  dirty-row retained patching and bounded render queue behavior remain frozen;
-  switching Stage visibility does not destroy or resize hidden terminal runtime
-  on every input/render event.
-- [ ] Close SF4 UI/input/failure/performance/platform/full-gate/Git/graph
-  evidence before starting SF5. Product and change-pipeline commits remain
-  separate.
-- [ ] Render icon-only Terminal/Files dock at preferred 5, min 3, max 9 cells.
-- [ ] Add stable active/running/disabled targets, singleton activation, bounded
-  right-click name popover, overlay blocking, resize/collapse, and tiny-terminal
-  behavior.
-- [ ] Close UI/input/failure/performance/full-gate/Git/graph evidence.
-- [ ] Replace the terminal curtain branch with typed `NativeFiles` Stage
-  projection/render while preserving AppDock/LeftPanel independence.
-- [ ] Preserve `FmState`, watcher, text/image workers, operations, selection,
-  context menus, agent handoff, and all failure/recovery semantics.
-- [ ] Prove singleton open/reactivate/close/failure restores previous Stage and
-  focus; terminal process stays alive but hidden input/hits/cursor are absent.
-- [ ] Close snapshot, render queue, retained PTY, isolated runtime, performance,
-  full-gate, Git, remote-SHA, and graph evidence.
-- [ ] Add logical history <=32, resident directory projections <=5, and at
-  most five visible complete columns.
-- [ ] Add native horizontal wheel, Shift+wheel, and bounded header navigation;
-  clamp after path/cache/terminal shrink and clear stale hits.
-- [ ] Prove close/reopen reset, inaccessible ancestors, render purity, resource
-  bounds, full gates, publication, and graph freshness.
-- [ ] Reuse the Shell resize transaction for min 16/preferred 28/max 64 column
-  widths.
-- [ ] Prove preview causes zero persistence/PTY/filesystem/image-target churn;
-  commit updates one revision and at most one final image target.
-- [ ] Close stale divider, terminal resize, cancel, 1,000-move bound,
-  cross-layer/full/performance/Git/graph gates.
-- [ ] Generate stable column/directory/entry/generation row targets for every
-  rendered directory column.
-- [ ] Route plain/right/double/wheel gestures in parent/current/preview/ancestor
-  columns; keep Ctrl/Shift operation authority current-directory-only.
-- [ ] Revalidate non-current paths before mutation; consume stale/reordered/
-  deleted/evicted targets without replay or side effect.
-- [ ] Close overlay/background-blocking, context/operation/selection, isolated
-  SGR mouse, full-gate, Git, and graph evidence.
-- [ ] Append one child segment on directory selection, truncate descendants on
-  ancestor branch change, and replace deeper chain with file preview.
-- [ ] Restore exact child focus/cursor/viewport; handle missing/hidden/reordered/
-  deleted/root/inaccessible paths deterministically.
-- [ ] Preserve all N2.1 tests, chain <=32, resident <=5, watcher generations,
-  close/reopen reset, adversarial 10,000-action invariants, and performance.
-- [ ] Close full gates, isolated deep-navigation proof, publication, and graph.
+- [ ] Publish only after P7 isolated runtime and final continuity closure.
+- [ ] Publish only after P7 isolated runtime and final continuity closure.
 - [ ] Measure inline final column, Shell RightPanel, and adaptive hybrid across
   terminal/path/Unicode/preview/failure/focus/performance fixtures.
 - [ ] Record raw evidence and explicit GO/NO-GO. A NO-GO keeps inline preview;

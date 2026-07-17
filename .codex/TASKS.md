@@ -269,7 +269,7 @@ Progress evidence:
 - [x] Close the deliberately deferred program-wide render queue, retained PTY,
   and named p95/outgoing-byte evidence with the completed Miller production
   chain.
-- [ ] Complete the isolated runtime portion in P7; do not summarize it as
+- [x] Complete the isolated runtime portion in P7; do not summarize it as
   measured before the throwaway socket/XDG matrix and zero-residue proof.
 
 ### FM1 — Horizontal Miller Viewport
@@ -312,7 +312,8 @@ Progress evidence:
   deleted/evicted targets without replay or side effect.
 - [x] Close overlay/background-blocking, context/operation/selection,
   full-gate, and CLI-graph evidence.
-- [ ] Close isolated SGR mouse evidence and publication in P7.
+- [x] Close isolated SGR mouse evidence in P7; publication remains the shared
+  final P7 action.
 
 ### FM4 — Finder-Like Path-Stable Growing Navigation
 
@@ -323,7 +324,8 @@ Progress evidence:
 - [x] Preserve all N2.1 tests, chain <=32, resident <=5, watcher generations,
   close/reopen reset, adversarial 10,000-action invariants, and performance.
 - [x] Close full gates and CLI graph evidence.
-- [ ] Close isolated deep-navigation proof and publication in P7.
+- [x] Close isolated deep-navigation proof in P7; publication remains the
+  shared final P7 action.
 
 ### FM5 — Preview / Inspector Placement
 
