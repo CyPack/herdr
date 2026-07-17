@@ -61,6 +61,129 @@ impl ResolvedMillerRow {
     }
 }
 
+impl crate::app::App {
+    pub(super) fn resolve_miller_mouse_row(
+        &self,
+        column: u16,
+        row: u16,
+    ) -> Option<ResolvedMillerRow> {
+        let files_generation = self.state.stage.active_instance_generation()?;
+        let file_manager = self.state.file_manager.as_ref()?;
+        resolve_live_miller_row(
+            &self.state.view.file_manager_miller,
+            file_manager,
+            files_generation,
+            column,
+            row,
+        )
+    }
+
+    /// Apply the two exact horizontal Miller gestures. Recognized gestures
+    /// remain consumed even when the immutable frame has gone stale; stale
+    /// geometry must never leak through to another Files action.
+    pub(super) fn handle_miller_horizontal_scroll(
+        &mut self,
+        kind: crossterm::event::MouseEventKind,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> bool {
+        use crossterm::event::{KeyModifiers, MouseEventKind};
+
+        let delta = match (kind, modifiers) {
+            (MouseEventKind::ScrollLeft, KeyModifiers::NONE)
+            | (MouseEventKind::ScrollUp, KeyModifiers::SHIFT) => -1,
+            (MouseEventKind::ScrollRight, KeyModifiers::NONE)
+            | (MouseEventKind::ScrollDown, KeyModifiers::SHIFT) => 1,
+            _ => return false,
+        };
+
+        self.last_file_manager_click = None;
+        let active_generation = self.state.stage.active_instance_generation();
+        let snapshot = &self.state.view.file_manager_miller;
+        let target = (snapshot.files_generation == active_generation)
+            .then(|| {
+                self.state
+                    .file_manager
+                    .as_ref()
+                    .and_then(|file_manager| snapshot.horizontal_scroll_target(file_manager, delta))
+            })
+            .flatten();
+        if let (Some(file_manager), Some(target)) = (self.state.file_manager.as_mut(), target) {
+            file_manager.miller.horizontal.first_visible = target;
+        }
+        true
+    }
+
+    /// Revalidate and activate a non-current row before opening the existing
+    /// current-directory context menu. Returns only the exact live current
+    /// index/path pair accepted by the downstream context-menu authority.
+    pub(super) fn activate_miller_context_row(
+        &mut self,
+        row: &ResolvedMillerRow,
+    ) -> Option<(usize, std::path::PathBuf)> {
+        let (directory_path, entry_path) = row.directory_selection_target()?;
+        let activated = self
+            .state
+            .file_manager
+            .as_mut()
+            .is_some_and(|file_manager| {
+                file_manager.activate_directory_selection(&directory_path, &entry_path)
+            });
+        activated.then_some(())?;
+        self.state.file_manager.as_ref().and_then(|file_manager| {
+            (file_manager.selected().map(|entry| &entry.path) == Some(&entry_path))
+                .then_some((file_manager.cursor, entry_path))
+        })
+    }
+
+    /// Select or enter an exact live non-current Miller row. The first click
+    /// activates its owning directory; a second click on the same stable path
+    /// enters it after revalidation.
+    pub(super) fn handle_miller_non_current_plain_click(
+        &mut self,
+        row: &ResolvedMillerRow,
+    ) -> bool {
+        let Some((directory_path, entry_path)) = row.directory_selection_target() else {
+            return false;
+        };
+        let click = crate::app::FileManagerClickState {
+            entry_path: entry_path.clone(),
+            at: std::time::Instant::now(),
+        };
+        let is_double_click = self
+            .last_file_manager_click
+            .as_ref()
+            .is_some_and(|last| last.is_double_click_for(&click));
+        let activated = self
+            .state
+            .file_manager
+            .as_mut()
+            .is_some_and(|file_manager| {
+                let activated =
+                    file_manager.activate_directory_selection(&directory_path, &entry_path);
+                if activated && is_double_click {
+                    file_manager.enter();
+                }
+                activated
+            });
+        self.last_file_manager_click = activated.then_some(click).filter(|_| !is_double_click);
+        true
+    }
+
+    pub(super) fn scroll_miller_non_current_row(
+        &mut self,
+        row: &ResolvedMillerRow,
+        delta: i8,
+    ) -> bool {
+        let Some((target, visible_rows)) = row.non_current_scroll_target() else {
+            return false;
+        };
+        if let Some(file_manager) = self.state.file_manager.as_mut() {
+            let _ = file_manager.scroll_miller_column(&target, delta, visible_rows);
+        }
+        true
+    }
+}
+
 pub(super) fn resolve_live_miller_row(
     snapshot: &crate::ui::MillerViewSnapshot,
     file_manager: &crate::fm::FmState,

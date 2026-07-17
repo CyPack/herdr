@@ -278,32 +278,7 @@ impl App {
             return FileManagerMouseDispatch::NotHandled;
         }
 
-        // FM1.3: horizontal viewport input is presentation-local and consumes
-        // the exact current frame's bounded origin authority. Native
-        // ScrollLeft/Right and Shift+vertical-wheel share the same axis;
-        // unrelated modifiers fail closed. Recompute happens on the next
-        // frame, while repeated wheel events can safely reuse these bounds.
-        let horizontal_delta = match (mouse.kind, mouse.modifiers) {
-            (MouseEventKind::ScrollLeft, KeyModifiers::NONE)
-            | (MouseEventKind::ScrollUp, KeyModifiers::SHIFT) => Some(-1),
-            (MouseEventKind::ScrollRight, KeyModifiers::NONE)
-            | (MouseEventKind::ScrollDown, KeyModifiers::SHIFT) => Some(1),
-            _ => None,
-        };
-        if let Some(delta) = horizontal_delta {
-            self.last_file_manager_click = None;
-            let active_generation = self.state.stage.active_instance_generation();
-            let snapshot = &self.state.view.file_manager_miller;
-            let target = (snapshot.files_generation == active_generation)
-                .then(|| {
-                    self.state.file_manager.as_ref().and_then(|file_manager| {
-                        snapshot.horizontal_scroll_target(file_manager, delta)
-                    })
-                })
-                .flatten();
-            if let (Some(file_manager), Some(target)) = (self.state.file_manager.as_mut(), target) {
-                file_manager.miller.horizontal.first_visible = target;
-            }
+        if self.handle_miller_horizontal_scroll(mouse.kind, mouse.modifiers) {
             return FileManagerMouseDispatch::Consumed;
         }
 
@@ -355,21 +330,7 @@ impl App {
                     .map(|area| area.action)
             });
 
-        let miller_row_target =
-            self.state
-                .stage
-                .active_instance_generation()
-                .and_then(|files_generation| {
-                    self.state.file_manager.as_ref().and_then(|file_manager| {
-                        super::super::file_manager_miller::resolve_live_miller_row(
-                            &self.state.view.file_manager_miller,
-                            file_manager,
-                            files_generation,
-                            mouse.column,
-                            mouse.row,
-                        )
-                    })
-                });
+        let miller_row_target = self.resolve_miller_mouse_row(mouse.column, mouse.row);
         let entry_target = miller_row_target
             .as_ref()
             .and_then(|row| row.current_entry_target());
@@ -399,24 +360,8 @@ impl App {
             && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right))
             && mouse.modifiers.is_empty()
         {
-            if let Some((directory_path, entry_path)) = miller_row_target
-                .as_ref()
-                .and_then(|row| row.directory_selection_target())
-            {
-                let activated = self
-                    .state
-                    .file_manager
-                    .as_mut()
-                    .is_some_and(|file_manager| {
-                        file_manager.activate_directory_selection(&directory_path, &entry_path)
-                    });
-                if activated {
-                    context_entry_target =
-                        self.state.file_manager.as_ref().and_then(|file_manager| {
-                            (file_manager.selected().map(|entry| &entry.path) == Some(&entry_path))
-                                .then_some((file_manager.cursor, entry_path))
-                        });
-                }
+            if let Some(row) = miller_row_target.as_ref() {
+                context_entry_target = self.activate_miller_context_row(row);
             }
         }
 
@@ -537,32 +482,10 @@ impl App {
                 }
             }
             MouseEventKind::Down(MouseButton::Left) if mouse.modifiers.is_empty() => {
-                if let Some((directory_path, entry_path)) = miller_row_target
+                if miller_row_target
                     .as_ref()
-                    .and_then(|row| row.directory_selection_target())
+                    .is_some_and(|row| self.handle_miller_non_current_plain_click(row))
                 {
-                    let click = FileManagerClickState {
-                        entry_path: entry_path.clone(),
-                        at: std::time::Instant::now(),
-                    };
-                    let is_double_click = self
-                        .last_file_manager_click
-                        .as_ref()
-                        .is_some_and(|last| last.is_double_click_for(&click));
-                    let activated = self
-                        .state
-                        .file_manager
-                        .as_mut()
-                        .is_some_and(|file_manager| {
-                            let activated = file_manager
-                                .activate_directory_selection(&directory_path, &entry_path);
-                            if activated && is_double_click {
-                                file_manager.enter();
-                            }
-                            activated
-                        });
-                    self.last_file_manager_click =
-                        activated.then_some(click).filter(|_| !is_double_click);
                     return FileManagerMouseDispatch::Consumed;
                 }
                 let Some((entry_idx, entry_path)) = entry_target else {
@@ -592,13 +515,8 @@ impl App {
                     if let Some(file_manager) = self.state.file_manager.as_mut() {
                         file_manager.move_up();
                     }
-                } else if let Some((target, visible_rows)) = miller_row_target
-                    .as_ref()
-                    .and_then(|row| row.non_current_scroll_target())
-                {
-                    if let Some(file_manager) = self.state.file_manager.as_mut() {
-                        let _ = file_manager.scroll_miller_column(&target, -1, visible_rows);
-                    }
+                } else if let Some(row) = miller_row_target.as_ref() {
+                    let _ = self.scroll_miller_non_current_row(row, -1);
                 }
             }
             MouseEventKind::ScrollDown if mouse.modifiers.is_empty() => {
@@ -607,13 +525,8 @@ impl App {
                     if let Some(file_manager) = self.state.file_manager.as_mut() {
                         file_manager.move_down();
                     }
-                } else if let Some((target, visible_rows)) = miller_row_target
-                    .as_ref()
-                    .and_then(|row| row.non_current_scroll_target())
-                {
-                    if let Some(file_manager) = self.state.file_manager.as_mut() {
-                        let _ = file_manager.scroll_miller_column(&target, 1, visible_rows);
-                    }
+                } else if let Some(row) = miller_row_target.as_ref() {
+                    let _ = self.scroll_miller_non_current_row(row, 1);
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {
@@ -1797,6 +1710,61 @@ mod tests {
             file_manager.selected().map(|entry| &entry.path),
             Some(&target.entry_path)
         );
+    }
+
+    // TP-FM3-OVERLAY: the typed Files handler remains fail-closed while a
+    // topmost overlay owns input. Exact live row geometry cannot select,
+    // activate, scroll, or open a second context surface behind that overlay.
+    #[test]
+    fn overlay_blocks_every_typed_miller_row_gesture() {
+        let td = TempDir::new("typed-row-overlay");
+        td.dir("directory");
+        td.file("file.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 80, 16));
+        let target = app
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .find(|column| column.kind.is_current())
+            .and_then(|column| column.rows.get(1))
+            .cloned()
+            .expect("second typed CURRENT row");
+        let before = app.state.file_manager.as_ref().expect("open FM").clone();
+        app.state.mode = Mode::ContextMenu;
+
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Down(MouseButton::Right),
+            MouseEventKind::ScrollDown,
+        ] {
+            assert_eq!(
+                app.handle_file_manager_mouse(mouse(kind, target.rect.x, target.rect.y)),
+                FileManagerMouseDispatch::NotHandled
+            );
+        }
+
+        let after = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(after.cwd, before.cwd);
+        assert_eq!(after.entries, before.entries);
+        assert_eq!(after.cursor, before.cursor);
+        assert_eq!(after.viewport_start, before.viewport_start);
+        assert_eq!(after.preview_viewport_start, before.preview_viewport_start);
+        assert_eq!(
+            after.multi_selection_paths(),
+            before.multi_selection_paths()
+        );
+        assert_eq!(after.parent, before.parent);
+        assert_eq!(after.preview, before.preview);
+        assert_eq!(after.directory_generation, before.directory_generation);
+        assert_eq!(after.preview_generation, before.preview_generation);
+        assert_eq!(after.miller, before.miller);
+        assert!(app.state.context_menu.is_none());
     }
 
     // TP-FM3-ALL-COLUMN-PLAIN: one plain click in each actionable visible

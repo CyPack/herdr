@@ -794,6 +794,20 @@ mod tests {
                 assert_eq!(row.rect.intersection(column.content_rect), row.rect);
             }
         }
+        let row_rects = snapshot
+            .columns
+            .iter()
+            .flat_map(|column| column.rows.iter().map(|row| row.rect))
+            .collect::<Vec<_>>();
+        for (index, rect) in row_rects.iter().enumerate() {
+            assert!(!rect.is_empty(), "every actionable row has a hit area");
+            for other in row_rects.iter().skip(index + 1) {
+                assert!(
+                    rect.intersection(*other).is_empty(),
+                    "generation-safe row hit areas are globally disjoint"
+                );
+            }
+        }
         let resident_row = &snapshot.columns[1].rows[0];
         assert_eq!(
             (
