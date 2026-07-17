@@ -212,9 +212,14 @@ pub fn read_dir_entries(dir: &Path, show_hidden: bool) -> Vec<FileEntry> {
 }
 
 fn read_directory_snapshot(dir: &Path, show_hidden: bool) -> FmDirectorySnapshot {
+    crate::render_prof::event("fm.filesystem.read");
     let read = match std::fs::read_dir(dir) {
-        Ok(read) => read,
+        Ok(read) => {
+            crate::render_prof::event("fm.filesystem.read_success");
+            read
+        }
         Err(err) => {
+            crate::render_prof::event("fm.filesystem.read_failure");
             // A directory that does not exist yet is a normal state; only log the
             // genuinely unexpected failures, and never spam.
             if err.kind() != std::io::ErrorKind::NotFound {

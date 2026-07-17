@@ -189,6 +189,7 @@ impl NativeFileManagerWatcher {
         match result {
             FmWatcherSync::Unchanged => {}
             FmWatcherSync::Started { .. } => {
+                crate::render_prof::event("fm.watcher.rebound");
                 self.receiver = next_receiver;
                 self.overflowed = next_overflowed;
                 self.mode = next_mode;
