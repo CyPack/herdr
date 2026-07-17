@@ -1499,6 +1499,61 @@ mod tests {
     }
 
     #[test]
+    fn files_close_cancels_typed_miller_resize_capture() {
+        let td = TempDir::new("fm3-divider-close-cancel");
+        td.file("00.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 86, 16));
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .first()
+            .expect("current Files projection exposes a divider")
+            .rect;
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                divider.x,
+                divider.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Drag(MouseButton::Left),
+                divider.x + 4,
+                divider.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert!(
+            app.state.shell_interaction.miller_resize_active(),
+            "precondition: Files owns a typed Miller capture"
+        );
+
+        app.state.close_file_manager();
+
+        assert!(
+            !app.state.shell_interaction.resize_active(),
+            "closing Files must retire its transient resize authority"
+        );
+        assert!(
+            app.state.file_manager.is_none(),
+            "the closed Files model cannot receive a later commit"
+        );
+        assert!(
+            app.state.view.file_manager_miller.dividers.is_empty(),
+            "closing Files retires the divider hit generation atomically"
+        );
+    }
+
+    #[test]
     fn miller_mouse_up_commits_once() {
         let td = TempDir::new("fm3-divider-commit");
         td.file("00.txt");
