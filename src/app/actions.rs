@@ -522,6 +522,11 @@ impl AppState {
     pub(crate) fn close_file_manager(&mut self) {
         self.request_file_manager_sidebar_navigation = None;
         self.request_file_manager_context_action = None;
+        if self.shell_interaction.miller_resize_active() {
+            let update = self.shell_interaction.cancel_resize();
+            debug_assert!(!update.marks_persistence_dirty());
+            debug_assert!(!update.requests_pty_resize());
+        }
         self.stage.close_files();
         self.file_manager = None;
         self.miller_trio_drag = None;
