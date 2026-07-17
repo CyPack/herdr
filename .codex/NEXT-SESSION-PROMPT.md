@@ -51,17 +51,18 @@ At this handoff there are:
 
 Recount them. If counts differ, stop before code and reconcile the registry,
 handoff, and current state. Mark only one product microtask `in_progress`:
-the first SF4.2 RED. Keep every later product task pending and the
+the first SF6.1 RED. Keep every later product task pending and the
 non-product pipeline paused.
 
 Priority is mandatory:
 
-1. P0 ACTIVE: SF5 AppDock. SF4 is FULLY CLOSED (4.1 8/8, 4.2 8/8 at
-   `20f659c1`, 4.3 6/6 at `f973740e`; registry reconciled `5349bb85`).
-   SF5.1 (`64d5dd5e`/`cb0c77fd`, dock model/geometry/pure render, 7/7)
-   is CLOSED. Next: SF5.2 dock interaction + anchored name popover
-   (reuse the SF3 reducer; popover enters through `enter_overlay_mode`),
-   then the SF5 closure gate, then SF6. Evidence:
+1. P0 ACTIVE: SF6 Files-to-Stage migration. SF4 and SF5 are FULLY
+   CLOSED (SF5.1 `cb0c77fd` 7/7; SF5.2 `d031ef26` 7/7 with the SF5
+   closure gate incl. Bun/Python). Next: SF6.1 move the Files render
+   projection out of the terminal curtain onto the Workspace Stage, then
+   SF6.2 lifecycle/input migration, SF6.3 perf/failure/isolated closure,
+   then FM1 horizontal Miller viewport and FM2 column drag-resize (the
+   custom-layout target). Evidence:
    `.codex/evidence/shell-foundation-sf5-app-dock-progress.md`. The
    custom-layout target guide (scrollable Miller area + edge drag-resize
    columns + SSH performance architecture) lives locally at
@@ -80,15 +81,16 @@ continuity, and pipeline files in one commit.
 ## Current Verified Truth
 
 - Branch: `feat/native-fm`.
-- Verified product head: `cb0c77fd`
-  (`feat: render bounded native app dock`, SF5.1 CLOSED).
-- Matching RED: `64d5dd5e`
-  (`test: define native app dock presentation`).
+- Verified product head: `d031ef26`
+  (`feat: activate dock apps with bounded name popover`, SF5.2 CLOSED —
+  SF5 phase closed).
+- Matching RED: `406db487`
+  (`test: define app dock interaction and popover`).
 - Separate test-stability commit `3c853a70` closed the parallel-load
   process-exit suppression flake class in `src/terminal/state.rs`.
-- SF0-SF3 are closed. SF4.1 is CLOSED with 8/8 behavior slices GREEN.
-- SF4 remains active; SF4.2 is the active microphase with slices 01-05
-  GREEN (05 fully closed by the `3880c66b` entry sweep) and 06-08 pending.
+- SF0-SF5 are ALL closed (SF4.1 8/8, SF4.2 8/8 at `20f659c1`, SF4.3 6/6
+  at `f973740e`, SF5.1 `cb0c77fd`, SF5.2 `d031ef26`). The active phase is
+  SF6 (Files-to-Stage migration).
 - Closed SF4.1 pairs:
   - `557bcc77` / `6a18f0c7`: default Terminal Stage.
   - `f22bdac4` / `b9180de3`: Files activation history.
@@ -99,10 +101,8 @@ continuity, and pipeline files in one commit.
   - `056f0879` / `f0f32075`: failed open restores exact Stage/focus.
   - `784fdc2e` / `944a9d4c`: stage switches preserve terminal runtime
     (`AppDefinition`/`LaunchPolicy` + pure `StageState::surface_view()`).
-- Next tests are not yet written: the SF5.2 catalog (dock left/right
-  click activation, bounded name popover with topmost ownership, popover
-  reanchor after resize, disabled-target consumption, shared SF3
-  resize/collapse transaction).
+- Next tests are not yet written: the SF6.1 catalog from the plan's
+  "Task SF6.1" (Files render projection out of the terminal curtain).
 - Legacy `AppState.file_manager: Option<FmState>` curtain still renders. Do
   not remove it until SF6.
 - `previous_pane_focus` is existing pane history, not the new SF4.2 focus
@@ -110,13 +110,12 @@ continuity, and pipeline files in one commit.
   seam, never persisted.
 - Protocol remains 16. SF4.1 and SF4.2 stayed client-local presentation
   state.
-- Full current gate: Nextest 3,322/3,322 passed plus one named B0 skip
-  (`--no-fail-fast`), Linux all-target Clippy, Windows MSVC bin Clippy,
-  fmt, diff and added-production-`unwrap()` clean (Bun 5/5 + 12/12 and
-  Python 64/64 last verified at the SF4.3 closure gate `f973740e`; rerun
-  at the SF5 closure gate).
+- Full current SF5 CLOSURE gate: Nextest 3,329/3,329 passed plus one
+  named B0 skip (`--no-fail-fast`), Linux all-target Clippy, Windows MSVC
+  bin Clippy, Bun 5/5 + 12/12, Python 64/64, fmt, diff and
+  added-production-`unwrap()` clean.
 - Both CyPack refs equal exact SHA
-  `cb0c77fd4d831d41f2e85cb2cebd80f589d9c078`.
+  `d031ef26d65b26967ac758a28da9dc478d996ae0`.
 - User-owned `.superpowers/` is untracked and must never be staged or edited.
 
 ## Mandatory Git and Remote Audit

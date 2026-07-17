@@ -202,9 +202,16 @@
   with active bar/running/idle affordances, BaseLayer wiring inert until
   a dock-bearing template is live. Dock table 7/7; full suite
   3,322/3,322. Current verified head: `cb0c77fd`.
-- Next microtask: SF5.2 dock interaction + anchored name popover (SF3
-  reducer reuse, `enter_overlay_mode` popover), then the SF5 closure
-  gate, then SF6. See
+- SF5.2 is CLOSED (`406db487`/`d031ef26`): shared `activate_dock_app`
+  authority, fail-closed `handle_app_dock_mouse` over live dock terrain,
+  `ContextMenuKind::AppDock` popover through `enter_overlay_mode`, SF3
+  region-generic `ResizeTransaction` pinned for the dock's 3..=9 bounds.
+  SF5 PHASE CLOSED with the full gate (Rust 3,329/3,329 + B0 skip, Bun
+  5/5 + 12/12, Python 64/64, both Clippy targets). Current verified head:
+  `d031ef26`.
+- Next microtask: SF6.1 — move the Files render projection out of the
+  terminal curtain onto the Workspace Stage, then SF6.2 lifecycle/input
+  migration, SF6.3 closure, then FM1/FM2 (the custom-layout target). See
   `.codex/evidence/shell-foundation-sf5-app-dock-progress.md`.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one

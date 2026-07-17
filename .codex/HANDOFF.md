@@ -11,8 +11,9 @@
 - Branch: `feat/native-fm`
 - Acting identity: CyPack external contributor; `origin` is the writable
   `CyPack/herdr` fork and `upstream` is read-only.
-- Current verified product head: `cb0c77fd`
-  (`feat: render bounded native app dock`, SF5.1 CLOSED), RED `64d5dd5e`.
+- Current verified product head: `d031ef26`
+  (`feat: activate dock apps with bounded name popover`, SF5.2 CLOSED —
+  SF5 PHASE CLOSED), RED `406db487`. Prior: SF5.1 `64d5dd5e`/`cb0c77fd`.
   SF4 fully closed at `f973740e` (4.1 8/8, 4.2 8/8, 4.3 6/6); the SF4
   registry entries in `.codex/TASKS.md` were reconciled at `5349bb85`,
   and the custom-layout architecture guide lives locally at
@@ -63,19 +64,23 @@
   proven already closed by recon plus an 8-kind event matrix through the
   full production `App::handle_mouse` with a control phase proving the
   same press reaches the live terminal once Files closes.
-- Immediate next microtask: SF5.2 — dock interaction and anchored
-  app-name popover (reuse the SF3 reducer, popover through
-  `enter_overlay_mode`). See
+- SF5.2: shared `activate_dock_app` authority (Files singleton open /
+  Terminal stage restore), fail-closed `handle_app_dock_mouse` over live
+  dock terrain, `ContextMenuKind::AppDock` popover through
+  `enter_overlay_mode` (SF4.2 blocking/restore free), SF3 region-generic
+  `ResizeTransaction` pinned for dock 3..=9 bounds.
+- Immediate next microtask: SF6.1 — move Files render out of the terminal
+  curtain onto the Workspace Stage (recon the plan catalog + curtain seams
+  first). See
   `.codex/evidence/shell-foundation-sf5-app-dock-progress.md`.
-- Product tree: clean at `cb0c77fd`; only the user-owned untracked
+- Product tree: clean at `d031ef26`; only the user-owned untracked
   `.superpowers/` tree exists and must remain untouched/unstaged.
-- Full exact-head gate: 3,322/3,322 Rust tests (`--no-fail-fast`), one
-  named B0 real-host probe skipped; Linux all-target and Windows MSVC bin
-  Clippy; fmt/diff/added-production-unwrap checks passed (Bun 5/5 +
-  12/12 and Python 64/64 last verified at the SF4.3 closure gate
-  `f973740e`; rerun at the SF5 closure gate).
+- Full exact-head SF5 CLOSURE gate: 3,329/3,329 Rust tests
+  (`--no-fail-fast`), one named B0 real-host probe skipped; Linux
+  all-target and Windows MSVC bin Clippy; Bun 5/5 + 12/12; Python 64/64;
+  fmt/diff/added-production-unwrap checks passed.
 - Both CyPack refs (`feat/native-fm`, fork `master`) equal exact SHA
-  `cb0c77fd4d831d41f2e85cb2cebd80f589d9c078` at this checkpoint;
+  `d031ef26d65b26967ac758a28da9dc478d996ae0` at this checkpoint;
   `upstream` untouched.
 - Fresh sequential Codebase Memory store refreshed post-publication with
   current `blocking_overlay_active`, `shell_mouse_input_owner`,
