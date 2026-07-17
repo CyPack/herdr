@@ -550,7 +550,12 @@ impl AppState {
                         return None;
                     }
 
-                    if let Some(tab) = self.sidebar_tab_at(mouse.column, mouse.row) {
+                    if let Some(tab) = self
+                        .sidebar_tab_at(mouse.column, mouse.row)
+                        // Only an unmodified primary click owns tab switching
+                        // and Stage activation; modified clicks stay inert.
+                        .filter(|_| mouse.modifiers.is_empty())
+                    {
                         // Switching must stay I/O-free: the tab renders from
                         // the cache instantly and the scheduled poll (fast
                         // fingerprint check) refreshes it moments later.
