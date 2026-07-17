@@ -17,7 +17,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
+use std::path::{Path, PathBuf};
 
 use super::text::truncate_end;
 use super::widgets::{centered_popup_rect, render_panel_shell};
@@ -119,7 +120,6 @@ struct MillerLayout {
 struct FileManagerAreas {
     header: Rect,
     columns: MillerLayout,
-    status: Rect,
 }
 
 fn column_constraint(override_width: Option<u16>) -> Constraint {
@@ -201,11 +201,10 @@ pub(crate) fn file_manager_miller_viewport_area(area: Rect) -> Rect {
 }
 
 fn file_manager_areas_with(area: Rect, overrides: MillerTrioOverrides) -> Option<FileManagerAreas> {
-    let [header, body, status] = file_manager_frame_areas(area)?;
+    let [header, body, _status] = file_manager_frame_areas(area)?;
     Some(FileManagerAreas {
         header,
         columns: miller_layout_with(body, overrides),
-        status,
     })
 }
 
@@ -674,7 +673,7 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
     let Some(fm) = app.file_manager.as_ref() else {
         return;
     };
-    let Some(areas) = file_manager_areas_with(area, fm.trio_overrides) else {
+    let Some([header_area, body_area, status_area]) = file_manager_frame_areas(area) else {
         return;
     };
     let p = &app.palette;
@@ -716,9 +715,9 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         .unwrap_or_else(|| cwd_text.into_owned());
     let identity_width = header_actions
         .first()
-        .map(|action| action.rect.x.saturating_sub(areas.header.x))
-        .unwrap_or(areas.header.width);
-    let identity_area = Rect::new(areas.header.x, areas.header.y, identity_width, 1);
+        .map(|action| action.rect.x.saturating_sub(header_area.x))
+        .unwrap_or(header_area.width);
+    let identity_area = Rect::new(header_area.x, header_area.y, identity_width, 1);
     let header = truncate_end(&action_bar_identity, identity_area.width as usize);
     frame.render_widget(Paragraph::new(header).style(styles.identity), identity_area);
     for action in header_actions {
@@ -736,11 +735,19 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         );
     }
 
-    if areas.columns.current.height == 0 {
-        return;
-    }
-
-    let layout = areas.columns;
+    let fallback_snapshot;
+    let snapshot = if area == app.view.terminal_area {
+        &app.view.file_manager_miller
+    } else {
+        // Unit/component callers can render without a preceding compute_view,
+        // but still consume the same bounded pure projection as production.
+        fallback_snapshot = miller::project_miller_view(
+            body_area,
+            fm,
+            app.stage.active_instance_generation().unwrap_or(0),
+        );
+        &fallback_snapshot
+    };
     let fallback_geometry;
     let (current_rows, current_actions) = if area == app.view.terminal_area {
         (
@@ -748,121 +755,246 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
             app.view.file_manager_row_action_areas.as_slice(),
         )
     } else {
-        // Unit-level/component callers can render into an arbitrary rect
-        // without a preceding full-frame compute_view pass.
-        fallback_geometry = compute_file_manager_row_geometry_with(
-            area,
-            &fm.entries,
-            fm.viewport_start,
-            fm.trio_overrides,
-        );
+        fallback_geometry = snapshot
+            .columns
+            .iter()
+            .find(|column| column.kind.is_current())
+            .map(|column| {
+                compute_file_manager_row_geometry_in_content(
+                    column.content_rect,
+                    &fm.entries,
+                    fm.viewport_start,
+                )
+            })
+            .unwrap_or_default();
         (
             fallback_geometry.rows.as_slice(),
             fallback_geometry.actions.as_slice(),
         )
     };
-    for divider in layout.dividers.into_iter().flatten() {
+    for divider in &snapshot.dividers {
         frame.render_widget(
             Block::default()
                 .borders(Borders::LEFT)
                 .border_style(styles.divider),
-            divider,
+            divider.rect,
         );
     }
 
-    if let Some(parent_area) = layout.parent {
-        if let Some(parent) = fm.parent.as_ref() {
-            render_panel(
-                app,
-                frame,
-                parent_area,
-                "PARENT",
-                &parent.entries,
-                parent.cursor,
-                "(empty)",
-                None,
-                None,
-                None,
-            );
-        } else {
-            render_panel(
-                app,
-                frame,
-                parent_area,
-                "PARENT",
-                &[],
-                None,
-                "(root)",
-                None,
-                None,
-                None,
-            );
-        }
-    }
-
-    let (current_empty_label, current_empty_style) = file_manager_current_empty_state(fm, styles);
-    render_panel(
-        app,
-        frame,
-        layout.current,
-        "CURRENT",
-        &fm.entries,
-        (!fm.entries.is_empty()).then_some(fm.cursor),
-        current_empty_label,
-        Some(current_empty_style),
-        Some(current_rows),
-        Some(fm.multi_selection_paths()),
-    );
-    for action_area in current_actions {
-        if let Some(entry) = fm.entries.get(action_area.entry_idx) {
-            render_row_action(
-                app,
-                frame,
-                action_area,
-                fm.cursor == action_area.entry_idx,
-                fm.multi_selection_paths().contains(&entry.path),
-            );
-        }
-    }
-
-    if let Some(preview_area) = layout.preview {
-        match &fm.preview {
-            FmPreview::None => render_panel(
-                app,
-                frame,
-                preview_area,
-                "PREVIEW",
-                &[],
-                None,
-                "(nothing selected)",
-                None,
-                None,
-                None,
-            ),
-            FmPreview::File(preview) => {
-                render_file_preview(app, frame, preview_area, preview);
+    for column in &snapshot.columns {
+        match &column.kind {
+            miller::MillerColumnKind::Directory {
+                directory, source, ..
+            } => {
+                let title = miller_directory_title(directory, source);
+                match source {
+                    miller::MillerDirectorySource::Resident(id) => {
+                        if let Some(resident) = fm.miller.resident_projection(id) {
+                            render_snapshot_panel(
+                                app,
+                                frame,
+                                column,
+                                &title,
+                                &resident.entries,
+                                column.cursor,
+                                "(empty)",
+                                None,
+                                None,
+                            );
+                        } else {
+                            render_snapshot_panel(
+                                app,
+                                frame,
+                                column,
+                                &title,
+                                &[],
+                                None,
+                                "(unavailable)",
+                                Some(styles.error),
+                                None,
+                            );
+                        }
+                    }
+                    miller::MillerDirectorySource::PreparedParent => {
+                        if let Some(parent) = fm.parent.as_ref() {
+                            render_snapshot_panel(
+                                app,
+                                frame,
+                                column,
+                                &title,
+                                &parent.entries,
+                                column.cursor,
+                                "(empty)",
+                                None,
+                                None,
+                            );
+                        } else {
+                            render_snapshot_panel(
+                                app,
+                                frame,
+                                column,
+                                &title,
+                                &[],
+                                None,
+                                "(unavailable)",
+                                Some(styles.error),
+                                None,
+                            );
+                        }
+                    }
+                    miller::MillerDirectorySource::Unavailable => render_snapshot_panel(
+                        app,
+                        frame,
+                        column,
+                        &title,
+                        &[],
+                        None,
+                        "(unavailable)",
+                        Some(styles.error),
+                        None,
+                    ),
+                }
             }
-            FmPreview::Directory(entries) => render_panel(
+            miller::MillerColumnKind::Current {
+                directory,
+                generation,
+                ..
+            } if directory == &fm.cwd && *generation == fm.preview_generation => {
+                let (empty_label, empty_style) = file_manager_current_empty_state(fm, styles);
+                render_panel(
+                    app,
+                    frame,
+                    column.rect,
+                    "CURRENT",
+                    &fm.entries,
+                    (!fm.entries.is_empty()).then_some(fm.cursor),
+                    empty_label,
+                    Some(empty_style),
+                    Some(current_rows),
+                    Some(fm.multi_selection_paths()),
+                );
+                for action_area in current_actions {
+                    if let Some(entry) = fm.entries.get(action_area.entry_idx) {
+                        render_row_action(
+                            app,
+                            frame,
+                            action_area,
+                            fm.cursor == action_area.entry_idx,
+                            fm.multi_selection_paths().contains(&entry.path),
+                        );
+                    }
+                }
+            }
+            miller::MillerColumnKind::Current { .. } => render_snapshot_panel(
                 app,
                 frame,
-                preview_area,
+                column,
+                "CURRENT",
+                &[],
+                None,
+                "(stale)",
+                Some(styles.error),
+                None,
+            ),
+            miller::MillerColumnKind::Preview {
+                source_path,
+                generation,
+                ..
+            } if *generation == fm.preview_generation
+                && source_path.as_ref() == fm.selected().map(|entry| &entry.path) =>
+            {
+                match &fm.preview {
+                    FmPreview::None => render_snapshot_panel(
+                        app,
+                        frame,
+                        column,
+                        "PREVIEW",
+                        &[],
+                        None,
+                        "(nothing selected)",
+                        None,
+                        None,
+                    ),
+                    FmPreview::File(preview) => {
+                        render_file_preview(app, frame, column.rect, preview);
+                    }
+                    FmPreview::Directory(entries) => render_snapshot_panel(
+                        app, frame, column, "PREVIEW", entries, None, "(empty)", None, None,
+                    ),
+                }
+            }
+            miller::MillerColumnKind::Preview { .. } => render_snapshot_panel(
+                app,
+                frame,
+                column,
                 "PREVIEW",
-                entries,
+                &[],
                 None,
-                "(empty)",
-                None,
-                None,
+                "(stale)",
+                Some(styles.error),
                 None,
             ),
         }
     }
 
-    if areas.status.width > 0 && areas.status.height > 0 {
+    if status_area.width > 0 && status_area.height > 0 {
         if let Some((status, style)) =
             file_manager_status_line(fm, app.file_manager_operation.as_ref(), styles)
         {
-            let status = truncate_end(&format!(" {status}"), areas.status.width as usize);
-            frame.render_widget(Paragraph::new(status).style(style), areas.status);
+            let status = truncate_end(&format!(" {status}"), status_area.width as usize);
+            frame.render_widget(Paragraph::new(status).style(style), status_area);
+        }
+    }
+}
+
+fn miller_directory_title(directory: &Path, source: &miller::MillerDirectorySource) -> String {
+    if matches!(source, miller::MillerDirectorySource::PreparedParent) {
+        return "PARENT".to_string();
+    }
+    directory
+        .file_name()
+        .filter(|name| !name.is_empty())
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| directory.to_string_lossy().into_owned())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_snapshot_panel(
+    app: &AppState,
+    frame: &mut Frame,
+    column: &miller::MillerColumnView,
+    title: &str,
+    entries: &[FileEntry],
+    selected: Option<usize>,
+    empty_label: &str,
+    empty_style: Option<Style>,
+    multi_selected_paths: Option<&HashSet<PathBuf>>,
+) {
+    let styles = file_manager_visual_styles(&app.palette);
+    let [title_area, list_area] = panel_areas(column.rect);
+    let title = truncate_end(&format!(" {title}"), title_area.width as usize);
+    frame.render_widget(Paragraph::new(title).style(styles.panel_title), title_area);
+    if list_area.height == 0 {
+        return;
+    }
+    if entries.is_empty() {
+        let label = truncate_end(&format!("  {empty_label}"), list_area.width as usize);
+        frame.render_widget(
+            Paragraph::new(label).style(empty_style.unwrap_or(styles.empty)),
+            list_area,
+        );
+        return;
+    }
+    for row in &column.rows {
+        if let Some(entry) = entries.get(row.entry_index) {
+            render_entry_row(
+                app,
+                frame,
+                row.rect,
+                entry,
+                selected == Some(row.entry_index),
+                multi_selected_paths.is_some_and(|paths| paths.contains(&entry.path)),
+            );
         }
     }
 }
@@ -1423,7 +1555,6 @@ mod tests {
     use ratatui::buffer::Buffer;
     use ratatui::Terminal;
     use std::fs;
-    use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     fn unique() -> u64 {
@@ -1537,6 +1668,7 @@ mod tests {
         for (width, expected_column_count) in [(16, 1usize), (57, 2), (86, 3), (115, 4), (144, 5)] {
             let frame = Rect::new(0, 0, width, 8);
             let body = file_manager_miller_viewport_area(frame);
+            app.view.terminal_area = frame;
             app.view.file_manager_miller =
                 miller::project_miller_view(body, app.file_manager.as_ref().expect("open FM"), 1);
             assert_eq!(
@@ -1572,6 +1704,225 @@ mod tests {
         }
     }
 
+    #[test]
+    fn windowed_render_uses_current_resident_parent_unavailable_and_preview_sources() {
+        let unavailable = PathBuf::from("/virtual/unavailable");
+        let resident = PathBuf::from("/virtual/resident");
+        let parent = PathBuf::from("/virtual/parent");
+        let current = parent.join("current");
+        let selected = current.join("selected");
+        let mut fm = FmState::test_empty(current.clone());
+        fm.miller.chain = [
+            unavailable,
+            resident.clone(),
+            parent.clone(),
+            current.clone(),
+        ]
+        .into_iter()
+        .map(crate::fm::miller::MillerPathSegment::new)
+        .collect();
+        fm.miller.focused_directory = current.clone();
+        fm.entries = vec![FileEntry {
+            name: "current-only".to_string(),
+            path: selected.clone(),
+            is_dir: true,
+            operation_supported: true,
+        }];
+        fm.parent = Some(crate::fm::FmParent {
+            entries: vec![
+                FileEntry {
+                    name: "current".to_string(),
+                    path: current.clone(),
+                    is_dir: true,
+                    operation_supported: true,
+                },
+                FileEntry {
+                    name: "parent-only.txt".to_string(),
+                    path: parent.join("parent-only.txt"),
+                    is_dir: false,
+                    operation_supported: true,
+                },
+            ],
+            cursor: Some(0),
+        });
+        fm.preview = FmPreview::Directory(vec![FileEntry {
+            name: "preview-only.txt".to_string(),
+            path: selected.join("preview-only.txt"),
+            is_dir: false,
+            operation_supported: true,
+        }]);
+        fm.miller.visit(
+            current,
+            Some(crate::fm::miller::MillerDirectoryProjection {
+                id: crate::fm::miller::MillerColumnId {
+                    directory: resident.clone(),
+                    generation: 77,
+                },
+                entries: vec![FileEntry {
+                    name: "resident-only.txt".to_string(),
+                    path: resident.join("resident-only.txt"),
+                    is_dir: false,
+                    operation_supported: true,
+                }],
+                status: FmDirectoryStatus::Available,
+                writable: true,
+            }),
+        );
+
+        let rows = render_rows(&app_with_fm(fm), 144, 8);
+        let rendered = rows.join("\n");
+
+        for marker in [
+            "(unavailable)",
+            "resident-only.txt",
+            "parent-only.txt",
+            "current-only/",
+            "preview-only.txt",
+        ] {
+            assert!(
+                rendered.contains(marker),
+                "typed source marker {marker:?} must be visible: {rows:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn windowed_render_ignores_unprojected_chain_segments() {
+        let current = PathBuf::from("/virtual/current");
+        let far = PathBuf::from("/virtual/forbidden-far");
+        let mut fm = FmState::test_empty(current.clone());
+        fm.miller.chain = [
+            far.clone(),
+            PathBuf::from("/virtual/a"),
+            PathBuf::from("/virtual/b"),
+            PathBuf::from("/virtual/c"),
+            PathBuf::from("/virtual/d"),
+            current.clone(),
+        ]
+        .into_iter()
+        .map(crate::fm::miller::MillerPathSegment::new)
+        .collect();
+        fm.miller.focused_directory = current.clone();
+        fm.miller.visit(
+            current,
+            Some(crate::fm::miller::MillerDirectoryProjection {
+                id: crate::fm::miller::MillerColumnId {
+                    directory: far.clone(),
+                    generation: 3,
+                },
+                entries: vec![FileEntry {
+                    name: "FORBIDDEN_FAR_MARKER".to_string(),
+                    path: far.join("FORBIDDEN_FAR_MARKER"),
+                    is_dir: false,
+                    operation_supported: true,
+                }],
+                status: FmDirectoryStatus::Available,
+                writable: true,
+            }),
+        );
+
+        let rendered = render_rows(&app_with_fm(fm), 57, 6).join("\n");
+
+        assert!(rendered.contains("CURRENT"));
+        assert!(rendered.contains("PREVIEW"));
+        assert!(!rendered.contains("forbidden-far"));
+        assert!(!rendered.contains("FORBIDDEN_FAR_MARKER"));
+    }
+
+    #[test]
+    fn windowed_render_tiny_body_is_inert_and_target_free() {
+        let app = app_with_fm(FmState::test_empty("/virtual/current"));
+        for (width, height) in [(15, 6), (40, 2)] {
+            let buffer = render_buffer(&app, width, height);
+            let rendered = (0..height)
+                .map(|y| {
+                    (0..width)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(!rendered.contains("CURRENT"));
+            assert!(!rendered.contains("PREVIEW"));
+            assert!(!rendered.contains("PARENT"));
+            assert!(
+                (0..height).all(|y| (0..width).all(|x| buffer[(x, y)].symbol() != "│")),
+                "degenerate body must expose no divider-like paint target"
+            );
+        }
+    }
+
+    #[test]
+    fn windowed_render_is_byte_identical_and_state_pure() {
+        let td = TempDir::new("windowed-purity");
+        td.file("a.txt");
+        td.dir("child");
+        let app = app_with_fm(FmState::new(&td.root));
+        let before_fm = {
+            let fm = app.file_manager.as_ref().expect("open FM");
+            (
+                fm.cwd.clone(),
+                fm.entries.clone(),
+                fm.cursor,
+                fm.viewport_start,
+                fm.parent.clone(),
+                fm.preview.clone(),
+                fm.preview_generation,
+                fm.miller.clone(),
+                fm.trio_overrides,
+            )
+        };
+        let before_snapshot = app.view.file_manager_miller.clone();
+
+        let first = render_buffer(&app, 86, 8);
+        let second = render_buffer(&app, 86, 8);
+
+        assert_eq!(first, second, "identical state must paint identical bytes");
+        let after_fm = {
+            let fm = app.file_manager.as_ref().expect("open FM");
+            (
+                fm.cwd.clone(),
+                fm.entries.clone(),
+                fm.cursor,
+                fm.viewport_start,
+                fm.parent.clone(),
+                fm.preview.clone(),
+                fm.preview_generation,
+                fm.miller.clone(),
+                fm.trio_overrides,
+            )
+        };
+        assert_eq!(after_fm, before_fm, "render cannot mutate FM state");
+        assert_eq!(
+            app.view.file_manager_miller, before_snapshot,
+            "component fallback cannot publish or mutate ViewState"
+        );
+    }
+
+    #[test]
+    fn windowed_render_rejects_stale_current_and_preview_generation() {
+        let td = TempDir::new("windowed-stale");
+        fs::write(td.root.join("selected.txt"), "SECRET_PREVIEW")
+            .expect("write stale preview fixture");
+        let mut app = app_with_fm(FmState::new(&td.root));
+        let frame = Rect::new(0, 0, 57, 6);
+        app.view.terminal_area = frame;
+        app.view.file_manager_miller = miller::project_miller_view(
+            file_manager_miller_viewport_area(frame),
+            app.file_manager.as_ref().expect("open FM"),
+            1,
+        );
+        app.file_manager
+            .as_mut()
+            .expect("open FM")
+            .preview_generation += 1;
+
+        let rendered = render_rows(&app, frame.width, frame.height).join("\n");
+
+        assert!(rendered.contains("(stale)"));
+        assert!(!rendered.contains("SECRET_PREVIEW"));
+    }
+
     // TP-A2.2.1/2/3: a directory selection renders parent, current, and child
     // context side by side. Both the cwd in its parent and the selected child
     // in the current directory are visibly highlighted.
@@ -1586,7 +1937,7 @@ mod tests {
             .expect("write preview file");
 
         let app = app_with_fm(FmState::new(td.root.join("work")));
-        let rows = render_rows(&app, 80, 8);
+        let rows = render_rows(&app, 90, 8);
         let joined = rows.join("\n");
 
         assert!(joined.contains("PARENT"), "parent title: {rows:?}");
@@ -1602,13 +1953,13 @@ mod tests {
             "selected directory contents shown: {rows:?}"
         );
 
-        let buffer = render_buffer(&app, 80, 8);
+        let buffer = render_buffer(&app, 90, 8);
         assert_eq!(
             buffer[(2, 2)].bg,
             app.palette.surface0,
             "cwd row is highlighted in the parent column"
         );
-        let first_divider = (0..80)
+        let first_divider = (0..90)
             .find(|&x| buffer[(x, 2)].symbol() == "│")
             .expect("first Miller divider");
         assert_eq!(
@@ -1873,8 +2224,8 @@ mod tests {
         fs::write(td.root.join("selected.txt"), "x".repeat(512)).expect("write long-line fixture");
         let app = app_with_fm(FmState::new(&td.root));
 
-        let rows = render_rows(&app, 30, 5);
-        assert!(rows.iter().all(|row| row.chars().count() <= 30));
+        let rows = render_rows(&app, 40, 5);
+        assert!(rows.iter().all(|row| row.chars().count() <= 40));
         assert_eq!(
             rows.iter().filter(|row| row.contains("xxxxxxxx")).count(),
             1,
@@ -1882,15 +2233,16 @@ mod tests {
         );
     }
 
-    // TP-A2.2.4/N1: at forty columns the two one-cell dividers leave all three
-    // content columns at least twelve cells wide.
+    // TP-A2.2.4/N1: at the frozen preferred-width breakpoint, the two
+    // one-cell dividers leave all three complete content columns readable.
     #[test]
-    fn forty_columns_preserve_three_readable_miller_columns() {
-        let td = TempDir::new("forty-columns");
+    fn eighty_six_columns_preserve_three_complete_miller_columns() {
+        let td = TempDir::new("eighty-six-columns");
         td.dir("child");
         let app = app_with_fm(FmState::new(&td.root));
-        let buffer = render_buffer(&app, 40, 6);
-        let dividers: Vec<u16> = (0..40)
+        let width = 86;
+        let buffer = render_buffer(&app, width, 6);
+        let dividers: Vec<u16> = (0..width)
             .filter(|&x| buffer[(x, 2)].symbol() == "│")
             .collect();
 
@@ -1898,23 +2250,25 @@ mod tests {
         let widths = [
             dividers[0],
             dividers[1] - dividers[0] - 1,
-            40 - dividers[1] - 1,
+            width - dividers[1] - 1,
         ];
         assert!(
-            widths.iter().all(|&width| width >= 12),
+            widths
+                .iter()
+                .all(|&width| width >= crate::fm::miller::MILLER_COLUMN_MIN_WIDTH),
             "all Miller columns remain readable: {widths:?}"
         );
     }
 
-    // TP-A2.2.4: when three minimum-width columns cannot fit, parent context is
-    // progressively disclosed first; current and preview remain readable.
+    // TP-A2.2.4: current wins a one-column frame; the inline preview appears
+    // only when both frozen 16-cell minima plus one divider fit.
     #[test]
     fn narrower_areas_degrade_to_two_then_one_column() {
         let td = TempDir::new("responsive-columns");
         td.dir("child");
         let app = app_with_fm(FmState::new(&td.root));
 
-        let two = render_rows(&app, 30, 6).join("\n");
+        let two = render_rows(&app, 33, 6).join("\n");
         assert!(!two.contains("PARENT"), "parent is hidden first: {two:?}");
         assert!(two.contains("CURRENT"), "current remains: {two:?}");
         assert!(two.contains("PREVIEW"), "preview remains: {two:?}");
@@ -2563,15 +2917,20 @@ mod tests {
         assert_ne!(enabled[(copy_x, 0)].fg, disabled[(copy_x, 0)].fg);
     }
 
-    // TP-A2.2.5: the filesystem root has no parent but still renders a stable,
-    // explicit parent-column state without panicking.
+    // TP-A2.2.5: the filesystem root has no logical ancestor. The bounded
+    // snapshot must not synthesize a fake parent column.
     #[test]
-    fn filesystem_root_renders_no_parent_state() {
+    fn filesystem_root_does_not_synthesize_parent_column() {
         let app = app_with_fm(FmState::new("/"));
         let rows = render_rows(&app, 40, 5);
+        let joined = rows.join("\n");
         assert!(
-            rows.iter().any(|row| row.contains("(root)")),
-            "root parent state is explicit: {rows:?}"
+            joined.contains("CURRENT") && joined.contains("PREVIEW"),
+            "root still renders current and preview surfaces: {rows:?}"
+        );
+        assert!(
+            !joined.contains("PARENT") && !joined.contains("(root)"),
+            "no ancestor identity means no synthesized parent target: {rows:?}"
         );
     }
 
@@ -2759,12 +3118,14 @@ mod tests {
         let (header_x, header_y) = find_rendered_text(&buffer, width, height, "herdr-fmrender");
         assert_eq!(buffer[(header_x, header_y)].fg, app.palette.subtext0);
 
-        let layout = file_manager_areas(Rect::new(0, 0, width, height))
-            .expect("non-empty FM geometry")
-            .columns;
-        for divider in layout.dividers.into_iter().flatten() {
+        let snapshot = miller::project_miller_view(
+            file_manager_miller_viewport_area(Rect::new(0, 0, width, height)),
+            app.file_manager.as_ref().expect("open FM"),
+            1,
+        );
+        for divider in snapshot.dividers {
             assert_eq!(
-                buffer[(divider.x, divider.y + 1)].fg,
+                buffer[(divider.rect.x, divider.rect.y + 1)].fg,
                 app.palette.surface_dim
             );
         }

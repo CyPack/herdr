@@ -2308,7 +2308,7 @@ mod tests {
         assert!(buffer_rect_text(&collapsed, app.view.terminal_area).contains("copy 0/1"));
 
         app.sidebar_collapsed = false;
-        let mobile_two = Rect::new(0, 0, 30, 15);
+        let mobile_two = Rect::new(0, 0, 33, 15);
         compute_view(&mut app, mobile_two);
         assert_eq!(app.view.layout, ViewLayout::Mobile);
         assert!(app.view.file_manager_sidebar_row_areas.is_empty());
