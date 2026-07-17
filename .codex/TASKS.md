@@ -5,19 +5,30 @@
 Activated by explicit user approval on 2026-07-17. Drag-and-drop is excluded.
 The approved product contract is
 `docs/superpowers/specs/2026-07-17-herdr-files-interaction-polish-design.md`.
-The mandatory next action is planning, not production mutation: run
-`superpowers:writing-plans`, preserve every `TP-FIP-*` acceptance point, and
-write a code-level RED/GREEN plan before editing Rust.
+FIP-G.1/FIP-G.2 are closed; the approved code-level plan is
+`docs/superpowers/plans/2026-07-18-herdr-files-interaction-polish-implementation.md`
+(commit `dd81ef59`). The next executable task is **FIP-0.1** (baseline freeze),
+then the plan's Tasks 2-29 in order.
 
 ### FIP-G — Planning Gate
 
-- [ ] **FIP-G.1** Use `superpowers:writing-plans` to convert the approved
+- [x] **FIP-G.1** Use `superpowers:writing-plans` to convert the approved
   design into an implementation plan with exact files, symbols, RED test
   names, expected failures, GREEN seams, commands, atomic commits, rollback,
-  and CyPack-only publication boundaries.
-- [ ] **FIP-G.2** Reconcile the plan against a fresh Codebase Memory graph,
+  and CyPack-only publication boundaries. Closed 2026-07-18: plan committed as
+  `docs/superpowers/plans/2026-07-18-herdr-files-interaction-polish-implementation.md`
+  (`dd81ef59`), 29 tasks, all 57 unique `TP-FIP-*` IDs mapped (the recorded
+  "55" figure excluded the two E2E IDs; nothing is dropped).
+- [x] **FIP-G.2** Reconcile the plan against a fresh Codebase Memory graph,
   every `TP-FIP-*` test point, current full-gate commands, and the no-drag,
   no-submit, client-local/runtime-boundary non-goals before any Rust edit.
+  Closed 2026-07-18 against the 21,064/98,009 graph and current source: Terminal
+  restore authority `activate_dock_app(Terminal)`/`close_file_manager`
+  (`src/app/actions.rs:522,556`), resident `render_snapshot_panel(column.cursor)`
+  seam, direct `unicode-width 0.2` dependency, and sole-producer Claude-split
+  machinery were all verified; gate commands taken from the current `justfile`.
+  Note: the global `rust-dev` skill is a broken symlink on this machine and must
+  be restored before Rust implementation starts.
 
 ### FIP-0 — Baseline and Playwright Chromium Visual Harness
 

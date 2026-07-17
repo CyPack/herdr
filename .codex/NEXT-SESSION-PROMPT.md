@@ -69,48 +69,40 @@ out of scope.
 
 ## Mandatory Task-List Trigger
 
-Expected canonical inventory:
+Expected canonical inventory (after the 2026-07-18 planning-gate closure):
 
-- `.codex/TASKS.md`: 54 unchecked product/deferred tasks;
+- `.codex/TASKS.md`: 52 unchecked product/deferred tasks;
 - `.codex/CHANGE-PIPELINE-TASKS.md`: 89 unchecked paused tooling tasks;
-- total: 143;
-- `.codex/HANDOFF.md` section 8: exact 143-block copy.
+- total: 141;
+- `.codex/HANDOFF.md` section 8: exact 141-block copy.
 
 Recount all three and compare exact task blocks. If count or text differs,
 stop before code and reconcile CURRENT/TASKS/HANDOFF.
 
 Status assignment:
 
-- set only **FIP-G.1** to `in_progress`;
-- keep FIP-G.2 and FIP-0 through FIP-6 pending;
+- set only **FIP-0.1** to `in_progress`;
+- keep FIP-0.2 through FIP-6 pending;
 - keep S5/S7 trigger-gated;
 - keep change-pipeline T3.1-T10.9 paused;
 - never choose an easier lower-priority task.
 
 ## Exact First Work
 
-FIP-G.1 is planning, not Rust:
+FIP-G.1/FIP-G.2 are CLOSED. The approved code-level TDD plan is
+`docs/superpowers/plans/2026-07-18-herdr-files-interaction-polish-implementation.md`
+(commit `dd81ef59`; 29 bite-sized tasks; all 57 unique `TP-FIP-*` IDs mapped —
+the earlier "55" figure excluded the two E2E IDs, nothing was dropped).
 
-1. Announce and load `superpowers:writing-plans`.
-2. Read its `SKILL.md` and required lessons completely.
-3. Use the approved design as the single product contract.
-4. Produce a code-level TDD implementation plan containing:
-   - exact files and symbols;
-   - current owner and target owner;
-   - every one of the 55 unique `TP-FIP-*` IDs;
-   - exact RED test names and expected failure;
-   - reason each RED proves behavior rather than compile failure;
-   - minimum GREEN seam;
-   - refactor boundary;
-   - focused, broad, visual, PTY, platform, and full commands;
-   - expected counts/results;
-   - edge/failure/security/resource/performance cases;
-   - atomic RED/GREEN/refactor commit subjects;
-   - rollback boundary;
-   - graph refresh and CyPack-only publication.
-5. Complete FIP-G.2 by reconciling that plan against fresh graph snippets,
-   call paths, data flows, current gate commands, and non-goals.
-6. Do not write Rust until both planning tasks are demonstrably complete.
+1. Read that plan completely; it is the execution contract.
+2. Start at plan Task 1 (FIP-0.1 baseline freeze) and execute tasks in order
+   with separate RED/GREEN/refactor commits.
+3. Before any Rust production edit, restore the broken global `rust-dev`
+   skill (`~/.codex/skills/rust-dev` is a symlink to the missing
+   `~/.claude/skills/rust-dev`) or explicitly record that only the
+   herdr-local HP1-HP10 catalog is available.
+4. Follow the plan's verified-owner map; re-verify any symbol the plan marks
+   as graph-verified if the graph has been refreshed since `dd81ef59`.
 
 ## Codebase Memory Protocol
 

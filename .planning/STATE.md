@@ -4,16 +4,19 @@
 - Branch: `feat/native-fm`
 - Active program: **Files Interaction Polish (FIP)**. The approved design is
   `docs/superpowers/specs/2026-07-17-herdr-files-interaction-polish-design.md`.
-- Exact next action: FIP-G.1, use `superpowers:writing-plans` to create a
-  code-level TDD plan; then FIP-G.2 reconciles exact symbols, 55 test-point
-  IDs, failure paths, gates, commits, and graph evidence before Rust edits.
+- FIP-G.1/FIP-G.2 CLOSED 2026-07-18: the code-level TDD plan is
+  `docs/superpowers/plans/2026-07-18-herdr-files-interaction-polish-implementation.md`
+  (commit `dd81ef59`, 29 tasks, all 57 unique `TP-FIP-*` IDs mapped — the
+  earlier "55" count excluded the two E2E IDs). Exact next action: FIP-0.1
+  baseline freeze, then plan Tasks 2-29 in order. Restore the broken global
+  `rust-dev` skill symlink before Rust implementation.
 - Approved scope: sidebar Files mouse activation, Miller exact-child focus,
   semantic entry kinds/icons, and explicit `Add Reference to Agent...`.
 - Excluded scope: drag-and-drop, auto-submit/Enter, implicit Claude split/chat,
   protocol/runtime ownership expansion, speculative ComponentRegistry, popup
   framework, Apps/Desktop, and unrelated change-pipeline implementation.
-- Open registry: 54 product items plus 89 paused non-product items = 143.
-  Only FIP-G.1 is priority eligible; S5/S7 remain trigger-gated.
+- Open registry: 52 product items plus 89 paused non-product items = 141.
+  Only FIP-0.1 is priority eligible; S5/S7 remain trigger-gated.
 - Local design chain: `fc76f648` -> `f097f6c7`; both CyPack refs were still at
   `b7d4217c` before this handoff publication.
 - Canonical graph project: `home-ayaz-projects-herdr`; final single-worker CLI

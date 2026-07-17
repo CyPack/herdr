@@ -14,9 +14,14 @@
 > closed. Required visual evidence uses Playwright Chromium over deterministic
 > Ratatui cell fixtures; Rust/TTY tests remain semantic authority.
 >
-> The next executable task is **FIP-G.1**, not Rust implementation:
-> `superpowers:writing-plans` must produce the code-level TDD plan, then
-> FIP-G.2 must reconcile it against all 55 `TP-FIP-*` IDs and a fresh graph.
+> PLANNING GATE CLOSED (2026-07-18): FIP-G.1 produced the code-level TDD plan
+> `docs/superpowers/plans/2026-07-18-herdr-files-interaction-polish-implementation.md`
+> (commit `dd81ef59`, 29 tasks) and FIP-G.2 reconciled it against the fresh
+> graph and current source (all 57 unique `TP-FIP-*` IDs mapped; the earlier
+> "55" count excluded the two E2E IDs). The next executable task is
+> **FIP-0.1** (baseline freeze), then plan Tasks 2-29 in order. The global
+> `rust-dev` skill symlink is broken on this machine and must be restored
+> before Rust implementation starts.
 > The canonical graph project is `home-ayaz-projects-herdr`; the final
 > single-worker refresh and built-in MCP agree at 21,064 nodes / 98,009 edges.
 > Fresh graph search finds FIP-G.1 in all six canonical continuity modules,
@@ -25,8 +30,8 @@
 > begins `fc76f648` -> `f097f6c7`; the commit containing this override is the
 > continuity publication target and its exact SHA must match both CyPack refs.
 > There are
-> 54 unchecked product-registry items and 89 paused change-pipeline items,
-> 143 total. Only FIP-G.1 may become in progress in the next session.
+> 52 unchecked product-registry items and 89 paused change-pipeline items,
+> 141 total. Only FIP-0.1 may become in progress in the next session.
 > S5/S7 remain trigger-gated; change-pipeline remains paused. Never touch the
 > stable Herdr/socket or user-owned `.superpowers/`.
 >

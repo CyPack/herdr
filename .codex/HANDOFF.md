@@ -4,20 +4,19 @@ Updated: 2026-07-17 CEST
 
 ## 0. SONRAKI ADIM — TEK AKTİF İŞ
 
-İlk ve tek priority-eligible iş **FIP-G.1**:
+FIP-G.1 ve FIP-G.2 KAPANDI (2026-07-18). Onaylı code-level TDD planı:
+`docs/superpowers/plans/2026-07-18-herdr-files-interaction-polish-implementation.md`
+(commit `dd81ef59`; 29 görev; 57 benzersiz `TP-FIP-*` ID eşlendi — eski "55"
+sayımı iki E2E ID'sini dışlıyordu, hiçbir ID atlanmadı).
 
-1. `superpowers:writing-plans` skill’ini ve lessons dosyalarını yükle.
-2. Onaylı tasarımı eksiksiz oku:
-   `docs/superpowers/specs/2026-07-17-herdr-files-interaction-polish-design.md`.
-3. Tüm 55 benzersiz `TP-FIP-*` kabul noktasını dosya/simge/test/komut/commit
-   düzeyinde RED/GREEN uygulama planına dönüştür.
-4. FIP-G.2 ile planı taze Codebase Memory graph’ı, gerçek call/data-flow
-   sahipleri, failure path’ler ve güncel full-gate komutlarıyla uzlaştır.
-5. Bu iki planlama kapısı kapanmadan Rust/product koduna dokunma.
+İlk ve tek priority-eligible iş **FIP-0.1** (baseline freeze), ardından planın
+Task 2-29 sırası. Rust implementasyonu başlamadan önce kırık global `rust-dev`
+skill symlink'i (`~/.codex/skills/rust-dev` → eksik `~/.claude/skills/rust-dev`)
+onarılmalı; herdr-lokal HP1-HP10 kataloğu mevcut ve önceliklidir.
 
-Bu sıra tartışmaya açık bir öneri değil, kanonik görev önceliğidir. FIP-0 veya
-başka bir uygulama işine atlama. Change-pipeline T3.1-T10.9 paused; S5/S7
-trigger-gated; Apps/Desktop ve drag-and-drop kapsam dışı.
+Bu sıra tartışmaya açık bir öneri değil, kanonik görev önceliğidir.
+Change-pipeline T3.1-T10.9 paused; S5/S7 trigger-gated; Apps/Desktop ve
+drag-and-drop kapsam dışı.
 
 ## 1. DURUM ÖZETİ
 
@@ -33,14 +32,15 @@ trigger-gated; Apps/Desktop ve drag-and-drop kapsam dışı.
 - `.superpowers/` hiçbir koşulda stage/edit/delete edilmez.
 - Eski SF0-SF6 + FM1-FM5 programı tamam ve yayınlıdır; yeniden uygulanmaz.
 - Yeni aktif program Files Interaction Polish’tir.
-- Açık görev envanteri:
-  - `.codex/TASKS.md`: 54
+- Açık görev envanteri (FIP-G.1/G.2 kapanışı sonrası):
+  - `.codex/TASKS.md`: 52
   - `.codex/CHANGE-PIPELINE-TASKS.md`: 89
-  - toplam: 143
-- Sadece FIP-G.1 in-progress yapılabilir; diğer 142 görev pending/paused kalır.
-- Fresh continuity gates:
-  - exact task copy 143/143;
-  - 55 unique `TP-FIP-*`;
+  - toplam: 141
+- Sadece FIP-0.1 in-progress yapılabilir; diğer 140 görev pending/paused kalır.
+- Fresh continuity gates (2026-07-18 planning-gate closure):
+  - exact task copy 141/141;
+  - 57 unique `TP-FIP-*` (fresh deterministic count; the earlier "55" excluded
+    the two E2E IDs — all 57 are mapped in the implementation plan);
   - Nextest run `4da2ee18-b784-4c38-aaab-98a2e8787511`,
     3,443/3,443 passed + 1 named skip;
   - Linux all-target and Windows MSVC Clippy clean;
@@ -317,22 +317,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 54 ve
-89, toplam 143’tür. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 52 ve
+89, toplam 141’dir. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 54 unchecked
-
-- [ ] **FIP-G.1** Use `superpowers:writing-plans` to convert the approved
-  design into an implementation plan with exact files, symbols, RED test
-  names, expected failures, GREEN seams, commands, atomic commits, rollback,
-  and CyPack-only publication boundaries.
-
-- [ ] **FIP-G.2** Reconcile the plan against a fresh Codebase Memory graph,
-  every `TP-FIP-*` test point, current full-gate commands, and the no-drag,
-  no-submit, client-local/runtime-boundary non-goals before any Rust edit.
+### Source: `.codex/TASKS.md` — 52 unchecked
 
 - [ ] **FIP-0.1** Freeze current characterization tests and fresh graph
   evidence without changing product behavior.
