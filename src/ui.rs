@@ -1607,6 +1607,23 @@ mod tests {
     }
 
     #[test]
+    fn compute_view_profile_records_desktop_and_mobile_invocations() {
+        let mut app = AppState::test_new();
+        app.mobile_width_threshold = 60;
+
+        let (_, profile) = crate::render_prof::observe_for_test(|| {
+            compute_view(&mut app, Rect::new(0, 0, 120, 40));
+            compute_view(&mut app, Rect::new(0, 0, 40, 20));
+        });
+
+        assert_eq!(
+            profile.duration_count("shell.compute_view"),
+            2,
+            "the shared compute seam records desktop and mobile early-return paths"
+        );
+    }
+
+    #[test]
     fn performance_workloads_meet_frozen_budgets() {
         const WARM_UP_SAMPLES: usize = if cfg!(debug_assertions) { 2 } else { 16 };
         const MEASURED_SAMPLES: usize = if cfg!(debug_assertions) { 10 } else { 100 };
