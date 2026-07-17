@@ -2301,6 +2301,75 @@ mod tests {
         );
     }
 
+    #[test]
+    fn stale_legacy_divider_geometry_cannot_start_resize_after_typed_cutover() {
+        let td = TempDir::new("fm3-no-legacy-divider-authority");
+        td.file("00.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 60, 16));
+
+        let center = app.state.view.terminal_area;
+        let overrides = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .trio_overrides;
+        let legacy_divider = crate::ui::file_manager_divider_areas(center, overrides)[0]
+            .expect("control fixture exposes the retired legacy divider");
+        app.state.view.file_manager_miller.dividers.clear();
+        let before_model = {
+            let file_manager = app.state.file_manager.as_ref().expect("open FM");
+            (
+                file_manager.miller.revision,
+                file_manager
+                    .miller
+                    .chain
+                    .iter()
+                    .map(|segment| segment.preferred_width)
+                    .collect::<Vec<_>>(),
+            )
+        };
+
+        let _ = app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            legacy_divider.x,
+            legacy_divider.y + 2,
+        ));
+        let _ = app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            legacy_divider.x + 4,
+            legacy_divider.y + 2,
+        ));
+        let _ = app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            legacy_divider.x + 4,
+            legacy_divider.y + 2,
+        ));
+
+        assert!(
+            !app.state.shell_interaction.resize_active(),
+            "only a current typed divider may create capture authority"
+        );
+        let file_manager = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(
+            (
+                file_manager.miller.revision,
+                file_manager
+                    .miller
+                    .chain
+                    .iter()
+                    .map(|segment| segment.preferred_width)
+                    .collect::<Vec<_>>(),
+            ),
+            before_model,
+            "retired legacy geometry cannot mutate the Miller model"
+        );
+    }
+
     // FM2.2 end-to-end: pressing a trio divider and dragging resizes the
     // column through the clamped commit seam; release ends the capture; the
     // committed width survives recompute and clamps to the frozen 16..=64
