@@ -247,6 +247,57 @@ fn directory_is_writable(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Perform every filesystem read needed by one typed navigation request.
+/// Applying the result later still requires exact source-generation matches.
+pub(crate) fn prepare_navigation_io(request: FmNavigationRequest) -> Option<FmPreparedNavigation> {
+    let snapshot = read_directory_snapshot(&request.target_directory, request.show_hidden);
+    if snapshot.status != FmDirectoryStatus::Available
+        || !std::fs::metadata(&request.target_directory).is_ok_and(|metadata| metadata.is_dir())
+    {
+        return None;
+    }
+
+    let cursor = match request.reason {
+        FmNavigationReason::Enter => request.fallback_cursor,
+        FmNavigationReason::Leave => request
+            .focus_path
+            .as_ref()
+            .and_then(|path| {
+                snapshot
+                    .entries
+                    .iter()
+                    .position(|entry| &entry.path == path)
+            })
+            .unwrap_or(request.fallback_cursor),
+        FmNavigationReason::ActivateSelection => {
+            unique_entry_index(&snapshot.entries, request.focus_path.as_deref()?)?
+        }
+    };
+    let cursor = if snapshot.entries.is_empty() {
+        0
+    } else {
+        cursor.min(snapshot.entries.len() - 1)
+    };
+    let preview_generation = request.source_preview_generation.wrapping_add(1).max(1);
+    let selected = snapshot
+        .entries
+        .get(cursor)
+        .map(|entry| (entry.path.clone(), entry.is_dir));
+    let parent = read_parent_context_for(&request.target_directory, request.show_hidden);
+    let preview = prepare_preview(selected, request.show_hidden, preview_generation, None);
+
+    Some(FmPreparedNavigation {
+        writable: directory_is_writable(&request.target_directory),
+        request,
+        entries: snapshot.entries,
+        status: snapshot.status,
+        cursor,
+        parent,
+        preview,
+        preview_generation,
+    })
+}
+
 /// Order entries directories-first, then by natural (case-insensitive) name,
 /// with the raw name as a stable tiebreaker for deterministic rendering/tests.
 fn sort_entries(entries: &mut [FileEntry]) {
@@ -256,6 +307,64 @@ fn sort_entries(entries: &mut [FileEntry]) {
             .then_with(|| natsort::natsort(a.name.as_bytes(), b.name.as_bytes(), true))
             .then_with(|| a.name.cmp(&b.name))
     });
+}
+
+fn read_parent_context_for(cwd: &Path, show_hidden: bool) -> Option<FmParent> {
+    let parent_path = cwd.parent()?;
+    let mut entries = read_dir_entries(parent_path, show_hidden);
+    let current_name = cwd.file_name().and_then(|name| name.to_str());
+    let mut cursor = entries
+        .iter()
+        .position(|entry| entry.path == cwd || current_name.is_some_and(|name| entry.name == name));
+
+    // Preserve a browsed dot-directory in parent context without exposing
+    // unrelated hidden siblings.
+    if cursor.is_none() && current_name.is_some_and(|name| name.starts_with('.')) && !show_hidden {
+        if let Some(current) = read_dir_entries(parent_path, true)
+            .into_iter()
+            .find(|entry| entry.path == cwd || current_name.is_some_and(|name| entry.name == name))
+        {
+            entries.push(current);
+            sort_entries(&mut entries);
+            cursor = entries.iter().position(|entry| {
+                entry.path == cwd || current_name.is_some_and(|name| entry.name == name)
+            });
+        }
+    }
+
+    Some(FmParent { entries, cursor })
+}
+
+fn prepare_preview(
+    selected: Option<(PathBuf, bool)>,
+    show_hidden: bool,
+    generation: u64,
+    previous_text: Option<TextPreview>,
+) -> FmPreview {
+    match selected {
+        None => FmPreview::None,
+        Some((path, true)) => FmPreview::Directory(read_dir_entries(&path, show_hidden)),
+        Some((path, false)) if is_image_preview_path(&path) => {
+            FmPreview::File(FmFilePreview::Image(FmImagePreview {
+                source_path: path,
+                generation,
+                state: FmImagePreviewState::Pending,
+            }))
+        }
+        Some((path, false)) => match read_text_preview(&path, TextPreviewLimits::default()) {
+            Ok(mut preview) => {
+                if let Some(previous) = previous_text.filter(|previous| {
+                    previous.source_path == preview.source_path
+                        && previous.content == preview.content
+                        && previous.truncated == preview.truncated
+                }) {
+                    preview.highlighted = previous.highlighted;
+                }
+                FmPreview::File(FmFilePreview::Text(preview))
+            }
+            Err(error) => FmPreview::File(FmFilePreview::Unavailable(error)),
+        },
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -316,8 +425,66 @@ pub struct FmState {
 }
 
 impl FmState {
-    pub(crate) fn apply_prepared_navigation(&mut self, _prepared: FmPreparedNavigation) -> bool {
-        false
+    pub(crate) fn apply_prepared_navigation(&mut self, prepared: FmPreparedNavigation) -> bool {
+        let expected_preview_generation = prepared
+            .request
+            .source_preview_generation
+            .wrapping_add(1)
+            .max(1);
+        let cursor_is_valid = if prepared.entries.is_empty() {
+            prepared.cursor == 0
+        } else {
+            prepared.cursor < prepared.entries.len()
+        };
+        let exact_activation = match prepared.request.reason {
+            FmNavigationReason::ActivateSelection => {
+                prepared
+                    .request
+                    .focus_path
+                    .as_deref()
+                    .and_then(|path| unique_entry_index(&prepared.entries, path))
+                    == Some(prepared.cursor)
+            }
+            FmNavigationReason::Enter => prepared.request.focus_path.is_none(),
+            FmNavigationReason::Leave => true,
+        };
+        if !self.navigation_request_is_current(&prepared.request)
+            || prepared.status != FmDirectoryStatus::Available
+            || prepared.preview_generation != expected_preview_generation
+            || !cursor_is_valid
+            || !exact_activation
+        {
+            return false;
+        }
+
+        let departing = self.departing_projection();
+        self.clear_multi_selection();
+        self.cwd = prepared.request.target_directory.clone();
+        self.entries = prepared.entries;
+        self.cursor = prepared.cursor;
+        self.viewport_start = 0;
+        self.cwd_status = prepared.status;
+        self.cwd_writable = prepared.writable;
+        self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
+        self.parent = prepared.parent;
+        self.preview = prepared.preview;
+        self.preview_viewport_start = 0;
+        self.preview_generation = prepared.preview_generation;
+        self.miller
+            .visit(prepared.request.target_directory, Some(departing));
+
+        if prepared.request.reason == FmNavigationReason::ActivateSelection {
+            let Some(path) = self
+                .entries
+                .get(self.cursor)
+                .map(|entry| entry.path.clone())
+            else {
+                return false;
+            };
+            self.multi_selection.paths.insert(path.clone());
+            self.multi_selection.anchor = Some(path);
+        }
+        true
     }
 
     pub(crate) fn request_enter_navigation(&self) -> Option<FmNavigationRequest> {
@@ -521,35 +688,8 @@ impl FmState {
         }
 
         let request = self.request_activate_navigation(directory, entry_path);
-        let snapshot = read_directory_snapshot(&request.target_directory, request.show_hidden);
-        if snapshot.status != FmDirectoryStatus::Available {
-            return false;
-        }
-        let Some(entry_path) = request.focus_path.as_deref() else {
-            return false;
-        };
-        let Some(entry_index) = unique_entry_index(&snapshot.entries, entry_path) else {
-            return false;
-        };
-        let cwd_writable = directory_is_writable(&request.target_directory);
-        if request.reason != FmNavigationReason::ActivateSelection
-            || !self.navigation_request_is_current(&request)
-        {
-            return false;
-        }
-
-        let departing = self.departing_projection();
-        self.clear_multi_selection();
-        self.cwd = request.target_directory.clone();
-        self.entries = snapshot.entries;
-        self.cursor = entry_index;
-        self.viewport_start = 0;
-        self.cwd_status = snapshot.status;
-        self.cwd_writable = cwd_writable;
-        self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
-        self.miller.visit(request.target_directory, Some(departing));
-        self.refresh_context();
-        self.replace_selection(entry_index)
+        prepare_navigation_io(request)
+            .is_some_and(|prepared| self.apply_prepared_navigation(prepared))
     }
 
     /// Move one non-current Miller column's local vertical presentation state.
@@ -811,27 +951,9 @@ impl FmState {
     /// file (or the directory is empty).
     pub fn enter(&mut self) {
         if let Some(request) = self.request_enter_navigation() {
-            let snapshot = read_directory_snapshot(&request.target_directory, request.show_hidden);
-            if snapshot.status != FmDirectoryStatus::Available
-                || !std::fs::metadata(&request.target_directory)
-                    .is_ok_and(|metadata| metadata.is_dir())
-                || request.reason != FmNavigationReason::Enter
-                || !self.navigation_request_is_current(&request)
-            {
-                return;
+            if let Some(prepared) = prepare_navigation_io(request) {
+                let _ = self.apply_prepared_navigation(prepared);
             }
-            let cwd_writable = directory_is_writable(&request.target_directory);
-            self.clear_multi_selection();
-            let departing = self.departing_projection();
-            self.cwd = request.target_directory.clone();
-            self.entries = snapshot.entries;
-            self.cursor = 0;
-            self.viewport_start = 0;
-            self.cwd_status = snapshot.status;
-            self.cwd_writable = cwd_writable;
-            self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
-            self.miller.visit(request.target_directory, Some(departing));
-            self.refresh_context();
         }
     }
 
@@ -877,32 +999,9 @@ impl FmState {
     /// use the deterministic top fallback. A no-op at the filesystem root.
     pub fn leave(&mut self) {
         if let Some(request) = self.request_leave_navigation() {
-            let snapshot = read_directory_snapshot(&request.target_directory, request.show_hidden);
-            if snapshot.status != FmDirectoryStatus::Available
-                || !std::fs::metadata(&request.target_directory)
-                    .is_ok_and(|metadata| metadata.is_dir())
-                || request.reason != FmNavigationReason::Leave
-                || !self.navigation_request_is_current(&request)
-            {
-                return;
+            if let Some(prepared) = prepare_navigation_io(request) {
+                let _ = self.apply_prepared_navigation(prepared);
             }
-            let cwd_writable = directory_is_writable(&request.target_directory);
-            self.clear_multi_selection();
-            let departing = self.departing_projection();
-            self.cwd = request.target_directory.clone();
-            self.entries = snapshot.entries;
-            self.cursor = request
-                .focus_path
-                .as_ref()
-                .and_then(|path| self.entries.iter().position(|entry| &entry.path == path))
-                .unwrap_or(request.fallback_cursor);
-            self.viewport_start = 0;
-            self.cwd_status = snapshot.status;
-            self.cwd_writable = cwd_writable;
-            self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
-            self.clamp_cursor();
-            self.miller.visit(request.target_directory, Some(departing));
-            self.refresh_context();
         }
     }
 
@@ -944,35 +1043,7 @@ impl FmState {
     }
 
     fn read_parent_context(&self) -> Option<FmParent> {
-        let parent_path = self.cwd.parent()?;
-        let mut entries = read_dir_entries(parent_path, self.show_hidden);
-        let current_name = self.cwd.file_name().and_then(|name| name.to_str());
-        let mut cursor = entries.iter().position(|entry| {
-            entry.path == self.cwd || current_name.is_some_and(|name| entry.name == name)
-        });
-
-        // A user can browse inside a dot-directory while hidden entries are
-        // disabled. Add only cwd back into the parent context; do not reveal
-        // unrelated hidden siblings merely to keep the highlight visible.
-        if cursor.is_none()
-            && current_name.is_some_and(|name| name.starts_with('.'))
-            && !self.show_hidden
-        {
-            if let Some(current) = read_dir_entries(parent_path, true)
-                .into_iter()
-                .find(|entry| {
-                    entry.path == self.cwd || current_name.is_some_and(|name| entry.name == name)
-                })
-            {
-                entries.push(current);
-                sort_entries(&mut entries);
-                cursor = entries.iter().position(|entry| {
-                    entry.path == self.cwd || current_name.is_some_and(|name| entry.name == name)
-                });
-            }
-        }
-
-        Some(FmParent { entries, cursor })
+        read_parent_context_for(&self.cwd, self.show_hidden)
     }
 
     fn refresh_preview(&mut self) {
@@ -986,30 +1057,7 @@ impl FmState {
         let selected = self
             .selected()
             .map(|entry| (entry.path.clone(), entry.is_dir));
-        self.preview = match selected {
-            None => FmPreview::None,
-            Some((path, true)) => FmPreview::Directory(read_dir_entries(&path, self.show_hidden)),
-            Some((path, false)) if is_image_preview_path(&path) => {
-                FmPreview::File(FmFilePreview::Image(FmImagePreview {
-                    source_path: path,
-                    generation,
-                    state: FmImagePreviewState::Pending,
-                }))
-            }
-            Some((path, false)) => match read_text_preview(&path, TextPreviewLimits::default()) {
-                Ok(mut preview) => {
-                    if let Some(previous) = previous_text.filter(|previous| {
-                        previous.source_path == preview.source_path
-                            && previous.content == preview.content
-                            && previous.truncated == preview.truncated
-                    }) {
-                        preview.highlighted = previous.highlighted;
-                    }
-                    FmPreview::File(FmFilePreview::Text(preview))
-                }
-                Err(error) => FmPreview::File(FmFilePreview::Unavailable(error)),
-            },
-        };
+        self.preview = prepare_preview(selected, self.show_hidden, generation, previous_text);
     }
 }
 
@@ -1983,6 +2031,47 @@ mod tests {
         );
         assert!(state.multi_selection_paths().is_empty());
         state.miller.assert_miller_invariants_for_test();
+    }
+
+    // TP-FM4-STALE-APPLY: preparation can complete after a watcher refresh or
+    // another navigation. Any source-generation drift retires the payload
+    // without partially moving entries, cache ownership, or focus.
+    #[test]
+    fn stale_prepared_navigation_is_rejected_without_state_mutation() {
+        let current = PathBuf::from("/virtual/current");
+        let child = current.join("child");
+        let mut state = FmState::test_empty(current);
+        state.entries = vec![FileEntry {
+            name: "child".into(),
+            path: child.clone(),
+            is_dir: true,
+            operation_supported: true,
+        }];
+        let request = state
+            .request_enter_navigation()
+            .expect("pure enter request");
+        let prepared = FmPreparedNavigation {
+            preview_generation: request.source_preview_generation + 1,
+            request,
+            entries: Vec::new(),
+            status: FmDirectoryStatus::Available,
+            writable: true,
+            cursor: 0,
+            parent: None,
+            preview: FmPreview::None,
+        };
+        state.directory_generation = state.directory_generation.saturating_add(1);
+        let before = state.clone();
+
+        assert!(!state.apply_prepared_navigation(prepared));
+        assert_eq!(state.cwd, before.cwd);
+        assert_eq!(state.entries, before.entries);
+        assert_eq!(state.cursor, before.cursor);
+        assert_eq!(state.directory_generation, before.directory_generation);
+        assert_eq!(state.parent, before.parent);
+        assert_eq!(state.preview, before.preview);
+        assert_eq!(state.preview_generation, before.preview_generation);
+        assert_eq!(state.miller, before.miller);
     }
 
     // TP-FM4-ENTER-FAILURE: directory identity can disappear between the
