@@ -1491,6 +1491,127 @@ mod tests {
         );
     }
 
+    #[test]
+    fn miller_mouse_up_commits_once() {
+        let td = TempDir::new("fm3-divider-commit");
+        td.file("00.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        let frame = Rect::new(0, 0, 86, 16);
+        compute_view(&mut app.state, frame);
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .first()
+            .expect("current Files projection exposes a divider")
+            .clone();
+        let leading_chain_index = app.state.view.file_manager_miller.columns[divider.left_column]
+            .kind
+            .chain_index()
+            .expect("leading projected column belongs to the Miller chain");
+        let original_tracks = [
+            app.state.view.file_manager_miller.columns[divider.left_column]
+                .rect
+                .width,
+            app.state.view.file_manager_miller.columns[divider.right_column]
+                .rect
+                .width,
+        ];
+        let (before_revision, before_widths, before_overrides) = {
+            let file_manager = app.state.file_manager.as_ref().expect("open FM");
+            (
+                file_manager.miller.revision,
+                file_manager
+                    .miller
+                    .chain
+                    .iter()
+                    .map(|segment| segment.preferred_width)
+                    .collect::<Vec<_>>(),
+                file_manager.trio_overrides,
+            )
+        };
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                divider.rect.x,
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        for delta in [2, 4, 6] {
+            assert_eq!(
+                app.handle_file_manager_mouse(mouse(
+                    MouseEventKind::Drag(MouseButton::Left),
+                    divider.rect.x + delta,
+                    divider.rect.y,
+                )),
+                FileManagerMouseDispatch::Consumed
+            );
+        }
+        let expected_tracks = [original_tracks[0] + 6, original_tracks[1] - 6];
+        assert_eq!(
+            app.state.shell_interaction.resize_preview_tracks(),
+            Some(expected_tracks),
+            "the final preview, not an intermediate move, is the commit candidate"
+        );
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Up(MouseButton::Left),
+                divider.rect.x + 6,
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert!(
+            !app.state.shell_interaction.miller_resize_active(),
+            "mouse-up must retire the typed Miller capture"
+        );
+
+        let (after_revision, after_widths, after_overrides) = {
+            let file_manager = app.state.file_manager.as_ref().expect("open FM");
+            (
+                file_manager.miller.revision,
+                file_manager
+                    .miller
+                    .chain
+                    .iter()
+                    .map(|segment| segment.preferred_width)
+                    .collect::<Vec<_>>(),
+                file_manager.trio_overrides,
+            )
+        };
+        let mut expected_widths = before_widths;
+        expected_widths[leading_chain_index] = expected_tracks[0];
+        assert_eq!(
+            (after_revision, after_widths, after_overrides),
+            (before_revision + 1, expected_widths, before_overrides,),
+            "mouse-up commits only the leading Miller preference and one revision"
+        );
+
+        let _ = app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            divider.rect.x + 6,
+            divider.rect.y,
+        ));
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .miller
+                .revision,
+            after_revision,
+            "a repeated mouse-up cannot duplicate the commit"
+        );
+    }
+
     // FM2.2 end-to-end: pressing a trio divider and dragging resizes the
     // column through the clamped commit seam; release ends the capture; the
     // committed width survives recompute and clamps to the frozen 16..=64
