@@ -148,11 +148,20 @@ impl MillerState {
         directory: PathBuf,
         previous_current: Option<MillerDirectoryProjection>,
     ) {
-        if !self
+        let mut retired_directories = Vec::new();
+        if let Some(existing_index) = self
             .chain
             .iter()
-            .any(|segment| segment.directory == directory)
+            .position(|segment| segment.directory == directory)
         {
+            retired_directories.extend(
+                self.chain
+                    .iter()
+                    .skip(existing_index.saturating_add(1))
+                    .map(|segment| segment.directory.clone()),
+            );
+            self.chain.truncate(existing_index.saturating_add(1));
+        } else {
             self.chain
                 .push_back(MillerPathSegment::new(directory.clone()));
         }
@@ -162,13 +171,21 @@ impl MillerState {
             self.chain.pop_front();
         }
 
-        if let Some(projection) = previous_current {
+        // Branch retirement is atomic with the chain transition: no cached
+        // projection may outlive the segment that gave it authority.
+        self.resident_non_current.retain(|resident| {
+            resident.id.directory != directory
+                && !retired_directories.contains(&resident.id.directory)
+        });
+
+        if let Some(projection) = previous_current.filter(|projection| {
+            projection.id.directory != directory
+                && !retired_directories.contains(&projection.id.directory)
+        }) {
             self.resident_non_current
                 .retain(|resident| resident.id.directory != projection.id.directory);
             self.resident_non_current.push_back(projection);
         }
-        self.resident_non_current
-            .retain(|resident| resident.id.directory != directory);
         while self.resident_non_current.len() >= MAX_RESIDENT_MILLER_COLUMNS {
             self.resident_non_current.pop_front();
         }
