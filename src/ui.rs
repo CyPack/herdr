@@ -237,6 +237,7 @@ fn compute_view_internal(
     resize_panes: bool,
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
+    let _profile = crate::render_prof::duration_guard("shell.compute_view");
     app.cancel_miller_resize_for_terminal_area(area.width);
     if app
         .shell_resize_original_total()

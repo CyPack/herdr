@@ -160,8 +160,34 @@ pub(crate) fn duration_since(name: &'static str, started: Option<Instant>) {
     }
 }
 
+pub(crate) struct DurationGuard {
+    name: &'static str,
+    started: Option<Instant>,
+}
+
+impl Drop for DurationGuard {
+    fn drop(&mut self) {
+        duration_since(self.name, self.started);
+    }
+}
+
+pub(crate) fn duration_guard(name: &'static str) -> DurationGuard {
+    let active = enabled();
+    #[cfg(test)]
+    let active = active || test_profiler_active();
+    DurationGuard {
+        name,
+        started: active.then(Instant::now),
+    }
+}
+
 pub(crate) fn flush_if_due() {
     with_profiler(RenderProfiler::flush_if_due);
+}
+
+#[cfg(test)]
+fn test_profiler_active() -> bool {
+    TEST_PROFILER.with(|profiler| profiler.borrow().is_some())
 }
 
 #[cfg(test)]
