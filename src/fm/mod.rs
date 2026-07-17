@@ -65,6 +65,29 @@ struct FmDirectorySnapshot {
     status: FmDirectoryStatus,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FmNavigationReason {
+    Enter,
+    Leave,
+    ActivateSelection,
+}
+
+/// Pure, generation-bound request for one directory transition. Preparing
+/// this value performs no filesystem work; an App adapter may load the target
+/// and later apply it only while every source identity still matches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FmNavigationRequest {
+    pub reason: FmNavigationReason,
+    pub source_directory: PathBuf,
+    pub source_directory_generation: u64,
+    pub source_preview_generation: u64,
+    pub source_miller_revision: u64,
+    pub target_directory: PathBuf,
+    pub focus_path: Option<PathBuf>,
+    pub fallback_cursor: usize,
+    pub show_hidden: bool,
+}
+
 /// Parent-directory context for the left Miller column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FmParent {
@@ -278,6 +301,10 @@ pub struct FmState {
 }
 
 impl FmState {
+    pub(crate) fn request_enter_navigation(&self) -> Option<FmNavigationRequest> {
+        None
+    }
+
     /// Open `cwd` (hidden files off) and read its entries, cursor at the top.
     pub fn new(cwd: impl Into<PathBuf>) -> Self {
         Self::with_hidden(cwd, false)
@@ -1764,6 +1791,48 @@ mod tests {
         assert_eq!(st.cwd, td.root.join("sub"));
         assert_eq!(st.cursor, 0);
         assert!(st.entries.iter().any(|e| e.name == "child.txt"));
+    }
+
+    // TP-FM4-PURE-REQUEST: input first creates an immutable, generation-bound
+    // transition request. Request construction cannot read disk or mutate
+    // selection, preview, chain, cache, cursor, or any generation.
+    #[test]
+    fn enter_navigation_request_is_exact_and_state_pure() {
+        let mut state = FmState::test_empty("/virtual/current");
+        let child = PathBuf::from("/virtual/current/child");
+        state.entries = vec![FileEntry {
+            name: "child".into(),
+            path: child.clone(),
+            is_dir: true,
+            operation_supported: true,
+        }];
+        state.directory_generation = 17;
+        state.preview_generation = 23;
+        state.miller.revision = 31;
+        let before = state.clone();
+
+        assert_eq!(
+            state.request_enter_navigation(),
+            Some(FmNavigationRequest {
+                reason: FmNavigationReason::Enter,
+                source_directory: PathBuf::from("/virtual/current"),
+                source_directory_generation: 17,
+                source_preview_generation: 23,
+                source_miller_revision: 31,
+                target_directory: child,
+                focus_path: None,
+                fallback_cursor: 0,
+                show_hidden: false,
+            })
+        );
+        assert_eq!(state.cwd, before.cwd);
+        assert_eq!(state.entries, before.entries);
+        assert_eq!(state.cursor, before.cursor);
+        assert_eq!(state.viewport_start, before.viewport_start);
+        assert_eq!(state.directory_generation, before.directory_generation);
+        assert_eq!(state.preview, before.preview);
+        assert_eq!(state.preview_generation, before.preview_generation);
+        assert_eq!(state.miller, before.miller);
     }
 
     // TP-FM4-ENTER-FAILURE: directory identity can disappear between the
