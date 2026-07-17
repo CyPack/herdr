@@ -298,10 +298,19 @@ impl MillerState {
         assert!(self.chain.len() <= MAX_MILLER_HISTORY_DEPTH);
         assert!(self.resident_non_current.len() < MAX_RESIDENT_MILLER_COLUMNS);
         assert!(
+            self.horizontal.first_visible < self.chain.len(),
+            "the horizontal window must address a live chain segment"
+        );
+        assert!(
             self.chain
                 .iter()
                 .any(|segment| segment.directory == self.focused_directory),
             "the focused directory must be a chain member"
+        );
+        assert_eq!(
+            self.chain.back().map(|segment| &segment.directory),
+            Some(&self.focused_directory),
+            "the focused current directory must be the chain tail"
         );
         assert!(
             (MILLER_COLUMN_MIN_WIDTH..=MILLER_COLUMN_MAX_WIDTH)
@@ -314,11 +323,26 @@ impl MillerState {
                 seen.insert(&segment.directory),
                 "chain path identity must be unique"
             );
+            assert!(
+                (MILLER_COLUMN_MIN_WIDTH..=MILLER_COLUMN_MAX_WIDTH)
+                    .contains(&segment.preferred_width),
+                "every chain width must stay inside frozen bounds"
+            );
         }
+        let mut resident_directories = std::collections::HashSet::new();
+        let mut resident_ids = std::collections::HashSet::new();
         for projection in &self.resident_non_current {
             assert_ne!(
                 projection.id.directory, self.focused_directory,
                 "the current directory never sits in the evictable cache"
+            );
+            assert!(
+                resident_directories.insert(&projection.id.directory),
+                "only one resident projection may own a directory"
+            );
+            assert!(
+                resident_ids.insert(&projection.id),
+                "resident column identity must be unique"
             );
         }
     }
@@ -368,7 +392,7 @@ mod tests {
 
     // FM1.1: chain trimming never drops the focused current segment.
     #[test]
-    fn miller_history_never_drops_focused_current_segment() {
+    fn history_eviction_preserves_focused_visibility() {
         let mut state = MillerState::seed(deep_path(31));
         for extra in 0..40 {
             let directory = deep_path(31).join(format!("extra-{extra:02}"));
@@ -381,6 +405,11 @@ mod tests {
                     .any(|segment| segment.directory == directory),
                 "trimming must never drop the focused segment"
             );
+            assert_eq!(
+                state.chain.back().map(|segment| &segment.directory),
+                Some(&directory),
+                "the focused segment remains the visible chain tail"
+            );
             state.assert_miller_invariants_for_test();
         }
     }
@@ -388,7 +417,7 @@ mod tests {
     // FM1.1: at most five complete directory projections are resident at
     // once — the current plus at most four unique non-current entries.
     #[test]
-    fn resident_cache_plus_current_keeps_at_most_five_directories() {
+    fn resident_projection_lru_never_exceeds_five() {
         let mut state = MillerState::seed(PathBuf::from("/tmp/miller"));
         for step in 0..20 {
             let previous = projection(&mut state, &format!("/tmp/miller/dir-{step:02}"));
@@ -401,6 +430,17 @@ mod tests {
                 "at most four unique non-current projections may be resident"
             );
         }
+        assert_eq!(
+            state
+                .resident_non_current
+                .iter()
+                .map(|projection| projection.id.directory.clone())
+                .collect::<Vec<_>>(),
+            (16..20)
+                .map(|step| PathBuf::from(format!("/tmp/miller/dir-{step:02}")))
+                .collect::<Vec<_>>(),
+            "the four most recently departed projections survive in LRU order"
+        );
         state.assert_miller_invariants_for_test();
     }
 
@@ -525,7 +565,7 @@ mod tests {
     // FM1.1: the current directory's projection is operational authority on
     // `FmState`, never a member of the evictable cache.
     #[test]
-    fn current_projection_is_separate_from_evictable_cache() {
+    fn current_segment_is_never_evicted() {
         let mut state = MillerState::seed(PathBuf::from("/tmp/miller"));
         let stale_current = projection(&mut state, "/tmp/miller/target");
         state.visit(PathBuf::from("/tmp/miller/target"), Some(stale_current));
@@ -626,7 +666,7 @@ mod tests {
     // FM1.1: close/reopen rebuilds fresh state — new revision baseline and
     // no leaked cache or generations from the previous Files lifecycle.
     #[test]
-    fn close_reopen_rebuilds_fresh_miller_state() {
+    fn close_reopen_resets_ephemeral_width_and_view_state() {
         let mut state = MillerState::seed(PathBuf::from("/tmp/miller"));
         for step in 0..6 {
             let previous = projection(&mut state, &format!("/tmp/miller/dir-{step}"));
@@ -635,12 +675,32 @@ mod tests {
                 Some(previous),
             );
         }
+        let focused_chain_index = state.chain.len().saturating_sub(1);
+        assert!(state.commit_adjacent_column_widths(
+            focused_chain_index,
+            51,
+            MillerAdjacentWidthTarget::Preview,
+            37,
+        ));
+        state.horizontal.first_visible = focused_chain_index;
         let old_id = state.next_column_id(PathBuf::from("/tmp/miller/dir-1"));
         assert!(old_id.generation > 0);
 
         let reopened = MillerState::seed(PathBuf::from("/tmp/miller"));
         assert_eq!(reopened.revision, 0);
         assert!(reopened.resident_non_current.is_empty());
+        assert_eq!(reopened.horizontal.first_visible, 0);
+        assert_eq!(
+            reopened.preview_preferred_width,
+            MILLER_COLUMN_PREFERRED_WIDTH
+        );
+        assert!(
+            reopened
+                .chain
+                .iter()
+                .all(|segment| segment.preferred_width == MILLER_COLUMN_PREFERRED_WIDTH),
+            "column preferences are client-local to one Files lifecycle"
+        );
         assert!(
             reopened.resident_projection(&old_id).is_none(),
             "a previous lifecycle's generation must not resolve after reopen"
