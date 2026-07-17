@@ -285,11 +285,19 @@ fn compute_view_internal(
     let sidebar_area = shell_view.regions.get(RegionId::LeftPanel);
     let main_area = shell_view.regions.get(RegionId::CenterContent);
 
-    let (tab_bar_rect, terminal_area) = app
-        .active
-        .and_then(|i| app.workspaces.get(i))
-        .map(|ws| desktop_tab_bar_and_terminal_area(app, ws, main_area))
-        .unwrap_or((Rect::default(), main_area));
+    // Exactly one stage surface owns the center. The tab bar is
+    // terminal-app chrome: while NativeFiles is active the Files surface
+    // owns the COMPLETE WorkspaceStage and no tab-bar row is carved out.
+    let terminal_surface_active =
+        app.stage.surface_view() == surface_host::StageSurfaceView::TerminalWorkspace;
+    let (tab_bar_rect, terminal_area) = if terminal_surface_active {
+        app.active
+            .and_then(|i| app.workspaces.get(i))
+            .map(|ws| desktop_tab_bar_and_terminal_area(app, ws, main_area))
+            .unwrap_or((Rect::default(), main_area))
+    } else {
+        (Rect::default(), main_area)
+    };
     let FileManagerRowGeometry {
         rows: file_manager_row_areas,
         actions: file_manager_row_action_areas,
@@ -376,11 +384,9 @@ fn compute_view_internal(
         .unwrap_or_default();
     app.tab_scroll = tab_bar_view.scroll;
 
-    // Exactly one stage surface owns projected hit geometry per frame: the
+    // The same surface exclusivity governs projected hit geometry: the
     // hidden terminal projects no pane/split rectangles (and receives no
     // resize side effects) while the NativeFiles surface is active.
-    let terminal_surface_active =
-        app.stage.surface_view() == surface_host::StageSurfaceView::TerminalWorkspace;
     let split_borders = if terminal_surface_active {
         app.active
             .and_then(|i| app.workspaces.get(i))
@@ -977,19 +983,19 @@ mod tests {
             .expect("Files activation");
         app.file_manager.as_mut().expect("open fm").cursor = 8;
 
-        // Desktop: height 7 -> tab bar 1, FM header 1, panel title 1,
-        // status 1, list 3.
+        // Desktop: Files owns the full stage (no tab-bar carve-out since
+        // SF6.1) -> height 7 = FM header 1, panel title 1, status 1, list 4.
         compute_view(&mut app, Rect::new(0, 0, 100, 7));
         assert_eq!(
             app.file_manager.as_ref().expect("open fm").viewport_start,
-            6
+            5
         );
 
-        // Expanding to eight list rows clamps the old start to max_start=2.
+        // Expanding to nine list rows clamps the old start to max_start=1.
         compute_view(&mut app, Rect::new(0, 0, 100, 12));
         assert_eq!(
             app.file_manager.as_ref().expect("open fm").viewport_start,
-            2
+            1
         );
 
         // Mobile: height 7 -> mobile header 2, FM header 1, panel title 1,
@@ -1037,7 +1043,8 @@ mod tests {
                 .iter()
                 .map(|row| row.entry_idx)
                 .collect::<Vec<_>>(),
-            vec![3, 4]
+            vec![2, 3, 4],
+            "Files owns the full stage since SF6.1, so height 6 shows three rows"
         );
         assert!(app
             .view
@@ -1050,7 +1057,7 @@ mod tests {
                 .iter()
                 .map(|area| (area.entry_idx, area.action))
                 .collect::<Vec<_>>(),
-            [3, 4]
+            [2, 3, 4]
                 .into_iter()
                 .flat_map(|entry_idx| {
                     crate::app::state::FileManagerRowAction::ALL.map(|action| (entry_idx, action))
@@ -1071,7 +1078,7 @@ mod tests {
             ]
         );
 
-        app.file_manager = None;
+        app.close_file_manager();
         compute_view(&mut app, Rect::new(0, 0, 100, 6));
         assert!(app.view.file_manager_row_areas.is_empty());
         assert!(app.view.file_manager_row_action_areas.is_empty());
@@ -1559,8 +1566,8 @@ mod tests {
             "the sidebar remains a separately rendered shell region"
         );
 
-        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height))
-            .expect("files stage terminal");
+        let mut terminal =
+            Terminal::new(TestBackend::new(area.width, area.height)).expect("files stage terminal");
         terminal
             .draw(|frame| render_with_runtime_registry(&app, &terminal_runtimes, frame))
             .expect("files stage render");
