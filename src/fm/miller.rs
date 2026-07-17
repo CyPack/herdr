@@ -169,6 +169,10 @@ impl MillerState {
             // the far (root) side, never the focused tail.
             self.chain.pop_front();
         }
+        self.horizontal.first_visible = self
+            .horizontal
+            .first_visible
+            .min(self.chain.len().saturating_sub(1));
 
         // Branch retirement is atomic with the chain transition: no cached
         // projection may outlive the segment that gave it authority.
