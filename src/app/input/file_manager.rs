@@ -247,6 +247,28 @@ impl App {
             return FileManagerMouseDispatch::NotHandled;
         }
 
+        // FM2.2: an ACTIVE divider capture owns move/up everywhere — even
+        // outside the Files area — per the SF4.2-04 capture principle, so a
+        // fast drag can never escape the gesture.
+        if let Some(drag) = self.state.miller_trio_drag {
+            match mouse.kind {
+                MouseEventKind::Drag(MouseButton::Left) => {
+                    let delta = i32::from(mouse.column) - i32::from(drag.origin_x);
+                    let desired =
+                        (i32::from(drag.original_width) + delta).clamp(0, i32::from(u16::MAX));
+                    if let Some(file_manager) = self.state.file_manager.as_mut() {
+                        let _ = file_manager.commit_trio_width(drag.slot, desired as u16);
+                    }
+                    return FileManagerMouseDispatch::Consumed;
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    self.state.miller_trio_drag = None;
+                    return FileManagerMouseDispatch::Consumed;
+                }
+                _ => {}
+            }
+        }
+
         let center = self.state.view.terminal_area;
         let in_center = rect_contains(center, mouse.column, mouse.row);
         if !in_center {
@@ -254,6 +276,42 @@ impl App {
                 self.last_file_manager_click = None;
             }
             return FileManagerMouseDispatch::NotHandled;
+        }
+
+        // FM2.2: trio divider drag-resize. The one-cell divider strips from
+        // the CURRENT layout (same pure geometry authority as render) own
+        // press/drag/release; commits clamp through `commit_trio_width`.
+        let overrides = self
+            .state
+            .file_manager
+            .as_ref()
+            .map(|file_manager| file_manager.trio_overrides)
+            .unwrap_or_default();
+        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+            && mouse.modifiers.is_empty()
+        {
+            let dividers = crate::ui::file_manager_divider_areas(center, overrides);
+            let areas = [
+                crate::ui::file_manager_column_widths(center, overrides)[0],
+                crate::ui::file_manager_column_widths(center, overrides)[1],
+            ];
+            for (slot, divider) in dividers.into_iter().enumerate() {
+                let Some(divider) = divider else { continue };
+                if mouse.column >= divider.x
+                    && mouse.column < divider.x.saturating_add(divider.width)
+                    && mouse.row >= divider.y
+                    && mouse.row < divider.y.saturating_add(divider.height)
+                {
+                    if let Some(original_width) = areas[slot] {
+                        self.state.miller_trio_drag = Some(crate::app::state::MillerTrioDrag {
+                            slot,
+                            origin_x: mouse.column,
+                            original_width,
+                        });
+                    }
+                    return FileManagerMouseDispatch::Consumed;
+                }
+            }
         }
 
         let header_action = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
@@ -876,6 +934,128 @@ mod tests {
         app.try_open_file_manager_with(|_| Some(fm))
             .expect("Files activation");
         app
+    }
+
+    // FM2.2 end-to-end: pressing a trio divider and dragging resizes the
+    // column through the clamped commit seam; release ends the capture; the
+    // committed width survives recompute and clamps to the frozen 16..=64
+    // bounds. This is the user-visible custom-layout interaction.
+    #[test]
+    fn divider_drag_resizes_trio_columns_end_to_end() {
+        let td = TempDir::new("fm2-divider-drag");
+        td.file("00.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 60, 16));
+
+        let center = app.state.view.terminal_area;
+        let overrides = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .trio_overrides;
+        assert_eq!(overrides, crate::fm::miller::MillerTrioOverrides::default());
+        let dividers = crate::ui::file_manager_divider_areas(center, overrides);
+        let divider = dividers[0].expect("three-column layout exposes the first divider");
+        let original = crate::ui::file_manager_column_widths(center, overrides)[0]
+            .expect("parent column width");
+
+        // Press on the divider begins the capture and consumes the event.
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                divider.x,
+                divider.y + 2,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert!(
+            app.state.miller_trio_drag.is_some(),
+            "capture begins on press"
+        );
+
+        // Dragging right widens the parent column through the clamped seam.
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Drag(MouseButton::Left),
+                divider.x + 4,
+                divider.y + 2,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        let widened = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .trio_overrides
+            .parent
+            .expect("committed parent width");
+        assert_eq!(
+            widened,
+            (original + 4).clamp(
+                crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
+                crate::fm::miller::MILLER_COLUMN_MAX_WIDTH
+            ),
+            "drag commits the clamped width"
+        );
+
+        // Release ends the capture; the width survives a fresh compute and
+        // the layout honors it.
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Up(MouseButton::Left),
+                divider.x + 4,
+                divider.y + 2,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert!(
+            app.state.miller_trio_drag.is_none(),
+            "release ends the capture"
+        );
+        compute_view(&mut app.state, Rect::new(0, 0, 60, 16));
+        let overrides_after = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .trio_overrides;
+        let new_parent = crate::ui::file_manager_column_widths(center, overrides_after)[0]
+            .expect("parent column width after drag");
+        assert_eq!(new_parent, widened, "the layout honors the committed width");
+
+        // A far drag clamps to the frozen bounds instead of exploding.
+        let dividers = crate::ui::file_manager_divider_areas(center, overrides_after);
+        let divider = dividers[0].expect("divider after resize");
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            divider.x,
+            divider.y + 2,
+        ));
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            divider.x.saturating_add(200),
+            divider.y + 2,
+        ));
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .trio_overrides
+                .parent,
+            Some(crate::fm::miller::MILLER_COLUMN_MAX_WIDTH),
+            "a runaway drag clamps to the 64-cell maximum"
+        );
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            divider.x,
+            divider.y + 2,
+        ));
     }
 
     // SF6.2: Files input routes from the TYPED stage authority

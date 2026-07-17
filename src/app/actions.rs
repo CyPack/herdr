@@ -524,6 +524,7 @@ impl AppState {
         self.request_file_manager_context_action = None;
         self.stage.close_files();
         self.file_manager = None;
+        self.miller_trio_drag = None;
         // The hidden Files surface loses its projected stage geometry in the
         // same transaction, so no stale row/header rectangle can act between
         // this close and the next compute.

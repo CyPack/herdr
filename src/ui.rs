@@ -33,12 +33,12 @@ use self::dialogs::{
 };
 use self::file_manager::{
     agent_attachment_picker_visible_rows, compute_agent_attachment_picker_row_areas,
-    compute_file_manager_header_action_areas, compute_file_manager_row_geometry,
-    file_manager_visible_rows, render_agent_attachment_picker, render_file_manager,
+    compute_file_manager_header_action_areas, render_agent_attachment_picker, render_file_manager,
     FileManagerRowGeometry,
 };
 pub(crate) use self::file_manager::{
-    compute_file_manager_action_bar_model, file_manager_preview_content_area,
+    compute_file_manager_action_bar_model, file_manager_column_widths, file_manager_divider_areas,
+    file_manager_preview_content_area_with,
 };
 use self::keybind_help::render_keybind_help_overlay;
 use self::menus::{
@@ -596,10 +596,20 @@ fn compute_mobile_view(
 }
 
 fn sync_file_manager_view(app: &mut AppState, area: Rect) -> FileManagerRowGeometry {
-    let visible_rows = file_manager_visible_rows(area);
+    let overrides = app
+        .file_manager
+        .as_ref()
+        .map(|file_manager| file_manager.trio_overrides)
+        .unwrap_or_default();
+    let visible_rows = file_manager::file_manager_visible_rows_with(area, overrides);
     if let Some(file_manager) = app.file_manager.as_mut() {
         file_manager.sync_viewport(visible_rows);
-        compute_file_manager_row_geometry(area, &file_manager.entries, file_manager.viewport_start)
+        file_manager::compute_file_manager_row_geometry_with(
+            area,
+            &file_manager.entries,
+            file_manager.viewport_start,
+            overrides,
+        )
     } else {
         FileManagerRowGeometry::default()
     }

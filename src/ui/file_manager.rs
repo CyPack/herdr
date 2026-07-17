@@ -28,6 +28,7 @@ use crate::app::state::{
     FileManagerHeaderActionArea, FileManagerOperationKind, FileManagerOperationState,
     FileManagerOperationStatus, FileManagerRowAction, FileManagerRowActionArea, FileManagerRowArea,
 };
+use crate::fm::miller::MillerTrioOverrides;
 use crate::fm::{
     FileEntry, FmDirectoryStatus, FmFilePreview, FmImagePreviewState, FmPreview, FmState,
     HighlightedTextPreview, ImagePreviewError, PreviewTextLine, PreviewTextSpan, PreviewTextStyle,
@@ -121,12 +122,24 @@ struct FileManagerAreas {
     status: Rect,
 }
 
+fn column_constraint(override_width: Option<u16>) -> Constraint {
+    match override_width {
+        Some(width) => Constraint::Length(width.max(MIN_COLUMN_WIDTH)),
+        None => Constraint::Min(MIN_COLUMN_WIDTH),
+    }
+}
+
+#[allow(dead_code)] // Default-override seam kept for callers without overrides.
 fn miller_layout(area: Rect) -> MillerLayout {
+    miller_layout_with(area, MillerTrioOverrides::default())
+}
+
+fn miller_layout_with(area: Rect, overrides: MillerTrioOverrides) -> MillerLayout {
     if area.width >= THREE_COLUMN_MIN_WIDTH {
         let [parent, first_divider, current, second_divider, preview] = Layout::horizontal([
-            Constraint::Min(MIN_COLUMN_WIDTH),
+            column_constraint(overrides.parent),
             Constraint::Length(DIVIDER_WIDTH),
-            Constraint::Min(MIN_COLUMN_WIDTH),
+            column_constraint(overrides.current),
             Constraint::Length(DIVIDER_WIDTH),
             Constraint::Min(MIN_COLUMN_WIDTH),
         ])
@@ -139,7 +152,7 @@ fn miller_layout(area: Rect) -> MillerLayout {
         }
     } else if area.width >= TWO_COLUMN_MIN_WIDTH {
         let [current, divider, preview] = Layout::horizontal([
-            Constraint::Min(MIN_COLUMN_WIDTH),
+            column_constraint(overrides.current),
             Constraint::Length(DIVIDER_WIDTH),
             Constraint::Min(MIN_COLUMN_WIDTH),
         ])
@@ -161,6 +174,10 @@ fn miller_layout(area: Rect) -> MillerLayout {
 }
 
 fn file_manager_areas(area: Rect) -> Option<FileManagerAreas> {
+    file_manager_areas_with(area, MillerTrioOverrides::default())
+}
+
+fn file_manager_areas_with(area: Rect, overrides: MillerTrioOverrides) -> Option<FileManagerAreas> {
     if area.width == 0 || area.height == 0 {
         return None;
     }
@@ -172,9 +189,36 @@ fn file_manager_areas(area: Rect) -> Option<FileManagerAreas> {
     .areas(area);
     Some(FileManagerAreas {
         header,
-        columns: miller_layout(body),
+        columns: miller_layout_with(body, overrides),
         status,
     })
+}
+
+/// Current trio column widths (parent, current) for the CURRENT layout —
+/// the drag capture snapshots its original width from exactly this seam.
+pub(crate) fn file_manager_column_widths(
+    area: Rect,
+    overrides: MillerTrioOverrides,
+) -> [Option<u16>; 2] {
+    file_manager_areas_with(area, overrides)
+        .map(|areas| {
+            [
+                areas.columns.parent.map(|rect| rect.width),
+                Some(areas.columns.current.width),
+            ]
+        })
+        .unwrap_or([None, None])
+}
+
+/// Divider rects between the visible trio columns for the CURRENT layout;
+/// input attaches the FM2 drag capture to exactly these one-cell strips.
+pub(crate) fn file_manager_divider_areas(
+    area: Rect,
+    overrides: MillerTrioOverrides,
+) -> [Option<Rect>; 2] {
+    file_manager_areas_with(area, overrides)
+        .map(|areas| areas.columns.dividers)
+        .unwrap_or([None, None])
 }
 
 fn panel_areas(area: Rect) -> [Rect; 2] {
@@ -183,8 +227,13 @@ fn panel_areas(area: Rect) -> [Rect; 2] {
 
 /// Number of rows available to CURRENT entries for this responsive FM area.
 /// `compute_view` uses the same pure geometry that render consumes.
+#[allow(dead_code)] // Default-override seam kept for callers without overrides.
 pub(crate) fn file_manager_visible_rows(area: Rect) -> usize {
-    file_manager_areas(area)
+    file_manager_visible_rows_with(area, MillerTrioOverrides::default())
+}
+
+pub(crate) fn file_manager_visible_rows_with(area: Rect, overrides: MillerTrioOverrides) -> usize {
+    file_manager_areas_with(area, overrides)
         .map(|areas| panel_areas(areas.columns.current)[1].height as usize)
         .unwrap_or(0)
 }
@@ -192,8 +241,16 @@ pub(crate) fn file_manager_visible_rows(area: Rect) -> usize {
 /// Pixel graphics and text rendering share this exact PREVIEW content seam.
 /// The top-level FM header and the PREVIEW panel title are intentionally
 /// excluded so host graphics cannot cover either label.
+#[allow(dead_code)] // Default-override seam kept for callers without overrides.
 pub(crate) fn file_manager_preview_content_area(area: Rect) -> Option<Rect> {
-    let preview = file_manager_areas(area)?.columns.preview?;
+    file_manager_preview_content_area_with(area, MillerTrioOverrides::default())
+}
+
+pub(crate) fn file_manager_preview_content_area_with(
+    area: Rect,
+    overrides: MillerTrioOverrides,
+) -> Option<Rect> {
+    let preview = file_manager_areas_with(area, overrides)?.columns.preview?;
     let content = panel_areas(preview)[1];
     (content.width > 0 && content.height > 0).then_some(content)
 }
@@ -207,12 +264,27 @@ pub(crate) struct FileManagerRowGeometry {
     pub(crate) actions: Vec<FileManagerRowActionArea>,
 }
 
+#[allow(dead_code)] // Default-override seam kept for unit tests.
 pub(crate) fn compute_file_manager_row_geometry(
     area: Rect,
     entries: &[FileEntry],
     viewport_start: usize,
 ) -> FileManagerRowGeometry {
-    let Some(areas) = file_manager_areas(area) else {
+    compute_file_manager_row_geometry_with(
+        area,
+        entries,
+        viewport_start,
+        MillerTrioOverrides::default(),
+    )
+}
+
+pub(crate) fn compute_file_manager_row_geometry_with(
+    area: Rect,
+    entries: &[FileEntry],
+    viewport_start: usize,
+    overrides: MillerTrioOverrides,
+) -> FileManagerRowGeometry {
+    let Some(areas) = file_manager_areas_with(area, overrides) else {
         return FileManagerRowGeometry::default();
     };
     let list = panel_areas(areas.columns.current)[1];
@@ -574,7 +646,7 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
     let Some(fm) = app.file_manager.as_ref() else {
         return;
     };
-    let Some(areas) = file_manager_areas(area) else {
+    let Some(areas) = file_manager_areas_with(area, fm.trio_overrides) else {
         return;
     };
     let p = &app.palette;
@@ -650,7 +722,12 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
     } else {
         // Unit-level/component callers can render into an arbitrary rect
         // without a preceding full-frame compute_view pass.
-        fallback_geometry = compute_file_manager_row_geometry(area, &fm.entries, fm.viewport_start);
+        fallback_geometry = compute_file_manager_row_geometry_with(
+            area,
+            &fm.entries,
+            fm.viewport_start,
+            fm.trio_overrides,
+        );
         (
             fallback_geometry.rows.as_slice(),
             fallback_geometry.actions.as_slice(),
@@ -891,7 +968,7 @@ fn render_agent_attachment_file_manager(
     area: Rect,
     current_rows: &[FileManagerRowArea],
 ) {
-    let Some(areas) = file_manager_areas(area) else {
+    let Some(areas) = file_manager_areas_with(area, fm.trio_overrides) else {
         return;
     };
     let styles = file_manager_visual_styles(&app.palette);

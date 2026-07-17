@@ -264,6 +264,9 @@ pub struct FmState {
     /// Bounded Miller chain and resident non-current projections (FM1). The
     /// current directory's `entries` above stay the operational authority.
     pub(crate) miller: miller::MillerState,
+    /// User-committed trio column width overrides (FM2.2); `None` keeps the
+    /// legacy proportional layout. Client-local, reset on close/reopen.
+    pub(crate) trio_overrides: miller::MillerTrioOverrides,
 }
 
 impl FmState {
@@ -292,6 +295,7 @@ impl FmState {
             preview_generation: 0,
             multi_selection: FmMultiSelection::default(),
             miller,
+            trio_overrides: miller::MillerTrioOverrides::default(),
         };
         state.refresh_context();
         state
@@ -314,6 +318,7 @@ impl FmState {
             preview: FmPreview::None,
             preview_generation: 0,
             multi_selection: FmMultiSelection::default(),
+            trio_overrides: miller::MillerTrioOverrides::default(),
         }
     }
 
@@ -562,6 +567,31 @@ impl FmState {
             self.miller.visit(path, Some(departing));
             self.reload();
         }
+    }
+
+    /// Commit one dragged trio divider width (FM2.2): slot 0 = parent
+    /// column, slot 1 = current column. Clamps to the frozen Miller bounds
+    /// and mirrors the width into the bounded chain model so pointer resize
+    /// and the FM1 chain never disagree.
+    pub(crate) fn commit_trio_width(&mut self, slot: usize, width: u16) -> bool {
+        let clamped = width.clamp(
+            miller::MILLER_COLUMN_MIN_WIDTH,
+            miller::MILLER_COLUMN_MAX_WIDTH,
+        );
+        let chain_index = match slot {
+            0 => self.miller.chain.len().checked_sub(2),
+            1 => self.miller.chain.len().checked_sub(1),
+            _ => return false,
+        };
+        match slot {
+            0 => self.trio_overrides.parent = Some(clamped),
+            1 => self.trio_overrides.current = Some(clamped),
+            _ => unreachable!(),
+        }
+        if let Some(chain_index) = chain_index {
+            let _ = self.miller.commit_column_width(chain_index, clamped);
+        }
+        true
     }
 
     /// Move the departing current directory's complete projection out of the

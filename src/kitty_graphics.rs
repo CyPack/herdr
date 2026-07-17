@@ -17,7 +17,6 @@ use crate::ghostty::{
 };
 use crate::layout::PaneId;
 use crate::terminal::TerminalRuntimeRegistry;
-use crate::ui::file_manager_preview_content_area;
 
 const KITTY_CHUNK_BYTES: usize = 3072;
 const HOST_IMAGE_ID_BASE: u32 = 10_000;
@@ -89,10 +88,22 @@ fn file_manager_image_geometry(
     file_manager_area: Rect,
     cell_size: HostCellSize,
 ) -> Option<(Rect, ImagePreviewTarget)> {
+    file_manager_image_geometry_with(
+        file_manager_area,
+        cell_size,
+        crate::fm::miller::MillerTrioOverrides::default(),
+    )
+}
+
+fn file_manager_image_geometry_with(
+    file_manager_area: Rect,
+    cell_size: HostCellSize,
+    overrides: crate::fm::miller::MillerTrioOverrides,
+) -> Option<(Rect, ImagePreviewTarget)> {
     if !cell_size.is_known() {
         return None;
     }
-    let area = file_manager_preview_content_area(file_manager_area)?;
+    let area = crate::ui::file_manager_preview_content_area_with(file_manager_area, overrides)?;
     let width_px = u32::from(area.width).checked_mul(cell_size.width_px)?;
     let height_px = u32::from(area.height).checked_mul(cell_size.height_px)?;
     if width_px == 0 || height_px == 0 {
@@ -123,13 +134,30 @@ fn file_manager_image_placement(
     file_manager_image_placement_with_data(file_manager_area, cell_size, prepared, true)
 }
 
+#[allow(dead_code)] // Default-override seam kept for callers without overrides.
 fn file_manager_image_placement_with_data(
     file_manager_area: Rect,
     cell_size: HostCellSize,
     prepared: &PreparedImagePreview,
     include_data: bool,
 ) -> Option<HostPlacement> {
-    let (area, target) = file_manager_image_geometry(file_manager_area, cell_size)?;
+    file_manager_image_placement_with_overrides(
+        file_manager_area,
+        cell_size,
+        prepared,
+        include_data,
+        crate::fm::miller::MillerTrioOverrides::default(),
+    )
+}
+
+fn file_manager_image_placement_with_overrides(
+    file_manager_area: Rect,
+    cell_size: HostCellSize,
+    prepared: &PreparedImagePreview,
+    include_data: bool,
+    overrides: crate::fm::miller::MillerTrioOverrides,
+) -> Option<HostPlacement> {
+    let (area, target) = file_manager_image_geometry_with(file_manager_area, cell_size, overrides)?;
     if prepared.width == 0
         || prepared.height == 0
         || prepared.width > target.width_px
@@ -208,12 +236,25 @@ fn collect_file_manager_image_placement(
     let crate::fm::FmImagePreviewState::Ready { target, prepared } = &preview.state else {
         return None;
     };
-    if file_manager_image_target(app.view.terminal_area, cell_size)? != *target {
+    let overrides = app
+        .file_manager
+        .as_ref()
+        .map(|file_manager| file_manager.trio_overrides)
+        .unwrap_or_default();
+    if file_manager_image_geometry_with(app.view.terminal_area, cell_size, overrides)
+        .map(|(_, target)| target)?
+        != *target
+    {
         return None;
     }
 
-    let mut placement =
-        file_manager_image_placement_with_data(app.view.terminal_area, cell_size, prepared, false)?;
+    let mut placement = file_manager_image_placement_with_overrides(
+        app.view.terminal_area,
+        cell_size,
+        prepared,
+        false,
+        overrides,
+    )?;
     let format_code = kitty_format_code(placement.placement.format);
     let signature = image_signature(&placement, format_code);
     let host_id = host_image_id(placement.pane_id, &placement.placement);
