@@ -530,7 +530,7 @@ fn apply_resize_preview_widths(
         tracks[1].clamp(MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_MAX_WIDTH);
 }
 
-fn miller_resize_column_is_live(
+pub(crate) fn miller_resize_column_is_live(
     column: &crate::ui::shell::MillerResizeColumnId,
     file_manager: &FmState,
 ) -> bool {

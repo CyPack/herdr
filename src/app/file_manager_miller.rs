@@ -156,6 +156,59 @@ impl crate::app::App {
         true
     }
 
+    /// Commit the final transient Miller track pair through the one model
+    /// write-back seam. The capture target is revalidated against the current
+    /// Files generation, model revision, and both adjacent column identities
+    /// before any preferred width may change.
+    pub(super) fn commit_miller_resize(&mut self) -> bool {
+        let Some(divider) = self
+            .state
+            .shell_interaction
+            .miller_resize_preview()
+            .map(|(divider, _)| divider.clone())
+        else {
+            return false;
+        };
+        let Some(current_revision) = self
+            .state
+            .file_manager
+            .as_ref()
+            .map(|file_manager| file_manager.miller.revision)
+        else {
+            return false;
+        };
+        let update = self.state.shell_interaction.commit_resize(current_revision);
+        let crate::ui::shell::ResizeDecision::Committed([leading_width, _]) = update.decision()
+        else {
+            return false;
+        };
+
+        let Some(active_files_generation) = self.state.stage.active_instance_generation() else {
+            return false;
+        };
+        let Some(file_manager) = self.state.file_manager.as_mut() else {
+            return false;
+        };
+        if divider.files_generation() != active_files_generation
+            || divider.model_revision() != file_manager.miller.revision
+            || divider.axis() != crate::ui::shell::ShellDirection::Horizontal
+            || divider.leading().projection_index().saturating_add(1)
+                != divider.trailing().projection_index()
+            || !crate::ui::miller_resize_column_is_live(divider.leading(), file_manager)
+            || !crate::ui::miller_resize_column_is_live(divider.trailing(), file_manager)
+        {
+            return false;
+        }
+        let crate::ui::shell::MillerResizeColumnId::Directory { chain_index, .. } =
+            divider.leading()
+        else {
+            return false;
+        };
+        file_manager
+            .miller
+            .commit_column_width(*chain_index, leading_width)
+    }
+
     /// Apply the two exact horizontal Miller gestures. Recognized gestures
     /// remain consumed even when the immutable frame has gone stale; stale
     /// geometry must never leak through to another Files action.

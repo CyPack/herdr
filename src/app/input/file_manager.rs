@@ -327,21 +327,28 @@ impl App {
             return FileManagerMouseDispatch::NotHandled;
         }
 
-        if self.state.shell_interaction.miller_resize_active()
-            && matches!(mouse.kind, MouseEventKind::Drag(MouseButton::Left))
-        {
-            if let Some(bounds) = crate::ui::shell::ResizeBounds::new(
-                crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
-                crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
-                crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
-                crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
-            ) {
-                let _ = self.state.shell_interaction.preview_resize(
-                    ratatui::layout::Position::new(mouse.column, mouse.row),
-                    bounds,
-                );
+        if self.state.shell_interaction.miller_resize_active() {
+            match mouse.kind {
+                MouseEventKind::Drag(MouseButton::Left) => {
+                    if let Some(bounds) = crate::ui::shell::ResizeBounds::new(
+                        crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
+                        crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
+                        crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
+                        crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
+                    ) {
+                        let _ = self.state.shell_interaction.preview_resize(
+                            ratatui::layout::Position::new(mouse.column, mouse.row),
+                            bounds,
+                        );
+                    }
+                    return FileManagerMouseDispatch::Consumed;
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    let _ = self.commit_miller_resize();
+                    return FileManagerMouseDispatch::Consumed;
+                }
+                _ => {}
             }
-            return FileManagerMouseDispatch::Consumed;
         }
 
         // FM2.2: an ACTIVE divider capture owns move/up everywhere — even
