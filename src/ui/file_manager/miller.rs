@@ -3,6 +3,8 @@
 //! the Stage rectangle and per-segment preferred widths. Render and input
 //! consume these rects; no filesystem work happens here. FM2 reuses the
 //! divider rects as SF3 resize-transaction targets.
+#![allow(dead_code)] // The FM1.3 render/input wiring and the FM2 divider
+                     // drag-resize consume this pure geometry.
 
 use ratatui::layout::Rect;
 
@@ -196,8 +198,10 @@ mod tests {
     fn horizontal_viewport_clamps_after_path_shrink() {
         let stage = Rect::new(0, 0, 120, 20);
         let geometry = miller_viewport_geometry(stage, &widths(3), 2, 30);
-        assert_eq!(geometry.first_visible, 2.min(geometry.first_visible.max(0)));
-        assert!(geometry.first_visible < 3);
+        assert!(
+            geometry.first_visible < 3,
+            "a stale window clamps into the chain"
+        );
         assert!(geometry.columns.iter().all(|column| column.chain_index < 3));
     }
 
