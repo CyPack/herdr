@@ -1607,6 +1607,78 @@ mod tests {
     }
 
     #[test]
+    fn performance_workloads_meet_frozen_budgets() {
+        const WARM_UP_SAMPLES: usize = 16;
+        const MEASURED_SAMPLES: usize = 100;
+        const COMPUTE_BUDGET: std::time::Duration = std::time::Duration::from_micros(500);
+        const FRAME_120_BUDGET: std::time::Duration = std::time::Duration::from_millis(8);
+        const FRAME_240_BUDGET: std::time::Duration = std::time::Duration::from_millis(16);
+
+        fn p95(
+            warm_up_samples: usize,
+            measured_samples: usize,
+            mut workload: impl FnMut(),
+        ) -> std::time::Duration {
+            for _ in 0..warm_up_samples {
+                std::hint::black_box(workload());
+            }
+            let mut samples = Vec::with_capacity(measured_samples);
+            for _ in 0..measured_samples {
+                let started = std::time::Instant::now();
+                std::hint::black_box(workload());
+                samples.push(started.elapsed());
+            }
+            samples.sort_unstable();
+            let rank = measured_samples.saturating_mul(95).div_ceil(100);
+            samples[rank.saturating_sub(1)]
+        }
+
+        let (mut app, _) = prepared_miller_projection_app(32, 31);
+        let medium = Rect::new(0, 0, 120, 40);
+        let large = Rect::new(0, 0, 240, 80);
+
+        let compute_medium = p95(WARM_UP_SAMPLES, MEASURED_SAMPLES, || {
+            compute_view(&mut app, medium);
+        });
+        let compute_large = p95(WARM_UP_SAMPLES, MEASURED_SAMPLES, || {
+            compute_view(&mut app, large);
+        });
+        compute_view(&mut app, medium);
+        let frame_medium = p95(WARM_UP_SAMPLES, MEASURED_SAMPLES, || {
+            std::hint::black_box(render_full_frame_for_test(&app, medium));
+        });
+        compute_view(&mut app, large);
+        let frame_large = p95(WARM_UP_SAMPLES, MEASURED_SAMPLES, || {
+            std::hint::black_box(render_full_frame_for_test(&app, large));
+        });
+
+        assert!(
+            compute_medium <= COMPUTE_BUDGET,
+            "120x40 Miller compute p95={}us exceeds {}us",
+            compute_medium.as_micros(),
+            COMPUTE_BUDGET.as_micros()
+        );
+        assert!(
+            compute_large <= COMPUTE_BUDGET,
+            "240x80 Miller compute p95={}us exceeds {}us",
+            compute_large.as_micros(),
+            COMPUTE_BUDGET.as_micros()
+        );
+        assert!(
+            frame_medium <= FRAME_120_BUDGET,
+            "120x40 Miller full-frame p95={}us exceeds {}us",
+            frame_medium.as_micros(),
+            FRAME_120_BUDGET.as_micros()
+        );
+        assert!(
+            frame_large <= FRAME_240_BUDGET,
+            "240x80 Miller full-frame p95={}us exceeds {}us",
+            frame_large.as_micros(),
+            FRAME_240_BUDGET.as_micros()
+        );
+    }
+
+    #[test]
     fn reopened_files_projection_uses_fresh_instance_generation() {
         let (mut app, _) = prepared_miller_projection_app(3, 2);
         compute_view(&mut app, Rect::new(0, 0, 100, 16));
