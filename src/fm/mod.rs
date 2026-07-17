@@ -302,7 +302,63 @@ pub struct FmState {
 
 impl FmState {
     pub(crate) fn request_enter_navigation(&self) -> Option<FmNavigationRequest> {
-        None
+        let target_directory = self
+            .selected()
+            .filter(|entry| entry.is_dir)
+            .map(|entry| entry.path.clone())?;
+        Some(self.navigation_request(FmNavigationReason::Enter, target_directory, None, 0))
+    }
+
+    fn request_leave_navigation(&self) -> Option<FmNavigationRequest> {
+        let departed = self.cwd.clone();
+        let target_directory = departed.parent().map(Path::to_path_buf)?;
+        Some(self.navigation_request(
+            FmNavigationReason::Leave,
+            target_directory,
+            Some(departed),
+            0,
+        ))
+    }
+
+    fn request_activate_navigation(
+        &self,
+        directory: &Path,
+        entry_path: &Path,
+    ) -> FmNavigationRequest {
+        self.navigation_request(
+            FmNavigationReason::ActivateSelection,
+            directory.to_path_buf(),
+            Some(entry_path.to_path_buf()),
+            0,
+        )
+    }
+
+    fn navigation_request(
+        &self,
+        reason: FmNavigationReason,
+        target_directory: PathBuf,
+        focus_path: Option<PathBuf>,
+        fallback_cursor: usize,
+    ) -> FmNavigationRequest {
+        FmNavigationRequest {
+            reason,
+            source_directory: self.cwd.clone(),
+            source_directory_generation: self.directory_generation,
+            source_preview_generation: self.preview_generation,
+            source_miller_revision: self.miller.revision,
+            target_directory,
+            focus_path,
+            fallback_cursor,
+            show_hidden: self.show_hidden,
+        }
+    }
+
+    fn navigation_request_is_current(&self, request: &FmNavigationRequest) -> bool {
+        self.cwd == request.source_directory
+            && self.directory_generation == request.source_directory_generation
+            && self.preview_generation == request.source_preview_generation
+            && self.miller.revision == request.source_miller_revision
+            && self.show_hidden == request.show_hidden
     }
 
     /// Open `cwd` (hidden files off) and read its entries, cursor at the top.
@@ -445,25 +501,34 @@ impl FmState {
             return self.replace_selection(entry_index);
         }
 
-        let snapshot = read_directory_snapshot(directory, self.show_hidden);
+        let request = self.request_activate_navigation(directory, entry_path);
+        let snapshot = read_directory_snapshot(&request.target_directory, request.show_hidden);
         if snapshot.status != FmDirectoryStatus::Available {
             return false;
         }
+        let Some(entry_path) = request.focus_path.as_deref() else {
+            return false;
+        };
         let Some(entry_index) = unique_entry_index(&snapshot.entries, entry_path) else {
             return false;
         };
-        let cwd_writable = directory_is_writable(directory);
+        let cwd_writable = directory_is_writable(&request.target_directory);
+        if request.reason != FmNavigationReason::ActivateSelection
+            || !self.navigation_request_is_current(&request)
+        {
+            return false;
+        }
 
         let departing = self.departing_projection();
         self.clear_multi_selection();
-        self.cwd = directory.to_path_buf();
+        self.cwd = request.target_directory.clone();
         self.entries = snapshot.entries;
         self.cursor = entry_index;
         self.viewport_start = 0;
         self.cwd_status = snapshot.status;
         self.cwd_writable = cwd_writable;
         self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
-        self.miller.visit(directory.to_path_buf(), Some(departing));
+        self.miller.visit(request.target_directory, Some(departing));
         self.refresh_context();
         self.replace_selection(entry_index)
     }
@@ -726,28 +791,27 @@ impl FmState {
     /// contents with the cursor back at the top. A no-op when the selection is a
     /// file (or the directory is empty).
     pub fn enter(&mut self) {
-        let target = self
-            .selected()
-            .filter(|entry| entry.is_dir)
-            .map(|entry| entry.path.clone());
-        if let Some(path) = target {
-            let snapshot = read_directory_snapshot(&path, self.show_hidden);
+        if let Some(request) = self.request_enter_navigation() {
+            let snapshot = read_directory_snapshot(&request.target_directory, request.show_hidden);
             if snapshot.status != FmDirectoryStatus::Available
-                || !std::fs::metadata(&path).is_ok_and(|metadata| metadata.is_dir())
+                || !std::fs::metadata(&request.target_directory)
+                    .is_ok_and(|metadata| metadata.is_dir())
+                || request.reason != FmNavigationReason::Enter
+                || !self.navigation_request_is_current(&request)
             {
                 return;
             }
-            let cwd_writable = directory_is_writable(&path);
+            let cwd_writable = directory_is_writable(&request.target_directory);
             self.clear_multi_selection();
             let departing = self.departing_projection();
-            self.cwd = path.clone();
+            self.cwd = request.target_directory.clone();
             self.entries = snapshot.entries;
             self.cursor = 0;
             self.viewport_start = 0;
             self.cwd_status = snapshot.status;
             self.cwd_writable = cwd_writable;
             self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
-            self.miller.visit(path, Some(departing));
+            self.miller.visit(request.target_directory, Some(departing));
             self.refresh_context();
         }
     }
@@ -793,30 +857,32 @@ impl FmState {
     /// exact departed child when it remains visible. Missing or filtered paths
     /// use the deterministic top fallback. A no-op at the filesystem root.
     pub fn leave(&mut self) {
-        let departed = self.cwd.clone();
-        if let Some(parent) = departed.parent().map(Path::to_path_buf) {
-            let snapshot = read_directory_snapshot(&parent, self.show_hidden);
+        if let Some(request) = self.request_leave_navigation() {
+            let snapshot = read_directory_snapshot(&request.target_directory, request.show_hidden);
             if snapshot.status != FmDirectoryStatus::Available
-                || !std::fs::metadata(&parent).is_ok_and(|metadata| metadata.is_dir())
+                || !std::fs::metadata(&request.target_directory)
+                    .is_ok_and(|metadata| metadata.is_dir())
+                || request.reason != FmNavigationReason::Leave
+                || !self.navigation_request_is_current(&request)
             {
                 return;
             }
-            let cwd_writable = directory_is_writable(&parent);
+            let cwd_writable = directory_is_writable(&request.target_directory);
             self.clear_multi_selection();
             let departing = self.departing_projection();
-            self.cwd = parent.clone();
+            self.cwd = request.target_directory.clone();
             self.entries = snapshot.entries;
-            self.cursor = self
-                .entries
-                .iter()
-                .position(|entry| entry.path == departed)
-                .unwrap_or(0);
+            self.cursor = request
+                .focus_path
+                .as_ref()
+                .and_then(|path| self.entries.iter().position(|entry| &entry.path == path))
+                .unwrap_or(request.fallback_cursor);
             self.viewport_start = 0;
             self.cwd_status = snapshot.status;
             self.cwd_writable = cwd_writable;
             self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
             self.clamp_cursor();
-            self.miller.visit(parent, Some(departing));
+            self.miller.visit(request.target_directory, Some(departing));
             self.refresh_context();
         }
     }
