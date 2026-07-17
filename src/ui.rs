@@ -632,11 +632,16 @@ fn sync_miller_view(app: &mut AppState, area: Rect) -> MillerViewSnapshot {
         return MillerViewSnapshot::default();
     };
     let viewport_area = file_manager::file_manager_miller_viewport_area(area);
+    let resize_preview = app.shell_interaction.miller_resize_preview();
     let Some(file_manager) = app.file_manager.as_mut() else {
         return MillerViewSnapshot::default();
     };
-    let mut snapshot =
-        file_manager::miller::project_miller_view(viewport_area, file_manager, files_generation);
+    let mut snapshot = file_manager::miller::project_miller_view_with_resize_preview(
+        viewport_area,
+        file_manager,
+        files_generation,
+        resize_preview,
+    );
     file_manager.miller.horizontal.first_visible = snapshot.first_visible;
     let current_visible_rows = snapshot
         .columns
@@ -646,10 +651,11 @@ fn sync_miller_view(app: &mut AppState, area: Rect) -> MillerViewSnapshot {
     let previous_viewport_start = file_manager.viewport_start;
     file_manager.sync_viewport(current_visible_rows);
     if file_manager.viewport_start != previous_viewport_start {
-        snapshot = file_manager::miller::project_miller_view(
+        snapshot = file_manager::miller::project_miller_view_with_resize_preview(
             viewport_area,
             file_manager,
             files_generation,
+            resize_preview,
         );
     }
     snapshot

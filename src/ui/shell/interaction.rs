@@ -37,6 +37,17 @@ pub(crate) enum MillerResizeColumnId {
     },
 }
 
+impl MillerResizeColumnId {
+    pub(crate) const fn projection_index(&self) -> usize {
+        match self {
+            Self::Directory { chain_index, .. } => *chain_index,
+            Self::Preview {
+                parent_chain_index, ..
+            } => parent_chain_index.saturating_add(1),
+        }
+    }
+}
+
 /// Stable identity for one Miller divider and its exact adjacent columns.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct MillerDividerId {
@@ -62,6 +73,26 @@ impl MillerDividerId {
             trailing,
             axis,
         })
+    }
+
+    pub(crate) const fn files_generation(&self) -> u32 {
+        self.files_generation
+    }
+
+    pub(crate) const fn model_revision(&self) -> u64 {
+        self.model_revision
+    }
+
+    pub(crate) const fn leading(&self) -> &MillerResizeColumnId {
+        &self.leading
+    }
+
+    pub(crate) const fn trailing(&self) -> &MillerResizeColumnId {
+        &self.trailing
+    }
+
+    pub(crate) const fn axis(&self) -> ShellDirection {
+        self.axis
     }
 }
 
@@ -551,6 +582,20 @@ impl ShellInteractionState {
         self.resize.as_ref().map(|transaction| &transaction.target)
     }
 
+    pub(crate) fn miller_resize_active(&self) -> bool {
+        self.resize
+            .as_ref()
+            .is_some_and(|transaction| matches!(&transaction.target, ResizeTargetId::Miller(_)))
+    }
+
+    pub(crate) fn miller_resize_preview(&self) -> Option<(&MillerDividerId, [u16; 2])> {
+        let transaction = self.resize.as_ref()?;
+        let ResizeTargetId::Miller(divider) = &transaction.target else {
+            return None;
+        };
+        Some((divider, transaction.preview_tracks))
+    }
+
     pub(crate) fn resize_preview_tracks(&self) -> Option<[u16; 2]> {
         self.resize
             .as_ref()
@@ -559,6 +604,26 @@ impl ShellInteractionState {
 
     pub(crate) fn resize_original_total(&self) -> Option<u16> {
         let transaction = self.resize.as_ref()?;
+        transaction.original_tracks[0].checked_add(transaction.original_tracks[1])
+    }
+
+    pub(crate) fn shell_resize_active(&self) -> bool {
+        self.resize
+            .as_ref()
+            .is_some_and(|transaction| matches!(&transaction.target, ResizeTargetId::Shell(_)))
+    }
+
+    pub(crate) fn shell_resize_preview_tracks(&self) -> Option<[u16; 2]> {
+        let transaction = self.resize.as_ref()?;
+        matches!(&transaction.target, ResizeTargetId::Shell(_))
+            .then_some(transaction.preview_tracks)
+    }
+
+    pub(crate) fn shell_resize_original_total(&self) -> Option<u16> {
+        let transaction = self.resize.as_ref()?;
+        if !matches!(&transaction.target, ResizeTargetId::Shell(_)) {
+            return None;
+        }
         transaction.original_tracks[0].checked_add(transaction.original_tracks[1])
     }
 

@@ -242,6 +242,15 @@ pub(crate) fn project_miller_view(
     file_manager: &FmState,
     files_generation: u32,
 ) -> MillerViewSnapshot {
+    project_miller_view_with_resize_preview(stage, file_manager, files_generation, None)
+}
+
+pub(crate) fn project_miller_view_with_resize_preview(
+    stage: Rect,
+    file_manager: &FmState,
+    files_generation: u32,
+    resize_preview: Option<(&crate::ui::shell::MillerDividerId, [u16; 2])>,
+) -> MillerViewSnapshot {
     let chain = &file_manager.miller.chain;
     let focused_chain_index = chain
         .iter()
@@ -284,6 +293,12 @@ pub(crate) fn project_miller_view(
     } else {
         focused_chain_index
     };
+    apply_resize_preview_widths(
+        &mut preferred_widths,
+        file_manager,
+        files_generation,
+        resize_preview,
+    );
     let first_visible_min =
         first_visible_floor(stage.width, &preferred_widths, focused_projection_index);
     let first_visible_max = focused_chain_index;
@@ -482,6 +497,84 @@ pub(crate) fn project_miller_view(
         first_visible: geometry.first_visible,
         columns,
         dividers,
+    }
+}
+
+fn apply_resize_preview_widths(
+    preferred_widths: &mut [u16],
+    file_manager: &FmState,
+    files_generation: u32,
+    resize_preview: Option<(&crate::ui::shell::MillerDividerId, [u16; 2])>,
+) {
+    let Some((divider, tracks)) = resize_preview else {
+        return;
+    };
+    if divider.files_generation() != files_generation
+        || divider.model_revision() != file_manager.miller.revision
+        || divider.axis() != crate::ui::shell::ShellDirection::Horizontal
+    {
+        return;
+    }
+    let leading_index = divider.leading().projection_index();
+    let trailing_index = divider.trailing().projection_index();
+    if leading_index.saturating_add(1) != trailing_index
+        || trailing_index >= preferred_widths.len()
+        || !miller_resize_column_is_live(divider.leading(), file_manager)
+        || !miller_resize_column_is_live(divider.trailing(), file_manager)
+    {
+        return;
+    }
+    preferred_widths[leading_index] =
+        tracks[0].clamp(MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_MAX_WIDTH);
+    preferred_widths[trailing_index] =
+        tracks[1].clamp(MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_MAX_WIDTH);
+}
+
+fn miller_resize_column_is_live(
+    column: &crate::ui::shell::MillerResizeColumnId,
+    file_manager: &FmState,
+) -> bool {
+    match column {
+        crate::ui::shell::MillerResizeColumnId::Directory {
+            chain_index,
+            directory,
+            generation,
+        } => {
+            let path_matches = file_manager
+                .miller
+                .chain
+                .get(*chain_index)
+                .is_some_and(|segment| segment.directory == *directory);
+            let generation_matches = if file_manager.cwd == *directory
+                || file_manager
+                    .cwd
+                    .parent()
+                    .is_some_and(|parent| parent == directory)
+            {
+                *generation == file_manager.directory_generation
+            } else if let Some(resident) = file_manager
+                .miller
+                .resident_projection_for_directory(directory)
+            {
+                *generation == resident.id.generation
+            } else {
+                *generation == 0
+            };
+            path_matches && generation_matches
+        }
+        crate::ui::shell::MillerResizeColumnId::Preview {
+            parent_chain_index,
+            source_path,
+            generation,
+        } => {
+            file_manager
+                .miller
+                .chain
+                .get(*parent_chain_index)
+                .is_some_and(|segment| segment.directory == file_manager.cwd)
+                && source_path.as_ref() == file_manager.selected().map(|entry| &entry.path)
+                && *generation == file_manager.preview_generation
+        }
     }
 }
 

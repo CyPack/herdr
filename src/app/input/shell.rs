@@ -292,17 +292,17 @@ impl AppState {
     }
 
     pub(crate) fn shell_resize_active(&self) -> bool {
-        self.shell_interaction.resize_active()
+        self.shell_interaction.shell_resize_active()
     }
 
     pub(crate) fn shell_resize_preview_width(&self) -> Option<u16> {
         self.shell_interaction
-            .resize_preview_tracks()
+            .shell_resize_preview_tracks()
             .map(|tracks| tracks[0])
     }
 
     pub(crate) fn shell_resize_original_total(&self) -> Option<u16> {
-        self.shell_interaction.resize_original_total()
+        self.shell_interaction.shell_resize_original_total()
     }
 
     fn current_sidebar_resize_total(&self) -> Option<u16> {
