@@ -95,13 +95,21 @@ pub(super) fn handle_file_manager_key(
             }
         }
         (KeyCode::Enter | KeyCode::Right | KeyCode::Char('l'), KeyModifiers::NONE) => {
-            if let Some(fm) = state.file_manager.as_mut() {
-                fm.enter();
+            if let Some(request) = state
+                .file_manager
+                .as_ref()
+                .and_then(crate::fm::FmState::request_enter_navigation)
+            {
+                return FileManagerKeyDispatch::Navigate(request);
             }
         }
         (KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h'), KeyModifiers::NONE) => {
-            if let Some(fm) = state.file_manager.as_mut() {
-                fm.leave();
+            if let Some(request) = state
+                .file_manager
+                .as_ref()
+                .and_then(crate::fm::FmState::request_leave_navigation)
+            {
+                return FileManagerKeyDispatch::Navigate(request);
             }
         }
         (KeyCode::Char('.'), KeyModifiers::NONE) => {
@@ -605,6 +613,20 @@ mod tests {
 
     fn key_with_modifiers(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
         KeyEvent::new(code, modifiers)
+    }
+
+    fn apply_test_navigation(state: &mut AppState, dispatch: FileManagerKeyDispatch) {
+        if let FileManagerKeyDispatch::Navigate(request) = dispatch {
+            let prepared =
+                crate::fm::prepare_navigation_io(request).expect("test navigation preparation");
+            assert!(
+                state
+                    .file_manager
+                    .as_mut()
+                    .is_some_and(|file_manager| file_manager.apply_prepared_navigation(prepared)),
+                "test App adapter must apply the live prepared result"
+            );
+        }
     }
 
     #[test]
@@ -1572,14 +1594,16 @@ mod tests {
         fs::write(td.root.join("sub").join("inner"), b"x").expect("write inner");
         let mut app = app_with_fm(FmState::new(&td.root));
 
-        handle_file_manager_key(&mut app, key(KeyCode::Enter));
+        let dispatch = handle_file_manager_key(&mut app, key(KeyCode::Enter));
+        apply_test_navigation(&mut app, dispatch);
         assert_eq!(
             app.file_manager.as_ref().unwrap().cwd,
             td.root.join("sub"),
             "enter descends into the directory"
         );
 
-        handle_file_manager_key(&mut app, key(KeyCode::Backspace));
+        let dispatch = handle_file_manager_key(&mut app, key(KeyCode::Backspace));
+        apply_test_navigation(&mut app, dispatch);
         assert_eq!(
             app.file_manager.as_ref().unwrap().cwd,
             td.root,

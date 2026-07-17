@@ -495,7 +495,7 @@ impl FmState {
         Some(self.navigation_request(FmNavigationReason::Enter, target_directory, None, 0))
     }
 
-    fn request_leave_navigation(&self) -> Option<FmNavigationRequest> {
+    pub(crate) fn request_leave_navigation(&self) -> Option<FmNavigationRequest> {
         let departed = self.cwd.clone();
         let target_directory = departed.parent().map(Path::to_path_buf)?;
         Some(self.navigation_request(

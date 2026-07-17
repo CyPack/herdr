@@ -62,6 +62,19 @@ impl ResolvedMillerRow {
 }
 
 impl crate::app::App {
+    pub(super) fn execute_file_manager_navigation(
+        &mut self,
+        request: crate::fm::FmNavigationRequest,
+    ) -> bool {
+        let Some(prepared) = crate::fm::prepare_navigation_io(request) else {
+            return false;
+        };
+        self.state
+            .file_manager
+            .as_mut()
+            .is_some_and(|file_manager| file_manager.apply_prepared_navigation(prepared))
+    }
+
     pub(super) fn resolve_miller_mouse_row(
         &self,
         column: u16,

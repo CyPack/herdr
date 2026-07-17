@@ -117,10 +117,14 @@ impl App {
                 // keyboard input, ahead of the mode dispatch, so keys drive
                 // its navigation instead of reaching the terminal underneath.
                 if self.state.file_manager.is_some() {
-                    if file_manager::handle_file_manager_key(&mut self.state, key_event)
-                        == file_manager::FileManagerKeyDispatch::CancelOperation
-                    {
-                        let _ = self.cancel_file_manager_operation();
+                    match file_manager::handle_file_manager_key(&mut self.state, key_event) {
+                        file_manager::FileManagerKeyDispatch::CancelOperation => {
+                            let _ = self.cancel_file_manager_operation();
+                        }
+                        file_manager::FileManagerKeyDispatch::Navigate(request) => {
+                            let _ = self.execute_file_manager_navigation(request);
+                        }
+                        file_manager::FileManagerKeyDispatch::Consumed => {}
                     }
                     if self.state.file_manager.is_none() {
                         self.last_file_manager_click = None;
