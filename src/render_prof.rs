@@ -263,6 +263,35 @@ pub(crate) fn observe_for_test<T>(work: impl FnOnce() -> T) -> (T, TestRenderPro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::sync::Arc;
+
+    #[derive(Clone, Default)]
+    struct SharedLogWriter(Arc<Mutex<Vec<u8>>>);
+
+    struct LockedLogWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for LockedLogWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .expect("profile log buffer lock")
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::writer::MakeWriter<'a> for SharedLogWriter {
+        type Writer = LockedLogWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            LockedLogWriter(self.0.clone())
+        }
+    }
 
     #[test]
     fn render_profiler_is_bounded_and_resettable() {
@@ -297,6 +326,30 @@ mod tests {
         assert!(profiler.durations.is_empty());
         assert_eq!(profiler.dropped_counter_labels, 0);
         assert_eq!(profiler.dropped_duration_labels, 0);
+    }
+
+    #[test]
+    fn render_profiler_flush_reports_duration_p95() {
+        let writer = SharedLogWriter::default();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(writer.clone())
+            .finish();
+        let mut profiler = RenderProfiler::new();
+        for duration_us in [1, 2, 4, 8, 16, 32, 64, 128, 256, 512] {
+            profiler.duration("test.duration", Duration::from_micros(duration_us));
+        }
+        profiler.window_started = Instant::now() - Duration::from_secs(2);
+
+        tracing::subscriber::with_default(subscriber, || profiler.flush_if_due());
+
+        let output = String::from_utf8(writer.0.lock().expect("profile log buffer lock").clone())
+            .expect("profile output is UTF-8");
+        assert!(
+            output.contains("p95_us:525"),
+            "duration telemetry must expose the bounded log2-bucket p95 estimate: {output}"
+        );
     }
 
     #[test]
