@@ -141,12 +141,54 @@ pub(crate) struct MillerViewSnapshot {
     pub files_generation: Option<u32>,
     pub model_revision: u64,
     pub focused_chain_index: Option<usize>,
+    /// Inclusive horizontal origin bounds for input against this exact frame.
+    /// The lower bound is the fullest complete window containing focus; the
+    /// upper bound keeps CURRENT (and inline PREVIEW, when present) visible.
+    pub first_visible_min: usize,
+    pub first_visible_max: usize,
     pub first_visible: usize,
     pub columns: Vec<MillerColumnView>,
     pub dividers: Vec<MillerDividerView>,
 }
 
 impl MillerViewSnapshot {
+    /// Resolve one bounded horizontal input step against this frame.
+    ///
+    /// A stale structural projection is inert. Horizontal position itself
+    /// deliberately does not increment `MillerState::revision`, so repeated
+    /// wheel events may share the same frame bounds until the next compute.
+    pub(crate) fn horizontal_scroll_target(
+        &self,
+        file_manager: &FmState,
+        delta: i8,
+    ) -> Option<usize> {
+        if self.files_generation.is_none()
+            || self.model_revision != file_manager.miller.revision
+            || self.focused_chain_index
+                != file_manager
+                    .miller
+                    .chain
+                    .iter()
+                    .position(|segment| segment.directory == file_manager.miller.focused_directory)
+            || self.columns.is_empty()
+            || self.first_visible_min > self.first_visible_max
+        {
+            return None;
+        }
+        let current = file_manager
+            .miller
+            .horizontal
+            .first_visible
+            .clamp(self.first_visible_min, self.first_visible_max);
+        Some(if delta < 0 {
+            current.saturating_sub(1).max(self.first_visible_min)
+        } else if delta > 0 {
+            current.saturating_add(1).min(self.first_visible_max)
+        } else {
+            current
+        })
+    }
+
     /// Exact prepared preview content rect for this frame. Generation and
     /// selected-path checks make stale snapshots inert for both text and Kitty
     /// consumers; no caller may reconstruct preview geometry independently.
@@ -221,12 +263,25 @@ pub(crate) fn project_miller_view(
     } else {
         focused_chain_index
     };
+    let first_visible_min =
+        first_visible_floor(stage.width, &preferred_widths, focused_projection_index);
+    let first_visible_max = focused_chain_index;
+    let requested_first_visible = file_manager
+        .miller
+        .horizontal
+        .first_visible
+        .clamp(first_visible_min, first_visible_max);
     let geometry = miller_viewport_geometry(
         stage,
         &preferred_widths,
         focused_projection_index,
-        file_manager.miller.horizontal.first_visible,
+        requested_first_visible,
     );
+    let (first_visible_min, first_visible_max) = if geometry.columns.is_empty() {
+        (0, 0)
+    } else {
+        (first_visible_min, first_visible_max)
+    };
 
     let mut columns = Vec::with_capacity(geometry.columns.len());
     for column in geometry.columns {
@@ -355,6 +410,8 @@ pub(crate) fn project_miller_view(
         files_generation: Some(files_generation),
         model_revision: file_manager.miller.revision,
         focused_chain_index: Some(focused_chain_index),
+        first_visible_min,
+        first_visible_max,
         first_visible: geometry.first_visible,
         columns,
         dividers,

@@ -278,6 +278,35 @@ impl App {
             return FileManagerMouseDispatch::NotHandled;
         }
 
+        // FM1.3: horizontal viewport input is presentation-local and consumes
+        // the exact current frame's bounded origin authority. Native
+        // ScrollLeft/Right and Shift+vertical-wheel share the same axis;
+        // unrelated modifiers fail closed. Recompute happens on the next
+        // frame, while repeated wheel events can safely reuse these bounds.
+        let horizontal_delta = match (mouse.kind, mouse.modifiers) {
+            (MouseEventKind::ScrollLeft, KeyModifiers::NONE)
+            | (MouseEventKind::ScrollUp, KeyModifiers::SHIFT) => Some(-1),
+            (MouseEventKind::ScrollRight, KeyModifiers::NONE)
+            | (MouseEventKind::ScrollDown, KeyModifiers::SHIFT) => Some(1),
+            _ => None,
+        };
+        if let Some(delta) = horizontal_delta {
+            self.last_file_manager_click = None;
+            let active_generation = self.state.stage.active_instance_generation();
+            let snapshot = &self.state.view.file_manager_miller;
+            let target = (snapshot.files_generation == active_generation)
+                .then(|| {
+                    self.state.file_manager.as_ref().and_then(|file_manager| {
+                        snapshot.horizontal_scroll_target(file_manager, delta)
+                    })
+                })
+                .flatten();
+            if let (Some(file_manager), Some(target)) = (self.state.file_manager.as_mut(), target) {
+                file_manager.miller.horizontal.first_visible = target;
+            }
+            return FileManagerMouseDispatch::Consumed;
+        }
+
         // FM2.2: trio divider drag-resize. The one-cell divider strips from
         // the CURRENT layout (same pure geometry authority as render) own
         // press/drag/release; commits clamp through `commit_trio_width`.
@@ -500,13 +529,13 @@ impl App {
                     }
                 }
             }
-            MouseEventKind::ScrollUp if entry_idx.is_some() => {
+            MouseEventKind::ScrollUp if mouse.modifiers.is_empty() && entry_idx.is_some() => {
                 self.last_file_manager_click = None;
                 if let Some(file_manager) = self.state.file_manager.as_mut() {
                     file_manager.move_up();
                 }
             }
-            MouseEventKind::ScrollDown if entry_idx.is_some() => {
+            MouseEventKind::ScrollDown if mouse.modifiers.is_empty() && entry_idx.is_some() => {
                 self.last_file_manager_click = None;
                 if let Some(file_manager) = self.state.file_manager.as_mut() {
                     file_manager.move_down();
@@ -1805,11 +1834,7 @@ mod tests {
             .expect("current column probe");
 
         assert_eq!(
-            app.handle_file_manager_mouse(mouse(
-                MouseEventKind::ScrollRight,
-                probe.0,
-                probe.1,
-            )),
+            app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollRight, probe.0, probe.1,)),
             FileManagerMouseDispatch::Consumed
         );
         assert_eq!(
@@ -1879,11 +1904,7 @@ mod tests {
             first_visible + 1,
             "Shift+ScrollDown maps to horizontal right"
         );
-        app.handle_file_manager_mouse(mouse(
-            MouseEventKind::ScrollLeft,
-            probe.0,
-            probe.1,
-        ));
+        app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollLeft, probe.0, probe.1));
         assert_eq!(
             app.state
                 .file_manager
@@ -1897,11 +1918,7 @@ mod tests {
         );
 
         for _ in 0..64 {
-            app.handle_file_manager_mouse(mouse(
-                MouseEventKind::ScrollLeft,
-                probe.0,
-                probe.1,
-            ));
+            app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollLeft, probe.0, probe.1));
         }
         assert_eq!(
             app.state
@@ -1916,11 +1933,7 @@ mod tests {
         );
 
         for _ in 0..64 {
-            app.handle_file_manager_mouse(mouse(
-                MouseEventKind::ScrollRight,
-                probe.0,
-                probe.1,
-            ));
+            app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollRight, probe.0, probe.1));
         }
         let focused_chain_index = app
             .state
@@ -1971,6 +1984,130 @@ mod tests {
         assert_eq!(after.preview, before.preview);
         assert_eq!(after.miller.chain, before.miller.chain);
         assert_eq!(after.miller.revision, before.miller.revision);
+    }
+
+    // TP-FM1.3-HSCROLL-AUTHORITY: horizontal input consumes only a fresh
+    // active-Files snapshot inside the Files terrain. Stale model/generation
+    // identity is inert, overlays retain priority, and outside coordinates
+    // remain available to the outer shell router.
+    #[test]
+    fn horizontal_wheel_fails_closed_without_fresh_files_authority() {
+        let td = TempDir::new("miller-horizontal-authority");
+        let mut current = td.root.clone();
+        for level in 0..8 {
+            current.push(format!("level-{level}"));
+        }
+        fs::create_dir_all(&current).expect("create deep Miller fixture");
+        fs::write(current.join("00.txt"), b"x").expect("write selected fixture");
+
+        let mut file_manager = FmState::new(&current);
+        for segment in &mut file_manager.miller.chain {
+            segment.preferred_width = crate::fm::miller::MILLER_COLUMN_MIN_WIDTH;
+        }
+        let mut app = runtime_app_with_fm(file_manager);
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 144, 18));
+
+        let center = app.state.view.terminal_area;
+        let probe = (center.x, center.y.saturating_add(2));
+        let first_visible = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .miller
+            .horizontal
+            .first_visible;
+
+        app.state.view.file_manager_miller.model_revision = app
+            .state
+            .view
+            .file_manager_miller
+            .model_revision
+            .saturating_add(1);
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollRight, probe.0, probe.1,)),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .miller
+                .horizontal
+                .first_visible,
+            first_visible,
+            "stale structural revision cannot move the window"
+        );
+
+        compute_view(&mut app.state, Rect::new(0, 0, 144, 18));
+        app.state.view.file_manager_miller.files_generation = app
+            .state
+            .view
+            .file_manager_miller
+            .files_generation
+            .map(|generation| generation.saturating_add(1));
+        app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollRight, probe.0, probe.1));
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .miller
+                .horizontal
+                .first_visible,
+            first_visible,
+            "wrong Files generation cannot move the window"
+        );
+
+        compute_view(&mut app.state, Rect::new(0, 0, 144, 18));
+        let previous_mode = app.state.mode;
+        app.state.mode = Mode::ContextMenu;
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollRight, probe.0, probe.1,)),
+            FileManagerMouseDispatch::NotHandled,
+            "the topmost overlay retains routing priority"
+        );
+        app.state.mode = previous_mode;
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::ScrollRight,
+                center.right(),
+                probe.1,
+            )),
+            FileManagerMouseDispatch::NotHandled,
+            "outside Files terrain remains owned by the outer shell"
+        );
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .miller
+                .horizontal
+                .first_visible,
+            first_visible
+        );
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollRight, probe.0, probe.1,)),
+            FileManagerMouseDispatch::Consumed,
+            "control: a fresh in-bounds Files snapshot consumes the event"
+        );
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .miller
+                .horizontal
+                .first_visible,
+            first_visible + 1,
+            "control: the same fresh snapshot can actually move"
+        );
     }
 
     // TP-A3.3-DISPATCH-STALE: a row snapshot can outlive a watcher reload for
