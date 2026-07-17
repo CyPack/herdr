@@ -402,7 +402,10 @@ pub(crate) fn project_miller_view_with_resize_preview(
                         source: MillerDirectorySource::Resident(resident.id.clone()),
                     },
                     resident.entries.as_slice(),
-                    (!resident.entries.is_empty()).then_some(segment.cursor),
+                    crate::fm::miller::MillerState::resolve_resident_selection(
+                        segment,
+                        resident.entries.as_slice(),
+                    ),
                     segment.viewport_start,
                     resident.id.generation,
                     MillerRowColumnKind::ResidentDirectory,

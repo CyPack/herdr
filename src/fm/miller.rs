@@ -155,6 +155,26 @@ impl MillerState {
         }
     }
 
+    /// Resolve the resident-column selection for `segment` against the exact
+    /// prepared `entries`: the bound focused-child path wins over any cached
+    /// index; a missing, ambiguous (duplicate), or unbound path yields no
+    /// selection instead of an unrelated row (TP-FIP-FOCUS-03/04/10).
+    pub(crate) fn resolve_resident_selection(
+        segment: &MillerPathSegment,
+        entries: &[crate::fm::FileEntry],
+    ) -> Option<usize> {
+        let focused = segment.focused_child.as_deref()?;
+        let mut matches = entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.path == focused);
+        let (index, _) = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+        Some(index)
+    }
+
     pub(crate) fn visit(
         &mut self,
         directory: PathBuf,
