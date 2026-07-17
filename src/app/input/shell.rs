@@ -406,6 +406,44 @@ mod tests {
         assert!(!state.session_dirty);
     }
 
+    // SF6.3 contract: one hundred pointer preview moves inside a single
+    // resize transaction produce ZERO persistence writes and leave the
+    // committed width untouched; exactly the commit marks persistence once.
+    // PTY resize purity is structural and separately frozen: preview returns
+    // no `ResizeUpdate` by type, and `resize_panes_during_shell_preview`
+    // suppresses pane resizing for the whole preview window.
+    #[test]
+    fn hundred_preview_moves_produce_no_persistence_or_pty_effects() {
+        let mut state = state_with_sidebar_capture();
+
+        for step in 0..100u16 {
+            state.preview_sidebar_resize(Position::new(20 + (step % 10), 5));
+        }
+        assert!(
+            !state.session_dirty,
+            "one hundred preview moves must write no persistence"
+        );
+        assert_eq!(
+            state.sidebar_width, 26,
+            "the committed width is untouched during preview"
+        );
+        assert!(
+            state.shell_resize_preview_width().is_some(),
+            "the transaction is still live after one hundred moves"
+        );
+
+        let handled = handle_shell_resize_key_for_test(
+            &mut state,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        );
+        assert!(handled);
+        assert!(
+            state.session_dirty,
+            "exactly the commit marks persistence dirty"
+        );
+        assert!(state.shell_resize_preview_width().is_none());
+    }
+
     #[test]
     fn active_sidebar_capture_enter_commits_preview() {
         let mut state = state_with_sidebar_capture();
