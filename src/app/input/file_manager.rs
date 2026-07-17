@@ -24,10 +24,11 @@ pub(super) enum FileManagerMouseDispatch {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum FileManagerKeyDispatch {
     Consumed,
     CancelOperation,
+    Navigate(crate::fm::FmNavigationRequest),
 }
 
 /// Handle one key while the file manager is open. `Esc` requests cancellation
@@ -1584,6 +1585,34 @@ mod tests {
             td.root,
             "backspace returns to the parent"
         );
+    }
+
+    // TP-FM4-APP-ADAPTER: input emits a typed request but performs no
+    // filesystem preparation or model transition. The App layer owns prepare
+    // and generation-safe apply after this pure dispatch step.
+    #[test]
+    fn keyboard_enter_emits_navigation_request_without_mutating_state() {
+        let td = TempDir::new("typed-keyboard-navigation");
+        td.dir("child");
+        let child = td.root.join("child");
+        let mut state = app_with_fm(FmState::new(&td.root));
+        let before = state.file_manager.as_ref().expect("open FM").clone();
+
+        let dispatch = handle_file_manager_key(&mut state, key(KeyCode::Enter));
+
+        let FileManagerKeyDispatch::Navigate(request) = dispatch else {
+            panic!("directory Enter must emit a typed navigation request");
+        };
+        assert_eq!(request.reason, crate::fm::FmNavigationReason::Enter);
+        assert_eq!(request.source_directory, td.root);
+        assert_eq!(request.target_directory, child);
+        let after = state.file_manager.as_ref().expect("open FM");
+        assert_eq!(after.cwd, before.cwd);
+        assert_eq!(after.entries, before.entries);
+        assert_eq!(after.cursor, before.cursor);
+        assert_eq!(after.directory_generation, before.directory_generation);
+        assert_eq!(after.preview_generation, before.preview_generation);
+        assert_eq!(after.miller, before.miller);
     }
 
     // TP-A3.6b: '.' toggles hidden-file visibility.
