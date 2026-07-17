@@ -29,8 +29,8 @@ mod template;
 mod view;
 
 pub(crate) use interaction::{
-    CollapseDecision, DividerId, ResizeBounds, ResizeDecision, ResizeTransaction, ResizeUpdate,
-    ShellInteractionState, ShellPresentationState,
+    CollapseDecision, DividerId, MillerDividerId, MillerResizeColumnId, ResizeBounds,
+    ResizeDecision, ResizeTransaction, ResizeUpdate, ShellInteractionState, ShellPresentationState,
 };
 pub(crate) use layout::ResponsiveDegradation;
 pub(crate) use model::{

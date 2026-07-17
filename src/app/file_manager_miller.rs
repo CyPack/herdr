@@ -91,6 +91,71 @@ impl crate::app::App {
         )
     }
 
+    /// Resolve one current snapshot divider and begin the shared typed resize
+    /// transaction. A recognized but stale or malformed divider remains
+    /// consumed without creating capture authority.
+    pub(super) fn begin_miller_resize_capture(&mut self, column: u16, row: u16) -> bool {
+        let transaction = {
+            let Some(active_files_generation) = self.state.stage.active_instance_generation()
+            else {
+                return false;
+            };
+            let snapshot = &self.state.view.file_manager_miller;
+            let mut hits = snapshot
+                .dividers
+                .iter()
+                .filter(|divider| rect_contains(divider.rect, column, row));
+            let Some(divider) = hits.next() else {
+                return false;
+            };
+            if hits.next().is_some() {
+                return true;
+            }
+            let Some(file_manager) = self.state.file_manager.as_ref() else {
+                return true;
+            };
+            if snapshot.files_generation != Some(active_files_generation)
+                || snapshot.model_revision != file_manager.miller.revision
+            {
+                return true;
+            }
+            let (Some(leading), Some(trailing)) = (
+                snapshot.columns.get(divider.left_column),
+                snapshot.columns.get(divider.right_column),
+            ) else {
+                return true;
+            };
+            if leading.projection_index.saturating_add(1) != trailing.projection_index {
+                return true;
+            }
+            let (Some(leading_id), Some(trailing_id)) = (
+                miller_resize_column_id(leading, file_manager),
+                miller_resize_column_id(trailing, file_manager),
+            ) else {
+                return true;
+            };
+            let Some(divider_id) = crate::ui::shell::MillerDividerId::new(
+                active_files_generation,
+                snapshot.model_revision,
+                leading_id,
+                trailing_id,
+                crate::ui::shell::ShellDirection::Horizontal,
+            ) else {
+                return true;
+            };
+            crate::ui::shell::ResizeTransaction::begin_miller(
+                divider_id,
+                snapshot.model_revision,
+                ratatui::layout::Position::new(column, row),
+                [leading.rect.width, trailing.rect.width],
+            )
+        };
+        if let Some(transaction) = transaction {
+            self.state.shell_interaction.begin_resize(transaction);
+        }
+        true
+    }
+
     /// Apply the two exact horizontal Miller gestures. Recognized gestures
     /// remain consumed even when the immutable frame has gone stale; stale
     /// geometry must never leak through to another Files action.
@@ -192,6 +257,52 @@ impl crate::app::App {
             let _ = file_manager.scroll_miller_column(&target, delta, visible_rows);
         }
         true
+    }
+}
+
+fn miller_resize_column_id(
+    column: &crate::ui::MillerColumnView,
+    file_manager: &crate::fm::FmState,
+) -> Option<crate::ui::shell::MillerResizeColumnId> {
+    match &column.kind {
+        crate::ui::MillerColumnKind::Directory {
+            chain_index,
+            directory,
+            source,
+        } => {
+            let generation = match source {
+                crate::ui::MillerDirectorySource::Resident(id) => {
+                    (id.directory == *directory).then_some(id.generation)?
+                }
+                crate::ui::MillerDirectorySource::PreparedParent => {
+                    file_manager.directory_generation
+                }
+                crate::ui::MillerDirectorySource::Unavailable => 0,
+            };
+            Some(crate::ui::shell::MillerResizeColumnId::Directory {
+                chain_index: *chain_index,
+                directory: directory.clone(),
+                generation,
+            })
+        }
+        crate::ui::MillerColumnKind::Current {
+            chain_index,
+            directory,
+            generation,
+        } => Some(crate::ui::shell::MillerResizeColumnId::Directory {
+            chain_index: *chain_index,
+            directory: directory.clone(),
+            generation: *generation,
+        }),
+        crate::ui::MillerColumnKind::Preview {
+            parent_chain_index,
+            source_path,
+            generation,
+        } => Some(crate::ui::shell::MillerResizeColumnId::Preview {
+            parent_chain_index: *parent_chain_index,
+            source_path: source_path.clone(),
+            generation: *generation,
+        }),
     }
 }
 

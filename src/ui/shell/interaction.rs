@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use ratatui::layout::Position;
 
 use super::{RegionId, ShellDirection};
@@ -17,6 +19,65 @@ impl DividerId {
             trailing,
             axis,
         })
+    }
+}
+
+/// Stable identity for one visible Miller column at the capture frame.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum MillerResizeColumnId {
+    Directory {
+        chain_index: usize,
+        directory: PathBuf,
+        generation: u64,
+    },
+    Preview {
+        parent_chain_index: usize,
+        source_path: Option<PathBuf>,
+        generation: u64,
+    },
+}
+
+/// Stable identity for one Miller divider and its exact adjacent columns.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MillerDividerId {
+    files_generation: u32,
+    model_revision: u64,
+    leading: MillerResizeColumnId,
+    trailing: MillerResizeColumnId,
+    axis: ShellDirection,
+}
+
+impl MillerDividerId {
+    pub(crate) fn new(
+        files_generation: u32,
+        model_revision: u64,
+        leading: MillerResizeColumnId,
+        trailing: MillerResizeColumnId,
+        axis: ShellDirection,
+    ) -> Option<Self> {
+        (leading != trailing).then_some(Self {
+            files_generation,
+            model_revision,
+            leading,
+            trailing,
+            axis,
+        })
+    }
+}
+
+/// Typed target for the one shared resize transaction lifecycle.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ResizeTargetId {
+    Shell(DividerId),
+    Miller(MillerDividerId),
+}
+
+impl ResizeTargetId {
+    const fn axis(&self) -> ShellDirection {
+        match self {
+            Self::Shell(divider) => divider.axis,
+            Self::Miller(divider) => divider.axis,
+        }
     }
 }
 
@@ -48,7 +109,7 @@ impl ResizeBounds {
 /// Pure transient state for one bounded divider gesture.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ResizeTransaction {
-    divider: DividerId,
+    target: ResizeTargetId,
     view_generation: u64,
     pointer_origin: Position,
     original_tracks: [u16; 2],
@@ -486,6 +547,10 @@ impl ShellInteractionState {
             .map(|transaction| transaction.view_generation)
     }
 
+    pub(crate) fn resize_target(&self) -> Option<&ResizeTargetId> {
+        self.resize.as_ref().map(|transaction| &transaction.target)
+    }
+
     pub(crate) fn resize_preview_tracks(&self) -> Option<[u16; 2]> {
         self.resize
             .as_ref()
@@ -535,12 +600,40 @@ impl ResizeTransaction {
         pointer_origin: Position,
         original_tracks: [u16; 2],
     ) -> Option<Self> {
+        Self::begin_target(
+            ResizeTargetId::Shell(divider),
+            view_generation,
+            pointer_origin,
+            original_tracks,
+        )
+    }
+
+    pub(crate) fn begin_miller(
+        divider: MillerDividerId,
+        view_generation: u64,
+        pointer_origin: Position,
+        original_tracks: [u16; 2],
+    ) -> Option<Self> {
+        Self::begin_target(
+            ResizeTargetId::Miller(divider),
+            view_generation,
+            pointer_origin,
+            original_tracks,
+        )
+    }
+
+    fn begin_target(
+        target: ResizeTargetId,
+        view_generation: u64,
+        pointer_origin: Position,
+        original_tracks: [u16; 2],
+    ) -> Option<Self> {
         let _total = original_tracks[0].checked_add(original_tracks[1])?;
         if original_tracks.contains(&0) {
             return None;
         }
         Some(Self {
-            divider,
+            target,
             view_generation,
             pointer_origin,
             original_tracks,
@@ -551,7 +644,7 @@ impl ResizeTransaction {
     /// Update only the transient tracks. No effect adapter is available here,
     /// so preview cannot dirty persistence or resize a terminal runtime.
     pub(crate) fn preview(&mut self, pointer: Position, bounds: ResizeBounds) -> bool {
-        let (pointer_now, pointer_origin) = match self.divider.axis {
+        let (pointer_now, pointer_origin) = match self.target.axis() {
             ShellDirection::Horizontal => (pointer.x, self.pointer_origin.x),
             ShellDirection::Vertical => (pointer.y, self.pointer_origin.y),
         };
@@ -682,13 +775,19 @@ mod tests {
 
         assert_eq!(
             (
-                transaction.divider,
+                transaction.target,
                 transaction.view_generation,
                 transaction.pointer_origin,
                 transaction.original_tracks,
                 transaction.preview_tracks,
             ),
-            (divider, 7, Position::new(25, 5), [26, 54], [26, 54],)
+            (
+                ResizeTargetId::Shell(divider),
+                7,
+                Position::new(25, 5),
+                [26, 54],
+                [26, 54],
+            )
         );
     }
 

@@ -362,6 +362,13 @@ impl App {
             return FileManagerMouseDispatch::Consumed;
         }
 
+        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+            && mouse.modifiers.is_empty()
+            && self.begin_miller_resize_capture(mouse.column, mouse.row)
+        {
+            return FileManagerMouseDispatch::Consumed;
+        }
+
         // FM2.2: trio divider drag-resize. The one-cell divider strips from
         // the CURRENT layout (same pure geometry authority as render) own
         // press/drag/release; commits clamp through `commit_trio_width`.
