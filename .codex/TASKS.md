@@ -248,27 +248,38 @@ Progress evidence:
 
 ### SF5 — AppDock
 
-- [ ] Render icon-only Terminal/Files dock at preferred 5, min 3, max 9 cells.
-- [ ] Add stable active/running/disabled targets, singleton activation, bounded
+- [x] Render icon-only Terminal/Files dock at preferred 5, min 3, max 9 cells.
+- [x] Add stable active/running/disabled targets, singleton activation, bounded
   right-click name popover, overlay blocking, resize/collapse, and tiny-terminal
   behavior.
-- [ ] Close UI/input/failure/performance/full-gate/Git/graph evidence.
+- [x] Close scoped UI/input/failure/full-gate/Git/graph evidence. SF5.1
+  `64d5dd5e`/`cb0c77fd`; SF5.2 `406db487`/`d031ef26`. The shared
+  `ResizeTransaction` is pinned for dock `3..=9` bounds. Program-wide p95 and
+  isolated runtime evidence remains explicitly owned by the SF6/FM production
+  closure below rather than being retroactively claimed here.
 
 ### SF6 — Files as Native Workspace Stage
 
-- [ ] Replace the terminal curtain branch with typed `NativeFiles` Stage
+- [x] Replace the terminal curtain branch with typed `NativeFiles` Stage
   projection/render while preserving AppDock/LeftPanel independence.
-- [ ] Preserve `FmState`, watcher, text/image workers, operations, selection,
+- [x] Preserve `FmState`, watcher, text/image workers, operations, selection,
   context menus, agent handoff, and all failure/recovery semantics.
-- [ ] Prove singleton open/reactivate/close/failure restores previous Stage and
+- [x] Prove singleton open/reactivate/close/failure restores previous Stage and
   focus; terminal process stays alive but hidden input/hits/cursor are absent.
-- [ ] Close snapshot, render queue, retained PTY, isolated runtime, performance,
-  full-gate, Git, remote-SHA, and graph evidence.
+- [ ] Close the deliberately deferred program-wide render queue, retained PTY,
+  isolated runtime, and named p95/outgoing-byte evidence together with the
+  completed Miller production chain. Scoped SF6.1/SF6.2 and regression/full
+  gates are published through `887471c2`; this unchecked item must not be
+  summarized away as already measured.
 
 ### FM1 — Horizontal Miller Viewport
 
-- [ ] Add logical history <=32, resident directory projections <=5, and at
+- [x] Add logical history <=32, resident directory projections <=5, and at
   most five visible complete columns.
+- [ ] Project the bounded Miller viewport into production `ViewState`, then
+  render that single snapshot instead of the fixed parent/current/preview
+  trio. The pure geometry core is published, but currently has test callers
+  only.
 - [ ] Add native horizontal wheel, Shift+wheel, and bounded header navigation;
   clamp after path/cache/terminal shrink and clear stale hits.
 - [ ] Prove close/reopen reset, inaccessible ancestors, render purity, resource
@@ -276,8 +287,11 @@ Progress evidence:
 
 ### FM2 — Miller Column Resize
 
-- [ ] Reuse the Shell resize transaction for min 16/preferred 28/max 64 column
-  widths.
+- [x] Add the visible legacy-trio divider drag and the clamped
+  `commit_column_width` model seam for min 16/preferred 28/max 64 widths.
+- [ ] Replace the separate `MillerTrioDrag` and move-time model commit path
+  with the shared Shell `ResizeTransaction` lifecycle and typed Miller divider
+  identity. Do not retain two resize authorities.
 - [ ] Prove preview causes zero persistence/PTY/filesystem/image-target churn;
   commit updates one revision and at most one final image target.
 - [ ] Close stale divider, terminal resize, cancel, 1,000-move bound,
