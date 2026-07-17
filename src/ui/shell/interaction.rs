@@ -693,6 +693,75 @@ mod tests {
     }
 
     #[test]
+    fn shell_resize_transaction_behavior_is_unchanged_after_typed_target() {
+        let mut pointer = transaction();
+        let mut keyboard = transaction();
+        let effects = TestResizeEffects::default();
+
+        assert!(pointer.preview(Position::new(99, 5), bounds()));
+        keyboard_preview_for_test(&mut keyboard, 74, bounds());
+        assert_eq!(
+            (pointer.preview_tracks, keyboard.preview_tracks, effects,),
+            ([40, 40], [40, 40], TestResizeEffects::default())
+        );
+
+        let mut committed_capture = Some(pointer);
+        let mut committed_effects = TestResizeEffects::default();
+        assert_eq!(
+            commit_resize_for_test(&mut committed_capture, 7, &mut committed_effects),
+            ResizeDecision::Committed([40, 40])
+        );
+        assert_eq!(
+            (committed_capture, committed_effects),
+            (
+                None,
+                TestResizeEffects {
+                    persistence_dirty: 1,
+                    pty_resize_requests: 1,
+                },
+            )
+        );
+
+        let mut cancelled_capture = Some(keyboard);
+        let mut cancelled_effects = TestResizeEffects::default();
+        assert_eq!(
+            cancel_resize_for_test(&mut cancelled_capture, &mut cancelled_effects),
+            ResizeDecision::Cancelled([26, 54])
+        );
+        assert_eq!(
+            (cancelled_capture, cancelled_effects),
+            (None, TestResizeEffects::default())
+        );
+
+        let mut terminal_capture = Some(transaction());
+        terminal_capture
+            .as_mut()
+            .expect("fixture owns capture")
+            .preview(Position::new(99, 5), bounds());
+        let mut terminal_effects = TestResizeEffects::default();
+        assert_eq!(
+            terminal_resize_for_test(&mut terminal_capture, 60, bounds(), &mut terminal_effects,),
+            ResizeDecision::Cancelled([26, 34])
+        );
+        assert_eq!(
+            (terminal_capture, terminal_effects),
+            (None, TestResizeEffects::default())
+        );
+
+        let mut stale_capture = Some(transaction());
+        let stale_before = stale_capture.clone();
+        let mut stale_effects = TestResizeEffects::default();
+        assert_eq!(
+            commit_resize_for_test(&mut stale_capture, 8, &mut stale_effects),
+            ResizeDecision::Inert
+        );
+        assert_eq!(
+            (stale_capture, stale_effects),
+            (stale_before, TestResizeEffects::default())
+        );
+    }
+
+    #[test]
     fn drag_preview_clamps_without_dirty_or_pty_resize() {
         let divider = DividerId::new(
             RegionId::LeftPanel,
