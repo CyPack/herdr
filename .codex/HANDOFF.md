@@ -13,7 +13,12 @@ FIP-0 fazı (Task 1-5) 2026-07-18 oturumunda KAPANDI: baseline 3,443/3,443 (run 
 zinciri (`3680c09b`→`17487a7b`→`584ef59e`→`7e736472`→`0fc16895`→modifier-gate
 fix→VIS-01 `2dcfffa4`); ctrl-click activation sızıntısı bulunup kapatıldı; full
 suite 3,454/3,454 + 1 skip; görsel suite 9/9. `TP-FIP-E2E-01` FIP-6.3 final
-koşumuna açıkça devredildi. İlk priority-eligible iş **FIP-2.1**.
+koşumuna açıkça devredildi. FIP-2 çekirdeği KAPANDI (2026-07-18): FOCUS-01 bind (`7b435ae2`/`7cd51a39`),
+FOCUS-03/04/10 re-resolution (`e74c8954`/`f75d1e48`), VIS-02 görsel kanıt
+(resident kolonda nonzero `beta` highlight; görsel suite 10/10); full suite
+3,456/3,456 + 2 skip (write_visual_fixtures ignored dahil). Kalan: FIP-2.5
+edge ailesi (FOCUS-02/05/06/07/08/09). Sonrası kullanıcı direktifi: custom
+layout altyapı programı tasarımı.
 KULLANICI DİREKTİFİ (2026-07-18): FIP-2 kapandıktan sonra, Excalidraw
 mockup'ındaki zengin layout'u kolay/hızlı/production-grade kurmayı sağlayan
 CUSTOM LAYOUT ALTYAPISI programı tasarlanacak (kendi brainstorm→design→plan
@@ -43,12 +48,12 @@ drag-and-drop kapsam dışı.
 - Eski SF0-SF6 + FM1-FM5 programı tamam ve yayınlıdır; yeniden uygulanmaz.
 - Yeni aktif program Files Interaction Polish’tir.
 - Açık görev envanteri (FIP-G.1/G.2 kapanışı sonrası):
-  - `.codex/TASKS.md`: 41
+  - `.codex/TASKS.md`: 36
   - `.codex/CHANGE-PIPELINE-TASKS.md`: 89
-  - toplam: 130
-- Sadece FIP-2.1 in-progress yapılabilir; diğer 129 görev pending/paused kalır.
+  - toplam: 125
+- Sadece FIP-2.5 in-progress yapılabilir; diğer 124 görev pending/paused kalır.
 - Fresh continuity gates (2026-07-18 planning-gate closure):
-  - exact task copy 130/130;
+  - exact task copy 125/125;
   - 57 unique `TP-FIP-*` (fresh deterministic count; the earlier "55" excluded
     the two E2E IDs — all 57 are mapped in the implementation plan);
   - Nextest run `4da2ee18-b784-4c38-aaab-98a2e8787511`,
@@ -327,13 +332,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 41 ve
-89, toplam 130’dur. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 36 ve
+89, toplam 125’tir. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 41 unchecked
+### Source: `.codex/TASKS.md` — 36 unchecked
 
 - [ ] **FIP-1.6** Add Playwright `TP-FIP-VIS-01` plus isolated real-mouse
   `TP-FIP-E2E-01` evidence without touching the stable Herdr socket.
@@ -342,22 +347,8 @@ sayar ve exact diff yapar.
   real-mouse `TP-FIP-E2E-01` smoke is explicitly deferred to the FIP-6.3
   closure run on the final build; do not claim it before that run.
 
-- [ ] **FIP-2.1 RED** Pin that entering a nonzero child keeps that exact child
-  highlighted in the departing/resident column rather than row zero.
-
-- [ ] **FIP-2.2 GREEN** Bind exact `focused_child` path identity before
-  resident-column ownership transfer.
-
-- [ ] **FIP-2.3 RED** Pin reorder, delete, hide, duplicate, and malformed-path
-  re-resolution/fail-closed behavior.
-
-- [ ] **FIP-2.4 GREEN** Add one unique-path resolver and absent-selection
-  projection; never substitute an unrelated first row.
-
 - [ ] **FIP-2.5** Cover four-plus-level chains, branch retirement, leave/revisit,
   viewport clamp, empty/root/unavailable/permission states, and stale hits.
-
-- [ ] **FIP-2.6** Add Playwright `TP-FIP-VIS-02` proof of exact-path highlight.
 
 - [ ] **FIP-3.1** Characterize sorting, operations, symlink/special handling,
   watcher refresh, preview, row actions, Unicode, and narrow-column behavior.

@@ -65,17 +65,17 @@ then the plan's Tasks 2-29 in order.
 
 ### FIP-2 — Miller Stable Child Focus
 
-- [ ] **FIP-2.1 RED** Pin that entering a nonzero child keeps that exact child
+- [x] **FIP-2.1 RED** Pin that entering a nonzero child keeps that exact child
   highlighted in the departing/resident column rather than row zero.
-- [ ] **FIP-2.2 GREEN** Bind exact `focused_child` path identity before
+- [x] **FIP-2.2 GREEN** Bind exact `focused_child` path identity before
   resident-column ownership transfer.
-- [ ] **FIP-2.3 RED** Pin reorder, delete, hide, duplicate, and malformed-path
+- [x] **FIP-2.3 RED** Pin reorder, delete, hide, duplicate, and malformed-path
   re-resolution/fail-closed behavior.
-- [ ] **FIP-2.4 GREEN** Add one unique-path resolver and absent-selection
+- [x] **FIP-2.4 GREEN** Add one unique-path resolver and absent-selection
   projection; never substitute an unrelated first row.
 - [ ] **FIP-2.5** Cover four-plus-level chains, branch retirement, leave/revisit,
   viewport clamp, empty/root/unavailable/permission states, and stale hits.
-- [ ] **FIP-2.6** Add Playwright `TP-FIP-VIS-02` proof of exact-path highlight.
+- [x] **FIP-2.6** Add Playwright `TP-FIP-VIS-02` proof of exact-path highlight.
 
 ### FIP-3 — Semantic Entry Kinds and File Icons
 
