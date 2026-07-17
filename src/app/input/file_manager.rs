@@ -873,6 +873,68 @@ mod tests {
         app
     }
 
+    // SF6.2: Files input routes from the TYPED stage authority
+    // (`AppSurfaceRef::NativeFiles`), not the legacy `file_manager.is_some()`
+    // boolean. The adversarial divergent state (Files domain state present
+    // while the typed stage says TerminalWorkspace) pins which source owns
+    // keyboard and mouse routing.
+    #[test]
+    fn files_input_routes_from_typed_surface_authority() {
+        let td = TempDir::new("files-typed-input-authority");
+        td.file("00.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 60, 16));
+
+        // Control: the aligned NativeFiles state owns the keyboard tier and
+        // consumes in-center mouse events.
+        assert_eq!(
+            app.state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::NativeFiles,
+            "fixture: Files owns the stage"
+        );
+        assert_eq!(
+            app.state.shell_key_input_owner(),
+            crate::app::input::shell::ShellInputOwner::FocusedComponent
+        );
+        let center = app.state.view.terminal_area;
+        let probe = (
+            center.x + center.width.saturating_sub(2),
+            center.y + center.height.saturating_sub(2),
+        );
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                probe.0,
+                probe.1
+            )),
+            FileManagerMouseDispatch::Consumed,
+            "control: the aligned Files surface consumes in-center mouse input"
+        );
+
+        // Adversarial divergence: Files domain state present while the typed
+        // stage says TerminalWorkspace. The TYPED authority must own routing
+        // on BOTH input paths.
+        app.state.stage.close_files();
+        assert!(app.state.file_manager.is_some(), "divergent fixture holds");
+        assert_ne!(
+            app.state.shell_key_input_owner(),
+            crate::app::input::shell::ShellInputOwner::FocusedComponent,
+            "the typed stage authority must own keyboard routing"
+        );
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                probe.0,
+                probe.1
+            )),
+            FileManagerMouseDispatch::NotHandled,
+            "the typed stage authority must own mouse routing"
+        );
+    }
+
     // SF4.2-08: with the Files surface covering the workspace stage, no
     // mouse event inside the covered center may reach the hidden terminal —
     // no selection anchor, no pane focus, no context/terminal side effect —
@@ -975,7 +1037,9 @@ mod tests {
 
     fn runtime_app_with_fm(fm: FmState) -> crate::app::App {
         let mut app = super::super::app_for_mouse_test();
-        app.state.file_manager = Some(fm);
+        app.state
+            .try_open_file_manager_with(|_| Some(fm))
+            .expect("Files activation");
         app.state.view.terminal_area = Rect::new(26, 0, 20, 6);
         let entry_paths = app
             .state
