@@ -1821,6 +1821,45 @@ mod tests {
         assert_eq!(st.cursor, 0);
     }
 
+    // TP-FM4-LEAVE-FAILURE: an external rename can retire the prepared parent
+    // path while the current directory is still displayed. Failed parent
+    // preparation must not replace the last valid model with a missing branch.
+    #[test]
+    fn missing_parent_does_not_corrupt_current_chain_on_leave() {
+        let td = TempDir::new("leave-missing-parent");
+        td.dir("parent/child");
+        td.file("parent/child/inside.txt");
+        let parent = td.root.join("parent");
+        let child = parent.join("child");
+        let moved_parent = td.root.join("moved-parent");
+        let mut state = FmState::new(&child);
+        let before = state.clone();
+
+        fs::rename(&parent, &moved_parent).expect("retire prepared parent path");
+        state.leave();
+
+        assert_eq!(state.cwd, before.cwd);
+        assert_eq!(state.entries, before.entries);
+        assert_eq!(state.cursor, before.cursor);
+        assert_eq!(state.viewport_start, before.viewport_start);
+        assert_eq!(state.cwd_status, before.cwd_status);
+        assert_eq!(state.cwd_writable, before.cwd_writable);
+        assert_eq!(state.directory_generation, before.directory_generation);
+        assert_eq!(state.parent, before.parent);
+        assert_eq!(state.preview, before.preview);
+        assert_eq!(state.preview_viewport_start, before.preview_viewport_start);
+        assert_eq!(state.preview_generation, before.preview_generation);
+        assert_eq!(
+            state.multi_selection_paths(),
+            before.multi_selection_paths()
+        );
+        assert_eq!(
+            state.multi_selection_anchor(),
+            before.multi_selection_anchor()
+        );
+        assert_eq!(state.miller, before.miller);
+    }
+
     // TP-A3.4: leaving at the filesystem root is a no-op (no panic).
     #[test]
     fn leave_at_root_is_noop() {
