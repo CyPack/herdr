@@ -1739,6 +1739,50 @@ mod tests {
         assert!(st.entries.iter().any(|e| e.name == "child.txt"));
     }
 
+    // TP-FM4-ENTER-FAILURE: directory identity can disappear between the
+    // prepared row snapshot and activation. Failed preparation must leave the
+    // last valid current directory and every generation/branch authority
+    // unchanged instead of publishing a missing ghost current.
+    #[test]
+    fn missing_selected_child_does_not_corrupt_current_chain() {
+        let td = TempDir::new("enter-missing-child");
+        td.dir("child");
+        td.file("sibling.txt");
+        let child = td.root.join("child");
+        let mut state = FmState::new(&td.root);
+        let child_index = state
+            .entries
+            .iter()
+            .position(|entry| entry.path == child)
+            .expect("prepared child");
+        assert!(state.replace_selection(child_index));
+        let before = state.clone();
+
+        fs::remove_dir(&child).expect("remove child after projection");
+        state.enter();
+
+        assert_eq!(state.cwd, before.cwd);
+        assert_eq!(state.entries, before.entries);
+        assert_eq!(state.cursor, before.cursor);
+        assert_eq!(state.viewport_start, before.viewport_start);
+        assert_eq!(state.cwd_status, before.cwd_status);
+        assert_eq!(state.cwd_writable, before.cwd_writable);
+        assert_eq!(state.directory_generation, before.directory_generation);
+        assert_eq!(state.parent, before.parent);
+        assert_eq!(state.preview, before.preview);
+        assert_eq!(state.preview_viewport_start, before.preview_viewport_start);
+        assert_eq!(state.preview_generation, before.preview_generation);
+        assert_eq!(
+            state.multi_selection_paths(),
+            before.multi_selection_paths()
+        );
+        assert_eq!(
+            state.multi_selection_anchor(),
+            before.multi_selection_anchor()
+        );
+        assert_eq!(state.miller, before.miller);
+    }
+
     // TP-A3.2: entering a file selection is a no-op.
     #[test]
     fn enter_on_file_is_noop() {
