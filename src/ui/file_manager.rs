@@ -10,6 +10,8 @@
 //! here instead of the terminal panes. Text/image previews and row-action
 //! geometry build on the same pure client-side projection.
 
+pub(crate) mod miller;
+
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
