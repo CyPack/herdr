@@ -79,8 +79,9 @@ continuity, and pipeline files in one commit.
 ## Current Verified Truth
 
 - Branch: `feat/native-fm`.
-- Verified product head: `97710337` (`feat: seed and visit miller state
-  through navigation`, FM1.2 CLOSED).
+- Verified product head: `d1002cac` (`feat: commit miller column widths
+  through clamped seam`, FM2.1 model core CLOSED; FM1.3 geometry core
+  `3e8a50d0`).
 - Separate test-stability commit `3c853a70` closed the parallel-load
   process-exit suppression flake class in `src/terminal/state.rs`.
 - SF0-SF5 are ALL closed (SF4.1 8/8, SF4.2 8/8 at `20f659c1`, SF4.3 6/6
@@ -96,9 +97,10 @@ continuity, and pipeline files in one commit.
   - `056f0879` / `f0f32075`: failed open restores exact Stage/focus.
   - `784fdc2e` / `944a9d4c`: stage switches preserve terminal runtime
     (`AppDefinition`/`LaunchPolicy` + pure `StageState::surface_view()`).
-- Next work: the FM1.3 horizontal viewport RED catalog (geometry at the
-  nine plan widths, scroll ownership, render purity), then FM2
-  drag-resize. Evidence:
+- Next work: the FM1.3/FM2.2 WIRING (render the windowed chain, scroll
+  input, divider mouse capture through the SF3 transaction into
+  `commit_column_width`) — the exact recipe is in the FM1 evidence
+  "Exact Next Microtask". Evidence:
   `.codex/evidence/fm1-miller-viewport-progress.md`.
 - Legacy `AppState.file_manager: Option<FmState>` curtain still renders. Do
   not remove it until SF6.
@@ -107,12 +109,12 @@ continuity, and pipeline files in one commit.
   seam, never persisted.
 - Protocol remains 16. SF4.1 and SF4.2 stayed client-local presentation
   state.
-- Full current gate: Nextest 3,338/3,338 passed plus one named B0 skip
+- Full current gate: Nextest 3,344/3,344 passed plus one named B0 skip
   (`--no-fail-fast`), Linux all-target Clippy, Windows MSVC bin Clippy,
   fmt, diff and added-production-`unwrap()` clean (Bun/Python last green
   at the SF6 gate `887471c2`).
 - Both CyPack refs equal exact SHA
-  `977103371055dd4782bfefd07f10851bcabf6052`.
+  `d1002cacb8f2b6eb730d0a9ab6217cff9ac7f6a9`.
 - User-owned `.superpowers/` is untracked and must never be staged or edited.
 
 ## Mandatory Git and Remote Audit

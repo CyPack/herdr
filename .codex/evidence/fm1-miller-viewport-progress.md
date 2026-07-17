@@ -73,3 +73,53 @@ ScrollLeft/Right + Shift+wheel + header arrows. Then the FM1 verification
 command (`test(/(miller|file_manager|shell.*scroll)/)`) and phase
 publication, then FM2.1-2.2 (SF3 transaction with column targets — the
 drag-resize target).
+
+## FM1.3 — Viewport geometry core (CLOSED at model level; render/scroll wiring NEXT)
+
+- `0176e394` + clippy fix `3e8a50d0` (`feat: add horizontal miller viewport
+  geometry`): pure `src/ui/file_manager/miller.rs` —
+  `miller_viewport_geometry(stage, preferred_widths, focused, requested_first)`
+  lays out <=5 COMPLETE columns (each clamped 16..=64) plus one-cell
+  divider rects, clamps the window origin via a backward-greedy
+  `first_visible_floor` so the focused column ALWAYS stays visible, and
+  returns the clamped `first_visible` for callers to persist. The test loop
+  covers the nine plan widths (0/15/16/31/32/56/84/140/400): bounded
+  non-empty counts, complete/disjoint/in-stage rects, focused visibility;
+  plus path-shrink clamp, terminal-resize clamp (focused wins the narrow
+  window), scroll-changes-only-window, and zero-area inertness. The test
+  loop CAUGHT two real algorithm bugs mid-slice (min-width capacity
+  overcount hiding the focused column; end-of-chain window semantics) —
+  fixed before publication. NOTE: an intermediate head `0176e394` was
+  briefly published with a failing clippy gate (a pipe swallowed the exit
+  code); the very next commit `3e8a50d0` restored the gate and both
+  targets are clean — recorded honestly, and gate commands now echo exit
+  codes explicitly.
+
+## FM2.1 — Column resize core (CLOSED at model level)
+
+- `d1002cac` (`feat: commit miller column widths through clamped seam`):
+  `MillerState::commit_column_width(chain_index, width)` — the SINGLE
+  write-back seam for divider resize commits: clamps to the frozen 16..=64
+  bounds, bumps the revision (geometry recomputes), refuses stale chain
+  indices. Combined with the proven region-generic SF3 `ResizeTransaction`
+  (clamping + stale-generation inertness pinned at `d031ef26`) and the
+  FM1.3 divider rects, the drag-resize MODEL chain is complete:
+  divider rect -> transaction preview/commit -> clamped width write-back
+  -> next-frame geometry. Full suite 3,344/3,344; both Clippy targets
+  exit-code-verified clean. Both refs equal
+  `d1002cacb8f2b6eb730d0a9ab6217cff9ac7f6a9`.
+
+## Exact Next Microtask
+
+FM1.3/FM2.2 WIRING (the remaining gap to the user-visible custom layout):
+(1) render the Miller chain through `miller_viewport_geometry` in
+`render_file_manager` (replace the fixed parent/current/preview trio with
+the windowed chain; unavailable ancestors render explicitly), storing
+column/divider rects + generations in `ViewState`; (2) horizontal scroll
+input (ScrollLeft/Right, Shift+wheel, header arrows) mutating ONLY
+`MillerState.horizontal.first_visible`; (3) divider mouse capture: press
+on a `MillerDividerRect` begins an SF3 `ResizeTransaction` over
+`[left_width, right_width]` with bounds 16..=64 (SF4.2 capture owns the
+gesture), preview updates transient widths, release commits through
+`commit_column_width`; (4) FM3 generation-checked `MillerRowTarget`
+routing. Then the FM1/FM2 verification commands and phase publication.

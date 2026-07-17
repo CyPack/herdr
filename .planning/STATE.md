@@ -241,9 +241,13 @@
   (ownership transfer) under fresh generations and visit the new cwd;
   real-tree integration test green. Full suite 3,338/3,338. Current
   verified head: `97710337`.
-- Next microtask: FM1.3 horizontal viewport geometry/scroll/render REDs,
-  then FM2 drag-resize (the custom-layout target). See
-  `.codex/evidence/fm1-miller-viewport-progress.md`.
+- FM1.3 geometry core (`3e8a50d0`) and the FM2.1 resize model core
+  (`d1002cac`) are CLOSED: bounded windowed column/divider rects with
+  focused-always-visible clamping, and the single clamped width write-back
+  seam. Full suite 3,344/3,344. Current verified head: `d1002cac`.
+- Next microtask: FM1.3/FM2.2 wiring (render + scroll input + divider
+  capture through the SF3 transaction) per the FM1 evidence "Exact Next
+  Microtask" — this is the last gap to the user-visible custom layout.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one
   bounded focus/capture router shared by mouse and keyboard, and recovery
