@@ -32,17 +32,17 @@ then the plan's Tasks 2-29 in order.
 
 ### FIP-0 — Baseline and Playwright Chromium Visual Harness
 
-- [ ] **FIP-0.1** Freeze current characterization tests and fresh graph
+- [x] **FIP-0.1** Freeze current characterization tests and fresh graph
   evidence without changing product behavior.
-- [ ] **FIP-0.2** Add an isolated Playwright Chromium package, config, and
+- [x] **FIP-0.2** Add an isolated Playwright Chromium package, config, and
   lockfile that never ships in the Herdr binary.
-- [ ] **FIP-0.3** Add a test-only Ratatui cell-fixture exporter with exact
+- [x] **FIP-0.3** Add a test-only Ratatui cell-fixture exporter with exact
   character, foreground, background, modifier, and cell-position data.
-- [ ] **FIP-0.4** Add the deterministic browser cell-grid renderer and harness
+- [x] **FIP-0.4** Add the deterministic browser cell-grid renderer and harness
   self-tests for wide/combining glyphs, malformed fixtures, and exact cells.
-- [ ] **FIP-0.5** Prove that a controlled one-cell mutation fails the matching
+- [x] **FIP-0.5** Prove that a controlled one-cell mutation fails the matching
   screenshot and that ordinary CI never rewrites approved snapshots.
-- [ ] **FIP-0.6** Keep screenshots, traces, browser state, and generated
+- [x] **FIP-0.6** Keep screenshots, traces, browser state, and generated
   fixtures inside declared test/target artifact paths.
 
 ### FIP-1 — Visible Files Navigation and Mouse Ownership

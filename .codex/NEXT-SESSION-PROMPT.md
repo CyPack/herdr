@@ -71,18 +71,18 @@ out of scope.
 
 Expected canonical inventory (after the 2026-07-18 planning-gate closure):
 
-- `.codex/TASKS.md`: 52 unchecked product/deferred tasks;
+- `.codex/TASKS.md`: 46 unchecked product/deferred tasks;
 - `.codex/CHANGE-PIPELINE-TASKS.md`: 89 unchecked paused tooling tasks;
-- total: 141;
-- `.codex/HANDOFF.md` section 8: exact 141-block copy.
+- total: 135;
+- `.codex/HANDOFF.md` section 8: exact 135-block copy.
 
 Recount all three and compare exact task blocks. If count or text differs,
 stop before code and reconcile CURRENT/TASKS/HANDOFF.
 
 Status assignment:
 
-- set only **FIP-0.1** to `in_progress`;
-- keep FIP-0.2 through FIP-6 pending;
+- set only **FIP-1.1** to `in_progress`;
+- keep the rest of FIP-1 through FIP-6 pending (FIP-0 is closed);
 - keep S5/S7 trigger-gated;
 - keep change-pipeline T3.1-T10.9 paused;
 - never choose an easier lower-priority task.
@@ -95,7 +95,7 @@ FIP-G.1/FIP-G.2 are CLOSED. The approved code-level TDD plan is
 the earlier "55" figure excluded the two E2E IDs, nothing was dropped).
 
 1. Read that plan completely; it is the execution contract.
-2. Start at plan Task 1 (FIP-0.1 baseline freeze) and execute tasks in order
+2. FIP-0 (plan Tasks 1-5) is closed; start at plan Task 6 (FIP-1.1 RED) and execute tasks in order
    with separate RED/GREEN/refactor commits.
 3. Before any Rust production edit, restore the broken global `rust-dev`
    skill (`~/.codex/skills/rust-dev` is a symlink to the missing

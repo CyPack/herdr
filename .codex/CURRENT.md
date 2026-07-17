@@ -18,8 +18,8 @@
 > `docs/superpowers/plans/2026-07-18-herdr-files-interaction-polish-implementation.md`
 > (commit `dd81ef59`, 29 tasks) and FIP-G.2 reconciled it against the fresh
 > graph and current source (all 57 unique `TP-FIP-*` IDs mapped; the earlier
-> "55" count excluded the two E2E IDs). The next executable task is
-> **FIP-0.1** (baseline freeze), then plan Tasks 2-29 in order. The global
+> "55" count excluded the two E2E IDs). FIP-0 (plan Tasks 1-5) is closed with green evidence; the next
+> executable task is **FIP-1.1** (plan Task 6), then the plan order. The global
 > `rust-dev` skill symlink is broken on this machine and must be restored
 > before Rust implementation starts.
 > The canonical graph project is `home-ayaz-projects-herdr`; the final
@@ -30,8 +30,8 @@
 > begins `fc76f648` -> `f097f6c7`; the commit containing this override is the
 > continuity publication target and its exact SHA must match both CyPack refs.
 > There are
-> 52 unchecked product-registry items and 89 paused change-pipeline items,
-> 141 total. Only FIP-0.1 may become in progress in the next session.
+> 46 unchecked product-registry items and 89 paused change-pipeline items,
+> 135 total. FIP-0 is closed (2026-07-18); only FIP-1.1 may become in progress.
 > S5/S7 remain trigger-gated; change-pipeline remains paused. Never touch the
 > stable Herdr/socket or user-owned `.superpowers/`.
 >

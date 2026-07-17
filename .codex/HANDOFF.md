@@ -9,8 +9,7 @@ FIP-G.1 ve FIP-G.2 KAPANDI (2026-07-18). Onaylı code-level TDD planı:
 (commit `dd81ef59`; 29 görev; 57 benzersiz `TP-FIP-*` ID eşlendi — eski "55"
 sayımı iki E2E ID'sini dışlıyordu, hiçbir ID atlanmadı).
 
-İlk ve tek priority-eligible iş **FIP-0.1** (baseline freeze), ardından planın
-Task 2-29 sırası. Rust implementasyonu başlamadan önce kırık global `rust-dev`
+FIP-0 fazı (Task 1-5) 2026-07-18 oturumunda KAPANDI: baseline 3,443/3,443 (run df00a924), exporter, Playwright 1.54.1+Chromium 139 harness, 7/7 görsel self-test, mutation kanıtı. İlk priority-eligible iş **FIP-1.1** (plan Task 6), ardından plan sırası. Rust implementasyonu başlamadan önce kırık global `rust-dev`
 skill symlink'i (`~/.codex/skills/rust-dev` → eksik `~/.claude/skills/rust-dev`)
 onarılmalı; herdr-lokal HP1-HP10 kataloğu mevcut ve önceliklidir.
 
@@ -33,12 +32,12 @@ drag-and-drop kapsam dışı.
 - Eski SF0-SF6 + FM1-FM5 programı tamam ve yayınlıdır; yeniden uygulanmaz.
 - Yeni aktif program Files Interaction Polish’tir.
 - Açık görev envanteri (FIP-G.1/G.2 kapanışı sonrası):
-  - `.codex/TASKS.md`: 52
+  - `.codex/TASKS.md`: 46
   - `.codex/CHANGE-PIPELINE-TASKS.md`: 89
-  - toplam: 141
-- Sadece FIP-0.1 in-progress yapılabilir; diğer 140 görev pending/paused kalır.
+  - toplam: 135
+- Sadece FIP-1.1 in-progress yapılabilir; diğer 134 görev pending/paused kalır.
 - Fresh continuity gates (2026-07-18 planning-gate closure):
-  - exact task copy 141/141;
+  - exact task copy 135/135;
   - 57 unique `TP-FIP-*` (fresh deterministic count; the earlier "55" excluded
     the two E2E IDs — all 57 are mapped in the implementation plan);
   - Nextest run `4da2ee18-b784-4c38-aaab-98a2e8787511`,
@@ -317,31 +316,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 52 ve
-89, toplam 141’dir. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 46 ve
+89, toplam 135’tir. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 52 unchecked
-
-- [ ] **FIP-0.1** Freeze current characterization tests and fresh graph
-  evidence without changing product behavior.
-
-- [ ] **FIP-0.2** Add an isolated Playwright Chromium package, config, and
-  lockfile that never ships in the Herdr binary.
-
-- [ ] **FIP-0.3** Add a test-only Ratatui cell-fixture exporter with exact
-  character, foreground, background, modifier, and cell-position data.
-
-- [ ] **FIP-0.4** Add the deterministic browser cell-grid renderer and harness
-  self-tests for wide/combining glyphs, malformed fixtures, and exact cells.
-
-- [ ] **FIP-0.5** Prove that a controlled one-cell mutation fails the matching
-  screenshot and that ordinary CI never rewrites approved snapshots.
-
-- [ ] **FIP-0.6** Keep screenshots, traces, browser state, and generated
-  fixtures inside declared test/target artifact paths.
+### Source: `.codex/TASKS.md` — 46 unchecked
 
 - [ ] **FIP-1.1 RED** Pin that a primary click on the visible default-sidebar
   Files tab opens the Native Files Stage.

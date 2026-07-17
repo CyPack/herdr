@@ -15,8 +15,8 @@
 - Excluded scope: drag-and-drop, auto-submit/Enter, implicit Claude split/chat,
   protocol/runtime ownership expansion, speculative ComponentRegistry, popup
   framework, Apps/Desktop, and unrelated change-pipeline implementation.
-- Open registry: 52 product items plus 89 paused non-product items = 141.
-  Only FIP-0.1 is priority eligible; S5/S7 remain trigger-gated.
+- Open registry: 46 product items plus 89 paused non-product items = 135.
+  FIP-0 closed 2026-07-18 (baseline + Playwright Chromium harness green 7/7); only FIP-1.1 is priority eligible; S5/S7 remain trigger-gated.
 - Local design chain: `fc76f648` -> `f097f6c7`; both CyPack refs were still at
   `b7d4217c` before this handoff publication.
 - Canonical graph project: `home-ayaz-projects-herdr`; final single-worker CLI
