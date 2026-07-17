@@ -1397,6 +1397,9 @@ pub struct ViewState {
     /// Exact clickable item rows for the prepared Files sidebar. Empty on
     /// every non-Files tab and when the sidebar is collapsed.
     pub file_manager_sidebar_row_areas: Vec<FileManagerSidebarRowArea>,
+    /// Complete AppDock entry targets for the current frame. Empty whenever
+    /// the live shell projects no dock region.
+    pub app_dock_entry_areas: Vec<crate::ui::app_dock::AppDockEntryArea>,
     /// Visible CURRENT rows for the native file manager. Empty while FM is
     /// closed or when its content area has no drawable rows.
     pub file_manager_row_areas: Vec<FileManagerRowArea>,
@@ -1872,6 +1875,11 @@ pub enum ContextMenuKind {
     File {
         model: FileManagerContextMenuModel,
     },
+    /// Anchored app-name popover for one dock entry (SF5.2). The single row
+    /// carries the accessible name and activates the app on selection.
+    AppDock {
+        app: crate::ui::surface_host::BuiltInAppId,
+    },
 }
 
 /// Right-click context menu state.
@@ -1931,6 +1939,10 @@ impl ContextMenuState {
             ContextMenuKind::File { model } => {
                 model.items.iter().map(|item| item.label.as_str()).collect()
             }
+            ContextMenuKind::AppDock { app } => match app {
+                crate::ui::surface_host::BuiltInAppId::Terminal => vec!["Terminal"],
+                crate::ui::surface_host::BuiltInAppId::Files => vec!["Files"],
+            },
             ContextMenuKind::Pane {
                 has_manual_label: true,
                 source_pane_id: Some(_),
@@ -2668,6 +2680,7 @@ impl AppState {
                 sidebar_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
                 file_manager_sidebar_row_areas: Vec::new(),
+                app_dock_entry_areas: Vec::new(),
                 file_manager_row_areas: Vec::new(),
                 file_manager_row_action_areas: Vec::new(),
                 file_manager_header_action_areas: Vec::new(),
@@ -3115,6 +3128,10 @@ impl AppState {
                     if let Some(source_pane_id) = source_pane_id {
                         assert_live_pane(source_pane_id, "context menu source pane");
                     }
+                }
+                ContextMenuKind::AppDock { .. } => {
+                    // The dock popover references only a closed built-in app
+                    // id; there is no index-shaped identity to validate.
                 }
             }
         }

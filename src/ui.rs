@@ -415,6 +415,13 @@ fn compute_view_internal(
         resize_background_tab_panes_for_desktop(app, terminal_runtimes, main_area, cell_size);
     }
 
+    // Complete dock targets for this frame; the legacy default template
+    // projects no dock region, so this stays empty until one is live.
+    let app_dock_entry_areas = app_dock::app_dock_entry_areas(
+        &app_dock::AppDockModel::for_state(app),
+        shell_view.regions.get(RegionId::AppDock),
+    );
+
     let toast_hit_area = app
         .toast
         .as_ref()
@@ -436,6 +443,7 @@ fn compute_view_internal(
         sidebar_tab_hit_areas,
         project_row_areas,
         file_manager_sidebar_row_areas,
+        app_dock_entry_areas,
         file_manager_row_areas,
         file_manager_row_action_areas,
         file_manager_header_action_areas,
@@ -558,6 +566,7 @@ fn compute_mobile_view(
         sidebar_tab_hit_areas: Vec::new(),
         project_row_areas: Vec::new(),
         file_manager_sidebar_row_areas: Vec::new(),
+                app_dock_entry_areas: Vec::new(),
         file_manager_row_areas,
         file_manager_row_action_areas,
         file_manager_header_action_areas,

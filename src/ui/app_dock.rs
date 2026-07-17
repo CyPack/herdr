@@ -25,6 +25,9 @@ pub(crate) struct AppDockEntry {
     /// The entry has live domain state behind it (running terminal
     /// workspaces / an open Files surface) even while not active.
     pub running: bool,
+    /// A disabled entry keeps its target visible but consumes activation
+    /// fail-closed. Every built-in entry is enabled in v0.
+    pub enabled: bool,
 }
 
 impl AppDockEntry {
@@ -65,11 +68,13 @@ impl AppDockModel {
                     app: BuiltInAppId::Terminal,
                     active: surface == StageSurfaceView::TerminalWorkspace,
                     running: !state.workspaces.is_empty(),
+                    enabled: true,
                 },
                 AppDockEntry {
                     app: BuiltInAppId::Files,
                     active: surface == StageSurfaceView::NativeFiles,
                     running: state.file_manager.is_some(),
+                    enabled: true,
                 },
             ],
         }
@@ -81,6 +86,9 @@ impl AppDockModel {
 pub(crate) struct AppDockEntryArea {
     pub app: BuiltInAppId,
     pub rect: Rect,
+    /// Copied from the entry so input can consume a disabled target
+    /// fail-closed without re-deriving the model.
+    pub enabled: bool,
 }
 
 /// Complete, disjoint, in-order entry rectangles inside the dock region:
@@ -99,6 +107,7 @@ pub(crate) fn app_dock_entry_areas(model: &AppDockModel, area: Rect) -> Vec<AppD
         .map(|(index, entry)| AppDockEntryArea {
             app: entry.app,
             rect: Rect::new(area.x, area.y + index as u16, area.width, 1),
+            enabled: entry.enabled,
         })
         .collect()
 }

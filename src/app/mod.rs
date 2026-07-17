@@ -695,6 +695,7 @@ impl App {
                 sidebar_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
                 file_manager_sidebar_row_areas: Vec::new(),
+                app_dock_entry_areas: Vec::new(),
                 file_manager_row_areas: Vec::new(),
                 file_manager_row_action_areas: Vec::new(),
                 file_manager_header_action_areas: Vec::new(),

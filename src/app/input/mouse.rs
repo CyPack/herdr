@@ -2005,6 +2005,199 @@ mod tests {
         workspace::Workspace,
     };
 
+    fn app_with_dock_targets() -> (crate::app::App, Rect, Rect) {
+        let mut app = app_for_mouse_test();
+        let mut workspace = Workspace::test_new("dock-input");
+        workspace.identity_cwd = std::env::temp_dir();
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.ensure_test_terminals();
+        let model = crate::ui::app_dock::AppDockModel::for_state(&app.state);
+        let dock = Rect::new(110, 0, 5, 8);
+        app.state.view.app_dock_entry_areas =
+            crate::ui::app_dock::app_dock_entry_areas(&model, dock);
+        let rect_of = |app_id: crate::ui::surface_host::BuiltInAppId| {
+            app.state
+                .view
+                .app_dock_entry_areas
+                .iter()
+                .find(|entry| entry.app == app_id)
+                .expect("dock target")
+                .rect
+        };
+        let terminal_rect = rect_of(crate::ui::surface_host::BuiltInAppId::Terminal);
+        let files_rect = rect_of(crate::ui::surface_host::BuiltInAppId::Files);
+        (app, terminal_rect, files_rect)
+    }
+
+    // SF5.2: a left click on the enabled Files dock target activates the
+    // existing Files singleton or opens one; a second click cannot create a
+    // second instance.
+    #[test]
+    fn left_click_files_activates_existing_singleton_or_opens_one() {
+        let (mut app, _terminal_rect, files_rect) = app_with_dock_targets();
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            files_rect.x,
+            files_rect.y,
+        ));
+        assert!(
+            app.state.file_manager.is_some(),
+            "the Files dock target must open the Files surface"
+        );
+        assert_eq!(
+            app.state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::NativeFiles
+        );
+
+        let stage_after_open = app.state.stage;
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            files_rect.x,
+            files_rect.y,
+        ));
+        assert_eq!(
+            app.state.stage, stage_after_open,
+            "the singleton policy must reuse the existing Files instance"
+        );
+        assert!(app.state.file_manager.is_some());
+    }
+
+    // SF5.2: a left click on the Terminal dock target restores the terminal
+    // stage from Files.
+    #[test]
+    fn left_click_terminal_restores_terminal_stage() {
+        let (mut app, terminal_rect, files_rect) = app_with_dock_targets();
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            files_rect.x,
+            files_rect.y,
+        ));
+        assert_eq!(
+            app.state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::NativeFiles,
+            "fixture: Files owns the stage before the terminal click"
+        );
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            terminal_rect.x,
+            terminal_rect.y,
+        ));
+        assert_eq!(
+            app.state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace,
+            "the Terminal dock target must restore the terminal stage"
+        );
+    }
+
+    // SF5.2: a right click on a dock target opens the bounded app-name
+    // popover as a topmost overlay clamped to the screen.
+    #[test]
+    fn right_click_opens_bounded_name_popover() {
+        let (mut app, terminal_rect, _files_rect) = app_with_dock_targets();
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            terminal_rect.x,
+            terminal_rect.y,
+        ));
+        assert_eq!(app.state.mode, Mode::ContextMenu);
+        let menu = app.state.context_menu.as_ref().expect("dock popover");
+        assert!(
+            matches!(
+                menu.kind,
+                ContextMenuKind::AppDock {
+                    app: crate::ui::surface_host::BuiltInAppId::Terminal
+                }
+            ),
+            "the popover targets the exact dock entry"
+        );
+        assert_eq!(menu.items(), vec!["Terminal"]);
+        let popup = app.state.context_menu_rect().expect("popover rect");
+        let screen = app.state.screen_rect();
+        assert_eq!(
+            popup.intersection(screen),
+            popup,
+            "the popover must stay inside the screen"
+        );
+    }
+
+    // SF5.2: while the dock popover is open, background input is consumed by
+    // the topmost overlay (the SF4.2 ContextMenu machinery).
+    #[test]
+    fn popover_blocks_background_input() {
+        let (mut app, terminal_rect, _files_rect) = app_with_dock_targets();
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            terminal_rect.x,
+            terminal_rect.y,
+        ));
+        assert_eq!(app.state.mode, Mode::ContextMenu, "fixture: popover open");
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 40, 10));
+        assert!(
+            app.state.selection.is_none(),
+            "a background press under the popover must not reach the terminal"
+        );
+    }
+
+    // SF5.2 characterization: after the terminal shrinks, the popover rect
+    // re-clamps fully inside the new screen (C3.2 clamping precedent).
+    #[test]
+    fn popover_reanchors_or_closes_after_terminal_resize() {
+        let (mut app, terminal_rect, _files_rect) = app_with_dock_targets();
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            terminal_rect.x,
+            terminal_rect.y,
+        ));
+        assert_eq!(app.state.mode, Mode::ContextMenu, "fixture: popover open");
+
+        app.state.view.terminal_area = Rect::new(0, 0, 40, 8);
+        app.state.view.sidebar_rect = Rect::new(0, 0, 0, 8);
+        let popup = app.state.context_menu_rect().expect("popover rect");
+        let screen = app.state.screen_rect();
+        assert_eq!(
+            popup.intersection(screen),
+            popup,
+            "the popover must reanchor inside the shrunken screen"
+        );
+    }
+
+    // SF5.2: a disabled dock target consumes the click fail-closed without
+    // activating anything.
+    #[test]
+    fn disabled_app_target_is_consumed_without_activation() {
+        let (mut app, _terminal_rect, files_rect) = app_with_dock_targets();
+        for entry in &mut app.state.view.app_dock_entry_areas {
+            entry.enabled = false;
+        }
+        let stage_before = app.state.stage;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            files_rect.x,
+            files_rect.y,
+        ));
+        assert!(
+            app.state.file_manager.is_none(),
+            "a disabled Files target must not open the Files surface"
+        );
+        assert_eq!(app.state.stage, stage_before);
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            files_rect.x,
+            files_rect.y,
+        ));
+        assert_ne!(
+            app.state.mode,
+            Mode::ContextMenu,
+            "a disabled target must not open the popover"
+        );
+    }
+
     fn mark_worktree_space_member(workspace: &mut Workspace, ws_idx: usize, key: &str) {
         workspace.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
             key: key.into(),

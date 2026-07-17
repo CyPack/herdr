@@ -707,6 +707,50 @@ mod tests {
         state.shell_mouse_input_owner(position)
     }
 
+    // SF5.2 characterization: dock resize reuses the SAME region-generic SF3
+    // `ResizeTransaction` with the dock's frozen 3..=9 track bounds — no
+    // dock-specific drag state exists. Valid RED was refuted by source: the
+    // reducer is generic over `DividerId` region pairs by construction.
+    #[test]
+    fn dock_resize_and_collapse_use_shared_transaction() {
+        let divider = DividerId::new(
+            RegionId::AppDock,
+            RegionId::WorkspaceStage,
+            ShellDirection::Horizontal,
+        )
+        .expect("dock divider");
+        let bounds = ResizeBounds::new(3, 9, 1, 80).expect("dock bounds");
+
+        // Growing far beyond the maximum clamps to the frozen 9-cell cap.
+        let mut transaction =
+            ResizeTransaction::begin(divider, 7, Position::new(5, 3), [5, 75]);
+        let tx = transaction.as_mut().expect("dock transaction");
+        assert!(tx.preview(Position::new(200, 3), bounds));
+        let update = ResizeTransaction::commit(&mut transaction, 7);
+        assert_eq!(
+            update.decision(),
+            ResizeDecision::Committed([9, 71]),
+            "the shared transaction clamps the dock to its maximum"
+        );
+
+        // Shrinking below the minimum clamps to the frozen 3-cell floor.
+        let mut transaction =
+            ResizeTransaction::begin(divider, 7, Position::new(5, 3), [5, 75]);
+        let tx = transaction.as_mut().expect("dock transaction");
+        assert!(tx.preview(Position::new(0, 3), bounds));
+        let update = ResizeTransaction::commit(&mut transaction, 7);
+        assert_eq!(update.decision(), ResizeDecision::Committed([3, 77]));
+
+        // A stale view generation stays inert — the same guard every shell
+        // divider already obeys.
+        let mut transaction =
+            ResizeTransaction::begin(divider, 7, Position::new(5, 3), [5, 75]);
+        let tx = transaction.as_mut().expect("dock transaction");
+        assert!(tx.preview(Position::new(200, 3), bounds));
+        let update = ResizeTransaction::commit(&mut transaction, 8);
+        assert_eq!(update.decision(), ResizeDecision::Inert);
+    }
+
     // SF4.2-06 companion characterization: the collapsed-sidebar guard inside
     // `on_sidebar_divider` is load-bearing but was previously unpinned. The
     // adversarial fixture keeps a stale non-zero sidebar rect in the view so
