@@ -31,8 +31,14 @@ browser fontunda GÖRÜNMEZ (deterministik boş hücre) — VIS-03/04 ASCII-prof
 fixture'ları için render profil seçimi (AppState client-local alanı) FIP-3.7/
 3.8'de eklenecek; Rust exact-cell testleri semantik otorite. Kalan FIP-3:
 3.4 consumer migration, 3.7 edge ailesi (ICON-08/09/11/13 + control escaping),
-3.8 VIS-03/04 (ASCII profil). Sonrası kullanıcı direktifi: custom
-layout altyapı programı tasarımı.
+3.8 VIS-03/04 (ASCII profil). FIP-4.1/4.2 de KAPANDI (`98d2df6b` RED / no-submit GREEN): FM agent handoff
+payload artık TAM path bytes — `\r` kaldırıldı, eski path+Enter kontratını
+pinleyen test onaylı REF-05/07 kontratına yükseltildi; full 3,469/3,469.
+NOT: M1 attachment picker'ın kendi path+CR delivery'si (satır ~18) FIP kapsamı
+DIŞI ve bilinçli korunuyor; Claude-split gönderimi (satır ~341) FIP-4.5/4.6'da
+makinesiyle birlikte kalkacak. Kalan FIP-4: 4.3/4.4 (directory + last-seam
+kind revalidation), 4.5/4.6 (implicit split kaldırma), 4.7 fail-closed ailesi.
+Sonrası: FIP-5 picker, kullanıcı direktifi custom-layout programı.
 KULLANICI DİREKTİFİ (2026-07-18): FIP-2 kapandıktan sonra, Excalidraw
 mockup'ındaki zengin layout'u kolay/hızlı/production-grade kurmayı sağlayan
 CUSTOM LAYOUT ALTYAPISI programı tasarlanacak (kendi brainstorm→design→plan
@@ -62,12 +68,12 @@ drag-and-drop kapsam dışı.
 - Eski SF0-SF6 + FM1-FM5 programı tamam ve yayınlıdır; yeniden uygulanmaz.
 - Yeni aktif program Files Interaction Polish’tir.
 - Açık görev envanteri (FIP-G.1/G.2 kapanışı sonrası):
-  - `.codex/TASKS.md`: 30
+  - `.codex/TASKS.md`: 28
   - `.codex/CHANGE-PIPELINE-TASKS.md`: 89
-  - toplam: 119
-- Sadece FIP-3.4 in-progress yapılabilir; diğer 118 görev pending/paused kalır.
+  - toplam: 117
+- Sadece FIP-3.4 veya FIP-4.3 in-progress yapılabilir; diğer 116 görev pending/paused kalır.
 - Fresh continuity gates (2026-07-18 planning-gate closure):
-  - exact task copy 119/119;
+  - exact task copy 117/117;
   - 57 unique `TP-FIP-*` (fresh deterministic count; the earlier "55" excluded
     the two E2E IDs — all 57 are mapped in the implementation plan);
   - Nextest run `4da2ee18-b784-4c38-aaab-98a2e8787511`,
@@ -346,13 +352,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 30 ve
-89, toplam 119’dur. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 28 ve
+89, toplam 117’dir. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 30 unchecked
+### Source: `.codex/TASKS.md` — 28 unchecked
 
 - [ ] **FIP-1.6** Add Playwright `TP-FIP-VIS-01` plus isolated real-mouse
   `TP-FIP-E2E-01` evidence without touching the stable Herdr socket.
@@ -369,12 +375,6 @@ sayar ve exact diff yapar.
 
 - [ ] **FIP-3.8** Add Playwright `TP-FIP-VIS-03` and `TP-FIP-VIS-04`
   snapshots for mixed kinds and narrow/tiny layouts.
-
-- [ ] **FIP-4.1 RED** Pin that the prepared payload is exactly the selected
-  UTF-8 path bytes and contains no CR, LF, Enter, prefix, suffix, or whitespace.
-
-- [ ] **FIP-4.2 GREEN** Replace the old send-and-submit payload with a
-  reference-only payload.
 
 - [ ] **FIP-4.3 RED** Pin directory acceptance and broken/special-path
   rejection.

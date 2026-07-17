@@ -99,9 +99,9 @@ then the plan's Tasks 2-29 in order.
 
 ### FIP-4 — Reference-Only Delivery Core
 
-- [ ] **FIP-4.1 RED** Pin that the prepared payload is exactly the selected
+- [x] **FIP-4.1 RED** Pin that the prepared payload is exactly the selected
   UTF-8 path bytes and contains no CR, LF, Enter, prefix, suffix, or whitespace.
-- [ ] **FIP-4.2 GREEN** Replace the old send-and-submit payload with a
+- [x] **FIP-4.2 GREEN** Replace the old send-and-submit payload with a
   reference-only payload.
 - [ ] **FIP-4.3 RED** Pin directory acceptance and broken/special-path
   rejection.
