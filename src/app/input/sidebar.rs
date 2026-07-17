@@ -2123,6 +2123,82 @@ mod tests {
         );
     }
 
+    // TP-FIP-NAV-03: switching to Spaces or Projects while Files is open must
+    // restore the terminal Stage client-locally with identical terminal
+    // identities and no runtime mutation.
+    #[test]
+    fn spaces_tab_click_restores_terminal_stage_and_preserves_identity() {
+        use crate::app::state::SidebarTab;
+        use crate::ui::surface_host::StageSurfaceView;
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("a")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.ensure_test_terminals();
+        let terminals_before: std::collections::HashSet<_> =
+            app.state.terminals.keys().cloned().collect();
+        app.state
+            .activate_dock_app(crate::ui::surface_host::BuiltInAppId::Files);
+        assert_eq!(
+            app.state.stage.surface_view(),
+            StageSurfaceView::NativeFiles
+        );
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let spaces_rect = app.state.view.sidebar_tab_hit_areas[0];
+        assert!(spaces_rect.width > 0, "spaces tab should have width");
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            spaces_rect.x,
+            spaces_rect.y,
+        ));
+
+        assert_eq!(app.state.sidebar_tab, SidebarTab::Spaces);
+        assert_eq!(
+            app.state.stage.surface_view(),
+            StageSurfaceView::TerminalWorkspace
+        );
+        assert!(app.state.file_manager.is_none());
+        let terminals_after: std::collections::HashSet<_> =
+            app.state.terminals.keys().cloned().collect();
+        assert_eq!(terminals_before, terminals_after);
+    }
+
+    // TP-FIP-NAV-03 (Projects variant): the symmetric exit path.
+    #[test]
+    fn projects_tab_click_restores_terminal_stage_and_preserves_identity() {
+        use crate::app::state::SidebarTab;
+        use crate::ui::surface_host::StageSurfaceView;
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("a")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.ensure_test_terminals();
+        let terminals_before: std::collections::HashSet<_> =
+            app.state.terminals.keys().cloned().collect();
+        app.state
+            .activate_dock_app(crate::ui::surface_host::BuiltInAppId::Files);
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let projects_rect = app.state.view.sidebar_tab_hit_areas[1];
+        assert!(projects_rect.width > 0, "projects tab should have width");
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            projects_rect.x,
+            projects_rect.y,
+        ));
+
+        assert_eq!(app.state.sidebar_tab, SidebarTab::Projects);
+        assert_eq!(
+            app.state.stage.surface_view(),
+            StageSurfaceView::TerminalWorkspace
+        );
+        assert!(app.state.file_manager.is_none());
+        let terminals_after: std::collections::HashSet<_> =
+            app.state.terminals.keys().cloned().collect();
+        assert_eq!(terminals_before, terminals_after);
+    }
+
     // TP-C6.1-NAV: the Files row hit area carries exact path identity. Mouse
     // input prepares one request only; it performs no directory read itself.
     #[test]
