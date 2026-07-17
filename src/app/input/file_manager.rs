@@ -1755,6 +1755,86 @@ mod tests {
         );
     }
 
+    #[test]
+    fn terminal_resize_cancels_stale_miller_transaction() {
+        let td = TempDir::new("fm3-divider-terminal-resize");
+        td.file("00.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        let original_frame = Rect::new(0, 0, 86, 16);
+        compute_view(&mut app.state, original_frame);
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .first()
+            .expect("current Files projection exposes a divider")
+            .rect;
+        let before_model = {
+            let file_manager = app.state.file_manager.as_ref().expect("open FM");
+            (
+                file_manager.miller.revision,
+                file_manager
+                    .miller
+                    .chain
+                    .iter()
+                    .map(|segment| segment.preferred_width)
+                    .collect::<Vec<_>>(),
+                file_manager.trio_overrides,
+            )
+        };
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                divider.x,
+                divider.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Drag(MouseButton::Left),
+                divider.x + 4,
+                divider.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert!(
+            app.state.shell_interaction.miller_resize_active(),
+            "precondition: old frame owns a Miller capture"
+        );
+
+        compute_view(&mut app.state, Rect::new(0, 0, 70, 16));
+
+        assert_eq!(
+            app.state.view.shell.area.width, 70,
+            "precondition: compute applies the terminal resize"
+        );
+        assert!(
+            !app.state.shell_interaction.miller_resize_active(),
+            "new terminal geometry must retire the old pointer transaction"
+        );
+        let file_manager = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(
+            (
+                file_manager.miller.revision,
+                file_manager
+                    .miller
+                    .chain
+                    .iter()
+                    .map(|segment| segment.preferred_width)
+                    .collect::<Vec<_>>(),
+                file_manager.trio_overrides,
+            ),
+            before_model,
+            "terminal resize cancellation cannot commit model or legacy widths"
+        );
+    }
+
     // FM2.2 end-to-end: pressing a trio divider and dragging resizes the
     // column through the clamped commit seam; release ends the capture; the
     // committed width survives recompute and clamps to the frozen 16..=64
