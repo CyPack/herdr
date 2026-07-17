@@ -7,6 +7,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
+use crate::app::file_manager_miller::ResolvedMillerRow;
 use crate::app::state::{
     AppState, ContextMenuKind, ContextMenuState, FileManagerContextMenuModel,
     FileManagerHeaderAction, FileManagerRowAction, MenuListState,
@@ -308,6 +309,195 @@ impl App {
         true
     }
 
+    fn handle_active_miller_resize_mouse(&mut self, mouse: &MouseEvent) -> bool {
+        if !self.state.shell_interaction.miller_resize_active() {
+            return false;
+        }
+        match mouse.kind {
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if let Some(bounds) = crate::ui::shell::ResizeBounds::new(
+                    crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
+                    crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
+                    crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
+                    crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
+                ) {
+                    let _ = self.state.shell_interaction.preview_resize(
+                        ratatui::layout::Position::new(mouse.column, mouse.row),
+                        bounds,
+                    );
+                }
+                true
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                let _ = self.commit_miller_resize();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_file_manager_right_click(
+        &mut self,
+        mouse: &MouseEvent,
+        miller_row_target: Option<&ResolvedMillerRow>,
+        entry_target: Option<&(usize, std::path::PathBuf)>,
+    ) -> bool {
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
+            return false;
+        }
+        self.last_file_manager_click = None;
+        if !mouse.modifiers.is_empty() {
+            return true;
+        }
+
+        let mut context_entry_target = entry_target.cloned().or_else(|| {
+            self.state
+                .view
+                .file_manager_row_action_areas
+                .iter()
+                .find(|area| rect_contains(area.rect, mouse.column, mouse.row))
+                .and_then(|area| {
+                    let entry = self
+                        .state
+                        .file_manager
+                        .as_ref()
+                        .and_then(|file_manager| file_manager.entries.get(area.entry_idx))?;
+                    (entry.path == area.entry_path)
+                        .then(|| (area.entry_idx, area.entry_path.clone()))
+                })
+        });
+        if context_entry_target.is_none() {
+            if let Some(row) = miller_row_target {
+                context_entry_target = self.activate_miller_context_row(row);
+            }
+        }
+        let Some((entry_idx, entry_path)) = context_entry_target else {
+            return true;
+        };
+        let selection_ready = self
+            .state
+            .file_manager
+            .as_mut()
+            .is_some_and(|file_manager| {
+                if file_manager.multi_selection_paths().contains(&entry_path) {
+                    file_manager.select(entry_idx)
+                } else {
+                    file_manager.replace_selection(entry_idx)
+                }
+            });
+        if !selection_ready {
+            return true;
+        }
+
+        let action_bar = self.state.file_manager.as_ref().map(|file_manager| {
+            crate::ui::compute_file_manager_action_bar_model(
+                file_manager,
+                &self.state.file_manager_clipboard,
+                self.state
+                    .file_manager_operation
+                    .as_ref()
+                    .is_some_and(|operation| operation.is_running()),
+            )
+        });
+        let plugin_actions =
+            crate::app::api::plugins::file_manifest_actions(&self.state.installed_plugins);
+        if let Some((action_bar, model)) = action_bar.and_then(|action_bar| {
+            FileManagerContextMenuModel::from_action_bar_with_plugins(&action_bar, &plugin_actions)
+                .map(|model| (action_bar, model))
+        }) {
+            self.state.view.file_manager_action_bar = Some(action_bar);
+            self.state.context_menu = Some(ContextMenuState {
+                kind: ContextMenuKind::File { model },
+                x: mouse.column,
+                y: mouse.row,
+                list: MenuListState::new(0),
+            });
+            self.state.enter_overlay_mode(Mode::ContextMenu);
+        }
+        true
+    }
+
+    fn handle_file_manager_row_mouse(
+        &mut self,
+        mouse: &MouseEvent,
+        miller_row_target: Option<&ResolvedMillerRow>,
+        entry_target: Option<(usize, std::path::PathBuf)>,
+    ) {
+        let entry_idx = entry_target.as_ref().map(|(entry_idx, _)| *entry_idx);
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) if mouse.modifiers == KeyModifiers::CONTROL => {
+                self.last_file_manager_click = None;
+                if let (Some(file_manager), Some(entry_idx)) =
+                    (self.state.file_manager.as_mut(), entry_idx)
+                {
+                    file_manager.toggle_selection(entry_idx);
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) if mouse.modifiers == KeyModifiers::SHIFT => {
+                self.last_file_manager_click = None;
+                if let (Some(file_manager), Some(entry_idx)) =
+                    (self.state.file_manager.as_mut(), entry_idx)
+                {
+                    file_manager.extend_selection(entry_idx);
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) if mouse.modifiers.is_empty() => {
+                if miller_row_target
+                    .is_some_and(|row| self.handle_miller_non_current_plain_click(row))
+                {
+                    return;
+                }
+                let Some((entry_idx, entry_path)) = entry_target else {
+                    self.last_file_manager_click = None;
+                    return;
+                };
+
+                let click = FileManagerClickState {
+                    entry_path,
+                    at: std::time::Instant::now(),
+                };
+                let is_double_click = self
+                    .last_file_manager_click
+                    .as_ref()
+                    .is_some_and(|last| last.is_double_click_for(&click));
+                self.last_file_manager_click = if is_double_click { None } else { Some(click) };
+
+                let enter_request = self.state.file_manager.as_mut().and_then(|file_manager| {
+                    (file_manager.replace_selection(entry_idx) && is_double_click)
+                        .then(|| file_manager.request_enter_navigation())
+                        .flatten()
+                });
+                if let Some(request) = enter_request {
+                    let _ = self.execute_file_manager_navigation(request);
+                }
+            }
+            MouseEventKind::ScrollUp if mouse.modifiers.is_empty() => {
+                self.last_file_manager_click = None;
+                if entry_idx.is_some() {
+                    if let Some(file_manager) = self.state.file_manager.as_mut() {
+                        file_manager.move_up();
+                    }
+                } else if let Some(row) = miller_row_target {
+                    let _ = self.scroll_miller_non_current_row(row, -1);
+                }
+            }
+            MouseEventKind::ScrollDown if mouse.modifiers.is_empty() => {
+                self.last_file_manager_click = None;
+                if entry_idx.is_some() {
+                    if let Some(file_manager) = self.state.file_manager.as_mut() {
+                        file_manager.move_down();
+                    }
+                } else if let Some(row) = miller_row_target {
+                    let _ = self.scroll_miller_non_current_row(row, 1);
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.last_file_manager_click = None;
+            }
+            _ => {}
+        }
+    }
+
     /// Route native-FM center-content mouse input before the hidden terminal
     /// pane path. Row actions carry stable path identity but remain side-effect
     /// free until their operation modules provide explicit execution authority.
@@ -330,28 +520,8 @@ impl App {
         // The one typed Miller capture owns drag/up everywhere, including
         // outside the Files Stage, so fast pointer movement cannot escape the
         // transaction or fall through to a retired geometry authority.
-        if self.state.shell_interaction.miller_resize_active() {
-            match mouse.kind {
-                MouseEventKind::Drag(MouseButton::Left) => {
-                    if let Some(bounds) = crate::ui::shell::ResizeBounds::new(
-                        crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
-                        crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
-                        crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
-                        crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
-                    ) {
-                        let _ = self.state.shell_interaction.preview_resize(
-                            ratatui::layout::Position::new(mouse.column, mouse.row),
-                            bounds,
-                        );
-                    }
-                    return FileManagerMouseDispatch::Consumed;
-                }
-                MouseEventKind::Up(MouseButton::Left) => {
-                    let _ = self.commit_miller_resize();
-                    return FileManagerMouseDispatch::Consumed;
-                }
-                _ => {}
-            }
+        if self.handle_active_miller_resize_mouse(&mouse) {
+            return FileManagerMouseDispatch::Consumed;
         }
 
         let center = self.state.view.terminal_area;
@@ -390,36 +560,6 @@ impl App {
         let entry_target = miller_row_target
             .as_ref()
             .and_then(|row| row.current_entry_target());
-        let entry_idx = entry_target.as_ref().map(|(entry_idx, _)| *entry_idx);
-
-        let mut context_entry_target =
-            matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right))
-                .then(|| {
-                    entry_target.clone().or_else(|| {
-                        self.state
-                            .view
-                            .file_manager_row_action_areas
-                            .iter()
-                            .find(|area| rect_contains(area.rect, mouse.column, mouse.row))
-                            .and_then(|area| {
-                                let entry =
-                                    self.state.file_manager.as_ref().and_then(|file_manager| {
-                                        file_manager.entries.get(area.entry_idx)
-                                    })?;
-                                (entry.path == area.entry_path)
-                                    .then(|| (area.entry_idx, area.entry_path.clone()))
-                            })
-                    })
-                })
-                .flatten();
-        if context_entry_target.is_none()
-            && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right))
-            && mouse.modifiers.is_empty()
-        {
-            if let Some(row) = miller_row_target.as_ref() {
-                context_entry_target = self.activate_miller_context_row(row);
-            }
-        }
 
         let row_action = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
             .then_some(())
@@ -469,130 +609,15 @@ impl App {
             }
         }
 
-        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
-            self.last_file_manager_click = None;
-            if mouse.modifiers.is_empty() {
-                if let Some((entry_idx, entry_path)) = context_entry_target {
-                    let selection_ready =
-                        self.state
-                            .file_manager
-                            .as_mut()
-                            .is_some_and(|file_manager| {
-                                if file_manager.multi_selection_paths().contains(&entry_path) {
-                                    file_manager.select(entry_idx)
-                                } else {
-                                    file_manager.replace_selection(entry_idx)
-                                }
-                            });
-                    if selection_ready {
-                        let action_bar = self.state.file_manager.as_ref().map(|file_manager| {
-                            crate::ui::compute_file_manager_action_bar_model(
-                                file_manager,
-                                &self.state.file_manager_clipboard,
-                                self.state
-                                    .file_manager_operation
-                                    .as_ref()
-                                    .is_some_and(|operation| operation.is_running()),
-                            )
-                        });
-                        let plugin_actions = crate::app::api::plugins::file_manifest_actions(
-                            &self.state.installed_plugins,
-                        );
-                        if let Some((action_bar, model)) = action_bar.and_then(|action_bar| {
-                            FileManagerContextMenuModel::from_action_bar_with_plugins(
-                                &action_bar,
-                                &plugin_actions,
-                            )
-                            .map(|model| (action_bar, model))
-                        }) {
-                            self.state.view.file_manager_action_bar = Some(action_bar);
-                            self.state.context_menu = Some(ContextMenuState {
-                                kind: ContextMenuKind::File { model },
-                                x: mouse.column,
-                                y: mouse.row,
-                                list: MenuListState::new(0),
-                            });
-                            self.state.enter_overlay_mode(Mode::ContextMenu);
-                        }
-                    }
-                }
-            }
+        if self.handle_file_manager_right_click(
+            &mouse,
+            miller_row_target.as_ref(),
+            entry_target.as_ref(),
+        ) {
             return FileManagerMouseDispatch::Consumed;
         }
 
-        match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) if mouse.modifiers == KeyModifiers::CONTROL => {
-                self.last_file_manager_click = None;
-                if let (Some(file_manager), Some(entry_idx)) =
-                    (self.state.file_manager.as_mut(), entry_idx)
-                {
-                    file_manager.toggle_selection(entry_idx);
-                }
-            }
-            MouseEventKind::Down(MouseButton::Left) if mouse.modifiers == KeyModifiers::SHIFT => {
-                self.last_file_manager_click = None;
-                if let (Some(file_manager), Some(entry_idx)) =
-                    (self.state.file_manager.as_mut(), entry_idx)
-                {
-                    file_manager.extend_selection(entry_idx);
-                }
-            }
-            MouseEventKind::Down(MouseButton::Left) if mouse.modifiers.is_empty() => {
-                if miller_row_target
-                    .as_ref()
-                    .is_some_and(|row| self.handle_miller_non_current_plain_click(row))
-                {
-                    return FileManagerMouseDispatch::Consumed;
-                }
-                let Some((entry_idx, entry_path)) = entry_target else {
-                    self.last_file_manager_click = None;
-                    return FileManagerMouseDispatch::Consumed;
-                };
-
-                let click = FileManagerClickState {
-                    entry_path,
-                    at: std::time::Instant::now(),
-                };
-                let is_double_click = self
-                    .last_file_manager_click
-                    .as_ref()
-                    .is_some_and(|last| last.is_double_click_for(&click));
-                self.last_file_manager_click = if is_double_click { None } else { Some(click) };
-
-                let enter_request = self.state.file_manager.as_mut().and_then(|file_manager| {
-                    (file_manager.replace_selection(entry_idx) && is_double_click)
-                        .then(|| file_manager.request_enter_navigation())
-                        .flatten()
-                });
-                if let Some(request) = enter_request {
-                    let _ = self.execute_file_manager_navigation(request);
-                }
-            }
-            MouseEventKind::ScrollUp if mouse.modifiers.is_empty() => {
-                self.last_file_manager_click = None;
-                if entry_idx.is_some() {
-                    if let Some(file_manager) = self.state.file_manager.as_mut() {
-                        file_manager.move_up();
-                    }
-                } else if let Some(row) = miller_row_target.as_ref() {
-                    let _ = self.scroll_miller_non_current_row(row, -1);
-                }
-            }
-            MouseEventKind::ScrollDown if mouse.modifiers.is_empty() => {
-                self.last_file_manager_click = None;
-                if entry_idx.is_some() {
-                    if let Some(file_manager) = self.state.file_manager.as_mut() {
-                        file_manager.move_down();
-                    }
-                } else if let Some(row) = miller_row_target.as_ref() {
-                    let _ = self.scroll_miller_non_current_row(row, 1);
-                }
-            }
-            MouseEventKind::Down(MouseButton::Left) => {
-                self.last_file_manager_click = None;
-            }
-            _ => {}
-        }
+        self.handle_file_manager_row_mouse(&mouse, miller_row_target.as_ref(), entry_target);
 
         FileManagerMouseDispatch::Consumed
     }
