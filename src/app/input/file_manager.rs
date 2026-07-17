@@ -31,6 +31,12 @@ pub(super) enum FileManagerKeyDispatch {
     Navigate(crate::fm::FmNavigationRequest),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AttachmentPickerKeyDispatch {
+    Consumed,
+    Navigate(crate::fm::FmNavigationRequest),
+}
+
 /// Handle one key while the file manager is open. `Esc` requests cancellation
 /// for a running file operation and otherwise closes the file manager; `q`
 /// always closes it. The arrow keys and `hjkl` move the cursor or navigate
@@ -122,18 +128,26 @@ pub(super) fn handle_file_manager_key(
     FileManagerKeyDispatch::Consumed
 }
 
-pub(crate) fn handle_agent_attachment_picker_key(state: &mut AppState, key: KeyEvent) {
+pub(crate) fn handle_agent_attachment_picker_key(
+    state: &mut AppState,
+    key: KeyEvent,
+) -> AttachmentPickerKeyDispatch {
     match (key.code, key.modifiers) {
-        (KeyCode::Esc | KeyCode::Char('q'), _) => state.close_agent_attachment_picker(),
+        (KeyCode::Esc | KeyCode::Char('q'), _) => {
+            state.close_agent_attachment_picker();
+            AttachmentPickerKeyDispatch::Consumed
+        }
         (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
             if let Some(picker) = state.agent_attachment_picker.as_mut() {
                 picker.file_manager.move_down();
             }
+            AttachmentPickerKeyDispatch::Consumed
         }
         (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) => {
             if let Some(picker) = state.agent_attachment_picker.as_mut() {
                 picker.file_manager.move_up();
             }
+            AttachmentPickerKeyDispatch::Consumed
         }
         (KeyCode::Enter, KeyModifiers::NONE) => {
             if let Some(path) = state.agent_attachment_selected_file() {
@@ -145,32 +159,67 @@ pub(crate) fn handle_agent_attachment_picker_key(state: &mut AppState, key: KeyE
                     state.request_agent_attachment_delivery =
                         Some(crate::app::state::AgentAttachmentDeliveryRequest { path, target });
                 }
-            } else if let Some(picker) = state.agent_attachment_picker.as_mut() {
-                picker.file_manager.enter();
+                AttachmentPickerKeyDispatch::Consumed
+            } else {
+                state
+                    .agent_attachment_picker
+                    .as_ref()
+                    .and_then(|picker| picker.file_manager.request_enter_navigation())
+                    .map_or(
+                        AttachmentPickerKeyDispatch::Consumed,
+                        AttachmentPickerKeyDispatch::Navigate,
+                    )
             }
         }
         (KeyCode::Right | KeyCode::Char('l'), KeyModifiers::NONE) => {
-            if state.agent_attachment_selected_file().is_none() {
-                if let Some(picker) = state.agent_attachment_picker.as_mut() {
-                    picker.file_manager.enter();
-                }
+            if state.agent_attachment_selected_file().is_some() {
+                AttachmentPickerKeyDispatch::Consumed
+            } else {
+                state
+                    .agent_attachment_picker
+                    .as_ref()
+                    .and_then(|picker| picker.file_manager.request_enter_navigation())
+                    .map_or(
+                        AttachmentPickerKeyDispatch::Consumed,
+                        AttachmentPickerKeyDispatch::Navigate,
+                    )
             }
         }
-        (KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h'), KeyModifiers::NONE) => {
-            if let Some(picker) = state.agent_attachment_picker.as_mut() {
-                picker.file_manager.leave();
-            }
-        }
+        (KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h'), KeyModifiers::NONE) => state
+            .agent_attachment_picker
+            .as_ref()
+            .and_then(|picker| picker.file_manager.request_leave_navigation())
+            .map_or(
+                AttachmentPickerKeyDispatch::Consumed,
+                AttachmentPickerKeyDispatch::Navigate,
+            ),
         (KeyCode::Char('.'), KeyModifiers::NONE) => {
             if let Some(picker) = state.agent_attachment_picker.as_mut() {
                 picker.file_manager.toggle_hidden();
             }
+            AttachmentPickerKeyDispatch::Consumed
         }
-        _ => {}
+        _ => AttachmentPickerKeyDispatch::Consumed,
     }
 }
 
 impl App {
+    pub(in crate::app) fn route_agent_attachment_picker_key(&mut self, key: KeyEvent) {
+        let AttachmentPickerKeyDispatch::Navigate(request) =
+            handle_agent_attachment_picker_key(&mut self.state, key)
+        else {
+            return;
+        };
+        let Some(prepared) = crate::fm::prepare_navigation_io(request) else {
+            return;
+        };
+        let _ = self
+            .state
+            .agent_attachment_picker
+            .as_mut()
+            .is_some_and(|picker| picker.file_manager.apply_prepared_navigation(prepared));
+    }
+
     /// Convert one stable row hit target into the same typed intent consumed by
     /// header/context actions. A cloned projection proves the anchored row is
     /// currently eligible before the real selection changes, so rejected
@@ -677,13 +726,28 @@ mod tests {
         picker.file_manager.select(entry_idx);
         let before = picker.file_manager.clone();
 
-        handle_agent_attachment_picker_key(&mut state, key(KeyCode::Enter));
+        let dispatch = handle_agent_attachment_picker_key(&mut state, key(KeyCode::Enter));
+        let AttachmentPickerKeyDispatch::Navigate(request) = dispatch else {
+            panic!("directory Enter must emit one typed navigation request");
+        };
 
         let after = &state
             .agent_attachment_picker
             .as_ref()
             .expect("picker remains open")
             .file_manager;
+        assert_eq!(request.reason, crate::fm::FmNavigationReason::Enter);
+        assert_eq!(request.source_directory, before.cwd);
+        assert_eq!(
+            request.source_directory_generation,
+            before.directory_generation
+        );
+        assert_eq!(request.source_preview_generation, before.preview_generation);
+        assert_eq!(request.source_miller_revision, before.miller.revision);
+        assert_eq!(request.target_directory, child);
+        assert_eq!(request.focus_path, None);
+        assert_eq!(request.fallback_cursor, 0);
+        assert_eq!(request.show_hidden, before.show_hidden);
         assert_eq!(after.cwd, before.cwd);
         assert_eq!(after.directory_generation, before.directory_generation);
         assert_eq!(after.preview_generation, before.preview_generation);
@@ -706,13 +770,28 @@ mod tests {
             .file_manager
             .clone();
 
-        handle_agent_attachment_picker_key(&mut state, key(KeyCode::Backspace));
+        let dispatch = handle_agent_attachment_picker_key(&mut state, key(KeyCode::Backspace));
+        let AttachmentPickerKeyDispatch::Navigate(request) = dispatch else {
+            panic!("Backspace must emit one typed parent navigation request");
+        };
 
         let after = &state
             .agent_attachment_picker
             .as_ref()
             .expect("picker remains open")
             .file_manager;
+        assert_eq!(request.reason, crate::fm::FmNavigationReason::Leave);
+        assert_eq!(request.source_directory, child);
+        assert_eq!(
+            request.source_directory_generation,
+            before.directory_generation
+        );
+        assert_eq!(request.source_preview_generation, before.preview_generation);
+        assert_eq!(request.source_miller_revision, before.miller.revision);
+        assert_eq!(request.target_directory, td.root);
+        assert_eq!(request.focus_path, Some(before.cwd.clone()));
+        assert_eq!(request.fallback_cursor, 0);
+        assert_eq!(request.show_hidden, before.show_hidden);
         assert_eq!(after.cwd, before.cwd);
         assert_eq!(after.directory_generation, before.directory_generation);
         assert_eq!(after.preview_generation, before.preview_generation);
@@ -762,6 +841,49 @@ mod tests {
         assert!(app.state.request_agent_attachment_delivery.is_none());
     }
 
+    // Characterization: the async production key path must use the same App
+    // adapter as the headless path and apply the navigation exactly once.
+    #[tokio::test]
+    async fn attachment_picker_async_app_route_enters_directory_once() {
+        let td = TempDir::new("attachment-async-app-navigation");
+        td.dir("child");
+        let child = td.root.join("child");
+        let mut app = super::super::app_for_mouse_test();
+        app.state = state_with_attachment_picker(&td.root, "attachment-async-app-navigation");
+        let picker = app
+            .state
+            .agent_attachment_picker
+            .as_mut()
+            .expect("open attachment picker");
+        let entry_idx = picker
+            .file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == child)
+            .expect("child directory");
+        picker.file_manager.select(entry_idx);
+        let before_generation = picker.file_manager.directory_generation;
+
+        app.handle_key(crate::input::TerminalKey::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        ))
+        .await;
+
+        let after = &app
+            .state
+            .agent_attachment_picker
+            .as_ref()
+            .expect("picker remains open")
+            .file_manager;
+        assert_eq!(after.cwd, child);
+        assert_eq!(
+            after.directory_generation,
+            before_generation.wrapping_add(1).max(1)
+        );
+        assert!(app.state.request_agent_attachment_delivery.is_none());
+    }
+
     #[test]
     fn attachment_picker_swallowing_unknown_key_preserves_background_terminal() {
         let td = TempDir::new("attachment-key-block");
@@ -791,8 +913,9 @@ mod tests {
             .file_manager
             .cursor;
 
-        handle_agent_attachment_picker_key(&mut state, key(KeyCode::Char('x')));
+        let dispatch = handle_agent_attachment_picker_key(&mut state, key(KeyCode::Char('x')));
 
+        assert_eq!(dispatch, AttachmentPickerKeyDispatch::Consumed);
         assert_eq!(state.mode, Mode::AttachFile);
         assert_eq!(
             state
@@ -840,8 +963,9 @@ mod tests {
             .unwrap();
         picker.file_manager.select(entry_idx);
 
-        handle_agent_attachment_picker_key(&mut state, key(KeyCode::Enter));
+        let dispatch = handle_agent_attachment_picker_key(&mut state, key(KeyCode::Enter));
 
+        assert_eq!(dispatch, AttachmentPickerKeyDispatch::Consumed);
         let request = state
             .request_agent_attachment_delivery
             .as_ref()

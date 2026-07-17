@@ -721,13 +721,10 @@ mod tests {
             .position(|entry| entry.path == path)
             .expect("attachment fixture entry");
         picker.file_manager.select(entry_idx);
-        crate::app::input::handle_agent_attachment_picker_key(
-            &mut app.state,
-            crossterm::event::KeyEvent::new(
-                crossterm::event::KeyCode::Enter,
-                crossterm::event::KeyModifiers::NONE,
-            ),
-        );
+        app.route_agent_attachment_picker_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        ));
     }
 
     fn app_with_non_agent_handoff(

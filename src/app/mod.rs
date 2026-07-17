@@ -1893,7 +1893,7 @@ impl App {
                 input::handle_navigator_key(&mut self.state, &self.terminal_runtimes, key_event);
             }
             Mode::AttachFile => {
-                input::handle_agent_attachment_picker_key(&mut self.state, key_event);
+                self.route_agent_attachment_picker_key(key_event);
             }
             Mode::Terminal => {
                 // Should not be called in terminal mode.

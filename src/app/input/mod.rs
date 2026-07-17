@@ -36,7 +36,6 @@ fn modified_url_click_modifier_matches_terminal_mouse_reporting() {
 
 mod copy_mode;
 mod file_manager;
-pub(crate) use file_manager::handle_agent_attachment_picker_key;
 mod modal;
 mod mouse;
 mod navigate;
@@ -99,9 +98,7 @@ impl App {
                         self.handle_file_manager_delete_confirmation_key(key_event)
                     }
                     Mode::RenameFile => self.handle_rename_key_via_api(key_event),
-                    Mode::AttachFile => {
-                        file_manager::handle_agent_attachment_picker_key(&mut self.state, key_event)
-                    }
+                    Mode::AttachFile => self.route_agent_attachment_picker_key(key_event),
                     _ => self.handle_global_key_dispatch(key).await,
                 }
             }

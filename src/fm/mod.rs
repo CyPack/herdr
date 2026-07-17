@@ -928,6 +928,7 @@ impl FmState {
     /// Descend into the selected entry when it is a directory, re-reading its
     /// contents with the cursor back at the top. A no-op when the selection is a
     /// file (or the directory is empty).
+    #[cfg(test)]
     pub fn enter(&mut self) {
         if let Some(request) = self.request_enter_navigation() {
             if let Some(prepared) = prepare_navigation_io(request) {
@@ -976,6 +977,7 @@ impl FmState {
     /// Go to the parent directory, re-reading its contents and focusing the
     /// exact departed child when it remains visible. Missing or filtered paths
     /// use the deterministic top fallback. A no-op at the filesystem root.
+    #[cfg(test)]
     pub fn leave(&mut self) {
         if let Some(request) = self.request_leave_navigation() {
             if let Some(prepared) = prepare_navigation_io(request) {
