@@ -123,6 +123,18 @@ committed, the final clean-diff/stable-socket checks pass, and both CyPack refs
 are proven fast-forwarded. FM5 remains a separate evidence-only placement
 decision and is not part of the Miller production-completion PRD.
 
+Publication subsequently closed:
+
+- CyPack `feat/native-fm` =
+  `059612b4ddb6eda81d4a9a2be33670e81dd9cc05`;
+- CyPack `master` =
+  `059612b4ddb6eda81d4a9a2be33670e81dd9cc05`;
+- both updates were non-force fast-forwards from `c2624470`;
+- `upstream` was untouched.
+
+The separate FM5 decision is recorded in
+`.codex/evidence/fm5-preview-placement-decision.md`.
+
 ## Current Override — P6 Closed, P7 Open
 
 This section supersedes the older P0/P1-only scope and next-phase statements

@@ -287,7 +287,7 @@ Progress evidence:
   clamp after path/cache/terminal shrink and clear stale hits.
 - [x] Prove close/reopen reset, inaccessible ancestors, render purity, resource
   bounds, full gates, and CLI graph freshness.
-- [ ] Publish only after P7 isolated runtime and final continuity closure.
+- [x] Publish only after P7 isolated runtime and final continuity closure.
 
 ### FM2 — Miller Column Resize
 
@@ -300,7 +300,7 @@ Progress evidence:
   commit updates one revision and at most one final image target.
 - [x] Close stale divider, terminal resize, cancel, 1,000-move bound, and
   cross-layer/full/performance/CLI-graph gates.
-- [ ] Publish only after P7 isolated runtime and final continuity closure.
+- [x] Publish only after P7 isolated runtime and final continuity closure.
 
 ### FM3 — All-Column Mouse Ownership
 
@@ -329,11 +329,11 @@ Progress evidence:
 
 ### FM5 — Preview / Inspector Placement
 
-- [ ] Measure inline final column, Shell RightPanel, and adaptive hybrid across
+- [x] Measure inline final column, Shell RightPanel, and adaptive hybrid across
   terminal/path/Unicode/preview/failure/focus/performance fixtures.
-- [ ] Record raw evidence and explicit GO/NO-GO. A NO-GO keeps inline preview;
+- [x] Record raw evidence and explicit GO/NO-GO. A NO-GO keeps inline preview;
   a GO requiring product code must receive a separate approved micro plan.
-- [ ] Commit the evidence/decision independently. Do not expand into
+- [x] Commit the evidence/decision independently. Do not expand into
   Apps/Desktop or speculative RightPanel consumers.
 
 ## Active Non-Product Tooling Lane — Change Pipeline

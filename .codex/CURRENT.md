@@ -1,5 +1,18 @@
 # Current State — 2026-07-17
 
+> CURRENT OVERRIDE — SHELL/NATIVE-FM PROGRAM COMPLETE. P7 was published to
+> both CyPack refs at `059612b4`. FM5 measured A inline, B RightPanel, and C
+> hybrid across the required size/depth/state/failure/interaction matrix.
+> Decision: NO-GO for B/C; retain the production-proven inline preview with
+> zero product mutation. At 80x24 expanded, A gives Stage 54 + preview 25x21;
+> B gives Stage 22 + preview 32x23, losing one navigation column for only
+> seven preview cells. A has actual p95/transport/lifecycle evidence; B/C are
+> unimplemented and cannot meet the measured-budget or ownership gates.
+> Final codebase graph is fresh through both CLI and MCP at 21,078/98,023 and
+> returns the current owner and Miller geometry symbols.
+> Canonical evidence:
+> `.codex/evidence/fm5-preview-placement-decision.md`.
+
 > CURRENT OVERRIDE — MILLER P7 VERIFIED: product head `d7997d0d`.
 > The isolated 240x80/80x24 matrix is complete with zero test residue and an
 > unchanged stable socket. It found and closed headless Files key/capture

@@ -2,6 +2,19 @@
 
 Updated: 2026-07-17 CEST
 
+## CURRENT OVERRIDE — PROGRAM COMPLETE; DO NOT AUTO-START DEFERRED WORK
+
+The approved SF0-SF6 + FM1-FM5 program is complete. P7 is published at
+`059612b4`; FM5 selected measured NO-GO for RightPanel/hybrid placement and
+keeps inline preview with no product diff.
+
+No active Native-FM implementation task remains. A new session must not infer
+authorization for the paused change-pipeline bridge, trigger-gated S5, S7, or
+Apps/Desktop. Await an explicit user-selected next objective.
+
+Canonical decision:
+`.codex/evidence/fm5-preview-placement-decision.md`.
+
 ## CURRENT OVERRIDE — FINISH P7 PUBLICATION, THEN FM5
 
 P0-P7 implementation and verification are closed at product head `d7997d0d`.

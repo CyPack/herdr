@@ -2,6 +2,18 @@
 
 - Updated: 2026-07-17
 - Branch: `feat/native-fm`
+- Final override: the approved SF0-SF6 + FM1-FM5 program is complete. P7 was
+  published at `059612b4`; FM5 selected evidence-backed NO-GO for RightPanel
+  and hybrid placement and preserves inline preview without product mutation.
+- FM5 raw geometry covers 5 terminal sizes x 5 path depths x 2 LeftPanel
+  states. The exact state/failure/transport decision gate is 14/14, run
+  `915bce56-1990-43b1-87a8-7078ddde6016`. Evidence:
+  `.codex/evidence/fm5-preview-placement-decision.md`.
+- Final CLI and built-in MCP graph agree at 21,078 nodes / 98,023 edges and
+  find current `handle_key_headless` plus `miller_viewport_geometry`.
+- Remaining product registry contains only three independent deferred items:
+  the paused change-pipeline bridge plus trigger-gated S5 and S7. They are not
+  part of this completed program.
 - Current override: P7 implementation and verification are CLOSED at product
   head `d7997d0d`; only the continuity commit and verified CyPack
   fast-forward remain before P7 publication closure. FM5 is the next separate

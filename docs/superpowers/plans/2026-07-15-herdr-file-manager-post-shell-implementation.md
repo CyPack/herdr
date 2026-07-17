@@ -472,18 +472,18 @@ work.
 **Files:** tests/bench/evidence docs already permitted by continuity; no
 production file until decision.
 
-- [ ] Record representative terminal sizes 80x24, 100x30, 120x40, 160x50,
+- [x] Record representative terminal sizes 80x24, 100x30, 120x40, 160x50,
   240x80; path depths 1, 3, 5, 12, 32; names with ASCII, CJK, emoji, and long
   graphemes; preview states none/directory/text/image/error/loading/truncated;
   AppDock and LeftPanel expanded/collapsed.
-- [ ] Measure visible navigation columns, focused-path readability, preview
+- [x] Measure visible navigation columns, focused-path readability, preview
   width/height, image target churn, full-frame p95, outgoing bytes, focus
   transitions, and collapse frequency for A/B/C using deterministic projections
   or local prototypes outside product code.
-- [ ] Run accessibility/interaction review: keyboard focus order, mouse travel,
+- [x] Run accessibility/interaction review: keyboard focus order, mouse travel,
   screen-reader/accessibility labels available to the TUI, color-independent
   status, overlay blocking, tiny terminal, and mobile behavior.
-- [ ] Record failure behavior for missing/inaccessible file, stale preview
+- [x] Record failure behavior for missing/inaccessible file, stale preview
   generation, image worker failure, RightPanel collapsed, and Stage switch.
 
 ### Task FM5.2: Apply explicit decision gate
@@ -498,15 +498,16 @@ Choose GO only if one option satisfies all of:
 - focus, scroll, overlay, collapse, and close/reopen ownership is unambiguous;
 - implementation fits one bounded independently revertible slice.
 
-- [ ] Write a decision record with raw measurements, option matrix, selected
+- [x] Write a decision record with raw measurements, option matrix, selected
   option or NO-GO, breakpoint if any, exact requirements/tests, file boundary,
   rollback, and risks.
-- [ ] If NO-GO, keep current inline preview and close FM5 honestly. Do not add
+- [x] If NO-GO, keep current inline preview and close FM5 honestly. Do not add
   speculative RightPanel product code.
-- [ ] If GO requires production behavior, stop and create a separately
+- [x] If GO requires production behavior, stop and create a separately
   user-approved micro implementation plan with RED/GREEN slices; FM5 evidence
-  alone does not authorize it.
-- [ ] Commit the decision/evidence separately as
+  alone does not authorize it. This branch selected NO-GO, so no product plan
+  or production code is required.
+- [x] Commit the decision/evidence separately as
   `docs: decide native Files preview placement`.
 
 ## Per-Phase Verification and Git Closure

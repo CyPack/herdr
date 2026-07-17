@@ -1,5 +1,25 @@
 # SESSION HANDOFF — Herdr Shell Foundation / Native FM — 2026-07-16
 
+## CURRENT OVERRIDE — PROGRAM COMPLETE / DEFERRED QUEUE ONLY — 2026-07-17
+
+- P7 publication is verified at exact CyPack SHA
+  `059612b4ddb6eda81d4a9a2be33670e81dd9cc05` for both
+  `feat/native-fm` and `master`; upstream was untouched.
+- FM5 is closed by measured NO-GO for RightPanel/hybrid placement. Existing
+  inline preview remains; FM5 changed no product code.
+- Minimum 80x24 expanded evidence: A Stage 54, two columns, preview 25x21;
+  B prototype Stage 22, one nav column, preview 32x23. B/C lack production
+  focus/transition/transport budgets and fail the GO gate.
+- Exact FM5 state/failure/transport gate: 14/14, run
+  `915bce56-1990-43b1-87a8-7078ddde6016`.
+- Canonical decision:
+  `.codex/evidence/fm5-preview-placement-decision.md`.
+- No active Shell/Native-FM implementation task remains. The only product
+  registry items are independent deferred work: change-pipeline bridge,
+  trigger-gated S5 registry, and trigger-gated S7 popup stack.
+- Never infer authorization to start a deferred item. Never push upstream or
+  touch `.superpowers/`.
+
 ## CURRENT OVERRIDE — MILLER PRODUCTION P7 VERIFIED — 2026-07-17
 
 This override supersedes every older next-action statement below.
@@ -409,24 +429,16 @@ No lower-priority task may preempt P0 merely because it is easier. A blocker
 does not authorize jumping lanes; record it and request user direction if safe
 in-scope alternatives are exhausted.
 
-## 8. COMPLETE UNCHECKED TASK INVENTORY — 97 ITEMS
+## 8. COMPLETE UNCHECKED TASK INVENTORY — 92 ITEMS
 
 The two blocks below are generated from the canonical registries and are part
-of this handoff. Current count: 8 product/deferred items plus 89
+of this handoff. Current count: 3 product/deferred items plus 89
 change-pipeline items. The next agent must recount after reading; any mismatch
 means registry drift and must be reconciled before code.
 
 ### 8.1 Product / Shell / FM / Deferred Registry — exact unchecked items
 
 <!-- PRODUCT_OPEN_TASKS_START -->
-- [ ] Publish only after P7 isolated runtime and final continuity closure.
-- [ ] Publish only after P7 isolated runtime and final continuity closure.
-- [ ] Measure inline final column, Shell RightPanel, and adaptive hybrid across
-  terminal/path/Unicode/preview/failure/focus/performance fixtures.
-- [ ] Record raw evidence and explicit GO/NO-GO. A NO-GO keeps inline preview;
-  a GO requiring product code must receive a separate approved micro plan.
-- [ ] Commit the evidence/decision independently. Do not expand into
-  Apps/Desktop or speculative RightPanel consumers.
 - [ ] Implement and verify `herdr-change-pipeline`, adapters, pilots, Git
   publication, and graph refresh; paused at T3.1 while the sequential active
   product lane closes its current phase.
