@@ -79,12 +79,12 @@ then the plan's Tasks 2-29 in order.
 
 ### FIP-3 — Semantic Entry Kinds and File Icons
 
-- [ ] **FIP-3.1** Characterize sorting, operations, symlink/special handling,
+- [x] **FIP-3.1** Characterize sorting, operations, symlink/special handling,
   watcher refresh, preview, row actions, Unicode, and narrow-column behavior.
-- [ ] **FIP-3.2 RED** Require canonical filesystem classification for
+- [x] **FIP-3.2 RED** Require canonical filesystem classification for
   directory, regular file, symlink-directory, symlink-file, broken symlink,
   and unsupported special entries.
-- [ ] **FIP-3.3 GREEN** Introduce `FileEntryKind` with derived capability
+- [x] **FIP-3.3 GREEN** Introduce `FileEntryKind` with derived capability
   methods while preserving current operational authority.
 - [ ] **FIP-3.4** Migrate every consumer without retaining dual
   `is_dir`/`operation_supported` sources of truth.

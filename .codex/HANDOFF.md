@@ -19,7 +19,12 @@ FOCUS-03/04/10 re-resolution (`e74c8954`/`f75d1e48`), VIS-02 görsel kanıt
 3,456/3,456 + 2 skip (write_visual_fixtures ignored dahil). FIP-2.5 de KAPANDI: FOCUS-02/05/06 characterization (`2df663c2`), FOCUS-07
 viewport clamp RED/GREEN (`2df663c2`/`9233048a`); FOCUS-08 unbound→None resolver
 testiyle, FOCUS-09 mevcut FM3 stale-generation aileleriyle korunuyor. FIP-2
-TAMAMEN KAPALI. Sıradaki: FIP-3.1 (ikon characterization). Sonrası kullanıcı direktifi: custom
+TAMAMEN KAPALI. FIP-3.1/3.2/3.3 KAPANDI (`4663d42d` characterization, `9c9b804a` canonical
+FileEntryKind: snapshot symlink kimliğini koruyarak 6 kind hazırlıyor; bridge
+alanları kind türevleriyle tutarlılığı test ediliyor; full 3,463/3,463 + iki
+Clippy hedefi temiz). Sıradaki: FIP-3.4 (consumer migration — is_dir/
+operation_supported alanlarını kind-türevi metodlara çevir), sonra FIP-3.5/3.6
+(görsel classifier + Nerd/ASCII glyph profilleri) ve FIP-3.8 VIS-03/04. Sonrası kullanıcı direktifi: custom
 layout altyapı programı tasarımı.
 KULLANICI DİREKTİFİ (2026-07-18): FIP-2 kapandıktan sonra, Excalidraw
 mockup'ındaki zengin layout'u kolay/hızlı/production-grade kurmayı sağlayan
@@ -50,12 +55,12 @@ drag-and-drop kapsam dışı.
 - Eski SF0-SF6 + FM1-FM5 programı tamam ve yayınlıdır; yeniden uygulanmaz.
 - Yeni aktif program Files Interaction Polish’tir.
 - Açık görev envanteri (FIP-G.1/G.2 kapanışı sonrası):
-  - `.codex/TASKS.md`: 35
+  - `.codex/TASKS.md`: 32
   - `.codex/CHANGE-PIPELINE-TASKS.md`: 89
-  - toplam: 124
-- Sadece FIP-3.1 in-progress yapılabilir; diğer 123 görev pending/paused kalır.
+  - toplam: 121
+- Sadece FIP-3.4 in-progress yapılabilir; diğer 120 görev pending/paused kalır.
 - Fresh continuity gates (2026-07-18 planning-gate closure):
-  - exact task copy 124/124;
+  - exact task copy 121/121;
   - 57 unique `TP-FIP-*` (fresh deterministic count; the earlier "55" excluded
     the two E2E IDs — all 57 are mapped in the implementation plan);
   - Nextest run `4da2ee18-b784-4c38-aaab-98a2e8787511`,
@@ -334,13 +339,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 35 ve
-89, toplam 124’tür. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 32 ve
+89, toplam 121’dir. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 35 unchecked
+### Source: `.codex/TASKS.md` — 32 unchecked
 
 - [ ] **FIP-1.6** Add Playwright `TP-FIP-VIS-01` plus isolated real-mouse
   `TP-FIP-E2E-01` evidence without touching the stable Herdr socket.
@@ -348,16 +353,6 @@ sayar ve exact diff yapar.
   fixtures, both stage snapshots approved, visual suite 9/9). The isolated
   real-mouse `TP-FIP-E2E-01` smoke is explicitly deferred to the FIP-6.3
   closure run on the final build; do not claim it before that run.
-
-- [ ] **FIP-3.1** Characterize sorting, operations, symlink/special handling,
-  watcher refresh, preview, row actions, Unicode, and narrow-column behavior.
-
-- [ ] **FIP-3.2 RED** Require canonical filesystem classification for
-  directory, regular file, symlink-directory, symlink-file, broken symlink,
-  and unsupported special entries.
-
-- [ ] **FIP-3.3 GREEN** Introduce `FileEntryKind` with derived capability
-  methods while preserving current operational authority.
 
 - [ ] **FIP-3.4** Migrate every consumer without retaining dual
   `is_dir`/`operation_supported` sources of truth.
