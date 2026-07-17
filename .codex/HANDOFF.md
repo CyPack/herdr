@@ -11,10 +11,10 @@
 - Branch: `feat/native-fm`
 - Acting identity: CyPack external contributor; `origin` is the writable
   `CyPack/herdr` fork and `upstream` is read-only.
-- Current verified head: `887471c2` (`test: verify shell foundation
-  integration and performance`, SF6.3 scoped close — deferred bench/
-  isolated items recorded OPEN in the SF6 evidence). SF6.1 `8472f14b`,
-  SF6.2 `11c054b8`, SF5 `d031ef26` all closed.
+- Current verified product head: `68ded90b` (`feat: add bounded Miller
+  history projections`, FM1.1+FM1.2-core CLOSED), RED `5e8616e0`. Shell
+  Foundation fully closed in scoped form at `887471c2` (SF6 evidence
+  records the deferred OPEN items).
   SF4 fully closed at `f973740e` (4.1 8/8, 4.2 8/8, 4.3 6/6); the SF4
   registry entries in `.codex/TASKS.md` were reconciled at `5349bb85`,
   and the custom-layout architecture guide lives locally at
@@ -79,19 +79,19 @@
   `StageSurfaceView::NativeFiles` authority; 37 direct test fixtures
   migrated onto the open transaction; the plan's composite regression
   command ran 214/214.
-- Immediate next microtask: FM1.1 — bounded Miller chain/cache RED tests
-  (frozen bounds: history 32, resident columns 5, widths 16/28/64), then
-  FM1.2 chain/projections, FM1.3 horizontal viewport, then FM2
-  drag-resize (the custom-layout target). See
-  `.codex/evidence/shell-foundation-sf6-files-stage-progress.md`.
-- Product tree: clean at `887471c2`; only the user-owned untracked
+- Immediate next microtask: FM1.2 App integration (`FmState.miller`
+  seeded in `new`, `enter`/`leave` visits with ownership-transfer
+  projections), then FM1.3 horizontal viewport geometry/scroll/render,
+  then FM2 drag-resize (the custom-layout target). See
+  `.codex/evidence/fm1-miller-viewport-progress.md`.
+- Product tree: clean at `68ded90b`; only the user-owned untracked
   `.superpowers/` tree exists and must remain untouched/unstaged.
-- Full exact-head SF6 gate: 3,331/3,331 Rust tests (`--no-fail-fast`),
-  one named B0 real-host probe skipped; Bun 5/5 + 12/12; Python 64/64;
-  Linux all-target and Windows MSVC bin Clippy;
-  fmt/diff/added-production-unwrap checks passed.
+- Full exact-head gate: 3,337/3,337 Rust tests (`--no-fail-fast`), one
+  named B0 real-host probe skipped; Linux all-target and Windows MSVC bin
+  Clippy; fmt/diff/added-production-unwrap checks passed (Bun/Python last
+  green at the SF6 gate `887471c2`).
 - Both CyPack refs (`feat/native-fm`, fork `master`) equal exact SHA
-  `887471c23655d53e64211cdb9c29cd26cbfcb33f` at this checkpoint;
+  `68ded90b86e9a32d0885332ae617d6474ea01d99` at this checkpoint;
   `upstream` untouched.
 - Fresh sequential Codebase Memory store refreshed post-publication with
   current `blocking_overlay_active`, `shell_mouse_input_owner`,

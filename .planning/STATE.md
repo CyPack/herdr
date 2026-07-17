@@ -229,9 +229,16 @@
   conditions: perf-counter/p95 bench harness, and the isolated manual
   runtime proof (blocked on a dock-bearing template going live). Current
   verified head: `887471c2`.
-- Next microtask: FM1.1 bounded Miller chain/cache REDs, then FM1.2/1.3,
-  then FM2 drag-resize (the custom-layout target). See
-  `.codex/evidence/shell-foundation-sf6-files-stage-progress.md`.
+- FM1.1 REDs and the FM1.2 core model are CLOSED
+  (`5e8616e0`/`68ded90b`): `src/fm/miller.rs` owns the frozen bounded
+  interfaces (history 32, resident 5 with the current never evicted,
+  widths 16/28/64), nearest-ancestor seeding without canonicalization,
+  root-side chain trimming, LRU eviction, and generation-checked
+  resolution (evicted generations resolve to nothing). Full suite
+  3,337/3,337. Current verified head: `68ded90b`.
+- Next microtask: FM1.2 App integration (FmState seeding + enter/leave
+  visits), then FM1.3 horizontal viewport, then FM2 drag-resize. See
+  `.codex/evidence/fm1-miller-viewport-progress.md`.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one
   bounded focus/capture router shared by mouse and keyboard, and recovery

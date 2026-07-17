@@ -56,10 +56,11 @@ non-product pipeline paused.
 
 Priority is mandatory:
 
-1. P0 ACTIVE: FM1 horizontal Miller viewport (then FM2 column
-   drag-resize — the custom-layout target). SF6 is closed in scoped form
-   (6.1 `8472f14b`, 6.2 `11c054b8`, 6.3 `887471c2` with bench/isolated
-   items recorded OPEN). Evidence:
+1. P0 ACTIVE: FM1 horizontal Miller viewport. FM1.1 REDs + FM1.2 core
+   model are CLOSED (`5e8616e0`/`68ded90b`, `src/fm/miller.rs`, bounds
+   32/5/16-28-64, LRU never-current, generation-checked resolution).
+   Next: FM1.2 App integration, FM1.3 viewport, FM2 drag-resize (the
+   custom-layout target). Evidence:
    `.codex/evidence/shell-foundation-sf6-files-stage-progress.md`. The
    custom-layout target guide (scrollable Miller area + edge drag-resize
    columns + SSH performance architecture) lives locally at
@@ -78,10 +79,8 @@ continuity, and pipeline files in one commit.
 ## Current Verified Truth
 
 - Branch: `feat/native-fm`.
-- Verified head: `887471c2` (`test: verify shell foundation integration
-  and performance`, SF6.3 scoped close; bench harness + isolated runtime
-  proof recorded OPEN in the SF6 evidence with named conditions).
-- Latest product GREEN: `11c054b8` (SF6.2), RED `1faff0e0`.
+- Verified product head: `68ded90b` (`feat: add bounded Miller history
+  projections`, FM1.1+FM1.2-core CLOSED), RED `5e8616e0`.
 - Separate test-stability commit `3c853a70` closed the parallel-load
   process-exit suppression flake class in `src/terminal/state.rs`.
 - SF0-SF5 are ALL closed (SF4.1 8/8, SF4.2 8/8 at `20f659c1`, SF4.3 6/6
@@ -97,9 +96,10 @@ continuity, and pipeline files in one commit.
   - `056f0879` / `f0f32075`: failed open restores exact Stage/focus.
   - `784fdc2e` / `944a9d4c`: stage switches preserve terminal runtime
     (`AppDefinition`/`LaunchPolicy` + pure `StageState::surface_view()`).
-- Next tests are not yet written: FM1.1 bounded Miller chain/cache REDs
-  from the FM plan (history seed <=32, resident cache <=5 with active
-  never evicted, close/reopen reset).
+- Next work: FM1.2 App integration (`FmState.miller` + enter/leave
+  visits with ownership-transfer projections), then the FM1.3 viewport
+  RED catalog. Evidence:
+  `.codex/evidence/fm1-miller-viewport-progress.md`.
 - Legacy `AppState.file_manager: Option<FmState>` curtain still renders. Do
   not remove it until SF6.
 - `previous_pane_focus` is existing pane history, not the new SF4.2 focus
@@ -107,12 +107,12 @@ continuity, and pipeline files in one commit.
   seam, never persisted.
 - Protocol remains 16. SF4.1 and SF4.2 stayed client-local presentation
   state.
-- Full current SF6 gate: Nextest 3,331/3,331 passed plus one named B0
-  skip (`--no-fail-fast`), Bun 5/5 + 12/12, Python 64/64, Linux
-  all-target Clippy, Windows MSVC bin Clippy, fmt, diff and
-  added-production-`unwrap()` clean.
+- Full current gate: Nextest 3,337/3,337 passed plus one named B0 skip
+  (`--no-fail-fast`), Linux all-target Clippy, Windows MSVC bin Clippy,
+  fmt, diff and added-production-`unwrap()` clean (Bun/Python last green
+  at the SF6 gate `887471c2`).
 - Both CyPack refs equal exact SHA
-  `887471c23655d53e64211cdb9c29cd26cbfcb33f`.
+  `68ded90b86e9a32d0885332ae617d6474ea01d99`.
 - User-owned `.superpowers/` is untracked and must never be staged or edited.
 
 ## Mandatory Git and Remote Audit
