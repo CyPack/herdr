@@ -11,8 +11,9 @@
 - Branch: `feat/native-fm`
 - Acting identity: CyPack external contributor; `origin` is the writable
   `CyPack/herdr` fork and `upstream` is read-only.
-- Current verified product head: `68ded90b` (`feat: add bounded Miller
-  history projections`, FM1.1+FM1.2-core CLOSED), RED `5e8616e0`. Shell
+- Current verified product head: `97710337` (`feat: seed and visit
+  miller state through navigation`, FM1.2 CLOSED — FmState integration
+  with ownership-transfer projections). Shell
   Foundation fully closed in scoped form at `887471c2` (SF6 evidence
   records the deferred OPEN items).
   SF4 fully closed at `f973740e` (4.1 8/8, 4.2 8/8, 4.3 6/6); the SF4
@@ -79,19 +80,19 @@
   `StageSurfaceView::NativeFiles` authority; 37 direct test fixtures
   migrated onto the open transaction; the plan's composite regression
   command ran 214/214.
-- Immediate next microtask: FM1.2 App integration (`FmState.miller`
-  seeded in `new`, `enter`/`leave` visits with ownership-transfer
-  projections), then FM1.3 horizontal viewport geometry/scroll/render,
-  then FM2 drag-resize (the custom-layout target). See
+- Immediate next microtask: FM1.3 — horizontal viewport geometry REDs
+  (Stage widths 0/15/16/31/32/56/84/140/400, <=5 complete disjoint
+  columns + dividers, focused visible) + scroll/render catalog, then FM2
+  drag-resize (the custom-layout target). See
   `.codex/evidence/fm1-miller-viewport-progress.md`.
-- Product tree: clean at `68ded90b`; only the user-owned untracked
+- Product tree: clean at `97710337`; only the user-owned untracked
   `.superpowers/` tree exists and must remain untouched/unstaged.
-- Full exact-head gate: 3,337/3,337 Rust tests (`--no-fail-fast`), one
+- Full exact-head gate: 3,338/3,338 Rust tests (`--no-fail-fast`), one
   named B0 real-host probe skipped; Linux all-target and Windows MSVC bin
   Clippy; fmt/diff/added-production-unwrap checks passed (Bun/Python last
   green at the SF6 gate `887471c2`).
 - Both CyPack refs (`feat/native-fm`, fork `master`) equal exact SHA
-  `68ded90b86e9a32d0885332ae617d6474ea01d99` at this checkpoint;
+  `977103371055dd4782bfefd07f10851bcabf6052` at this checkpoint;
   `upstream` untouched.
 - Fresh sequential Codebase Memory store refreshed post-publication with
   current `blocking_overlay_active`, `shell_mouse_input_owner`,

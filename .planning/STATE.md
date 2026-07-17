@@ -236,8 +236,13 @@
   root-side chain trimming, LRU eviction, and generation-checked
   resolution (evicted generations resolve to nothing). Full suite
   3,337/3,337. Current verified head: `68ded90b`.
-- Next microtask: FM1.2 App integration (FmState seeding + enter/leave
-  visits), then FM1.3 horizontal viewport, then FM2 drag-resize. See
+- FM1.2 is CLOSED (`97710337`): `FmState.miller` seeded at open;
+  enter/leave move the departing entries vector into the cache
+  (ownership transfer) under fresh generations and visit the new cwd;
+  real-tree integration test green. Full suite 3,338/3,338. Current
+  verified head: `97710337`.
+- Next microtask: FM1.3 horizontal viewport geometry/scroll/render REDs,
+  then FM2 drag-resize (the custom-layout target). See
   `.codex/evidence/fm1-miller-viewport-progress.md`.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one

@@ -79,8 +79,8 @@ continuity, and pipeline files in one commit.
 ## Current Verified Truth
 
 - Branch: `feat/native-fm`.
-- Verified product head: `68ded90b` (`feat: add bounded Miller history
-  projections`, FM1.1+FM1.2-core CLOSED), RED `5e8616e0`.
+- Verified product head: `97710337` (`feat: seed and visit miller state
+  through navigation`, FM1.2 CLOSED).
 - Separate test-stability commit `3c853a70` closed the parallel-load
   process-exit suppression flake class in `src/terminal/state.rs`.
 - SF0-SF5 are ALL closed (SF4.1 8/8, SF4.2 8/8 at `20f659c1`, SF4.3 6/6
@@ -96,9 +96,9 @@ continuity, and pipeline files in one commit.
   - `056f0879` / `f0f32075`: failed open restores exact Stage/focus.
   - `784fdc2e` / `944a9d4c`: stage switches preserve terminal runtime
     (`AppDefinition`/`LaunchPolicy` + pure `StageState::surface_view()`).
-- Next work: FM1.2 App integration (`FmState.miller` + enter/leave
-  visits with ownership-transfer projections), then the FM1.3 viewport
-  RED catalog. Evidence:
+- Next work: the FM1.3 horizontal viewport RED catalog (geometry at the
+  nine plan widths, scroll ownership, render purity), then FM2
+  drag-resize. Evidence:
   `.codex/evidence/fm1-miller-viewport-progress.md`.
 - Legacy `AppState.file_manager: Option<FmState>` curtain still renders. Do
   not remove it until SF6.
@@ -107,12 +107,12 @@ continuity, and pipeline files in one commit.
   seam, never persisted.
 - Protocol remains 16. SF4.1 and SF4.2 stayed client-local presentation
   state.
-- Full current gate: Nextest 3,337/3,337 passed plus one named B0 skip
+- Full current gate: Nextest 3,338/3,338 passed plus one named B0 skip
   (`--no-fail-fast`), Linux all-target Clippy, Windows MSVC bin Clippy,
   fmt, diff and added-production-`unwrap()` clean (Bun/Python last green
   at the SF6 gate `887471c2`).
 - Both CyPack refs equal exact SHA
-  `68ded90b86e9a32d0885332ae617d6474ea01d99`.
+  `977103371055dd4782bfefd07f10851bcabf6052`.
 - User-owned `.superpowers/` is untracked and must never be staged or edited.
 
 ## Mandatory Git and Remote Audit

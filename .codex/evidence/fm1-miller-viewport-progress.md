@@ -20,7 +20,7 @@ custom-layout target interaction).
   RUNTIME exactly as the plan requires (observed: history-32, focused-drop,
   cache-5, eviction-generation rows failing; no compile/setup failure).
 
-## FM1.2 — Logical chain and resident projections (CORE CLOSED; App integration NEXT)
+## FM1.2 — Logical chain and resident projections (CLOSED)
 
 - GREEN `68ded90b` (`feat: add bounded Miller history projections`):
   - `MillerState::seed(cwd)` — nearest <=32 ancestors plus the cwd,
@@ -43,13 +43,24 @@ custom-layout target interaction).
 - Publication: FF pushes to CyPack only; both refs equal exact SHA
   `68ded90b86e9a32d0885332ae617d6474ea01d99`; `upstream` untouched.
 
+- Integration `97710337` (`feat: seed and visit miller state through
+  navigation`): `FmState.miller` seeded in `with_hidden`/`test_empty`;
+  `enter()`/`leave()` route through one `departing_projection()` seam that
+  MOVES the departing `entries` vector (ownership transfer, no clone)
+  under a fresh `next_column_id` and then `visit`s the new cwd. The
+  integration test drives a REAL temp tree end-to-end: the departed
+  projection lands in the cache carrying the moved entries, returning to a
+  directory removes it from the evictable cache, and the invariant checker
+  holds after every transition. Miller family 14/14; full suite
+  3,338/3,338; both Clippy targets clean. Both refs equal
+  `977103371055dd4782bfefd07f10851bcabf6052`.
+- Note (recorded, FM1.3/FM4 scope): typed unavailable-ancestor projections
+  and the growing-chain traversal refinement land with the viewport and
+  FM4 navigation slices.
+
 ## Exact Next Microtask
 
-FM1.2 App integration: `FmState` gains a `miller: MillerState` seeded in
-`FmState::new(cwd)`; `enter()`/`leave()` call `visit` with the departing
-current projection built by MOVING the old `entries` vector (ownership
-transfer, no clone) under a fresh `next_column_id`; missing/inaccessible
-ancestors keep a typed unavailable projection (plan bullet). Then FM1.3:
+FM1.3:
 `src/ui/file_manager/miller.rs` horizontal viewport geometry (<=5 complete
 disjoint columns + dividers inside the Stage at widths
 0/15/16/31/32/56/84/140/400, focused column visible) + scroll REDs
