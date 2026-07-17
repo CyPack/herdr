@@ -1058,6 +1058,171 @@ mod tests {
         ));
     }
 
+    // P0 characterization: the published legacy-trio adapter exposes two
+    // independent divider slots. Pin the second one before the windowed
+    // projection and shared transaction replace this compatibility path.
+    #[test]
+    fn second_legacy_divider_is_interactive() {
+        let td = TempDir::new("fm2-second-divider");
+        td.file("00.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 60, 16));
+
+        let center = app.state.view.terminal_area;
+        let original_overrides = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .trio_overrides;
+        let divider = crate::ui::file_manager_divider_areas(center, original_overrides)[1]
+            .expect("three-column layout exposes the second divider");
+        let original_current = crate::ui::file_manager_column_widths(center, original_overrides)[1]
+            .expect("current column width");
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                divider.x,
+                divider.y + 2,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.state.miller_trio_drag.map(|drag| drag.slot),
+            Some(1),
+            "the second divider owns the current-column slot"
+        );
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Drag(MouseButton::Left),
+                divider.x + 3,
+                divider.y + 2,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+
+        let resized = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .trio_overrides;
+        assert_eq!(
+            resized.parent, original_overrides.parent,
+            "the second divider must not rewrite the parent slot"
+        );
+        assert_eq!(
+            resized.current,
+            Some((original_current + 3).clamp(
+                crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
+                crate::fm::miller::MILLER_COLUMN_MAX_WIDTH
+            )),
+            "the second divider changes only the current width"
+        );
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Up(MouseButton::Left),
+                divider.x + 3,
+                divider.y + 2,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert!(
+            app.state.miller_trio_drag.is_none(),
+            "release clears the second-divider capture"
+        );
+    }
+
+    // P0 characterization: Files close is an authority boundary. An old
+    // divider gesture cannot survive close/reopen and retarget a fresh Files
+    // generation even when the new surface occupies the same coordinates.
+    #[test]
+    fn files_close_retires_legacy_drag_and_hits() {
+        let td = TempDir::new("fm2-close-retires-drag");
+        td.file("00.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 60, 16));
+
+        let old_center = app.state.view.terminal_area;
+        let old_overrides = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .trio_overrides;
+        let old_divider = crate::ui::file_manager_divider_areas(old_center, old_overrides)[0]
+            .expect("three-column layout exposes the first divider");
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                old_divider.x,
+                old_divider.y + 2,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert!(
+            app.state.miller_trio_drag.is_some(),
+            "precondition: old Files generation owns a capture"
+        );
+
+        app.state.close_file_manager();
+        assert!(
+            app.state.miller_trio_drag.is_none(),
+            "close retires the active Files capture"
+        );
+        assert!(
+            app.state.view.file_manager_row_areas.is_empty()
+                && app.state.view.file_manager_row_action_areas.is_empty()
+                && app.state.view.file_manager_header_action_areas.is_empty(),
+            "close retires projected Files hits in the same transaction"
+        );
+
+        app.state
+            .try_open_file_manager_with(|_| Some(FmState::new(&td.root)))
+            .expect("fresh Files activation");
+        compute_view(&mut app.state, Rect::new(0, 0, 60, 16));
+        let fresh_before = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("reopened FM")
+            .trio_overrides;
+
+        let _ = app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            old_divider.x.saturating_add(4),
+            old_divider.y + 2,
+        ));
+        let _ = app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            old_divider.x.saturating_add(4),
+            old_divider.y + 2,
+        ));
+
+        assert!(
+            app.state.miller_trio_drag.is_none(),
+            "stale move/up cannot recreate a capture"
+        );
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("reopened FM")
+                .trio_overrides,
+            fresh_before,
+            "stale move/up cannot commit widths into the fresh Files generation"
+        );
+    }
+
     // SF6.2: Files input routes from the TYPED stage authority
     // (`AppSurfaceRef::NativeFiles`), not the legacy `file_manager.is_some()`
     // boolean. The adversarial divergent state (Files domain state present

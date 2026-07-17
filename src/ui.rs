@@ -1097,6 +1097,77 @@ mod tests {
         std::fs::remove_dir_all(root).expect("remove temp root");
     }
 
+    // P1 RED: the pure FM1.3 geometry exists, but production `compute_view`
+    // must consume it and persist the clamped horizontal origin. This uses a
+    // prepared in-memory logical chain; compute is forbidden from loading any
+    // of these synthetic paths.
+    #[test]
+    fn compute_view_projects_one_to_five_miller_columns() {
+        let mut file_manager =
+            crate::fm::FmState::new(&std::env::current_dir().expect("current directory"));
+        let directories = (0..7)
+            .map(|index| std::path::PathBuf::from(format!("/virtual/segment-{index}")))
+            .collect::<Vec<_>>();
+        file_manager.miller.chain = directories
+            .iter()
+            .cloned()
+            .map(crate::fm::miller::MillerPathSegment::new)
+            .collect();
+        file_manager.miller.focused_directory =
+            directories.last().expect("focused segment").clone();
+
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.mobile_width_threshold = 0;
+        app.sidebar_collapsed = true;
+        app.try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+
+        for width in [16, 33, 50, 84, 140, 400] {
+            let file_manager = app.file_manager.as_mut().expect("open FM");
+            file_manager.miller.horizontal.first_visible = 0;
+            let preferred_widths = file_manager
+                .miller
+                .chain
+                .iter()
+                .map(|segment| segment.preferred_width)
+                .collect::<Vec<_>>();
+            let focused_index = file_manager.miller.chain.len() - 1;
+            let expected = file_manager::miller::miller_viewport_geometry(
+                Rect::new(0, 0, width, 14),
+                &preferred_widths,
+                focused_index,
+                0,
+            );
+
+            compute_view(&mut app, Rect::new(0, 0, width, 16));
+
+            assert_eq!(
+                app.file_manager
+                    .as_ref()
+                    .expect("open FM")
+                    .miller
+                    .horizontal
+                    .first_visible,
+                expected.first_visible,
+                "production compute must persist the clamped Miller window at width {width}"
+            );
+            assert!(
+                (1..=crate::fm::miller::MAX_RESIDENT_MILLER_COLUMNS)
+                    .contains(&expected.columns.len()),
+                "the width {width} fixture must exercise one to five complete columns"
+            );
+            assert_eq!(
+                expected.dividers.len(),
+                expected.columns.len().saturating_sub(1),
+                "every adjacent visible pair has one divider at width {width}"
+            );
+        }
+    }
+
     // TP-N3.1-LIFECYCLE: compute_view rebuilds persistent action-bar content
     // after navigation/reload, clears it on close, and restores current empty
     // selection plus the client-local clipboard summary on reopen.
