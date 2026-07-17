@@ -8,10 +8,13 @@
 //! renders icons, never permanent labels.
 
 use ratatui::layout::Rect;
+use ratatui::style::Style;
+use ratatui::text::Span;
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::app::state::AppState;
-use crate::ui::surface_host::BuiltInAppId;
+use crate::ui::surface_host::{BuiltInAppId, StageSurfaceView};
 
 /// One dock entry projected from typed Stage and domain state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,8 +31,12 @@ impl AppDockEntry {
     /// Single-cell icon for the entry. `ascii` selects the ASCII-safe
     /// fallback used by tests and capability-limited terminals.
     pub(crate) fn icon(&self, ascii: bool) -> &'static str {
-        let _ = ascii;
-        ""
+        match (self.app, ascii) {
+            (BuiltInAppId::Terminal, false) => "❯",
+            (BuiltInAppId::Terminal, true) => ">",
+            (BuiltInAppId::Files, false) => "▤",
+            (BuiltInAppId::Files, true) => "#",
+        }
     }
 
     /// Accessible name for popover/text models; never rendered in the dock.
@@ -51,8 +58,21 @@ pub(crate) struct AppDockModel {
 
 impl AppDockModel {
     pub(crate) fn for_state(state: &AppState) -> Self {
-        let _ = state;
-        Self::default()
+        let surface = state.stage.surface_view();
+        Self {
+            entries: vec![
+                AppDockEntry {
+                    app: BuiltInAppId::Terminal,
+                    active: surface == StageSurfaceView::TerminalWorkspace,
+                    running: !state.workspaces.is_empty(),
+                },
+                AppDockEntry {
+                    app: BuiltInAppId::Files,
+                    active: surface == StageSurfaceView::NativeFiles,
+                    running: state.file_manager.is_some(),
+                },
+            ],
+        }
     }
 }
 
@@ -63,17 +83,59 @@ pub(crate) struct AppDockEntryArea {
     pub rect: Rect,
 }
 
-/// Complete, disjoint, in-order entry rectangles inside the dock region.
-/// Degenerate geometry produces no target at all.
+/// Complete, disjoint, in-order entry rectangles inside the dock region:
+/// one full-width single-row target per model entry, stacked from the top,
+/// clipped to the rows the region actually has. Degenerate geometry
+/// produces no target at all.
 pub(crate) fn app_dock_entry_areas(model: &AppDockModel, area: Rect) -> Vec<AppDockEntryArea> {
-    let _ = (model, area);
-    Vec::new()
+    if area.width == 0 || area.height == 0 {
+        return Vec::new();
+    }
+    model
+        .entries
+        .iter()
+        .take(usize::from(area.height))
+        .enumerate()
+        .map(|(index, entry)| AppDockEntryArea {
+            app: entry.app,
+            rect: Rect::new(area.x, area.y + index as u16, area.width, 1),
+        })
+        .collect()
 }
 
-/// Pure dock render: reads the prepared model and the palette, draws icons
-/// and active/running affordances, mutates nothing.
+/// Pure dock render: reads the prepared model and the palette, draws each
+/// entry's single-cell icon centered in its target row, an ownership bar on
+/// the active entry, and dims idle entries. Mutates nothing and performs no
+/// I/O.
 pub(crate) fn render_app_dock(app: &AppState, model: &AppDockModel, frame: &mut Frame, area: Rect) {
-    let _ = (app, model, frame, area);
+    let palette = &app.palette;
+    for target in app_dock_entry_areas(model, area) {
+        let Some(entry) = model.entries.iter().find(|entry| entry.app == target.app) else {
+            continue;
+        };
+        let icon_style = if entry.active {
+            Style::default().fg(palette.accent)
+        } else if entry.running {
+            Style::default().fg(palette.text)
+        } else {
+            Style::default().fg(palette.overlay0)
+        };
+        let bar = if entry.active {
+            Span::styled("▎", Style::default().fg(palette.accent))
+        } else {
+            Span::raw(" ")
+        };
+        // Center the single-cell icon in the remaining width after the
+        // one-cell ownership bar column.
+        let icon_col = 1 + target.rect.width.saturating_sub(1) / 2;
+        let padding = usize::from(icon_col.saturating_sub(1));
+        let line = ratatui::text::Line::from(vec![
+            bar,
+            Span::raw(" ".repeat(padding)),
+            Span::styled(entry.icon(false), icon_style),
+        ]);
+        frame.render_widget(Paragraph::new(line), target.rect);
+    }
 }
 
 #[cfg(test)]

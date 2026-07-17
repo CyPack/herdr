@@ -658,6 +658,18 @@ impl compose::Component for BaseLayer {
         if app.view.layout != ViewLayout::Mobile {
             render_tab_bar(app, frame, tab_bar_area);
         }
+        // The AppDock renders only when the current shell projects it a
+        // non-empty region (the legacy default template projects none, so
+        // this stays a no-op until a dock-bearing template is live).
+        let dock_area = app.view.shell.regions.get(RegionId::AppDock);
+        if !dock_area.is_empty() {
+            app_dock::render_app_dock(
+                app,
+                &app_dock::AppDockModel::for_state(app),
+                frame,
+                dock_area,
+            );
+        }
         // CenterContent hosts exactly one typed stage surface. The TYPED
         // Stage projection chooses the renderer so a divergent legacy
         // boolean can never paint a surface the stage does not own.
