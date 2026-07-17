@@ -1674,6 +1674,87 @@ mod tests {
         );
     }
 
+    #[test]
+    fn stale_miller_revision_mouse_up_retires_capture_without_commit() {
+        let td = TempDir::new("fm3-divider-stale-revision");
+        td.file("00.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 86, 16));
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .first()
+            .expect("current Files projection exposes a divider")
+            .clone();
+        let leading_chain_index = app.state.view.file_manager_miller.columns[divider.left_column]
+            .kind
+            .chain_index()
+            .expect("leading projected column belongs to the Miller chain");
+        let original_width = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .miller
+            .chain[leading_chain_index]
+            .preferred_width;
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                divider.rect.x,
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Drag(MouseButton::Left),
+                divider.rect.x + 4,
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+
+        let authoritative_width = original_width + 1;
+        let file_manager = app.state.file_manager.as_mut().expect("open FM");
+        assert!(
+            file_manager
+                .miller
+                .commit_column_width(leading_chain_index, authoritative_width),
+            "precondition: another authority advances the Miller revision"
+        );
+        let authoritative_revision = file_manager.miller.revision;
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Up(MouseButton::Left),
+                divider.rect.x + 4,
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert!(
+            !app.state.shell_interaction.miller_resize_active(),
+            "stale mouse-up must retire capture authority"
+        );
+        let file_manager = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(
+            (
+                file_manager.miller.revision,
+                file_manager.miller.chain[leading_chain_index].preferred_width,
+            ),
+            (authoritative_revision, authoritative_width),
+            "the stale preview cannot overwrite a newer model commit"
+        );
+    }
+
     // FM2.2 end-to-end: pressing a trio divider and dragging resizes the
     // column through the clamped commit seam; release ends the capture; the
     // committed width survives recompute and clamps to the frozen 16..=64
