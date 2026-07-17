@@ -1895,6 +1895,72 @@ mod tests {
         assert_eq!(after.miller, before.miller);
     }
 
+    // TP-FM3-NONCURRENT-CONTEXT: a live right-click in a non-current column
+    // revalidates and activates its owning directory, then opens the existing
+    // typed file menu for the exact new CURRENT selection.
+    #[test]
+    fn right_click_live_non_current_row_opens_exact_context_menu() {
+        let td = TempDir::new("typed-noncurrent-context");
+        let current = td.root.join("current");
+        let preview_directory = current.join("preview-directory");
+        let target_path = preview_directory.join("target.txt");
+        fs::create_dir_all(&preview_directory).expect("create preview directory");
+        fs::write(&target_path, b"x").expect("write context target");
+
+        let mut file_manager = FmState::new(&current);
+        let preview_index = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == preview_directory)
+            .expect("preview directory row");
+        assert!(file_manager.select(preview_index));
+        let mut app = runtime_app_with_fm(file_manager);
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 100, 16));
+        let target = app
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .flat_map(|column| &column.rows)
+            .find(|row| {
+                row.column_kind == crate::ui::MillerRowColumnKind::Preview
+                    && row.entry_path == target_path
+            })
+            .cloned()
+            .expect("live preview target");
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Right),
+                target.rect.x,
+                target.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+
+        let file_manager = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(file_manager.cwd, preview_directory);
+        assert_eq!(
+            file_manager.selected().map(|entry| &entry.path),
+            Some(&target_path)
+        );
+        assert_eq!(app.state.mode, Mode::ContextMenu);
+        let ContextMenuKind::File { model } = &app
+            .state
+            .context_menu
+            .as_ref()
+            .expect("typed file menu")
+            .kind
+        else {
+            panic!("expected typed file menu");
+        };
+        assert_eq!(model.paths, vec![target_path]);
+    }
+
     // TP-A3.3-DISPATCH: the second unmodified press on the same directory row
     // inside the double-click window selects then enters that directory.
     #[test]
