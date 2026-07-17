@@ -111,7 +111,7 @@ impl ValidatedShellLayout {
         self.0
     }
 
-    pub(super) fn as_layout(&self) -> &ShellLayout {
+    pub(crate) fn as_layout(&self) -> &ShellLayout {
         &self.0
     }
 }

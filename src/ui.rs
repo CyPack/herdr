@@ -5,6 +5,7 @@ use ratatui::{
     Frame,
 };
 
+pub(crate) mod app_dock;
 mod compose;
 mod dialogs;
 mod file_manager;
