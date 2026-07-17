@@ -8,6 +8,9 @@ use std::{cell::RefCell, thread::LocalKey};
 
 const ENV_VAR: &str = "HERDR_RENDER_PROF";
 const MAX_METRIC_LABELS_PER_KIND: usize = 128;
+// Nanosecond log2 buckets cover the complete `Duration` range while keeping
+// every duration label fixed-size (96 * 8 bytes) and allocation-free.
+const DURATION_HISTOGRAM_BUCKETS: usize = 96;
 
 static ENABLED: OnceLock<bool> = OnceLock::new();
 static PROFILER: OnceLock<Mutex<RenderProfiler>> = OnceLock::new();
@@ -16,11 +19,50 @@ thread_local! {
     static TEST_PROFILER: RefCell<Option<RenderProfiler>> = const { RefCell::new(None) };
 }
 
-#[derive(Default)]
 struct DurationStats {
     count: u64,
     total_ns: u128,
     max_ns: u128,
+    histogram: [u64; DURATION_HISTOGRAM_BUCKETS],
+}
+
+impl Default for DurationStats {
+    fn default() -> Self {
+        Self {
+            count: 0,
+            total_ns: 0,
+            max_ns: 0,
+            histogram: [0; DURATION_HISTOGRAM_BUCKETS],
+        }
+    }
+}
+
+impl DurationStats {
+    fn record(&mut self, duration: Duration) {
+        let ns = duration.as_nanos();
+        let bucket = ns.max(1).ilog2() as usize;
+        let bucket = bucket.min(DURATION_HISTOGRAM_BUCKETS - 1);
+        self.count = self.count.saturating_add(1);
+        self.total_ns = self.total_ns.saturating_add(ns);
+        self.max_ns = self.max_ns.max(ns);
+        self.histogram[bucket] = self.histogram[bucket].saturating_add(1);
+    }
+
+    fn p95_us(&self) -> u128 {
+        if self.count == 0 {
+            return 0;
+        }
+        let rank = self.count.saturating_mul(95).div_ceil(100);
+        let mut observed = 0_u64;
+        for (bucket, count) in self.histogram.iter().copied().enumerate() {
+            observed = observed.saturating_add(count);
+            if observed >= rank {
+                let upper_ns = (1_u128 << (bucket + 1)) - 1;
+                return upper_ns.div_ceil(1_000);
+            }
+        }
+        self.max_ns.div_ceil(1_000)
+    }
 }
 
 struct RenderProfiler {
@@ -59,10 +101,7 @@ impl RenderProfiler {
             return;
         }
         let stats = self.durations.entry(name).or_default();
-        let ns = duration.as_nanos();
-        stats.count = stats.count.saturating_add(1);
-        stats.total_ns = stats.total_ns.saturating_add(ns);
-        stats.max_ns = stats.max_ns.max(ns);
+        stats.record(duration);
     }
 
     fn flush_if_due(&mut self) {
@@ -87,9 +126,10 @@ impl RenderProfiler {
                     stats.total_ns / u128::from(stats.count) / 1_000
                 };
                 let max_us = stats.max_ns / 1_000;
+                let p95_us = stats.p95_us();
                 format!(
-                    "{name}=count:{} avg_us:{} max_us:{}",
-                    stats.count, avg_us, max_us
+                    "{name}=count:{} avg_us:{} p95_us:{} max_us:{}",
+                    stats.count, avg_us, p95_us, max_us
                 )
             })
             .collect::<Vec<_>>()
