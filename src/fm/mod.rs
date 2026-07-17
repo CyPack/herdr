@@ -88,6 +88,21 @@ pub(crate) struct FmNavigationRequest {
     pub show_hidden: bool,
 }
 
+/// Complete I/O result for one navigation request. Applying this payload is a
+/// pure model transition: every directory/preview/parent read has already
+/// happened in the adapter that prepared it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FmPreparedNavigation {
+    pub request: FmNavigationRequest,
+    pub entries: Vec<FileEntry>,
+    pub status: FmDirectoryStatus,
+    pub writable: bool,
+    pub cursor: usize,
+    pub parent: Option<FmParent>,
+    pub preview: FmPreview,
+    pub preview_generation: u64,
+}
+
 /// Parent-directory context for the left Miller column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FmParent {
@@ -301,6 +316,10 @@ pub struct FmState {
 }
 
 impl FmState {
+    pub(crate) fn apply_prepared_navigation(&mut self, _prepared: FmPreparedNavigation) -> bool {
+        false
+    }
+
     pub(crate) fn request_enter_navigation(&self) -> Option<FmNavigationRequest> {
         let target_directory = self
             .selected()
@@ -1899,6 +1918,71 @@ mod tests {
         assert_eq!(state.preview, before.preview);
         assert_eq!(state.preview_generation, before.preview_generation);
         assert_eq!(state.miller, before.miller);
+    }
+
+    // TP-FM4-PURE-APPLY: the apply half consumes only a prepared payload.
+    // Virtual paths deliberately do not exist on disk; success proves this
+    // transition does not fall back to filesystem reads.
+    #[test]
+    fn prepared_navigation_applies_virtual_payload_without_filesystem_access() {
+        let current = PathBuf::from("/virtual/current");
+        let child = current.join("child");
+        let inside = child.join("inside.txt");
+        let mut state = FmState::test_empty(current.clone());
+        state.entries = vec![FileEntry {
+            name: "child".into(),
+            path: child.clone(),
+            is_dir: true,
+            operation_supported: true,
+        }];
+        let request = state
+            .request_enter_navigation()
+            .expect("pure enter request");
+        let preview_generation = request.source_preview_generation + 1;
+        let prepared = FmPreparedNavigation {
+            request,
+            entries: vec![FileEntry {
+                name: "inside.txt".into(),
+                path: inside.clone(),
+                is_dir: false,
+                operation_supported: true,
+            }],
+            status: FmDirectoryStatus::Available,
+            writable: true,
+            cursor: 0,
+            parent: Some(FmParent {
+                entries: vec![FileEntry {
+                    name: "child".into(),
+                    path: child.clone(),
+                    is_dir: true,
+                    operation_supported: true,
+                }],
+                cursor: Some(0),
+            }),
+            preview: FmPreview::File(FmFilePreview::Unavailable(TextPreviewError::Io(
+                std::io::ErrorKind::NotFound,
+            ))),
+            preview_generation,
+        };
+
+        assert!(state.apply_prepared_navigation(prepared.clone()));
+        assert_eq!(state.cwd, child);
+        assert_eq!(state.entries, prepared.entries);
+        assert_eq!(state.cursor, 0);
+        assert_eq!(state.viewport_start, 0);
+        assert_eq!(state.cwd_status, FmDirectoryStatus::Available);
+        assert!(state.cwd_writable);
+        assert_eq!(state.directory_generation, 2);
+        assert_eq!(state.parent, prepared.parent);
+        assert_eq!(state.preview, prepared.preview);
+        assert_eq!(state.preview_generation, preview_generation);
+        assert_eq!(state.miller.focused_directory, state.cwd);
+        assert_eq!(
+            state.miller.chain.back().map(|segment| &segment.directory),
+            Some(&state.cwd)
+        );
+        assert!(state.multi_selection_paths().is_empty());
+        state.miller.assert_miller_invariants_for_test();
     }
 
     // TP-FM4-ENTER-FAILURE: directory identity can disappear between the
