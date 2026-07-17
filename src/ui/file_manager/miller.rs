@@ -406,7 +406,11 @@ pub(crate) fn project_miller_view_with_resize_preview(
                         segment,
                         resident.entries.as_slice(),
                     ),
-                    segment.viewport_start,
+                    resident_viewport_start(
+                        segment,
+                        resident.entries.as_slice(),
+                        content_rect.height,
+                    ),
                     resident.id.generation,
                     MillerRowColumnKind::ResidentDirectory,
                 )
@@ -588,6 +592,32 @@ pub(crate) fn miller_resize_column_is_live(
                 && source_path.as_ref() == file_manager.selected().map(|entry| &entry.path)
                 && *generation == file_manager.preview_generation
         }
+    }
+}
+
+/// Clamp the cached resident viewport so the re-resolved focused row stays
+/// visible (TP-FIP-FOCUS-07). Without a resolved selection the cached window
+/// is used unchanged.
+fn resident_viewport_start(
+    segment: &crate::fm::miller::MillerPathSegment,
+    entries: &[crate::fm::FileEntry],
+    visible_rows: u16,
+) -> usize {
+    let cached = segment.viewport_start;
+    let Some(cursor) = crate::fm::miller::MillerState::resolve_resident_selection(segment, entries)
+    else {
+        return cached;
+    };
+    let visible = visible_rows as usize;
+    if visible == 0 {
+        return cached;
+    }
+    if cursor < cached {
+        cursor
+    } else if cursor >= cached + visible {
+        cursor + 1 - visible
+    } else {
+        cached
     }
 }
 
