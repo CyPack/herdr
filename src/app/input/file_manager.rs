@@ -1671,6 +1671,49 @@ mod tests {
         assert!(matches!(fm.preview, crate::fm::FmPreview::File(_)));
     }
 
+    // TP-FM3-CURRENT-CUTOVER: CURRENT plain-click authority comes from the
+    // generation-safe Miller row target, not the legacy compatibility row
+    // list. Removing the legacy list must not disable an exact live click.
+    #[test]
+    fn current_plain_click_uses_typed_miller_target_without_legacy_rows() {
+        let td = TempDir::new("typed-current-click");
+        for index in 0..3 {
+            td.file(&format!("{index:02}.txt"));
+        }
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 80, 16));
+        let target = app
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .find(|column| column.kind.is_current())
+            .and_then(|column| column.rows.get(1))
+            .cloned()
+            .expect("second typed CURRENT row");
+        app.state.view.file_manager_row_areas.clear();
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                target.rect.x,
+                target.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+
+        let file_manager = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(file_manager.cursor, target.entry_index);
+        assert_eq!(
+            file_manager.selected().map(|entry| &entry.path),
+            Some(&target.entry_path)
+        );
+    }
+
     // TP-A3.3-DISPATCH: the second unmodified press on the same directory row
     // inside the double-click window selects then enters that directory.
     #[test]
