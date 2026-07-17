@@ -469,6 +469,55 @@ mod tests {
         state.assert_miller_invariants_for_test();
     }
 
+    // P5 BRANCH ATOMICITY: choosing a sibling is a two-step
+    // ancestor-then-child transition. The ancestor step must retire the old
+    // branch's segments, generations, and horizontal window authority
+    // together; projection must not be required to repair stale model state
+    // on a later frame.
+    #[test]
+    fn selecting_sibling_truncates_old_branch_atomically() {
+        let ancestor = PathBuf::from("/virtual/root/ancestor");
+        let old_child = ancestor.join("old-child");
+        let old_grandchild = old_child.join("grandchild");
+        let sibling = ancestor.join("sibling");
+        let mut state = MillerState::seed(ancestor.clone());
+
+        let ancestor_projection = projection(&mut state, "/virtual/root/ancestor");
+        state.visit(old_child.clone(), Some(ancestor_projection));
+        let old_child_projection = projection(&mut state, "/virtual/root/ancestor/old-child");
+        let old_child_id = old_child_projection.id.clone();
+        state.visit(old_grandchild.clone(), Some(old_child_projection));
+        state.horizontal.first_visible = state.chain.len().saturating_sub(1);
+
+        let old_grandchild_projection =
+            projection(&mut state, "/virtual/root/ancestor/old-child/grandchild");
+        state.visit(ancestor.clone(), Some(old_grandchild_projection));
+
+        assert_eq!(
+            state.chain.back().map(|segment| &segment.directory),
+            Some(&ancestor)
+        );
+        assert!(
+            state.chain.iter().all(
+                |segment| segment.directory != old_child && segment.directory != old_grandchild
+            ),
+            "the old branch tail must be retired in the ancestor transition"
+        );
+        assert!(
+            state.resident_projection(&old_child_id).is_none(),
+            "the old branch generation must retire with its segment"
+        );
+        assert!(
+            state.horizontal.first_visible < state.chain.len(),
+            "the horizontal window must be live before the next frame"
+        );
+
+        let ancestor_projection = projection(&mut state, "/virtual/root/ancestor");
+        state.visit(sibling.clone(), Some(ancestor_projection));
+        assert_eq!(state.focused_directory, sibling);
+        state.assert_miller_invariants_for_test();
+    }
+
     // FM1.1: the current directory's projection is operational authority on
     // `FmState`, never a member of the evictable cache.
     #[test]
