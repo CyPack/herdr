@@ -342,6 +342,27 @@ impl NativeFileManagerWatcher {
 }
 
 impl super::App {
+    fn active_files_generation(&self) -> Option<u32> {
+        (self.state.stage.surface_view() == crate::ui::surface_host::StageSurfaceView::NativeFiles)
+            .then(|| self.state.stage.active_instance_generation())
+            .flatten()
+    }
+
+    fn apply_prepared_file_manager_refresh(
+        &mut self,
+        prepared: crate::fm::FmPreparedCurrentRefresh,
+    ) -> bool {
+        let Some(files_generation) = self.active_files_generation() else {
+            return false;
+        };
+        self.state
+            .file_manager
+            .as_mut()
+            .is_some_and(|file_manager| {
+                file_manager.apply_prepared_current_refresh(prepared, files_generation)
+            })
+    }
+
     /// Consume one Files-sidebar navigation intent at the App-owned filesystem
     /// boundary. Both model authority and live directory type are revalidated;
     /// invalid or stale requests preserve the currently open FM projection.
@@ -427,28 +448,49 @@ impl super::App {
             return false;
         }
 
-        let Some(file_manager) = self.state.file_manager.as_mut() else {
+        let Some(files_generation) = self.active_files_generation() else {
             return false;
         };
-        if watched_dir.as_deref() != Some(file_manager.cwd.as_path()) {
+        let Some(request) = self.state.file_manager.as_ref().and_then(|file_manager| {
+            (watched_dir.as_deref() == Some(file_manager.cwd.as_path()))
+                .then(|| file_manager.request_current_refresh(files_generation))
+        }) else {
+            return false;
+        };
+
+        let prepared = crate::fm::prepare_current_refresh_io(request);
+        let Some(previous) = self.state.file_manager.as_ref().map(|file_manager| {
+            (
+                file_manager.entries.clone(),
+                file_manager.cursor,
+                file_manager.cwd_status,
+                file_manager.cwd_writable,
+                file_manager.parent.clone(),
+                file_manager.preview.clone(),
+            )
+        }) else {
+            return false;
+        };
+        if !self.apply_prepared_file_manager_refresh(prepared) {
             return false;
         }
-
-        let previous_entries = file_manager.entries.clone();
-        let previous_cursor = file_manager.cursor;
-        let previous_parent = file_manager.parent.clone();
-        let previous_preview = file_manager.preview.clone();
-        file_manager.reload();
         self.file_manager_watcher.reconcile_revision = self
             .file_manager_watcher
             .reconcile_revision
             .wrapping_add(1)
             .max(1);
 
-        previous_entries != file_manager.entries
-            || previous_cursor != file_manager.cursor
-            || previous_parent != file_manager.parent
-            || previous_preview != file_manager.preview
+        self.state
+            .file_manager
+            .as_ref()
+            .is_some_and(|file_manager| {
+                previous.0 != file_manager.entries
+                    || previous.1 != file_manager.cursor
+                    || previous.2 != file_manager.cwd_status
+                    || previous.3 != file_manager.cwd_writable
+                    || previous.4 != file_manager.parent
+                    || previous.5 != file_manager.preview
+            })
     }
 }
 
@@ -793,6 +835,128 @@ mod tests {
             .entries
             .iter()
             .any(|entry| entry.path == external));
+    }
+
+    // P5 WATCHER/APPLY: one accepted event prepares and applies exactly one
+    // stable-path refresh; the drained second sync cannot churn generations.
+    #[test]
+    fn watcher_refresh_uses_typed_prepare_apply_once() {
+        let td = TempDir::new("typed-refresh-once");
+        let selected = td.root.join("b.txt");
+        std::fs::write(td.root.join("a.txt"), b"a").expect("write a");
+        std::fs::write(&selected, b"b").expect("write b");
+        let mut file_manager = crate::fm::FmState::new(&td.root);
+        let selected_index = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == selected)
+            .expect("selected path");
+        assert!(file_manager.select(selected_index));
+
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+        let now = Instant::now();
+        assert!(!app.sync_file_manager_watcher_at(now));
+        let watcher_generation = app.file_manager_watcher.generation();
+        let before = app
+            .state
+            .file_manager
+            .as_ref()
+            .map(|file_manager| {
+                (
+                    file_manager.directory_generation,
+                    file_manager.preview_generation,
+                    app.file_manager_watcher.reconcile_revision,
+                )
+            })
+            .expect("file manager open");
+
+        let inserted = td.root.join("aa.txt");
+        std::fs::write(&inserted, b"aa").expect("write inserted path");
+        let (watch_tx, watch_rx) = sync_channel(1);
+        watch_tx
+            .send(message(
+                watcher_generation,
+                inserted.to_str().expect("UTF-8 inserted temp path"),
+            ))
+            .expect("queue watcher event");
+        app.file_manager_watcher.receiver = Some(watch_rx);
+
+        assert!(app.sync_file_manager_watcher_at(now));
+        let refreshed = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(
+            refreshed.selected().map(|entry| entry.path.as_path()),
+            Some(selected.as_path())
+        );
+        assert_eq!(refreshed.directory_generation, before.0 + 1);
+        assert_eq!(refreshed.preview_generation, before.1 + 1);
+        assert_eq!(app.file_manager_watcher.reconcile_revision, before.2 + 1);
+        assert!(refreshed.entries.iter().any(|entry| entry.path == inserted));
+
+        assert!(!app.sync_file_manager_watcher_at(now));
+        let stable = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(stable.directory_generation, before.0 + 1);
+        assert_eq!(stable.preview_generation, before.1 + 1);
+        assert_eq!(app.file_manager_watcher.reconcile_revision, before.2 + 1);
+        drop(watch_tx);
+    }
+
+    // P5 LIFECYCLE: model generations can repeat after reopen, so the typed
+    // request must also carry the Stage-owned Files instance generation.
+    #[test]
+    fn prepared_refresh_cannot_apply_after_files_close_reopen() {
+        let td = TempDir::new("refresh-close-reopen");
+        std::fs::write(td.root.join("before.txt"), b"before").expect("write initial entry");
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files activation");
+        let files_generation = app
+            .active_files_generation()
+            .expect("active Files generation");
+        let request = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("file manager open")
+            .request_current_refresh(files_generation);
+        std::fs::write(td.root.join("stale.txt"), b"stale").expect("write stale payload entry");
+        let prepared = crate::fm::prepare_current_refresh_io(request);
+
+        app.state.close_file_manager();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files reopen");
+        let reopened_generation = app
+            .active_files_generation()
+            .expect("reopened Files generation");
+        assert_ne!(reopened_generation, files_generation);
+        let before = app
+            .state
+            .file_manager
+            .as_ref()
+            .map(|file_manager| {
+                (
+                    file_manager.entries.clone(),
+                    file_manager.directory_generation,
+                    file_manager.preview_generation,
+                    file_manager.miller.clone(),
+                )
+            })
+            .expect("reopened file manager");
+
+        assert!(!app.apply_prepared_file_manager_refresh(prepared));
+        let reopened = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("reopened file manager");
+        assert_eq!(reopened.entries, before.0);
+        assert_eq!(reopened.directory_generation, before.1);
+        assert_eq!(reopened.preview_generation, before.2);
+        assert_eq!(reopened.miller, before.3);
     }
 
     // TP-C4.4-RECONCILE: when the watcher has already reconciled the exact

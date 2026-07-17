@@ -329,6 +329,39 @@ pub(crate) fn prepare_navigation_io(request: FmNavigationRequest) -> Option<FmPr
     })
 }
 
+/// Perform every filesystem read needed by one current-directory refresh.
+/// Applying the result later remains generation-bound and disk-free.
+pub(crate) fn prepare_current_refresh_io(
+    request: FmCurrentRefreshRequest,
+) -> FmPreparedCurrentRefresh {
+    let snapshot = read_directory_snapshot(&request.source_directory, request.show_hidden);
+    let cursor = current_refresh_cursor(&request, &snapshot.entries);
+    let preview_generation = request.source_preview_generation.wrapping_add(1).max(1);
+    let selected = snapshot
+        .entries
+        .get(cursor)
+        .map(|entry| (entry.path.clone(), entry.is_dir));
+    let parent = read_parent_context_for(&request.source_directory, request.show_hidden);
+    let preview = prepare_preview(
+        selected,
+        request.show_hidden,
+        preview_generation,
+        request.previous_text_preview.clone(),
+    );
+
+    FmPreparedCurrentRefresh {
+        writable: snapshot.status == FmDirectoryStatus::Available
+            && directory_is_writable(&request.source_directory),
+        request,
+        entries: snapshot.entries,
+        status: snapshot.status,
+        cursor,
+        parent,
+        preview,
+        preview_generation,
+    }
+}
+
 /// Order entries directories-first, then by natural (case-insensitive) name,
 /// with the raw name as a stable tiebreaker for deterministic rendering/tests.
 fn sort_entries(entries: &mut [FileEntry]) {
@@ -481,8 +514,34 @@ impl FmState {
         prepared: FmPreparedCurrentRefresh,
         current_files_generation: u32,
     ) -> bool {
-        let _ = (prepared, current_files_generation);
-        false
+        let expected_preview_generation = prepared
+            .request
+            .source_preview_generation
+            .wrapping_add(1)
+            .max(1);
+        let status_payload_is_valid = prepared.status == FmDirectoryStatus::Available
+            || (prepared.entries.is_empty() && !prepared.writable);
+        if !self.current_refresh_request_is_current(&prepared.request, current_files_generation)
+            || prepared.preview_generation != expected_preview_generation
+            || prepared.cursor != current_refresh_cursor(&prepared.request, &prepared.entries)
+            || !status_payload_is_valid
+        {
+            return false;
+        }
+
+        self.entries = prepared.entries;
+        self.cwd_status = prepared.status;
+        self.cwd_writable = prepared.writable;
+        self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
+        self.reconcile_multi_selection();
+        self.cursor = prepared.cursor;
+        self.clamp_cursor();
+        self.viewport_start = 0;
+        self.parent = prepared.parent;
+        self.preview = prepared.preview;
+        self.preview_viewport_start = 0;
+        self.preview_generation = prepared.preview_generation;
+        true
     }
 
     pub(crate) fn apply_prepared_navigation(&mut self, prepared: FmPreparedNavigation) -> bool {
@@ -601,6 +660,19 @@ impl FmState {
 
     fn navigation_request_is_current(&self, request: &FmNavigationRequest) -> bool {
         self.cwd == request.source_directory
+            && self.directory_generation == request.source_directory_generation
+            && self.preview_generation == request.source_preview_generation
+            && self.miller.revision == request.source_miller_revision
+            && self.show_hidden == request.show_hidden
+    }
+
+    fn current_refresh_request_is_current(
+        &self,
+        request: &FmCurrentRefreshRequest,
+        current_files_generation: u32,
+    ) -> bool {
+        current_files_generation == request.files_generation
+            && self.cwd == request.source_directory
             && self.directory_generation == request.source_directory_generation
             && self.preview_generation == request.source_preview_generation
             && self.miller.revision == request.source_miller_revision
@@ -1119,6 +1191,18 @@ fn unique_entry_index(entries: &[FileEntry], entry_path: &Path) -> Option<usize>
         .filter(|(_, entry)| entry.path == entry_path);
     let (entry_index, _) = matches.next()?;
     matches.next().is_none().then_some(entry_index)
+}
+
+fn current_refresh_cursor(request: &FmCurrentRefreshRequest, entries: &[FileEntry]) -> usize {
+    if entries.is_empty() {
+        return 0;
+    }
+    request
+        .selected_path
+        .as_deref()
+        .and_then(|path| unique_entry_index(entries, path))
+        .unwrap_or(request.fallback_cursor)
+        .min(entries.len() - 1)
 }
 
 fn scroll_miller_segment(
@@ -2099,6 +2183,8 @@ mod tests {
         state.viewport_start = 1;
         state.directory_generation = 11;
         state.preview_generation = 17;
+        state.multi_selection.paths = BTreeSet::from([root.join("a.txt"), selected_path.clone()]);
+        state.multi_selection.anchor = Some(selected_path.clone());
 
         let request = state.request_current_refresh(29);
         assert_eq!(request.files_generation, 29);
@@ -2150,6 +2236,122 @@ mod tests {
         assert_eq!(state.preview_generation, 18);
         assert_eq!(state.viewport_start, 0);
         assert!(state.cwd_writable);
+        assert_eq!(
+            state.multi_selection_paths(),
+            &BTreeSet::from([selected_path.clone()])
+        );
+        assert_eq!(
+            state.multi_selection_anchor(),
+            Some(selected_path.as_path())
+        );
+        state.miller.assert_miller_invariants_for_test();
+    }
+
+    // P5 AUTHORITY: each request identity and each structural payload oracle
+    // independently fails closed without a partial model mutation.
+    #[test]
+    fn prepared_current_refresh_rejects_each_stale_authority() {
+        let root = PathBuf::from("/virtual/current-refresh-stale");
+        let selected_path = root.join("b.txt");
+        let mut base = FmState::test_empty(&root);
+        base.entries = vec![FileEntry {
+            name: "b.txt".to_string(),
+            path: selected_path.clone(),
+            is_dir: false,
+            operation_supported: true,
+        }];
+        base.directory_generation = 11;
+        base.preview_generation = 17;
+        base.miller.revision = 23;
+        let request = base.request_current_refresh(29);
+        let prepared = FmPreparedCurrentRefresh {
+            request,
+            entries: vec![
+                FileEntry {
+                    name: "b.txt".to_string(),
+                    path: selected_path,
+                    is_dir: false,
+                    operation_supported: true,
+                },
+                FileEntry {
+                    name: "c.txt".to_string(),
+                    path: root.join("c.txt"),
+                    is_dir: false,
+                    operation_supported: true,
+                },
+            ],
+            status: FmDirectoryStatus::Available,
+            writable: true,
+            cursor: 0,
+            parent: None,
+            preview: FmPreview::None,
+            preview_generation: 18,
+        };
+
+        for case in 0..9 {
+            let mut state = base.clone();
+            let mut candidate = prepared.clone();
+            let mut current_files_generation = 29;
+            let label = match case {
+                0 => {
+                    current_files_generation += 1;
+                    "files generation"
+                }
+                1 => {
+                    state.cwd = PathBuf::from("/virtual/other");
+                    "cwd"
+                }
+                2 => {
+                    state.directory_generation += 1;
+                    "directory generation"
+                }
+                3 => {
+                    state.preview_generation += 1;
+                    "preview generation"
+                }
+                4 => {
+                    state.miller.revision += 1;
+                    "Miller revision"
+                }
+                5 => {
+                    state.show_hidden = !state.show_hidden;
+                    "hidden preference"
+                }
+                6 => {
+                    candidate.preview_generation += 1;
+                    "prepared preview generation"
+                }
+                7 => {
+                    candidate.cursor = 1;
+                    "prepared cursor"
+                }
+                8 => {
+                    candidate.status = FmDirectoryStatus::Missing;
+                    "status payload"
+                }
+                _ => unreachable!(),
+            };
+            let before = state.clone();
+
+            assert!(
+                !state.apply_prepared_current_refresh(candidate, current_files_generation),
+                "{label} drift must reject the prepared payload"
+            );
+            assert_eq!(state.cwd, before.cwd, "{label}");
+            assert_eq!(state.entries, before.entries, "{label}");
+            assert_eq!(state.cursor, before.cursor, "{label}");
+            assert_eq!(
+                state.directory_generation, before.directory_generation,
+                "{label}"
+            );
+            assert_eq!(state.parent, before.parent, "{label}");
+            assert_eq!(state.preview, before.preview, "{label}");
+            assert_eq!(
+                state.preview_generation, before.preview_generation,
+                "{label}"
+            );
+            assert_eq!(state.miller, before.miller, "{label}");
+        }
     }
 
     // TP-FM4-STALE-APPLY: preparation can complete after a watcher refresh or
