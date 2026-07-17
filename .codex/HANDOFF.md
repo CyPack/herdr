@@ -22,9 +22,16 @@ testiyle, FOCUS-09 mevcut FM3 stale-generation aileleriyle korunuyor. FIP-2
 TAMAMEN KAPALI. FIP-3.1/3.2/3.3 KAPANDI (`4663d42d` characterization, `9c9b804a` canonical
 FileEntryKind: snapshot symlink kimliğini koruyarak 6 kind hazırlıyor; bridge
 alanları kind türevleriyle tutarlılığı test ediliyor; full 3,463/3,463 + iki
-Clippy hedefi temiz). Sıradaki: FIP-3.4 (consumer migration — is_dir/
-operation_supported alanlarını kind-türevi metodlara çevir), sonra FIP-3.5/3.6
-(görsel classifier + Nerd/ASCII glyph profilleri) ve FIP-3.8 VIS-03/04. Sonrası kullanıcı direktifi: custom
+Clippy hedefi temiz). FIP-3.5/3.6 de KAPANDI (`fa2bc768` RED / `34d73460` GREEN): pure visual_class
+(17 sınıf, exact-name > lowercase-ext, kind her zaman kazanır) + Nerd/ASCII
+tek-hücre glyph tabloları (ASCII benzersizliği testli) + `render_entry_row`
+artık her satıra semantik ikon basıyor; full 3,469/3,469, iki Clippy hedefi
+temiz, görsel suite ikonlu baseline'larla 10/10. NOT: Nerd PUA glyph'leri
+browser fontunda GÖRÜNMEZ (deterministik boş hücre) — VIS-03/04 ASCII-profil
+fixture'ları için render profil seçimi (AppState client-local alanı) FIP-3.7/
+3.8'de eklenecek; Rust exact-cell testleri semantik otorite. Kalan FIP-3:
+3.4 consumer migration, 3.7 edge ailesi (ICON-08/09/11/13 + control escaping),
+3.8 VIS-03/04 (ASCII profil). Sonrası kullanıcı direktifi: custom
 layout altyapı programı tasarımı.
 KULLANICI DİREKTİFİ (2026-07-18): FIP-2 kapandıktan sonra, Excalidraw
 mockup'ındaki zengin layout'u kolay/hızlı/production-grade kurmayı sağlayan
@@ -55,12 +62,12 @@ drag-and-drop kapsam dışı.
 - Eski SF0-SF6 + FM1-FM5 programı tamam ve yayınlıdır; yeniden uygulanmaz.
 - Yeni aktif program Files Interaction Polish’tir.
 - Açık görev envanteri (FIP-G.1/G.2 kapanışı sonrası):
-  - `.codex/TASKS.md`: 32
+  - `.codex/TASKS.md`: 30
   - `.codex/CHANGE-PIPELINE-TASKS.md`: 89
-  - toplam: 121
-- Sadece FIP-3.4 in-progress yapılabilir; diğer 120 görev pending/paused kalır.
+  - toplam: 119
+- Sadece FIP-3.4 in-progress yapılabilir; diğer 118 görev pending/paused kalır.
 - Fresh continuity gates (2026-07-18 planning-gate closure):
-  - exact task copy 121/121;
+  - exact task copy 119/119;
   - 57 unique `TP-FIP-*` (fresh deterministic count; the earlier "55" excluded
     the two E2E IDs — all 57 are mapped in the implementation plan);
   - Nextest run `4da2ee18-b784-4c38-aaab-98a2e8787511`,
@@ -339,13 +346,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 32 ve
-89, toplam 121’dir. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 30 ve
+89, toplam 119’dur. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 32 unchecked
+### Source: `.codex/TASKS.md` — 30 unchecked
 
 - [ ] **FIP-1.6** Add Playwright `TP-FIP-VIS-01` plus isolated real-mouse
   `TP-FIP-E2E-01` evidence without touching the stable Herdr socket.
@@ -356,12 +363,6 @@ sayar ve exact diff yapar.
 
 - [ ] **FIP-3.4** Migrate every consumer without retaining dual
   `is_dir`/`operation_supported` sources of truth.
-
-- [ ] **FIP-3.5 RED** Pin exact-name, case-insensitive extension, semantic
-  class, Nerd-glyph, and ASCII-fallback mappings.
-
-- [ ] **FIP-3.6 GREEN** Implement a pure visual classifier and one-cell glyph
-  profiles with no render-time filesystem/config/process work.
 
 - [ ] **FIP-3.7** Cover truncation, display width, Unicode, control escaping,
   cursor/multi-select hierarchy, render purity, sorting, and operation parity.

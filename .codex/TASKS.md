@@ -88,9 +88,9 @@ then the plan's Tasks 2-29 in order.
   methods while preserving current operational authority.
 - [ ] **FIP-3.4** Migrate every consumer without retaining dual
   `is_dir`/`operation_supported` sources of truth.
-- [ ] **FIP-3.5 RED** Pin exact-name, case-insensitive extension, semantic
+- [x] **FIP-3.5 RED** Pin exact-name, case-insensitive extension, semantic
   class, Nerd-glyph, and ASCII-fallback mappings.
-- [ ] **FIP-3.6 GREEN** Implement a pure visual classifier and one-cell glyph
+- [x] **FIP-3.6 GREEN** Implement a pure visual classifier and one-cell glyph
   profiles with no render-time filesystem/config/process work.
 - [ ] **FIP-3.7** Cover truncation, display width, Unicode, control escaping,
   cursor/multi-select hierarchy, render purity, sorting, and operation parity.
