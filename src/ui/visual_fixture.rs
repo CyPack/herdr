@@ -118,8 +118,8 @@ mod tests {
         );
         std::fs::create_dir_all(&out_dir).expect("create fixture output dir");
 
-        let render_state = |app: &crate::app::state::AppState| {
-            let backend = TestBackend::new(120, 40);
+        let render_state = |app: &crate::app::state::AppState, width: u16, height: u16| {
+            let backend = TestBackend::new(width, height);
             let mut terminal = Terminal::new(backend).expect("test terminal");
             terminal
                 .draw(|frame| crate::ui::render(app, frame))
@@ -136,7 +136,7 @@ mod tests {
         crate::ui::compute_view(&mut app, Rect::new(0, 0, 120, 40));
         write_fixture(
             &out_dir,
-            export_cell_fixture("vis-01-terminal", &render_state(&app)),
+            export_cell_fixture("vis-01-terminal", &render_state(&app, 120, 40)),
         );
 
         // Fixed filesystem base so cwd labels stay identical across exports.
@@ -151,14 +151,48 @@ mod tests {
         for file in ["gamma.rs", "notes.txt"] {
             std::fs::write(root.join(file), b"x").expect("fixture file");
         }
+        std::fs::create_dir_all(root.join("beta").join("deep")).expect("fixture deep dir");
+        std::fs::write(root.join("beta").join("inner.txt"), b"x").expect("fixture inner file");
         app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(root.clone())))
             .expect("files stage must open for the fixture");
         crate::ui::compute_view(&mut app, Rect::new(0, 0, 120, 40));
         write_fixture(
             &out_dir,
-            export_cell_fixture("vis-01-files", &render_state(&app)),
+            export_cell_fixture("vis-01-files", &render_state(&app, 120, 40)),
         );
-        let _ = std::fs::remove_dir_all(&root);
+
+        // TP-FIP-VIS-02: descend through the NONZERO child `beta` (index 1)
+        // and then into `deep`; the resident `inner` column must highlight
+        // `beta`, never row zero.
+        {
+            let fm = app.file_manager.as_mut().expect("open file manager");
+            let beta = root.join("beta");
+            let beta_index = fm
+                .entries
+                .iter()
+                .position(|entry| entry.path == beta)
+                .expect("beta row");
+            assert!(beta_index > 0, "fixture requires a nonzero child index");
+            fm.cursor = beta_index;
+            fm.enter();
+            let deep = beta.join("deep");
+            let deep_index = fm
+                .entries
+                .iter()
+                .position(|entry| entry.path == deep)
+                .expect("deep row");
+            fm.cursor = deep_index;
+            fm.enter();
+            assert_eq!(fm.cwd, deep);
+        }
+        // 160 cells wide so the resident `inner` column stays inside the
+        // bounded window next to parent/current/preview.
+        crate::ui::compute_view(&mut app, Rect::new(0, 0, 160, 40));
+        write_fixture(
+            &out_dir,
+            export_cell_fixture("vis-02-resident-focus", &render_state(&app, 160, 40)),
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
