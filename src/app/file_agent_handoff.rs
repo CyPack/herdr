@@ -1007,10 +1007,12 @@ mod tests {
         shutdown_test_runtimes(&mut app);
     }
 
-    // TP-C5-SEND: the handoff is one literal UTF-8 path followed by exactly
-    // one terminal Enter. Shell metacharacters are data, never command syntax.
+    // TP-FIP-REF-05/07 (supersedes TP-C5-SEND): the reference payload is
+    // EXACTLY the literal UTF-8 path bytes — no CR, LF, Enter, prefix,
+    // suffix, or implicit whitespace, and never a second attempt. Shell
+    // metacharacters stay data; this is chat text, not a command.
     #[tokio::test]
-    async fn existing_agent_receives_one_literal_path_and_enter_exactly_once() {
+    async fn existing_agent_receives_exact_path_bytes_with_no_submit() {
         let fixture = HandoffFixture::new("literal");
         let path = fixture.file("space 'quote' $(touch nope) `echo` ünicode.txt");
         let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 4);
@@ -1021,15 +1023,16 @@ mod tests {
 
         assert!(app.sync_file_manager_agent_handoff_send());
         assert!(app.state.request_file_manager_agent_handoff.is_none());
-        let mut expected = path
+        let expected = path
             .to_str()
             .expect("UTF-8 fixture path")
             .as_bytes()
             .to_vec();
-        expected.push(b'\r');
-        assert_eq!(
-            receiver.try_recv().expect("one literal handoff payload"),
-            Bytes::from(expected)
+        let sent = receiver.try_recv().expect("one literal reference payload");
+        assert_eq!(sent, Bytes::from(expected));
+        assert!(
+            !sent.contains(&b'\r') && !sent.contains(&b'\n'),
+            "the reference payload must contain no submit byte"
         );
         assert!(receiver.try_recv().is_err(), "no second payload");
         assert!(!app.sync_file_manager_agent_handoff_send());
