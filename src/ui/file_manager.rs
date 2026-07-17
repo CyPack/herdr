@@ -1430,7 +1430,12 @@ fn render_entry_row(
     let p = &app.palette;
     let styles = file_manager_visual_styles(p);
     let suffix = if entry.is_dir { "/" } else { "" };
-    let label = truncate_end(&format!("  {}{}", entry.name, suffix), row.width as usize);
+    let icon = crate::fm::entry_kind::visual_class(entry.kind, &entry.name)
+        .glyph(crate::fm::entry_kind::IconProfile::Nerd);
+    let label = truncate_end(
+        &format!(" {icon} {}{}", entry.name, suffix),
+        row.width as usize,
+    );
     let style = if cursor_focused {
         styles.cursor
     } else if multi_selected {
