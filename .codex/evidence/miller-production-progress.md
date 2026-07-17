@@ -1,4 +1,4 @@
-# Miller Production Progress — P0/P1
+# Miller Production Progress — P0–P6
 
 Date: 2026-07-17
 
@@ -6,7 +6,91 @@ Branch: `feat/native-fm`
 
 Starting checkpoint: `cbac59bb`
 
-Verified product head: `35cfbc00`
+Verified P6 product head: `9e1d63bf`
+
+## Current Override — P6 Closed, P7 Open
+
+This section supersedes the older P0/P1-only scope and next-phase statements
+below. Those sections remain as historical slice evidence.
+
+P0–P6 of
+`.local/prd/native-fm/MILLER-PRODUCTION-COMPLETION-PRD.md` are closed:
+
+- one prepared, generation-safe 1–5-column Miller snapshot owns compute,
+  render, image geometry, horizontal input, all-column rows, and dividers;
+- the legacy resize authority is removed; mouse and keyboard use the shared
+  typed `ResizeTransaction`, with 16..=64 clamps, one model commit, zero PTY
+  resize, zero persistence request, and zero filesystem/worker work during
+  preview;
+- all-column mouse targets fail closed across overlays, stale generations,
+  rename/delete/reorder, close/reopen, and branch truncation;
+- growing navigation is bounded to 32 history segments and five resident/
+  visible projections, with exact parent focus and current-only watcher
+  ownership;
+- render transport skips identical frames, keeps one pending payload per
+  client, rejects stale worker results, and keeps invalid previews stable;
+- the opt-in profiler has fixed label cardinality, fixed-size duration
+  histograms, p95 output, and test-readable thread-local observation.
+
+P7 remains open. No isolated runtime/manual matrix or release-readiness claim
+is made by this checkpoint.
+
+## P6 Verification
+
+- P6 exact matrix: run `97be87ad-8f24-4300-bd4f-5e16a0f50f3d`,
+  18/18 passed.
+- Targeted Miller/Files/Stage/watcher/preview/resize gate:
+  run `996dfa4d-803e-48eb-a183-012d9c8f0a90`, 244/244 passed.
+- Full Nextest: run `d6bc5091-7c32-4027-a3e0-0d436d57c5ba`,
+  3,437/3,437 passed, one named real-host probe skipped.
+- Linux all-target Clippy and canonical Windows MSVC bin Clippy: PASS.
+- Bun integration assets 5/5; plugin marketplace 12/12.
+- Python maintenance: 64/64.
+- `cargo fmt --all -- --check` and `git diff --check`: PASS.
+- Stable Herdr, inherited sockets, terminals, browsers, editors, and every
+  user-owned process were untouched. `.superpowers/` remains untracked and
+  unstaged.
+
+Final release-profile named workload:
+
+| Metric | Result | Frozen budget |
+|---|---:|---:|
+| 120x40 compute p95 | 17 us | <= 500 us |
+| 240x80 compute p95 | 9 us | <= 500 us |
+| 120x40 full-frame p95 | 1,057 us | <= 8,000 us |
+| 240x80 full-frame p95 | 4,804 us | <= 16,000 us |
+
+The profiler also exposes bounded counters for geometry cache hit/miss, resize
+preview/commit, filesystem reads, watcher rebinds, text/image worker
+submission/completion/rejection, image-target refresh, PTY-resize requests,
+debounced persistence-write requests, identical-frame skips, outgoing bytes,
+and queue-full outcomes. The persistence counter represents the logical
+debounced write request, not completion of the background disk thread.
+
+## Graph and Publication Truth
+
+The safe one-worker CLI refresh indexed the P6 head with zero extraction
+errors: 21,041 nodes / 97,701 edges. CLI search returns the new production
+`render_prof::duration_guard` symbol. The long-lived MCP transport failed on a
+later call and was not restarted; it is not claimed fresh or available.
+
+At this evidence-writing point, both CyPack refs still equal the last published
+P5 head `c26244709ab55a6f73b30415299a9de4df0fc27a`. The P6 chain is green but
+unpublished until the continuity commit and final pre-push verification
+complete. `upstream` remains untouched.
+
+## Exact Next Phase
+
+P7 only:
+
+1. follow `.local/ISOLATED-DEV-TEST.md` with unique throwaway XDG roots and
+   sockets;
+2. execute the practical deep-path, fast-drag, scroll, branch, Unicode,
+   preview, close/reopen, Terminal-return, and non-Kitty matrix without
+   touching stable Herdr;
+3. verify cleanup residue is zero;
+4. rerun proportionate final gates, reconcile release/continuity evidence,
+   and only then fast-forward the two CyPack refs.
 
 ## Scope and Truth Boundary
 

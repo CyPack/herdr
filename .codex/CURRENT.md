@@ -1,4 +1,16 @@
-# Current State — 2026-07-16
+# Current State — 2026-07-17
+
+> CURRENT OVERRIDE — MILLER P6 CLOSED: verified product head `9e1d63bf`.
+> P0–P6 of the Miller production completion PRD are green. Fresh gates:
+> P6 18/18, targeted Miller 244/244, full Nextest 3,437/3,437 plus one
+> named real-host skip, Linux/Windows Clippy, Bun 5/5 + 12/12, Python
+> 64/64. Release p95 is 17us/9us compute and 1,057us/4,804us frame at
+> 120x40/240x80. Safe CLI graph is 21,041 nodes / 97,701 edges and finds
+> `duration_guard`; the long-lived MCP transport later failed and is not
+> claimed fresh. P7 isolated runtime/release closure is the only active
+> Miller phase. Both CyPack refs remain at published P5 head `c2624470`
+> until P7 and final publication. See
+> `.codex/evidence/miller-production-progress.md`.
 
 > STALE-HEAD NOTICE (2026-07-16, later session): the sections below stop at
 > the SF4.1 mid-phase checkpoint (`f0f32075`). The live executive state is

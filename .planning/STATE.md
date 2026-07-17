@@ -1,7 +1,19 @@
 # Herdr Native-FM Planning State
 
-- Updated: 2026-07-16
+- Updated: 2026-07-17
 - Branch: `feat/native-fm`
+- Current override: P0–P6 of the Miller production completion PRD are CLOSED
+  at verified product head `9e1d63bf`. Only P7 isolated runtime/platform/
+  release closure remains.
+- Fresh P6 gates: exact 18/18; targeted Miller 244/244; full Nextest
+  3,437/3,437 plus one named B0 skip; Linux/Windows Clippy; Bun 17/17;
+  Python 64/64. Release p95 compute 17us/9us and full frame
+  1,057us/4,804us at 120x40/240x80.
+- Safe CLI graph is 21,041 nodes / 97,701 edges and contains
+  `render_prof::duration_guard`. Long-lived MCP transport is unavailable and
+  not accepted as freshness evidence.
+- Publication remains pending: CyPack `feat/native-fm` and `master` are still
+  at P5 `c2624470`; never push upstream. `.superpowers/` remains user-owned.
 - Current verified product head: `efe6446b` (`feat: give blocking overlays
   keyboard ownership over captures`); matching RED `bb6f8970`. Prior heads
   this session: SF4.2-02 `41362e89`/`017ba97f`, SF4.2-01

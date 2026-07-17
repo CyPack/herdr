@@ -266,11 +266,11 @@ Progress evidence:
   context menus, agent handoff, and all failure/recovery semantics.
 - [x] Prove singleton open/reactivate/close/failure restores previous Stage and
   focus; terminal process stays alive but hidden input/hits/cursor are absent.
-- [ ] Close the deliberately deferred program-wide render queue, retained PTY,
-  isolated runtime, and named p95/outgoing-byte evidence together with the
-  completed Miller production chain. Scoped SF6.1/SF6.2 and regression/full
-  gates are published through `887471c2`; this unchecked item must not be
-  summarized away as already measured.
+- [x] Close the deliberately deferred program-wide render queue, retained PTY,
+  and named p95/outgoing-byte evidence with the completed Miller production
+  chain.
+- [ ] Complete the isolated runtime portion in P7; do not summarize it as
+  measured before the throwaway socket/XDG matrix and zero-residue proof.
 
 ### FM1 — Horizontal Miller Viewport
 
@@ -281,46 +281,49 @@ Progress evidence:
   exact path identities, complete column rects, and adjacent divider rects
   (`35cfbc00`). Desktop/mobile/zero/foreign-surface/close-reopen behavior is
   gated; graph proves the production compute caller.
-- [ ] Render that single snapshot instead of the fixed
-  parent/current/preview trio; P1 intentionally leaves visible output
-  unchanged until the P2 render cutover.
-- [ ] Add native horizontal wheel, Shift+wheel, and bounded header navigation;
+- [x] Render that single snapshot instead of the fixed
+  parent/current/preview trio.
+- [x] Add native horizontal wheel, Shift+wheel, and bounded header navigation;
   clamp after path/cache/terminal shrink and clear stale hits.
-- [ ] Prove close/reopen reset, inaccessible ancestors, render purity, resource
-  bounds, full gates, publication, and graph freshness.
+- [x] Prove close/reopen reset, inaccessible ancestors, render purity, resource
+  bounds, full gates, and CLI graph freshness.
+- [ ] Publish only after P7 isolated runtime and final continuity closure.
 
 ### FM2 — Miller Column Resize
 
 - [x] Add the visible legacy-trio divider drag and the clamped
   `commit_column_width` model seam for min 16/preferred 28/max 64 widths.
-- [ ] Replace the separate `MillerTrioDrag` and move-time model commit path
+- [x] Replace the separate `MillerTrioDrag` and move-time model commit path
   with the shared Shell `ResizeTransaction` lifecycle and typed Miller divider
   identity. Do not retain two resize authorities.
-- [ ] Prove preview causes zero persistence/PTY/filesystem/image-target churn;
+- [x] Prove preview causes zero persistence/PTY/filesystem/image-target churn;
   commit updates one revision and at most one final image target.
-- [ ] Close stale divider, terminal resize, cancel, 1,000-move bound,
-  cross-layer/full/performance/Git/graph gates.
+- [x] Close stale divider, terminal resize, cancel, 1,000-move bound, and
+  cross-layer/full/performance/CLI-graph gates.
+- [ ] Publish only after P7 isolated runtime and final continuity closure.
 
 ### FM3 — All-Column Mouse Ownership
 
-- [ ] Generate stable column/directory/entry/generation row targets for every
+- [x] Generate stable column/directory/entry/generation row targets for every
   rendered directory column.
-- [ ] Route plain/right/double/wheel gestures in parent/current/preview/ancestor
+- [x] Route plain/right/double/wheel gestures in parent/current/preview/ancestor
   columns; keep Ctrl/Shift operation authority current-directory-only.
-- [ ] Revalidate non-current paths before mutation; consume stale/reordered/
+- [x] Revalidate non-current paths before mutation; consume stale/reordered/
   deleted/evicted targets without replay or side effect.
-- [ ] Close overlay/background-blocking, context/operation/selection, isolated
-  SGR mouse, full-gate, Git, and graph evidence.
+- [x] Close overlay/background-blocking, context/operation/selection,
+  full-gate, and CLI-graph evidence.
+- [ ] Close isolated SGR mouse evidence and publication in P7.
 
 ### FM4 — Finder-Like Path-Stable Growing Navigation
 
-- [ ] Append one child segment on directory selection, truncate descendants on
+- [x] Append one child segment on directory selection, truncate descendants on
   ancestor branch change, and replace deeper chain with file preview.
-- [ ] Restore exact child focus/cursor/viewport; handle missing/hidden/reordered/
+- [x] Restore exact child focus/cursor/viewport; handle missing/hidden/reordered/
   deleted/root/inaccessible paths deterministically.
-- [ ] Preserve all N2.1 tests, chain <=32, resident <=5, watcher generations,
+- [x] Preserve all N2.1 tests, chain <=32, resident <=5, watcher generations,
   close/reopen reset, adversarial 10,000-action invariants, and performance.
-- [ ] Close full gates, isolated deep-navigation proof, publication, and graph.
+- [x] Close full gates and CLI graph evidence.
+- [ ] Close isolated deep-navigation proof and publication in P7.
 
 ### FM5 — Preview / Inspector Placement
 

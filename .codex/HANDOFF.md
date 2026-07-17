@@ -1,5 +1,31 @@
 # SESSION HANDOFF — Herdr Shell Foundation / Native FM — 2026-07-16
 
+## CURRENT OVERRIDE — MILLER PRODUCTION P6 — 2026-07-17
+
+This override supersedes every older next-action statement below.
+
+- Branch: `feat/native-fm`; verified P6 product head: `9e1d63bf`.
+- P0–P6 are closed. Windowed render/input, typed shared resize, all-column
+  generation-safe mouse, bounded growing navigation, worker/transport failure
+  bounds, and production profiler/p95 gates are green.
+- Fresh evidence: P6 18/18; targeted Miller 244/244; full Rust 3,437/3,437
+  plus one named B0 skip; Linux and Windows Clippy; Bun 5/5 + 12/12; Python
+  64/64.
+- Release p95: compute 120/240 = 17us/9us; full frame 120/240 =
+  1,057us/4,804us, all below frozen budgets.
+- Safe CLI graph: 21,041 nodes / 97,701 edges, new `duration_guard` found.
+  Long-lived MCP later returned a transport error and was not restarted or
+  represented as fresh.
+- Publication truth: both CyPack refs still equal P5 `c2624470`; the green P6
+  chain is local until P7/final continuity closure. Never push upstream.
+- Only P7 remains: use `.local/ISOLATED-DEV-TEST.md`, run the practical runtime
+  matrix with throwaway XDG/socket state, prove zero residue, reconcile final
+  release evidence, then fast-forward both CyPack refs.
+- Stable Herdr and all user processes remain untouched. Never stage
+  `.superpowers/`.
+
+Canonical detail: `.codex/evidence/miller-production-progress.md`.
+
 > AUTHORITATIVE CURRENT CHECKPOINT. This section supersedes every lower
 > historical "next action" statement. The prior handoff is preserved after the
 > current checkpoint as an evidence appendix; do not resume from its stale

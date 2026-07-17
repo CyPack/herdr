@@ -1,6 +1,26 @@
 # NEXT SESSION TRIGGER — Herdr Shell Foundation / Native FM
 
-Updated: 2026-07-16 CEST
+Updated: 2026-07-17 CEST
+
+## CURRENT OVERRIDE — RESUME P7 ONLY
+
+P0–P6 of the Miller production completion PRD are closed at verified product
+head `9e1d63bf`. Do not resume any older FM1/FM2 wiring instruction below.
+
+Exact next action:
+
+1. read `.local/ISOLATED-DEV-TEST.md`;
+2. run P7 only with unique throwaway XDG roots and sockets;
+3. never touch stable Herdr, inherited sockets, or user processes;
+4. capture the practical runtime/platform/cleanup evidence;
+5. rerun final gates and publish only to CyPack `feat/native-fm` + `master`.
+
+Current gates: P6 18/18, targeted Miller 244/244, full Rust 3,437/3,437 plus
+one named skip, Linux/Windows Clippy, Bun 17/17, Python 64/64. Release p95:
+compute 17us/9us and frame 1,057us/4,804us at 120x40/240x80. CLI graph:
+21,041 nodes / 97,701 edges. Long-lived MCP transport is unavailable and must
+not be presented as fresh. Both CyPack refs remain at published P5 `c2624470`
+until P7 closes.
 
 Continue `/home/ayaz/projects/herdr` on branch `feat/native-fm`. This is a
 `mid_flight_adoption` continuation. Do not restart the project, discard valid
