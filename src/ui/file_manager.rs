@@ -1499,6 +1499,66 @@ mod tests {
             .collect()
     }
 
+    // P2.1: production render must consume the exact bounded Miller snapshot,
+    // not independently reconstruct the legacy parent/current/preview trio.
+    #[test]
+    fn windowed_render_draws_one_to_five_snapshot_columns() {
+        let td = TempDir::new("windowed-render");
+        td.file("c.txt");
+        let mut fm = FmState::new(td.root.clone());
+        let directories = [
+            PathBuf::from("/a"),
+            PathBuf::from("/b"),
+            PathBuf::from("/c"),
+            PathBuf::from("/d"),
+            td.root.clone(),
+        ];
+        fm.miller.chain = directories
+            .iter()
+            .cloned()
+            .map(crate::fm::miller::MillerPathSegment::new)
+            .collect();
+        fm.miller.focused_directory = td.root.clone();
+        let mut app = app_with_fm(fm);
+
+        for (width, expected_column_count) in [(16, 1usize), (57, 2), (86, 3), (115, 4), (144, 5)] {
+            let frame = Rect::new(0, 0, width, 8);
+            let body = file_manager_miller_viewport_area(frame);
+            app.view.file_manager_miller =
+                miller::project_miller_view(body, app.file_manager.as_ref().expect("open FM"), 1);
+            assert_eq!(
+                app.view.file_manager_miller.columns.len(),
+                expected_column_count,
+                "fixture must exercise {expected_column_count} complete columns at width {width}"
+            );
+
+            let expected_divider_x = app
+                .view
+                .file_manager_miller
+                .dividers
+                .iter()
+                .map(|divider| divider.rect.x)
+                .collect::<Vec<_>>();
+            let buffer = render_buffer(&app, width, 8);
+            let rendered_divider_x = (0..width)
+                .filter(|&x| buffer[(x, body.y + 1)].symbol() == "│")
+                .collect::<Vec<_>>();
+
+            assert_eq!(
+                rendered_divider_x, expected_divider_x,
+                "render must use the exact snapshot dividers for {expected_column_count} columns \
+                 at width {width}"
+            );
+            for column in &app.view.file_manager_miller.columns {
+                assert!(
+                    (column.rect.x..column.rect.right())
+                        .any(|x| buffer[(x, column.rect.y)].symbol() != " "),
+                    "every snapshot column must draw a title inside {column:?}"
+                );
+            }
+        }
+    }
+
     // TP-A2.2.1/2/3: a directory selection renders parent, current, and child
     // context side by side. Both the cwd in its parent and the selected child
     // in the current directory are visibly highlighted.
