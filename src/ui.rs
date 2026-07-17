@@ -33,7 +33,7 @@ use self::dialogs::{
 };
 pub(crate) use self::file_manager::compute_file_manager_action_bar_model;
 #[cfg(test)]
-pub(crate) use self::file_manager::file_manager_preview_content_area_with;
+pub(crate) use self::file_manager::file_manager_preview_content_area;
 #[cfg(test)]
 pub(crate) use self::file_manager::miller::project_miller_view;
 pub(crate) use self::file_manager::miller::{

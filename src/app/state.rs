@@ -1888,14 +1888,6 @@ pub enum ContextMenuKind {
     },
 }
 
-/// One in-flight FM trio divider drag (FM2.2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct MillerTrioDrag {
-    pub slot: usize,
-    pub origin_x: u16,
-    pub original_width: u16,
-}
-
 /// Right-click context menu state.
 pub struct ContextMenuState {
     pub kind: ContextMenuKind,
@@ -2119,10 +2111,6 @@ pub struct AppState {
     /// blocking overlay opened, restored by `leave_modal` while still valid.
     /// Client-local transient presentation state — never persisted.
     pub(crate) overlay_return_mode: Option<Mode>,
-    /// Active FM trio divider drag capture (FM2.2): slot 0 resizes the
-    /// parent column, slot 1 the current column. Client-local and
-    /// transient; cleared on release and on Files close.
-    pub(crate) miller_trio_drag: Option<MillerTrioDrag>,
     /// When `Some`, the native file manager is open and its directory list
     /// replaces the terminal panes in the center area. `None` = closed (the
     /// panes render as usual). Client-side presentation state (v1 TUI-only,
@@ -2622,7 +2610,6 @@ impl AppState {
             selected: 0,
             mode: Mode::Navigate,
             overlay_return_mode: None,
-            miller_trio_drag: None,
             file_manager: None,
             stage: Default::default(),
             agent_attachment_picker: None,

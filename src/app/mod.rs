@@ -614,7 +614,6 @@ impl App {
             selected,
             mode,
             overlay_return_mode: None,
-            miller_trio_drag: None,
             file_manager: None,
             stage: Default::default(),
             agent_attachment_picker: None,

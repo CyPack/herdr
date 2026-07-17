@@ -1321,7 +1321,7 @@ mod tests {
             .rect;
         let before_model = {
             let file_manager = app.state.file_manager.as_ref().expect("open FM");
-            (file_manager.miller.revision, file_manager.trio_overrides)
+            file_manager.miller.clone()
         };
 
         assert_eq!(
@@ -1334,19 +1334,15 @@ mod tests {
         );
         let after_model = {
             let file_manager = app.state.file_manager.as_ref().expect("open FM");
-            (file_manager.miller.revision, file_manager.trio_overrides)
+            file_manager.miller.clone()
         };
         assert_eq!(
             after_model, before_model,
             "divider down captures input without committing a model width"
         );
-        assert_eq!(
-            (
-                app.state.miller_trio_drag.is_none(),
-                app.state.shell_interaction.resize_active(),
-            ),
-            (true, true),
-            "Miller divider down must start only the shared typed resize transaction"
+        assert!(
+            app.state.shell_interaction.resize_active(),
+            "Miller divider down starts the one shared typed resize transaction"
         );
     }
 
@@ -1387,7 +1383,6 @@ mod tests {
                     .iter()
                     .map(|segment| segment.preferred_width)
                     .collect::<Vec<_>>(),
-                file_manager.trio_overrides,
             )
         };
 
@@ -1434,7 +1429,6 @@ mod tests {
                     .iter()
                     .map(|segment| segment.preferred_width)
                     .collect::<Vec<_>>(),
-                file_manager.trio_overrides,
             )
         };
         assert_eq!(
@@ -1529,7 +1523,7 @@ mod tests {
                 .rect
                 .width,
         ];
-        let (before_revision, before_widths, before_overrides) = {
+        let (before_revision, before_widths) = {
             let file_manager = app.state.file_manager.as_ref().expect("open FM");
             (
                 file_manager.miller.revision,
@@ -1539,7 +1533,6 @@ mod tests {
                     .iter()
                     .map(|segment| segment.preferred_width)
                     .collect::<Vec<_>>(),
-                file_manager.trio_overrides,
             )
         };
 
@@ -1581,7 +1574,7 @@ mod tests {
             "mouse-up must retire the typed Miller capture"
         );
 
-        let (after_revision, after_widths, after_overrides) = {
+        let (after_revision, after_widths) = {
             let file_manager = app.state.file_manager.as_ref().expect("open FM");
             (
                 file_manager.miller.revision,
@@ -1591,14 +1584,13 @@ mod tests {
                     .iter()
                     .map(|segment| segment.preferred_width)
                     .collect::<Vec<_>>(),
-                file_manager.trio_overrides,
             )
         };
         let mut expected_widths = before_widths;
         expected_widths[leading_chain_index] = expected_tracks[0];
         assert_eq!(
-            (after_revision, after_widths, after_overrides),
-            (before_revision + 1, expected_widths, before_overrides,),
+            (after_revision, after_widths),
+            (before_revision + 1, expected_widths),
             "mouse-up commits only the leading Miller preference and one revision"
         );
 
@@ -1729,7 +1721,6 @@ mod tests {
                     .iter()
                     .map(|segment| segment.preferred_width)
                     .collect::<Vec<_>>(),
-                file_manager.trio_overrides,
             )
         };
         assert_eq!(
@@ -1773,10 +1764,9 @@ mod tests {
                     .iter()
                     .map(|segment| segment.preferred_width)
                     .collect::<Vec<_>>(),
-                file_manager.trio_overrides,
             ),
             before_model,
-            "terminal resize cancellation cannot commit model or legacy widths"
+            "terminal resize cancellation cannot commit model widths"
         );
     }
 
@@ -1808,7 +1798,6 @@ mod tests {
                     .iter()
                     .map(|segment| segment.preferred_width)
                     .collect::<Vec<_>>(),
-                file_manager.trio_overrides,
             )
         };
         assert_eq!(
@@ -1852,10 +1841,9 @@ mod tests {
                     .iter()
                     .map(|segment| segment.preferred_width)
                     .collect::<Vec<_>>(),
-                file_manager.trio_overrides,
             ),
             before_model,
-            "Escape cancellation cannot commit model or legacy widths"
+            "Escape cancellation cannot commit model widths"
         );
     }
 
@@ -1889,7 +1877,7 @@ mod tests {
                 .rect
                 .width,
         ];
-        let (before_revision, before_widths, before_overrides) = {
+        let (before_revision, before_widths) = {
             let file_manager = app.state.file_manager.as_ref().expect("open FM");
             (
                 file_manager.miller.revision,
@@ -1899,7 +1887,6 @@ mod tests {
                     .iter()
                     .map(|segment| segment.preferred_width)
                     .collect::<Vec<_>>(),
-                file_manager.trio_overrides,
             )
         };
         assert_eq!(
@@ -1930,9 +1917,8 @@ mod tests {
                     .iter()
                     .map(|segment| segment.preferred_width)
                     .collect::<Vec<_>>(),
-                file_manager.trio_overrides,
             ),
-            (before_revision, before_widths.clone(), before_overrides),
+            (before_revision, before_widths.clone()),
             "keyboard preview cannot mutate committed model state"
         );
 
@@ -1962,9 +1948,8 @@ mod tests {
                     .iter()
                     .map(|segment| segment.preferred_width)
                     .collect::<Vec<_>>(),
-                file_manager.trio_overrides,
             ),
-            (before_revision + 1, expected_widths, before_overrides),
+            (before_revision + 1, expected_widths),
             "Enter performs exactly one final model commit"
         );
     }
@@ -2009,7 +1994,7 @@ mod tests {
             .iter()
             .map(|column| column.rect.width)
             .collect::<Vec<_>>();
-        let (before_revision, before_widths, before_overrides) = {
+        let (before_revision, before_widths) = {
             let file_manager = app.state.file_manager.as_ref().expect("open FM");
             (
                 file_manager.miller.revision,
@@ -2019,7 +2004,6 @@ mod tests {
                     .iter()
                     .map(|segment| segment.preferred_width)
                     .collect::<Vec<_>>(),
-                file_manager.trio_overrides,
             )
         };
 
@@ -2076,9 +2060,8 @@ mod tests {
                     .iter()
                     .map(|segment| segment.preferred_width)
                     .collect::<Vec<_>>(),
-                file_manager.trio_overrides,
             ),
-            (before_revision + 1, expected_widths, before_overrides),
+            (before_revision + 1, expected_widths),
             "commit updates only the second pair's leading preference"
         );
 
@@ -2219,13 +2202,11 @@ mod tests {
                 file_manager.miller.chain[focused_chain_index].preferred_width,
                 file_manager.miller.preview_preferred_width,
                 file_manager.miller.revision,
-                file_manager.trio_overrides,
             ),
             (
                 crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
                 crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
                 before_revision + 2,
-                crate::fm::miller::MillerTrioOverrides::default(),
             ),
             "two boundary commits stay typed, bounded, and one revision each"
         );

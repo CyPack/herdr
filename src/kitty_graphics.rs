@@ -119,10 +119,7 @@ fn legacy_file_manager_image_target(
     file_manager_area: Rect,
     cell_size: HostCellSize,
 ) -> Option<ImagePreviewTarget> {
-    let content_area = crate::ui::file_manager_preview_content_area_with(
-        file_manager_area,
-        crate::fm::miller::MillerTrioOverrides::default(),
-    )?;
+    let content_area = crate::ui::file_manager_preview_content_area(file_manager_area)?;
     image_geometry_for_content_area(content_area, cell_size).map(|(_, target)| target)
 }
 
@@ -132,10 +129,7 @@ fn file_manager_image_placement(
     cell_size: HostCellSize,
     prepared: &PreparedImagePreview,
 ) -> Option<HostPlacement> {
-    let content_area = crate::ui::file_manager_preview_content_area_with(
-        file_manager_area,
-        crate::fm::miller::MillerTrioOverrides::default(),
-    )?;
+    let content_area = crate::ui::file_manager_preview_content_area(file_manager_area)?;
     file_manager_image_placement_in_content_area(content_area, cell_size, prepared, true)
 }
 

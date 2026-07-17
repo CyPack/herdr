@@ -492,9 +492,6 @@ pub struct FmState {
     /// Bounded Miller chain and resident non-current projections (FM1). The
     /// current directory's `entries` above stay the operational authority.
     pub(crate) miller: miller::MillerState,
-    /// User-committed trio column width overrides (FM2.2); `None` keeps the
-    /// legacy proportional layout. Client-local, reset on close/reopen.
-    pub(crate) trio_overrides: miller::MillerTrioOverrides,
 }
 
 impl FmState {
@@ -750,7 +747,6 @@ impl FmState {
             preview_generation: 0,
             multi_selection: FmMultiSelection::default(),
             miller,
-            trio_overrides: miller::MillerTrioOverrides::default(),
         };
         state.refresh_context();
         state
@@ -775,7 +771,6 @@ impl FmState {
             preview_viewport_start: 0,
             preview_generation: 0,
             multi_selection: FmMultiSelection::default(),
-            trio_overrides: miller::MillerTrioOverrides::default(),
         }
     }
 

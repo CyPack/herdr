@@ -20,15 +20,6 @@ pub(crate) const MILLER_COLUMN_MIN_WIDTH: u16 = 16;
 pub(crate) const MILLER_COLUMN_PREFERRED_WIDTH: u16 = 28;
 pub(crate) const MILLER_COLUMN_MAX_WIDTH: u16 = 64;
 
-/// User-committed trio column widths (FM2.2). `None` keeps the legacy
-/// proportional constraint for that column; `Some` pins it (clamped to the
-/// frozen Miller bounds at commit time). Client-local, never persisted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct MillerTrioOverrides {
-    pub parent: Option<u16>,
-    pub current: Option<u16>,
-}
-
 /// Exact identity of one projected Miller column: the directory path plus a
 /// monotonically increasing generation. A stale generation never resolves.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
