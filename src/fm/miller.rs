@@ -344,3 +344,70 @@ mod tests {
         reopened.assert_miller_invariants_for_test();
     }
 }
+
+#[cfg(test)]
+mod integration_tests {
+    use crate::fm::FmState;
+
+    // FM1.2 integration: real enter/leave navigation seeds, visits, and
+    // caches through the bounded model — the departed directory's complete
+    // projection moves into the cache (ownership transfer) and the focused
+    // directory always tracks the live cwd.
+    #[test]
+    fn navigation_visits_keep_bounded_state_and_cache_departed_projection() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "herdr-miller-integration-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let child = root.join("child");
+        std::fs::create_dir_all(&child).expect("create integration tree");
+        std::fs::write(root.join("aaa-marker.txt"), b"x").expect("root marker");
+        std::fs::write(child.join("inner.txt"), b"x").expect("child marker");
+
+        let mut state = FmState::new(&root);
+        assert_eq!(state.miller.focused_directory, root);
+        state.miller.assert_miller_invariants_for_test();
+
+        let child_index = state
+            .entries
+            .iter()
+            .position(|entry| entry.path == child)
+            .expect("child entry visible");
+        state.cursor = child_index;
+        state.enter();
+        assert_eq!(state.cwd, child);
+        assert_eq!(state.miller.focused_directory, child);
+        let cached_root = state
+            .miller
+            .resident_non_current
+            .iter()
+            .find(|projection| projection.id.directory == root)
+            .expect("the departed root projection is cached");
+        assert!(
+            cached_root
+                .entries
+                .iter()
+                .any(|entry| entry.path == root.join("aaa-marker.txt")),
+            "the cached projection carries the moved complete entry vector"
+        );
+        state.miller.assert_miller_invariants_for_test();
+
+        state.leave();
+        assert_eq!(state.cwd, root);
+        assert_eq!(state.miller.focused_directory, root);
+        assert!(
+            state
+                .miller
+                .resident_non_current
+                .iter()
+                .all(|projection| projection.id.directory != root),
+            "returning to a directory removes it from the evictable cache"
+        );
+        state.miller.assert_miller_invariants_for_test();
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}

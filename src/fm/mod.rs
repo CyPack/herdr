@@ -261,6 +261,9 @@ pub struct FmState {
     /// Explicit path identities selected for future bulk actions. This is
     /// intentionally separate from cursor focus and private to the FM model.
     multi_selection: FmMultiSelection,
+    /// Bounded Miller chain and resident non-current projections (FM1). The
+    /// current directory's `entries` above stay the operational authority.
+    pub(crate) miller: miller::MillerState,
 }
 
 impl FmState {
@@ -275,6 +278,7 @@ impl FmState {
         let snapshot = read_directory_snapshot(&cwd, show_hidden);
         let cwd_writable =
             snapshot.status == FmDirectoryStatus::Available && directory_is_writable(&cwd);
+        let miller = miller::MillerState::seed(cwd.clone());
         let mut state = Self {
             cwd,
             entries: snapshot.entries,
@@ -287,6 +291,7 @@ impl FmState {
             preview: FmPreview::None,
             preview_generation: 0,
             multi_selection: FmMultiSelection::default(),
+            miller,
         };
         state.refresh_context();
         state
@@ -295,8 +300,10 @@ impl FmState {
     /// Disk-free baseline for unit tests that need to install prepared state.
     #[cfg(test)]
     pub(crate) fn test_empty(cwd: impl Into<PathBuf>) -> Self {
+        let cwd = cwd.into();
         Self {
-            cwd: cwd.into(),
+            miller: miller::MillerState::seed(cwd.clone()),
+            cwd,
             entries: Vec::new(),
             cursor: 0,
             viewport_start: 0,
@@ -548,10 +555,24 @@ impl FmState {
             .map(|entry| entry.path.clone());
         if let Some(path) = target {
             self.clear_multi_selection();
-            self.cwd = path;
+            let departing = self.departing_projection();
+            self.cwd = path.clone();
             self.cursor = 0;
             self.viewport_start = 0;
+            self.miller.visit(path, Some(departing));
             self.reload();
+        }
+    }
+
+    /// Move the departing current directory's complete projection out of the
+    /// operational vectors (ownership transfer, no clone) so the Miller cache
+    /// can retain it under a fresh column generation.
+    fn departing_projection(&mut self) -> miller::MillerDirectoryProjection {
+        miller::MillerDirectoryProjection {
+            id: self.miller.next_column_id(self.cwd.clone()),
+            entries: std::mem::take(&mut self.entries),
+            status: self.cwd_status,
+            writable: self.cwd_writable,
         }
     }
 
@@ -562,9 +583,11 @@ impl FmState {
         let departed = self.cwd.clone();
         if let Some(parent) = departed.parent().map(Path::to_path_buf) {
             self.clear_multi_selection();
-            self.cwd = parent;
+            let departing = self.departing_projection();
+            self.cwd = parent.clone();
             self.cursor = 0;
             self.viewport_start = 0;
+            self.miller.visit(parent, Some(departing));
             self.reload_focusing_path(Some(&departed), 0);
         }
     }
