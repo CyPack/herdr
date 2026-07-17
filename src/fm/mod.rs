@@ -103,6 +103,37 @@ pub(crate) struct FmPreparedNavigation {
     pub preview_generation: u64,
 }
 
+/// Pure, generation-bound request for refreshing the current directory.
+///
+/// The active Files instance generation is explicit because model generations
+/// restart when Files is closed and reopened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FmCurrentRefreshRequest {
+    pub files_generation: u32,
+    pub source_directory: PathBuf,
+    pub source_directory_generation: u64,
+    pub source_preview_generation: u64,
+    pub source_miller_revision: u64,
+    pub selected_path: Option<PathBuf>,
+    pub fallback_cursor: usize,
+    pub show_hidden: bool,
+    pub previous_text_preview: Option<TextPreview>,
+}
+
+/// Complete I/O result for one current-directory refresh. Applying this value
+/// is a pure model transition and must revalidate every source identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FmPreparedCurrentRefresh {
+    pub request: FmCurrentRefreshRequest,
+    pub entries: Vec<FileEntry>,
+    pub status: FmDirectoryStatus,
+    pub writable: bool,
+    pub cursor: usize,
+    pub parent: Option<FmParent>,
+    pub preview: FmPreview,
+    pub preview_generation: u64,
+}
+
 /// Parent-directory context for the left Miller column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FmParent {
@@ -425,6 +456,35 @@ pub struct FmState {
 }
 
 impl FmState {
+    pub(crate) fn request_current_refresh(&self, files_generation: u32) -> FmCurrentRefreshRequest {
+        let previous_text_preview = match &self.preview {
+            FmPreview::File(FmFilePreview::Text(preview)) => Some(preview.clone()),
+            FmPreview::None
+            | FmPreview::Directory(_)
+            | FmPreview::File(FmFilePreview::Image(_) | FmFilePreview::Unavailable(_)) => None,
+        };
+        FmCurrentRefreshRequest {
+            files_generation,
+            source_directory: self.cwd.clone(),
+            source_directory_generation: self.directory_generation,
+            source_preview_generation: self.preview_generation,
+            source_miller_revision: self.miller.revision,
+            selected_path: self.selected().map(|entry| entry.path.clone()),
+            fallback_cursor: self.cursor,
+            show_hidden: self.show_hidden,
+            previous_text_preview,
+        }
+    }
+
+    pub(crate) fn apply_prepared_current_refresh(
+        &mut self,
+        prepared: FmPreparedCurrentRefresh,
+        current_files_generation: u32,
+    ) -> bool {
+        let _ = (prepared, current_files_generation);
+        false
+    }
+
     pub(crate) fn apply_prepared_navigation(&mut self, prepared: FmPreparedNavigation) -> bool {
         let expected_preview_generation = prepared
             .request
@@ -2012,6 +2072,84 @@ mod tests {
         );
         assert!(state.multi_selection_paths().is_empty());
         state.miller.assert_miller_invariants_for_test();
+    }
+
+    // P5 RED: a prepared watcher/current refresh must be a disk-free model
+    // apply that reconciles cursor authority by stable path identity.
+    #[test]
+    fn prepared_current_refresh_applies_by_stable_path_without_io() {
+        let root = PathBuf::from("/virtual/current-refresh");
+        let selected_path = root.join("b.txt");
+        let mut state = FmState::test_empty(&root);
+        state.entries = vec![
+            FileEntry {
+                name: "a.txt".to_string(),
+                path: root.join("a.txt"),
+                is_dir: false,
+                operation_supported: true,
+            },
+            FileEntry {
+                name: "b.txt".to_string(),
+                path: selected_path.clone(),
+                is_dir: false,
+                operation_supported: true,
+            },
+        ];
+        state.cursor = 1;
+        state.viewport_start = 1;
+        state.directory_generation = 11;
+        state.preview_generation = 17;
+
+        let request = state.request_current_refresh(29);
+        assert_eq!(request.files_generation, 29);
+        assert_eq!(request.source_directory, root);
+        assert_eq!(request.source_directory_generation, 11);
+        assert_eq!(request.source_preview_generation, 17);
+        assert_eq!(request.source_miller_revision, state.miller.revision);
+        assert_eq!(
+            request.selected_path.as_deref(),
+            Some(selected_path.as_path())
+        );
+        assert_eq!(request.fallback_cursor, 1);
+        assert!(!request.show_hidden);
+
+        let prepared = FmPreparedCurrentRefresh {
+            request,
+            entries: vec![
+                FileEntry {
+                    name: "b.txt".to_string(),
+                    path: selected_path.clone(),
+                    is_dir: false,
+                    operation_supported: true,
+                },
+                FileEntry {
+                    name: "c.txt".to_string(),
+                    path: root.join("c.txt"),
+                    is_dir: false,
+                    operation_supported: true,
+                },
+            ],
+            status: FmDirectoryStatus::Available,
+            writable: true,
+            cursor: 0,
+            parent: None,
+            preview: FmPreview::None,
+            preview_generation: 18,
+        };
+
+        assert!(
+            state.apply_prepared_current_refresh(prepared, 29),
+            "current generation-bound refresh must apply"
+        );
+        assert_eq!(state.cursor, 0);
+        assert_eq!(
+            state.selected().map(|entry| entry.path.as_path()),
+            Some(selected_path.as_path())
+        );
+        assert_eq!(state.directory_generation, 12);
+        assert_eq!(state.preview_generation, 18);
+        assert_eq!(state.viewport_start, 0);
+        assert!(state.cwd_writable);
     }
 
     // TP-FM4-STALE-APPLY: preparation can complete after a watcher refresh or
