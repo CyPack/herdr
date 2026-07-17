@@ -8,6 +8,9 @@
 pub(super) struct ResolvedMillerRow {
     column_kind: crate::ui::MillerRowColumnKind,
     directory_path: std::path::PathBuf,
+    chain_index: Option<usize>,
+    source_generation: u64,
+    visible_rows: usize,
     entry_index: usize,
     entry_path: std::path::PathBuf,
 }
@@ -26,6 +29,35 @@ impl ResolvedMillerRow {
         &self,
     ) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
         (!self.is_current()).then(|| (self.directory_path.clone(), self.entry_path.clone()))
+    }
+
+    pub(super) fn non_current_scroll_target(
+        &self,
+    ) -> Option<(crate::fm::miller::MillerColumnScrollTarget, usize)> {
+        let target = match self.column_kind {
+            crate::ui::MillerRowColumnKind::ResidentDirectory => {
+                crate::fm::miller::MillerColumnScrollTarget::Resident {
+                    chain_index: self.chain_index?,
+                    directory: self.directory_path.clone(),
+                    generation: self.source_generation,
+                }
+            }
+            crate::ui::MillerRowColumnKind::PreparedParent => {
+                crate::fm::miller::MillerColumnScrollTarget::PreparedParent {
+                    chain_index: self.chain_index?,
+                    directory: self.directory_path.clone(),
+                    generation: self.source_generation,
+                }
+            }
+            crate::ui::MillerRowColumnKind::Preview => {
+                crate::fm::miller::MillerColumnScrollTarget::Preview {
+                    directory: self.directory_path.clone(),
+                    generation: self.source_generation,
+                }
+            }
+            crate::ui::MillerRowColumnKind::Current => return None,
+        };
+        Some((target, self.visible_rows))
     }
 }
 
@@ -122,6 +154,9 @@ pub(super) fn resolve_live_miller_row(
     entry_is_live.then(|| ResolvedMillerRow {
         column_kind: target.column_kind,
         directory_path: target.directory_path.as_ref().clone(),
+        chain_index: target.chain_index,
+        source_generation: target.source_generation,
+        visible_rows: column_view.content_rect.height as usize,
         entry_index: target.entry_index,
         entry_path: target.entry_path.clone(),
     })
@@ -234,6 +269,9 @@ mod tests {
                 Some(ResolvedMillerRow {
                     column_kind: expected_kind,
                     directory_path: target.directory_path.as_ref().clone(),
+                    chain_index: target.chain_index,
+                    source_generation: target.source_generation,
+                    visible_rows: column.content_rect.height as usize,
                     entry_index: target.entry_index,
                     entry_path: target.entry_path.clone(),
                 })

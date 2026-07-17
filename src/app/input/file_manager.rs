@@ -586,16 +586,34 @@ impl App {
                     }
                 }
             }
-            MouseEventKind::ScrollUp if mouse.modifiers.is_empty() && entry_idx.is_some() => {
+            MouseEventKind::ScrollUp if mouse.modifiers.is_empty() => {
                 self.last_file_manager_click = None;
-                if let Some(file_manager) = self.state.file_manager.as_mut() {
-                    file_manager.move_up();
+                if entry_idx.is_some() {
+                    if let Some(file_manager) = self.state.file_manager.as_mut() {
+                        file_manager.move_up();
+                    }
+                } else if let Some((target, visible_rows)) = miller_row_target
+                    .as_ref()
+                    .and_then(|row| row.non_current_scroll_target())
+                {
+                    if let Some(file_manager) = self.state.file_manager.as_mut() {
+                        let _ = file_manager.scroll_miller_column(&target, -1, visible_rows);
+                    }
                 }
             }
-            MouseEventKind::ScrollDown if mouse.modifiers.is_empty() && entry_idx.is_some() => {
+            MouseEventKind::ScrollDown if mouse.modifiers.is_empty() => {
                 self.last_file_manager_click = None;
-                if let Some(file_manager) = self.state.file_manager.as_mut() {
-                    file_manager.move_down();
+                if entry_idx.is_some() {
+                    if let Some(file_manager) = self.state.file_manager.as_mut() {
+                        file_manager.move_down();
+                    }
+                } else if let Some((target, visible_rows)) = miller_row_target
+                    .as_ref()
+                    .and_then(|row| row.non_current_scroll_target())
+                {
+                    if let Some(file_manager) = self.state.file_manager.as_mut() {
+                        let _ = file_manager.scroll_miller_column(&target, 1, visible_rows);
+                    }
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {

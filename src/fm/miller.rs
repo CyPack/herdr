@@ -76,6 +76,27 @@ pub(crate) struct MillerHorizontalViewport {
     pub first_visible: usize,
 }
 
+/// Exact non-current column authority for one vertical wheel transition.
+/// Input obtains this only after generation-safe row resolution; the model
+/// revalidates the identity again before changing bounded presentation state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum MillerColumnScrollTarget {
+    Resident {
+        chain_index: usize,
+        directory: PathBuf,
+        generation: u64,
+    },
+    PreparedParent {
+        chain_index: usize,
+        directory: PathBuf,
+        generation: u64,
+    },
+    Preview {
+        directory: PathBuf,
+        generation: u64,
+    },
+}
+
 /// Bounded client-local Miller state. The CURRENT directory's entries stay
 /// the operational authority on `FmState`; this model owns only the chain,
 /// the evictable non-current cache, and the horizontal window.

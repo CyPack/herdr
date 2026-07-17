@@ -436,6 +436,76 @@ impl FmState {
         self.replace_selection(entry_index)
     }
 
+    /// Move one non-current Miller column's local vertical presentation state.
+    /// This performs no filesystem/runtime work and changes neither directory
+    /// nor preview generations. Invalid or stale identities are inert.
+    pub(crate) fn scroll_miller_column(
+        &mut self,
+        target: &miller::MillerColumnScrollTarget,
+        delta: i8,
+        visible_rows: usize,
+    ) -> bool {
+        if visible_rows == 0 {
+            return false;
+        }
+        match target {
+            miller::MillerColumnScrollTarget::Resident {
+                chain_index,
+                directory,
+                generation,
+            } => {
+                let Some(entry_count) = self
+                    .miller
+                    .resident_non_current
+                    .iter()
+                    .find(|projection| {
+                        projection.id.directory == *directory
+                            && projection.id.generation == *generation
+                    })
+                    .map(|projection| projection.entries.len())
+                else {
+                    return false;
+                };
+                let Some(segment) = self.miller.chain.get_mut(*chain_index) else {
+                    return false;
+                };
+                if segment.directory != *directory {
+                    return false;
+                }
+                scroll_miller_segment(segment, entry_count, delta, visible_rows)
+            }
+            miller::MillerColumnScrollTarget::PreparedParent {
+                chain_index,
+                directory,
+                generation,
+            } => {
+                if self.directory_generation != *generation
+                    || self.cwd.parent() != Some(directory.as_path())
+                {
+                    return false;
+                }
+                let Some(parent) = self.parent.as_mut() else {
+                    return false;
+                };
+                let entry_count = parent.entries.len();
+                let previous_cursor = parent.cursor.unwrap_or(0);
+                let cursor = stepped_miller_cursor(previous_cursor, entry_count, delta);
+                parent.cursor = (!parent.entries.is_empty()).then_some(cursor);
+                let Some(segment) = self.miller.chain.get_mut(*chain_index) else {
+                    return false;
+                };
+                if segment.directory != *directory {
+                    return false;
+                }
+                let previous = (segment.cursor, segment.viewport_start);
+                segment.cursor = cursor;
+                sync_miller_segment_viewport(segment, entry_count, visible_rows);
+                previous != (segment.cursor, segment.viewport_start)
+            }
+            miller::MillerColumnScrollTarget::Preview { .. } => false,
+        }
+    }
+
     /// Path identities in the explicit multi-selection set. Cursor movement
     /// alone never changes this set.
     pub fn multi_selection_paths(&self) -> &BTreeSet<PathBuf> {
@@ -792,6 +862,55 @@ fn unique_entry_index(entries: &[FileEntry], entry_path: &Path) -> Option<usize>
         .filter(|(_, entry)| entry.path == entry_path);
     let (entry_index, _) = matches.next()?;
     matches.next().is_none().then_some(entry_index)
+}
+
+fn scroll_miller_segment(
+    segment: &mut miller::MillerPathSegment,
+    entry_count: usize,
+    delta: i8,
+    visible_rows: usize,
+) -> bool {
+    let previous = (segment.cursor, segment.viewport_start);
+    segment.cursor = stepped_miller_cursor(segment.cursor, entry_count, delta);
+    sync_miller_segment_viewport(segment, entry_count, visible_rows);
+    previous != (segment.cursor, segment.viewport_start)
+}
+
+fn stepped_miller_cursor(cursor: usize, entry_count: usize, delta: i8) -> usize {
+    if entry_count == 0 {
+        return 0;
+    }
+    if delta < 0 {
+        cursor.saturating_sub(1)
+    } else if delta > 0 {
+        cursor.saturating_add(1).min(entry_count - 1)
+    } else {
+        cursor.min(entry_count - 1)
+    }
+}
+
+fn sync_miller_segment_viewport(
+    segment: &mut miller::MillerPathSegment,
+    entry_count: usize,
+    visible_rows: usize,
+) {
+    if entry_count == 0 || visible_rows == 0 {
+        segment.cursor = 0;
+        segment.viewport_start = 0;
+        return;
+    }
+    segment.cursor = segment.cursor.min(entry_count - 1);
+    let max_start = entry_count.saturating_sub(visible_rows);
+    segment.viewport_start = segment.viewport_start.min(max_start);
+    if segment.cursor < segment.viewport_start {
+        segment.viewport_start = segment.cursor;
+    } else if segment.cursor >= segment.viewport_start.saturating_add(visible_rows) {
+        segment.viewport_start = segment
+            .cursor
+            .saturating_add(1)
+            .saturating_sub(visible_rows);
+    }
+    segment.viewport_start = segment.viewport_start.min(max_start);
 }
 
 #[cfg(test)]
