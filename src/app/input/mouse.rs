@@ -564,6 +564,16 @@ impl AppState {
                             self.activate_dock_app(crate::ui::surface_host::BuiltInAppId::Files);
                         } else {
                             self.request_file_manager_sidebar_navigation = None;
+                            if self.stage.surface_view()
+                                == crate::ui::surface_host::StageSurfaceView::NativeFiles
+                            {
+                                // Symmetric client-local exit through the same
+                                // shared authority; terminal runtimes are not
+                                // touched.
+                                self.activate_dock_app(
+                                    crate::ui::surface_host::BuiltInAppId::Terminal,
+                                );
+                            }
                         }
                         return None;
                     }
