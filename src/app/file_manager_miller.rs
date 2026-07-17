@@ -152,6 +152,7 @@ impl crate::app::App {
         };
         if let Some(transaction) = transaction {
             self.state.shell_interaction.begin_resize(transaction);
+            crate::render_prof::event("fm.miller_resize.started");
         }
         true
     }
@@ -219,12 +220,16 @@ impl crate::app::App {
                 crate::fm::miller::MillerAdjacentWidthTarget::Preview
             }
         };
-        file_manager.miller.commit_adjacent_column_widths(
+        let committed = file_manager.miller.commit_adjacent_column_widths(
             *chain_index,
             leading_width,
             trailing,
             trailing_width,
-        )
+        );
+        if committed {
+            crate::render_prof::event("fm.miller_resize.committed");
+        }
+        committed
     }
 
     pub(super) fn handle_miller_resize_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
@@ -246,10 +251,15 @@ impl crate::app::App {
                 crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
                 crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
             ) {
-                let _ = self
+                let tracks_before = self.state.shell_interaction.resize_preview_tracks();
+                let accepted = self
                     .state
                     .shell_interaction
                     .preview_keyboard_resize_step(step, bounds);
+                if accepted && self.state.shell_interaction.resize_preview_tracks() != tracks_before
+                {
+                    crate::render_prof::event("fm.miller_resize.preview_changed");
+                }
             }
             return true;
         }

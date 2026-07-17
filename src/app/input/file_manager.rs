@@ -321,10 +321,16 @@ impl App {
                     crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
                     crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
                 ) {
-                    let _ = self.state.shell_interaction.preview_resize(
+                    let tracks_before = self.state.shell_interaction.resize_preview_tracks();
+                    let accepted = self.state.shell_interaction.preview_resize(
                         ratatui::layout::Position::new(mouse.column, mouse.row),
                         bounds,
                     );
+                    if accepted
+                        && self.state.shell_interaction.resize_preview_tracks() != tracks_before
+                    {
+                        crate::render_prof::event("fm.miller_resize.preview_changed");
+                    }
                 }
                 true
             }
