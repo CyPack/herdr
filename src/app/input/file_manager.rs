@@ -1859,6 +1859,69 @@ mod tests {
             "native ScrollLeft returns to the bounded origin"
         );
 
+        for _ in 0..64 {
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::ScrollLeft,
+                probe.0,
+                probe.1,
+            ));
+        }
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .miller
+                .horizontal
+                .first_visible,
+            first_visible,
+            "left input clamps at the fullest focused window"
+        );
+
+        for _ in 0..64 {
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::ScrollRight,
+                probe.0,
+                probe.1,
+            ));
+        }
+        let focused_chain_index = app
+            .state
+            .view
+            .file_manager_miller
+            .focused_chain_index
+            .expect("focused chain identity");
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .miller
+                .horizontal
+                .first_visible,
+            focused_chain_index,
+            "right input clamps before it can hide current"
+        );
+        compute_view(&mut app.state, frame);
+        assert!(
+            app.state
+                .view
+                .file_manager_miller
+                .columns
+                .iter()
+                .any(|column| column.kind.is_current()),
+            "current remains visible at the right clamp"
+        );
+        assert!(
+            app.state
+                .view
+                .file_manager_miller
+                .columns
+                .iter()
+                .any(|column| column.kind.is_preview()),
+            "preview remains visible at the right clamp"
+        );
+
         let after = app.state.file_manager.as_ref().expect("open FM");
         assert_eq!(after.cursor, before.cursor);
         assert_eq!(after.viewport_start, before.viewport_start);
