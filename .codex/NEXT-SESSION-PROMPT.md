@@ -79,9 +79,8 @@ continuity, and pipeline files in one commit.
 ## Current Verified Truth
 
 - Branch: `feat/native-fm`.
-- Verified product head: `d1002cac` (`feat: commit miller column widths
-  through clamped seam`, FM2.1 model core CLOSED; FM1.3 geometry core
-  `3e8a50d0`).
+- Verified product head: `b1c4aec2` (`feat: drag miller trio dividers
+  to resize columns` — FM2.2 drag-resize LANDED end-to-end).
 - Separate test-stability commit `3c853a70` closed the parallel-load
   process-exit suppression flake class in `src/terminal/state.rs`.
 - SF0-SF5 are ALL closed (SF4.1 8/8, SF4.2 8/8 at `20f659c1`, SF4.3 6/6
@@ -109,12 +108,12 @@ continuity, and pipeline files in one commit.
   seam, never persisted.
 - Protocol remains 16. SF4.1 and SF4.2 stayed client-local presentation
   state.
-- Full current gate: Nextest 3,344/3,344 passed plus one named B0 skip
+- Full current gate: Nextest 3,345/3,345 passed plus one named B0 skip
   (`--no-fail-fast`), Linux all-target Clippy, Windows MSVC bin Clippy,
   fmt, diff and added-production-`unwrap()` clean (Bun/Python last green
   at the SF6 gate `887471c2`).
 - Both CyPack refs equal exact SHA
-  `d1002cacb8f2b6eb730d0a9ab6217cff9ac7f6a9`.
+  `b1c4aec2e034651ad3ceb8d74f2e4aa02426c4fa`.
 - User-owned `.superpowers/` is untracked and must never be staged or edited.
 
 ## Mandatory Git and Remote Audit

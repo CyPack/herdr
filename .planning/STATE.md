@@ -245,9 +245,13 @@
   (`d1002cac`) are CLOSED: bounded windowed column/divider rects with
   focused-always-visible clamping, and the single clamped width write-back
   seam. Full suite 3,344/3,344. Current verified head: `d1002cac`.
-- Next microtask: FM1.3/FM2.2 wiring (render + scroll input + divider
-  capture through the SF3 transaction) per the FM1 evidence "Exact Next
-  Microtask" — this is the last gap to the user-visible custom layout.
+- FM2.2 drag-resize LANDED end-to-end (`b1c4aec2`): divider press begins
+  a capture that owns move/up everywhere, drags commit clamped 16..=64
+  widths through one seam mirrored into the FM1 chain, and compute/render/
+  hit-test/kitty all consume ONE override authority. E2E test green; full
+  suite 3,345/3,345. Current verified head: `b1c4aec2`.
+- Next microtask: FM1.3 chain-window render + horizontal scroll input,
+  then FM3 (per the FM1 evidence "Exact Next Microtask").
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one
   bounded focus/capture router shared by mouse and keyboard, and recovery

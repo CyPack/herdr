@@ -123,3 +123,38 @@ on a `MillerDividerRect` begins an SF3 `ResizeTransaction` over
 gesture), preview updates transient widths, release commits through
 `commit_column_width`; (4) FM3 generation-checked `MillerRowTarget`
 routing. Then the FM1/FM2 verification commands and phase publication.
+
+## FM2.2 — Divider drag-resize LANDED (user-visible, end-to-end)
+
+- `b1c4aec2` (`feat: drag miller trio dividers to resize columns`): pressing
+  a Miller divider begins a capture that owns move/up EVERYWHERE (the
+  SF4.2-04 principle — the E2E test CAUGHT the in-center gate swallowing a
+  fast drag and forced the fix), each drag commits the clamped 16..=64
+  width through the single `FmState::commit_trio_width` seam (mirrored into
+  the FM1 chain model via `commit_column_width`), release ends the capture,
+  and Files close clears it. ONE geometry authority: compute
+  (`sync_file_manager_view`), render (`render_file_manager` + helpers),
+  hit-testing, and the kitty image preview all consume the SAME
+  `MillerTrioOverrides` through `_with` seams; default-override twins keep
+  every legacy caller byte-identical (overrides None until the user drags).
+- E2E test `divider_drag_resizes_trio_columns_end_to_end`: press ->
+  capture, drag -> clamped commit, recompute honors the width, release ->
+  capture ends, runaway drag clamps to 64. Full suite 3,345/3,345; both
+  Clippy targets exit-code-verified clean; fmt/diff/unwrap clean. Both refs
+  equal `b1c4aec2e034651ad3ceb8d74f2e4aa02426c4fa`.
+- Recorded deviations/candidates: (1) drag commits live per move (no
+  preview/commit split yet — client-local widths, zero persistence/PTY, so
+  the SF3 purity contract is not violated; unify onto `ResizeTransaction`
+  with a Miller `DividerId` extension at FM2 closure); (2) the horizontal
+  GROWING-chain window render (FM1.3 full: >3 columns + ScrollLeft/Right/
+  Shift+wheel over the chain) remains the next slice — the geometry
+  (`miller_viewport_geometry`) and model are ready.
+
+## Exact Next Microtask
+
+FM1.3 chain-window render: replace the trio with the windowed chain render
+consuming `miller_viewport_geometry` (columns from resident projections +
+current FmState; unavailable ancestors explicit), horizontal scroll input
+(ScrollLeft/Right, Shift+wheel, header arrows -> `horizontal.first_visible`
+only), then FM3 generation-checked `MillerRowTarget` routing and the FM1/FM2
+verification commands + phase publication.

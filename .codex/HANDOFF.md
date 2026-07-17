@@ -11,9 +11,10 @@
 - Branch: `feat/native-fm`
 - Acting identity: CyPack external contributor; `origin` is the writable
   `CyPack/herdr` fork and `upstream` is read-only.
-- Current verified product head: `d1002cac` (`feat: commit miller
-  column widths through clamped seam`, FM2.1 model core CLOSED). Prior:
-  FM1.3 geometry core `3e8a50d0`, FM1.2 `97710337`, FM1.1 `5e8616e0`. Shell
+- Current verified product head: `b1c4aec2` (`feat: drag miller trio
+  dividers to resize columns` — FM2.2 drag-resize LANDED user-visibly,
+  end-to-end). Prior: FM2.1 `d1002cac`, FM1.3 geometry `3e8a50d0`,
+  FM1.2 `97710337`, FM1.1 `5e8616e0`. Shell
   Foundation fully closed in scoped form at `887471c2` (SF6 evidence
   records the deferred OPEN items).
   SF4 fully closed at `f973740e` (4.1 8/8, 4.2 8/8, 4.3 6/6); the SF4
@@ -85,14 +86,14 @@
   columns + dividers, focused visible) + scroll/render catalog, then FM2
   drag-resize (the custom-layout target). See
   `.codex/evidence/fm1-miller-viewport-progress.md`.
-- Product tree: clean at `d1002cac`; only the user-owned untracked
+- Product tree: clean at `b1c4aec2`; only the user-owned untracked
   `.superpowers/` tree exists and must remain untouched/unstaged.
-- Full exact-head gate: 3,344/3,344 Rust tests (`--no-fail-fast`), one
+- Full exact-head gate: 3,345/3,345 Rust tests (`--no-fail-fast`), one
   named B0 real-host probe skipped; Linux all-target and Windows MSVC bin
   Clippy; fmt/diff/added-production-unwrap checks passed (Bun/Python last
   green at the SF6 gate `887471c2`).
 - Both CyPack refs (`feat/native-fm`, fork `master`) equal exact SHA
-  `d1002cacb8f2b6eb730d0a9ab6217cff9ac7f6a9` at this checkpoint;
+  `b1c4aec2e034651ad3ceb8d74f2e4aa02426c4fa` at this checkpoint;
   `upstream` untouched.
 - Fresh sequential Codebase Memory store refreshed post-publication with
   current `blocking_overlay_active`, `shell_mouse_input_owner`,
