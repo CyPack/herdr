@@ -289,6 +289,7 @@ impl super::App {
         match self.image_preview_worker.sync_target(target.clone()) {
             ImagePreviewSync::Started { .. } => {
                 return target.is_some_and(|key| {
+                    crate::render_prof::event("fm.image_target.refresh");
                     set_image_state(
                         &mut self.state,
                         &key,

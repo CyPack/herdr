@@ -359,7 +359,11 @@ impl AppState {
             self.sidebar_width_auto = false;
         }
         if update.marks_persistence_dirty() {
+            crate::render_prof::event("shell.persistence_write");
             self.mark_session_dirty();
+        }
+        if update.requests_pty_resize() {
+            crate::render_prof::event("shell.pty_resize_request");
         }
         // Clearing preview capture makes the next committed compute_view frame
         // the single high-level resize request represented by this flag.

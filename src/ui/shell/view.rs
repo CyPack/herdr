@@ -112,8 +112,10 @@ pub(crate) fn compute_shell_view(
     resolve_dynamic: &impl Fn(RegionId) -> u16,
 ) -> ShellView {
     if previous.geometry_key == key {
+        crate::render_prof::event("shell.geometry_cache.hit");
         return previous;
     }
+    crate::render_prof::event("shell.geometry_cache.miss");
 
     let (regions, degradation) = layout.compute_projection(key.area, resolve_dynamic);
     project_changed_geometry(key, previous.generation, regions, degradation)
@@ -121,8 +123,10 @@ pub(crate) fn compute_shell_view(
 
 pub(crate) fn compute_empty_shell_view(key: ShellGeometryKey, previous: ShellView) -> ShellView {
     if previous.geometry_key == key {
+        crate::render_prof::event("shell.geometry_cache.hit");
         return previous;
     }
+    crate::render_prof::event("shell.geometry_cache.miss");
 
     project_changed_geometry(
         key,
