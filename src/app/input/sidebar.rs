@@ -2048,6 +2048,81 @@ mod tests {
         assert_eq!(app.state.sidebar_tab, SidebarTab::Spaces);
     }
 
+    // TP-FIP-NAV-01: a primary click on the visible default-sidebar Files tab
+    // must open the Native Files Stage, not only switch the visual tab.
+    #[test]
+    fn files_tab_primary_click_opens_native_files_stage() {
+        use crate::app::state::SidebarTab;
+        use crate::ui::surface_host::StageSurfaceView;
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("a")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        assert_eq!(
+            app.state.stage.surface_view(),
+            StageSurfaceView::TerminalWorkspace
+        );
+        let files_rect = app.state.view.sidebar_tab_hit_areas[2];
+        assert!(files_rect.width > 0, "files tab should have width");
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            files_rect.x,
+            files_rect.y,
+        ));
+
+        assert_eq!(app.state.sidebar_tab, SidebarTab::Files);
+        assert_eq!(
+            app.state.stage.surface_view(),
+            StageSurfaceView::NativeFiles
+        );
+        assert!(app.state.file_manager.is_some());
+    }
+
+    // TP-FIP-NAV-02: reactivating Files from the visible tab keeps the open
+    // singleton surface without resetting file-manager state.
+    #[test]
+    fn files_tab_click_reuses_open_singleton_files_stage() {
+        use crate::app::state::SidebarTab;
+        use crate::ui::surface_host::StageSurfaceView;
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("a")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state
+            .activate_dock_app(crate::ui::surface_host::BuiltInAppId::Files);
+        {
+            let fm = app.state.file_manager.as_mut().expect("open file manager");
+            // Marker: a re-open would reset this client-local flag to default.
+            fm.show_hidden = true;
+        }
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let files_rect = app.state.view.sidebar_tab_hit_areas[2];
+        assert!(files_rect.width > 0, "files tab should have width");
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            files_rect.x,
+            files_rect.y,
+        ));
+
+        assert_eq!(app.state.sidebar_tab, SidebarTab::Files);
+        assert_eq!(
+            app.state.stage.surface_view(),
+            StageSurfaceView::NativeFiles
+        );
+        let fm = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("singleton kept open");
+        assert!(
+            fm.show_hidden,
+            "singleton must not be reset by reactivation"
+        );
+    }
+
     // TP-C6.1-NAV: the Files row hit area carries exact path identity. Mouse
     // input prepares one request only; it performs no directory read itself.
     #[test]
