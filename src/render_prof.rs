@@ -3,12 +3,18 @@
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+#[cfg(test)]
+use std::{cell::RefCell, thread::LocalKey};
 
 const ENV_VAR: &str = "HERDR_RENDER_PROF";
 const MAX_METRIC_LABELS_PER_KIND: usize = 128;
 
 static ENABLED: OnceLock<bool> = OnceLock::new();
 static PROFILER: OnceLock<Mutex<RenderProfiler>> = OnceLock::new();
+#[cfg(test)]
+thread_local! {
+    static TEST_PROFILER: RefCell<Option<RenderProfiler>> = const { RefCell::new(None) };
+}
 
 #[derive(Default)]
 struct DurationStats {
@@ -129,6 +135,8 @@ pub(crate) fn counter(name: &'static str, value: u64) {
     if value == 0 {
         return;
     }
+    #[cfg(test)]
+    with_test_profiler(|profiler| profiler.increment(name, value));
     with_profiler(|profiler| profiler.increment(name, value));
 }
 
@@ -137,6 +145,8 @@ pub(crate) fn event(name: &'static str) {
 }
 
 pub(crate) fn duration(name: &'static str, duration: Duration) {
+    #[cfg(test)]
+    with_test_profiler(|profiler| profiler.duration(name, duration));
     with_profiler(|profiler| profiler.duration(name, duration));
 }
 
@@ -152,6 +162,76 @@ pub(crate) fn duration_since(name: &'static str, started: Option<Instant>) {
 
 pub(crate) fn flush_if_due() {
     with_profiler(RenderProfiler::flush_if_due);
+}
+
+#[cfg(test)]
+fn with_test_profiler(update: impl FnOnce(&mut RenderProfiler)) {
+    TEST_PROFILER.with(|profiler| {
+        if let Some(profiler) = profiler.borrow_mut().as_mut() {
+            update(profiler);
+        }
+    });
+}
+
+#[cfg(test)]
+pub(crate) struct TestRenderProfile {
+    counters: BTreeMap<&'static str, u64>,
+    durations: BTreeMap<&'static str, DurationStats>,
+}
+
+#[cfg(test)]
+impl TestRenderProfile {
+    pub(crate) fn counter(&self, name: &'static str) -> u64 {
+        self.counters.get(name).copied().unwrap_or(0)
+    }
+
+    pub(crate) fn duration_count(&self, name: &'static str) -> u64 {
+        self.durations
+            .get(name)
+            .map(|stats| stats.count)
+            .unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+struct TestProfilerGuard(&'static LocalKey<RefCell<Option<RenderProfiler>>>);
+
+#[cfg(test)]
+impl Drop for TestProfilerGuard {
+    fn drop(&mut self) {
+        self.0.with(|profiler| {
+            profiler.borrow_mut().take();
+        });
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn observe_for_test<T>(work: impl FnOnce() -> T) -> (T, TestRenderProfile) {
+    TEST_PROFILER.with(|profiler| {
+        assert!(
+            profiler
+                .borrow_mut()
+                .replace(RenderProfiler::new())
+                .is_none(),
+            "render profile observers cannot nest on one test thread"
+        );
+    });
+    let guard = TestProfilerGuard(&TEST_PROFILER);
+    let value = work();
+    let profiler = TEST_PROFILER.with(|profiler| {
+        profiler
+            .borrow_mut()
+            .take()
+            .expect("scoped render profiler remains installed")
+    });
+    drop(guard);
+    (
+        value,
+        TestRenderProfile {
+            counters: profiler.counters,
+            durations: profiler.durations,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -191,5 +271,24 @@ mod tests {
         assert!(profiler.durations.is_empty());
         assert_eq!(profiler.dropped_counter_labels, 0);
         assert_eq!(profiler.dropped_duration_labels, 0);
+    }
+
+    #[test]
+    fn test_render_profile_observer_is_scoped_and_thread_local() {
+        let (_, first) = observe_for_test(|| {
+            event("test.outer");
+            counter("test.outer", 2);
+            duration("test.duration", Duration::from_micros(7));
+            std::thread::spawn(|| event("test.other_thread"))
+                .join()
+                .expect("test observer thread");
+        });
+        assert_eq!(first.counter("test.outer"), 3);
+        assert_eq!(first.counter("test.other_thread"), 0);
+        assert_eq!(first.duration_count("test.duration"), 1);
+
+        let (_, second) = observe_for_test(|| {});
+        assert_eq!(second.counter("test.outer"), 0);
+        assert_eq!(second.duration_count("test.duration"), 0);
     }
 }
