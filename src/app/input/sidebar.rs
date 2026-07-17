@@ -2164,6 +2164,117 @@ mod tests {
         assert_eq!(terminals_before, terminals_after);
     }
 
+    // TP-FIP-NAV-04: modified, middle, release-only, and outside clicks must
+    // not transition the Stage.
+    #[test]
+    fn modified_left_click_on_files_tab_does_not_activate_stage() {
+        use crate::ui::surface_host::StageSurfaceView;
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("a")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let files_rect = app.state.view.sidebar_tab_hit_areas[2];
+        app.handle_mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: files_rect.x,
+            row: files_rect.y,
+            modifiers: crossterm::event::KeyModifiers::CONTROL,
+        });
+        assert_eq!(
+            app.state.stage.surface_view(),
+            StageSurfaceView::TerminalWorkspace
+        );
+        assert!(app.state.file_manager.is_none());
+    }
+
+    #[test]
+    fn middle_click_on_files_tab_does_not_activate_stage() {
+        use crate::ui::surface_host::StageSurfaceView;
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("a")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let files_rect = app.state.view.sidebar_tab_hit_areas[2];
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Middle),
+            files_rect.x,
+            files_rect.y,
+        ));
+        assert_eq!(
+            app.state.stage.surface_view(),
+            StageSurfaceView::TerminalWorkspace
+        );
+        assert!(app.state.file_manager.is_none());
+    }
+
+    #[test]
+    fn release_only_event_on_files_tab_does_not_activate_stage() {
+        use crate::ui::surface_host::StageSurfaceView;
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("a")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let files_rect = app.state.view.sidebar_tab_hit_areas[2];
+        app.handle_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            files_rect.x,
+            files_rect.y,
+        ));
+        assert_eq!(
+            app.state.stage.surface_view(),
+            StageSurfaceView::TerminalWorkspace
+        );
+        assert!(app.state.file_manager.is_none());
+    }
+
+    #[test]
+    fn outside_click_next_to_files_tab_does_not_activate_stage() {
+        use crate::ui::surface_host::StageSurfaceView;
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("a")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let files_rect = app.state.view.sidebar_tab_hit_areas[2];
+        // One row below the tab strip, same column: not a tab hit.
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            files_rect.x,
+            files_rect.y + files_rect.height,
+        ));
+        assert_eq!(
+            app.state.stage.surface_view(),
+            StageSurfaceView::TerminalWorkspace
+        );
+        assert!(app.state.file_manager.is_none());
+    }
+
+    // TP-FIP-NAV-08: a collapsed sidebar exposes no Files tab target.
+    #[test]
+    fn collapsed_sidebar_files_tab_is_inert() {
+        use crate::ui::surface_host::StageSurfaceView;
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("a")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let files_rect = app.state.view.sidebar_tab_hit_areas[2];
+        app.state.set_sidebar_collapsed(true);
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            files_rect.x,
+            files_rect.y,
+        ));
+        assert_eq!(
+            app.state.stage.surface_view(),
+            StageSurfaceView::TerminalWorkspace
+        );
+        assert!(app.state.file_manager.is_none());
+    }
+
     // TP-FIP-NAV-03 (Projects variant): the symmetric exit path.
     #[test]
     fn projects_tab_click_restores_terminal_stage_and_preserves_identity() {
