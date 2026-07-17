@@ -1381,6 +1381,99 @@ mod tests {
         );
     }
 
+    #[test]
+    fn miller_drag_preview_changes_geometry_not_model_preferences() {
+        let td = TempDir::new("fm3-divider-preview");
+        td.file("00.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        let frame = Rect::new(0, 0, 86, 16);
+        compute_view(&mut app.state, frame);
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .first()
+            .expect("current Files projection exposes a divider")
+            .clone();
+        let original_tracks = [
+            app.state.view.file_manager_miller.columns[divider.left_column]
+                .rect
+                .width,
+            app.state.view.file_manager_miller.columns[divider.right_column]
+                .rect
+                .width,
+        ];
+        let before_model = {
+            let file_manager = app.state.file_manager.as_ref().expect("open FM");
+            (
+                file_manager.miller.revision,
+                file_manager
+                    .miller
+                    .chain
+                    .iter()
+                    .map(|segment| segment.preferred_width)
+                    .collect::<Vec<_>>(),
+                file_manager.trio_overrides,
+            )
+        };
+
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            divider.rect.x,
+            divider.rect.y,
+        ));
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Drag(MouseButton::Left),
+                divider.rect.x + 4,
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.state.shell_interaction.resize_preview_tracks(),
+            Some([original_tracks[0] + 4, original_tracks[1] - 4]),
+            "drag changes only the transient adjacent track pair"
+        );
+
+        compute_view(&mut app.state, frame);
+        let preview_tracks = [
+            app.state.view.file_manager_miller.columns[divider.left_column]
+                .rect
+                .width,
+            app.state.view.file_manager_miller.columns[divider.right_column]
+                .rect
+                .width,
+        ];
+        assert_eq!(
+            preview_tracks,
+            [original_tracks[0] + 4, original_tracks[1] - 4],
+            "fresh projection consumes the transient resize preview"
+        );
+        let after_model = {
+            let file_manager = app.state.file_manager.as_ref().expect("open FM");
+            (
+                file_manager.miller.revision,
+                file_manager
+                    .miller
+                    .chain
+                    .iter()
+                    .map(|segment| segment.preferred_width)
+                    .collect::<Vec<_>>(),
+                file_manager.trio_overrides,
+            )
+        };
+        assert_eq!(
+            after_model, before_model,
+            "preview cannot commit a width or advance the Miller model"
+        );
+    }
+
     // FM2.2 end-to-end: pressing a trio divider and dragging resizes the
     // column through the clamped commit seam; release ends the capture; the
     // committed width survives recompute and clamps to the frozen 16..=64
