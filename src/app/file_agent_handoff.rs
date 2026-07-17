@@ -167,11 +167,11 @@ impl crate::app::App {
             self.show_file_manager_agent_handoff_failure("agent handoff authority changed");
             return true;
         };
-        let mut payload = Vec::with_capacity(path.len() + 1);
-        payload.extend_from_slice(path.as_bytes());
-        payload.push(b'\r');
+        // Reference-only contract (TP-FIP-REF-05/07): exactly the UTF-8 path
+        // bytes, never a submit byte. The agent decides when to send.
+        let payload = Bytes::copy_from_slice(path.as_bytes());
 
-        match self.try_send_terminal_input(&request.terminal_id, Bytes::from(payload)) {
+        match self.try_send_terminal_input(&request.terminal_id, payload) {
             Ok(()) => {}
             Err(TerminalInputSendError::RuntimeUnavailable) => {
                 self.show_file_manager_agent_handoff_failure("agent runtime is unavailable");
