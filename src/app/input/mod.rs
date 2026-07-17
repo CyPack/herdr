@@ -379,6 +379,50 @@ impl App {
         self.handle_mouse_without_agent_frame_action(mouse);
     }
 
+    /// Consume every event over live dock terrain: an enabled target
+    /// activates on plain left press and opens its name popover on plain
+    /// right press; everything else on the dock (disabled targets, modified
+    /// presses, moves, wheels) is consumed fail-closed so no event can fall
+    /// through to a surface underneath the dock chrome.
+    fn handle_app_dock_mouse(&mut self, mouse: MouseEvent) -> bool {
+        let Some(target) = self
+            .state
+            .view
+            .app_dock_entry_areas
+            .iter()
+            .find(|entry| {
+                mouse.column >= entry.rect.x
+                    && mouse.column < entry.rect.x.saturating_add(entry.rect.width)
+                    && mouse.row >= entry.rect.y
+                    && mouse.row < entry.rect.y.saturating_add(entry.rect.height)
+            })
+            .copied()
+        else {
+            return false;
+        };
+
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left)
+                if mouse.modifiers.is_empty() && target.enabled =>
+            {
+                self.state.activate_dock_app(target.app);
+            }
+            MouseEventKind::Down(MouseButton::Right)
+                if mouse.modifiers.is_empty() && target.enabled =>
+            {
+                self.state.context_menu = Some(crate::app::state::ContextMenuState {
+                    kind: crate::app::state::ContextMenuKind::AppDock { app: target.app },
+                    x: mouse.column,
+                    y: mouse.row,
+                    list: crate::app::state::MenuListState::new(0),
+                });
+                self.state.enter_overlay_mode(Mode::ContextMenu);
+            }
+            _ => {}
+        }
+        true
+    }
+
     fn handle_mouse_without_agent_frame_action(&mut self, mouse: MouseEvent) {
         if self.handle_overlay_mouse(mouse) {
             return;
@@ -394,6 +438,10 @@ impl App {
             == ShellInputOwner::TopmostOverlay;
 
         if !blocking_overlay {
+            if self.handle_app_dock_mouse(mouse) {
+                return;
+            }
+
             match self.handle_file_manager_mouse(mouse) {
                 file_manager::FileManagerMouseDispatch::NotHandled => {}
                 file_manager::FileManagerMouseDispatch::Consumed => return,

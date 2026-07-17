@@ -544,6 +544,24 @@ impl AppState {
         }
     }
 
+    /// Activate one built-in dock app: Files opens (or keeps) its singleton
+    /// surface, Terminal restores the terminal stage. Shared by the dock
+    /// left-click and the popover activation so both paths stay identical.
+    pub(crate) fn activate_dock_app(&mut self, app: crate::ui::surface_host::BuiltInAppId) {
+        match app {
+            crate::ui::surface_host::BuiltInAppId::Files => {
+                if self.file_manager.is_none() {
+                    self.open_file_manager();
+                }
+            }
+            crate::ui::surface_host::BuiltInAppId::Terminal => {
+                if self.file_manager.is_some() {
+                    self.close_file_manager();
+                }
+            }
+        }
+    }
+
     /// Toggle the native file manager open/closed.
     pub(crate) fn toggle_file_manager(&mut self) {
         if self.file_manager.is_some() {

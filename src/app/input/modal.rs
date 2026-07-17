@@ -749,6 +749,10 @@ pub(super) fn apply_context_menu_action(
             state.request_file_manager_context_action = file_intent;
             leave_modal(state);
         }
+        (ContextMenuKind::AppDock { app }, _) => {
+            state.activate_dock_app(app);
+            leave_modal(state);
+        }
         // Worktree rows must match BEFORE the agent catch-all below, which
         // would otherwise persist "New worktree" as the default chat agent.
         (ContextMenuKind::ProjectNewChat { proj_idx, .. }, Some("New worktree")) => {
