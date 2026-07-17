@@ -5,6 +5,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 const ENV_VAR: &str = "HERDR_RENDER_PROF";
+const MAX_METRIC_LABELS_PER_KIND: usize = 128;
 
 static ENABLED: OnceLock<bool> = OnceLock::new();
 static PROFILER: OnceLock<Mutex<RenderProfiler>> = OnceLock::new();
@@ -20,6 +21,8 @@ struct RenderProfiler {
     window_started: Instant,
     counters: BTreeMap<&'static str, u64>,
     durations: BTreeMap<&'static str, DurationStats>,
+    dropped_counter_labels: u64,
+    dropped_duration_labels: u64,
 }
 
 impl RenderProfiler {
@@ -28,18 +31,31 @@ impl RenderProfiler {
             window_started: Instant::now(),
             counters: BTreeMap::new(),
             durations: BTreeMap::new(),
+            dropped_counter_labels: 0,
+            dropped_duration_labels: 0,
         }
     }
 
     fn increment(&mut self, name: &'static str, value: u64) {
-        *self.counters.entry(name).or_default() += value;
+        if let Some(counter) = self.counters.get_mut(name) {
+            *counter = counter.saturating_add(value);
+        } else if self.counters.len() < MAX_METRIC_LABELS_PER_KIND {
+            self.counters.insert(name, value);
+        } else {
+            self.dropped_counter_labels = self.dropped_counter_labels.saturating_add(1);
+        }
     }
 
     fn duration(&mut self, name: &'static str, duration: Duration) {
+        if !self.durations.contains_key(name) && self.durations.len() >= MAX_METRIC_LABELS_PER_KIND
+        {
+            self.dropped_duration_labels = self.dropped_duration_labels.saturating_add(1);
+            return;
+        }
         let stats = self.durations.entry(name).or_default();
         let ns = duration.as_nanos();
-        stats.count += 1;
-        stats.total_ns += ns;
+        stats.count = stats.count.saturating_add(1);
+        stats.total_ns = stats.total_ns.saturating_add(ns);
         stats.max_ns = stats.max_ns.max(ns);
     }
 
@@ -78,12 +94,16 @@ impl RenderProfiler {
             window_ms = elapsed.as_millis() as u64,
             counters = %counters,
             durations = %durations,
+            dropped_counter_labels = self.dropped_counter_labels,
+            dropped_duration_labels = self.dropped_duration_labels,
             "render profiler window"
         );
 
         self.window_started = Instant::now();
         self.counters.clear();
         self.durations.clear();
+        self.dropped_counter_labels = 0;
+        self.dropped_duration_labels = 0;
     }
 }
 
@@ -162,10 +182,14 @@ mod tests {
             "duration labels must stay bounded, got {}",
             profiler.durations.len()
         );
+        assert_eq!(profiler.dropped_counter_labels, 128);
+        assert_eq!(profiler.dropped_duration_labels, 128);
 
         profiler.window_started = Instant::now() - Duration::from_secs(2);
         profiler.flush_if_due();
         assert!(profiler.counters.is_empty());
         assert!(profiler.durations.is_empty());
+        assert_eq!(profiler.dropped_counter_labels, 0);
+        assert_eq!(profiler.dropped_duration_labels, 0);
     }
 }
