@@ -276,10 +276,14 @@ Progress evidence:
 
 - [x] Add logical history <=32, resident directory projections <=5, and at
   most five visible complete columns.
-- [ ] Project the bounded Miller viewport into production `ViewState`, then
-  render that single snapshot instead of the fixed parent/current/preview
-  trio. The pure geometry core is published, but currently has test callers
-  only.
+- [x] Project the bounded Miller viewport into production `ViewState` with the
+  active Files instance generation, Miller revision, clamped `first_visible`,
+  exact path identities, complete column rects, and adjacent divider rects
+  (`35cfbc00`). Desktop/mobile/zero/foreign-surface/close-reopen behavior is
+  gated; graph proves the production compute caller.
+- [ ] Render that single snapshot instead of the fixed
+  parent/current/preview trio; P1 intentionally leaves visible output
+  unchanged until the P2 render cutover.
 - [ ] Add native horizontal wheel, Shift+wheel, and bounded header navigation;
   clamp after path/cache/terminal shrink and clear stale hits.
 - [ ] Prove close/reopen reset, inaccessible ancestors, render purity, resource

@@ -5,6 +5,42 @@
 > current checkpoint as an evidence appendix; do not resume from its stale
 > SF3/SF4-start pointer.
 
+## CURRENT OVERRIDE — MILLER PRODUCTION P1 — 2026-07-17
+
+This override supersedes the historical status bullets in Section 0 below.
+
+- Verified product head: `35cfbc00` (`feat: project bounded miller viewport
+  into view state`). Preceded by compile-valid RED `345d32a5` and canonical
+  registry reconciliation `2812c5ac`.
+- P1 is CLOSED: desktop and mobile `compute_view` project the bounded
+  1–5-column Miller window from prepared `FmState` into `ViewState`, carrying
+  active Files singleton generation, Miller revision, clamped
+  `first_visible`, focused chain index, exact column path/rect identities, and
+  adjacent divider path/rect identities. Close, foreign Stage, zero body, and
+  close/reopen ABA paths fail closed.
+- P1 exact tests: 7/7; cross-layer Files/Miller/Stage/watcher/preview/resize
+  family: 189/189; full Nextest: 3,354/3,354 with the single named B0
+  real-host probe skipped. Linux all-target and Windows MSVC bin Clippy,
+  `cargo fmt --check`, Bun 5/5 + 12/12, Python 64/64, diff and added-unwrap
+  audits are clean. `just` is absent, so every command from `just check` was
+  executed directly.
+- Fresh sequential graph: 20,649 nodes / 94,370 edges. Built-in MCP proves
+  `project_miller_view <- sync_miller_view <- compute_view_internal |
+  compute_mobile_view`; freshness is not inferred from `ready`.
+- Product checkpoint publication is verified: CyPack `feat/native-fm` and
+  fork `master` both fast-forwarded to exact
+  `35cfbc0074fdf2a1319fb7f5954b5eb7953a95be`; `upstream` was untouched.
+- Visible output is intentionally still the legacy fixed
+  parent/current/preview trio. P2 is the exact next phase: first RED tests for
+  snapshot-driven 1–5-column render and horizontal input, then render/image
+  geometry cutover. P3 shared resize transaction, P4 all-column mouse, P5
+  growing navigation, P6 performance/runtime, and P7 release audit remain
+  OPEN.
+- Stable Herdr/socket and all user-session processes remain untouched.
+  `.superpowers/` remains user-owned, untracked, and unstaged.
+- Exact commands, RED/GREEN run IDs, gates, graph proof, and limitations:
+  `.codex/evidence/miller-production-progress.md`.
+
 ## 0. EXECUTIVE STATE
 
 - Repository: `/home/ayaz/projects/herdr`
