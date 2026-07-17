@@ -1469,11 +1469,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    // SF1 characterization: Files currently replaces the terminal surface
-    // inside `terminal_area`, but opening/rendering it does not remove the
-    // server-owned terminal runtime that sits behind the curtain.
+    // SF6.1 target (replaces the SF1 curtain characterization): an active
+    // NativeFiles surface owns EXACTLY the WorkspaceStage — Files content is
+    // clipped to the stage, the terminal-app chrome (tab bar) is absent, the
+    // sidebar stays separately rendered, no terminal pane text leaks, and the
+    // server-owned terminal runtime survives untouched.
     #[tokio::test]
-    async fn files_curtain_currently_replaces_terminal_surface() {
+    async fn files_renders_as_native_workspace_stage_surface() {
         use std::sync::atomic::{AtomicU64, Ordering};
 
         struct FixtureRoot(std::path::PathBuf);
@@ -1525,28 +1527,92 @@ mod tests {
         let runtime_count = terminal_runtimes.len();
 
         let area = Rect::new(0, 0, 100, 30);
-        compute_view_with_runtime_registry(&mut app, &terminal_runtimes, area);
-        let terminal_area = app.view.terminal_area;
-        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height))
-            .expect("curtain characterization terminal");
-        terminal
-            .draw(|frame| render_with_runtime_registry(&app, &terminal_runtimes, frame))
-            .expect("curtain characterization render");
-        let surface_text = buffer_rect_text(terminal.backend().buffer(), terminal_area);
 
+        // Control: with the terminal surface active the tab-bar chrome is a
+        // real, non-empty region the Files surface must later reclaim.
+        app.close_file_manager();
+        compute_view_with_runtime_registry(&mut app, &terminal_runtimes, area);
         assert!(
-            surface_text.contains("FM_VISIBLE"),
-            "Files content should occupy terminal_area; rendered surface: {surface_text:?}"
+            !app.view.tab_bar_rect.is_empty(),
+            "control: the terminal surface owns a visible tab bar"
+        );
+
+        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .expect("Files reactivation");
+        compute_view_with_runtime_registry(&mut app, &terminal_runtimes, area);
+        let stage = app
+            .view
+            .shell
+            .regions
+            .get(crate::ui::shell::RegionId::WorkspaceStage);
+        assert_eq!(
+            app.view.terminal_area, stage,
+            "active NativeFiles must own exactly the WorkspaceStage"
+        );
+        assert_eq!(
+            app.view.tab_bar_rect,
+            Rect::default(),
+            "the terminal-app tab bar is not part of the Files surface"
         );
         assert!(
-            !surface_text.contains("TERMINAL_SURFACE_SHOULD_BE_HIDDEN"),
-            "terminal pane content should be absent behind the Files curtain"
+            !app.view.sidebar_rect.is_empty(),
+            "the sidebar remains a separately rendered shell region"
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height))
+            .expect("files stage terminal");
+        terminal
+            .draw(|frame| render_with_runtime_registry(&app, &terminal_runtimes, frame))
+            .expect("files stage render");
+        let stage_text = buffer_rect_text(terminal.backend().buffer(), stage);
+        assert!(
+            stage_text.contains("FM_VISIBLE"),
+            "Files content must occupy the stage; rendered stage: {stage_text:?}"
+        );
+        assert!(
+            !stage_text.contains("TERMINAL_SURFACE_SHOULD_BE_HIDDEN"),
+            "terminal pane content must be absent under the Files surface"
         );
         assert_eq!(terminal_runtimes.len(), runtime_count);
         assert!(
             terminal_runtimes.get(&terminal_id).is_some(),
-            "Files rendering should preserve the exact terminal runtime"
+            "Files rendering must preserve the exact terminal runtime"
         );
+
+        // Collapsed sidebar: the wider stage stays fully owned by Files.
+        app.sidebar_collapsed = true;
+        compute_view_with_runtime_registry(&mut app, &terminal_runtimes, area);
+        let collapsed_stage = app
+            .view
+            .shell
+            .regions
+            .get(crate::ui::shell::RegionId::WorkspaceStage);
+        assert!(collapsed_stage.width > stage.width);
+        assert_eq!(app.view.terminal_area, collapsed_stage);
+        app.sidebar_collapsed = false;
+
+        // Tiny terminal: degenerate geometry stays bounded and panic-free.
+        let tiny = Rect::new(0, 0, 12, 4);
+        compute_view_with_runtime_registry(&mut app, &terminal_runtimes, tiny);
+        let mut tiny_terminal =
+            Terminal::new(TestBackend::new(tiny.width, tiny.height)).expect("tiny terminal");
+        tiny_terminal
+            .draw(|frame| render_with_runtime_registry(&app, &terminal_runtimes, frame))
+            .expect("tiny files stage render");
+
+        // Mobile keeps its explicit dedicated full-width contract: the shell
+        // projects no desktop regions and Files fills the mobile content
+        // area below the header.
+        app.mobile_width_threshold = 500;
+        compute_view_with_runtime_registry(&mut app, &terminal_runtimes, area);
+        assert_eq!(app.view.layout, crate::app::state::ViewLayout::Mobile);
+        assert!(app
+            .view
+            .shell
+            .regions
+            .get(crate::ui::shell::RegionId::WorkspaceStage)
+            .is_empty());
+        assert!(!app.view.terminal_area.is_empty());
     }
 
     fn native_fm_visual_composition_app(root: &std::path::Path) -> AppState {
