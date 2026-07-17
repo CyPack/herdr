@@ -182,6 +182,7 @@ impl ImagePreviewWorker {
             ImagePreviewSync::Started { generation } => {
                 if let Some(key) = target {
                     state.pending = Some(ImagePreviewRequest { generation, key });
+                    crate::render_prof::event("fm.image_worker.submitted");
                     pending.notify_one();
                 }
             }
@@ -202,7 +203,15 @@ impl ImagePreviewWorker {
         self.disconnect_reported |= disconnected;
         drop(state);
 
-        let current = result.filter(|result| self.slot.accepts(result.generation, &result.key));
+        let current = result.and_then(|result| {
+            if self.slot.accepts(result.generation, &result.key) {
+                crate::render_prof::event("fm.image_worker.completed");
+                Some(result)
+            } else {
+                crate::render_prof::event("fm.image_worker.rejected");
+                None
+            }
+        });
         ImagePreviewDrain {
             current,
             disconnected,

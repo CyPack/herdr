@@ -183,6 +183,7 @@ impl FilePreviewHighlightWorker {
                         path,
                         preview,
                     });
+                    crate::render_prof::event("fm.text_worker.submitted");
                     pending.notify_one();
                 }
             }
@@ -203,7 +204,15 @@ impl FilePreviewHighlightWorker {
         self.disconnect_reported |= disconnected;
         drop(state);
 
-        let current = result.filter(|result| self.slot.accepts(result.generation, &result.key));
+        let current = result.and_then(|result| {
+            if self.slot.accepts(result.generation, &result.key) {
+                crate::render_prof::event("fm.text_worker.completed");
+                Some(result)
+            } else {
+                crate::render_prof::event("fm.text_worker.rejected");
+                None
+            }
+        });
         FilePreviewHighlightDrain {
             current,
             disconnected,
