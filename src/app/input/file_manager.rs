@@ -720,6 +720,48 @@ mod tests {
         assert!(state.request_agent_attachment_delivery.is_none());
     }
 
+    // Characterization: the complete App route still enters the selected
+    // directory after the input-only handler is separated from filesystem I/O.
+    #[test]
+    fn attachment_picker_app_route_enters_directory_once() {
+        let td = TempDir::new("attachment-app-navigation");
+        td.dir("child");
+        let child = td.root.join("child");
+        let mut app = super::super::app_for_mouse_test();
+        app.state = state_with_attachment_picker(&td.root, "attachment-app-navigation");
+        let picker = app
+            .state
+            .agent_attachment_picker
+            .as_mut()
+            .expect("open attachment picker");
+        let entry_idx = picker
+            .file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == child)
+            .expect("child directory");
+        picker.file_manager.select(entry_idx);
+        let before_generation = picker.file_manager.directory_generation;
+
+        app.handle_non_terminal_key_headless(crate::input::TerminalKey::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        ));
+
+        let after = &app
+            .state
+            .agent_attachment_picker
+            .as_ref()
+            .expect("picker remains open")
+            .file_manager;
+        assert_eq!(after.cwd, child);
+        assert_eq!(
+            after.directory_generation,
+            before_generation.wrapping_add(1).max(1)
+        );
+        assert!(app.state.request_agent_attachment_delivery.is_none());
+    }
+
     #[test]
     fn attachment_picker_swallowing_unknown_key_preserves_background_terminal() {
         let td = TempDir::new("attachment-key-block");
