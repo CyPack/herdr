@@ -868,7 +868,7 @@ mod tests {
     // P5 WATCHER/APPLY: one accepted event prepares and applies exactly one
     // stable-path refresh; the drained second sync cannot churn generations.
     #[test]
-    fn watcher_refresh_uses_typed_prepare_apply_once() {
+    fn current_watcher_refresh_reconciles_by_stable_path() {
         let td = TempDir::new("typed-refresh-once");
         let selected = td.root.join("b.txt");
         std::fs::write(td.root.join("a.txt"), b"a").expect("write a");
@@ -1311,37 +1311,59 @@ mod tests {
     }
 
     #[test]
-    fn app_sync_binds_once_rebinds_on_cwd_change_and_stops_on_close() {
-        let first = TempDir::new("first");
-        let second = TempDir::new("second");
+    fn ancestor_revalidation_does_not_create_persistent_watcher() {
+        let tree = TempDir::new("ancestor-watcher");
+        let child = tree.root.join("child");
+        std::fs::create_dir(&child).expect("create watched child");
         let mut app = test_app();
 
         assert!(!app.sync_file_manager_watcher());
         assert!(!app.file_manager_watcher.has_backend());
 
         app.state
-            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&first.root)))
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&child)))
             .expect("Files activation");
         assert!(!app.sync_file_manager_watcher());
         assert_eq!(
             app.file_manager_watcher.watched_dir(),
-            Some(first.root.as_path())
+            Some(child.as_path())
         );
         assert!(app.file_manager_watcher.has_backend());
-        let first_generation = app.file_manager_watcher.generation();
+        let child_generation = app.file_manager_watcher.generation();
 
         assert!(!app.sync_file_manager_watcher());
-        assert_eq!(app.file_manager_watcher.generation(), first_generation);
+        assert_eq!(app.file_manager_watcher.generation(), child_generation);
 
         app.state
-            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&second.root)))
-            .expect("Files activation");
+            .file_manager
+            .as_mut()
+            .expect("file manager open")
+            .leave();
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .map(|file_manager| file_manager.cwd.as_path()),
+            Some(tree.root.as_path())
+        );
         assert!(!app.sync_file_manager_watcher());
         assert_eq!(
             app.file_manager_watcher.watched_dir(),
-            Some(second.root.as_path())
+            Some(tree.root.as_path())
         );
-        assert!(app.file_manager_watcher.generation() > first_generation);
+        assert!(app.file_manager_watcher.has_backend());
+        assert!(app.file_manager_watcher.generation() > child_generation);
+        let ancestor_generation = app.file_manager_watcher.generation();
+
+        assert!(
+            !app.sync_file_manager_watcher(),
+            "ancestor projection revalidation keeps the single current watcher stable"
+        );
+        assert_eq!(
+            app.file_manager_watcher.generation(),
+            ancestor_generation,
+            "no second persistent ancestor watcher may be created"
+        );
 
         app.state.file_manager = None;
         assert!(!app.sync_file_manager_watcher());
