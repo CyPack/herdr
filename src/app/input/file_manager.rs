@@ -1890,6 +1890,399 @@ mod tests {
     }
 
     #[test]
+    fn ten_thousand_miller_actions_preserve_all_invariants() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        const SEED: u64 = 0x5eed_cafe_f00d_2026;
+        const ACTION_COUNT: usize = 14;
+        const ADAPTER_SAMPLE_QUOTA: usize = 16;
+
+        let td = TempDir::new("miller-ten-thousand-actions");
+        let root = td.root.join("workspace");
+        fs::create_dir_all(&root).expect("create isolated stress workspace");
+        for directory in ["alpha", "bravo", "charlie"] {
+            fs::create_dir_all(root.join(directory)).expect("create branch fixture");
+        }
+        fs::write(root.join("root.txt"), b"x").expect("write root preview fixture");
+
+        let mut app = runtime_app_with_fm(FmState::new(&root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        let mut pressure_current = root.join("pressure-root");
+        let mut pressure_miller = crate::fm::miller::MillerState::seed(pressure_current.clone());
+        let mut random = SEED;
+        let mut action_counts = [0usize; ACTION_COUNT];
+        let mut adapter_sample_counts = [0usize; ACTION_COUNT];
+        let frames = [
+            Rect::ZERO,
+            Rect::new(0, 0, 1, 1),
+            Rect::new(0, 0, 40, 8),
+            Rect::new(0, 0, 90, 16),
+            Rect::new(0, 0, 180, 32),
+        ];
+
+        for step in 0..10_000usize {
+            random = random
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let action_index = ((random >> 32) as usize) % ACTION_COUNT;
+            action_counts[action_index] += 1;
+            let action = match action_index {
+                0 => "select",
+                1 => "enter-or-leave",
+                2 => "sibling-branch",
+                3 => "horizontal-scroll",
+                4 => "divider-preview-commit",
+                5 => "divider-preview-cancel",
+                6 => "terminal-resize",
+                7 => "watcher-create-delete-rename",
+                8 => "overlay-open-close",
+                9 => "files-close-reopen",
+                10 => "stale-worker-target-churn",
+                11 => "stale-row-after-revision",
+                12 => "viewport-branch-clamp",
+                13 => "cache-pressure-eviction",
+                _ => unreachable!("action index is modulo ACTION_COUNT"),
+            };
+            let before = app
+                .state
+                .file_manager
+                .as_ref()
+                .map(|file_manager| {
+                    format!(
+                        "open cwd={:?} chain={} resident={} first={} revision={} mode={:?} resize={}",
+                        file_manager.cwd,
+                        file_manager.miller.chain.len(),
+                        file_manager.miller.resident_non_current.len(),
+                        file_manager.miller.horizontal.first_visible,
+                        file_manager.miller.revision,
+                        app.state.mode,
+                        app.state.shell_interaction.miller_resize_active(),
+                    )
+                })
+                .unwrap_or_else(|| {
+                    format!(
+                        "closed mode={:?} resize={}",
+                        app.state.mode,
+                        app.state.shell_interaction.miller_resize_active()
+                    )
+                });
+
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                let frame = frames[((random >> 8) as usize) % frames.len()];
+                let sample_cross_layer_route = matches!(action_index, 3..=11)
+                    && adapter_sample_counts[action_index] < ADAPTER_SAMPLE_QUOTA;
+                if sample_cross_layer_route {
+                    adapter_sample_counts[action_index] += 1;
+                }
+
+                match action_index {
+                    0 => {
+                        if let Some(file_manager) = app.state.file_manager.as_mut() {
+                            if random & 1 == 0 {
+                                file_manager.move_down();
+                            } else {
+                                file_manager.move_up();
+                            }
+                        }
+                    }
+                    1 => {
+                        if let Some(file_manager) = app.state.file_manager.as_mut() {
+                            if file_manager.selected().is_some_and(|entry| entry.is_dir) {
+                                file_manager.enter();
+                            } else if file_manager.cwd != root {
+                                file_manager.leave();
+                            }
+                        }
+                    }
+                    2 => {
+                        if let Some(file_manager) = app.state.file_manager.as_mut() {
+                            if file_manager.cwd != root {
+                                file_manager.leave();
+                            }
+                            let branch =
+                                ["alpha", "bravo", "charlie"][((random >> 16) as usize) % 3];
+                            if let Some(index) = file_manager
+                                .entries
+                                .iter()
+                                .position(|entry| entry.path == root.join(branch))
+                            {
+                                assert!(file_manager.replace_selection(index));
+                                file_manager.enter();
+                            }
+                        }
+                    }
+                    3 => {
+                        if sample_cross_layer_route {
+                            compute_view(&mut app.state, frame);
+                            let kind = if random & 1 == 0 {
+                                MouseEventKind::ScrollLeft
+                            } else {
+                                MouseEventKind::ScrollRight
+                            };
+                            let _ = app.handle_miller_horizontal_scroll(kind, KeyModifiers::NONE);
+                        } else if let Some(file_manager) = app.state.file_manager.as_mut() {
+                            let last = file_manager.miller.chain.len().saturating_sub(1);
+                            file_manager.miller.horizontal.first_visible = if random & 1 == 0 {
+                                file_manager
+                                    .miller
+                                    .horizontal
+                                    .first_visible
+                                    .saturating_sub(1)
+                            } else {
+                                file_manager
+                                    .miller
+                                    .horizontal
+                                    .first_visible
+                                    .saturating_add(1)
+                                    .min(last)
+                            };
+                        }
+                    }
+                    4 | 5 => {
+                        if sample_cross_layer_route {
+                            compute_view(&mut app.state, frame);
+                            let divider =
+                                app.state.view.file_manager_miller.dividers.first().cloned();
+                            if let Some(divider) = divider {
+                                let _ = app.handle_file_manager_mouse(mouse(
+                                    MouseEventKind::Down(MouseButton::Left),
+                                    divider.rect.x,
+                                    divider.rect.y,
+                                ));
+                                let _ = app.handle_file_manager_mouse(mouse(
+                                    MouseEventKind::Drag(MouseButton::Left),
+                                    divider.rect.x.saturating_add(((random >> 24) as u16) % 12),
+                                    divider.rect.y.saturating_add(1),
+                                ));
+                                if action_index == 4 {
+                                    let _ = app.handle_file_manager_mouse(mouse(
+                                        MouseEventKind::Up(MouseButton::Left),
+                                        divider.rect.x.saturating_add(((random >> 24) as u16) % 12),
+                                        divider.rect.y.saturating_add(1),
+                                    ));
+                                } else {
+                                    assert!(app.handle_miller_resize_key(key(KeyCode::Esc)));
+                                }
+                            }
+                        } else if action_index == 4 {
+                            if let Some(file_manager) = app.state.file_manager.as_mut() {
+                                let _ = file_manager
+                                    .miller
+                                    .commit_column_width(0, ((random >> 24) as u16) % 96);
+                            }
+                        }
+                    }
+                    6 => {
+                        if sample_cross_layer_route {
+                            let resized =
+                                frames[((random >> 40) as usize).wrapping_add(step) % frames.len()];
+                            compute_view(&mut app.state, resized);
+                        }
+                    }
+                    7 => {
+                        let first = root.join(format!("dynamic-{}.txt", (random >> 20) % 8));
+                        let second = root.join(format!("dynamic-{}.txt", (random >> 28) % 8));
+                        match (random >> 48) % 3 {
+                            0 => {
+                                fs::write(&first, format!("{step}\n"))
+                                    .expect("create watcher stress entry");
+                            }
+                            1 => {
+                                let _ = fs::remove_file(&first);
+                            }
+                            _ => {
+                                fs::write(&first, format!("{step}\n"))
+                                    .expect("prepare watcher rename source");
+                                if first != second {
+                                    let _ = fs::remove_file(&second);
+                                    fs::rename(&first, &second)
+                                        .expect("rename watcher stress entry");
+                                }
+                            }
+                        }
+                        if let Some(file_manager) = app.state.file_manager.as_mut() {
+                            if file_manager.cwd == root {
+                                file_manager.reload();
+                            }
+                        }
+                        if sample_cross_layer_route {
+                            let now = Instant::now() + Duration::from_millis(step as u64);
+                            let _ = app.sync_file_manager_watcher_at(now);
+                        }
+                    }
+                    8 => {
+                        if sample_cross_layer_route {
+                            compute_view(&mut app.state, frame);
+                            let row = app
+                                .state
+                                .view
+                                .file_manager_miller
+                                .columns
+                                .iter()
+                                .flat_map(|column| column.rows.iter())
+                                .next()
+                                .cloned();
+                            if let Some(row) = row {
+                                let _ = app.handle_file_manager_mouse(mouse(
+                                    MouseEventKind::Down(MouseButton::Right),
+                                    row.rect.x,
+                                    row.rect.y,
+                                ));
+                                if app.state.context_menu.is_some() {
+                                    app.handle_context_menu_key_via_api(key(KeyCode::Esc));
+                                }
+                            }
+                        }
+                    }
+                    9 => {
+                        app.state.close_file_manager();
+                        if sample_cross_layer_route {
+                            let _ = app.sync_file_preview_worker();
+                            let _ = app.sync_image_preview_worker();
+                            let _ = app.sync_file_manager_watcher_at(Instant::now());
+                        }
+                        app.state
+                            .try_open_file_manager_with(|_| Some(FmState::new(&root)))
+                            .expect("stress Files reopen");
+                    }
+                    10 => {
+                        if sample_cross_layer_route {
+                            if let Some(file_manager) = app.state.file_manager.as_mut() {
+                                if file_manager.cwd != root {
+                                    file_manager.leave();
+                                }
+                                let root_file = root.join("root.txt");
+                                let root_file_index = file_manager
+                                    .entries
+                                    .iter()
+                                    .position(|entry| entry.path == root_file)
+                                    .expect("root preview fixture remains visible");
+                                assert!(file_manager.replace_selection(root_file_index));
+                            }
+                            let _ = app.sync_file_preview_worker();
+                            let _ = app.sync_image_preview_worker();
+                            if let Some(file_manager) = app.state.file_manager.as_mut() {
+                                file_manager.move_up();
+                            }
+                            let _ = app.sync_file_preview_worker();
+                            let _ = app.sync_image_preview_worker();
+                        } else if let Some(file_manager) = app.state.file_manager.as_mut() {
+                            file_manager.move_down();
+                            file_manager.move_up();
+                        }
+                    }
+                    11 => {
+                        let stale_row = sample_cross_layer_route.then(|| {
+                            compute_view(&mut app.state, frame);
+                            app.state
+                                .view
+                                .file_manager_miller
+                                .columns
+                                .iter()
+                                .flat_map(|column| column.rows.iter())
+                                .next()
+                                .cloned()
+                        });
+                        if let Some(file_manager) = app.state.file_manager.as_mut() {
+                            let _ = file_manager
+                                .miller
+                                .commit_column_width(0, ((random >> 24) as u16) % 96);
+                        }
+                        if let Some(Some(row)) = stale_row {
+                            let _ = app.handle_file_manager_mouse(mouse(
+                                MouseEventKind::Down(MouseButton::Left),
+                                row.rect.x,
+                                row.rect.y,
+                            ));
+                        }
+                    }
+                    12 => {
+                        if let Some(file_manager) = app.state.file_manager.as_mut() {
+                            file_manager.miller.horizontal.first_visible =
+                                file_manager.miller.chain.len().saturating_sub(1);
+                            if file_manager.cwd != root {
+                                file_manager.leave();
+                            }
+                        }
+                    }
+                    13 => {
+                        let departing = crate::fm::miller::MillerDirectoryProjection {
+                            id: pressure_miller.next_column_id(pressure_current.clone()),
+                            entries: Vec::new(),
+                            status: crate::fm::FmDirectoryStatus::Available,
+                            writable: true,
+                        };
+                        let next = root.join("pressure").join(step.to_string());
+                        pressure_miller.visit(next.clone(), Some(departing));
+                        pressure_current = next;
+                    }
+                    _ => unreachable!("action index is modulo ACTION_COUNT"),
+                }
+
+                let file_manager = app
+                    .state
+                    .file_manager
+                    .as_ref()
+                    .expect("every stress action completes with Files open");
+                assert_eq!(
+                    app.state.stage.surface_view(),
+                    crate::ui::surface_host::StageSurfaceView::NativeFiles,
+                    "the Files model and Stage surface must converge"
+                );
+                assert!(
+                    app.state.stage.active_instance_generation().is_some(),
+                    "open Files must retain a live Stage generation"
+                );
+                assert!(
+                    app.state.context_menu.is_none(),
+                    "overlay actions must close before the next transition"
+                );
+                file_manager.miller.assert_miller_invariants_for_test();
+                assert_eq!(
+                    file_manager.miller.focused_directory, file_manager.cwd,
+                    "operational cwd and Miller focus must converge"
+                );
+                pressure_miller.assert_miller_invariants_for_test();
+                if step % 256 == 0 {
+                    app.state.assert_invariants_for_test();
+                }
+            }));
+
+            assert!(
+                result.is_ok(),
+                "seed={SEED:#x} step={step} previous={before} action={action}"
+            );
+        }
+
+        assert!(
+            action_counts.iter().all(|count| *count > 0),
+            "seed={SEED:#x} must exercise every action category: {action_counts:?}"
+        );
+        for action_index in 3..=11 {
+            assert_eq!(
+                adapter_sample_counts[action_index], ADAPTER_SAMPLE_QUOTA,
+                "seed={SEED:#x} must exercise the bounded real adapter quota for action \
+                 {action_index}: {adapter_sample_counts:?}"
+            );
+        }
+        assert_eq!(
+            pressure_miller.chain.len(),
+            crate::fm::miller::MAX_MILLER_HISTORY_DEPTH,
+            "cache-pressure actions must fill and evict the bounded history"
+        );
+        assert!(
+            pressure_miller
+                .resident_non_current
+                .iter()
+                .all(|projection| projection.id.directory != pressure_current),
+            "cache-pressure actions must never evict current into resident storage"
+        );
+        app.state.assert_invariants_for_test();
+    }
+
+    #[test]
     fn stale_miller_revision_mouse_up_retires_capture_without_commit() {
         let td = TempDir::new("fm3-divider-stale-revision");
         td.file("00.txt");
