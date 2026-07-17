@@ -1560,6 +1560,11 @@ mod tests {
                 name: format!("{entry_idx:02}.txt"),
                 path: PathBuf::from("geometry-fixture").join(format!("{entry_idx:02}.txt")),
                 is_dir: false,
+                kind: if false {
+                    crate::fm::entry_kind::FileEntryKind::Directory
+                } else {
+                    crate::fm::entry_kind::FileEntryKind::RegularFile
+                },
                 operation_supported: true,
             })
             .collect()
@@ -1648,6 +1653,11 @@ mod tests {
             name: "current-only".to_string(),
             path: selected.clone(),
             is_dir: true,
+            kind: if true {
+                crate::fm::entry_kind::FileEntryKind::Directory
+            } else {
+                crate::fm::entry_kind::FileEntryKind::RegularFile
+            },
             operation_supported: true,
         }];
         fm.parent = Some(crate::fm::FmParent {
@@ -1656,12 +1666,22 @@ mod tests {
                     name: "current".to_string(),
                     path: current.clone(),
                     is_dir: true,
+                    kind: if true {
+                        crate::fm::entry_kind::FileEntryKind::Directory
+                    } else {
+                        crate::fm::entry_kind::FileEntryKind::RegularFile
+                    },
                     operation_supported: true,
                 },
                 FileEntry {
                     name: "parent-only.txt".to_string(),
                     path: parent.join("parent-only.txt"),
                     is_dir: false,
+                    kind: if false {
+                        crate::fm::entry_kind::FileEntryKind::Directory
+                    } else {
+                        crate::fm::entry_kind::FileEntryKind::RegularFile
+                    },
                     operation_supported: true,
                 },
             ],
@@ -1671,6 +1691,11 @@ mod tests {
             name: "preview-only.txt".to_string(),
             path: selected.join("preview-only.txt"),
             is_dir: false,
+            kind: if false {
+                crate::fm::entry_kind::FileEntryKind::Directory
+            } else {
+                crate::fm::entry_kind::FileEntryKind::RegularFile
+            },
             operation_supported: true,
         }]);
         fm.miller.visit(
@@ -1684,6 +1709,11 @@ mod tests {
                     name: "resident-only.txt".to_string(),
                     path: resident.join("resident-only.txt"),
                     is_dir: false,
+                    kind: if false {
+                        crate::fm::entry_kind::FileEntryKind::Directory
+                    } else {
+                        crate::fm::entry_kind::FileEntryKind::RegularFile
+                    },
                     operation_supported: true,
                 }],
                 status: FmDirectoryStatus::Available,
@@ -1736,6 +1766,11 @@ mod tests {
                     name: "FORBIDDEN_FAR_MARKER".to_string(),
                     path: far.join("FORBIDDEN_FAR_MARKER"),
                     is_dir: false,
+                    kind: if false {
+                        crate::fm::entry_kind::FileEntryKind::Directory
+                    } else {
+                        crate::fm::entry_kind::FileEntryKind::RegularFile
+                    },
                     operation_supported: true,
                 }],
                 status: FmDirectoryStatus::Available,

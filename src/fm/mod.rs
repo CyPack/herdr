@@ -11,6 +11,10 @@
 //! Design docs: `.local/prd/native-fm/` (A1-fs-reader.md, 00-MODULE-TREE.md).
 
 pub(crate) mod delete;
+// Removal condition for the allow: FIP-3.3/3.4 wire `classify_dir_entry` into
+// `read_directory_snapshot` and migrate consumers onto `FileEntryKind`.
+#[allow(dead_code)]
+pub(crate) mod entry_kind;
 pub(crate) mod image_preview;
 pub(crate) mod miller;
 mod natsort;
@@ -47,6 +51,11 @@ pub struct FileEntry {
     /// Whether the target resolves to a regular file or directory supported by
     /// the native operation surface. Special/broken targets fail closed.
     pub operation_supported: bool,
+    /// Canonical semantic kind prepared at snapshot time (symlink identity
+    /// preserved). Visual classification and capability checks derive from
+    /// this single source; `is_dir`/`operation_supported` stay consistent
+    /// bridges until the FIP-3.4 consumer migration completes.
+    pub kind: entry_kind::FileEntryKind,
 }
 
 /// Prepared availability of the exact current directory. Keeping the read
@@ -244,6 +253,7 @@ fn read_directory_snapshot(dir: &Path, show_hidden: bool) -> FmDirectorySnapshot
             Some(FileEntry {
                 is_dir,
                 operation_supported,
+                kind: entry_kind::classify_dir_entry(&entry),
                 path: entry.path(),
                 name,
             })
@@ -1340,6 +1350,11 @@ mod tests {
                 name: format!("{index:05}.txt"),
                 path: PathBuf::from(format!("/virtual/{index:05}.txt")),
                 is_dir: false,
+                kind: if false {
+                    crate::fm::entry_kind::FileEntryKind::Directory
+                } else {
+                    crate::fm::entry_kind::FileEntryKind::RegularFile
+                },
                 operation_supported: true,
             })
             .collect();
@@ -2129,6 +2144,11 @@ mod tests {
             name: "child".into(),
             path: child.clone(),
             is_dir: true,
+            kind: if true {
+                crate::fm::entry_kind::FileEntryKind::Directory
+            } else {
+                crate::fm::entry_kind::FileEntryKind::RegularFile
+            },
             operation_supported: true,
         }];
         state.directory_generation = 17;
@@ -2173,6 +2193,11 @@ mod tests {
             name: "child".into(),
             path: child.clone(),
             is_dir: true,
+            kind: if true {
+                crate::fm::entry_kind::FileEntryKind::Directory
+            } else {
+                crate::fm::entry_kind::FileEntryKind::RegularFile
+            },
             operation_supported: true,
         }];
         let request = state
@@ -2185,6 +2210,11 @@ mod tests {
                 name: "inside.txt".into(),
                 path: inside.clone(),
                 is_dir: false,
+                kind: if false {
+                    crate::fm::entry_kind::FileEntryKind::Directory
+                } else {
+                    crate::fm::entry_kind::FileEntryKind::RegularFile
+                },
                 operation_supported: true,
             }],
             status: FmDirectoryStatus::Available,
@@ -2195,6 +2225,11 @@ mod tests {
                     name: "child".into(),
                     path: child.clone(),
                     is_dir: true,
+                    kind: if true {
+                        crate::fm::entry_kind::FileEntryKind::Directory
+                    } else {
+                        crate::fm::entry_kind::FileEntryKind::RegularFile
+                    },
                     operation_supported: true,
                 }],
                 cursor: Some(0),
@@ -2237,12 +2272,22 @@ mod tests {
                 name: "a.txt".to_string(),
                 path: root.join("a.txt"),
                 is_dir: false,
+                kind: if false {
+                    crate::fm::entry_kind::FileEntryKind::Directory
+                } else {
+                    crate::fm::entry_kind::FileEntryKind::RegularFile
+                },
                 operation_supported: true,
             },
             FileEntry {
                 name: "b.txt".to_string(),
                 path: selected_path.clone(),
                 is_dir: false,
+                kind: if false {
+                    crate::fm::entry_kind::FileEntryKind::Directory
+                } else {
+                    crate::fm::entry_kind::FileEntryKind::RegularFile
+                },
                 operation_supported: true,
             },
         ];
@@ -2275,12 +2320,22 @@ mod tests {
                     name: "b.txt".to_string(),
                     path: selected_path.clone(),
                     is_dir: false,
+                    kind: if false {
+                        crate::fm::entry_kind::FileEntryKind::Directory
+                    } else {
+                        crate::fm::entry_kind::FileEntryKind::RegularFile
+                    },
                     operation_supported: true,
                 },
                 FileEntry {
                     name: "c.txt".to_string(),
                     path: root.join("c.txt"),
                     is_dir: false,
+                    kind: if false {
+                        crate::fm::entry_kind::FileEntryKind::Directory
+                    } else {
+                        crate::fm::entry_kind::FileEntryKind::RegularFile
+                    },
                     operation_supported: true,
                 },
             ],
@@ -2327,6 +2382,11 @@ mod tests {
             name: "b.txt".to_string(),
             path: selected_path.clone(),
             is_dir: false,
+            kind: if false {
+                crate::fm::entry_kind::FileEntryKind::Directory
+            } else {
+                crate::fm::entry_kind::FileEntryKind::RegularFile
+            },
             operation_supported: true,
         }];
         base.directory_generation = 11;
@@ -2340,12 +2400,22 @@ mod tests {
                     name: "b.txt".to_string(),
                     path: selected_path,
                     is_dir: false,
+                    kind: if false {
+                        crate::fm::entry_kind::FileEntryKind::Directory
+                    } else {
+                        crate::fm::entry_kind::FileEntryKind::RegularFile
+                    },
                     operation_supported: true,
                 },
                 FileEntry {
                     name: "c.txt".to_string(),
                     path: root.join("c.txt"),
                     is_dir: false,
+                    kind: if false {
+                        crate::fm::entry_kind::FileEntryKind::Directory
+                    } else {
+                        crate::fm::entry_kind::FileEntryKind::RegularFile
+                    },
                     operation_supported: true,
                 },
             ],
@@ -2435,6 +2505,11 @@ mod tests {
             name: "child".into(),
             path: child.clone(),
             is_dir: true,
+            kind: if true {
+                crate::fm::entry_kind::FileEntryKind::Directory
+            } else {
+                crate::fm::entry_kind::FileEntryKind::RegularFile
+            },
             operation_supported: true,
         }];
         let request = state
@@ -3621,6 +3696,50 @@ mod tests {
             assert!(
                 !by_name("broken").is_dir && !by_name("broken").operation_supported,
                 "a broken symlink lists as an unsupported file"
+            );
+        }
+    }
+
+    // TP-FIP-ICON-01..05 at the snapshot seam: the prepared canonical kind
+    // preserves symlink identity, and the bridge fields stay consistent with
+    // the kind-derived capabilities for every listed entry.
+    #[test]
+    fn snapshot_prepares_canonical_entry_kinds() {
+        use super::entry_kind::FileEntryKind;
+        let td = TempDir::new("kind-snapshot");
+        fs::create_dir_all(td.root.join("dir")).expect("dir");
+        fs::write(td.root.join("file.txt"), b"x").expect("file");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(td.root.join("dir"), td.root.join("link-dir"))
+                .expect("link-dir");
+            std::os::unix::fs::symlink(td.root.join("file.txt"), td.root.join("link-file"))
+                .expect("link-file");
+            std::os::unix::fs::symlink(td.root.join("missing"), td.root.join("broken"))
+                .expect("broken");
+        }
+        let snapshot = read_directory_snapshot(&td.root, false);
+        let kind_of = |name: &str| {
+            snapshot
+                .entries
+                .iter()
+                .find(|entry| entry.name == name)
+                .expect("entry present")
+                .kind
+        };
+        assert_eq!(kind_of("dir"), FileEntryKind::Directory);
+        assert_eq!(kind_of("file.txt"), FileEntryKind::RegularFile);
+        #[cfg(unix)]
+        {
+            assert_eq!(kind_of("link-dir"), FileEntryKind::SymlinkDirectory);
+            assert_eq!(kind_of("link-file"), FileEntryKind::SymlinkFile);
+            assert_eq!(kind_of("broken"), FileEntryKind::BrokenSymlink);
+        }
+        for entry in &snapshot.entries {
+            assert_eq!(entry.is_dir, entry.kind.is_directory_target());
+            assert_eq!(
+                entry.operation_supported,
+                entry.kind.supports_native_operation()
             );
         }
     }

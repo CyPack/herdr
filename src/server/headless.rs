@@ -4399,6 +4399,11 @@ mod tests {
                 name: name.to_owned(),
                 path: cwd.join(name),
                 is_dir: false,
+                kind: if false {
+                    crate::fm::entry_kind::FileEntryKind::Directory
+                } else {
+                    crate::fm::entry_kind::FileEntryKind::RegularFile
+                },
                 operation_supported: true,
             })
             .collect();

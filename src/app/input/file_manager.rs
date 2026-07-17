@@ -4522,6 +4522,11 @@ mod tests {
                         name: format!("{index:02}.txt"),
                         path: resident.join(format!("{index:02}.txt")),
                         is_dir: false,
+                        kind: if false {
+                            crate::fm::entry_kind::FileEntryKind::Directory
+                        } else {
+                            crate::fm::entry_kind::FileEntryKind::RegularFile
+                        },
                         operation_supported: true,
                     })
                     .collect(),
@@ -5450,6 +5455,11 @@ mod tests {
                 name: format!("{index:05}.txt"),
                 path: PathBuf::from(format!("/virtual/{index:05}.txt")),
                 is_dir: false,
+                kind: if false {
+                    crate::fm::entry_kind::FileEntryKind::Directory
+                } else {
+                    crate::fm::entry_kind::FileEntryKind::RegularFile
+                },
                 operation_supported: true,
             })
             .collect();
@@ -5476,6 +5486,11 @@ mod tests {
                 name: format!("{index:05}.txt"),
                 path: PathBuf::from(format!("/virtual/{index:05}.txt")),
                 is_dir: false,
+                kind: if false {
+                    crate::fm::entry_kind::FileEntryKind::Directory
+                } else {
+                    crate::fm::entry_kind::FileEntryKind::RegularFile
+                },
                 operation_supported: true,
             })
             .collect();
