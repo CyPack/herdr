@@ -691,6 +691,32 @@ mod tests {
             4,
             "preview directory rows are clipped to the same bounded content height"
         );
+
+        // FM3 RED: every actionable row must carry its own complete
+        // generation-safe column authority. A consumer may not authorize a
+        // click by combining a bare row index with whichever column happens
+        // to occupy the same rectangle in a later frame.
+        for column in snapshot
+            .columns
+            .iter()
+            .filter(|column| !column.rows.is_empty())
+        {
+            for row in &column.rows {
+                let identity = format!("{row:?}");
+                for required in [
+                    "files_generation: 9",
+                    "model_revision: 1",
+                    "source_generation:",
+                    "column_kind:",
+                    "directory_path:",
+                ] {
+                    assert!(
+                        identity.contains(required),
+                        "projected row lacks `{required}` authority: {identity}"
+                    );
+                }
+            }
+        }
     }
 
     // FM1.3: the nine plan widths — at most five columns, every visible
