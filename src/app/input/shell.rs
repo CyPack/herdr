@@ -722,8 +722,7 @@ mod tests {
         let bounds = ResizeBounds::new(3, 9, 1, 80).expect("dock bounds");
 
         // Growing far beyond the maximum clamps to the frozen 9-cell cap.
-        let mut transaction =
-            ResizeTransaction::begin(divider, 7, Position::new(5, 3), [5, 75]);
+        let mut transaction = ResizeTransaction::begin(divider, 7, Position::new(5, 3), [5, 75]);
         let tx = transaction.as_mut().expect("dock transaction");
         assert!(tx.preview(Position::new(200, 3), bounds));
         let update = ResizeTransaction::commit(&mut transaction, 7);
@@ -734,8 +733,7 @@ mod tests {
         );
 
         // Shrinking below the minimum clamps to the frozen 3-cell floor.
-        let mut transaction =
-            ResizeTransaction::begin(divider, 7, Position::new(5, 3), [5, 75]);
+        let mut transaction = ResizeTransaction::begin(divider, 7, Position::new(5, 3), [5, 75]);
         let tx = transaction.as_mut().expect("dock transaction");
         assert!(tx.preview(Position::new(0, 3), bounds));
         let update = ResizeTransaction::commit(&mut transaction, 7);
@@ -743,8 +741,7 @@ mod tests {
 
         // A stale view generation stays inert — the same guard every shell
         // divider already obeys.
-        let mut transaction =
-            ResizeTransaction::begin(divider, 7, Position::new(5, 3), [5, 75]);
+        let mut transaction = ResizeTransaction::begin(divider, 7, Position::new(5, 3), [5, 75]);
         let tx = transaction.as_mut().expect("dock transaction");
         assert!(tx.preview(Position::new(200, 3), bounds));
         let update = ResizeTransaction::commit(&mut transaction, 8);
