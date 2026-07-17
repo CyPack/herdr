@@ -622,7 +622,14 @@ impl FmState {
             return false;
         }
 
+        let departing_directory = self.cwd.clone();
         let departing = self.departing_projection();
+        if prepared.request.reason == FmNavigationReason::Enter {
+            // Bind the entered child to its source segment before ownership
+            // transfer so the resident column can highlight the exact path.
+            self.miller
+                .bind_focused_child(&departing_directory, &prepared.request.target_directory);
+        }
         self.clear_multi_selection();
         self.cwd = prepared.request.target_directory.clone();
         self.entries = prepared.entries;

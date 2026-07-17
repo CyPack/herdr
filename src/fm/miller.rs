@@ -142,6 +142,19 @@ impl MillerState {
     /// stays bounded to the nearest segments around the new focus; the cache
     /// evicts by least-recent visible/focused transition and NEVER holds the
     /// current directory.
+    /// Bind the exact child path a navigation departed through to its source
+    /// segment. `cursor` stays a derived cache value; this path identity is
+    /// the resident-selection authority (TP-FIP-FOCUS-01).
+    pub(crate) fn bind_focused_child(&mut self, directory: &Path, child: &Path) {
+        if let Some(segment) = self
+            .chain
+            .iter_mut()
+            .find(|segment| segment.directory == directory)
+        {
+            segment.focused_child = Some(child.to_path_buf());
+        }
+    }
+
     pub(crate) fn visit(
         &mut self,
         directory: PathBuf,
