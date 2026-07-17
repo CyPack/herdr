@@ -4390,6 +4390,27 @@ mod tests {
         )
     }
 
+    fn open_virtual_miller_files(server: &mut HeadlessServer) {
+        let cwd = PathBuf::from("/virtual/miller-transport");
+        let mut file_manager = crate::fm::FmState::test_empty(cwd.clone());
+        file_manager.entries = ["alpha.txt", "bravo.txt"]
+            .into_iter()
+            .map(|name| crate::fm::FileEntry {
+                name: name.to_owned(),
+                path: cwd.join(name),
+                is_dir: false,
+                operation_supported: true,
+            })
+            .collect();
+        server.app.state.mobile_width_threshold = 0;
+        server.app.state.sidebar_collapsed = true;
+        server
+            .app
+            .state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("open virtual Miller Files");
+    }
+
     fn retained_test_server(
         initial_screen: &[u8],
     ) -> (
@@ -7224,6 +7245,151 @@ next_tab = ""
             client_rx.recv_timeout(Duration::from_millis(50)).is_err(),
             "identical frame should not be sent twice"
         );
+    }
+
+    #[test]
+    fn identical_miller_frame_sends_no_payload() {
+        let mut server = test_headless_server();
+        open_virtual_miller_files(&mut server);
+        let (client_tx, _client_control_rx, client_rx) = test_client_writer();
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (120, 40),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(client_tx),
+            ),
+        );
+        server.foreground_client_id = Some(1);
+        server.sync_foreground_client_state();
+        server.resize_shared_runtime_to_effective_size();
+
+        server.render_and_stream();
+        let first = read_server_frame(
+            client_rx
+                .recv_timeout(Duration::from_millis(100))
+                .expect("first Miller frame"),
+        );
+        assert!(
+            frame_text(&first).contains("alpha.txt"),
+            "first transport frame must contain the active Miller surface"
+        );
+
+        server.render_and_stream();
+        assert!(
+            client_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+            "a logically identical Miller frame must produce zero payload"
+        );
+        assert!(!server.clients.get(&1).expect("client").render_pending);
+    }
+
+    #[test]
+    fn miller_render_queue_remains_single_slot() {
+        let mut server = test_headless_server();
+        open_virtual_miller_files(&mut server);
+        let (client_tx, _client_control_rx, client_rx) = test_client_writer();
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (120, 40),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(client_tx),
+            ),
+        );
+        server.foreground_client_id = Some(1);
+        server.sync_foreground_client_state();
+        server.resize_shared_runtime_to_effective_size();
+
+        server.render_and_stream();
+        server
+            .app
+            .state
+            .file_manager
+            .as_mut()
+            .expect("open Files")
+            .move_down();
+        server.render_and_stream();
+
+        assert!(
+            server.clients.get(&1).expect("client").render_pending,
+            "backpressure must retain one retry intent instead of enqueueing another frame"
+        );
+        let first = read_server_frame(
+            client_rx
+                .recv_timeout(Duration::from_millis(100))
+                .expect("single queued frame"),
+        );
+        assert!(frame_text(&first).contains("alpha.txt"));
+        assert!(
+            client_rx.recv_timeout(Duration::from_millis(20)).is_err(),
+            "the render channel must contain at most one pending payload"
+        );
+
+        assert!(server.handle_server_event(ServerEvent::ClientWriterDrained { client_id: 1 }));
+        server.render_and_stream();
+        let latest = read_server_frame(
+            client_rx
+                .recv_timeout(Duration::from_millis(100))
+                .expect("retry frame after drain"),
+        );
+        assert_ne!(
+            first, latest,
+            "the retry must carry the latest Miller state"
+        );
+        assert!(!server.clients.get(&1).expect("client").render_pending);
+        assert!(
+            client_rx.recv_timeout(Duration::from_millis(20)).is_err(),
+            "drain retry must still leave no second queued payload"
+        );
+    }
+
+    #[tokio::test]
+    async fn one_miller_row_change_does_not_force_unrelated_runtime_mutation() {
+        let (mut server, client_rx, pane_id) = retained_test_server(b"terminal sentinel");
+        open_virtual_miller_files(&mut server);
+        server.render_and_stream();
+        let _ = client_rx
+            .recv_timeout(Duration::from_millis(100))
+            .expect("initial Files frame");
+        let runtime = server
+            .app
+            .state
+            .runtime_for_pane_in_workspace(&server.app.terminal_runtimes, 0, pane_id)
+            .expect("test-owned terminal runtime");
+        let before_size = runtime.current_size();
+        let before_history = runtime.snapshot_history();
+
+        server
+            .app
+            .state
+            .file_manager
+            .as_mut()
+            .expect("open Files")
+            .move_down();
+        server.render_and_stream();
+        let changed = read_server_frame(
+            client_rx
+                .recv_timeout(Duration::from_millis(100))
+                .expect("changed Miller frame"),
+        );
+        assert!(frame_text(&changed).contains("bravo.txt"));
+
+        let runtime = server
+            .app
+            .state
+            .runtime_for_pane_in_workspace(&server.app.terminal_runtimes, 0, pane_id)
+            .expect("same test-owned terminal runtime");
+        assert_eq!(runtime.current_size(), before_size);
+        assert_eq!(runtime.snapshot_history(), before_history);
+        shutdown_test_runtimes(&mut server);
     }
 
     #[tokio::test]
