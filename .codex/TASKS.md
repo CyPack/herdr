@@ -73,7 +73,7 @@ then the plan's Tasks 2-29 in order.
   re-resolution/fail-closed behavior.
 - [x] **FIP-2.4 GREEN** Add one unique-path resolver and absent-selection
   projection; never substitute an unrelated first row.
-- [ ] **FIP-2.5** Cover four-plus-level chains, branch retirement, leave/revisit,
+- [x] **FIP-2.5** Cover four-plus-level chains, branch retirement, leave/revisit,
   viewport clamp, empty/root/unavailable/permission states, and stale hits.
 - [x] **FIP-2.6** Add Playwright `TP-FIP-VIS-02` proof of exact-path highlight.
 
