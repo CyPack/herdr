@@ -1165,6 +1165,47 @@ mod tests {
         std::fs::remove_dir_all(root).expect("remove temp root");
     }
 
+    // P1.4: the inline preview is existing published Files behavior. A
+    // snapshot cutover must type and place it instead of silently dropping it.
+    #[test]
+    fn windowed_projection_preserves_inline_preview_column() {
+        let cwd = std::env::current_dir().expect("current directory");
+        let mut file_manager = crate::fm::FmState::new(cwd.clone());
+        file_manager.miller.chain =
+            std::iter::once(crate::fm::miller::MillerPathSegment::new(cwd.clone())).collect();
+        file_manager.miller.focused_directory = cwd;
+
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.mobile_width_threshold = 0;
+        app.sidebar_collapsed = true;
+        app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
+        app.try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+
+        compute_view(&mut app, Rect::new(0, 0, 16, 16));
+        assert_eq!(
+            app.view.file_manager_miller.columns.len(),
+            1,
+            "one-column width must keep the operational current directory visible"
+        );
+
+        compute_view(&mut app, Rect::new(0, 0, 33, 16));
+        assert_eq!(
+            app.view.file_manager_miller.columns.len(),
+            2,
+            "two-column width must preserve current plus the inline preview column"
+        );
+        assert_eq!(
+            app.view.file_manager_miller.dividers.len(),
+            1,
+            "current and inline preview are separated by one projected divider"
+        );
+    }
+
     // P1 RED: the pure FM1.3 geometry exists, but production `compute_view`
     // must consume it and persist the clamped horizontal origin. This uses a
     // prepared in-memory logical chain; compute is forbidden from loading any
