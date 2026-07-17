@@ -616,6 +616,107 @@ mod tests {
     }
 
     #[test]
+    fn committed_resize_requests_at_most_one_image_target() {
+        let temp = TempDir::new("committed-resize-target");
+        std::fs::write(temp.root.join("sample.png"), encoded_png(160, 80))
+            .expect("write PNG fixture");
+        let mut app = test_app();
+        app.image_preview_cell_size = HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        app.state
+            .try_open_file_manager_with(|_| Some(FmState::new(&temp.root)))
+            .expect("Files activation");
+        let frame = Rect::new(0, 0, 90, 16);
+        crate::ui::compute_view(&mut app.state, frame);
+
+        assert!(
+            app.sync_image_preview_worker(),
+            "initial committed geometry starts one target"
+        );
+        let (original_target, _, _) = wait_for_ready(&mut app);
+        let generation_before = app.image_preview_worker.slot.generation;
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .get(1)
+            .expect("three-column projection exposes the preview divider")
+            .clone();
+        assert!(
+            app.begin_miller_resize_capture(divider.rect.x, divider.rect.y),
+            "the typed divider starts capture"
+        );
+        let bounds = crate::ui::shell::ResizeBounds::new(
+            crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
+            crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
+            crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
+            crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
+        );
+        assert!(
+            bounds.is_some_and(|bounds| app.state.shell_interaction.preview_resize(
+                Position::new(divider.rect.x.saturating_add(4), u16::MAX),
+                bounds,
+            )),
+            "the typed transaction previews the new pair"
+        );
+        crate::ui::compute_view(&mut app.state, frame);
+        for _ in 0..100 {
+            assert!(
+                !app.sync_image_preview_worker(),
+                "preview sync cannot submit an image target"
+            );
+        }
+        assert_eq!(
+            app.image_preview_worker.slot.generation, generation_before,
+            "preview produces zero worker generations"
+        );
+
+        assert!(
+            app.commit_miller_resize(),
+            "the valid transaction commits once"
+        );
+        assert!(
+            !app.sync_image_preview_worker(),
+            "release before committed compute still sees transient geometry"
+        );
+        assert_eq!(
+            app.image_preview_worker.slot.generation, generation_before,
+            "release alone cannot submit a target"
+        );
+
+        crate::ui::compute_view(&mut app.state, frame);
+        assert!(
+            app.sync_image_preview_worker(),
+            "the first committed frame starts one replacement target"
+        );
+        assert_eq!(
+            app.image_preview_worker.slot.generation,
+            generation_before + 1,
+            "commit requests at most one new target generation"
+        );
+        let (committed_target, _, _) = wait_for_ready(&mut app);
+        assert_ne!(
+            committed_target, original_target,
+            "the exercised divider changes the target geometry"
+        );
+        assert_eq!(
+            app.image_preview_worker.slot.generation,
+            generation_before + 1,
+            "completion cannot create another target generation"
+        );
+        assert!(
+            !app.sync_image_preview_worker(),
+            "the committed Ready target remains stable"
+        );
+    }
+
+    #[test]
     fn stale_precommit_image_completion_is_rejected() {
         let temp = TempDir::new("stale-precommit");
         std::fs::write(temp.root.join("sample.png"), encoded_png(160, 80))

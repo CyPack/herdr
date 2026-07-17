@@ -1952,6 +1952,225 @@ mod tests {
     }
 
     #[test]
+    fn reloaded_divider_generation_fails_closed_without_commit() {
+        let td = TempDir::new("fm3-divider-stale-directory-generation");
+        td.file("00.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        let frame = Rect::new(0, 0, 86, 16);
+        compute_view(&mut app.state, frame);
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .first()
+            .expect("current Files projection exposes a divider")
+            .clone();
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                divider.rect.x,
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Drag(MouseButton::Left),
+                divider.rect.x.saturating_add(4),
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+
+        let (before_directory_generation, before_revision) = {
+            let file_manager = app.state.file_manager.as_ref().expect("open FM");
+            (
+                file_manager.directory_generation,
+                file_manager.miller.revision,
+            )
+        };
+        app.state.file_manager.as_mut().expect("open FM").reload();
+        let after_reload_model = {
+            let file_manager = app.state.file_manager.as_ref().expect("open FM");
+            assert!(
+                file_manager.directory_generation > before_directory_generation,
+                "reload retires the captured directory generation"
+            );
+            assert_eq!(
+                file_manager.miller.revision, before_revision,
+                "reload isolates source generation from Miller model revision"
+            );
+            file_manager.miller.clone()
+        };
+
+        compute_view(&mut app.state, frame);
+        assert!(
+            !app.state.view.file_manager_miller.resize_preview_active,
+            "a generation-stale divider cannot own transient geometry"
+        );
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Up(MouseButton::Left),
+                divider.rect.x.saturating_add(4),
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert!(
+            !app.state.shell_interaction.miller_resize_active(),
+            "stale release retires the typed capture"
+        );
+        assert_eq!(
+            app.state.file_manager.as_ref().expect("open FM").miller,
+            after_reload_model,
+            "a retired directory generation cannot commit any Miller width"
+        );
+    }
+
+    #[test]
+    fn evicted_or_reordered_divider_fails_closed() {
+        let td = TempDir::new("fm3-divider-reordered-chain");
+        td.dir("child");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        let frame = Rect::new(0, 0, 90, 16);
+        compute_view(&mut app.state, frame);
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .get(1)
+            .expect("current/preview divider is visible")
+            .clone();
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                divider.rect.x,
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Drag(MouseButton::Left),
+                divider.rect.x.saturating_add(4),
+                u16::MAX,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+
+        let captured_revision = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .miller
+            .revision;
+        app.state.file_manager.as_mut().expect("open FM").enter();
+        {
+            let file_manager = app.state.file_manager.as_ref().expect("open FM");
+            assert_eq!(
+                file_manager.cwd,
+                td.root.join("child"),
+                "real navigation replaces the captured current/preview adjacency"
+            );
+            assert!(
+                file_manager.miller.revision > captured_revision,
+                "chain transition retires the captured model revision"
+            );
+        }
+
+        compute_view(&mut app.state, frame);
+        assert!(
+            !app.state.view.file_manager_miller.resize_preview_active,
+            "the reordered chain cannot project the retired divider"
+        );
+        let reordered_model = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .miller
+            .clone();
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Up(MouseButton::Left),
+                divider.rect.x.saturating_add(4),
+                u16::MAX,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert!(
+            !app.state.shell_interaction.miller_resize_active(),
+            "stale release retires capture after chain replacement"
+        );
+        assert_eq!(
+            app.state.file_manager.as_ref().expect("open FM").miller,
+            reordered_model,
+            "the old divider cannot replay a width into the reordered chain"
+        );
+    }
+
+    #[test]
+    fn mouse_up_without_miller_capture_is_inert() {
+        let td = TempDir::new("fm3-divider-stray-mouse-up");
+        td.file("00.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 86, 16));
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .first()
+            .expect("current Files projection exposes a divider")
+            .rect;
+        let before_model = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .miller
+            .clone();
+        assert!(
+            !app.state.shell_interaction.miller_resize_active(),
+            "precondition: no transaction owns this release"
+        );
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Up(MouseButton::Left),
+                divider.x,
+                divider.y,
+            )),
+            FileManagerMouseDispatch::Consumed,
+            "Files consumes an in-surface stray release without inventing capture"
+        );
+        assert!(
+            !app.state.shell_interaction.miller_resize_active(),
+            "stray release cannot create transaction authority"
+        );
+        assert_eq!(
+            app.state.file_manager.as_ref().expect("open FM").miller,
+            before_model,
+            "stray release cannot mutate widths or revision"
+        );
+    }
+
+    #[test]
     fn terminal_resize_cancels_stale_miller_transaction() {
         let td = TempDir::new("fm3-divider-terminal-resize");
         td.file("00.txt");
@@ -2210,6 +2429,133 @@ mod tests {
             ),
             (before_revision + 1, expected_widths),
             "Enter performs exactly one final model commit"
+        );
+    }
+
+    #[test]
+    fn first_miller_divider_resizes_expected_pair() {
+        let td = TempDir::new("fm3-first-divider");
+        td.dir("child");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        let frame = Rect::new(0, 0, 90, 16);
+        compute_view(&mut app.state, frame);
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .first()
+            .expect("three-column projection exposes the first divider")
+            .clone();
+        assert_eq!(
+            (divider.left_column, divider.right_column),
+            (0, 1),
+            "the first divider owns only the left/current pair"
+        );
+        let leading_chain_index = app.state.view.file_manager_miller.columns[divider.left_column]
+            .kind
+            .chain_index()
+            .expect("first leading column belongs to the Miller chain");
+        let trailing_chain_index = app.state.view.file_manager_miller.columns[divider.right_column]
+            .kind
+            .chain_index()
+            .expect("first trailing column belongs to the Miller chain");
+        let original_geometry = app
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .map(|column| column.rect.width)
+            .collect::<Vec<_>>();
+        let (before_revision, before_widths) = {
+            let file_manager = app.state.file_manager.as_ref().expect("open FM");
+            (
+                file_manager.miller.revision,
+                file_manager
+                    .miller
+                    .chain
+                    .iter()
+                    .map(|segment| segment.preferred_width)
+                    .collect::<Vec<_>>(),
+            )
+        };
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                divider.rect.x,
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Drag(MouseButton::Left),
+                divider.rect.x.saturating_add(4),
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        compute_view(&mut app.state, frame);
+        let preview_geometry = app
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .map(|column| column.rect.width)
+            .collect::<Vec<_>>();
+        let mut expected_geometry = original_geometry.clone();
+        expected_geometry[divider.left_column] += 4;
+        expected_geometry[divider.right_column] -= 4;
+        assert_eq!(
+            preview_geometry, expected_geometry,
+            "preview changes only the first adjacent pair"
+        );
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Up(MouseButton::Left),
+                divider.rect.x.saturating_add(4),
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        let file_manager = app.state.file_manager.as_ref().expect("open FM");
+        let mut expected_widths = before_widths;
+        expected_widths[leading_chain_index] = expected_geometry[divider.left_column];
+        expected_widths[trailing_chain_index] = expected_geometry[divider.right_column];
+        assert_eq!(
+            (
+                file_manager.miller.revision,
+                file_manager
+                    .miller
+                    .chain
+                    .iter()
+                    .map(|segment| segment.preferred_width)
+                    .collect::<Vec<_>>(),
+            ),
+            (before_revision + 1, expected_widths),
+            "commit updates only the first divider's exact adjacent preferences"
+        );
+
+        compute_view(&mut app.state, frame);
+        let committed_geometry = app
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .map(|column| column.rect.width)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            committed_geometry, expected_geometry,
+            "fresh geometry keeps the committed first-divider result"
         );
     }
 
