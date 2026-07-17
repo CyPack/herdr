@@ -239,6 +239,7 @@ fn compute_view_internal(
     resize_panes: bool,
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
+    app.cancel_miller_resize_for_terminal_area(area.width);
     if app
         .shell_resize_original_total()
         .is_some_and(|original_total| original_total != area.width)

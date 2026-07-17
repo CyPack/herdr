@@ -287,6 +287,19 @@ impl AppState {
         self.clear_sidebar_resize_drag();
     }
 
+    pub(crate) fn cancel_miller_resize_for_terminal_area(&mut self, new_total: u16) {
+        let previous_total = self.view.shell.area.width;
+        if previous_total == 0
+            || previous_total == new_total
+            || !self.shell_interaction.miller_resize_active()
+        {
+            return;
+        }
+        let update = self.shell_interaction.cancel_resize();
+        debug_assert!(!update.marks_persistence_dirty());
+        debug_assert!(!update.requests_pty_resize());
+    }
+
     pub(crate) fn rebase_sidebar_resize_generation(&mut self, generation: u64) {
         self.shell_interaction.rebase_resize_generation(generation);
     }
