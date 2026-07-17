@@ -133,3 +133,39 @@ pub(crate) fn duration_since(name: &'static str, started: Option<Instant>) {
 pub(crate) fn flush_if_due() {
     with_profiler(RenderProfiler::flush_if_due);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_profiler_is_bounded_and_resettable() {
+        const EXPECTED_MAX_LABELS_PER_KIND: usize = 128;
+        let mut profiler = RenderProfiler::new();
+
+        for index in 0..(EXPECTED_MAX_LABELS_PER_KIND * 2) {
+            let counter_name: &'static str =
+                Box::leak(format!("test.counter.{index}").into_boxed_str());
+            let duration_name: &'static str =
+                Box::leak(format!("test.duration.{index}").into_boxed_str());
+            profiler.increment(counter_name, 1);
+            profiler.duration(duration_name, Duration::from_micros(index as u64));
+        }
+
+        assert!(
+            profiler.counters.len() <= EXPECTED_MAX_LABELS_PER_KIND,
+            "counter labels must stay bounded, got {}",
+            profiler.counters.len()
+        );
+        assert!(
+            profiler.durations.len() <= EXPECTED_MAX_LABELS_PER_KIND,
+            "duration labels must stay bounded, got {}",
+            profiler.durations.len()
+        );
+
+        profiler.window_started = Instant::now() - Duration::from_secs(2);
+        profiler.flush_if_due();
+        assert!(profiler.counters.is_empty());
+        assert!(profiler.durations.is_empty());
+    }
+}
