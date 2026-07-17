@@ -1,79 +1,46 @@
-# NEXT SESSION TRIGGER — Herdr Shell Foundation / Native FM
+# NEXT SESSION TRIGGER — Herdr Files Interaction Polish
 
 Updated: 2026-07-17 CEST
 
-## CURRENT OVERRIDE — PROGRAM COMPLETE; DO NOT AUTO-START DEFERRED WORK
+Continue `/home/ayaz/projects/herdr` on branch `feat/native-fm` from the
+canonical Files Interaction Polish handoff. This is `mid_flight_adoption`.
+Do not restart the project, reimplement completed SF/FM work, infer state from
+chat memory, or begin with a lower-priority task.
 
-The approved SF0-SF6 + FM1-FM5 program is complete. P7 is published at
-`059612b4`; FM5 selected measured NO-GO for RightPanel/hybrid placement and
-keeps inline preview with no product diff.
+## Exact Objective
 
-No active Native-FM implementation task remains. A new session must not infer
-authorization for the paused change-pipeline bridge, trigger-gated S5, S7, or
-Apps/Desktop. Await an explicit user-selected next objective.
+Deliver the user-approved Files Interaction Polish program:
 
-Canonical decision:
-`.codex/evidence/fm5-preview-placement-decision.md`.
+1. visible default-sidebar Files primary click opens Native Files Stage;
+2. Spaces/Projects restore Terminal Stage client-locally without changing
+   pane/terminal/runtime identity;
+3. Miller resident columns highlight the exact child path entered, never a
+   fabricated row-zero fallback;
+4. directory/file/symlink/broken/special kinds receive deterministic semantic
+   icons with Nerd and ASCII one-cell profiles;
+5. `Add Reference to Agent...` targets an explicit live agent and inserts an
+   exact safe UTF-8 file or directory path only;
+6. no CR, LF, Enter, submit, implicit whitespace, implicit Claude split/chat,
+   retry queue, or hot retry;
+7. Rust semantic tests, deterministic Ratatui cells, Playwright Chromium,
+   isolated mouse, PTY byte capture, full platform gates, performance and
+   cleanup evidence close the program.
 
-## CURRENT OVERRIDE — FINISH P7 PUBLICATION, THEN FM5
-
-P0-P7 implementation and verification are closed at product head `d7997d0d`.
-Do not rerun the isolated runtime matrix unless new code changes its behavior.
-
-Exact next action:
-
-1. review and commit the P7 evidence/continuity unit;
-2. prove clean diff, stable socket, and CyPack fast-forward ancestry;
-3. publish only to CyPack `feat/native-fm` and `master`; verify exact refs;
-4. execute FM5 as an evidence-only A/B/C placement comparison;
-5. choose explicit GO/NO-GO; production RightPanel code requires a separately
-   approved TDD micro-plan.
-
-P7 gates: targeted 245/245, platform/input 146/146, deterministic failure
-substitutions 10/10, full Rust 3,443/3,443 plus one named skip,
-Linux/Windows Clippy, Bun 17/17, Python 64/64. Release p95 is
-10us/14us compute and 1,153us/4,115us frame at 120x40/240x80. Fresh CLI graph:
-21,056/97,919. The built-in MCP channel remains stale at 21,041/97,701 and
-must not be represented as fresh.
-
-## CURRENT OVERRIDE — RESUME P7 ONLY
-
-P0–P6 of the Miller production completion PRD are closed at verified product
-head `9e1d63bf`. Do not resume any older FM1/FM2 wiring instruction below.
-
-Exact next action:
-
-1. read `.local/ISOLATED-DEV-TEST.md`;
-2. run P7 only with unique throwaway XDG roots and sockets;
-3. never touch stable Herdr, inherited sockets, or user processes;
-4. capture the practical runtime/platform/cleanup evidence;
-5. rerun final gates and publish only to CyPack `feat/native-fm` + `master`.
-
-Current gates: P6 18/18, targeted Miller 244/244, full Rust 3,437/3,437 plus
-one named skip, Linux/Windows Clippy, Bun 17/17, Python 64/64. Release p95:
-compute 17us/9us and frame 1,057us/4,804us at 120x40/240x80. CLI graph:
-21,041 nodes / 97,701 edges. Long-lived MCP transport is unavailable and must
-not be presented as fresh. Both CyPack refs remain at published P5 `c2624470`
-until P7 closes.
-
-Continue `/home/ayaz/projects/herdr` on branch `feat/native-fm`. This is a
-`mid_flight_adoption` continuation. Do not restart the project, discard valid
-work, reimplement completed modules, or infer state from chat memory.
+Drag-and-drop, Apps/Desktop, server protocol expansion, speculative
+ComponentRegistry, popup framework, and unrelated change-pipeline work are
+out of scope.
 
 ## Mandatory Start Order — No Skips
 
 1. Read `/home/ayaz/projects/herdr/AGENTS.md` completely.
 2. Read `/home/ayaz/projects/herdr/CLAUDE.md` completely.
-3. Use project skill `$herdr-native-fm`.
-4. Before executing that skill, read all of its lessons:
+3. Use `$herdr-native-fm`.
+4. Before executing that skill, completely read:
    - `.codex/skills/herdr-native-fm/lessons/errors.md`
    - `.codex/skills/herdr-native-fm/lessons/golden-paths.md`
    - `.codex/skills/herdr-native-fm/lessons/edge-cases.md`
    - `/home/ayaz/.codex/skills/_shared/common-errors.md`
-5. Load `rust-dev` and its lessons before Rust work. If its symlink still
-   resolves to a missing target, report that honestly; do not claim it loaded
-   and do not mutate global tooling without separate authorization.
-6. Read, in exact order:
+5. Read these canonical files completely and in order:
    - `.codex/BOOTSTRAP.md`
    - `.codex/CURRENT.md`
    - `.codex/TASKS.md`
@@ -81,292 +48,250 @@ work, reimplement completed modules, or infer state from chat memory.
    - `.codex/HANDOFF.md`
    - `.codex/MEMORY.md`
    - `.planning/STATE.md`
-   - `.codex/evidence/shell-foundation-sf4-stage-progress.md`
-7. Read the approved design/implementation sources relevant to SF4:
-   - `docs/superpowers/specs/2026-07-15-herdr-shell-foundation-v0-design.md`
-   - `docs/superpowers/plans/2026-07-15-herdr-shell-file-manager-program-plan.md`
-   - `docs/superpowers/plans/2026-07-15-herdr-shell-foundation-v0-implementation.md`
-   - `docs/superpowers/plans/2026-07-15-herdr-file-manager-post-shell-implementation.md`
-8. Before any manual runtime test, read `.local/ISOLATED-DEV-TEST.md` and use
-   its throwaway-XDG, cleared-socket contract exactly.
+   - `.codex/NEXT-SESSION-PROMPT.md`
+6. Read the approved design completely:
+   - `docs/superpowers/specs/2026-07-17-herdr-files-interaction-polish-design.md`
+7. Audit Git and remotes before edits:
+
+   ```bash
+   git status --short --branch
+   git log --oneline --decorate -12
+   git remote -v
+   git rev-parse HEAD
+   git ls-remote origin refs/heads/feat/native-fm refs/heads/master
+   ```
+
+8. Preserve every unrelated/user-owned change. `.superpowers/` is untracked,
+   user-owned, and must never be edited, staged, deleted, or cleaned.
+9. Use Codebase Memory before grep/glob for every code-discovery question.
+10. Recount and copy every unchecked canonical task into the in-session task
+    list with continuation lines intact.
 
 ## Mandatory Task-List Trigger
 
-Immediately create/update the in-session task list from every unchecked item
-in both canonical registries. Do not summarize away, merge, silently drop, or
-renumber tasks.
+Expected canonical inventory:
 
-At this handoff there are:
+- `.codex/TASKS.md`: 54 unchecked product/deferred tasks;
+- `.codex/CHANGE-PIPELINE-TASKS.md`: 89 unchecked paused tooling tasks;
+- total: 143;
+- `.codex/HANDOFF.md` section 8: exact 143-block copy.
 
-- 36 unchecked product/Shell/FM/deferred items in `.codex/TASKS.md`.
-- 89 unchecked non-product pipeline items in
-  `.codex/CHANGE-PIPELINE-TASKS.md`.
-- 125 unchecked items total, copied exactly into `.codex/HANDOFF.md` section 8.
+Recount all three and compare exact task blocks. If count or text differs,
+stop before code and reconcile CURRENT/TASKS/HANDOFF.
 
-Recount them. If counts differ, stop before code and reconcile the registry,
-handoff, and current state. Mark only one product microtask `in_progress`:
-the first SF6.1 RED. Keep every later product task pending and the
-non-product pipeline paused.
+Status assignment:
 
-Priority is mandatory:
+- set only **FIP-G.1** to `in_progress`;
+- keep FIP-G.2 and FIP-0 through FIP-6 pending;
+- keep S5/S7 trigger-gated;
+- keep change-pipeline T3.1-T10.9 paused;
+- never choose an easier lower-priority task.
 
-1. P0 ACTIVE: FM1 horizontal Miller viewport. FM1.1 REDs + FM1.2 core
-   model are CLOSED (`5e8616e0`/`68ded90b`, `src/fm/miller.rs`, bounds
-   32/5/16-28-64, LRU never-current, generation-checked resolution).
-   Next: FM1.2 App integration, FM1.3 viewport, FM2 drag-resize (the
-   custom-layout target). Evidence:
-   `.codex/evidence/shell-foundation-sf6-files-stage-progress.md`. The
-   custom-layout target guide (scrollable Miller area + edge drag-resize
-   columns + SSH performance architecture) lives locally at
-   `docs/superpowers/specs/2026-07-17-herdr-custom-layout-architecture-guide.md`.
-2. P0 NEXT: SF4.3 -> SF4.4 -> SF5 -> SF6 -> FM1 -> FM2 -> FM3 -> FM4
-   -> FM5.
-3. P1 PAUSED: `herdr-change-pipeline` T3.1-T10.9, until the current sequential
-   product phase closes.
-4. P2 LATER, separately authorized: Apps/Desktop, real TopBar/BottomBar/
-   RightPanel consumers, btop/Music/terminal app definitions and launcher.
-5. P3 trigger-gated: arbitrary S5 ComponentRegistry and S7 popup stack.
+## Exact First Work
 
-Do not jump to a lower priority because it is easier. Do not mix product,
-continuity, and pipeline files in one commit.
+FIP-G.1 is planning, not Rust:
 
-## Current Verified Truth
+1. Announce and load `superpowers:writing-plans`.
+2. Read its `SKILL.md` and required lessons completely.
+3. Use the approved design as the single product contract.
+4. Produce a code-level TDD implementation plan containing:
+   - exact files and symbols;
+   - current owner and target owner;
+   - every one of the 55 unique `TP-FIP-*` IDs;
+   - exact RED test names and expected failure;
+   - reason each RED proves behavior rather than compile failure;
+   - minimum GREEN seam;
+   - refactor boundary;
+   - focused, broad, visual, PTY, platform, and full commands;
+   - expected counts/results;
+   - edge/failure/security/resource/performance cases;
+   - atomic RED/GREEN/refactor commit subjects;
+   - rollback boundary;
+   - graph refresh and CyPack-only publication.
+5. Complete FIP-G.2 by reconciling that plan against fresh graph snippets,
+   call paths, data flows, current gate commands, and non-goals.
+6. Do not write Rust until both planning tasks are demonstrably complete.
 
-- Branch: `feat/native-fm`.
-- Verified product head: `b1c4aec2` (`feat: drag miller trio dividers
-  to resize columns` — FM2.2 drag-resize LANDED end-to-end).
-- Separate test-stability commit `3c853a70` closed the parallel-load
-  process-exit suppression flake class in `src/terminal/state.rs`.
-- SF0-SF5 are ALL closed (SF4.1 8/8, SF4.2 8/8 at `20f659c1`, SF4.3 6/6
-  at `f973740e`, SF5.1 `cb0c77fd`, SF5.2 `d031ef26`). The active phase is
-  SF6 (Files-to-Stage migration).
-- Closed SF4.1 pairs:
-  - `557bcc77` / `6a18f0c7`: default Terminal Stage.
-  - `f22bdac4` / `b9180de3`: Files activation history.
-  - `96e6cddb` / `d20403d0`: singleton reactivation.
-  - `27ad2a79` / `e8ef80ac`: fixed 16-instance bound.
-  - `207c9da3` / `f31ab28a`: checked generation exhaustion.
-  - `a5e5bace` / `e1c82036`: close restores Terminal.
-  - `056f0879` / `f0f32075`: failed open restores exact Stage/focus.
-  - `784fdc2e` / `944a9d4c`: stage switches preserve terminal runtime
-    (`AppDefinition`/`LaunchPolicy` + pure `StageState::surface_view()`).
-- Next work: the FM1.3/FM2.2 WIRING (render the windowed chain, scroll
-  input, divider mouse capture through the SF3 transaction into
-  `commit_column_width`) — the exact recipe is in the FM1 evidence
-  "Exact Next Microtask". Evidence:
-  `.codex/evidence/fm1-miller-viewport-progress.md`.
-- Legacy `AppState.file_manager: Option<FmState>` curtain still renders. Do
-  not remove it until SF6.
-- `previous_pane_focus` is existing pane history, not the new SF4.2 focus
-  router; `overlay_return_mode` is the client-local overlay focus-restore
-  seam, never persisted.
-- Protocol remains 16. SF4.1 and SF4.2 stayed client-local presentation
-  state.
-- Full current gate: Nextest 3,345/3,345 passed plus one named B0 skip
-  (`--no-fail-fast`), Linux all-target Clippy, Windows MSVC bin Clippy,
-  fmt, diff and added-production-`unwrap()` clean (Bun/Python last green
-  at the SF6 gate `887471c2`).
-- Both CyPack refs equal exact SHA
-  `b1c4aec2e034651ad3ceb8d74f2e4aa02426c4fa`.
-- User-owned `.superpowers/` is untracked and must never be staged or edited.
+## Codebase Memory Protocol
 
-## Mandatory Git and Remote Audit
+Canonical project:
 
-Run before edits:
-
-```bash
-git status --short --branch
-git log --oneline -12
-git remote -v
-git rev-parse HEAD
-git ls-remote origin refs/heads/feat/native-fm refs/heads/master
+```text
+home-ayaz-projects-herdr
 ```
 
-Expected policy:
+Required discovery order:
 
-- `origin` = writable CyPack fork.
-- `upstream` = read-only `ogulcancelik/herdr`; never push it.
-- Never `git add -A`, force, reset/discard user changes, or publish a RED-only
-  remote tip.
-- Standing authorization exists for targeted atomic commits and CyPack-only
-  fast-forward pushes after fresh verification.
+1. `get_architecture`
+2. `search_graph`
+3. `trace_path` with `calls` or `data_flow`
+4. `get_code_snippet` using an exact qualified name returned by graph search
+5. `query_graph` for complex ownership/edge questions
+6. graph-augmented `search_code`
+7. grep only for strings/config/non-code or when graph evidence is insufficient
 
-If local/remote SHA differs from `.codex/CURRENT.md`, analyze the drift before
-editing. Never overwrite remote work.
+Final handoff graph evidence:
 
-## Mandatory Codebase Memory / Architecture Audit
+- 21,064 nodes / 98,009 edges;
+- major packages: app 2,615; ui 968; pane 715; fm 457; server 407;
+- single-worker CLI and built-in MCP agree;
+- FIP-G.1 is found in six canonical continuity modules;
+- `focused_child` and current handoff send/fail-closed seams are present;
+- freshness was verified from current symbols, not `ready` alone.
 
-Use Codebase Memory MCP before grep for code discovery:
+Root-cause hypotheses already supported by graph/source evidence and requiring
+fresh-plan confirmation:
 
-1. `index_status(project="home-ayaz-projects-herdr")`.
-2. Search `AppState.try_open_file_manager_with`.
-3. Search `miller_layout`.
-4. Read the exact transaction source via `get_code_snippet`.
-5. Locate and trace the frozen SF1 terminal-runtime preservation test/fixture.
-6. Use `trace_path` for runtime ownership and current callers.
-7. Use `get_architecture` when ownership is unclear.
+- default ShellLayout has no AppDock; sidebar tab route changes visual tab but
+  does not invoke existing Files Stage activation;
+- `MillerPathSegment.focused_child` is not populated; resident projection falls
+  back to a cursor initialized at zero;
+- directory snapshot capability reduction discards symlink identity and row
+  render has no semantic icon classification;
+- current handoff delivery appends carriage return and can prepare an implicit
+  Claude split for a non-agent target;
+- existing `agent_panel_entries`, target identity lookup, and bounded terminal
+  input seam can be reused instead of adding runtime ownership.
 
-Do not trust `ready` alone. The fresh sequential store at handoff is 20,396
-nodes / 93,372 edges and contains `StageState.surface_view`,
-launch-policy-consulting `activate_files`, and `miller_layout`. A new session
-must prove current symbols and snippet content before accepting freshness.
-
-If refresh is required, do not restart/kill the proxy or user processes. Use:
+After committed changes, refresh the graph with the safe single-worker route if
+the long-lived channel is stale:
 
 ```bash
 CBM_WORKERS=1 codebase-memory-mcp cli index_repository \
   '{"repo_path":"/home/ayaz/projects/herdr","mode":"fast","persistence":false}'
 ```
 
-Then verify status, new symbol, old `miller_layout`, and exact source snippet.
-Label CLI evidence honestly if the built-in transport remains stale.
+Do not restart/kill the MCP proxy or any user process. Re-query changed recent
+symbols after indexing.
 
-## Adoption Checkpoint — Show Before Code
+## TDD and Test-Point Protocol
 
-Report all of the following in commentary before editing:
+Before each production edit:
 
-1. Preserved current commits/diffs/user files.
-2. A0-A7 status and any gaps for this microtask.
-3. Current I0-I14 delivery phase.
-4. Current architecture owners: Stage presentation versus terminal runtime.
-5. The exact next microtask and why it is the smallest dependency-safe slice.
-6. RED test name, what it tests, expected result, and reason.
-7. Failure/setup conditions that do not count as RED.
-8. Owned files and forbidden files.
-9. RED/GREEN commit boundaries.
-10. Verification and CyPack-only publication boundary.
+1. identify exact test point(s);
+2. state current behavior;
+3. state expected behavior;
+4. state expected RED failure and why;
+5. add a compile-valid behavior test;
+6. run it and read the actual failure;
+7. commit RED separately;
+8. implement minimum GREEN;
+9. run focused + regression tests;
+10. commit GREEN separately;
+11. refactor only behind green tests;
+12. run proportionate and final gates.
 
-## Exact Next TDD Slice
+Never accept:
 
-Write the compile-valid table-driven behavior RED:
+- a test that passes before the product change;
+- compile failure as behavioral RED;
+- snapshot-only semantic authority;
+- manual “looks right” without automated evidence;
+- skipped Playwright as success;
+- “should work” completion language;
+- hidden failing tests or unverified platform claims.
 
-```text
-shell_input_router_follows_frozen_precedence
-```
+Required non-happy-path families include:
 
-Test points to announce first:
+- mouse modifiers/buttons/releases/outside coordinates;
+- overlay/capture precedence and hidden background;
+- collapsed/tiny/resized layouts;
+- stale generations and stale typed hits;
+- deep Miller chain, reorder/delete/hide/branch retirement;
+- duplicate/malformed/missing exact path;
+- empty/root/permission/unavailable directories;
+- symlink target types, broken symlink and special entries;
+- mixed-case extensions, dotfiles, Unicode, long and control names;
+- exact display-cell truncation and no icon/action overlap;
+- target disappearance, terminal identity replacement and non-agent state;
+- path deletion/kind change between picker and delivery;
+- control/non-UTF-8 rejection;
+- busy/full channel, exact-once, cancellation and zero retry;
+- payload audit proving zero CR/LF/Enter/submit;
+- zero process/socket/temp residue.
 
-| Test point | Expected result | Reason |
-|---|---|---|
-| Precedence table rows (overlay, active capture, overlapping topmost hit, focused component, page shortcut, global shortcut, no target) | Exactly one owner per event following overlay -> capture -> active Stage surface -> shell/page -> global; the no-target row is inert | Input authority must be explicit and total before SF4.3 blocking and SF6 migration rely on it |
-| Stale hit generation | Consumed without action | Old coordinates must never become authority |
-| Collapsed/inert region focus | Cannot receive focus | Hidden geometry must not own input |
-| Hidden background target | No fall-through to hidden terminal input | Fixes the reported curtain/input leak class |
-| Recovery (terminal resize, surface close/failure, focus target disappearance, capture cancellation) | One valid owner restored without replay, duplicate action, or stuck capture | The router must fail closed under lifecycle churn |
+## Playwright Chromium Visual Contract
 
-Follow `docs/superpowers/plans/2026-07-15-herdr-shell-foundation-v0-implementation.md`
-Task SF4.2 for the complete RED list. Compile failure, reactor panic,
-environment/setup failure, rejected/zero-test filter, flaky timing, or an
-already-green characterization is not a valid RED.
+Playwright is mandatory for visual acceptance but is not the semantic source of
+truth.
 
-Planned RED commit:
+- Export exact Ratatui TestBackend cells through test-only code.
+- Browser renders a deterministic monospace cell grid.
+- Canonical cross-machine snapshots use ASCII icon profile.
+- Nerd profile mappings are tested in Rust exact-cell tests.
+- Pin viewport, DPR, font, locale, timezone, color scheme and motion.
+- Use one CI worker.
+- Ordinary CI cannot update snapshots.
+- Missing/malformed fixture and missing browser fail explicitly.
+- A controlled one-cell mutation must fail its snapshot.
+- Capture screenshot on failure and trace on first retry.
 
-```text
-test: define shell focus and input ownership
-```
+Before any manual or physical test, read `.local/ISOLATED-DEV-TEST.md`.
+Clear inherited Herdr socket variables and use unique throwaway XDG/socket
+state. Never touch installed stable Herdr or its socket.
 
-After observing the correct assertion failure, implement only the minimum
-GREEN: one bounded focus/capture router shared by mouse and keyboard, routing
-through the frozen `ShellView` hit list. It must not add:
+## Architecture Guardrails
 
-- AppDock rendering;
-- Files Stage rendering migration;
-- protocol/server/pane/tab/workspace/terminal identities;
-- watcher, preview, operation, process or filesystem behavior;
-- dependency or snapshot change;
-- change-pipeline tooling;
-- unrelated refactor.
+- `AppState` stays pure data; runtime stays separate.
+- `compute_view()` owns geometry/mutation; `render()` is pure.
+- no filesystem/config/process/socket reads in icon render;
+- shared runtime facts remain server/API; FIP presentation state remains TUI;
+- no private TUI socket protocol expansion;
+- no production `unwrap()`;
+- no unbounded history/cache/queue/worker;
+- one bounded terminal send attempt;
+- generation/path/terminal identity is authority, never coordinates alone;
+- stale and ambiguous state consumes inert/fails closed;
+- no new Rust dependency unless existing dependencies cannot satisfy a proven
+  need and the plan explicitly justifies it.
 
-Planned GREEN commit:
+## Git and Publication Protocol
 
-```text
-feat: route shell input through semantic ownership
-```
+- Acting account: CyPack, external contributor/fork.
+- Never push upstream and never open upstream issue/PR.
+- Preserve existing valid history; no reset/checkout destruction.
+- Use exact-path staging only, never `git add -A`.
+- Review staged file list and staged diff before every commit.
+- Commit style: lowercase conventional, no emoji, no AI co-author.
+- One concern per commit; RED/GREEN/refactor separate.
+- Product, continuity and non-product pipeline concerns do not mix.
+- Fetch before publication.
+- Prove fast-forward ancestry for both CyPack refs.
+- Push only:
+  - `origin HEAD:feat/native-fm`
+  - `origin HEAD:master`
+- Verify both remote SHAs equal local HEAD.
+- Verify tracked worktree clean; `.superpowers/` may remain untracked and
+  untouched.
 
-Do not push the RED alone. Close the pair locally, then run proportional
-overlay/FM-input/sidebar/terminal-input/router tests. Before SF4.2 closure run
-broad regressions and the full direct `just check` equivalent.
+## Stop Conditions
 
-## Verification Contract
+Stop before mutation and report exact evidence if:
 
-`just` is absent. The applicable direct `check` recipe is:
+- task inventory does not reconcile;
+- Git ancestry or remote ownership differs;
+- unrelated tracked product changes exist;
+- graph is stale and cannot be safely refreshed;
+- a required skill/lesson is unavailable;
+- RED does not fail for the expected behavior;
+- three fixes hit the same blocker without new evidence;
+- Chromium/Playwright visual gate cannot run;
+- stable socket isolation cannot be proven;
+- any full/platform gate remains failing;
+- requested publication is non-fast-forward or targets upstream.
 
-```bash
-cargo fmt --check
-cargo clippy --all-targets --locked -- -D warnings
-cargo nextest run --locked --status-level fail --final-status-level fail \
-  --failure-output final --success-output never
-bun test src/integration/assets/herdr-agent-state.test.ts
-(cd workers/plugin-marketplace && bun test)
-LIBGHOSTTY_VT_SIMD=false cargo clippy --bin herdr --locked \
-  --target x86_64-pc-windows-msvc -- -D warnings
-python3 -m unittest \
-  scripts.test_agent_detection_manifest_check \
-  scripts.test_changelog \
-  scripts.test_docs_translation_parity \
-  scripts.test_preview \
-  scripts.test_vendor_libghostty_vt \
-  scripts.test_vendor_portable_pty
-```
+## Completion Definition
 
-Also run staged/product diff checks, added production `unwrap()` audit,
-ignored-test inventory, private operation/staging residue scan when applicable,
-and exact test count. Poll every live command session until explicit exit code.
+Do not claim FIP complete until every condition in `.codex/HANDOFF.md`
+section 11 is freshly proven and recorded. In particular: all 55 test points,
+exact resident focus, semantic icons, explicit live-agent picker, exact
+path-only no-submit payload, all fail-closed cases, Playwright/PTY/runtime/full
+gates, budgets, zero residue, fresh graph, atomic history, continuity updates,
+and exact CyPack remote SHA equality.
 
-## Git Publication Contract
+## Start Now
 
-1. Target-stage only owned files.
-2. Inspect staged names/stat and `git diff --cached --check`.
-3. Use lowercase conventional commit, no emoji, no AI co-author.
-4. Run fresh proportional gates; full gates before phase publication.
-5. Fetch origin feature/master and prove fast-forward ancestry.
-6. Push sequentially only to CyPack:
-
-```bash
-git push origin HEAD:feat/native-fm
-git push origin HEAD:master
-```
-
-7. Verify exact remote SHA equality.
-8. Reindex graph after committed product changes and prove current symbols/
-   snippets, not `ready` alone.
-9. Update `.codex/CURRENT.md`, `.codex/TASKS.md`, `.codex/HANDOFF.md`,
-   `.planning/STATE.md`, and relevant evidence as a separate continuity commit.
-
-## Non-Negotiable Safety
-
-- Never kill/restart user processes, terminals, browsers, editors, Herdr, or
-  MCP proxy processes.
-- Never touch installed stable Herdr or inherited stable socket.
-- Runtime testing uses cleared Herdr socket/session variables and throwaway
-  XDG roots from `.local/ISOLATED-DEV-TEST.md`.
-- Never stage/edit `.superpowers/`.
-- Never push `upstream`, force, open upstream issues/PRs, or bypass the external
-  contributor guardrail.
-- No production `unwrap()`.
-- Render stays pure; filesystem/runtime work remains in refresh/App paths.
-- Topmost overlays consume input; hidden background terminal input is inert.
-- Test failure paths, stale identities, capacity/generation exhaustion,
-  close/reopen, cancellation, platform cfg, tiny geometry, and resource bounds;
-  do not close on happy-path-only evidence.
-
-## Required Handoff Maintenance
-
-Before ending the next session:
-
-1. Leave no RED-only HEAD, failed test, warning, temp artifact, or uncertain
-   process/socket state.
-2. Update all canonical state/task/evidence files with exact commits, run IDs,
-   counts, graph source/count, remote SHAs, and next microtask.
-3. Re-extract every unchecked item from both registries into the handoff and
-   prove exact diff/count equality; do not summarize away tasks.
-4. Keep completed, active, pending, paused, trigger-gated, and later-authorized
-   lanes explicitly separate.
-5. Produce/update this trigger prompt and open it in a text editor if the user
-   requests a new handoff.
-
-Start command:
-
-```bash
-herdr-codex
-```
+Read the mandatory sources, reconstruct the exact 143-item task list, verify
+Git and graph truth, set only FIP-G.1 in progress, and produce the detailed
+code-level TDD plan. Do not ask which task to do and do not start Rust before
+FIP-G.2 closes.

@@ -1,5 +1,40 @@
 # Current State — 2026-07-17
 
+> **CURRENT OVERRIDE — FILES INTERACTION POLISH ACTIVE.** The previously
+> approved SF0-SF6 + FM1-FM5 program remains complete and published. A new,
+> bounded user-approved correction program is active:
+> `docs/superpowers/specs/2026-07-17-herdr-files-interaction-polish-design.md`.
+> It fixes visible sidebar Files activation, exact-path Miller resident-column
+> highlight, semantic file/directory/symlink/special icons, and explicit
+> `Add Reference to Agent...` delivery to a selected live agent. Drag-and-drop
+> is explicitly out of scope. Delivery inserts exact safe UTF-8 path bytes
+> only: no CR, LF, Enter, automatic submit, implicit whitespace, or implicit
+> Claude split/chat. Files and directories are supported; stale source/target,
+> changed terminal identity, control/non-UTF-8 path, and backpressure fail
+> closed. Required visual evidence uses Playwright Chromium over deterministic
+> Ratatui cell fixtures; Rust/TTY tests remain semantic authority.
+>
+> The next executable task is **FIP-G.1**, not Rust implementation:
+> `superpowers:writing-plans` must produce the code-level TDD plan, then
+> FIP-G.2 must reconcile it against all 55 `TP-FIP-*` IDs and a fresh graph.
+> The canonical graph project is `home-ayaz-projects-herdr`; the final
+> single-worker refresh and built-in MCP agree at 21,064 nodes / 98,009 edges.
+> Fresh graph search finds FIP-G.1 in all six canonical continuity modules,
+> `MillerPathSegment.focused_child` only at its field/constructor, and the
+> current agent-handoff send/fail-closed test family. The local design chain
+> begins `fc76f648` -> `f097f6c7`; the commit containing this override is the
+> continuity publication target and its exact SHA must match both CyPack refs.
+> There are
+> 54 unchecked product-registry items and 89 paused change-pipeline items,
+> 143 total. Only FIP-G.1 may become in progress in the next session.
+> S5/S7 remain trigger-gated; change-pipeline remains paused. Never touch the
+> stable Herdr/socket or user-owned `.superpowers/`.
+>
+> Fresh continuity gate: task-copy 143/143 exact, 55 unique `TP-FIP-*`,
+> Markdown references and `git diff --check` clean; Nextest run
+> `4da2ee18-b784-4c38-aaab-98a2e8787511` is 3,443/3,443 plus one named skip;
+> Linux and Windows Clippy pass; Bun is 5/5 + 12/12; Python is 64/64.
+
 > CURRENT OVERRIDE — SHELL/NATIVE-FM PROGRAM COMPLETE. P7 was published to
 > both CyPack refs at `059612b4`. FM5 measured A inline, B RightPanel, and C
 > hybrid across the required size/depth/state/failure/interaction matrix.

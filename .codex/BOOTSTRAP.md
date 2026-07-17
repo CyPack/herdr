@@ -32,7 +32,10 @@ Follow this sequence before changing code.
 
 Verify Git and graph freshness against `.codex/CURRENT.md`, then resume the
 first priority-eligible unchecked microtask in `.codex/TASKS.md`. At the
-2026-07-16 checkpoint that is SF4.1
-`stage_surface_switch_does_not_destroy_terminal_runtime`; the non-product
-change-pipeline queue is paused. Preserve atomic commit concerns and push only
-the CyPack fork after fresh evidence.
+2026-07-17 checkpoint that is **FIP-G.1**: load
+`superpowers:writing-plans` and turn the approved Files Interaction Polish
+design into a code-level TDD implementation plan. Do not edit Rust before
+FIP-G.2 reconciles every `TP-FIP-*` point with fresh graph and gate evidence.
+The non-product change-pipeline queue and trigger-gated S5/S7 remain paused.
+Preserve atomic commit concerns and push only the CyPack fork after fresh
+evidence.

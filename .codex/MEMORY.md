@@ -18,6 +18,19 @@
 
 ## Current Decision Ledger
 
+- The user approved the bounded Files Interaction Polish program on
+  2026-07-17. Its canonical design is
+  `docs/superpowers/specs/2026-07-17-herdr-files-interaction-polish-design.md`.
+  Drag-and-drop is excluded. The next task is FIP-G.1 planning through
+  `superpowers:writing-plans`, not an immediate Rust edit.
+- The FIP no-submit invariant is absolute: the selected safe UTF-8 file or
+  directory path is inserted once into an explicitly selected live agent
+  terminal with no CR/LF/Enter, submit, implicit whitespace, or implicit
+  split/chat. All stale identity, path-kind, control-character, and
+  backpressure cases fail closed.
+- FIP visual acceptance requires Playwright Chromium driven by deterministic
+  Ratatui cell fixtures, while Rust and isolated PTY tests retain semantic and
+  byte-level authority.
 - The user approved twelve ordered phases: SF0-SF6 followed by FM1-FM5.
   Apps/Desktop is a later independent program.
 - SF0-SF3 are closed. Named/typed bounded shell geometry, cached semantic hits,

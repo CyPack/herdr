@@ -2,6 +2,30 @@
 
 - Updated: 2026-07-17
 - Branch: `feat/native-fm`
+- Active program: **Files Interaction Polish (FIP)**. The approved design is
+  `docs/superpowers/specs/2026-07-17-herdr-files-interaction-polish-design.md`.
+- Exact next action: FIP-G.1, use `superpowers:writing-plans` to create a
+  code-level TDD plan; then FIP-G.2 reconciles exact symbols, 55 test-point
+  IDs, failure paths, gates, commits, and graph evidence before Rust edits.
+- Approved scope: sidebar Files mouse activation, Miller exact-child focus,
+  semantic entry kinds/icons, and explicit `Add Reference to Agent...`.
+- Excluded scope: drag-and-drop, auto-submit/Enter, implicit Claude split/chat,
+  protocol/runtime ownership expansion, speculative ComponentRegistry, popup
+  framework, Apps/Desktop, and unrelated change-pipeline implementation.
+- Open registry: 54 product items plus 89 paused non-product items = 143.
+  Only FIP-G.1 is priority eligible; S5/S7 remain trigger-gated.
+- Local design chain: `fc76f648` -> `f097f6c7`; both CyPack refs were still at
+  `b7d4217c` before this handoff publication.
+- Canonical graph project: `home-ayaz-projects-herdr`; final single-worker CLI
+  refresh and built-in MCP agree at 21,064 nodes / 98,009 edges and find
+  current FIP continuity plus `focused_child`/handoff send seams.
+- Fresh handoff gates: exact task copy 143/143, 55 unique test points,
+  Nextest 3,443/3,443 plus one skip (run
+  `4da2ee18-b784-4c38-aaab-98a2e8787511`), Linux/Windows Clippy, Bun
+  5/5 + 12/12, Python 64/64, fmt/diff/reference checks clean.
+- Safety: never touch stable Herdr/inherited sockets; use
+  `.local/ISOLATED-DEV-TEST.md` for later runtime work; never stage
+  user-owned `.superpowers/`.
 - Final override: the approved SF0-SF6 + FM1-FM5 program is complete. P7 was
   published at `059612b4`; FM5 selected evidence-backed NO-GO for RightPanel
   and hybrid placement and preserves inline preview without product mutation.

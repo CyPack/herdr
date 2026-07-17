@@ -1,5 +1,142 @@
 # Durable Tasks — Herdr Native FM
 
+## P0 ACTIVE — Files Interaction Polish (FIP)
+
+Activated by explicit user approval on 2026-07-17. Drag-and-drop is excluded.
+The approved product contract is
+`docs/superpowers/specs/2026-07-17-herdr-files-interaction-polish-design.md`.
+The mandatory next action is planning, not production mutation: run
+`superpowers:writing-plans`, preserve every `TP-FIP-*` acceptance point, and
+write a code-level RED/GREEN plan before editing Rust.
+
+### FIP-G — Planning Gate
+
+- [ ] **FIP-G.1** Use `superpowers:writing-plans` to convert the approved
+  design into an implementation plan with exact files, symbols, RED test
+  names, expected failures, GREEN seams, commands, atomic commits, rollback,
+  and CyPack-only publication boundaries.
+- [ ] **FIP-G.2** Reconcile the plan against a fresh Codebase Memory graph,
+  every `TP-FIP-*` test point, current full-gate commands, and the no-drag,
+  no-submit, client-local/runtime-boundary non-goals before any Rust edit.
+
+### FIP-0 — Baseline and Playwright Chromium Visual Harness
+
+- [ ] **FIP-0.1** Freeze current characterization tests and fresh graph
+  evidence without changing product behavior.
+- [ ] **FIP-0.2** Add an isolated Playwright Chromium package, config, and
+  lockfile that never ships in the Herdr binary.
+- [ ] **FIP-0.3** Add a test-only Ratatui cell-fixture exporter with exact
+  character, foreground, background, modifier, and cell-position data.
+- [ ] **FIP-0.4** Add the deterministic browser cell-grid renderer and harness
+  self-tests for wide/combining glyphs, malformed fixtures, and exact cells.
+- [ ] **FIP-0.5** Prove that a controlled one-cell mutation fails the matching
+  screenshot and that ordinary CI never rewrites approved snapshots.
+- [ ] **FIP-0.6** Keep screenshots, traces, browser state, and generated
+  fixtures inside declared test/target artifact paths.
+
+### FIP-1 — Visible Files Navigation and Mouse Ownership
+
+- [ ] **FIP-1.1 RED** Pin that a primary click on the visible default-sidebar
+  Files tab opens the Native Files Stage.
+- [ ] **FIP-1.2 GREEN** Converge the sidebar route on the existing bounded
+  Files activation seam without duplicating Stage/runtime ownership.
+- [ ] **FIP-1.3 RED** Pin that Spaces/Projects restore Terminal Stage while
+  preserving exact pane, terminal, and runtime identity.
+- [ ] **FIP-1.4 GREEN** Implement the symmetric client-local Stage transition.
+- [ ] **FIP-1.5** Cover overlay/capture precedence, modified/middle/release-only
+  clicks, collapsed/tiny sidebar, stale path/generation, and singleton reopen.
+- [ ] **FIP-1.6** Add Playwright `TP-FIP-VIS-01` plus isolated real-mouse
+  `TP-FIP-E2E-01` evidence without touching the stable Herdr socket.
+
+### FIP-2 — Miller Stable Child Focus
+
+- [ ] **FIP-2.1 RED** Pin that entering a nonzero child keeps that exact child
+  highlighted in the departing/resident column rather than row zero.
+- [ ] **FIP-2.2 GREEN** Bind exact `focused_child` path identity before
+  resident-column ownership transfer.
+- [ ] **FIP-2.3 RED** Pin reorder, delete, hide, duplicate, and malformed-path
+  re-resolution/fail-closed behavior.
+- [ ] **FIP-2.4 GREEN** Add one unique-path resolver and absent-selection
+  projection; never substitute an unrelated first row.
+- [ ] **FIP-2.5** Cover four-plus-level chains, branch retirement, leave/revisit,
+  viewport clamp, empty/root/unavailable/permission states, and stale hits.
+- [ ] **FIP-2.6** Add Playwright `TP-FIP-VIS-02` proof of exact-path highlight.
+
+### FIP-3 — Semantic Entry Kinds and File Icons
+
+- [ ] **FIP-3.1** Characterize sorting, operations, symlink/special handling,
+  watcher refresh, preview, row actions, Unicode, and narrow-column behavior.
+- [ ] **FIP-3.2 RED** Require canonical filesystem classification for
+  directory, regular file, symlink-directory, symlink-file, broken symlink,
+  and unsupported special entries.
+- [ ] **FIP-3.3 GREEN** Introduce `FileEntryKind` with derived capability
+  methods while preserving current operational authority.
+- [ ] **FIP-3.4** Migrate every consumer without retaining dual
+  `is_dir`/`operation_supported` sources of truth.
+- [ ] **FIP-3.5 RED** Pin exact-name, case-insensitive extension, semantic
+  class, Nerd-glyph, and ASCII-fallback mappings.
+- [ ] **FIP-3.6 GREEN** Implement a pure visual classifier and one-cell glyph
+  profiles with no render-time filesystem/config/process work.
+- [ ] **FIP-3.7** Cover truncation, display width, Unicode, control escaping,
+  cursor/multi-select hierarchy, render purity, sorting, and operation parity.
+- [ ] **FIP-3.8** Add Playwright `TP-FIP-VIS-03` and `TP-FIP-VIS-04`
+  snapshots for mixed kinds and narrow/tiny layouts.
+
+### FIP-4 — Reference-Only Delivery Core
+
+- [ ] **FIP-4.1 RED** Pin that the prepared payload is exactly the selected
+  UTF-8 path bytes and contains no CR, LF, Enter, prefix, suffix, or whitespace.
+- [ ] **FIP-4.2 GREEN** Replace the old send-and-submit payload with a
+  reference-only payload.
+- [ ] **FIP-4.3 RED** Pin directory acceptance and broken/special-path
+  rejection.
+- [ ] **FIP-4.4 GREEN** Share source-path validation and repeat the kind/path
+  metadata check at the final delivery seam.
+- [ ] **FIP-4.5 RED** Pin that a non-agent focus never creates a Claude
+  split/chat for this action.
+- [ ] **FIP-4.6 GREEN** Remove implicit split creation from the reference
+  action while leaving unrelated split workflows unchanged.
+- [ ] **FIP-4.7** Cover vanished path/workspace/pane, changed terminal,
+  no-longer-agent runtime, control/non-UTF-8 path, backpressure, exact-once,
+  cancellation, and zero-retry behavior.
+
+### FIP-5 — Explicit Agent Target Picker
+
+- [ ] **FIP-5.1 RED** Pin that `Add Reference to Agent...` opens a picker from
+  the existing live Agents projection.
+- [ ] **FIP-5.2 GREEN** Project current chat first/preselected when live and
+  every other live agent exactly once with stable identities.
+- [ ] **FIP-5.3 RED** Pin keyboard, mouse, overlay ownership, outside-click,
+  Escape, disabled row, and cancel paths.
+- [ ] **FIP-5.4 GREEN** Reuse current popup geometry, focus, close, and
+  responsive language instead of adding a popup framework.
+- [ ] **FIP-5.5 RED** Pin target disappearance and workspace/pane/terminal
+  identity change between picker open and activation.
+- [ ] **FIP-5.6 GREEN** Recompute live rows and fail closed again at the final
+  target-validation seam.
+- [ ] **FIP-5.7** Rename all visible action copy to
+  `Add Reference to Agent...`; support files and directories, never multi-select.
+- [ ] **FIP-5.8** Add Playwright `TP-FIP-VIS-05` and `TP-FIP-VIS-06`
+  snapshots for live, disabled, disappearing, and tiny-layout targets.
+
+### FIP-6 — Production Closure
+
+- [ ] **FIP-6.1** Run focused nextest for every Rust `TP-FIP-*` behavior.
+- [ ] **FIP-6.2** Run the Playwright Chromium suite from fresh deterministic
+  fixtures with failure screenshots/traces and no skipped-success claim.
+- [ ] **FIP-6.3** Run isolated terminal mouse and PTY-byte smokes using
+  `.local/ISOLATED-DEV-TEST.md`; prove exact path bytes and zero CR/LF.
+- [ ] **FIP-6.4** Run format, full nextest, maintenance scripts, Linux Clippy,
+  canonical Windows Clippy, Bun, and Python gates required by current Herdr.
+- [ ] **FIP-6.5** Verify render purity, latency/resource budgets, state
+  invariants, failure recovery, and zero new unbounded queue/cache/worker.
+- [ ] **FIP-6.6** Refresh Codebase Memory and re-read every changed owner,
+  caller, and data-flow seam rather than trusting `ready`.
+- [ ] **FIP-6.7** Update `.codex` current/tasks/evidence, planning state,
+  lessons, and next-session handoff with exact fresh evidence.
+- [ ] **FIP-6.8** Verify clean tracked worktree, atomic RED/GREEN history,
+  fast-forward ancestry, exact remote SHA equality, and CyPack-only push.
+
 ## P0 — Completion Audit (2026-07-15)
 
 - [x] Reconcile the ignored local `00-MODULE-TREE.md` and all A1–C6 module
