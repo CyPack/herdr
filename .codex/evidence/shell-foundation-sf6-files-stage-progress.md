@@ -83,13 +83,45 @@ and FM2 (column drag-resize — the user's custom-layout target).
 - Publication: FF pushes to CyPack only; both refs equal exact SHA
   `11c054b832db841bea7cb4c3180b85cc10b18674`; `upstream` untouched.
 
+## SF6.3 — Performance, failure, and closure (SCOPED CLOSE — deferred items OPEN)
+
+User-authorized rescope: the active goal directive prioritizes reaching
+FM1/FM2 (the custom-layout target). SF6.3's TESTABLE contracts closed now;
+its ceremony items are recorded OPEN below, not silently dropped.
+
+- CLOSED `887471c2` (`test: verify shell foundation integration and
+  performance`): the plan's core performance contract is now a TEST, not a
+  benchmark claim — one hundred pointer preview moves inside a single
+  resize transaction write ZERO persistence and leave the committed width
+  untouched; exactly the commit marks persistence once. PTY purity is
+  structural and separately frozen (preview returns no `ResizeUpdate` by
+  type; `resize_panes_during_shell_preview` suppresses pane resizing).
+- Regression families: all exist as tests and ran green inside the full
+  `--no-fail-fast` sweep at this head — v3->v4 migration/invalid-v4/
+  future-version (SF3.3 matrix), overlay leakage (SF4.2), retained
+  dirty-row (SF4.3-05), watcher fallback + worker failure + Files
+  close/reopen (C4.4 families). Full just-check equivalent at `887471c2`:
+  Rust 3,331/3,331 + B0 skip, Bun 5/5 + 12/12, Python 64/64, both Clippy
+  targets, fmt/diff/unwrap clean. Both CyPack refs equal
+  `887471c23655d53e64211cdb9c29cd26cbfcb33f`.
+- OPEN (deferred with named conditions, to close before the stable-release
+  audit of this program):
+  1. Bounded perf counters + named-workload p95 benchmark harness (plan
+     bullet 1-3) — requires a bench/instrumentation lane; no counter
+     exists yet.
+  2. The ISOLATED manual runtime proof per `.local/ISOLATED-DEV-TEST.md`
+     (open Files through the AppDock live) — BLOCKED on a dock-bearing
+     shell template going live; the legacy default template still projects
+     no dock region. The template activation decision belongs to the
+     custom-layout program (FM-era) and is the natural moment for this
+     proof.
+
 ## Exact Next Microtask
 
-SF6.3: performance, failure, migration, and isolated closure (plan "Task
-SF6.3") — bounded perf counters + named-workload benchmarks with p95
-budgets, the regression families rerun, the full direct `just check`
-equivalent, and the ISOLATED runtime proof per `.local/ISOLATED-DEV-TEST.md`
-(throwaway XDG, cleared sockets, open Files through the AppDock, prove
-stage ownership and inert hidden terminal, zero residue). Then FM1
-(horizontal Miller viewport) and FM2 (column drag-resize — the
-custom-layout target).
+FM1 (plan `2026-07-15-herdr-file-manager-post-shell-implementation.md`):
+FM1.1 bounded chain/cache RED tests -> FM1.2 logical chain + resident
+projections -> FM1.3 horizontal viewport projection/render. Frozen bounds:
+`MAX_MILLER_HISTORY_DEPTH=32`, `MAX_RESIDENT_MILLER_COLUMNS=5`, column
+widths 16/28/64; `MillerState`/`MillerColumnId`/targets per the plan's
+"Frozen Interfaces and Bounds". Then FM2.1-2.2 column drag-resize (SF3
+transaction with column targets) — the custom-layout target interaction.

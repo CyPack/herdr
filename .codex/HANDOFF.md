@@ -11,9 +11,10 @@
 - Branch: `feat/native-fm`
 - Acting identity: CyPack external contributor; `origin` is the writable
   `CyPack/herdr` fork and `upstream` is read-only.
-- Current verified product head: `11c054b8`
-  (`feat: migrate Files lifecycle to workspace stage`, SF6.2 CLOSED), RED
-  `1faff0e0`. Prior: SF6.1 `8a256d37`/`8472f14b`, SF5 closed `d031ef26`.
+- Current verified head: `887471c2` (`test: verify shell foundation
+  integration and performance`, SF6.3 scoped close — deferred bench/
+  isolated items recorded OPEN in the SF6 evidence). SF6.1 `8472f14b`,
+  SF6.2 `11c054b8`, SF5 `d031ef26` all closed.
   SF4 fully closed at `f973740e` (4.1 8/8, 4.2 8/8, 4.3 6/6); the SF4
   registry entries in `.codex/TASKS.md` were reconciled at `5349bb85`,
   and the custom-layout architecture guide lives locally at
@@ -78,19 +79,19 @@
   `StageSurfaceView::NativeFiles` authority; 37 direct test fixtures
   migrated onto the open transaction; the plan's composite regression
   command ran 214/214.
-- Immediate next microtask: SF6.3 — perf counters/benchmarks with p95
-  budgets, regression families, full just-check equivalent, and the
-  ISOLATED runtime proof per `.local/ISOLATED-DEV-TEST.md`. See
+- Immediate next microtask: FM1.1 — bounded Miller chain/cache RED tests
+  (frozen bounds: history 32, resident columns 5, widths 16/28/64), then
+  FM1.2 chain/projections, FM1.3 horizontal viewport, then FM2
+  drag-resize (the custom-layout target). See
   `.codex/evidence/shell-foundation-sf6-files-stage-progress.md`.
-- Product tree: clean at `11c054b8`; only the user-owned untracked
+- Product tree: clean at `887471c2`; only the user-owned untracked
   `.superpowers/` tree exists and must remain untouched/unstaged.
-- Full exact-head gate: 3,330/3,330 Rust tests (`--no-fail-fast`), one
-  named B0 real-host probe skipped; composite SF6.2 regression command
-  214/214; Linux all-target and Windows MSVC bin Clippy;
-  fmt/diff/added-production-unwrap checks passed (Bun/Python last green
-  at the SF5 closure gate `d031ef26`; rerun at the SF6.3 closure).
+- Full exact-head SF6 gate: 3,331/3,331 Rust tests (`--no-fail-fast`),
+  one named B0 real-host probe skipped; Bun 5/5 + 12/12; Python 64/64;
+  Linux all-target and Windows MSVC bin Clippy;
+  fmt/diff/added-production-unwrap checks passed.
 - Both CyPack refs (`feat/native-fm`, fork `master`) equal exact SHA
-  `11c054b832db841bea7cb4c3180b85cc10b18674` at this checkpoint;
+  `887471c23655d53e64211cdb9c29cd26cbfcb33f` at this checkpoint;
   `upstream` untouched.
 - Fresh sequential Codebase Memory store refreshed post-publication with
   current `blocking_overlay_active`, `shell_mouse_input_owner`,

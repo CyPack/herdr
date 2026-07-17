@@ -222,8 +222,15 @@
   fixtures across nine files migrated onto the open transaction; the
   plan's composite regression command ran 214/214; full suite
   3,330/3,330. Current verified head: `11c054b8`.
-- Next microtask: SF6.3 perf/failure/migration/isolated closure, then
-  FM1/FM2 (the custom-layout target). See
+- SF6.3 closed in scoped form (`887471c2`): the 100-preview-moves
+  zero-persistence/zero-PTY contract is now a TEST; regression families
+  all green inside the full sweep; full just-check equivalent ran (Rust
+  3,331/3,331, Bun, Python, both Clippy). Deferred OPEN with named
+  conditions: perf-counter/p95 bench harness, and the isolated manual
+  runtime proof (blocked on a dock-bearing template going live). Current
+  verified head: `887471c2`.
+- Next microtask: FM1.1 bounded Miller chain/cache REDs, then FM1.2/1.3,
+  then FM2 drag-resize (the custom-layout target). See
   `.codex/evidence/shell-foundation-sf6-files-stage-progress.md`.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one
