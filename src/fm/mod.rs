@@ -260,6 +260,9 @@ pub struct FmState {
     pub parent: Option<FmParent>,
     /// Cached selected-entry context for the right Miller column.
     pub preview: FmPreview,
+    /// First visible entry of a directory PREVIEW column. This is ephemeral
+    /// client presentation state: every preview identity refresh resets it.
+    pub(crate) preview_viewport_start: usize,
     /// Monotonic client-local identity for preview work. Every context refresh
     /// invalidates in-flight image results even when the path is unchanged.
     pub(crate) preview_generation: u64,
@@ -298,6 +301,7 @@ impl FmState {
             directory_generation: 1,
             parent: None,
             preview: FmPreview::None,
+            preview_viewport_start: 0,
             preview_generation: 0,
             multi_selection: FmMultiSelection::default(),
             miller,
@@ -323,6 +327,7 @@ impl FmState {
             directory_generation: 1,
             parent: None,
             preview: FmPreview::None,
+            preview_viewport_start: 0,
             preview_generation: 0,
             multi_selection: FmMultiSelection::default(),
             trio_overrides: miller::MillerTrioOverrides::default(),
@@ -502,7 +507,30 @@ impl FmState {
                 sync_miller_segment_viewport(segment, entry_count, visible_rows);
                 previous != (segment.cursor, segment.viewport_start)
             }
-            miller::MillerColumnScrollTarget::Preview { .. } => false,
+            miller::MillerColumnScrollTarget::Preview {
+                directory,
+                generation,
+            } => {
+                if self.preview_generation != *generation
+                    || self.selected().map(|entry| &entry.path) != Some(directory)
+                {
+                    return false;
+                }
+                let entry_count = match &self.preview {
+                    FmPreview::Directory(entries) => entries.len(),
+                    FmPreview::None | FmPreview::File(_) => return false,
+                };
+                let max_start = entry_count.saturating_sub(visible_rows);
+                let previous = self.preview_viewport_start;
+                self.preview_viewport_start = if delta < 0 {
+                    self.preview_viewport_start.saturating_sub(1)
+                } else if delta > 0 {
+                    self.preview_viewport_start.saturating_add(1).min(max_start)
+                } else {
+                    self.preview_viewport_start.min(max_start)
+                };
+                self.preview_viewport_start != previous
+            }
         }
     }
 
@@ -809,6 +837,7 @@ impl FmState {
     }
 
     fn refresh_preview(&mut self) {
+        self.preview_viewport_start = 0;
         self.preview_generation = self.preview_generation.wrapping_add(1).max(1);
         let generation = self.preview_generation;
         let previous_text = match std::mem::replace(&mut self.preview, FmPreview::None) {

@@ -310,7 +310,11 @@ pub(crate) fn project_miller_view(
         if project_inline_preview && column.chain_index == preview_projection_index {
             let source_path = file_manager.selected().map(|entry| entry.path.clone());
             let (entries, cursor, viewport_start) = match &file_manager.preview {
-                FmPreview::Directory(entries) => (entries.as_slice(), None, 0),
+                FmPreview::Directory(entries) => (
+                    entries.as_slice(),
+                    None,
+                    file_manager.preview_viewport_start,
+                ),
                 FmPreview::None | FmPreview::File(_) => (&[][..], None, 0),
             };
             let rows = source_path.as_ref().map_or_else(Vec::new, |directory| {

@@ -2334,6 +2334,7 @@ mod tests {
             "three wheel steps advance only the preview viewport"
         );
         let after = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(after.preview_viewport_start, 3);
         assert_eq!(after.cwd, before.cwd);
         assert_eq!(after.cursor, before.cursor);
         assert_eq!(after.viewport_start, before.viewport_start);
