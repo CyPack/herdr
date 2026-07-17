@@ -110,7 +110,7 @@ impl App {
                 let handled = if self.state.shell_resize_active() {
                     self.state.handle_shell_resize_key(key_event)
                 } else {
-                    self.state.handle_miller_resize_key(key_event)
+                    self.handle_miller_resize_key(key_event)
                 };
                 debug_assert!(handled, "an active capture must consume every key");
             }

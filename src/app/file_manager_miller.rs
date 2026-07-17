@@ -215,6 +215,47 @@ impl crate::app::App {
             .commit_column_width(*chain_index, leading_width)
     }
 
+    pub(super) fn handle_miller_resize_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        use crossterm::event::KeyCode;
+
+        if !self.state.shell_interaction.miller_resize_active() {
+            return false;
+        }
+
+        let preview_step = match key.code {
+            KeyCode::Right | KeyCode::Char('l') => Some(1),
+            KeyCode::Left | KeyCode::Char('h') => Some(-1),
+            _ => None,
+        };
+        if let Some(step) = preview_step {
+            if let Some(bounds) = crate::ui::shell::ResizeBounds::new(
+                crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
+                crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
+                crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
+                crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
+            ) {
+                let _ = self
+                    .state
+                    .shell_interaction
+                    .preview_keyboard_resize_step(step, bounds);
+            }
+            return true;
+        }
+
+        match key.code {
+            KeyCode::Enter => {
+                let _ = self.commit_miller_resize();
+            }
+            KeyCode::Esc => {
+                let update = self.state.shell_interaction.cancel_resize();
+                debug_assert!(!update.marks_persistence_dirty());
+                debug_assert!(!update.requests_pty_resize());
+            }
+            _ => {}
+        }
+        true
+    }
+
     /// Apply the two exact horizontal Miller gestures. Recognized gestures
     /// remain consumed even when the immutable frame has gone stale; stale
     /// geometry must never leak through to another Files action.
