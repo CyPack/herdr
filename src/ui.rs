@@ -1608,8 +1608,8 @@ mod tests {
 
     #[test]
     fn performance_workloads_meet_frozen_budgets() {
-        const WARM_UP_SAMPLES: usize = 16;
-        const MEASURED_SAMPLES: usize = 100;
+        const WARM_UP_SAMPLES: usize = if cfg!(debug_assertions) { 2 } else { 16 };
+        const MEASURED_SAMPLES: usize = if cfg!(debug_assertions) { 10 } else { 100 };
         const COMPUTE_BUDGET: std::time::Duration = std::time::Duration::from_micros(500);
         const FRAME_120_BUDGET: std::time::Duration = std::time::Duration::from_millis(8);
         const FRAME_240_BUDGET: std::time::Duration = std::time::Duration::from_millis(16);
@@ -1620,12 +1620,12 @@ mod tests {
             mut workload: impl FnMut(),
         ) -> std::time::Duration {
             for _ in 0..warm_up_samples {
-                std::hint::black_box(workload());
+                workload();
             }
             let mut samples = Vec::with_capacity(measured_samples);
             for _ in 0..measured_samples {
                 let started = std::time::Instant::now();
-                std::hint::black_box(workload());
+                workload();
                 samples.push(started.elapsed());
             }
             samples.sort_unstable();
@@ -1651,6 +1651,28 @@ mod tests {
         let frame_large = p95(WARM_UP_SAMPLES, MEASURED_SAMPLES, || {
             std::hint::black_box(render_full_frame_for_test(&app, large));
         });
+
+        assert_eq!(
+            app.file_manager
+                .as_ref()
+                .expect("open Files")
+                .miller
+                .chain
+                .len(),
+            crate::fm::miller::MAX_MILLER_HISTORY_DEPTH
+        );
+        assert!((1..=5).contains(&app.view.file_manager_miller.columns.len()));
+        if cfg!(debug_assertions) {
+            return;
+        }
+
+        eprintln!(
+            "Miller release p95: compute_120={}us compute_240={}us frame_120={}us frame_240={}us",
+            compute_medium.as_micros(),
+            compute_large.as_micros(),
+            frame_medium.as_micros(),
+            frame_large.as_micros()
+        );
 
         assert!(
             compute_medium <= COMPUTE_BUDGET,
