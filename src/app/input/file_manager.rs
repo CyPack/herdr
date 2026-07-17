@@ -1726,6 +1726,96 @@ mod tests {
         );
     }
 
+    // TP-FM3-ALL-COLUMN-PLAIN: one plain click in each actionable visible
+    // column focuses the exact live entry under that column. Non-current
+    // columns first become the operational directory; a plain click never
+    // enters the clicked child itself.
+    #[test]
+    fn plain_click_focuses_exact_live_row_in_every_visible_column() {
+        let td = TempDir::new("typed-all-column-click");
+        let a = td.root.join("a");
+        let b = a.join("b");
+        let current = b.join("current");
+        let preview_directory = current.join("preview-directory");
+        fs::create_dir_all(&preview_directory).expect("create deep FM fixture");
+        fs::write(preview_directory.join("child.txt"), b"x").expect("write preview child");
+        fs::write(current.join("peer.txt"), b"x").expect("write current peer");
+
+        let mut file_manager = FmState::new(&td.root);
+        for expected in [&a, &b, &current] {
+            let entry_index = file_manager
+                .entries
+                .iter()
+                .position(|entry| &entry.path == expected)
+                .expect("next directory row");
+            assert!(file_manager.select(entry_index));
+            file_manager.enter();
+        }
+        assert_eq!(file_manager.cwd, current);
+        assert_eq!(
+            file_manager.selected().map(|entry| &entry.path),
+            Some(&preview_directory)
+        );
+
+        let frame = Rect::new(0, 0, 200, 18);
+        let mut template = runtime_app_with_fm(file_manager.clone());
+        install_focused_agent(&mut template);
+        template.state.mobile_width_threshold = 0;
+        template.state.sidebar_collapsed = true;
+        compute_view(&mut template.state, frame);
+        let targets = template
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .flat_map(|column| column.rows.first())
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(
+            targets.len() >= 4,
+            "fixture must expose resident/current/preview rows"
+        );
+        assert!(targets
+            .iter()
+            .any(|row| row.column_kind == crate::ui::MillerRowColumnKind::Current));
+        assert!(targets
+            .iter()
+            .any(|row| row.column_kind == crate::ui::MillerRowColumnKind::Preview));
+        assert!(targets
+            .iter()
+            .any(|row| { row.column_kind == crate::ui::MillerRowColumnKind::ResidentDirectory }));
+
+        for target in targets {
+            let mut app = runtime_app_with_fm(file_manager.clone());
+            install_focused_agent(&mut app);
+            app.state.mobile_width_threshold = 0;
+            app.state.sidebar_collapsed = true;
+            compute_view(&mut app.state, frame);
+
+            assert_eq!(
+                app.handle_file_manager_mouse(mouse(
+                    MouseEventKind::Down(MouseButton::Left),
+                    target.rect.x,
+                    target.rect.y,
+                )),
+                FileManagerMouseDispatch::Consumed
+            );
+
+            let actual = app.state.file_manager.as_ref().expect("open FM");
+            assert_eq!(
+                actual.cwd.as_path(),
+                target.directory_path.as_path(),
+                "plain click first activates the row's owning directory"
+            );
+            assert_eq!(
+                actual.selected().map(|entry| &entry.path),
+                Some(&target.entry_path),
+                "plain click focuses the exact live target path"
+            );
+        }
+    }
+
     // TP-A3.3-DISPATCH: the second unmodified press on the same directory row
     // inside the double-click window selects then enters that directory.
     #[test]
