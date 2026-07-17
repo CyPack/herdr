@@ -12,6 +12,7 @@
 
 pub(crate) mod delete;
 pub(crate) mod image_preview;
+pub(crate) mod miller;
 mod natsort;
 pub(crate) mod operations;
 pub(crate) mod rename;
