@@ -557,7 +557,12 @@ impl AppState {
                         // Synchronously re-reading sessions here blocked the
                         // click for the whole store read (~70MB observed).
                         self.sidebar_tab = tab;
-                        if tab != crate::app::state::SidebarTab::Files {
+                        if tab == crate::app::state::SidebarTab::Files {
+                            // Converge on the shared dock authority so the
+                            // visible tab, dock click, and popover all open or
+                            // reuse the same singleton Files Stage.
+                            self.activate_dock_app(crate::ui::surface_host::BuiltInAppId::Files);
+                        } else {
                             self.request_file_manager_sidebar_navigation = None;
                         }
                         return None;
