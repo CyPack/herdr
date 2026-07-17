@@ -158,6 +158,20 @@ impl MillerState {
         }
     }
 
+    /// Apply a committed divider resize to one chain column's preferred
+    /// width, clamped to the frozen `MILLER_COLUMN_MIN_WIDTH..=MAX` bounds
+    /// (FM2.1). The SF3 `ResizeTransaction` supplies the committed leading
+    /// track; this is the single write-back seam, so pointer and keyboard
+    /// resize can never drift. Returns false for a stale chain index.
+    pub(crate) fn commit_column_width(&mut self, chain_index: usize, width: u16) -> bool {
+        let Some(segment) = self.chain.get_mut(chain_index) else {
+            return false;
+        };
+        segment.preferred_width = width.clamp(MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_MAX_WIDTH);
+        self.revision = self.revision.saturating_add(1);
+        true
+    }
+
     /// Resolve a resident non-current projection by EXACT column identity.
     /// A stale generation (evicted or replaced) resolves to nothing.
     pub(crate) fn resident_projection(
@@ -316,6 +330,34 @@ mod tests {
                 .all(|resident| resident.id.directory != state.focused_directory),
             "the current directory never sits in the evictable cache"
         );
+        state.assert_miller_invariants_for_test();
+    }
+
+    // FM2.1: a committed divider resize writes back through ONE clamped
+    // seam — widths clamp to the frozen 16..=64 bounds, the revision
+    // advances (geometry recomputes), and a stale chain index is refused.
+    #[test]
+    fn column_resize_commits_clamped_width_through_single_seam() {
+        let mut state = MillerState::seed(deep_path(4));
+        let before = state.revision;
+
+        assert!(state.commit_column_width(1, 200));
+        assert_eq!(state.chain[1].preferred_width, MILLER_COLUMN_MAX_WIDTH);
+        assert!(state.commit_column_width(1, 2));
+        assert_eq!(state.chain[1].preferred_width, MILLER_COLUMN_MIN_WIDTH);
+        assert!(state.commit_column_width(1, 40));
+        assert_eq!(state.chain[1].preferred_width, 40);
+        assert_eq!(
+            state.revision,
+            before + 3,
+            "every commit recomputes geometry"
+        );
+
+        assert!(
+            !state.commit_column_width(99, 40),
+            "a stale chain index must be refused"
+        );
+        assert_eq!(state.revision, before + 3);
         state.assert_miller_invariants_for_test();
     }
 
