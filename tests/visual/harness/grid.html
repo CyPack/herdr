@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>herdr visual harness</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #000000;
+      }
+      #grid {
+        display: grid;
+        width: max-content;
+        font-family: "DejaVu Sans Mono", monospace;
+        font-size: 16px;
+        line-height: 1;
+      }
+      .cell {
+        width: 10px;
+        height: 18px;
+        overflow: hidden;
+        white-space: pre;
+        display: block;
+      }
+      #error {
+        color: #ff0000;
+        font-family: monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="grid"></div>
+    <div id="error"></div>
+    <script src="grid.js"></script>
+  </body>
+</html>

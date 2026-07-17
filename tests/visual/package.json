@@ -1,6 +1,7 @@
 {
   "name": "herdr-visual-tests",
   "private": true,
+  "type": "module",
   "devDependencies": {
     "@playwright/test": "1.54.1"
   },

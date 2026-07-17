@@ -1,0 +1,31 @@
+{
+  "name": "self-test",
+  "width": 3,
+  "height": 1,
+  "cells": [
+    {
+      "symbol": "a",
+      "fg": "rgb(1,2,3)",
+      "bg": "rgb(0,0,0)",
+      "modifiers": [],
+      "x": 0,
+      "y": 0
+    },
+    {
+      "symbol": "全",
+      "fg": "white",
+      "bg": "reset",
+      "modifiers": ["bold"],
+      "x": 1,
+      "y": 0
+    },
+    {
+      "symbol": "x",
+      "fg": "lightred",
+      "bg": "indexed(238)",
+      "modifiers": ["underlined"],
+      "x": 2,
+      "y": 0
+    }
+  ]
+}
