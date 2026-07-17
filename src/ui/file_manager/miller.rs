@@ -973,6 +973,91 @@ mod tests {
         );
     }
 
+    // TP-FIP-FOCUS-03/04/10: the resident column selection re-resolves the
+    // bound focused-child PATH against the exact resident entries. A stale
+    // cached index, a deleted child, or a duplicate identity can never
+    // highlight an unrelated row.
+    #[test]
+    fn resident_column_reresolves_focused_child_by_unique_path() {
+        let resident_dir = PathBuf::from("/virtual/resident");
+        let current = resident_dir.join("beta");
+        let beta = current.clone();
+        let build = |entries: Vec<crate::fm::FileEntry>,
+                     focused_child: Option<PathBuf>|
+         -> MillerViewSnapshot {
+            let mut file_manager = FmState::test_empty(current.clone());
+            file_manager.miller.chain = vec![
+                crate::fm::miller::MillerPathSegment::new(resident_dir.clone()),
+                crate::fm::miller::MillerPathSegment::new(current.clone()),
+            ]
+            .into();
+            file_manager.miller.chain[0].focused_child = focused_child;
+            file_manager.miller.chain[0].cursor = 1; // stale cached index
+            file_manager.miller.focused_directory = current.clone();
+            file_manager.miller.visit(
+                current.clone(),
+                Some(crate::fm::miller::MillerDirectoryProjection {
+                    id: crate::fm::miller::MillerColumnId {
+                        directory: resident_dir.clone(),
+                        generation: 7,
+                    },
+                    entries,
+                    status: crate::fm::FmDirectoryStatus::Available,
+                    writable: true,
+                }),
+            );
+            project_miller_view(Rect::new(0, 0, 144, 8), &file_manager, 3)
+        };
+        let resident_cursor = |snapshot: &MillerViewSnapshot| {
+            snapshot
+                .columns
+                .iter()
+                .find(|column| {
+                    matches!(
+                        &column.kind,
+                        MillerColumnKind::Directory {
+                            source: MillerDirectorySource::Resident(_),
+                            ..
+                        }
+                    )
+                })
+                .expect("resident column visible")
+                .cursor
+        };
+
+        // Reorder: beta moved from cached index 1 to index 2 — path wins.
+        let reordered = build(
+            vec![
+                entry(resident_dir.join("alpha"), true),
+                entry(resident_dir.join("gamma"), true),
+                entry(beta.clone(), true),
+            ],
+            Some(beta.clone()),
+        );
+        assert_eq!(resident_cursor(&reordered), Some(2));
+
+        // Deleted focused child: no unrelated row may be highlighted.
+        let deleted = build(
+            vec![
+                entry(resident_dir.join("alpha"), true),
+                entry(resident_dir.join("gamma"), true),
+            ],
+            Some(beta.clone()),
+        );
+        assert_eq!(resident_cursor(&deleted), None);
+
+        // Duplicate identity: ambiguous authority resolves to no selection.
+        let duplicated = build(
+            vec![
+                entry(resident_dir.join("alpha"), true),
+                entry(beta.clone(), true),
+                entry(beta.clone(), true),
+            ],
+            Some(beta),
+        );
+        assert_eq!(resident_cursor(&duplicated), None);
+    }
+
     // FM1.3: the nine plan widths — at most five columns, every visible
     // column COMPLETE (>= min width), dividers disjoint one-cell strips,
     // the focused column visible, and every rect inside the Stage.
