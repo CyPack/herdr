@@ -1404,6 +1404,127 @@ mod tests {
     }
 
     #[test]
+    fn miller_resize_profile_counts_transaction_changes_and_commit() {
+        let td = TempDir::new("fm3-resize-profile");
+        td.dir("child");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 90, 16));
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .first()
+            .expect("three-column projection exposes a divider")
+            .clone();
+        let revision_before = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .miller
+            .revision;
+
+        let (_, profile) = crate::render_prof::observe_for_test(|| {
+            assert_eq!(
+                app.handle_file_manager_mouse(mouse(
+                    MouseEventKind::Down(MouseButton::Left),
+                    divider.rect.x,
+                    divider.rect.y,
+                )),
+                FileManagerMouseDispatch::Consumed
+            );
+            for _ in 0..2 {
+                assert_eq!(
+                    app.handle_file_manager_mouse(mouse(
+                        MouseEventKind::Drag(MouseButton::Left),
+                        divider.rect.x.saturating_add(4),
+                        divider.rect.y,
+                    )),
+                    FileManagerMouseDispatch::Consumed
+                );
+            }
+            assert_eq!(
+                app.handle_file_manager_mouse(mouse(
+                    MouseEventKind::Up(MouseButton::Left),
+                    divider.rect.x.saturating_add(4),
+                    divider.rect.y,
+                )),
+                FileManagerMouseDispatch::Consumed
+            );
+        });
+
+        assert_eq!(profile.counter("fm.miller_resize.started"), 1);
+        assert_eq!(
+            profile.counter("fm.miller_resize.preview_changed"),
+            1,
+            "repeating the same pointer position is a no-op, not a second preview change"
+        );
+        assert_eq!(profile.counter("fm.miller_resize.committed"), 1);
+        assert!(
+            !app.state.shell_interaction.miller_resize_active(),
+            "commit retires capture authority"
+        );
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("Files remains open")
+                .miller
+                .revision,
+            revision_before + 1,
+            "the profiled gesture performs exactly one model write-back"
+        );
+    }
+
+    #[test]
+    fn miller_resize_profile_covers_keyboard_preview_and_commit() {
+        let td = TempDir::new("fm3-keyboard-resize-profile");
+        td.dir("child");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 90, 16));
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .first()
+            .expect("three-column projection exposes a divider")
+            .clone();
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                divider.rect.x,
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+
+        let (_, profile) =
+            crate::render_prof::observe_for_test(|| {
+                assert!(app
+                    .handle_miller_resize_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE,)));
+                assert!(app
+                    .handle_miller_resize_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE,)));
+            });
+
+        assert_eq!(profile.counter("fm.miller_resize.preview_changed"), 1);
+        assert_eq!(profile.counter("fm.miller_resize.committed"), 1);
+        assert!(
+            !app.state.shell_interaction.miller_resize_active(),
+            "keyboard commit retires capture authority"
+        );
+    }
+
+    #[test]
     fn miller_drag_preview_changes_geometry_not_model_preferences() {
         let td = TempDir::new("fm3-divider-preview");
         td.file("00.txt");
