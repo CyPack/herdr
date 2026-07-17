@@ -103,12 +103,20 @@ pub(crate) struct FmPreparedNavigation {
     pub preview_generation: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FmCurrentRefreshReason {
+    Watcher,
+    ToggleHidden,
+    OperationFallback,
+}
+
 /// Pure, generation-bound request for refreshing the current directory.
 ///
 /// The active Files instance generation is explicit because model generations
 /// restart when Files is closed and reopened.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FmCurrentRefreshRequest {
+    pub reason: FmCurrentRefreshReason,
     pub files_generation: u32,
     pub source_directory: PathBuf,
     pub source_directory_generation: u64,
@@ -116,7 +124,8 @@ pub(crate) struct FmCurrentRefreshRequest {
     pub source_miller_revision: u64,
     pub selected_path: Option<PathBuf>,
     pub fallback_cursor: usize,
-    pub show_hidden: bool,
+    pub source_show_hidden: bool,
+    pub target_show_hidden: bool,
     pub previous_text_preview: Option<TextPreview>,
 }
 
@@ -334,17 +343,17 @@ pub(crate) fn prepare_navigation_io(request: FmNavigationRequest) -> Option<FmPr
 pub(crate) fn prepare_current_refresh_io(
     request: FmCurrentRefreshRequest,
 ) -> FmPreparedCurrentRefresh {
-    let snapshot = read_directory_snapshot(&request.source_directory, request.show_hidden);
+    let snapshot = read_directory_snapshot(&request.source_directory, request.target_show_hidden);
     let cursor = current_refresh_cursor(&request, &snapshot.entries);
     let preview_generation = request.source_preview_generation.wrapping_add(1).max(1);
     let selected = snapshot
         .entries
         .get(cursor)
         .map(|entry| (entry.path.clone(), entry.is_dir));
-    let parent = read_parent_context_for(&request.source_directory, request.show_hidden);
+    let parent = read_parent_context_for(&request.source_directory, request.target_show_hidden);
     let preview = prepare_preview(
         selected,
-        request.show_hidden,
+        request.target_show_hidden,
         preview_generation,
         request.previous_text_preview.clone(),
     );
@@ -490,6 +499,38 @@ pub struct FmState {
 
 impl FmState {
     pub(crate) fn request_current_refresh(&self, files_generation: u32) -> FmCurrentRefreshRequest {
+        self.current_refresh_request(
+            files_generation,
+            FmCurrentRefreshReason::Watcher,
+            self.show_hidden,
+        )
+    }
+
+    pub(crate) fn request_hidden_toggle(&self, files_generation: u32) -> FmCurrentRefreshRequest {
+        self.current_refresh_request(
+            files_generation,
+            FmCurrentRefreshReason::ToggleHidden,
+            !self.show_hidden,
+        )
+    }
+
+    pub(crate) fn request_operation_refresh(
+        &self,
+        files_generation: u32,
+    ) -> FmCurrentRefreshRequest {
+        self.current_refresh_request(
+            files_generation,
+            FmCurrentRefreshReason::OperationFallback,
+            self.show_hidden,
+        )
+    }
+
+    fn current_refresh_request(
+        &self,
+        files_generation: u32,
+        reason: FmCurrentRefreshReason,
+        target_show_hidden: bool,
+    ) -> FmCurrentRefreshRequest {
         let previous_text_preview = match &self.preview {
             FmPreview::File(FmFilePreview::Text(preview)) => Some(preview.clone()),
             FmPreview::None
@@ -497,6 +538,7 @@ impl FmState {
             | FmPreview::File(FmFilePreview::Image(_) | FmFilePreview::Unavailable(_)) => None,
         };
         FmCurrentRefreshRequest {
+            reason,
             files_generation,
             source_directory: self.cwd.clone(),
             source_directory_generation: self.directory_generation,
@@ -504,7 +546,8 @@ impl FmState {
             source_miller_revision: self.miller.revision,
             selected_path: self.selected().map(|entry| entry.path.clone()),
             fallback_cursor: self.cursor,
-            show_hidden: self.show_hidden,
+            source_show_hidden: self.show_hidden,
+            target_show_hidden,
             previous_text_preview,
         }
     }
@@ -530,6 +573,7 @@ impl FmState {
         }
 
         self.entries = prepared.entries;
+        self.show_hidden = prepared.request.target_show_hidden;
         self.cwd_status = prepared.status;
         self.cwd_writable = prepared.writable;
         self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
@@ -676,7 +720,7 @@ impl FmState {
             && self.directory_generation == request.source_directory_generation
             && self.preview_generation == request.source_preview_generation
             && self.miller.revision == request.source_miller_revision
-            && self.show_hidden == request.show_hidden
+            && self.show_hidden == request.source_show_hidden
     }
 
     /// Open `cwd` (hidden files off) and read its entries, cursor at the top.
@@ -2187,6 +2231,7 @@ mod tests {
         state.multi_selection.anchor = Some(selected_path.clone());
 
         let request = state.request_current_refresh(29);
+        assert_eq!(request.reason, FmCurrentRefreshReason::Watcher);
         assert_eq!(request.files_generation, 29);
         assert_eq!(request.source_directory, root);
         assert_eq!(request.source_directory_generation, 11);
@@ -2197,7 +2242,8 @@ mod tests {
             Some(selected_path.as_path())
         );
         assert_eq!(request.fallback_cursor, 1);
-        assert!(!request.show_hidden);
+        assert!(!request.source_show_hidden);
+        assert!(!request.target_show_hidden);
 
         let prepared = FmPreparedCurrentRefresh {
             request,

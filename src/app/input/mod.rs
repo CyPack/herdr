@@ -121,6 +121,7 @@ impl App {
                         file_manager::FileManagerKeyDispatch::Navigate(request) => {
                             let _ = self.execute_file_manager_navigation(request);
                         }
+                        file_manager::FileManagerKeyDispatch::Refresh(_) => {}
                         file_manager::FileManagerKeyDispatch::Consumed => {}
                     }
                     if self.state.file_manager.is_none() {

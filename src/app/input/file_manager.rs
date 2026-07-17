@@ -29,12 +29,14 @@ pub(super) enum FileManagerKeyDispatch {
     Consumed,
     CancelOperation,
     Navigate(crate::fm::FmNavigationRequest),
+    Refresh(crate::fm::FmCurrentRefreshRequest),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AttachmentPickerKeyDispatch {
     Consumed,
     Navigate(crate::fm::FmNavigationRequest),
+    Refresh(crate::fm::FmCurrentRefreshRequest),
 }
 
 /// Handle one key while the file manager is open. `Esc` requests cancellation
@@ -752,6 +754,46 @@ mod tests {
         assert_eq!(after.directory_generation, before.directory_generation);
         assert_eq!(after.preview_generation, before.preview_generation);
         assert_eq!(after.miller, before.miller);
+        assert!(state.request_agent_attachment_delivery.is_none());
+    }
+
+    // P5 RED: the blocking attachment overlay owns the key but emits the same
+    // disk-free hidden-refresh intent instead of mutating its model directly.
+    #[test]
+    fn attachment_dot_emits_hidden_refresh_request_without_mutation() {
+        let td = TempDir::new("attachment-hidden-intent");
+        td.file("shown.txt");
+        td.file(".hidden.txt");
+        let mut state = state_with_attachment_picker(&td.root, "attachment-hidden-intent");
+        let before = state
+            .agent_attachment_picker
+            .as_ref()
+            .expect("open attachment picker")
+            .file_manager
+            .clone();
+
+        let dispatch = handle_agent_attachment_picker_key(&mut state, key(KeyCode::Char('.')));
+
+        let AttachmentPickerKeyDispatch::Refresh(request) = dispatch else {
+            panic!("attachment dot must emit one typed hidden-refresh request");
+        };
+        assert_eq!(
+            request.reason,
+            crate::fm::FmCurrentRefreshReason::ToggleHidden
+        );
+        assert_eq!(request.files_generation, 0);
+        assert_eq!(request.source_directory, td.root);
+        assert_eq!(request.source_show_hidden, before.show_hidden);
+        assert_eq!(request.target_show_hidden, !before.show_hidden);
+        let after = &state
+            .agent_attachment_picker
+            .as_ref()
+            .expect("attachment picker remains open")
+            .file_manager;
+        assert_eq!(after.entries, before.entries);
+        assert_eq!(after.show_hidden, before.show_hidden);
+        assert_eq!(after.directory_generation, before.directory_generation);
+        assert_eq!(after.preview_generation, before.preview_generation);
         assert!(state.request_agent_attachment_delivery.is_none());
     }
 
@@ -1896,17 +1938,41 @@ mod tests {
         assert_eq!(after.miller, before.miller);
     }
 
-    // TP-A3.6b: '.' toggles hidden-file visibility.
+    // P5 RED: '.' emits one exact hidden-refresh intent without reading disk
+    // or mutating the Files model in the input layer.
     #[test]
-    fn dot_toggles_hidden() {
+    fn dot_emits_hidden_refresh_request_without_mutating_files() {
         let td = TempDir::new("hidden");
         td.file("shown");
         td.file(".secret");
         let mut app = app_with_fm(FmState::new(&td.root));
-        assert_eq!(app.file_manager.as_ref().unwrap().entries.len(), 1);
+        let before = app.file_manager.as_ref().expect("open FM").clone();
 
-        handle_file_manager_key(&mut app, key(KeyCode::Char('.')));
-        assert_eq!(app.file_manager.as_ref().unwrap().entries.len(), 2);
+        let dispatch = handle_file_manager_key(&mut app, key(KeyCode::Char('.')));
+
+        let FileManagerKeyDispatch::Refresh(request) = dispatch else {
+            panic!("dot must emit one typed hidden-refresh request");
+        };
+        assert_eq!(
+            request.reason,
+            crate::fm::FmCurrentRefreshReason::ToggleHidden
+        );
+        assert_eq!(request.source_directory, td.root);
+        assert_eq!(request.source_show_hidden, before.show_hidden);
+        assert_eq!(request.target_show_hidden, !before.show_hidden);
+        assert_eq!(
+            request.files_generation,
+            app.stage
+                .active_instance_generation()
+                .expect("active Files generation")
+        );
+        let after = app.file_manager.as_ref().expect("open FM");
+        assert_eq!(after.entries, before.entries);
+        assert_eq!(after.cursor, before.cursor);
+        assert_eq!(after.show_hidden, before.show_hidden);
+        assert_eq!(after.directory_generation, before.directory_generation);
+        assert_eq!(after.preview_generation, before.preview_generation);
+        assert_eq!(after.miller, before.miller);
     }
 
     // TP-A3.7: Esc and q both close the file manager.
