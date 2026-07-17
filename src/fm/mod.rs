@@ -704,13 +704,24 @@ impl FmState {
             .filter(|entry| entry.is_dir)
             .map(|entry| entry.path.clone());
         if let Some(path) = target {
+            let snapshot = read_directory_snapshot(&path, self.show_hidden);
+            if snapshot.status != FmDirectoryStatus::Available
+                || !std::fs::metadata(&path).is_ok_and(|metadata| metadata.is_dir())
+            {
+                return;
+            }
+            let cwd_writable = directory_is_writable(&path);
             self.clear_multi_selection();
             let departing = self.departing_projection();
             self.cwd = path.clone();
+            self.entries = snapshot.entries;
             self.cursor = 0;
             self.viewport_start = 0;
+            self.cwd_status = snapshot.status;
+            self.cwd_writable = cwd_writable;
+            self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
             self.miller.visit(path, Some(departing));
-            self.reload();
+            self.refresh_context();
         }
     }
 
