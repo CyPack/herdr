@@ -1329,6 +1329,53 @@ mod tests {
         );
     }
 
+    // P3 RED: decode target and host placement must consume the same typed
+    // preview content rect as text render. Width 57 is adversarial because the
+    // legacy trio independently creates three narrow columns while the frozen
+    // Miller snapshot owns current + preview at 28 cells each.
+    #[test]
+    fn file_manager_image_target_matches_windowed_snapshot_preview_rect() {
+        let frame = Rect::new(0, 0, 57, 10);
+        let cells = HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        let current = std::path::PathBuf::from("/virtual/current");
+        let mut file_manager = crate::fm::FmState::test_empty(current.clone());
+        file_manager.miller.chain =
+            std::iter::once(crate::fm::miller::MillerPathSegment::new(current.clone())).collect();
+        file_manager.miller.focused_directory = current;
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![crate::workspace::Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = crate::app::state::Mode::Terminal;
+        app.mobile_width_threshold = 0;
+        app.sidebar_collapsed = true;
+        app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
+        app.try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+        crate::ui::compute_view(&mut app, frame);
+        let preview_content = app
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .find(|column| column.kind.is_preview())
+            .expect("typed preview column")
+            .content_rect;
+        let expected = ImagePreviewTarget {
+            width_px: u32::from(preview_content.width) * cells.width_px,
+            height_px: u32::from(preview_content.height) * cells.height_px,
+        };
+
+        assert_eq!(
+            file_manager_image_target(frame, cells),
+            Some(expected),
+            "decode target must match the exact windowed preview content rect"
+        );
+    }
+
     #[test]
     fn file_manager_image_placement_is_centered_bounded_and_client_local() {
         let cells = HostCellSize {
