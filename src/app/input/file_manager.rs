@@ -2170,6 +2170,94 @@ mod tests {
         assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 0);
     }
 
+    // TP-FM3-RESIDENT-WHEEL: plain wheel over a resident ancestor advances
+    // only that owning segment's bounded cursor/viewport. CURRENT selection,
+    // horizontal window, generations, and other segments remain unchanged.
+    #[test]
+    fn plain_wheel_moves_only_hovered_resident_column_viewport() {
+        let td = TempDir::new("resident-wheel");
+        td.file("current-a.txt");
+        td.file("current-b.txt");
+        let current = td.root.clone();
+        let resident = PathBuf::from("/virtual/resident-wheel");
+        let mut file_manager = FmState::new(&current);
+        file_manager.miller.chain = [resident.clone(), current.clone()]
+            .into_iter()
+            .map(crate::fm::miller::MillerPathSegment::new)
+            .collect();
+        file_manager.miller.focused_directory = current;
+        file_manager.miller.resident_non_current.push_back(
+            crate::fm::miller::MillerDirectoryProjection {
+                id: crate::fm::miller::MillerColumnId {
+                    directory: resident.clone(),
+                    generation: 77,
+                },
+                entries: (0..12)
+                    .map(|index| crate::fm::FileEntry {
+                        name: format!("{index:02}.txt"),
+                        path: resident.join(format!("{index:02}.txt")),
+                        is_dir: false,
+                        operation_supported: true,
+                    })
+                    .collect(),
+                status: crate::fm::FmDirectoryStatus::Available,
+                writable: true,
+            },
+        );
+        let mut app = runtime_app_with_fm(file_manager);
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 200, 8));
+        let resident_column = app
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .find(|column| {
+                column.rows.first().is_some_and(|row| {
+                    row.column_kind == crate::ui::MillerRowColumnKind::ResidentDirectory
+                })
+            })
+            .cloned()
+            .expect("visible resident column");
+        let probe = resident_column.rows[0].rect;
+        let visible_rows = resident_column.content_rect.height as usize;
+        let before = app.state.file_manager.as_ref().expect("open FM").clone();
+
+        let wheel_events = visible_rows.saturating_add(2);
+        for _ in 0..wheel_events {
+            assert_eq!(
+                app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollDown, probe.x, probe.y,)),
+                FileManagerMouseDispatch::Consumed
+            );
+        }
+
+        let after = app.state.file_manager.as_ref().expect("open FM");
+        let resident_segment = &after.miller.chain[0];
+        let expected_cursor = wheel_events.min(11);
+        let expected_viewport = expected_cursor
+            .saturating_add(1)
+            .saturating_sub(visible_rows);
+        assert_eq!(resident_segment.cursor, expected_cursor);
+        assert_eq!(resident_segment.viewport_start, expected_viewport);
+        assert_eq!(after.cursor, before.cursor);
+        assert_eq!(after.viewport_start, before.viewport_start);
+        assert_eq!(
+            after.multi_selection_paths(),
+            before.multi_selection_paths()
+        );
+        assert_eq!(
+            after.miller.horizontal, before.miller.horizontal,
+            "vertical column wheel cannot pan the horizontal window"
+        );
+        assert_eq!(after.miller.chain[1], before.miller.chain[1]);
+        assert_eq!(after.directory_generation, before.directory_generation);
+        assert_eq!(after.preview_generation, before.preview_generation);
+        assert_eq!(after.miller.revision, before.miller.revision);
+    }
+
     // TP-FM1.3-HSCROLL-MODIFIERS: only the exact Shift+wheel gesture changes
     // the horizontal window. Control/Alt and combined modifiers are consumed
     // fail-closed and cannot accidentally become vertical list navigation.
