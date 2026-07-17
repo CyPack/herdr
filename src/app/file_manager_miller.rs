@@ -177,6 +177,12 @@ impl crate::app::App {
         else {
             return false;
         };
+        if divider.model_revision() != current_revision {
+            let update = self.state.shell_interaction.cancel_resize();
+            debug_assert!(!update.marks_persistence_dirty());
+            debug_assert!(!update.requests_pty_resize());
+            return false;
+        }
         let update = self.state.shell_interaction.commit_resize(current_revision);
         let crate::ui::shell::ResizeDecision::Committed([leading_width, _]) = update.decision()
         else {
