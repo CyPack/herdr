@@ -2,6 +2,7 @@
 
 | Error | Cause | Fix | Date |
 |-------|-------|-----|------|
+| codebase-memory MCP rejects `project="herdr"` with `project not found or not indexed` while the Herdr graph is healthy | Graph tools require the exact canonical project ID returned by `list_projects`, not a human-readable repository alias | Read `available_projects` or call `list_projects`, then use `project="home-ayaz-projects-herdr"` consistently for Herdr graph queries | 2026-07-17 |
 | `codex mcp list` can expose credentials embedded in command arguments during an MCP audit | Codex masks values in the Env column but prints the Args column verbatim | Prefer structured TOML/plugin parsing that emits only server names, transports, enabled state, env key names, and path health; never surface raw `codex mcp list` output | 2026-07-14 |
 | A narrow line-range read around an MCP section can still expose credentials | The requested range can spill into the adjacent `[mcp_servers.<name>.env]` table | Never use raw line windows for MCP config; parse TOML and emit a strict allowlist of safe fields | 2026-07-14 |
 | `apply_patch` rejects a Herdr module edit with `Invalid Context` | The patch assumed a stale or reconstructed file header instead of the exact current worktree context | Inspect the narrow target region first, then reapply against the exact adjacent line; verify status to prove the rejected patch made no partial edit | 2026-07-14 |
