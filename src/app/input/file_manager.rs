@@ -1730,6 +1730,149 @@ mod tests {
         assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 0);
     }
 
+    // TP-FM1.3-HSCROLL: native horizontal wheel events and Shift+wheel move
+    // ONLY the bounded Miller window. Current/preview remain visible after
+    // every recompute, while vertical cursor/viewport, entries, selection,
+    // preview identity, and the structural Miller revision stay unchanged.
+    #[test]
+    fn horizontal_wheel_changes_only_miller_window_and_preserves_focus() {
+        let td = TempDir::new("miller-horizontal-wheel");
+        let mut current = td.root.clone();
+        for level in 0..8 {
+            current.push(format!("level-{level}"));
+        }
+        fs::create_dir_all(&current).expect("create deep Miller fixture");
+        fs::write(current.join("00.txt"), b"x").expect("write selected fixture");
+
+        let mut file_manager = FmState::new(&current);
+        for segment in &mut file_manager.miller.chain {
+            segment.preferred_width = crate::fm::miller::MILLER_COLUMN_MIN_WIDTH;
+        }
+        let mut app = runtime_app_with_fm(file_manager);
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        let frame = Rect::new(0, 0, 144, 18);
+        compute_view(&mut app.state, frame);
+
+        let before = app.state.file_manager.as_ref().expect("open FM").clone();
+        let first_visible = app.state.view.file_manager_miller.first_visible;
+        let probe = app
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .find(|column| column.kind.is_current())
+            .map(|column| (column.content_rect.x, column.content_rect.y))
+            .expect("current column probe");
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::ScrollRight,
+                probe.0,
+                probe.1,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .miller
+                .horizontal
+                .first_visible,
+            first_visible + 1,
+            "native ScrollRight advances the bounded horizontal origin"
+        );
+        compute_view(&mut app.state, frame);
+        assert!(
+            app.state
+                .view
+                .file_manager_miller
+                .columns
+                .iter()
+                .any(|column| column.kind.is_current()),
+            "current remains visible after horizontal scroll"
+        );
+        assert!(
+            app.state
+                .view
+                .file_manager_miller
+                .columns
+                .iter()
+                .any(|column| column.kind.is_preview()),
+            "preview remains visible after horizontal scroll"
+        );
+
+        app.handle_file_manager_mouse(mouse_with_modifiers(
+            MouseEventKind::ScrollUp,
+            probe.0,
+            probe.1,
+            KeyModifiers::SHIFT,
+        ));
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .miller
+                .horizontal
+                .first_visible,
+            first_visible,
+            "Shift+ScrollUp maps to horizontal left"
+        );
+        compute_view(&mut app.state, frame);
+
+        app.handle_file_manager_mouse(mouse_with_modifiers(
+            MouseEventKind::ScrollDown,
+            probe.0,
+            probe.1,
+            KeyModifiers::SHIFT,
+        ));
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .miller
+                .horizontal
+                .first_visible,
+            first_visible + 1,
+            "Shift+ScrollDown maps to horizontal right"
+        );
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::ScrollLeft,
+            probe.0,
+            probe.1,
+        ));
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .miller
+                .horizontal
+                .first_visible,
+            first_visible,
+            "native ScrollLeft returns to the bounded origin"
+        );
+
+        let after = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(after.cursor, before.cursor);
+        assert_eq!(after.viewport_start, before.viewport_start);
+        assert_eq!(after.entries, before.entries);
+        assert_eq!(
+            after.multi_selection_paths(),
+            before.multi_selection_paths()
+        );
+        assert_eq!(after.preview_generation, before.preview_generation);
+        assert_eq!(after.preview, before.preview);
+        assert_eq!(after.miller.chain, before.miller.chain);
+        assert_eq!(after.miller.revision, before.miller.revision);
+    }
+
     // TP-A3.3-DISPATCH-STALE: a row snapshot can outlive a watcher reload for
     // one frame. An invalid absolute index is consumed but must not clamp to or
     // activate an unrelated live entry.
