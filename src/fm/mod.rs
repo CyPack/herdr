@@ -506,7 +506,7 @@ impl FmState {
         ))
     }
 
-    fn request_activate_navigation(
+    pub(crate) fn request_activate_navigation(
         &self,
         directory: &Path,
         entry_path: &Path,
@@ -669,27 +669,6 @@ impl FmState {
             self.refresh_preview();
         }
         true
-    }
-
-    /// Revalidate and activate one non-current Miller column, focusing its
-    /// exact clicked child without entering that child. The filesystem read
-    /// completes before any model mutation, so missing, inaccessible,
-    /// renamed, reordered, or duplicate targets leave the prior state intact.
-    pub(crate) fn activate_directory_selection(
-        &mut self,
-        directory: &Path,
-        entry_path: &Path,
-    ) -> bool {
-        if directory == self.cwd {
-            let Some(entry_index) = unique_entry_index(&self.entries, entry_path) else {
-                return false;
-            };
-            return self.replace_selection(entry_index);
-        }
-
-        let request = self.request_activate_navigation(directory, entry_path);
-        prepare_navigation_io(request)
-            .is_some_and(|prepared| self.apply_prepared_navigation(prepared))
     }
 
     /// Move one non-current Miller column's local vertical presentation state.

@@ -512,10 +512,13 @@ impl App {
                     .is_some_and(|last| last.is_double_click_for(&click));
                 self.last_file_manager_click = if is_double_click { None } else { Some(click) };
 
-                if let Some(file_manager) = self.state.file_manager.as_mut() {
-                    if file_manager.replace_selection(entry_idx) && is_double_click {
-                        file_manager.enter();
-                    }
+                let enter_request = self.state.file_manager.as_mut().and_then(|file_manager| {
+                    (file_manager.replace_selection(entry_idx) && is_double_click)
+                        .then(|| file_manager.request_enter_navigation())
+                        .flatten()
+                });
+                if let Some(request) = enter_request {
+                    let _ = self.execute_file_manager_navigation(request);
                 }
             }
             MouseEventKind::ScrollUp if mouse.modifiers.is_empty() => {

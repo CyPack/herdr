@@ -1022,8 +1022,13 @@ impl crate::app::App {
                     })
             });
         if is_current {
-            if let Some(file_manager) = self.state.file_manager.as_mut() {
-                file_manager.enter();
+            let request = self
+                .state
+                .file_manager
+                .as_ref()
+                .and_then(crate::fm::FmState::request_enter_navigation);
+            if let Some(request) = request {
+                let _ = self.execute_file_manager_navigation(request);
             }
         }
         true

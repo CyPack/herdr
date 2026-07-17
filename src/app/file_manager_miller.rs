@@ -134,14 +134,11 @@ impl crate::app::App {
         row: &ResolvedMillerRow,
     ) -> Option<(usize, std::path::PathBuf)> {
         let (directory_path, entry_path) = row.directory_selection_target()?;
-        let activated = self
-            .state
-            .file_manager
-            .as_mut()
-            .is_some_and(|file_manager| {
-                file_manager.activate_directory_selection(&directory_path, &entry_path)
-            });
-        activated.then_some(())?;
+        let request = self.state.file_manager.as_ref().map(|file_manager| {
+            file_manager.request_activate_navigation(&directory_path, &entry_path)
+        })?;
+        self.execute_file_manager_navigation(request)
+            .then_some(())?;
         self.state.file_manager.as_ref().and_then(|file_manager| {
             (file_manager.selected().map(|entry| &entry.path) == Some(&entry_path))
                 .then_some((file_manager.cursor, entry_path))
@@ -166,18 +163,19 @@ impl crate::app::App {
             .last_file_manager_click
             .as_ref()
             .is_some_and(|last| last.is_double_click_for(&click));
-        let activated = self
-            .state
-            .file_manager
-            .as_mut()
-            .is_some_and(|file_manager| {
-                let activated =
-                    file_manager.activate_directory_selection(&directory_path, &entry_path);
-                if activated && is_double_click {
-                    file_manager.enter();
-                }
-                activated
-            });
+        let request = self.state.file_manager.as_ref().map(|file_manager| {
+            file_manager.request_activate_navigation(&directory_path, &entry_path)
+        });
+        let activated = request.is_some_and(|request| {
+            self.execute_file_manager_navigation(request)
+                && (!is_double_click
+                    || self
+                        .state
+                        .file_manager
+                        .as_ref()
+                        .and_then(crate::fm::FmState::request_enter_navigation)
+                        .is_some_and(|request| self.execute_file_manager_navigation(request)))
+        });
         self.last_file_manager_click = activated.then_some(click).filter(|_| !is_double_click);
         true
     }
