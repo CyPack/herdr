@@ -1986,6 +1986,85 @@ mod tests {
         assert_eq!(model.paths, vec![target_path]);
     }
 
+    // TP-FM3-CROSS-COLUMN-DOUBLE: a first click may move a preview/resident
+    // column into CURRENT. After the required frame recompute, a second click
+    // on the same stable entry path preserves the existing directory-enter
+    // double-click semantics across that column transition.
+    #[test]
+    fn double_click_non_current_directory_revalidates_then_enters() {
+        let td = TempDir::new("typed-noncurrent-double");
+        let current = td.root.join("current");
+        let preview_directory = current.join("preview-directory");
+        let child_directory = preview_directory.join("child-directory");
+        fs::create_dir_all(&child_directory).expect("create nested directory");
+        fs::write(child_directory.join("inside.txt"), b"x").expect("write nested fixture");
+
+        let mut file_manager = FmState::new(&current);
+        let preview_index = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == preview_directory)
+            .expect("preview directory row");
+        assert!(file_manager.select(preview_index));
+        let mut app = runtime_app_with_fm(file_manager);
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        let frame = Rect::new(0, 0, 100, 16);
+        compute_view(&mut app.state, frame);
+        let preview_target = app
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .flat_map(|column| &column.rows)
+            .find(|row| {
+                row.column_kind == crate::ui::MillerRowColumnKind::Preview
+                    && row.entry_path == child_directory
+            })
+            .cloned()
+            .expect("preview directory target");
+
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            preview_target.rect.x,
+            preview_target.rect.y,
+        ));
+        assert_eq!(
+            app.state.file_manager.as_ref().expect("open FM").cwd,
+            preview_directory
+        );
+        compute_view(&mut app.state, frame);
+        let current_target = app
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .find(|column| column.kind.is_current())
+            .and_then(|column| {
+                column
+                    .rows
+                    .iter()
+                    .find(|row| row.entry_path == child_directory)
+            })
+            .cloned()
+            .expect("same path moved into CURRENT");
+
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            current_target.rect.x,
+            current_target.rect.y,
+        ));
+
+        assert_eq!(
+            app.state.file_manager.as_ref().expect("open FM").cwd,
+            child_directory,
+            "second stable-path click enters only after fresh revalidation"
+        );
+    }
+
     // TP-A3.3-DISPATCH: the second unmodified press on the same directory row
     // inside the double-click window selects then enters that directory.
     #[test]
