@@ -3,8 +3,6 @@
 //! Raw terminal coordinates are resolved against the immutable Files frame
 //! snapshot, then exact generation/path/index identities are revalidated
 //! against `FmState` before any input adapter may mutate state.
-#![allow(dead_code)] // FM3 lands and verifies the resolver before the next
-                     // atomic commit cuts mouse routing over to this module.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ResolvedMillerRow {
@@ -12,6 +10,13 @@ pub(super) struct ResolvedMillerRow {
     directory_path: std::path::PathBuf,
     entry_index: usize,
     entry_path: std::path::PathBuf,
+}
+
+impl ResolvedMillerRow {
+    pub(super) fn current_entry_target(&self) -> Option<(usize, std::path::PathBuf)> {
+        (self.column_kind == crate::ui::MillerRowColumnKind::Current)
+            .then(|| (self.entry_index, self.entry_path.clone()))
+    }
 }
 
 pub(super) fn resolve_live_miller_row(
@@ -47,7 +52,7 @@ pub(super) fn resolve_live_miller_row(
         crate::ui::MillerRowColumnKind::Current => {
             let chain_index = target.chain_index?;
             file_manager.cwd == *target.directory_path
-                && file_manager.preview_generation == target.source_generation
+                && file_manager.directory_generation == target.source_generation
                 && file_manager
                     .miller
                     .chain
@@ -80,7 +85,7 @@ pub(super) fn resolve_live_miller_row(
         }
         crate::ui::MillerRowColumnKind::PreparedParent => {
             let chain_index = target.chain_index?;
-            file_manager.preview_generation == target.source_generation
+            file_manager.directory_generation == target.source_generation
                 && file_manager.cwd.parent() == Some(target.directory_path.as_path())
                 && file_manager
                     .miller
@@ -337,8 +342,8 @@ mod tests {
         );
 
         let mut refreshed_current = file_manager.clone();
-        refreshed_current.preview_generation =
-            refreshed_current.preview_generation.saturating_add(1);
+        refreshed_current.directory_generation =
+            refreshed_current.directory_generation.saturating_add(1);
         assert!(
             resolve(
                 &refreshed_current,

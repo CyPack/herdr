@@ -861,7 +861,7 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
                 directory,
                 generation,
                 ..
-            } if directory == &fm.cwd && *generation == fm.preview_generation => {
+            } if directory == &fm.cwd && *generation == fm.directory_generation => {
                 let (empty_label, empty_style) = file_manager_current_empty_state(fm, styles);
                 render_panel(
                     app,
@@ -1869,6 +1869,7 @@ mod tests {
                 fm.viewport_start,
                 fm.parent.clone(),
                 fm.preview.clone(),
+                fm.directory_generation,
                 fm.preview_generation,
                 fm.miller.clone(),
                 fm.trio_overrides,
@@ -1889,6 +1890,7 @@ mod tests {
                 fm.viewport_start,
                 fm.parent.clone(),
                 fm.preview.clone(),
+                fm.directory_generation,
                 fm.preview_generation,
                 fm.miller.clone(),
                 fm.trio_overrides,

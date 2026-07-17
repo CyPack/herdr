@@ -357,18 +357,20 @@ impl App {
 
         let entry_target = self
             .state
-            .view
-            .file_manager_row_areas
-            .iter()
-            .find(|row| rect_contains(row.rect, mouse.column, mouse.row))
-            .and_then(|row| {
-                let entry = self
-                    .state
-                    .file_manager
-                    .as_ref()
-                    .and_then(|file_manager| file_manager.entries.get(row.entry_idx))?;
-                (entry.path == row.entry_path).then(|| (row.entry_idx, row.entry_path.clone()))
-            });
+            .stage
+            .active_instance_generation()
+            .and_then(|files_generation| {
+                self.state.file_manager.as_ref().and_then(|file_manager| {
+                    super::super::file_manager_miller::resolve_live_miller_row(
+                        &self.state.view.file_manager_miller,
+                        file_manager,
+                        files_generation,
+                        mouse.column,
+                        mouse.row,
+                    )
+                })
+            })
+            .and_then(|row| row.current_entry_target());
         let entry_idx = entry_target.as_ref().map(|(entry_idx, _)| *entry_idx);
 
         let context_entry_target = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right))
@@ -1442,6 +1444,16 @@ mod tests {
                 entry_path,
             })
             .collect();
+        let files_generation = app
+            .state
+            .stage
+            .active_instance_generation()
+            .expect("active Files generation");
+        app.state.view.file_manager_miller = crate::ui::project_miller_view(
+            Rect::new(26, 1, 20, 5),
+            app.state.file_manager.as_ref().expect("open FM"),
+            files_generation,
+        );
         app
     }
 
@@ -2461,7 +2473,7 @@ mod tests {
         assert_eq!(fm.multi_selection_anchor(), before_anchor.as_deref());
     }
 
-    // TP-N4.1-SELECTION-STATE: a stale row snapshot and unrecognized modifier
+    // TP-N4.1-SELECTION-STATE: a stale typed row target and unrecognized modifier
     // combinations are consumed without mutating cursor, paths, or anchor.
     #[test]
     fn stale_and_unrecognized_selection_gestures_fail_closed() {
@@ -2475,7 +2487,15 @@ mod tests {
             .as_mut()
             .expect("open fm")
             .replace_selection(0));
-        app.state.view.file_manager_row_areas[1].entry_idx = usize::MAX;
+        app.state
+            .view
+            .file_manager_miller
+            .columns
+            .iter_mut()
+            .flat_map(|column| &mut column.rows)
+            .find(|row| row.entry_index == 1)
+            .expect("second typed current row")
+            .entry_index = usize::MAX;
         let before_paths = app
             .state
             .file_manager

@@ -356,12 +356,12 @@ pub(crate) fn project_miller_view(
                     MillerColumnKind::Current {
                         chain_index: column.chain_index,
                         directory,
-                        generation: file_manager.preview_generation,
+                        generation: file_manager.directory_generation,
                     },
                     file_manager.entries.as_slice(),
                     (!file_manager.entries.is_empty()).then_some(file_manager.cursor),
                     file_manager.viewport_start,
-                    file_manager.preview_generation,
+                    file_manager.directory_generation,
                     MillerRowColumnKind::Current,
                 )
             } else if let Some(resident) = file_manager
@@ -395,7 +395,7 @@ pub(crate) fn project_miller_view(
                         parent.entries.as_slice(),
                         parent.cursor,
                         segment.viewport_start,
-                        file_manager.preview_generation,
+                        file_manager.directory_generation,
                         MillerRowColumnKind::PreparedParent,
                     ),
                     None => (
@@ -407,7 +407,7 @@ pub(crate) fn project_miller_view(
                         &[][..],
                         None,
                         0,
-                        file_manager.preview_generation,
+                        file_manager.directory_generation,
                         MillerRowColumnKind::PreparedParent,
                     ),
                 }
@@ -737,7 +737,7 @@ mod tests {
             &snapshot.columns[3].kind,
             MillerColumnKind::Current {
                 directory,
-                generation: 0,
+                generation: 1,
                 ..
             } if directory == &current
         ));
@@ -774,7 +774,7 @@ mod tests {
             "preview directory rows are clipped to the same bounded content height"
         );
 
-        // FM3 RED: every actionable row must carry its own complete
+        // FM3: every actionable row carries its own complete
         // generation-safe column authority. A consumer may not authorize a
         // click by combining a bare row index with whichever column happens
         // to occupy the same rectangle in a later frame.
@@ -815,7 +815,7 @@ mod tests {
             ),
             (
                 Some(2),
-                file_manager.preview_generation,
+                file_manager.directory_generation,
                 MillerRowColumnKind::PreparedParent,
                 &parent,
             )
@@ -830,7 +830,7 @@ mod tests {
             ),
             (
                 Some(3),
-                file_manager.preview_generation,
+                file_manager.directory_generation,
                 MillerRowColumnKind::Current,
                 &current,
             )

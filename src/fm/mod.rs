@@ -251,6 +251,11 @@ pub struct FmState {
     pub cwd_writable: bool,
     /// Prepared result of reading cwd; render must not repeat this I/O.
     pub cwd_status: FmDirectoryStatus,
+    /// Monotonic identity of the prepared current-directory and parent entry
+    /// snapshots. Cursor/preview changes do not advance this generation;
+    /// every filesystem reload does, so rapid double-click remains valid
+    /// while watcher/content refresh retires prior row targets.
+    pub(crate) directory_generation: u64,
     /// Cached parent-directory context for the left Miller column.
     pub parent: Option<FmParent>,
     /// Cached selected-entry context for the right Miller column.
@@ -290,6 +295,7 @@ impl FmState {
             show_hidden,
             cwd_writable,
             cwd_status: snapshot.status,
+            directory_generation: 1,
             parent: None,
             preview: FmPreview::None,
             preview_generation: 0,
@@ -314,6 +320,7 @@ impl FmState {
             show_hidden: false,
             cwd_writable: false,
             cwd_status: FmDirectoryStatus::Available,
+            directory_generation: 1,
             parent: None,
             preview: FmPreview::None,
             preview_generation: 0,
@@ -338,6 +345,7 @@ impl FmState {
         let snapshot = read_directory_snapshot(&self.cwd, self.show_hidden);
         self.entries = snapshot.entries;
         self.cwd_status = snapshot.status;
+        self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
         self.cwd_writable =
             self.cwd_status == FmDirectoryStatus::Available && directory_is_writable(&self.cwd);
         self.reconcile_multi_selection();
@@ -799,6 +807,30 @@ mod tests {
             })
             .collect();
         state
+    }
+
+    // TP-FM3-DIRECTORY-GENERATION: cursor/preview movement must not retire a
+    // second click from the same prepared directory snapshot, while any
+    // filesystem reload must retire every prior current/parent row target.
+    #[test]
+    fn directory_generation_changes_on_reload_not_cursor_selection() {
+        let td = TempDir::new("directory-generation");
+        td.file("a.txt");
+        td.file("b.txt");
+        let mut state = FmState::new(&td.root);
+        let opened_generation = state.directory_generation;
+
+        assert!(state.select(1));
+        assert_eq!(
+            state.directory_generation, opened_generation,
+            "cursor/preview selection is not a directory content generation"
+        );
+
+        state.reload();
+        assert!(
+            state.directory_generation > opened_generation,
+            "every prepared directory reload retires prior row targets"
+        );
     }
 
     // T-A1.2a: directories first, each group in natural order. Cross-check
