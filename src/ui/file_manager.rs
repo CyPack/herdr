@@ -208,33 +208,6 @@ fn file_manager_areas_with(area: Rect, overrides: MillerTrioOverrides) -> Option
     })
 }
 
-/// Current trio column widths (parent, current) for the CURRENT layout —
-/// the drag capture snapshots its original width from exactly this seam.
-pub(crate) fn file_manager_column_widths(
-    area: Rect,
-    overrides: MillerTrioOverrides,
-) -> [Option<u16>; 2] {
-    file_manager_areas_with(area, overrides)
-        .map(|areas| {
-            [
-                areas.columns.parent.map(|rect| rect.width),
-                Some(areas.columns.current.width),
-            ]
-        })
-        .unwrap_or([None, None])
-}
-
-/// Divider rects between the visible trio columns for the CURRENT layout;
-/// input attaches the FM2 drag capture to exactly these one-cell strips.
-pub(crate) fn file_manager_divider_areas(
-    area: Rect,
-    overrides: MillerTrioOverrides,
-) -> [Option<Rect>; 2] {
-    file_manager_areas_with(area, overrides)
-        .map(|areas| areas.columns.dividers)
-        .unwrap_or([None, None])
-}
-
 fn panel_areas(area: Rect) -> [Rect; 2] {
     Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area)
 }

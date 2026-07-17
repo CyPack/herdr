@@ -1116,31 +1116,6 @@ impl FmState {
         }
     }
 
-    /// Commit one dragged trio divider width (FM2.2): slot 0 = parent
-    /// column, slot 1 = current column. Clamps to the frozen Miller bounds
-    /// and mirrors the width into the bounded chain model so pointer resize
-    /// and the FM1 chain never disagree.
-    pub(crate) fn commit_trio_width(&mut self, slot: usize, width: u16) -> bool {
-        let clamped = width.clamp(
-            miller::MILLER_COLUMN_MIN_WIDTH,
-            miller::MILLER_COLUMN_MAX_WIDTH,
-        );
-        let chain_index = match slot {
-            0 => self.miller.chain.len().checked_sub(2),
-            1 => self.miller.chain.len().checked_sub(1),
-            _ => return false,
-        };
-        match slot {
-            0 => self.trio_overrides.parent = Some(clamped),
-            1 => self.trio_overrides.current = Some(clamped),
-            _ => unreachable!(),
-        }
-        if let Some(chain_index) = chain_index {
-            let _ = self.miller.commit_column_width(chain_index, clamped);
-        }
-        true
-    }
-
     /// Move the departing current directory's complete projection out of the
     /// operational vectors (ownership transfer, no clone) so the Miller cache
     /// can retain it under a fresh column generation.

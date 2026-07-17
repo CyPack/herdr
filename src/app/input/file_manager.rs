@@ -327,6 +327,9 @@ impl App {
             return FileManagerMouseDispatch::NotHandled;
         }
 
+        // The one typed Miller capture owns drag/up everywhere, including
+        // outside the Files Stage, so fast pointer movement cannot escape the
+        // transaction or fall through to a retired geometry authority.
         if self.state.shell_interaction.miller_resize_active() {
             match mouse.kind {
                 MouseEventKind::Drag(MouseButton::Left) => {
@@ -351,28 +354,6 @@ impl App {
             }
         }
 
-        // FM2.2: an ACTIVE divider capture owns move/up everywhere — even
-        // outside the Files area — per the SF4.2-04 capture principle, so a
-        // fast drag can never escape the gesture.
-        if let Some(drag) = self.state.miller_trio_drag {
-            match mouse.kind {
-                MouseEventKind::Drag(MouseButton::Left) => {
-                    let delta = i32::from(mouse.column) - i32::from(drag.origin_x);
-                    let desired =
-                        (i32::from(drag.original_width) + delta).clamp(0, i32::from(u16::MAX));
-                    if let Some(file_manager) = self.state.file_manager.as_mut() {
-                        let _ = file_manager.commit_trio_width(drag.slot, desired as u16);
-                    }
-                    return FileManagerMouseDispatch::Consumed;
-                }
-                MouseEventKind::Up(MouseButton::Left) => {
-                    self.state.miller_trio_drag = None;
-                    return FileManagerMouseDispatch::Consumed;
-                }
-                _ => {}
-            }
-        }
-
         let center = self.state.view.terminal_area;
         let in_center = rect_contains(center, mouse.column, mouse.row);
         if !in_center {
@@ -391,42 +372,6 @@ impl App {
             && self.begin_miller_resize_capture(mouse.column, mouse.row)
         {
             return FileManagerMouseDispatch::Consumed;
-        }
-
-        // FM2.2: trio divider drag-resize. The one-cell divider strips from
-        // the CURRENT layout (same pure geometry authority as render) own
-        // press/drag/release; commits clamp through `commit_trio_width`.
-        let overrides = self
-            .state
-            .file_manager
-            .as_ref()
-            .map(|file_manager| file_manager.trio_overrides)
-            .unwrap_or_default();
-        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-            && mouse.modifiers.is_empty()
-        {
-            let dividers = crate::ui::file_manager_divider_areas(center, overrides);
-            let areas = [
-                crate::ui::file_manager_column_widths(center, overrides)[0],
-                crate::ui::file_manager_column_widths(center, overrides)[1],
-            ];
-            for (slot, divider) in dividers.into_iter().enumerate() {
-                let Some(divider) = divider else { continue };
-                if mouse.column >= divider.x
-                    && mouse.column < divider.x.saturating_add(divider.width)
-                    && mouse.row >= divider.y
-                    && mouse.row < divider.y.saturating_add(divider.height)
-                {
-                    if let Some(original_width) = areas[slot] {
-                        self.state.miller_trio_drag = Some(crate::app::state::MillerTrioDrag {
-                            slot,
-                            origin_x: mouse.column,
-                            original_width,
-                        });
-                    }
-                    return FileManagerMouseDispatch::Consumed;
-                }
-            }
         }
 
         let header_action = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
@@ -2312,14 +2257,21 @@ mod tests {
         compute_view(&mut app.state, Rect::new(0, 0, 60, 16));
 
         let center = app.state.view.terminal_area;
-        let overrides = app
-            .state
-            .file_manager
-            .as_ref()
-            .expect("open FM")
-            .trio_overrides;
-        let legacy_divider = crate::ui::file_manager_divider_areas(center, overrides)[0]
-            .expect("control fixture exposes the retired legacy divider");
+        let legacy_body = Rect::new(
+            center.x,
+            center.y.saturating_add(1),
+            center.width,
+            center.height.saturating_sub(2),
+        );
+        let [_parent, legacy_divider, _current, _second_divider, _preview] =
+            ratatui::layout::Layout::horizontal([
+                ratatui::layout::Constraint::Min(crate::fm::miller::MILLER_COLUMN_MIN_WIDTH),
+                ratatui::layout::Constraint::Length(1),
+                ratatui::layout::Constraint::Min(crate::fm::miller::MILLER_COLUMN_MIN_WIDTH),
+                ratatui::layout::Constraint::Length(1),
+                ratatui::layout::Constraint::Min(crate::fm::miller::MILLER_COLUMN_MIN_WIDTH),
+            ])
+            .areas(legacy_body);
         app.state.view.file_manager_miller.dividers.clear();
         let before_model = {
             let file_manager = app.state.file_manager.as_ref().expect("open FM");
@@ -2367,293 +2319,6 @@ mod tests {
             ),
             before_model,
             "retired legacy geometry cannot mutate the Miller model"
-        );
-    }
-
-    // FM2.2 end-to-end: pressing a trio divider and dragging resizes the
-    // column through the clamped commit seam; release ends the capture; the
-    // committed width survives recompute and clamps to the frozen 16..=64
-    // bounds. This is the user-visible custom-layout interaction.
-    #[test]
-    fn divider_drag_resizes_trio_columns_end_to_end() {
-        let td = TempDir::new("fm2-divider-drag");
-        td.file("00.txt");
-        let mut app = runtime_app_with_fm(FmState::new(&td.root));
-        install_focused_agent(&mut app);
-        app.state.mobile_width_threshold = 0;
-        app.state.sidebar_collapsed = true;
-        compute_view(&mut app.state, Rect::new(0, 0, 60, 16));
-
-        let center = app.state.view.terminal_area;
-        let overrides = app
-            .state
-            .file_manager
-            .as_ref()
-            .expect("open FM")
-            .trio_overrides;
-        assert_eq!(overrides, crate::fm::miller::MillerTrioOverrides::default());
-        let dividers = crate::ui::file_manager_divider_areas(center, overrides);
-        let divider = dividers[0].expect("three-column layout exposes the first divider");
-        let original = crate::ui::file_manager_column_widths(center, overrides)[0]
-            .expect("parent column width");
-
-        // Press on the divider begins the capture and consumes the event.
-        assert_eq!(
-            app.handle_file_manager_mouse(mouse(
-                MouseEventKind::Down(MouseButton::Left),
-                divider.x,
-                divider.y + 2,
-            )),
-            FileManagerMouseDispatch::Consumed
-        );
-        assert!(
-            app.state.miller_trio_drag.is_some(),
-            "capture begins on press"
-        );
-
-        // Dragging right widens the parent column through the clamped seam.
-        assert_eq!(
-            app.handle_file_manager_mouse(mouse(
-                MouseEventKind::Drag(MouseButton::Left),
-                divider.x + 4,
-                divider.y + 2,
-            )),
-            FileManagerMouseDispatch::Consumed
-        );
-        let widened = app
-            .state
-            .file_manager
-            .as_ref()
-            .expect("open FM")
-            .trio_overrides
-            .parent
-            .expect("committed parent width");
-        assert_eq!(
-            widened,
-            (original + 4).clamp(
-                crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
-                crate::fm::miller::MILLER_COLUMN_MAX_WIDTH
-            ),
-            "drag commits the clamped width"
-        );
-
-        // Release ends the capture; the width survives a fresh compute and
-        // the layout honors it.
-        assert_eq!(
-            app.handle_file_manager_mouse(mouse(
-                MouseEventKind::Up(MouseButton::Left),
-                divider.x + 4,
-                divider.y + 2,
-            )),
-            FileManagerMouseDispatch::Consumed
-        );
-        assert!(
-            app.state.miller_trio_drag.is_none(),
-            "release ends the capture"
-        );
-        compute_view(&mut app.state, Rect::new(0, 0, 60, 16));
-        let overrides_after = app
-            .state
-            .file_manager
-            .as_ref()
-            .expect("open FM")
-            .trio_overrides;
-        let new_parent = crate::ui::file_manager_column_widths(center, overrides_after)[0]
-            .expect("parent column width after drag");
-        assert_eq!(new_parent, widened, "the layout honors the committed width");
-
-        // A far drag clamps to the frozen bounds instead of exploding.
-        let dividers = crate::ui::file_manager_divider_areas(center, overrides_after);
-        let divider = dividers[0].expect("divider after resize");
-        app.handle_file_manager_mouse(mouse(
-            MouseEventKind::Down(MouseButton::Left),
-            divider.x,
-            divider.y + 2,
-        ));
-        app.handle_file_manager_mouse(mouse(
-            MouseEventKind::Drag(MouseButton::Left),
-            divider.x.saturating_add(200),
-            divider.y + 2,
-        ));
-        assert_eq!(
-            app.state
-                .file_manager
-                .as_ref()
-                .expect("open FM")
-                .trio_overrides
-                .parent,
-            Some(crate::fm::miller::MILLER_COLUMN_MAX_WIDTH),
-            "a runaway drag clamps to the 64-cell maximum"
-        );
-        app.handle_file_manager_mouse(mouse(
-            MouseEventKind::Up(MouseButton::Left),
-            divider.x,
-            divider.y + 2,
-        ));
-    }
-
-    // P0 characterization: the published legacy-trio adapter exposes two
-    // independent divider slots. Pin the second one before the windowed
-    // projection and shared transaction replace this compatibility path.
-    #[test]
-    fn second_legacy_divider_is_interactive() {
-        let td = TempDir::new("fm2-second-divider");
-        td.file("00.txt");
-        let mut app = runtime_app_with_fm(FmState::new(&td.root));
-        install_focused_agent(&mut app);
-        app.state.mobile_width_threshold = 0;
-        app.state.sidebar_collapsed = true;
-        compute_view(&mut app.state, Rect::new(0, 0, 60, 16));
-
-        let center = app.state.view.terminal_area;
-        let original_overrides = app
-            .state
-            .file_manager
-            .as_ref()
-            .expect("open FM")
-            .trio_overrides;
-        let divider = crate::ui::file_manager_divider_areas(center, original_overrides)[1]
-            .expect("three-column layout exposes the second divider");
-        let original_current = crate::ui::file_manager_column_widths(center, original_overrides)[1]
-            .expect("current column width");
-
-        assert_eq!(
-            app.handle_file_manager_mouse(mouse(
-                MouseEventKind::Down(MouseButton::Left),
-                divider.x,
-                divider.y + 2,
-            )),
-            FileManagerMouseDispatch::Consumed
-        );
-        assert_eq!(
-            app.state.miller_trio_drag.map(|drag| drag.slot),
-            Some(1),
-            "the second divider owns the current-column slot"
-        );
-        assert_eq!(
-            app.handle_file_manager_mouse(mouse(
-                MouseEventKind::Drag(MouseButton::Left),
-                divider.x + 3,
-                divider.y + 2,
-            )),
-            FileManagerMouseDispatch::Consumed
-        );
-
-        let resized = app
-            .state
-            .file_manager
-            .as_ref()
-            .expect("open FM")
-            .trio_overrides;
-        assert_eq!(
-            resized.parent, original_overrides.parent,
-            "the second divider must not rewrite the parent slot"
-        );
-        assert_eq!(
-            resized.current,
-            Some((original_current + 3).clamp(
-                crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
-                crate::fm::miller::MILLER_COLUMN_MAX_WIDTH
-            )),
-            "the second divider changes only the current width"
-        );
-
-        assert_eq!(
-            app.handle_file_manager_mouse(mouse(
-                MouseEventKind::Up(MouseButton::Left),
-                divider.x + 3,
-                divider.y + 2,
-            )),
-            FileManagerMouseDispatch::Consumed
-        );
-        assert!(
-            app.state.miller_trio_drag.is_none(),
-            "release clears the second-divider capture"
-        );
-    }
-
-    // P0 characterization: Files close is an authority boundary. An old
-    // divider gesture cannot survive close/reopen and retarget a fresh Files
-    // generation even when the new surface occupies the same coordinates.
-    #[test]
-    fn files_close_retires_legacy_drag_and_hits() {
-        let td = TempDir::new("fm2-close-retires-drag");
-        td.file("00.txt");
-        let mut app = runtime_app_with_fm(FmState::new(&td.root));
-        install_focused_agent(&mut app);
-        app.state.mobile_width_threshold = 0;
-        app.state.sidebar_collapsed = true;
-        compute_view(&mut app.state, Rect::new(0, 0, 60, 16));
-
-        let old_center = app.state.view.terminal_area;
-        let old_overrides = app
-            .state
-            .file_manager
-            .as_ref()
-            .expect("open FM")
-            .trio_overrides;
-        let old_divider = crate::ui::file_manager_divider_areas(old_center, old_overrides)[0]
-            .expect("three-column layout exposes the first divider");
-
-        assert_eq!(
-            app.handle_file_manager_mouse(mouse(
-                MouseEventKind::Down(MouseButton::Left),
-                old_divider.x,
-                old_divider.y + 2,
-            )),
-            FileManagerMouseDispatch::Consumed
-        );
-        assert!(
-            app.state.miller_trio_drag.is_some(),
-            "precondition: old Files generation owns a capture"
-        );
-
-        app.state.close_file_manager();
-        assert!(
-            app.state.miller_trio_drag.is_none(),
-            "close retires the active Files capture"
-        );
-        assert!(
-            app.state.view.file_manager_row_areas.is_empty()
-                && app.state.view.file_manager_row_action_areas.is_empty()
-                && app.state.view.file_manager_header_action_areas.is_empty(),
-            "close retires projected Files hits in the same transaction"
-        );
-
-        app.state
-            .try_open_file_manager_with(|_| Some(FmState::new(&td.root)))
-            .expect("fresh Files activation");
-        compute_view(&mut app.state, Rect::new(0, 0, 60, 16));
-        let fresh_before = app
-            .state
-            .file_manager
-            .as_ref()
-            .expect("reopened FM")
-            .trio_overrides;
-
-        let _ = app.handle_file_manager_mouse(mouse(
-            MouseEventKind::Drag(MouseButton::Left),
-            old_divider.x.saturating_add(4),
-            old_divider.y + 2,
-        ));
-        let _ = app.handle_file_manager_mouse(mouse(
-            MouseEventKind::Up(MouseButton::Left),
-            old_divider.x.saturating_add(4),
-            old_divider.y + 2,
-        ));
-
-        assert!(
-            app.state.miller_trio_drag.is_none(),
-            "stale move/up cannot recreate a capture"
-        );
-        assert_eq!(
-            app.state
-                .file_manager
-                .as_ref()
-                .expect("reopened FM")
-                .trio_overrides,
-            fresh_before,
-            "stale move/up cannot commit widths into the fresh Files generation"
         );
     }
 
