@@ -2152,6 +2152,155 @@ mod tests {
         );
     }
 
+    #[test]
+    fn miller_width_clamps_at_16_and_64_cells() {
+        let td = TempDir::new("fm3-divider-clamp");
+        td.dir("child");
+        let mut file_manager = FmState::new(&td.root);
+        let focused_chain_index = file_manager.miller.chain.len() - 1;
+        assert!(file_manager.miller.commit_adjacent_column_widths(
+            focused_chain_index,
+            40,
+            crate::fm::miller::MillerAdjacentWidthTarget::Preview,
+            40,
+        ));
+        let mut app = runtime_app_with_fm(file_manager);
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        let frame = Rect::new(0, 0, 116, 16);
+        compute_view(&mut app.state, frame);
+        let before_revision = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .miller
+            .revision;
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .get(1)
+            .expect("three-column projection exposes the second divider")
+            .clone();
+        assert_eq!(
+            [
+                app.state.view.file_manager_miller.columns[divider.left_column]
+                    .rect
+                    .width,
+                app.state.view.file_manager_miller.columns[divider.right_column]
+                    .rect
+                    .width,
+            ],
+            [40, 40],
+            "fixture starts with an 80-cell adjacent pair"
+        );
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                divider.rect.x,
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Drag(MouseButton::Left),
+                u16::MAX,
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.state.shell_interaction.resize_preview_tracks(),
+            Some([
+                crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
+                crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
+            ]),
+            "right overshoot clamps both sides of the fixed-total pair"
+        );
+        let _ = app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            u16::MAX,
+            divider.rect.y,
+        ));
+        compute_view(&mut app.state, frame);
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .get(1)
+            .expect("committed high clamp preserves the second divider")
+            .clone();
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                divider.rect.x,
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Drag(MouseButton::Left),
+                0,
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.state.shell_interaction.resize_preview_tracks(),
+            Some([
+                crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
+                crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
+            ]),
+            "left overshoot clamps both sides of the fixed-total pair"
+        );
+        let _ = app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            0,
+            divider.rect.y,
+        ));
+        compute_view(&mut app.state, frame);
+
+        let file_manager = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(
+            (
+                file_manager.miller.chain[focused_chain_index].preferred_width,
+                file_manager.miller.preview_preferred_width,
+                file_manager.miller.revision,
+                file_manager.trio_overrides,
+            ),
+            (
+                crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
+                crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
+                before_revision + 2,
+                crate::fm::miller::MillerTrioOverrides::default(),
+            ),
+            "two boundary commits stay typed, bounded, and one revision each"
+        );
+        let stage = app.state.view.terminal_area;
+        assert!(
+            app.state
+                .view
+                .file_manager_miller
+                .columns
+                .iter()
+                .all(|column| {
+                    column.rect.x >= stage.x
+                        && column.rect.right() <= stage.right()
+                        && column.rect.width >= crate::fm::miller::MILLER_COLUMN_MIN_WIDTH
+                        && column.rect.width <= crate::fm::miller::MILLER_COLUMN_MAX_WIDTH
+                }),
+            "every clamped column rect remains inside the Files Stage"
+        );
+    }
+
     // FM2.2 end-to-end: pressing a trio divider and dragging resizes the
     // column through the clamped commit seam; release ends the capture; the
     // committed width survives recompute and clamps to the frozen 16..=64
