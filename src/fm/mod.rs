@@ -768,13 +768,29 @@ impl FmState {
     pub fn leave(&mut self) {
         let departed = self.cwd.clone();
         if let Some(parent) = departed.parent().map(Path::to_path_buf) {
+            let snapshot = read_directory_snapshot(&parent, self.show_hidden);
+            if snapshot.status != FmDirectoryStatus::Available
+                || !std::fs::metadata(&parent).is_ok_and(|metadata| metadata.is_dir())
+            {
+                return;
+            }
+            let cwd_writable = directory_is_writable(&parent);
             self.clear_multi_selection();
             let departing = self.departing_projection();
             self.cwd = parent.clone();
-            self.cursor = 0;
+            self.entries = snapshot.entries;
+            self.cursor = self
+                .entries
+                .iter()
+                .position(|entry| entry.path == departed)
+                .unwrap_or(0);
             self.viewport_start = 0;
+            self.cwd_status = snapshot.status;
+            self.cwd_writable = cwd_writable;
+            self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
+            self.clamp_cursor();
             self.miller.visit(parent, Some(departing));
-            self.reload_focusing_path(Some(&departed), 0);
+            self.refresh_context();
         }
     }
 
