@@ -3,14 +3,17 @@
 //! the Stage rectangle and per-segment preferred widths. Render and input
 //! consume these rects; no filesystem work happens here. FM2 reuses the
 //! divider rects as SF3 resize-transaction targets.
-#![allow(dead_code)] // The FM1.3 render/input wiring and the FM2 divider
-                     // drag-resize consume this pure geometry.
+#![allow(dead_code)] // P1 production compute owns this snapshot; P2/P3 will
+                     // consume every projected render/input identity.
+
+use std::path::PathBuf;
 
 use ratatui::layout::Rect;
 
 use crate::fm::miller::{
     MAX_RESIDENT_MILLER_COLUMNS, MILLER_COLUMN_MAX_WIDTH, MILLER_COLUMN_MIN_WIDTH,
 };
+use crate::fm::FmState;
 
 pub(crate) const MILLER_DIVIDER_WIDTH: u16 = 1;
 
@@ -38,6 +41,114 @@ pub(crate) struct MillerViewportGeometry {
     /// The clamped first visible chain index actually used. Callers persist
     /// this back so shrink/resize can never leave a stale window.
     pub first_visible: usize,
+}
+
+/// One visible logical Miller column projected from prepared model state.
+/// Directory identity is copied into the frame snapshot so later render/input
+/// wiring never has to infer a path from a raw chain index or coordinate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MillerColumnView {
+    pub chain_index: usize,
+    pub directory: PathBuf,
+    pub rect: Rect,
+}
+
+/// One visible divider with the exact adjacent logical directory identities.
+/// FM2's transaction target will combine this identity with the snapshot's
+/// Files generation; P1 deliberately introduces no input behavior.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MillerDividerView {
+    pub left_chain_index: usize,
+    pub right_chain_index: usize,
+    pub left_directory: PathBuf,
+    pub right_directory: PathBuf,
+    pub rect: Rect,
+}
+
+/// Immutable, bounded Miller projection owned by one computed Files frame.
+/// Render and input will consume this snapshot in later phases; P1 first
+/// establishes production geometry authority without changing visible output.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct MillerViewSnapshot {
+    /// Generation of the active Files singleton that owns this projection.
+    /// `None` means no Files instance has authority over these rects.
+    pub files_generation: Option<u32>,
+    pub model_revision: u64,
+    pub focused_chain_index: Option<usize>,
+    pub first_visible: usize,
+    pub columns: Vec<MillerColumnView>,
+    pub dividers: Vec<MillerDividerView>,
+}
+
+/// Project prepared Miller model state into a bounded frame snapshot.
+///
+/// This function performs no filesystem work. At most five directory paths
+/// and four adjacent divider pairs are cloned, matching the frozen resident
+/// and visible-column bound.
+pub(crate) fn project_miller_view(
+    stage: Rect,
+    file_manager: &FmState,
+    files_generation: u32,
+) -> MillerViewSnapshot {
+    let chain = &file_manager.miller.chain;
+    let focused_chain_index = chain
+        .iter()
+        .position(|segment| segment.directory == file_manager.miller.focused_directory);
+    let Some(focused_chain_index) = focused_chain_index else {
+        return MillerViewSnapshot {
+            files_generation: Some(files_generation),
+            model_revision: file_manager.miller.revision,
+            ..MillerViewSnapshot::default()
+        };
+    };
+    let preferred_widths = chain
+        .iter()
+        .map(|segment| segment.preferred_width)
+        .collect::<Vec<_>>();
+    let geometry = miller_viewport_geometry(
+        stage,
+        &preferred_widths,
+        focused_chain_index,
+        file_manager.miller.horizontal.first_visible,
+    );
+
+    let mut columns = Vec::with_capacity(geometry.columns.len());
+    for column in geometry.columns {
+        let Some(segment) = chain.get(column.chain_index) else {
+            continue;
+        };
+        columns.push(MillerColumnView {
+            chain_index: column.chain_index,
+            directory: segment.directory.clone(),
+            rect: column.rect,
+        });
+    }
+
+    let mut dividers = Vec::with_capacity(geometry.dividers.len());
+    for divider in geometry.dividers {
+        let (Some(left), Some(right)) = (
+            chain.get(divider.left_chain_index),
+            chain.get(divider.right_chain_index),
+        ) else {
+            continue;
+        };
+        dividers.push(MillerDividerView {
+            left_chain_index: divider.left_chain_index,
+            right_chain_index: divider.right_chain_index,
+            left_directory: left.directory.clone(),
+            right_directory: right.directory.clone(),
+            rect: divider.rect,
+        });
+    }
+
+    MillerViewSnapshot {
+        files_generation: Some(files_generation),
+        model_revision: file_manager.miller.revision,
+        focused_chain_index: Some(focused_chain_index),
+        first_visible: geometry.first_visible,
+        columns,
+        dividers,
+    }
 }
 
 /// Compute the bounded horizontal viewport: starting at `first_visible`

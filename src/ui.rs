@@ -31,6 +31,7 @@ use self::dialogs::{
     render_new_linked_worktree_overlay, render_open_existing_worktree_overlay,
     render_remove_worktree_overlay, render_rename_overlay,
 };
+pub(crate) use self::file_manager::miller::MillerViewSnapshot;
 use self::file_manager::{
     agent_attachment_picker_visible_rows, compute_agent_attachment_picker_row_areas,
     compute_file_manager_header_action_areas, render_agent_attachment_picker, render_file_manager,
@@ -298,6 +299,7 @@ fn compute_view_internal(
     } else {
         (Rect::default(), main_area)
     };
+    let file_manager_miller = sync_miller_view(app, terminal_area);
     let FileManagerRowGeometry {
         rows: file_manager_row_areas,
         actions: file_manager_row_action_areas,
@@ -450,6 +452,7 @@ fn compute_view_internal(
         project_row_areas,
         file_manager_sidebar_row_areas,
         app_dock_entry_areas,
+        file_manager_miller,
         file_manager_row_areas,
         file_manager_row_action_areas,
         file_manager_header_action_areas,
@@ -491,6 +494,7 @@ fn compute_mobile_view(
     } else {
         (area, Rect::default())
     };
+    let file_manager_miller = sync_miller_view(app, terminal_area);
     let FileManagerRowGeometry {
         rows: file_manager_row_areas,
         actions: file_manager_row_action_areas,
@@ -573,6 +577,7 @@ fn compute_mobile_view(
         project_row_areas: Vec::new(),
         file_manager_sidebar_row_areas: Vec::new(),
         app_dock_entry_areas: Vec::new(),
+        file_manager_miller,
         file_manager_row_areas,
         file_manager_row_action_areas,
         file_manager_header_action_areas,
@@ -613,6 +618,23 @@ fn sync_file_manager_view(app: &mut AppState, area: Rect) -> FileManagerRowGeome
     } else {
         FileManagerRowGeometry::default()
     }
+}
+
+fn sync_miller_view(app: &mut AppState, area: Rect) -> MillerViewSnapshot {
+    if app.stage.surface_view() != surface_host::StageSurfaceView::NativeFiles {
+        return MillerViewSnapshot::default();
+    }
+    let Some(files_generation) = app.stage.active_instance_generation() else {
+        return MillerViewSnapshot::default();
+    };
+    let viewport_area = file_manager::file_manager_miller_viewport_area(area);
+    let Some(file_manager) = app.file_manager.as_mut() else {
+        return MillerViewSnapshot::default();
+    };
+    let snapshot =
+        file_manager::miller::project_miller_view(viewport_area, file_manager, files_generation);
+    file_manager.miller.horizontal.first_visible = snapshot.first_visible;
+    snapshot
 }
 
 fn sync_agent_attachment_picker_view(
@@ -886,6 +908,42 @@ mod tests {
     use ratatui::style::Color;
     use ratatui::{backend::TestBackend, Terminal};
 
+    fn prepared_miller_projection_app(
+        chain_len: usize,
+        focused_index: usize,
+    ) -> (crate::app::state::AppState, Vec<std::path::PathBuf>) {
+        assert!(chain_len > 0);
+        assert!(focused_index < chain_len);
+
+        let mut file_manager =
+            crate::fm::FmState::new(std::env::current_dir().expect("current directory"));
+        let directories = (0..chain_len)
+            .map(|index| {
+                std::path::PathBuf::from(format!(
+                    "/definitely-missing-herdr-miller/segment-{index}"
+                ))
+            })
+            .collect::<Vec<_>>();
+        file_manager.miller.chain = directories
+            .iter()
+            .cloned()
+            .map(crate::fm::miller::MillerPathSegment::new)
+            .collect();
+        file_manager.miller.focused_directory = directories[focused_index].clone();
+
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.mobile_width_threshold = 0;
+        app.sidebar_collapsed = true;
+        app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
+        app.try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+        (app, directories)
+    }
+
     // S2 integration: `compute_view` populates `view.shell.regions` from the shell tree
     // consistently with the established `sidebar_rect`/main-area geometry — the
     // named-region map is the same outer split, just addressable by `RegionId`.
@@ -1087,8 +1145,18 @@ mod tests {
                 crate::app::state::FileManagerHeaderAction::Delete,
             ]
         );
+        assert!(
+            !app.view.file_manager_miller.columns.is_empty(),
+            "open Files projects at least one bounded Miller column"
+        );
 
         app.close_file_manager();
+        assert!(
+            app.view.file_manager_miller.columns.is_empty()
+                && app.view.file_manager_miller.dividers.is_empty()
+                && app.view.file_manager_miller.files_generation.is_none(),
+            "close must retire the Miller projection in the same transaction"
+        );
         compute_view(&mut app, Rect::new(0, 0, 100, 6));
         assert!(app.view.file_manager_row_areas.is_empty());
         assert!(app.view.file_manager_row_action_areas.is_empty());
@@ -1104,7 +1172,7 @@ mod tests {
     #[test]
     fn compute_view_projects_one_to_five_miller_columns() {
         let mut file_manager =
-            crate::fm::FmState::new(&std::env::current_dir().expect("current directory"));
+            crate::fm::FmState::new(std::env::current_dir().expect("current directory"));
         let directories = (0..7)
             .map(|index| std::path::PathBuf::from(format!("/virtual/segment-{index}")))
             .collect::<Vec<_>>();
@@ -1123,10 +1191,12 @@ mod tests {
         app.mode = Mode::Terminal;
         app.mobile_width_threshold = 0;
         app.sidebar_collapsed = true;
+        app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
         app.try_open_file_manager_with(|_| Some(file_manager))
             .expect("Files activation");
 
-        for width in [16, 33, 50, 84, 140, 400] {
+        let mut observed_column_counts = Vec::new();
+        for width in [16, 57, 86, 115, 144, 400] {
             let file_manager = app.file_manager.as_mut().expect("open FM");
             file_manager.miller.horizontal.first_visible = 0;
             let preferred_widths = file_manager
@@ -1136,15 +1206,73 @@ mod tests {
                 .map(|segment| segment.preferred_width)
                 .collect::<Vec<_>>();
             let focused_index = file_manager.miller.chain.len() - 1;
+            let frame = Rect::new(0, 0, width, 16);
+            let expected_body = Rect::new(
+                frame.x,
+                frame.y + 1,
+                frame.width,
+                frame.height.saturating_sub(2),
+            );
             let expected = file_manager::miller::miller_viewport_geometry(
-                Rect::new(0, 0, width, 14),
+                expected_body,
                 &preferred_widths,
                 focused_index,
                 0,
             );
 
-            compute_view(&mut app, Rect::new(0, 0, width, 16));
+            compute_view(&mut app, frame);
 
+            let snapshot = &app.view.file_manager_miller;
+            assert_eq!(
+                snapshot.files_generation,
+                app.stage.active_instance_generation(),
+                "the frame snapshot carries the active Files singleton generation"
+            );
+            assert_eq!(
+                snapshot.model_revision,
+                app.file_manager.as_ref().expect("open FM").miller.revision
+            );
+            assert_eq!(
+                snapshot.first_visible, expected.first_visible,
+                "the frame snapshot owns the clamped window at width {width}"
+            );
+            assert_eq!(
+                snapshot.focused_chain_index,
+                Some(focused_index),
+                "the exact focused logical segment is projected"
+            );
+            assert_eq!(
+                snapshot.columns.len(),
+                expected.columns.len(),
+                "production projection publishes every complete visible column"
+            );
+            observed_column_counts.push(snapshot.columns.len());
+            assert_eq!(
+                snapshot.dividers.len(),
+                expected.dividers.len(),
+                "production projection publishes one divider per adjacent pair"
+            );
+            for (projected, geometry) in snapshot.columns.iter().zip(&expected.columns) {
+                assert_eq!(projected.chain_index, geometry.chain_index);
+                assert_eq!(projected.rect, geometry.rect);
+                assert_eq!(
+                    projected.directory, directories[geometry.chain_index],
+                    "column identity comes from the exact logical segment"
+                );
+            }
+            for (projected, geometry) in snapshot.dividers.iter().zip(&expected.dividers) {
+                assert_eq!(projected.left_chain_index, geometry.left_chain_index);
+                assert_eq!(projected.right_chain_index, geometry.right_chain_index);
+                assert_eq!(projected.rect, geometry.rect);
+                assert_eq!(
+                    projected.left_directory,
+                    directories[geometry.left_chain_index]
+                );
+                assert_eq!(
+                    projected.right_directory,
+                    directories[geometry.right_chain_index]
+                );
+            }
             assert_eq!(
                 app.file_manager
                     .as_ref()
@@ -1166,6 +1294,231 @@ mod tests {
                 "every adjacent visible pair has one divider at width {width}"
             );
         }
+        assert_eq!(
+            observed_column_counts,
+            vec![1, 2, 3, 4, 5, 5],
+            "production projection exercises every supported visible-column count"
+        );
+
+        compute_view(&mut app, Rect::new(0, 0, 0, 16));
+        assert!(
+            app.view.file_manager_miller.columns.is_empty()
+                && app.view.file_manager_miller.dividers.is_empty(),
+            "zero-width Files projection publishes no stale Miller targets"
+        );
+    }
+
+    #[test]
+    fn windowed_projection_uses_model_first_visible() {
+        let (mut app, directories) = prepared_miller_projection_app(7, 4);
+        let original_revision = app.file_manager.as_ref().expect("open FM").miller.revision;
+        app.file_manager
+            .as_mut()
+            .expect("open FM")
+            .miller
+            .horizontal
+            .first_visible = 2;
+
+        compute_view(&mut app, Rect::new(0, 0, 86, 16));
+
+        let snapshot = &app.view.file_manager_miller;
+        assert_eq!(snapshot.first_visible, 2);
+        assert_eq!(
+            snapshot
+                .columns
+                .iter()
+                .map(|column| column.chain_index)
+                .collect::<Vec<_>>(),
+            vec![2, 3, 4],
+            "the requested nonzero model window is the production projection authority"
+        );
+        let file_manager = app.file_manager.as_ref().expect("open FM");
+        assert_eq!(file_manager.miller.horizontal.first_visible, 2);
+        assert_eq!(file_manager.miller.focused_directory, directories[4]);
+        assert_eq!(file_manager.miller.revision, original_revision);
+        assert_eq!(
+            file_manager
+                .miller
+                .chain
+                .iter()
+                .map(|segment| segment.directory.clone())
+                .collect::<Vec<_>>(),
+            directories,
+            "projection must not rewrite the logical chain"
+        );
+    }
+
+    #[test]
+    fn zero_files_area_retires_windowed_miller_targets() {
+        let (mut app, _) = prepared_miller_projection_app(7, 6);
+
+        compute_view(&mut app, Rect::new(0, 0, 100, 16));
+        assert!(!app.view.file_manager_miller.columns.is_empty());
+
+        compute_view(&mut app, Rect::new(0, 0, 0, 16));
+        assert!(app.view.file_manager_miller.columns.is_empty());
+        assert!(app.view.file_manager_miller.dividers.is_empty());
+        assert!(app.view.file_manager_row_areas.is_empty());
+        assert!(app.view.file_manager_row_action_areas.is_empty());
+        assert!(app.view.file_manager_header_action_areas.is_empty());
+
+        app.mobile_width_threshold = u16::MAX;
+        compute_view(&mut app, Rect::new(0, 0, 80, 16));
+        assert!(
+            !app.view.file_manager_miller.columns.is_empty(),
+            "precondition: the mobile Files body owns live targets"
+        );
+        compute_view(&mut app, Rect::new(0, 0, 80, 2));
+        assert!(app.view.file_manager_miller.columns.is_empty());
+        assert!(app.view.file_manager_miller.dividers.is_empty());
+        assert!(app.view.file_manager_row_areas.is_empty());
+        assert!(app.view.file_manager_row_action_areas.is_empty());
+        assert!(
+            app.view.file_manager_header_action_areas.is_empty(),
+            "a header-only mobile frame must expose no Files body targets"
+        );
+    }
+
+    #[test]
+    fn windowed_projection_does_not_read_filesystem() {
+        let (mut app, directories) = prepared_miller_projection_app(7, 6);
+        assert!(
+            directories.iter().all(|directory| !directory.exists()),
+            "precondition: every logical segment is intentionally absent on disk"
+        );
+        let file_manager = app.file_manager.as_ref().expect("open FM");
+        let original_cwd = file_manager.cwd.clone();
+        let original_entries = file_manager.entries.clone();
+        let original_revision = file_manager.miller.revision;
+
+        compute_view(&mut app, Rect::new(0, 0, 144, 16));
+
+        let file_manager = app.file_manager.as_ref().expect("open FM");
+        assert_eq!(file_manager.cwd, original_cwd);
+        assert_eq!(file_manager.entries, original_entries);
+        assert_eq!(file_manager.miller.revision, original_revision);
+        assert_eq!(
+            file_manager
+                .miller
+                .chain
+                .iter()
+                .map(|segment| segment.directory.clone())
+                .collect::<Vec<_>>(),
+            directories,
+            "compute consumes prepared state without loading synthetic directories"
+        );
+        assert_eq!(app.view.file_manager_miller.columns.len(), 5);
+    }
+
+    #[test]
+    fn focused_column_remains_visible_after_projection_shrink() {
+        let (mut app, directories) = prepared_miller_projection_app(7, 6);
+
+        compute_view(&mut app, Rect::new(0, 0, 144, 16));
+        assert_eq!(app.view.file_manager_miller.columns.len(), 5);
+        let wide_first_visible = app.view.file_manager_miller.first_visible;
+
+        compute_view(&mut app, Rect::new(0, 0, 57, 16));
+
+        let snapshot = &app.view.file_manager_miller;
+        assert_eq!(snapshot.columns.len(), 2);
+        assert!(snapshot.first_visible > wide_first_visible);
+        assert_eq!(snapshot.focused_chain_index, Some(6));
+        assert!(
+            snapshot
+                .columns
+                .iter()
+                .any(|column| column.chain_index == 6 && column.directory == directories[6]),
+            "the focused logical column remains visible after shrink"
+        );
+        let body = file_manager::file_manager_miller_viewport_area(Rect::new(0, 0, 57, 16));
+        assert!(snapshot.columns.iter().all(|column| {
+            column.rect.x >= body.x
+                && column.rect.y >= body.y
+                && column.rect.right() <= body.right()
+                && column.rect.bottom() <= body.bottom()
+        }));
+        assert_eq!(
+            app.file_manager
+                .as_ref()
+                .expect("open FM")
+                .miller
+                .chain
+                .len(),
+            7,
+            "responsive shrink changes only the viewport window"
+        );
+    }
+
+    #[test]
+    fn reopened_files_projection_uses_fresh_instance_generation() {
+        let (mut app, _) = prepared_miller_projection_app(3, 2);
+        compute_view(&mut app, Rect::new(0, 0, 100, 16));
+        let first_generation = app
+            .view
+            .file_manager_miller
+            .files_generation
+            .expect("first Files generation");
+
+        app.close_file_manager();
+        assert!(app.view.file_manager_miller.files_generation.is_none());
+        app.try_open_file_manager_with(|_| {
+            Some(crate::fm::FmState::new(
+                std::env::current_dir().expect("current directory"),
+            ))
+        })
+        .expect("reopen Files");
+        compute_view(&mut app, Rect::new(0, 0, 100, 16));
+
+        let reopened_generation = app
+            .view
+            .file_manager_miller
+            .files_generation
+            .expect("reopened Files generation");
+        assert!(
+            reopened_generation > first_generation,
+            "close/reopen must not alias prior Files projection identity"
+        );
+    }
+
+    #[test]
+    fn windowed_projection_requires_typed_files_surface() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.mobile_width_threshold = 0;
+        app.sidebar_collapsed = true;
+        app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
+        app.try_open_file_manager_with(|_| {
+            Some(crate::fm::FmState::new(
+                std::env::current_dir().expect("current directory"),
+            ))
+        })
+        .expect("Files activation");
+
+        compute_view(&mut app, Rect::new(0, 0, 100, 16));
+        assert!(
+            !app.view.file_manager_miller.columns.is_empty(),
+            "precondition: typed Files owns a live Miller projection"
+        );
+
+        // Adversarial split-brain fixture: retain the domain model but remove
+        // typed Files ownership. Projection must follow Stage authority.
+        app.stage = crate::ui::surface_host::StageState::default();
+        compute_view(&mut app, Rect::new(0, 0, 100, 16));
+
+        assert!(
+            app.view.file_manager_miller.columns.is_empty()
+                && app.view.file_manager_miller.dividers.is_empty()
+                && app.view.file_manager_miller.files_generation.is_none(),
+            "a foreign typed Stage surface must project no Miller geometry"
+        );
+        assert!(
+            app.file_manager.is_some(),
+            "the authority test must not pass by deleting the Files model"
+        );
     }
 
     // TP-N3.1-LIFECYCLE: compute_view rebuilds persistent action-bar content

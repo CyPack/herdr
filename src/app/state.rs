@@ -1400,6 +1400,12 @@ pub struct ViewState {
     /// Complete AppDock entry targets for the current frame. Empty whenever
     /// the live shell projects no dock region.
     pub app_dock_entry_areas: Vec<crate::ui::app_dock::AppDockEntryArea>,
+    /// Bounded logical Miller columns and dividers projected for the current
+    /// Files frame. Empty while Files is closed or its body cannot fit one
+    /// complete minimum-width column.
+    #[allow(dead_code)] // P1 establishes compute ownership; P2 removes this
+    // once render/input consume the snapshot.
+    pub(crate) file_manager_miller: crate::ui::MillerViewSnapshot,
     /// Visible CURRENT rows for the native file manager. Empty while FM is
     /// closed or when its content area has no drawable rows.
     pub file_manager_row_areas: Vec<FileManagerRowArea>,
@@ -2694,6 +2700,7 @@ impl AppState {
                 project_row_areas: Vec::new(),
                 file_manager_sidebar_row_areas: Vec::new(),
                 app_dock_entry_areas: Vec::new(),
+                file_manager_miller: Default::default(),
                 file_manager_row_areas: Vec::new(),
                 file_manager_row_action_areas: Vec::new(),
                 file_manager_header_action_areas: Vec::new(),

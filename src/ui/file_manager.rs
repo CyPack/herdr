@@ -177,16 +177,31 @@ fn file_manager_areas(area: Rect) -> Option<FileManagerAreas> {
     file_manager_areas_with(area, MillerTrioOverrides::default())
 }
 
-fn file_manager_areas_with(area: Rect, overrides: MillerTrioOverrides) -> Option<FileManagerAreas> {
+fn file_manager_frame_areas(area: Rect) -> Option<[Rect; 3]> {
     if area.width == 0 || area.height == 0 {
         return None;
     }
-    let [header, body, status] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Min(0),
-        Constraint::Length(1),
-    ])
-    .areas(area);
+    Some(
+        Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .areas(area),
+    )
+}
+
+/// Complete body reserved for Miller columns between the one-row header and
+/// one-row status line. Production viewport projection, legacy trio render,
+/// hit geometry, and preview placement must derive from this same frame split.
+pub(crate) fn file_manager_miller_viewport_area(area: Rect) -> Rect {
+    file_manager_frame_areas(area)
+        .map(|[_, body, _]| body)
+        .unwrap_or_default()
+}
+
+fn file_manager_areas_with(area: Rect, overrides: MillerTrioOverrides) -> Option<FileManagerAreas> {
+    let [header, body, status] = file_manager_frame_areas(area)?;
     Some(FileManagerAreas {
         header,
         columns: miller_layout_with(body, overrides),

@@ -87,6 +87,15 @@ impl StageState {
         self.instance(self.active).map(|instance| instance.surface)
     }
 
+    /// Generation of the active built-in app instance.
+    ///
+    /// Frame projections use this opaque lifecycle identity to reject geometry
+    /// retained from a closed and reopened singleton.
+    pub(crate) fn active_instance_generation(&self) -> Option<u32> {
+        self.instance(self.active)
+            .map(|instance| instance.id.generation)
+    }
+
     #[allow(dead_code)] // SF4.1 close/failure restoration consumes this after its RED contracts.
     pub(crate) fn previous_surface(&self) -> Option<AppSurfaceRef> {
         self.previous
