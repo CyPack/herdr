@@ -541,11 +541,28 @@ impl App {
                     .as_ref()
                     .and_then(|row| row.directory_selection_target())
                 {
-                    self.last_file_manager_click = None;
-                    if let Some(file_manager) = self.state.file_manager.as_mut() {
-                        let _ =
-                            file_manager.activate_directory_selection(&directory_path, &entry_path);
-                    }
+                    let click = FileManagerClickState {
+                        entry_path: entry_path.clone(),
+                        at: std::time::Instant::now(),
+                    };
+                    let is_double_click = self
+                        .last_file_manager_click
+                        .as_ref()
+                        .is_some_and(|last| last.is_double_click_for(&click));
+                    let activated = self
+                        .state
+                        .file_manager
+                        .as_mut()
+                        .is_some_and(|file_manager| {
+                            let activated = file_manager
+                                .activate_directory_selection(&directory_path, &entry_path);
+                            if activated && is_double_click {
+                                file_manager.enter();
+                            }
+                            activated
+                        });
+                    self.last_file_manager_click =
+                        activated.then_some(click).filter(|_| !is_double_click);
                     return FileManagerMouseDispatch::Consumed;
                 }
                 let Some((entry_idx, entry_path)) = entry_target else {
