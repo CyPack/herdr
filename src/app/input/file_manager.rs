@@ -2347,6 +2347,191 @@ mod tests {
         assert_eq!(after.preview_generation, before.preview_generation);
     }
 
+    // TP-FM3-PARENT-WHEEL: a prepared immediate-parent column uses the same
+    // bounded owning-column semantics as a resident ancestor. It may move its
+    // local highlight/viewport but never CURRENT or horizontal state.
+    #[test]
+    fn plain_wheel_moves_only_hovered_prepared_parent_viewport() {
+        let td = TempDir::new("prepared-parent-wheel");
+        for index in 0..10 {
+            td.dir(&format!("{index:02}-sibling"));
+        }
+        let current = td.root.join("zz-current");
+        fs::create_dir(&current).expect("create current directory");
+        let file_manager = FmState::new(&current);
+        let mut app = runtime_app_with_fm(file_manager);
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 200, 8));
+        let parent_column = app
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .find(|column| {
+                column.rows.first().is_some_and(|row| {
+                    row.column_kind == crate::ui::MillerRowColumnKind::PreparedParent
+                })
+            })
+            .cloned()
+            .expect("visible prepared parent");
+        let target = parent_column.rows[0].clone();
+        let visible_rows = parent_column.content_rect.height as usize;
+        let before = app.state.file_manager.as_ref().expect("open FM").clone();
+        let before_parent_cursor = before
+            .parent
+            .as_ref()
+            .and_then(|parent| parent.cursor)
+            .expect("current row in prepared parent");
+
+        for _ in 0..3 {
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::ScrollUp,
+                target.rect.x,
+                target.rect.y,
+            ));
+        }
+
+        let after = app.state.file_manager.as_ref().expect("open FM");
+        let expected_cursor = before_parent_cursor.saturating_sub(3);
+        assert_eq!(
+            after.parent.as_ref().and_then(|parent| parent.cursor),
+            Some(expected_cursor)
+        );
+        let segment = &after.miller.chain[target.chain_index.expect("parent chain index")];
+        assert_eq!(segment.cursor, expected_cursor);
+        assert_eq!(
+            segment.viewport_start,
+            before_parent_cursor.saturating_sub(visible_rows),
+            "first upward step brings the offscreen parent cursor into view; later steps remain within that window"
+        );
+        assert_eq!(after.cwd, before.cwd);
+        assert_eq!(after.cursor, before.cursor);
+        assert_eq!(after.viewport_start, before.viewport_start);
+        assert_eq!(after.miller.horizontal, before.miller.horizontal);
+        assert_eq!(after.directory_generation, before.directory_generation);
+        assert_eq!(after.preview_generation, before.preview_generation);
+    }
+
+    // TP-FM3-NONCURRENT-MODIFIERS: Ctrl/Shift selection authority is confined
+    // to CURRENT. A preview/ancestor target with either modifier is consumed
+    // without activating a directory or creating cross-directory selection.
+    #[test]
+    fn modified_click_outside_current_directory_is_consumed_inert() {
+        let td = TempDir::new("noncurrent-modified-click");
+        let preview_directory = td.root.join("preview-directory");
+        let child = preview_directory.join("child.txt");
+        fs::create_dir_all(&preview_directory).expect("create preview directory");
+        fs::write(&child, b"x").expect("write preview child");
+        let mut file_manager = FmState::new(&td.root);
+        let preview_index = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == preview_directory)
+            .expect("preview directory row");
+        assert!(file_manager.select(preview_index));
+        let mut app = runtime_app_with_fm(file_manager);
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 100, 12));
+        let target = app
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .flat_map(|column| &column.rows)
+            .find(|row| row.column_kind == crate::ui::MillerRowColumnKind::Preview)
+            .cloned()
+            .expect("preview row target");
+        let before = app.state.file_manager.as_ref().expect("open FM").clone();
+
+        for modifiers in [KeyModifiers::CONTROL, KeyModifiers::SHIFT] {
+            assert_eq!(
+                app.handle_file_manager_mouse(mouse_with_modifiers(
+                    MouseEventKind::Down(MouseButton::Left),
+                    target.rect.x,
+                    target.rect.y,
+                    modifiers,
+                )),
+                FileManagerMouseDispatch::Consumed
+            );
+        }
+
+        let after = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(after.cwd, before.cwd);
+        assert_eq!(after.cursor, before.cursor);
+        assert_eq!(
+            after.multi_selection_paths(),
+            before.multi_selection_paths()
+        );
+        assert_eq!(after.miller, before.miller);
+        assert_eq!(after.directory_generation, before.directory_generation);
+        assert_eq!(after.preview_generation, before.preview_generation);
+    }
+
+    // TP-FM3-STALE-CONTEXT: a right-click target can become stale on disk
+    // after projection. The second revalidation must preserve model state and
+    // must not open a destructive context overlay.
+    #[test]
+    fn renamed_non_current_right_click_does_not_open_context_menu() {
+        let td = TempDir::new("noncurrent-context-rename");
+        let preview_directory = td.root.join("preview-directory");
+        let old_path = preview_directory.join("old.txt");
+        let new_path = preview_directory.join("new.txt");
+        fs::create_dir_all(&preview_directory).expect("create preview directory");
+        fs::write(&old_path, b"x").expect("write preview target");
+        let mut file_manager = FmState::new(&td.root);
+        let preview_index = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == preview_directory)
+            .expect("preview directory row");
+        assert!(file_manager.select(preview_index));
+        let mut app = runtime_app_with_fm(file_manager);
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 100, 12));
+        let target = app
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .flat_map(|column| &column.rows)
+            .find(|row| row.entry_path == old_path)
+            .cloned()
+            .expect("preview row target");
+        let before = app.state.file_manager.as_ref().expect("open FM").clone();
+
+        fs::rename(&old_path, &new_path).expect("rename after projection");
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Right),
+                target.rect.x,
+                target.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+
+        let after = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert!(app.state.context_menu.is_none());
+        assert_eq!(after.cwd, before.cwd);
+        assert_eq!(after.cursor, before.cursor);
+        assert_eq!(
+            after.multi_selection_paths(),
+            before.multi_selection_paths()
+        );
+        assert_eq!(after.miller, before.miller);
+        assert_eq!(after.directory_generation, before.directory_generation);
+        assert_eq!(after.preview_generation, before.preview_generation);
+    }
+
     // TP-FM1.3-HSCROLL-MODIFIERS: only the exact Shift+wheel gesture changes
     // the horizontal window. Control/Alt and combined modifiers are consumed
     // fail-closed and cannot accidentally become vertical list navigation.
