@@ -375,25 +375,50 @@ impl App {
             .and_then(|row| row.current_entry_target());
         let entry_idx = entry_target.as_ref().map(|(entry_idx, _)| *entry_idx);
 
-        let context_entry_target = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right))
-            .then(|| {
-                entry_target.clone().or_else(|| {
-                    self.state
-                        .view
-                        .file_manager_row_action_areas
-                        .iter()
-                        .find(|area| rect_contains(area.rect, mouse.column, mouse.row))
-                        .and_then(|area| {
-                            let entry =
-                                self.state.file_manager.as_ref().and_then(|file_manager| {
-                                    file_manager.entries.get(area.entry_idx)
-                                })?;
-                            (entry.path == area.entry_path)
-                                .then(|| (area.entry_idx, area.entry_path.clone()))
-                        })
+        let mut context_entry_target =
+            matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right))
+                .then(|| {
+                    entry_target.clone().or_else(|| {
+                        self.state
+                            .view
+                            .file_manager_row_action_areas
+                            .iter()
+                            .find(|area| rect_contains(area.rect, mouse.column, mouse.row))
+                            .and_then(|area| {
+                                let entry =
+                                    self.state.file_manager.as_ref().and_then(|file_manager| {
+                                        file_manager.entries.get(area.entry_idx)
+                                    })?;
+                                (entry.path == area.entry_path)
+                                    .then(|| (area.entry_idx, area.entry_path.clone()))
+                            })
+                    })
                 })
-            })
-            .flatten();
+                .flatten();
+        if context_entry_target.is_none()
+            && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right))
+            && mouse.modifiers.is_empty()
+        {
+            if let Some((directory_path, entry_path)) = miller_row_target
+                .as_ref()
+                .and_then(|row| row.directory_selection_target())
+            {
+                let activated = self
+                    .state
+                    .file_manager
+                    .as_mut()
+                    .is_some_and(|file_manager| {
+                        file_manager.activate_directory_selection(&directory_path, &entry_path)
+                    });
+                if activated {
+                    context_entry_target =
+                        self.state.file_manager.as_ref().and_then(|file_manager| {
+                            (file_manager.selected().map(|entry| &entry.path) == Some(&entry_path))
+                                .then_some((file_manager.cursor, entry_path))
+                        });
+                }
+            }
+        }
 
         let row_action = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
             .then_some(())
