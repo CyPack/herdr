@@ -2276,6 +2276,76 @@ mod tests {
         assert_eq!(after.miller.revision, before.miller.revision);
     }
 
+    // TP-FM3-PREVIEW-WHEEL: PREVIEW has no chain segment, so it owns one
+    // bounded client-local viewport. Plain wheel scrolls only that directory
+    // preview; CURRENT focus, horizontal origin, chain, and generations stay
+    // byte-for-byte stable.
+    #[test]
+    fn plain_wheel_moves_only_hovered_preview_viewport() {
+        let td = TempDir::new("preview-wheel");
+        let preview_directory = td.root.join("preview-directory");
+        fs::create_dir_all(&preview_directory).expect("create preview directory");
+        for index in 0..12 {
+            fs::write(preview_directory.join(format!("{index:02}.txt")), b"x")
+                .expect("write preview entry");
+        }
+        let mut file_manager = FmState::new(&td.root);
+        let preview_index = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == preview_directory)
+            .expect("preview directory row");
+        assert!(file_manager.select(preview_index));
+        let mut app = runtime_app_with_fm(file_manager);
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        let frame = Rect::new(0, 0, 100, 8);
+        compute_view(&mut app.state, frame);
+        let preview_column = app
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .find(|column| column.kind.is_preview())
+            .cloned()
+            .expect("visible preview column");
+        let probe = preview_column.rows[0].rect;
+        let before = app.state.file_manager.as_ref().expect("open FM").clone();
+
+        for _ in 0..3 {
+            app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollDown, probe.x, probe.y));
+        }
+        compute_view(&mut app.state, frame);
+
+        let first_preview_entry = app
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .find(|column| column.kind.is_preview())
+            .and_then(|column| column.rows.first())
+            .map(|row| row.entry_index);
+        assert_eq!(
+            first_preview_entry,
+            Some(3),
+            "three wheel steps advance only the preview viewport"
+        );
+        let after = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(after.cwd, before.cwd);
+        assert_eq!(after.cursor, before.cursor);
+        assert_eq!(after.viewport_start, before.viewport_start);
+        assert_eq!(
+            after.multi_selection_paths(),
+            before.multi_selection_paths()
+        );
+        assert_eq!(after.miller, before.miller);
+        assert_eq!(after.directory_generation, before.directory_generation);
+        assert_eq!(after.preview_generation, before.preview_generation);
+    }
+
     // TP-FM1.3-HSCROLL-MODIFIERS: only the exact Shift+wheel gesture changes
     // the horizontal window. Control/Alt and combined modifiers are consumed
     // fail-closed and cannot accidentally become vertical list navigation.
