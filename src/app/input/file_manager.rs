@@ -618,6 +618,30 @@ mod tests {
         KeyEvent::new(code, modifiers)
     }
 
+    fn state_with_attachment_picker(root: &std::path::Path, label: &str) -> AppState {
+        let mut state = AppState::test_new();
+        let mut workspace = crate::workspace::Workspace::test_new(label);
+        workspace.identity_cwd = root.to_path_buf();
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace.tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        state.workspaces = vec![workspace];
+        state.active = Some(0);
+        state.mode = Mode::Terminal;
+        state.ensure_test_terminals();
+        state
+            .terminals
+            .get_mut(&terminal_id)
+            .expect("attachment target terminal")
+            .set_agent_name("codex".into());
+        state.view.terminal_area = Rect::new(0, 0, 80, 24);
+        state
+            .open_agent_attachment_picker()
+            .expect("open attachment picker");
+        state
+    }
+
     fn apply_test_navigation(state: &mut AppState, dispatch: FileManagerKeyDispatch) {
         if let FileManagerKeyDispatch::Navigate(request) = dispatch {
             let prepared =
@@ -630,6 +654,70 @@ mod tests {
                 "test App adapter must apply the live prepared result"
             );
         }
+    }
+
+    // TP-FM4-APP-ADAPTER: attachment-picker input emits navigation intent but
+    // performs no filesystem-backed model transition before the App adapter.
+    #[test]
+    fn attachment_picker_directory_enter_is_pure_until_app_adapter() {
+        let td = TempDir::new("attachment-directory-intent");
+        td.dir("child");
+        let child = td.root.join("child");
+        let mut state = state_with_attachment_picker(&td.root, "attachment-directory-intent");
+        let picker = state
+            .agent_attachment_picker
+            .as_mut()
+            .expect("open attachment picker");
+        let entry_idx = picker
+            .file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == child)
+            .expect("child directory");
+        picker.file_manager.select(entry_idx);
+        let before = picker.file_manager.clone();
+
+        handle_agent_attachment_picker_key(&mut state, key(KeyCode::Enter));
+
+        let after = &state
+            .agent_attachment_picker
+            .as_ref()
+            .expect("picker remains open")
+            .file_manager;
+        assert_eq!(after.cwd, before.cwd);
+        assert_eq!(after.directory_generation, before.directory_generation);
+        assert_eq!(after.preview_generation, before.preview_generation);
+        assert_eq!(after.miller, before.miller);
+        assert!(state.request_agent_attachment_delivery.is_none());
+    }
+
+    // TP-FM4-APP-ADAPTER: parent navigation is also an intent-only input
+    // transition; stale preparation must be rejectable before model mutation.
+    #[test]
+    fn attachment_picker_leave_is_pure_until_app_adapter() {
+        let td = TempDir::new("attachment-leave-intent");
+        td.dir("child");
+        let child = td.root.join("child");
+        let mut state = state_with_attachment_picker(&child, "attachment-leave-intent");
+        let before = state
+            .agent_attachment_picker
+            .as_ref()
+            .expect("open attachment picker")
+            .file_manager
+            .clone();
+
+        handle_agent_attachment_picker_key(&mut state, key(KeyCode::Backspace));
+
+        let after = &state
+            .agent_attachment_picker
+            .as_ref()
+            .expect("picker remains open")
+            .file_manager;
+        assert_eq!(after.cwd, before.cwd);
+        assert_eq!(after.directory_generation, before.directory_generation);
+        assert_eq!(after.preview_generation, before.preview_generation);
+        assert_eq!(after.miller, before.miller);
+        assert!(state.request_agent_attachment_delivery.is_none());
     }
 
     #[test]
