@@ -782,6 +782,7 @@ impl FmState {
     /// Re-read the current directory, keeping `show_hidden` and preserving the
     /// selected path when it still exists. If it disappeared, retain the old
     /// row when possible and clamp it into the new entry range.
+    #[cfg(test)]
     pub fn reload(&mut self) {
         let selected_path = self.selected().map(|entry| entry.path.clone());
         let previous_cursor = self.cursor;
@@ -791,6 +792,7 @@ impl FmState {
     /// Re-read cwd once, preferring one exact visible path and otherwise using
     /// the supplied cursor fallback. Directory navigation uses this seam to
     /// transfer path identity without retaining per-directory history.
+    #[cfg(test)]
     fn reload_focusing_path(&mut self, selected_path: Option<&Path>, fallback_cursor: usize) {
         let snapshot = read_directory_snapshot(&self.cwd, self.show_hidden);
         self.entries = snapshot.entries;
@@ -807,6 +809,7 @@ impl FmState {
     }
 
     /// Toggle hidden-file visibility and re-read the directory.
+    #[cfg(test)]
     pub fn toggle_hidden(&mut self) {
         self.show_hidden = !self.show_hidden;
         self.reload();

@@ -363,6 +363,49 @@ impl super::App {
             })
     }
 
+    pub(super) fn execute_file_manager_current_refresh(
+        &mut self,
+        request: crate::fm::FmCurrentRefreshRequest,
+    ) -> Option<bool> {
+        let previous = self.state.file_manager.as_ref().map(|file_manager| {
+            (
+                file_manager.entries.clone(),
+                file_manager.cursor,
+                file_manager.cwd_status,
+                file_manager.cwd_writable,
+                file_manager.parent.clone(),
+                file_manager.preview.clone(),
+                file_manager.show_hidden,
+            )
+        })?;
+        let prepared = crate::fm::prepare_current_refresh_io(request);
+        if !self.apply_prepared_file_manager_refresh(prepared) {
+            return None;
+        }
+        self.state.file_manager.as_ref().map(|file_manager| {
+            previous.0 != file_manager.entries
+                || previous.1 != file_manager.cursor
+                || previous.2 != file_manager.cwd_status
+                || previous.3 != file_manager.cwd_writable
+                || previous.4 != file_manager.parent
+                || previous.5 != file_manager.preview
+                || previous.6 != file_manager.show_hidden
+        })
+    }
+
+    pub(super) fn refresh_file_manager_after_operation(&mut self, directory: &Path) -> bool {
+        let Some(files_generation) = self.active_files_generation() else {
+            return false;
+        };
+        let Some(request) = self.state.file_manager.as_ref().and_then(|file_manager| {
+            (file_manager.cwd == directory)
+                .then(|| file_manager.request_operation_refresh(files_generation))
+        }) else {
+            return false;
+        };
+        self.execute_file_manager_current_refresh(request).is_some()
+    }
+
     /// Consume one Files-sidebar navigation intent at the App-owned filesystem
     /// boundary. Both model authority and live directory type are revalidated;
     /// invalid or stale requests preserve the currently open FM projection.
@@ -458,39 +501,16 @@ impl super::App {
             return false;
         };
 
-        let prepared = crate::fm::prepare_current_refresh_io(request);
-        let Some(previous) = self.state.file_manager.as_ref().map(|file_manager| {
-            (
-                file_manager.entries.clone(),
-                file_manager.cursor,
-                file_manager.cwd_status,
-                file_manager.cwd_writable,
-                file_manager.parent.clone(),
-                file_manager.preview.clone(),
-            )
-        }) else {
+        let Some(changed) = self.execute_file_manager_current_refresh(request) else {
             return false;
         };
-        if !self.apply_prepared_file_manager_refresh(prepared) {
-            return false;
-        }
         self.file_manager_watcher.reconcile_revision = self
             .file_manager_watcher
             .reconcile_revision
             .wrapping_add(1)
             .max(1);
 
-        self.state
-            .file_manager
-            .as_ref()
-            .is_some_and(|file_manager| {
-                previous.0 != file_manager.entries
-                    || previous.1 != file_manager.cursor
-                    || previous.2 != file_manager.cwd_status
-                    || previous.3 != file_manager.cwd_writable
-                    || previous.4 != file_manager.parent
-                    || previous.5 != file_manager.preview
-            })
+        changed
     }
 }
 

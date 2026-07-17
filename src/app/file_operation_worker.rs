@@ -693,11 +693,7 @@ impl crate::app::App {
                     .file_manager_watcher
                     .request_reconcile(&destination_directory);
         if !reconcile_with_watcher {
-            if let Some(file_manager) = self.state.file_manager.as_mut() {
-                if file_manager.cwd == destination_directory {
-                    file_manager.reload();
-                }
-            }
+            let _ = self.refresh_file_manager_after_operation(&destination_directory);
         }
         changed = true;
         changed

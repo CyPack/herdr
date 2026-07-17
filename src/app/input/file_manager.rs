@@ -121,8 +121,14 @@ pub(super) fn handle_file_manager_key(
             }
         }
         (KeyCode::Char('.'), KeyModifiers::NONE) => {
-            if let Some(fm) = state.file_manager.as_mut() {
-                fm.toggle_hidden();
+            let files_generation = (state.stage.surface_view()
+                == crate::ui::surface_host::StageSurfaceView::NativeFiles)
+                .then(|| state.stage.active_instance_generation())
+                .flatten();
+            if let Some(request) = state.file_manager.as_ref().and_then(|file_manager| {
+                files_generation.map(|generation| file_manager.request_hidden_toggle(generation))
+            }) {
+                return FileManagerKeyDispatch::Refresh(request);
             }
         }
         _ => {}
@@ -195,31 +201,45 @@ pub(crate) fn handle_agent_attachment_picker_key(
                 AttachmentPickerKeyDispatch::Consumed,
                 AttachmentPickerKeyDispatch::Navigate,
             ),
-        (KeyCode::Char('.'), KeyModifiers::NONE) => {
-            if let Some(picker) = state.agent_attachment_picker.as_mut() {
-                picker.file_manager.toggle_hidden();
-            }
-            AttachmentPickerKeyDispatch::Consumed
-        }
+        (KeyCode::Char('.'), KeyModifiers::NONE) => state
+            .agent_attachment_picker
+            .as_ref()
+            .map(|picker| picker.file_manager.request_hidden_toggle(0))
+            .map_or(
+                AttachmentPickerKeyDispatch::Consumed,
+                AttachmentPickerKeyDispatch::Refresh,
+            ),
         _ => AttachmentPickerKeyDispatch::Consumed,
     }
 }
 
 impl App {
     pub(in crate::app) fn route_agent_attachment_picker_key(&mut self, key: KeyEvent) {
-        let AttachmentPickerKeyDispatch::Navigate(request) =
-            handle_agent_attachment_picker_key(&mut self.state, key)
-        else {
-            return;
-        };
-        let Some(prepared) = crate::fm::prepare_navigation_io(request) else {
-            return;
-        };
-        let _ = self
-            .state
-            .agent_attachment_picker
-            .as_mut()
-            .is_some_and(|picker| picker.file_manager.apply_prepared_navigation(prepared));
+        match handle_agent_attachment_picker_key(&mut self.state, key) {
+            AttachmentPickerKeyDispatch::Navigate(request) => {
+                let Some(prepared) = crate::fm::prepare_navigation_io(request) else {
+                    return;
+                };
+                let _ = self
+                    .state
+                    .agent_attachment_picker
+                    .as_mut()
+                    .is_some_and(|picker| picker.file_manager.apply_prepared_navigation(prepared));
+            }
+            AttachmentPickerKeyDispatch::Refresh(request) => {
+                let prepared = crate::fm::prepare_current_refresh_io(request);
+                let _ = self
+                    .state
+                    .agent_attachment_picker
+                    .as_mut()
+                    .is_some_and(|picker| {
+                        picker
+                            .file_manager
+                            .apply_prepared_current_refresh(prepared, 0)
+                    });
+            }
+            AttachmentPickerKeyDispatch::Consumed => {}
+        }
     }
 
     /// Convert one stable row hit target into the same typed intent consumed by
@@ -795,6 +815,36 @@ mod tests {
         assert_eq!(after.directory_generation, before.directory_generation);
         assert_eq!(after.preview_generation, before.preview_generation);
         assert!(state.request_agent_attachment_delivery.is_none());
+    }
+
+    #[test]
+    fn attachment_app_route_applies_hidden_refresh_once() {
+        let td = TempDir::new("attachment-hidden-app");
+        td.file("shown.txt");
+        td.file(".hidden.txt");
+        let mut app = super::super::app_for_mouse_test();
+        app.state = state_with_attachment_picker(&td.root, "attachment-hidden-app");
+        let before = app
+            .state
+            .agent_attachment_picker
+            .as_ref()
+            .expect("open attachment picker")
+            .file_manager
+            .clone();
+
+        app.route_agent_attachment_picker_key(key(KeyCode::Char('.')));
+
+        let after = &app
+            .state
+            .agent_attachment_picker
+            .as_ref()
+            .expect("attachment picker remains open")
+            .file_manager;
+        assert!(after.show_hidden);
+        assert_eq!(after.entries.len(), 2);
+        assert_eq!(after.directory_generation, before.directory_generation + 1);
+        assert_eq!(after.preview_generation, before.preview_generation + 1);
+        assert!(app.state.request_agent_attachment_delivery.is_none());
     }
 
     // TP-FM4-APP-ADAPTER: parent navigation is also an intent-only input
@@ -1973,6 +2023,68 @@ mod tests {
         assert_eq!(after.directory_generation, before.directory_generation);
         assert_eq!(after.preview_generation, before.preview_generation);
         assert_eq!(after.miller, before.miller);
+    }
+
+    #[test]
+    fn app_hidden_toggle_applies_once_and_rejects_replay() {
+        let td = TempDir::new("hidden-app-adapter");
+        td.file("shown");
+        td.file(".secret");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let before = app.state.file_manager.as_ref().expect("open FM").clone();
+        let dispatch = handle_file_manager_key(&mut app.state, key(KeyCode::Char('.')));
+        let FileManagerKeyDispatch::Refresh(request) = dispatch else {
+            panic!("dot must emit hidden refresh");
+        };
+        let stale_replay = request.clone();
+
+        assert_eq!(
+            app.execute_file_manager_current_refresh(request),
+            Some(true)
+        );
+        let toggled = app.state.file_manager.as_ref().expect("open FM");
+        assert!(toggled.show_hidden);
+        assert_eq!(toggled.entries.len(), 2);
+        assert_eq!(
+            toggled.directory_generation,
+            before.directory_generation + 1
+        );
+        assert_eq!(toggled.preview_generation, before.preview_generation + 1);
+        let once = toggled.clone();
+
+        assert_eq!(
+            app.execute_file_manager_current_refresh(stale_replay),
+            None,
+            "the first request cannot replay after its generations retire"
+        );
+        let after_replay = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(after_replay.entries, once.entries);
+        assert_eq!(after_replay.show_hidden, once.show_hidden);
+        assert_eq!(after_replay.directory_generation, once.directory_generation);
+        assert_eq!(after_replay.preview_generation, once.preview_generation);
+
+        let dispatch = handle_file_manager_key(&mut app.state, key(KeyCode::Char('.')));
+        let FileManagerKeyDispatch::Refresh(request) = dispatch else {
+            panic!("second dot must emit a fresh hidden refresh");
+        };
+        assert_eq!(
+            request.reason,
+            crate::fm::FmCurrentRefreshReason::ToggleHidden
+        );
+        assert!(request.source_show_hidden);
+        assert!(!request.target_show_hidden);
+        assert_eq!(
+            app.execute_file_manager_current_refresh(request),
+            Some(true)
+        );
+        let restored = app.state.file_manager.as_ref().expect("open FM");
+        assert!(!restored.show_hidden);
+        assert_eq!(restored.entries.len(), 1);
+        assert_eq!(
+            restored.directory_generation,
+            before.directory_generation + 2
+        );
+        assert_eq!(restored.preview_generation, before.preview_generation + 2);
     }
 
     // TP-A3.7: Esc and q both close the file manager.
