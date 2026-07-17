@@ -2024,6 +2024,134 @@ mod tests {
         );
     }
 
+    #[test]
+    fn second_miller_divider_resizes_expected_pair() {
+        let td = TempDir::new("fm3-second-divider");
+        td.dir("child");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        let frame = Rect::new(0, 0, 90, 16);
+        compute_view(&mut app.state, frame);
+        assert_eq!(
+            app.state.view.terminal_area.width, 86,
+            "compact shell leaves the canonical three-column Files Stage"
+        );
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .get(1)
+            .expect("three-column projection exposes the second divider")
+            .clone();
+        assert_eq!(
+            (divider.left_column, divider.right_column),
+            (1, 2),
+            "the second divider owns only the current/right pair"
+        );
+        let leading_chain_index = app.state.view.file_manager_miller.columns[divider.left_column]
+            .kind
+            .chain_index()
+            .expect("second divider leading column belongs to the Miller chain");
+        let original_geometry = app
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .map(|column| column.rect.width)
+            .collect::<Vec<_>>();
+        let (before_revision, before_widths, before_overrides) = {
+            let file_manager = app.state.file_manager.as_ref().expect("open FM");
+            (
+                file_manager.miller.revision,
+                file_manager
+                    .miller
+                    .chain
+                    .iter()
+                    .map(|segment| segment.preferred_width)
+                    .collect::<Vec<_>>(),
+                file_manager.trio_overrides,
+            )
+        };
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                divider.rect.x,
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Drag(MouseButton::Left),
+                divider.rect.x + 4,
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        compute_view(&mut app.state, frame);
+        let preview_geometry = app
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .map(|column| column.rect.width)
+            .collect::<Vec<_>>();
+        let mut expected_geometry = original_geometry.clone();
+        expected_geometry[divider.left_column] += 4;
+        expected_geometry[divider.right_column] -= 4;
+        assert_eq!(
+            preview_geometry, expected_geometry,
+            "preview changes only the second adjacent pair"
+        );
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Up(MouseButton::Left),
+                divider.rect.x + 4,
+                divider.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        let file_manager = app.state.file_manager.as_ref().expect("open FM");
+        let mut expected_widths = before_widths;
+        expected_widths[leading_chain_index] += 4;
+        assert_eq!(
+            (
+                file_manager.miller.revision,
+                file_manager
+                    .miller
+                    .chain
+                    .iter()
+                    .map(|segment| segment.preferred_width)
+                    .collect::<Vec<_>>(),
+                file_manager.trio_overrides,
+            ),
+            (before_revision + 1, expected_widths, before_overrides),
+            "commit updates only the second pair's leading preference"
+        );
+
+        compute_view(&mut app.state, frame);
+        let committed_geometry = app
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .map(|column| column.rect.width)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            committed_geometry, expected_geometry,
+            "fresh geometry keeps the committed second-divider result"
+        );
+    }
+
     // FM2.2 end-to-end: pressing a trio divider and dragging resizes the
     // column through the clamped commit seam; release ends the capture; the
     // committed width survives recompute and clamps to the frozen 16..=64
