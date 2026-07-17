@@ -56,13 +56,16 @@ non-product pipeline paused.
 
 Priority is mandatory:
 
-1. P0 ACTIVE: SF4 is FULLY CLOSED (SF4.1 8/8, SF4.2 8/8 at `20f659c1`,
-   SF4.3 6/6 at `f973740e` — closure gate incl. Bun/Python). Next: run
-   the SF4 closure review against the plan's "Phase Completion and
-   Publication" section, then SF5.1 Dock model/geometry/pure render and
-   SF5.2 Dock interaction/popover. Evidence:
-   `.codex/evidence/shell-foundation-sf4-surface-projection-progress.md`
-   and `shell-foundation-sf4-input-router-progress.md`.
+1. P0 ACTIVE: SF5 AppDock. SF4 is FULLY CLOSED (4.1 8/8, 4.2 8/8 at
+   `20f659c1`, 4.3 6/6 at `f973740e`; registry reconciled `5349bb85`).
+   SF5.1 (`64d5dd5e`/`cb0c77fd`, dock model/geometry/pure render, 7/7)
+   is CLOSED. Next: SF5.2 dock interaction + anchored name popover
+   (reuse the SF3 reducer; popover enters through `enter_overlay_mode`),
+   then the SF5 closure gate, then SF6. Evidence:
+   `.codex/evidence/shell-foundation-sf5-app-dock-progress.md`. The
+   custom-layout target guide (scrollable Miller area + edge drag-resize
+   columns + SSH performance architecture) lives locally at
+   `docs/superpowers/specs/2026-07-17-herdr-custom-layout-architecture-guide.md`.
 2. P0 NEXT: SF4.3 -> SF4.4 -> SF5 -> SF6 -> FM1 -> FM2 -> FM3 -> FM4
    -> FM5.
 3. P1 PAUSED: `herdr-change-pipeline` T3.1-T10.9, until the current sequential
@@ -77,11 +80,10 @@ continuity, and pipeline files in one commit.
 ## Current Verified Truth
 
 - Branch: `feat/native-fm`.
-- Verified product head: `f973740e`
-  (`feat: choose stage renderer from typed surface authority`, SF4.3-06
-  — SF4.3 CLOSED 6/6, SF4 fully closed).
-- Matching RED: `a9b67112`
-  (`test: require typed stage authority for renderer choice`).
+- Verified product head: `cb0c77fd`
+  (`feat: render bounded native app dock`, SF5.1 CLOSED).
+- Matching RED: `64d5dd5e`
+  (`test: define native app dock presentation`).
 - Separate test-stability commit `3c853a70` closed the parallel-load
   process-exit suppression flake class in `src/terminal/state.rs`.
 - SF0-SF3 are closed. SF4.1 is CLOSED with 8/8 behavior slices GREEN.
@@ -97,9 +99,10 @@ continuity, and pipeline files in one commit.
   - `056f0879` / `f0f32075`: failed open restores exact Stage/focus.
   - `784fdc2e` / `944a9d4c`: stage switches preserve terminal runtime
     (`AppDefinition`/`LaunchPolicy` + pure `StageState::surface_view()`).
-- Next test is not yet written: the first SF5.1 RED from the plan's
-  "Task SF5.1" catalog (Dock model, geometry, and pure render), after the
-  SF4 closure review.
+- Next tests are not yet written: the SF5.2 catalog (dock left/right
+  click activation, bounded name popover with topmost ownership, popover
+  reanchor after resize, disabled-target consumption, shared SF3
+  resize/collapse transaction).
 - Legacy `AppState.file_manager: Option<FmState>` curtain still renders. Do
   not remove it until SF6.
 - `previous_pane_focus` is existing pane history, not the new SF4.2 focus
@@ -107,12 +110,13 @@ continuity, and pipeline files in one commit.
   seam, never persisted.
 - Protocol remains 16. SF4.1 and SF4.2 stayed client-local presentation
   state.
-- Full current CLOSURE gate: Nextest 3,315/3,315 passed plus one named
-  B0 skip (`--no-fail-fast`), Linux all-target Clippy, Windows MSVC bin
-  Clippy, Bun 5/5 + 12/12, Python 64/64, fmt, diff and
-  added-production-`unwrap()` clean.
+- Full current gate: Nextest 3,322/3,322 passed plus one named B0 skip
+  (`--no-fail-fast`), Linux all-target Clippy, Windows MSVC bin Clippy,
+  fmt, diff and added-production-`unwrap()` clean (Bun 5/5 + 12/12 and
+  Python 64/64 last verified at the SF4.3 closure gate `f973740e`; rerun
+  at the SF5 closure gate).
 - Both CyPack refs equal exact SHA
-  `f973740e2bda45c0cc39d8c9afd1061d8b47761d`.
+  `cb0c77fd4d831d41f2e85cb2cebd80f589d9c078`.
 - User-owned `.superpowers/` is untracked and must never be staged or edited.
 
 ## Mandatory Git and Remote Audit

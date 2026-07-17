@@ -190,9 +190,22 @@
   12/12, Python 64/64, both Clippy targets, fmt/diff/unwrap clean.
   SF4 (4.1/4.2/4.3) is now fully closed. Current verified head:
   `f973740e`.
-- Next microtask: SF4 closure review (plan "Phase Completion and
-  Publication"), then SF5.1 Dock model/geometry/pure render. See
-  `.codex/evidence/shell-foundation-sf4-surface-projection-progress.md`.
+- SF4 closure review done: the registry (`.codex/TASKS.md`) now records
+  SF4.1/4.2/4.3-4.4 CLOSED with evidence pointers (`5349bb85`); every
+  other checklist item was satisfied per-slice. The custom-layout target
+  guide (scrollable Miller area + edge drag-resize columns + remote/SSH
+  performance architecture, grounded in the frozen FM bounds) lives
+  locally at
+  `docs/superpowers/specs/2026-07-17-herdr-custom-layout-architecture-guide.md`.
+- SF5.1 is CLOSED (`64d5dd5e`/`cb0c77fd`): icon-only bounded AppDock —
+  typed-stage-authority model, stable disjoint entry targets, pure render
+  with active bar/running/idle affordances, BaseLayer wiring inert until
+  a dock-bearing template is live. Dock table 7/7; full suite
+  3,322/3,322. Current verified head: `cb0c77fd`.
+- Next microtask: SF5.2 dock interaction + anchored name popover (SF3
+  reducer reuse, `enter_overlay_mode` popover), then the SF5 closure
+  gate, then SF6. See
+  `.codex/evidence/shell-foundation-sf5-app-dock-progress.md`.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one
   bounded focus/capture router shared by mouse and keyboard, and recovery

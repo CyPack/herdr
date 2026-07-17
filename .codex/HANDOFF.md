@@ -11,14 +11,18 @@
 - Branch: `feat/native-fm`
 - Acting identity: CyPack external contributor; `origin` is the writable
   `CyPack/herdr` fork and `upstream` is read-only.
-- Current verified product head: `f973740e`
-  (`feat: choose stage renderer from typed surface authority`, SF4.3-06),
-  RED `a9b67112`. SF4.3 is CLOSED with its 6-row catalog GREEN
-  (01 `acc82ffd` exclusive hit geometry · 02 `1bc69cf5` stale projection
-  retirement · 03+04 `08d73676` render purity · 05 `1f57ccbb` retained
-  path · 06 `f973740e` typed renderer authority); the closure gate ran
-  Rust 3,315/3,315 + Bun 5/5 + 12/12 + Python 64/64 + both Clippy
-  targets. SF4 (SF4.1/4.2/4.3) is now fully closed.
+- Current verified product head: `cb0c77fd`
+  (`feat: render bounded native app dock`, SF5.1 CLOSED), RED `64d5dd5e`.
+  SF4 fully closed at `f973740e` (4.1 8/8, 4.2 8/8, 4.3 6/6); the SF4
+  registry entries in `.codex/TASKS.md` were reconciled at `5349bb85`,
+  and the custom-layout architecture guide lives locally at
+  `docs/superpowers/specs/2026-07-17-herdr-custom-layout-architecture-guide.md`
+  (gitignored program artifact, like the plans).
+- SF5.1: `AppDockModel`/`app_dock_entry_areas`/`render_app_dock` in
+  `src/ui/app_dock.rs` — icon-only Terminal+Files from the typed stage
+  authority, bounded 3..=9 template track, pure render, BaseLayer wiring
+  that stays a no-op until a dock-bearing template is live. Dock table
+  7/7; full suite 3,322/3,322.
 - SF4.2 closed 8/8 at `20f659c1`; SF4.3 is now the ACTIVE microphase with
   slice 01 GREEN (surface-exclusive hit geometry: pane/split projection
   and `rt.resize` side effects gated behind
@@ -59,18 +63,19 @@
   proven already closed by recon plus an 8-kind event matrix through the
   full production `App::handle_mouse` with a control phase proving the
   same press reaches the live terminal once Files closes.
-- Immediate next microtask: SF4 closure review against the plan's "Phase
-  Completion and Publication" section, then SF5.1 (Dock model, geometry,
-  and pure render). See
-  `.codex/evidence/shell-foundation-sf4-surface-projection-progress.md`.
-- Product tree: clean at `f973740e`; only the user-owned untracked
+- Immediate next microtask: SF5.2 — dock interaction and anchored
+  app-name popover (reuse the SF3 reducer, popover through
+  `enter_overlay_mode`). See
+  `.codex/evidence/shell-foundation-sf5-app-dock-progress.md`.
+- Product tree: clean at `cb0c77fd`; only the user-owned untracked
   `.superpowers/` tree exists and must remain untouched/unstaged.
-- Full exact-head CLOSURE gate: 3,315/3,315 Rust tests
-  (`--no-fail-fast`), one named B0 real-host probe skipped; Linux
-  all-target and Windows MSVC bin Clippy; Bun 5/5 + 12/12; Python 64/64;
-  fmt/diff/added-production-unwrap checks passed.
+- Full exact-head gate: 3,322/3,322 Rust tests (`--no-fail-fast`), one
+  named B0 real-host probe skipped; Linux all-target and Windows MSVC bin
+  Clippy; fmt/diff/added-production-unwrap checks passed (Bun 5/5 +
+  12/12 and Python 64/64 last verified at the SF4.3 closure gate
+  `f973740e`; rerun at the SF5 closure gate).
 - Both CyPack refs (`feat/native-fm`, fork `master`) equal exact SHA
-  `f973740e2bda45c0cc39d8c9afd1061d8b47761d` at this checkpoint;
+  `cb0c77fd4d831d41f2e85cb2cebd80f589d9c078` at this checkpoint;
   `upstream` untouched.
 - Fresh sequential Codebase Memory store refreshed post-publication with
   current `blocking_overlay_active`, `shell_mouse_input_owner`,
