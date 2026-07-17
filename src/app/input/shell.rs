@@ -75,7 +75,7 @@ impl AppState {
             && self.file_manager.is_some();
         route_shell_input(ShellInputRouteContext {
             topmost_overlay: self.blocking_overlay_active(),
-            active_capture: self.shell_resize_active(),
+            active_capture: self.shell_interaction.resize_active(),
             topmost_hit: None,
             focused_component: files_surface_focused,
             page_shortcut: false,
@@ -198,6 +198,18 @@ impl AppState {
             }
             KeyCode::Esc => self.cancel_sidebar_resize(),
             _ => {}
+        }
+        true
+    }
+
+    pub(crate) fn handle_miller_resize_key(&mut self, key: KeyEvent) -> bool {
+        if !self.shell_interaction.miller_resize_active() {
+            return false;
+        }
+        if key.code == KeyCode::Esc {
+            let update = self.shell_interaction.cancel_resize();
+            debug_assert!(!update.marks_persistence_dirty());
+            debug_assert!(!update.requests_pty_resize());
         }
         true
     }

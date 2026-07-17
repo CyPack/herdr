@@ -103,10 +103,15 @@ impl App {
                 }
             }
             ShellInputOwner::ActiveCapture => {
-                // An active shell divider capture owns keyboard input ahead of
-                // the visible surface. This keeps resize keys out of native
-                // apps and PTYs while preserving topmost modal ownership above.
-                let handled = self.state.handle_shell_resize_key(key_event);
+                // An active typed divider capture owns keyboard input ahead of
+                // the visible surface. Target-specific handlers keep resize
+                // keys out of native apps and PTYs while preserving topmost
+                // modal ownership above.
+                let handled = if self.state.shell_resize_active() {
+                    self.state.handle_shell_resize_key(key_event)
+                } else {
+                    self.state.handle_miller_resize_key(key_event)
+                };
                 debug_assert!(handled, "an active capture must consume every key");
             }
             ShellInputOwner::FocusedComponent => {
