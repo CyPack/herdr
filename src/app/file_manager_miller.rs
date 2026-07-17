@@ -13,9 +13,19 @@ pub(super) struct ResolvedMillerRow {
 }
 
 impl ResolvedMillerRow {
+    pub(super) fn is_current(&self) -> bool {
+        self.column_kind == crate::ui::MillerRowColumnKind::Current
+    }
+
     pub(super) fn current_entry_target(&self) -> Option<(usize, std::path::PathBuf)> {
-        (self.column_kind == crate::ui::MillerRowColumnKind::Current)
+        self.is_current()
             .then(|| (self.entry_index, self.entry_path.clone()))
+    }
+
+    pub(super) fn directory_selection_target(
+        &self,
+    ) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+        (!self.is_current()).then(|| (self.directory_path.clone(), self.entry_path.clone()))
     }
 }
 

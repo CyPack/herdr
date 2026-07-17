@@ -355,21 +355,23 @@ impl App {
                     .map(|area| area.action)
             });
 
-        let entry_target = self
-            .state
-            .stage
-            .active_instance_generation()
-            .and_then(|files_generation| {
-                self.state.file_manager.as_ref().and_then(|file_manager| {
-                    super::super::file_manager_miller::resolve_live_miller_row(
-                        &self.state.view.file_manager_miller,
-                        file_manager,
-                        files_generation,
-                        mouse.column,
-                        mouse.row,
-                    )
-                })
-            })
+        let miller_row_target =
+            self.state
+                .stage
+                .active_instance_generation()
+                .and_then(|files_generation| {
+                    self.state.file_manager.as_ref().and_then(|file_manager| {
+                        super::super::file_manager_miller::resolve_live_miller_row(
+                            &self.state.view.file_manager_miller,
+                            file_manager,
+                            files_generation,
+                            mouse.column,
+                            mouse.row,
+                        )
+                    })
+                });
+        let entry_target = miller_row_target
+            .as_ref()
             .and_then(|row| row.current_entry_target());
         let entry_idx = entry_target.as_ref().map(|(entry_idx, _)| *entry_idx);
 
@@ -510,6 +512,17 @@ impl App {
                 }
             }
             MouseEventKind::Down(MouseButton::Left) if mouse.modifiers.is_empty() => {
+                if let Some((directory_path, entry_path)) = miller_row_target
+                    .as_ref()
+                    .and_then(|row| row.directory_selection_target())
+                {
+                    self.last_file_manager_click = None;
+                    if let Some(file_manager) = self.state.file_manager.as_mut() {
+                        let _ =
+                            file_manager.activate_directory_selection(&directory_path, &entry_path);
+                    }
+                    return FileManagerMouseDispatch::Consumed;
+                }
                 let Some((entry_idx, entry_path)) = entry_target else {
                     self.last_file_manager_click = None;
                     return FileManagerMouseDispatch::Consumed;
@@ -1814,6 +1827,72 @@ mod tests {
                 "plain click focuses the exact live target path"
             );
         }
+    }
+
+    // TP-FM3-TOCTOU: the prepared snapshot can remain internally fresh while
+    // the filesystem changes before dispatch. The second exact directory read
+    // rejects the renamed path atomically and the stale event is not replayed.
+    #[test]
+    fn renamed_non_current_target_is_consumed_without_model_mutation() {
+        let td = TempDir::new("typed-row-rename-race");
+        let current = td.root.join("current");
+        let preview_directory = current.join("preview-directory");
+        let old_path = preview_directory.join("old-name.txt");
+        let new_path = preview_directory.join("new-name.txt");
+        fs::create_dir_all(&preview_directory).expect("create preview directory");
+        fs::write(&old_path, b"x").expect("write preview target");
+
+        let mut file_manager = FmState::new(&current);
+        let preview_index = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == preview_directory)
+            .expect("preview directory row");
+        assert!(file_manager.select(preview_index));
+        let mut app = runtime_app_with_fm(file_manager);
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 100, 16));
+        let target = app
+            .state
+            .view
+            .file_manager_miller
+            .columns
+            .iter()
+            .flat_map(|column| &column.rows)
+            .find(|row| {
+                row.column_kind == crate::ui::MillerRowColumnKind::Preview
+                    && row.entry_path == old_path
+            })
+            .cloned()
+            .expect("prepared preview row");
+        let before = app.state.file_manager.as_ref().expect("open FM").clone();
+
+        fs::rename(&old_path, &new_path).expect("rename after projection");
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                target.rect.x,
+                target.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+
+        let after = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(after.cwd, before.cwd);
+        assert_eq!(after.entries, before.entries);
+        assert_eq!(after.cursor, before.cursor);
+        assert_eq!(after.viewport_start, before.viewport_start);
+        assert_eq!(
+            after.multi_selection_paths(),
+            before.multi_selection_paths()
+        );
+        assert_eq!(after.parent, before.parent);
+        assert_eq!(after.preview, before.preview);
+        assert_eq!(after.directory_generation, before.directory_generation);
+        assert_eq!(after.preview_generation, before.preview_generation);
+        assert_eq!(after.miller, before.miller);
     }
 
     // TP-A3.3-DISPATCH: the second unmodified press on the same directory row

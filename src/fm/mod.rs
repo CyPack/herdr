@@ -397,6 +397,45 @@ impl FmState {
         true
     }
 
+    /// Revalidate and activate one non-current Miller column, focusing its
+    /// exact clicked child without entering that child. The filesystem read
+    /// completes before any model mutation, so missing, inaccessible,
+    /// renamed, reordered, or duplicate targets leave the prior state intact.
+    pub(crate) fn activate_directory_selection(
+        &mut self,
+        directory: &Path,
+        entry_path: &Path,
+    ) -> bool {
+        if directory == self.cwd {
+            let Some(entry_index) = unique_entry_index(&self.entries, entry_path) else {
+                return false;
+            };
+            return self.replace_selection(entry_index);
+        }
+
+        let snapshot = read_directory_snapshot(directory, self.show_hidden);
+        if snapshot.status != FmDirectoryStatus::Available {
+            return false;
+        }
+        let Some(entry_index) = unique_entry_index(&snapshot.entries, entry_path) else {
+            return false;
+        };
+        let cwd_writable = directory_is_writable(directory);
+
+        let departing = self.departing_projection();
+        self.clear_multi_selection();
+        self.cwd = directory.to_path_buf();
+        self.entries = snapshot.entries;
+        self.cursor = entry_index;
+        self.viewport_start = 0;
+        self.cwd_status = snapshot.status;
+        self.cwd_writable = cwd_writable;
+        self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
+        self.miller.visit(directory.to_path_buf(), Some(departing));
+        self.refresh_context();
+        self.replace_selection(entry_index)
+    }
+
     /// Path identities in the explicit multi-selection set. Cursor movement
     /// alone never changes this set.
     pub fn multi_selection_paths(&self) -> &BTreeSet<PathBuf> {
@@ -744,6 +783,15 @@ fn is_image_preview_path(path: &Path) -> bool {
                 .iter()
                 .any(|candidate| extension.eq_ignore_ascii_case(candidate))
         })
+}
+
+fn unique_entry_index(entries: &[FileEntry], entry_path: &Path) -> Option<usize> {
+    let mut matches = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| entry.path == entry_path);
+    let (entry_index, _) = matches.next()?;
+    matches.next().is_none().then_some(entry_index)
 }
 
 #[cfg(test)]
