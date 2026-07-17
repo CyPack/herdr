@@ -360,6 +360,49 @@ mod tests {
         state.assert_miller_invariants_for_test();
     }
 
+    // TP-FM4-BRANCH-TRUNCATE: revisiting an ancestor is one atomic branch
+    // transition. Descendant segments and every resident generation owned by
+    // that retired tail disappear before a sibling branch can be appended.
+    #[test]
+    fn revisiting_ancestor_truncates_descendants_and_retires_projections() {
+        let ancestor = PathBuf::from("/virtual/root/ancestor");
+        let child = ancestor.join("child");
+        let grandchild = child.join("grandchild");
+        let mut state = MillerState::seed(ancestor.clone());
+
+        let ancestor_projection = projection(&mut state, "/virtual/root/ancestor");
+        let ancestor_id = ancestor_projection.id.clone();
+        state.visit(child.clone(), Some(ancestor_projection));
+        let child_projection = projection(&mut state, "/virtual/root/ancestor/child");
+        let child_id = child_projection.id.clone();
+        state.visit(grandchild.clone(), Some(child_projection));
+        let grandchild_projection =
+            projection(&mut state, "/virtual/root/ancestor/child/grandchild");
+
+        assert!(state.resident_projection(&ancestor_id).is_some());
+        assert!(state.resident_projection(&child_id).is_some());
+        state.visit(ancestor.clone(), Some(grandchild_projection));
+
+        assert_eq!(
+            state.chain.back().map(|segment| &segment.directory),
+            Some(&ancestor),
+            "the revisited ancestor becomes the chain tail"
+        );
+        assert!(
+            state
+                .chain
+                .iter()
+                .all(|segment| segment.directory != child && segment.directory != grandchild),
+            "the retired branch cannot remain addressable"
+        );
+        assert!(
+            state.resident_projection(&child_id).is_none(),
+            "a retired descendant generation cannot resolve"
+        );
+        assert_eq!(state.focused_directory, ancestor);
+        state.assert_miller_invariants_for_test();
+    }
+
     // FM1.1: the current directory's projection is operational authority on
     // `FmState`, never a member of the evictable cache.
     #[test]
