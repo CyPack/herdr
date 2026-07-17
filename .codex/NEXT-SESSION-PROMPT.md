@@ -56,13 +56,12 @@ non-product pipeline paused.
 
 Priority is mandatory:
 
-1. P0 ACTIVE: SF6 Files-to-Stage migration. SF4/SF5 fully closed; SF6.1
-   (`8a256d37`/`8472f14b`, Files owns the complete WorkspaceStage, no
-   tab-bar carve-out) is CLOSED. Next: SF6.2 lifecycle/input authority
-   migration (typed `AppSurfaceRef::NativeFiles` routing; verify
-   RED-ability per catalog row), then SF6.3 perf/failure/isolated
-   closure, then FM1 horizontal Miller viewport and FM2 column
-   drag-resize (the custom-layout target). Evidence:
+1. P0 ACTIVE: SF6 Files-to-Stage migration. SF6.1 (Files owns the
+   complete WorkspaceStage) and SF6.2 (`1faff0e0`/`11c054b8`, typed
+   input authority + 37-fixture migration + composite 214/214) are
+   CLOSED. Next: SF6.3 perf/failure/migration/isolated closure, then FM1
+   horizontal Miller viewport and FM2 column drag-resize (the
+   custom-layout target). Evidence:
    `.codex/evidence/shell-foundation-sf6-files-stage-progress.md`. The
    custom-layout target guide (scrollable Miller area + edge drag-resize
    columns + SSH performance architecture) lives locally at
@@ -81,10 +80,10 @@ continuity, and pipeline files in one commit.
 ## Current Verified Truth
 
 - Branch: `feat/native-fm`.
-- Verified product head: `8472f14b`
-  (`feat: host Files in the native workspace stage`, SF6.1 CLOSED).
-- Matching RED: `8a256d37`
-  (`test: define Files workspace stage rendering`).
+- Verified product head: `11c054b8`
+  (`feat: migrate Files lifecycle to workspace stage`, SF6.2 CLOSED).
+- Matching RED: `1faff0e0`
+  (`test: define Files stage lifecycle and ownership`).
 - Separate test-stability commit `3c853a70` closed the parallel-load
   process-exit suppression flake class in `src/terminal/state.rs`.
 - SF0-SF5 are ALL closed (SF4.1 8/8, SF4.2 8/8 at `20f659c1`, SF4.3 6/6
@@ -100,10 +99,10 @@ continuity, and pipeline files in one commit.
   - `056f0879` / `f0f32075`: failed open restores exact Stage/focus.
   - `784fdc2e` / `944a9d4c`: stage switches preserve terminal runtime
     (`AppDefinition`/`LaunchPolicy` + pure `StageState::surface_view()`).
-- Next tests are not yet written: the SF6.2 typed input-authority RED
-  (route Files input from `AppSurfaceRef::NativeFiles`, not the legacy
-  boolean) plus RED-ability verification for the rest of the SF6.2
-  catalog (most rows already delivered by SF4.x/C4-C6).
+- Next work is SF6.3 (test/instrumentation only unless profiling finds a
+  regression): bounded perf counters, named-workload benchmarks with p95
+  budgets, regression families, full just-check equivalent, ISOLATED
+  runtime proof per `.local/ISOLATED-DEV-TEST.md`.
 - Legacy `AppState.file_manager: Option<FmState>` curtain still renders. Do
   not remove it until SF6.
 - `previous_pane_focus` is existing pane history, not the new SF4.2 focus
@@ -111,12 +110,13 @@ continuity, and pipeline files in one commit.
   seam, never persisted.
 - Protocol remains 16. SF4.1 and SF4.2 stayed client-local presentation
   state.
-- Full current gate: Nextest 3,329/3,329 passed plus one named B0 skip
-  (`--no-fail-fast`), Linux all-target Clippy, Windows MSVC bin Clippy,
-  fmt, diff and added-production-`unwrap()` clean (Bun/Python last green
-  at the SF5 closure gate `d031ef26`).
+- Full current gate: Nextest 3,330/3,330 passed plus one named B0 skip
+  (`--no-fail-fast`), composite SF6.2 regression 214/214, Linux
+  all-target Clippy, Windows MSVC bin Clippy, fmt, diff and
+  added-production-`unwrap()` clean (Bun/Python last green at the SF5
+  closure gate `d031ef26`).
 - Both CyPack refs equal exact SHA
-  `8472f14b057e4e83180fe1a37cd8983d853f563d`.
+  `11c054b832db841bea7cb4c3180b85cc10b18674`.
 - User-owned `.superpowers/` is untracked and must never be staged or edited.
 
 ## Mandatory Git and Remote Audit

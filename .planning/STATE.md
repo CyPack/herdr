@@ -216,10 +216,14 @@
   fixtures pinning the old curtain arithmetic were migrated to the frozen
   stage geometry. Full suite 3,329/3,329. Current verified head:
   `8472f14b`.
-- Next microtask: SF6.2 lifecycle/input authority migration (typed
-  `AppSurfaceRef::NativeFiles` routing RED; other catalog rows verified
-  for RED-ability against SF4.x/C4-C6 coverage first), then SF6.3, then
-  FM1/FM2. See
+- SF6.2 is CLOSED (`1faff0e0`/`11c054b8`): Files keyboard/mouse route
+  from the TYPED `StageSurfaceView::NativeFiles` authority (adversarial
+  divergent-state RED per the SF4.3-06 precedent); 37 direct FM test
+  fixtures across nine files migrated onto the open transaction; the
+  plan's composite regression command ran 214/214; full suite
+  3,330/3,330. Current verified head: `11c054b8`.
+- Next microtask: SF6.3 perf/failure/migration/isolated closure, then
+  FM1/FM2 (the custom-layout target). See
   `.codex/evidence/shell-foundation-sf6-files-stage-progress.md`.
 - Then the remaining SF4.2 REDs (overlay blocking, capture ownership, focus
   restore, inert regions, stale generation, hidden-terminal blocking), one

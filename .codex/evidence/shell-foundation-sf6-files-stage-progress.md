@@ -43,17 +43,53 @@ and FM2 (column drag-resize — the user's custom-layout target).
 - Publication: FF pushes to CyPack only; both refs equal exact SHA
   `8472f14b057e4e83180fe1a37cd8983d853f563d`; `upstream` untouched.
 
+## SF6.2 — Files lifecycle and input authority migration (CLOSED)
+
+- RED-ability was verified per catalog row BEFORE writing: lifecycle
+  open/repeat/close/restore/failed-open rows are already frozen by the
+  SF4.1 slices; hidden-terminal blocking by SF4.2-08; stale Files hits
+  after a surface switch by SF4.3-02; watcher init failure, worker
+  panic/disconnect, operation-running, context-menu, selected-path
+  deletion, and reopen rows by the C4-C6 suites (all rerun green in the
+  plan's composite command below). The genuinely open contract was input
+  AUTHORITY: keyboard and mouse routed from the legacy
+  `file_manager.is_some()` boolean.
+- RED `1faff0e0` (`test: define Files stage lifecycle and ownership`):
+  `files_input_routes_from_typed_surface_authority` — aligned control
+  (Files owns stage -> `FocusedComponent` keyboard + in-center mouse
+  `Consumed`), then the adversarial divergent state (Files domain state
+  present, typed stage TerminalWorkspace) failed exactly: the boolean
+  still granted `FocusedComponent`. The shared `runtime_app_with_fm`
+  fixture was migrated onto the real open transaction to make the control
+  phase truthful.
+- GREEN `11c054b8` (`feat: migrate Files lifecycle to workspace stage`):
+  - `shell_key_input_owner`: the focused-component tier now requires the
+    TYPED `StageSurfaceView::NativeFiles` AND live Files domain state.
+  - `handle_file_manager_mouse`: early NotHandled unless the typed stage
+    authority owns Files (plus domain presence for safe access).
+  - Fixture debt retired: 37 direct `app.state.file_manager = Some(...)`
+    test assignments across nine test files (worker, watcher, previews,
+    rename, delete-confirmation, agent-handoff, plugins, input) migrated
+    onto `try_open_file_manager_with`; the SF4.2-08 control phase now
+    closes through `close_file_manager()`. The production watcher rebind
+    swap (`self.state.file_manager = Some(next)`) is deliberately
+    untouched — it replaces state WITHIN an open Files surface.
+- Gates: exact 1/1; the plan's composite regression command
+  (`file_manager|file_operation|file_preview|image_preview|watcher|`
+  `stage_surface|app_dock|shell_input`) 214/214 with zero retries; full
+  Nextest `--no-fail-fast` 3,330/3,330 plus only the named B0 skip; fmt;
+  Linux all-target and Windows MSVC bin Clippy with `-D warnings`; diff
+  and added-production-`unwrap()` clean.
+- Publication: FF pushes to CyPack only; both refs equal exact SHA
+  `11c054b832db841bea7cb4c3180b85cc10b18674`; `upstream` untouched.
+
 ## Exact Next Microtask
 
-SF6.2: migrate Files lifecycle and input authority (plan "Task SF6.2").
-Recon note recorded now: much of the catalog is ALREADY delivered by
-earlier phases — lifecycle singleton/close-restoration/failed-open
-rollback (SF4.1), hidden-terminal input seal (SF4.2-08), stale-hit
-retirement on switch (SF4.3-02), watcher/worker/operation authority
-(C4-C6). Verify RED-ability per row; the genuinely open contract is
-routing Files keyboard/mouse from the TYPED `AppSurfaceRef::NativeFiles`
-authority instead of the legacy `file_manager.is_some()` boolean
-(SF4.3-06 precedent, adversarial divergent-state RED), plus the plan's
-composite regression command. Then SF6.3
-(perf/failure/migration/isolated-runtime closure per
-`.local/ISOLATED-DEV-TEST.md`), then FM1/FM2.
+SF6.3: performance, failure, migration, and isolated closure (plan "Task
+SF6.3") — bounded perf counters + named-workload benchmarks with p95
+budgets, the regression families rerun, the full direct `just check`
+equivalent, and the ISOLATED runtime proof per `.local/ISOLATED-DEV-TEST.md`
+(throwaway XDG, cleared sockets, open Files through the AppDock, prove
+stage ownership and inert hidden terminal, zero residue). Then FM1
+(horizontal Miller viewport) and FM2 (column drag-resize — the
+custom-layout target).
