@@ -649,6 +649,96 @@ mod tests {
         assert_eq!(current_highlight.lines.len(), 2);
     }
 
+    #[test]
+    fn stale_worker_completion_after_scroll_is_rejected() {
+        let td = TempDir::new("scroll-stale-completion");
+        std::fs::write(td.root.join("alpha.rs"), "fn alpha() {}\n")
+            .expect("write first preview fixture");
+        std::fs::write(td.root.join("beta.py"), "def beta():\n    pass\n")
+            .expect("write second preview fixture");
+        let (first_started_tx, first_started_rx) = mpsc::channel();
+        let (first_release_tx, first_release_rx) = mpsc::channel();
+        let (second_started_tx, second_started_rx) = mpsc::channel();
+        let (second_release_tx, second_release_rx) = mpsc::channel();
+        let worker = FilePreviewHighlightWorker::with_processor(
+            Arc::new(Notify::new()),
+            move |path, preview| {
+                if path.ends_with("alpha.rs") {
+                    first_started_tx.send(()).expect("signal first started");
+                    first_release_rx.recv().expect("release first result");
+                } else {
+                    second_started_tx.send(()).expect("signal second started");
+                    second_release_rx.recv().expect("release second result");
+                }
+                highlight_text_preview(path, preview)
+            },
+        );
+        let mut app = test_app();
+        app.file_preview_worker = worker;
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files activation");
+
+        assert!(!app.sync_file_preview_worker());
+        first_started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first request started");
+        let file_manager = app.state.file_manager.as_mut().expect("open Files");
+        file_manager.move_down();
+        assert_eq!(
+            file_manager.selected().map(|entry| entry.name.as_str()),
+            Some("beta.py")
+        );
+        assert!(!app.sync_file_preview_worker());
+
+        first_release_tx.send(()).expect("release stale result");
+        second_started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("current request started");
+        assert!(
+            !app.sync_file_preview_worker(),
+            "the stale result cannot dirty the current preview"
+        );
+        assert!(
+            app.state
+                .file_manager
+                .as_ref()
+                .and_then(|state| match &state.preview {
+                    crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(preview)) => {
+                        preview.highlighted.as_ref()
+                    }
+                    _ => None,
+                })
+                .is_none(),
+            "the stale Rust highlight cannot appear under the Python selection"
+        );
+
+        second_release_tx.send(()).expect("release current result");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if app.sync_file_preview_worker() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out applying the current scrolled result"
+            );
+            std::thread::yield_now();
+        }
+        let current_highlight = app
+            .state
+            .file_manager
+            .as_ref()
+            .and_then(|state| match &state.preview {
+                crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(preview)) => {
+                    preview.highlighted.as_ref()
+                }
+                _ => None,
+            })
+            .expect("current result applied");
+        assert_eq!(current_highlight.syntax_name.as_deref(), Some("Python"));
+    }
+
     // TP-B1.4-CLOSE: closing the FM invalidates a running request. Even when
     // that request later publishes a result, scheduled sync must discard it
     // without dirtying the frame or recreating file-manager state.

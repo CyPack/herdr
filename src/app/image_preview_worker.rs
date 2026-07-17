@@ -616,6 +616,79 @@ mod tests {
     }
 
     #[test]
+    fn preview_error_states_render_without_retry_loop() {
+        let temp = TempDir::new("stable-preview-error");
+        std::fs::write(temp.root.join("broken.png"), b"not an encoded image")
+            .expect("write invalid image fixture");
+        let mut app = test_app();
+        app.state.kitty_graphics_enabled = true;
+        app.image_preview_cell_size = HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        app.state
+            .try_open_file_manager_with(|_| Some(FmState::new(&temp.root)))
+            .expect("Files activation");
+        let frame = Rect::new(0, 0, 120, 40);
+        crate::ui::compute_view(&mut app.state, frame);
+
+        assert!(
+            app.sync_image_preview_worker(),
+            "Pending must transition once to Loading"
+        );
+        let generation = app.image_preview_worker_generation_for_test();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let _ = app.sync_image_preview_worker();
+            if matches!(
+                current_image_state(&app),
+                FmImagePreviewState::Unavailable {
+                    error: ImagePreviewError::UnsupportedFormat | ImagePreviewError::DecodeFailed,
+                    ..
+                }
+            ) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for stable image failure"
+            );
+            std::thread::yield_now();
+        }
+
+        for _ in 0..100 {
+            assert!(
+                !app.sync_image_preview_worker(),
+                "a stable failure cannot dirty another frame or retry work"
+            );
+        }
+        assert_eq!(
+            app.image_preview_worker_generation_for_test(),
+            generation,
+            "a stable failure cannot allocate another worker generation"
+        );
+
+        let (first, _) = crate::server::render_stream::render_virtual(&mut app.state, frame, false);
+        let (second, _) =
+            crate::server::render_stream::render_virtual(&mut app.state, frame, false);
+        assert_eq!(
+            first, second,
+            "stable failures must render deterministically"
+        );
+        let rendered = first
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(
+            rendered.contains("(unsupported image)") || rendered.contains("(image decode failed)"),
+            "the stable failure must render one explicit fallback: {rendered:?}"
+        );
+    }
+
+    #[test]
     fn committed_resize_requests_at_most_one_image_target() {
         let temp = TempDir::new("committed-resize-target");
         std::fs::write(temp.root.join("sample.png"), encoded_png(160, 80))
