@@ -532,15 +532,20 @@ mod tests {
         );
     }
 
-    // TP-B1.4-NAVIGATION: a result for the previous selection can become
-    // available while the current selection is still being processed. App
-    // must reject that stale result, then apply only the current generation.
+    // P5 BRANCH/WORKER RACE: a highlight result from a branch retired by
+    // ancestor-then-sibling navigation can arrive while the sibling preview
+    // is still being processed. The old branch authority and its result must
+    // both be rejected; only the current sibling generation may apply.
     #[test]
-    fn app_rejects_stale_highlight_after_navigation() {
-        let td = TempDir::new("app-navigation-stale");
-        std::fs::write(td.root.join("alpha.rs"), "fn alpha() {}\n")
+    fn branch_truncation_rejects_stale_preview_completion() {
+        let td = TempDir::new("branch-truncation-stale");
+        let old_branch = td.root.join("old-branch");
+        let sibling = td.root.join("sibling");
+        std::fs::create_dir_all(&old_branch).expect("create old branch");
+        std::fs::create_dir_all(&sibling).expect("create sibling branch");
+        std::fs::write(old_branch.join("alpha.rs"), "fn alpha() {}\n")
             .expect("write first preview fixture");
-        std::fs::write(td.root.join("beta.py"), "def beta():\n    pass\n")
+        std::fs::write(sibling.join("beta.py"), "def beta():\n    pass\n")
             .expect("write second preview fixture");
         let (first_started_tx, first_started_rx) = mpsc::channel();
         let (first_release_tx, first_release_rx) = mpsc::channel();
@@ -562,18 +567,39 @@ mod tests {
         let mut app = test_app();
         app.file_preview_worker = worker;
         app.state
-            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&old_branch)))
             .expect("Files activation");
 
         assert!(!app.sync_file_preview_worker());
         first_started_rx
             .recv_timeout(Duration::from_secs(2))
             .expect("first request started");
-        app.state
-            .file_manager
-            .as_mut()
-            .expect("open file manager")
-            .move_down();
+        let file_manager = app.state.file_manager.as_mut().expect("open file manager");
+        file_manager.leave();
+        let sibling_index = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == sibling)
+            .expect("sibling row after ancestor transition");
+        assert!(file_manager.replace_selection(sibling_index));
+        file_manager.enter();
+        assert_eq!(file_manager.cwd, sibling);
+        assert!(
+            file_manager
+                .miller
+                .chain
+                .iter()
+                .all(|segment| segment.directory != old_branch),
+            "the retired branch segment cannot remain addressable"
+        );
+        assert!(
+            file_manager
+                .miller
+                .resident_non_current
+                .iter()
+                .all(|projection| projection.id.directory != old_branch),
+            "the retired branch projection cannot remain resident"
+        );
         assert!(!app.sync_file_preview_worker());
 
         first_release_tx.send(()).expect("release first result");
@@ -620,6 +646,7 @@ mod tests {
             })
             .expect("current result applied");
         assert_eq!(current_highlight.syntax_name.as_deref(), Some("Python"));
+        assert_eq!(current_highlight.lines.len(), 2);
     }
 
     // TP-B1.4-CLOSE: closing the FM invalidates a running request. Even when
