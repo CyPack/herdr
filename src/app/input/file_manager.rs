@@ -1325,6 +1325,55 @@ mod tests {
         app
     }
 
+    #[test]
+    fn miller_divider_down_starts_typed_capture() {
+        let td = TempDir::new("fm3-typed-divider-capture");
+        td.file("00.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 86, 16));
+
+        let divider = app
+            .state
+            .view
+            .file_manager_miller
+            .dividers
+            .first()
+            .expect("current Files projection exposes a divider")
+            .rect;
+        let before_model = {
+            let file_manager = app.state.file_manager.as_ref().expect("open FM");
+            (file_manager.miller.revision, file_manager.trio_overrides)
+        };
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                divider.x,
+                divider.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        let after_model = {
+            let file_manager = app.state.file_manager.as_ref().expect("open FM");
+            (file_manager.miller.revision, file_manager.trio_overrides)
+        };
+        assert_eq!(
+            after_model, before_model,
+            "divider down captures input without committing a model width"
+        );
+        assert_eq!(
+            (
+                app.state.miller_trio_drag.is_none(),
+                app.state.shell_interaction.resize_active(),
+            ),
+            (true, true),
+            "Miller divider down must start only the shared typed resize transaction"
+        );
+    }
+
     // FM2.2 end-to-end: pressing a trio divider and dragging resizes the
     // column through the clamped commit seam; release ends the capture; the
     // committed width survives recompute and clamps to the frozen 16..=64
