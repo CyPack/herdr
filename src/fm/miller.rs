@@ -97,6 +97,12 @@ pub(crate) enum MillerColumnScrollTarget {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MillerAdjacentWidthTarget {
+    Chain(usize),
+    Preview,
+}
+
 /// Bounded client-local Miller state. The CURRENT directory's entries stay
 /// the operational authority on `FmState`; this model owns only the chain,
 /// the evictable non-current cache, and the horizontal window.
@@ -106,6 +112,7 @@ pub(crate) struct MillerState {
     pub resident_non_current: VecDeque<MillerDirectoryProjection>,
     pub horizontal: MillerHorizontalViewport,
     pub focused_directory: PathBuf,
+    pub preview_preferred_width: u16,
     pub revision: u64,
     next_generation: u64,
 }
@@ -133,6 +140,7 @@ impl MillerState {
             resident_non_current: VecDeque::new(),
             horizontal: MillerHorizontalViewport::default(),
             focused_directory: cwd,
+            preview_preferred_width: MILLER_COLUMN_PREFERRED_WIDTH,
             revision: 0,
             next_generation: 0,
         }
@@ -219,6 +227,51 @@ impl MillerState {
         true
     }
 
+    /// Atomically commit the two adjacent tracks of one typed Miller divider.
+    /// Both identities are validated before either preference changes, and
+    /// the model revision advances exactly once for the complete gesture.
+    pub(crate) fn commit_adjacent_column_widths(
+        &mut self,
+        leading_chain_index: usize,
+        leading_width: u16,
+        trailing: MillerAdjacentWidthTarget,
+        trailing_width: u16,
+    ) -> bool {
+        let Some(leading) = self.chain.get(leading_chain_index) else {
+            return false;
+        };
+        let trailing_is_live = match trailing {
+            MillerAdjacentWidthTarget::Chain(trailing_chain_index) => {
+                leading_chain_index.saturating_add(1) == trailing_chain_index
+                    && self.chain.get(trailing_chain_index).is_some()
+            }
+            MillerAdjacentWidthTarget::Preview => leading.directory == self.focused_directory,
+        };
+        if !trailing_is_live {
+            return false;
+        }
+
+        let leading_width = leading_width.clamp(MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_MAX_WIDTH);
+        let trailing_width = trailing_width.clamp(MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_MAX_WIDTH);
+        let Some(leading) = self.chain.get_mut(leading_chain_index) else {
+            return false;
+        };
+        leading.preferred_width = leading_width;
+        match trailing {
+            MillerAdjacentWidthTarget::Chain(trailing_chain_index) => {
+                let Some(trailing) = self.chain.get_mut(trailing_chain_index) else {
+                    return false;
+                };
+                trailing.preferred_width = trailing_width;
+            }
+            MillerAdjacentWidthTarget::Preview => {
+                self.preview_preferred_width = trailing_width;
+            }
+        }
+        self.revision = self.revision.saturating_add(1);
+        true
+    }
+
     /// Resolve a resident non-current projection by EXACT column identity.
     /// A stale generation (evicted or replaced) resolves to nothing.
     pub(crate) fn resident_projection(
@@ -254,6 +307,11 @@ impl MillerState {
                 .iter()
                 .any(|segment| segment.directory == self.focused_directory),
             "the focused directory must be a chain member"
+        );
+        assert!(
+            (MILLER_COLUMN_MIN_WIDTH..=MILLER_COLUMN_MAX_WIDTH)
+                .contains(&self.preview_preferred_width),
+            "the inline preview preference stays inside frozen bounds"
         );
         let mut seen = std::collections::HashSet::new();
         for segment in &self.chain {
@@ -462,6 +520,62 @@ mod tests {
             "a stale chain index must be refused"
         );
         assert_eq!(state.revision, before + 3);
+        state.assert_miller_invariants_for_test();
+    }
+
+    #[test]
+    fn adjacent_column_resize_commits_atomically_once() {
+        let mut state = MillerState::seed(deep_path(4));
+        let before = state.clone();
+
+        assert!(
+            !state.commit_adjacent_column_widths(1, 40, MillerAdjacentWidthTarget::Chain(3), 20,),
+            "non-adjacent chain identities are stale"
+        );
+        assert_eq!(state, before, "failed validation is mutation-free");
+
+        assert!(state.commit_adjacent_column_widths(
+            1,
+            40,
+            MillerAdjacentWidthTarget::Chain(2),
+            20,
+        ));
+        assert_eq!(
+            (
+                state.chain[1].preferred_width,
+                state.chain[2].preferred_width,
+                state.revision,
+            ),
+            (40, 20, before.revision + 1),
+            "one adjacent pair advances one revision"
+        );
+
+        let focused_chain_index = state.chain.len() - 1;
+        assert!(state.commit_adjacent_column_widths(
+            focused_chain_index,
+            50,
+            MillerAdjacentWidthTarget::Preview,
+            2,
+        ));
+        assert_eq!(
+            (
+                state.chain[focused_chain_index].preferred_width,
+                state.preview_preferred_width,
+                state.revision,
+            ),
+            (50, MILLER_COLUMN_MIN_WIDTH, before.revision + 2),
+            "focused/preview commit clamps both tracks and advances once"
+        );
+
+        let before_stale_preview = state.clone();
+        assert!(
+            !state.commit_adjacent_column_widths(0, 32, MillerAdjacentWidthTarget::Preview, 24,),
+            "a non-focused chain column cannot authorize inline preview width"
+        );
+        assert_eq!(
+            state, before_stale_preview,
+            "stale preview identity is mutation-free"
+        );
         state.assert_miller_invariants_for_test();
     }
 

@@ -184,7 +184,8 @@ impl crate::app::App {
             return false;
         }
         let update = self.state.shell_interaction.commit_resize(current_revision);
-        let crate::ui::shell::ResizeDecision::Committed([leading_width, _]) = update.decision()
+        let crate::ui::shell::ResizeDecision::Committed([leading_width, trailing_width]) =
+            update.decision()
         else {
             return false;
         };
@@ -210,9 +211,20 @@ impl crate::app::App {
         else {
             return false;
         };
-        file_manager
-            .miller
-            .commit_column_width(*chain_index, leading_width)
+        let trailing = match divider.trailing() {
+            crate::ui::shell::MillerResizeColumnId::Directory { chain_index, .. } => {
+                crate::fm::miller::MillerAdjacentWidthTarget::Chain(*chain_index)
+            }
+            crate::ui::shell::MillerResizeColumnId::Preview { .. } => {
+                crate::fm::miller::MillerAdjacentWidthTarget::Preview
+            }
+        };
+        file_manager.miller.commit_adjacent_column_widths(
+            *chain_index,
+            leading_width,
+            trailing,
+            trailing_width,
+        )
     }
 
     pub(super) fn handle_miller_resize_key(&mut self, key: crossterm::event::KeyEvent) -> bool {

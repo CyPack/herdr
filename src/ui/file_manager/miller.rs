@@ -283,10 +283,13 @@ pub(crate) fn project_miller_view_with_resize_preview(
             .min(MILLER_COLUMN_MAX_WIDTH);
         let current_width =
             preferred_widths[focused_chain_index].clamp(MILLER_COLUMN_MIN_WIDTH, current_max);
-        let preview_width = pair_budget.saturating_sub(current_width).clamp(
-            MILLER_COLUMN_MIN_WIDTH,
-            crate::fm::miller::MILLER_COLUMN_PREFERRED_WIDTH,
-        );
+        let preview_max = pair_budget
+            .saturating_sub(current_width)
+            .min(MILLER_COLUMN_MAX_WIDTH);
+        let preview_width = file_manager
+            .miller
+            .preview_preferred_width
+            .clamp(MILLER_COLUMN_MIN_WIDTH, preview_max);
         preferred_widths[focused_chain_index] = current_width;
         preferred_widths.push(preview_width);
         preview_projection_index
