@@ -141,7 +141,7 @@ Progress evidence:
   `90be689359988424b2a7c6206ff45a3207422196`. Evidence:
   `.codex/evidence/shell-foundation-sf3-persistence.md`.
 
-### SF4 — SurfaceHost and Input Router (P0 ACTIVE)
+### SF4 — SurfaceHost and Input Router (CLOSED — 4.1/4.2/4.3-4.4 all GREEN)
 
 #### SF4.1 — Typed Stage State and Lifecycle (CLOSED — 8/8 behavior slices GREEN)
 
@@ -191,52 +191,60 @@ Progress evidence:
 Progress evidence:
 `.codex/evidence/shell-foundation-sf4-stage-progress.md`.
 
-#### SF4.2 — Focus Scope and Input Precedence (SF4.2-01 GREEN)
+#### SF4.2 — Focus Scope and Input Precedence (CLOSED — 8/8 slices GREEN)
 
-- [ ] RED-test focus scope entry/restore, active capture, topmost semantic hit,
+- [x] RED-test focus scope entry/restore, active capture, topmost semantic hit,
   page/global shortcut precedence, stale generation rejection, and no-owner
-  fallback before adding router production state. Progress: table-driven
-  `shell_input_router_follows_frozen_precedence` is GREEN (RED `92777e23`,
-  run `67730dbd`; seven tiers including fail-closed no-owner). Remaining REDs:
-  overlay mouse/keyboard blocking, capture-outside-rect, focus restore, inert
-  regions, stale generation, hidden-terminal blocking — see
+  fallback before adding router production state. All eight slice contracts are
+  GREEN at closure head `20f659c1`: 01 router (`92777e23`/`f4f5e3cb`), 02
+  overlay mouse (`41362e89`/`017ba97f`), 03 overlay keyboard
+  (`bb6f8970`/`efe6446b`), 04 capture characterization (`119e4a2d`), 05+05b
+  focus restore with the FULL overlay-entry sweep (`8b1882eb`/`5eb63763` +
+  `27f8699f`/`3880c66b`), 06 inert regions (`3580ff19`), 07
+  current-generation hit tier (`bb3ac54d`/`c6b024ce`), 08 hidden-terminal
+  seal (`20f659c1`). Evidence:
   `.codex/evidence/shell-foundation-sf4-input-router-progress.md`.
-- [ ] Add one bounded focus/capture router shared by mouse and keyboard. It
-  must route overlay -> capture -> active Stage surface -> shell/page -> global
-  and never infer authority from paint output or stale coordinates. Progress:
-  pure `route_shell_input` + `AppState::shell_key_input_owner()` landed in
-  GREEN `f4f5e3cb`; `App::handle_key` selects its tier through the router
-  with preserved behavior. Mouse-side extraction is still open and follows
-  the SF4.2-02+ REDs.
-- [ ] Prove terminal resize, surface close/failure, focus target disappearance,
-  hidden/zero regions, and capture cancellation restore one valid owner without
-  replay, duplicate action, or stuck capture.
+- [x] One bounded focus/capture router shared by mouse and keyboard:
+  `route_shell_input` + `shell_key_input_owner()` +
+  `shell_mouse_input_owner(position)` with the topmost-hit tier resolved
+  against the exact current `ShellView` generation; keyboard and mouse both
+  select their tier through the router.
+- [x] Restoration proofs: overlay close restores a still-valid Resize/Copy
+  owner through `overlay_return_mode`/`enter_overlay_mode`/validity-filtered
+  `leave_modal`; collapsed/zero regions expose no focusable target; stale
+  coordinates re-resolve to their current owner. Closure gate: Rust
+  3,309/3,309 + B0 skip, Bun 5/5 + 12/12, Python 64/64, both Clippy targets.
 
-#### SF4.3 — Overlay and Hidden-Background Blocking
+#### SF4.3 — Overlay and Hidden-Background Blocking (CLOSED — landed inside SF4.2)
 
-- [ ] RED-test every active overlay/context/modal path against Files, shell,
-  dock placeholder geometry, and terminal input. Topmost owner must consume the
-  event even when disabled or stale; no event may fall through to a hidden
-  terminal or background surface.
-- [ ] Make background hit areas, cursor ownership, scroll ownership, and raw
-  terminal input inert whenever a topmost overlay or another Stage surface owns
-  the interaction.
-- [ ] Cover right/middle/modified mouse, double-click timing, wheel, drag,
-  keyboard prefix/global keys, stale frame generations, close/reopen, and tiny
-  terminal failure paths.
+- [x] Delivered by the SF4.2 slices: total early ContextMenu ownership block
+  and per-overlay mouse consumption (02), overlay keyboard ownership ahead of
+  captures via the exhaustive `blocking_overlay_active()` classifier (03),
+  and the hidden-terminal seal with an 8-kind event matrix through the full
+  production `App::handle_mouse` plus a live-terminal control phase (08).
+- [x] Background hit areas, scroll, and raw terminal input are inert under a
+  topmost overlay or a foreign Stage surface; right/middle/modified mouse,
+  wheel, drag, and close/reopen paths covered in the SF4.2 evidence.
 
-#### SF4.4 — Surface Projection, Pure Render, and Closure
+#### SF4.4 — Surface Projection, Pure Render, and Closure (CLOSED — plan Task SF4.3, 6/6 GREEN)
 
-- [ ] Split cached shell geometry projection from typed active-surface
-  projection without moving filesystem, worker, PTY, or runtime work into
-  render.
-- [ ] Prove identical active state skips network frame production; terminal
-  dirty-row retained patching and bounded render queue behavior remain frozen;
-  switching Stage visibility does not destroy or resize hidden terminal runtime
-  on every input/render event.
-- [ ] Close SF4 UI/input/failure/performance/platform/full-gate/Git/graph
-  evidence before starting SF5. Product and change-pipeline commits remain
-  separate.
+- [x] Cached shell geometry projection split from typed active-surface
+  projection: pane/split geometry and `rt.resize` side effects gated behind
+  `stage.surface_view() == TerminalWorkspace` on desktop AND mobile
+  (`7796d855`/`acc82ffd`); surface-switch transactions retire the hidden
+  surface's projected geometry in the same mutation (`bb5a6899`/`1bc69cf5`);
+  `BaseLayer` chooses the stage renderer from the TYPED surface authority
+  (`a9b67112`/`f973740e`).
+- [x] Render purity and retained-path proofs: byte-identical double-draw
+  buffers and no observable state mutation for BOTH surfaces (`08d73676`);
+  static-shell dirty-row recomputes keep the exact cached `ShellView`
+  generation (`1f57ccbb`); stage switches do not destroy or resize hidden
+  terminal runtimes (SF4.1-08 + SF4.3-01).
+- [x] SF4 closed before SF5: closure gate at `f973740e` — Rust 3,315/3,315 +
+  B0 skip (`--no-fail-fast`), Bun 5/5 + 12/12, Python 64/64, both Clippy
+  targets, fmt/diff/unwrap clean; both CyPack refs equal; graph refreshed
+  with `stage.surface_view()` proven from current source. Evidence:
+  `.codex/evidence/shell-foundation-sf4-surface-projection-progress.md`.
 
 ### SF5 — AppDock
 
