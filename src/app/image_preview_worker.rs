@@ -467,6 +467,82 @@ mod tests {
         }
     }
 
+    #[test]
+    fn image_worker_profile_counts_submitted_completed_and_rejected() {
+        let (started_tx, started_rx) = mpsc::channel::<ImagePreviewTarget>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let mut worker =
+            ImagePreviewWorker::with_processor(Arc::new(Notify::new()), move |_path, target| {
+                started_tx
+                    .send(target)
+                    .map_err(|_| ImagePreviewError::DecodeFailed)?;
+                release_rx
+                    .recv_timeout(Duration::from_secs(2))
+                    .map_err(|_| ImagePreviewError::DecodeFailed)?;
+                Ok(PreparedImagePreview {
+                    width: 1,
+                    height: 1,
+                    data_fingerprint: u64::from(target.width_px),
+                    rgba: vec![0, 0, 0, 0xff],
+                })
+            });
+        let first_target = target(80, 40);
+        let second_target = target(40, 20);
+
+        let (_, profile) = crate::render_prof::observe_for_test(|| {
+            assert!(matches!(
+                worker.sync_target(Some(key("sample.png", 1, first_target))),
+                ImagePreviewSync::Started { .. }
+            ));
+            assert_eq!(
+                started_rx
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("first image request starts"),
+                first_target
+            );
+            let second_key = key("sample.png", 1, second_target);
+            assert!(matches!(
+                worker.sync_target(Some(second_key.clone())),
+                ImagePreviewSync::Started { .. }
+            ));
+
+            release_tx.send(()).expect("release stale image request");
+            assert_eq!(
+                started_rx
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("second image request starts"),
+                second_target
+            );
+            let stale = worker.drain();
+            assert!(
+                stale.current.is_none(),
+                "the first completion is rejected after the target changes"
+            );
+            assert!(!stale.disconnected);
+
+            release_tx.send(()).expect("release current image request");
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                let drained = worker.drain();
+                assert!(!drained.disconnected);
+                if let Some(current) = drained.current {
+                    assert_eq!(current.key, second_key);
+                    assert!(current.output.is_ok());
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "timed out waiting for current image result"
+                );
+                std::thread::yield_now();
+            }
+        });
+
+        assert_eq!(profile.counter("fm.image_worker.submitted"), 2);
+        assert_eq!(profile.counter("fm.image_worker.rejected"), 1);
+        assert_eq!(profile.counter("fm.image_worker.completed"), 1);
+    }
+
     struct TempDir {
         root: PathBuf,
     }

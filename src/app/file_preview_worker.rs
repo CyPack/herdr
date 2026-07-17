@@ -465,6 +465,62 @@ mod tests {
         );
     }
 
+    #[test]
+    fn text_worker_profile_counts_submitted_completed_and_rejected() {
+        let (started_tx, started_rx) = mpsc::channel::<String>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let mut worker = FilePreviewHighlightWorker::with_processor(
+            Arc::new(Notify::new()),
+            move |_path, preview| {
+                started_tx
+                    .send(preview.content.clone())
+                    .expect("signal started text request");
+                release_rx.recv().expect("release text request");
+                highlighted(&preview.content)
+            },
+        );
+        let path = PathBuf::from("sample.rs");
+
+        let (_, profile) = crate::render_prof::observe_for_test(|| {
+            assert!(matches!(
+                worker.sync_target(Some((path.clone(), preview("first")))),
+                FilePreviewHighlightSync::Started { .. }
+            ));
+            assert_eq!(
+                started_rx
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("first text request starts"),
+                "first"
+            );
+            assert!(matches!(
+                worker.sync_target(Some((path, preview("second")))),
+                FilePreviewHighlightSync::Started { .. }
+            ));
+
+            release_tx.send(()).expect("release stale text request");
+            assert_eq!(
+                started_rx
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("second text request starts"),
+                "second"
+            );
+            let stale = worker.drain();
+            assert!(
+                stale.current.is_none(),
+                "the first completion is rejected after the target changes"
+            );
+            assert!(!stale.disconnected);
+
+            release_tx.send(()).expect("release current text request");
+            let current = wait_for_current(&mut worker);
+            assert_eq!(current.highlighted, highlighted("second"));
+        });
+
+        assert_eq!(profile.counter("fm.text_worker.submitted"), 2);
+        assert_eq!(profile.counter("fm.text_worker.rejected"), 1);
+        assert_eq!(profile.counter("fm.text_worker.completed"), 1);
+    }
+
     // TP-B1.4-LIFECYCLE: a processor panic closes the result channel. Draining
     // reports degradation instead of panicking or applying partial data.
     #[test]
