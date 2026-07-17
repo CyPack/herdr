@@ -2603,7 +2603,7 @@ mod tests {
     // TP-N2.1-PATH: leaving must transfer the exact departed child identity
     // into the new current list instead of reusing the unrelated row zero.
     #[test]
-    fn leave_focuses_departed_child_by_path() {
+    fn leave_focuses_exact_parent_and_preserves_valid_child_focus() {
         let td = TempDir::new("leave-path-focus");
         td.dir("alpha");
         td.dir("target");
@@ -2619,6 +2619,12 @@ mod tests {
             Some(&target),
             "leave follows the departed path rather than its former row index"
         );
+        assert_eq!(state.miller.focused_directory, td.root);
+        assert_eq!(
+            state.miller.chain.back().map(|segment| &segment.directory),
+            Some(&td.root)
+        );
+        state.miller.assert_miller_invariants_for_test();
     }
 
     // TP-N2.1-PATH: directory-boundary selection cleanup and preview
