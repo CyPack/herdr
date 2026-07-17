@@ -3410,4 +3410,48 @@ mod tests {
             .draw(|frame| render_file_manager(&app, frame, Rect::new(0, 0, 10, 1)))
             .unwrap();
     }
+
+    // TP-FIP-ICON-01/02: every entry row renders its prepared semantic icon
+    // in one leading display cell before the name.
+    #[test]
+    fn entry_row_renders_semantic_icon_before_name() {
+        use crate::fm::entry_kind::{FileEntryKind, IconProfile, VisualClass};
+        let app = crate::app::state::AppState::test_new();
+        let cases = [
+            (
+                "main.rs",
+                FileEntryKind::RegularFile,
+                VisualClass::SourceCode,
+            ),
+            ("assets", FileEntryKind::Directory, VisualClass::Directory),
+            ("broken", FileEntryKind::BrokenSymlink, VisualClass::Broken),
+        ];
+        for (name, kind, class) in cases {
+            let entry = crate::fm::FileEntry {
+                name: name.to_string(),
+                path: std::path::PathBuf::from("/x").join(name),
+                is_dir: kind.is_directory_target(),
+                operation_supported: kind.supports_native_operation(),
+                kind,
+            };
+            let backend = ratatui::backend::TestBackend::new(24, 1);
+            let mut terminal = ratatui::Terminal::new(backend).expect("test terminal");
+            terminal
+                .draw(|frame| {
+                    render_entry_row(&app, frame, Rect::new(0, 0, 24, 1), &entry, false, false);
+                })
+                .expect("draw entry row");
+            let buffer = terminal.backend().buffer();
+            assert_eq!(
+                buffer[(1u16, 0u16)].symbol(),
+                class.glyph(IconProfile::Nerd),
+                "{name}: the icon cell must carry the semantic glyph"
+            );
+            assert_eq!(
+                buffer[(3u16, 0u16)].symbol(),
+                &name[0..1],
+                "{name}: the name must follow icon + separator"
+            );
+        }
+    }
 }

@@ -28,6 +28,154 @@ impl FileEntryKind {
     }
 }
 
+/// Pure visual class of one entry: kind always wins over name; exact
+/// well-known names win over the lowercase final extension; every unmatched
+/// regular file is `Generic` (TP-FIP-ICON-01..07, ICON-10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisualClass {
+    Directory,
+    SymlinkDirectory,
+    SymlinkFile,
+    Broken,
+    Special,
+    VersionControl,
+    BuildPackage,
+    SourceCode,
+    WebCode,
+    Script,
+    ConfigData,
+    Document,
+    Image,
+    Audio,
+    Video,
+    Archive,
+    Generic,
+}
+
+/// Icon glyph profile. `Nerd` reuses the private-use icon language already
+/// present in the sidebar/AppDock; `Ascii` is the deterministic no-font
+/// fallback and the canonical cross-machine visual-fixture profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IconProfile {
+    Nerd,
+    Ascii,
+}
+
+impl VisualClass {
+    pub const ALL: [Self; 17] = [
+        Self::Directory,
+        Self::SymlinkDirectory,
+        Self::SymlinkFile,
+        Self::Broken,
+        Self::Special,
+        Self::VersionControl,
+        Self::BuildPackage,
+        Self::SourceCode,
+        Self::WebCode,
+        Self::Script,
+        Self::ConfigData,
+        Self::Document,
+        Self::Image,
+        Self::Audio,
+        Self::Video,
+        Self::Archive,
+        Self::Generic,
+    ];
+
+    /// One display-cell token for this class in the given profile.
+    pub fn glyph(self, profile: IconProfile) -> &'static str {
+        match profile {
+            IconProfile::Nerd => match self {
+                Self::Directory => "\u{f07b}",
+                Self::SymlinkDirectory => "\u{f482}",
+                Self::SymlinkFile => "\u{f481}",
+                Self::Broken => "\u{f127}",
+                Self::Special => "\u{f128}",
+                Self::VersionControl => "\u{f1d3}",
+                Self::BuildPackage => "\u{f487}",
+                Self::SourceCode => "\u{f121}",
+                Self::WebCode => "\u{f13b}",
+                Self::Script => "\u{f120}",
+                Self::ConfigData => "\u{f013}",
+                Self::Document => "\u{f15c}",
+                Self::Image => "\u{f1c5}",
+                Self::Audio => "\u{f001}",
+                Self::Video => "\u{f008}",
+                Self::Archive => "\u{f1c6}",
+                Self::Generic => "\u{f15b}",
+            },
+            IconProfile::Ascii => match self {
+                Self::Directory => "/",
+                Self::SymlinkDirectory => "@",
+                Self::SymlinkFile => "&",
+                Self::Broken => "!",
+                Self::Special => "?",
+                Self::VersionControl => "+",
+                Self::BuildPackage => "*",
+                Self::SourceCode => "#",
+                Self::WebCode => "<",
+                Self::Script => "$",
+                Self::ConfigData => "=",
+                Self::Document => "-",
+                Self::Image => "%",
+                Self::Audio => "~",
+                Self::Video => "^",
+                Self::Archive => "[",
+                Self::Generic => ".",
+            },
+        }
+    }
+}
+
+/// Classify the visual class from the prepared kind and file name. Pure:
+/// no filesystem, config, process, or socket work (TP-FIP-ICON-11).
+pub fn visual_class(kind: FileEntryKind, name: &str) -> VisualClass {
+    match kind {
+        FileEntryKind::Directory => return VisualClass::Directory,
+        FileEntryKind::SymlinkDirectory => return VisualClass::SymlinkDirectory,
+        FileEntryKind::SymlinkFile => return VisualClass::SymlinkFile,
+        FileEntryKind::BrokenSymlink => return VisualClass::Broken,
+        FileEntryKind::UnsupportedSpecial => return VisualClass::Special,
+        FileEntryKind::RegularFile => {}
+    }
+    match name {
+        ".gitignore" | ".gitattributes" | ".gitmodules" => return VisualClass::VersionControl,
+        "Cargo.toml" | "Cargo.lock" | "package.json" | "package-lock.json" | "pnpm-lock.yaml"
+        | "yarn.lock" | "bun.lock" | "bun.lockb" | "Dockerfile" | "Makefile" | "Justfile"
+        | "justfile" => return VisualClass::BuildPackage,
+        _ => {}
+    }
+    let extension = name
+        .rsplit_once('.')
+        .map(|(stem, extension)| (stem, extension.to_ascii_lowercase()));
+    let Some((stem, extension)) = extension else {
+        return VisualClass::Generic;
+    };
+    if stem.is_empty() {
+        // Dotfiles without a further extension (".bashrc") stay generic
+        // unless matched by the exact-name table above.
+        return VisualClass::Generic;
+    }
+    match extension.as_str() {
+        "rs" | "c" | "h" | "cpp" | "hpp" | "go" | "py" | "rb" | "java" | "kt" | "swift" | "lua" => {
+            VisualClass::SourceCode
+        }
+        "js" | "jsx" | "ts" | "tsx" | "html" | "htm" | "css" | "scss" | "sass" | "vue"
+        | "svelte" => VisualClass::WebCode,
+        "sh" | "bash" | "zsh" | "fish" | "ps1" | "bat" | "cmd" => VisualClass::Script,
+        "toml" | "yaml" | "yml" | "json" | "jsonc" | "xml" | "csv" | "env" | "ini" | "conf"
+        | "properties" => VisualClass::ConfigData,
+        "md" | "mdx" | "rst" | "txt" | "pdf" | "doc" | "docx" | "odt" | "xls" | "xlsx" | "ods"
+        | "ppt" | "pptx" => VisualClass::Document,
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "ico" | "bmp" | "tif" | "tiff"
+        | "avif" => VisualClass::Image,
+        "mp3" | "wav" | "flac" | "m4a" | "aac" | "ogg" | "opus" => VisualClass::Audio,
+        "mp4" | "mkv" | "mov" | "webm" | "avi" | "m4v" => VisualClass::Video,
+        "zip" | "tar" | "gz" | "bz2" | "xz" | "zst" | "7z" | "rar" | "tgz" => VisualClass::Archive,
+        _ => VisualClass::Generic,
+    }
+}
+
 /// Classify one directory entry from symlink-aware metadata. A symlink keeps
 /// its link identity and resolves its target kind; a broken link and every
 /// special (FIFO/socket/device) or unprovable target fail closed.
@@ -121,5 +269,76 @@ mod tests {
         }
         assert!(FileEntryKind::SymlinkDirectory.is_directory_target());
         assert!(!FileEntryKind::SymlinkFile.is_directory_target());
+    }
+
+    // TP-FIP-ICON-07: exact well-known names win before extension matching.
+    #[test]
+    fn visual_class_uses_exact_name_override_before_extension() {
+        let file = FileEntryKind::RegularFile;
+        assert_eq!(visual_class(file, "Dockerfile"), VisualClass::BuildPackage);
+        assert_eq!(visual_class(file, "Makefile"), VisualClass::BuildPackage);
+        assert_eq!(visual_class(file, "Cargo.toml"), VisualClass::BuildPackage);
+        assert_eq!(
+            visual_class(file, ".gitignore"),
+            VisualClass::VersionControl
+        );
+    }
+
+    // TP-FIP-ICON-06: extension matching is case-insensitive.
+    #[test]
+    fn visual_class_extension_match_is_case_insensitive() {
+        let file = FileEntryKind::RegularFile;
+        assert_eq!(visual_class(file, "photo.PNG"), VisualClass::Image);
+        assert_eq!(visual_class(file, "main.RS"), VisualClass::SourceCode);
+        assert_eq!(visual_class(file, "notes.Md"), VisualClass::Document);
+    }
+
+    // TP-FIP-ICON-01..05: kind always wins over any apparent extension.
+    #[test]
+    fn visual_class_kind_wins_over_extension() {
+        assert_eq!(
+            visual_class(FileEntryKind::Directory, "dir.png"),
+            VisualClass::Directory
+        );
+        assert_eq!(
+            visual_class(FileEntryKind::BrokenSymlink, "a.rs"),
+            VisualClass::Broken
+        );
+        assert_eq!(
+            visual_class(FileEntryKind::UnsupportedSpecial, "b.md"),
+            VisualClass::Special
+        );
+        assert_eq!(
+            visual_class(FileEntryKind::SymlinkDirectory, "c.zip"),
+            VisualClass::SymlinkDirectory
+        );
+    }
+
+    // TP-FIP-ICON-02: deterministic generic fallback.
+    #[test]
+    fn visual_class_no_extension_maps_to_generic() {
+        let file = FileEntryKind::RegularFile;
+        assert_eq!(visual_class(file, "README2"), VisualClass::Generic);
+        assert_eq!(visual_class(file, "data.unknownext"), VisualClass::Generic);
+    }
+
+    // TP-FIP-ICON-10: every class maps to exactly one display cell in both
+    // profiles; the ASCII fallback contains no private-use glyph.
+    #[test]
+    fn every_visual_class_has_one_cell_glyph_in_both_profiles() {
+        use unicode_width::UnicodeWidthStr;
+        let mut seen_ascii = std::collections::HashSet::new();
+        for class in VisualClass::ALL {
+            for profile in [IconProfile::Nerd, IconProfile::Ascii] {
+                let glyph = class.glyph(profile);
+                assert_eq!(glyph.width(), 1, "{class:?} {profile:?} must be one cell");
+            }
+            let ascii = class.glyph(IconProfile::Ascii);
+            assert!(ascii.is_ascii(), "{class:?} ascii profile must stay ascii");
+            assert!(
+                seen_ascii.insert(ascii),
+                "{class:?} ascii token must be unique"
+            );
+        }
     }
 }
