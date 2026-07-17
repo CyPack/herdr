@@ -13,7 +13,7 @@ use ratatui::layout::Rect;
 use crate::fm::miller::{
     MAX_RESIDENT_MILLER_COLUMNS, MILLER_COLUMN_MAX_WIDTH, MILLER_COLUMN_MIN_WIDTH,
 };
-use crate::fm::FmState;
+use crate::fm::{FmPreview, FmState};
 
 pub(crate) const MILLER_DIVIDER_WIDTH: u16 = 1;
 
@@ -43,25 +43,91 @@ pub(crate) struct MillerViewportGeometry {
     pub first_visible: usize,
 }
 
-/// One visible logical Miller column projected from prepared model state.
-/// Directory identity is copied into the frame snapshot so later render/input
-/// wiring never has to infer a path from a raw chain index or coordinate.
+/// Prepared source for a non-current directory column. A missing source is an
+/// explicit inert state; render must never load or substitute the directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MillerColumnView {
-    pub chain_index: usize,
-    pub directory: PathBuf,
+pub(crate) enum MillerDirectorySource {
+    Resident(crate::fm::miller::MillerColumnId),
+    PreparedParent,
+    Unavailable,
+}
+
+/// Typed identity of one visible column. Preview is a first-class snapshot
+/// column so render and Kitty placement cannot silently lose or re-lay it out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum MillerColumnKind {
+    Directory {
+        chain_index: usize,
+        directory: PathBuf,
+        source: MillerDirectorySource,
+    },
+    Current {
+        chain_index: usize,
+        directory: PathBuf,
+        generation: u64,
+    },
+    Preview {
+        parent_chain_index: usize,
+        source_path: Option<PathBuf>,
+        generation: u64,
+    },
+}
+
+impl MillerColumnKind {
+    pub(crate) fn chain_index(&self) -> Option<usize> {
+        match self {
+            Self::Directory { chain_index, .. } | Self::Current { chain_index, .. } => {
+                Some(*chain_index)
+            }
+            Self::Preview { .. } => None,
+        }
+    }
+
+    pub(crate) fn directory(&self) -> Option<&PathBuf> {
+        match self {
+            Self::Directory { directory, .. } | Self::Current { directory, .. } => Some(directory),
+            Self::Preview { .. } => None,
+        }
+    }
+
+    pub(crate) fn is_current(&self) -> bool {
+        matches!(self, Self::Current { .. })
+    }
+
+    pub(crate) fn is_preview(&self) -> bool {
+        matches!(self, Self::Preview { .. })
+    }
+}
+
+/// One bounded visible row projected from already-prepared entries. Only the
+/// visible exact path identities are cloned; complete directory vectors remain
+/// singly owned by `FmState` or the resident cache.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MillerRowView {
+    pub entry_index: usize,
+    pub entry_path: PathBuf,
     pub rect: Rect,
 }
 
-/// One visible divider with the exact adjacent logical directory identities.
-/// FM2's transaction target will combine this identity with the snapshot's
-/// Files generation; P1 deliberately introduces no input behavior.
+/// One visible logical Miller column projected from prepared model state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MillerColumnView {
+    /// Index in the geometry input. Preview uses the synthetic index directly
+    /// after the focused current chain segment.
+    pub projection_index: usize,
+    pub kind: MillerColumnKind,
+    pub rect: Rect,
+    pub content_rect: Rect,
+    pub cursor: Option<usize>,
+    pub viewport_start: usize,
+    pub rows: Vec<MillerRowView>,
+}
+
+/// One visible divider linked to exact adjacent entries in `columns`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MillerDividerView {
-    pub left_chain_index: usize,
-    pub right_chain_index: usize,
-    pub left_directory: PathBuf,
-    pub right_directory: PathBuf,
+    pub left_column: usize,
+    pub right_column: usize,
     pub rect: Rect,
 }
 
@@ -82,9 +148,9 @@ pub(crate) struct MillerViewSnapshot {
 
 /// Project prepared Miller model state into a bounded frame snapshot.
 ///
-/// This function performs no filesystem work. At most five directory paths
-/// and four adjacent divider pairs are cloned, matching the frozen resident
-/// and visible-column bound.
+/// This function performs no filesystem work. At most five columns (including
+/// inline preview), four dividers, and their visible row path identities are
+/// projected.
 pub(crate) fn project_miller_view(
     stage: Rect,
     file_manager: &FmState,
@@ -101,42 +167,163 @@ pub(crate) fn project_miller_view(
             ..MillerViewSnapshot::default()
         };
     };
-    let preferred_widths = chain
+    let mut preferred_widths = chain
         .iter()
+        .take(focused_chain_index + 1)
         .map(|segment| segment.preferred_width)
         .collect::<Vec<_>>();
+    let preview_projection_index = focused_chain_index + 1;
+    let project_inline_preview = stage.width
+        >= MILLER_COLUMN_MIN_WIDTH
+            .saturating_mul(2)
+            .saturating_add(MILLER_DIVIDER_WIDTH);
+    let focused_projection_index = if project_inline_preview {
+        // Reserve the preview minimum before honoring the current column's
+        // preferred width. Without this pair budget, the generic geometry's
+        // complete-column rule can greedily keep a 28-cell preview and evict
+        // current at the exact 33-cell two-column threshold.
+        let pair_budget = stage.width.saturating_sub(MILLER_DIVIDER_WIDTH);
+        let current_max = pair_budget
+            .saturating_sub(MILLER_COLUMN_MIN_WIDTH)
+            .min(MILLER_COLUMN_MAX_WIDTH);
+        let current_width =
+            preferred_widths[focused_chain_index].clamp(MILLER_COLUMN_MIN_WIDTH, current_max);
+        let preview_width = pair_budget.saturating_sub(current_width).clamp(
+            MILLER_COLUMN_MIN_WIDTH,
+            crate::fm::miller::MILLER_COLUMN_PREFERRED_WIDTH,
+        );
+        preferred_widths[focused_chain_index] = current_width;
+        preferred_widths.push(preview_width);
+        preview_projection_index
+    } else {
+        focused_chain_index
+    };
     let geometry = miller_viewport_geometry(
         stage,
         &preferred_widths,
-        focused_chain_index,
+        focused_projection_index,
         file_manager.miller.horizontal.first_visible,
     );
 
     let mut columns = Vec::with_capacity(geometry.columns.len());
     for column in geometry.columns {
+        let content_rect = column_content_rect(column.rect);
+        if project_inline_preview && column.chain_index == preview_projection_index {
+            let source_path = file_manager.selected().map(|entry| entry.path.clone());
+            let (entries, cursor, viewport_start) = match &file_manager.preview {
+                FmPreview::Directory(entries) => (entries.as_slice(), None, 0),
+                FmPreview::None | FmPreview::File(_) => (&[][..], None, 0),
+            };
+            columns.push(MillerColumnView {
+                projection_index: column.chain_index,
+                kind: MillerColumnKind::Preview {
+                    parent_chain_index: focused_chain_index,
+                    source_path,
+                    generation: file_manager.preview_generation,
+                },
+                rect: column.rect,
+                content_rect,
+                cursor,
+                viewport_start,
+                rows: project_visible_rows(content_rect, entries, viewport_start),
+            });
+            continue;
+        }
+
         let Some(segment) = chain.get(column.chain_index) else {
             continue;
         };
+        let directory = segment.directory.clone();
+        let (kind, entries, cursor, viewport_start) = if directory == file_manager.cwd {
+            (
+                MillerColumnKind::Current {
+                    chain_index: column.chain_index,
+                    directory,
+                    generation: file_manager.preview_generation,
+                },
+                file_manager.entries.as_slice(),
+                (!file_manager.entries.is_empty()).then_some(file_manager.cursor),
+                file_manager.viewport_start,
+            )
+        } else if let Some(resident) = file_manager
+            .miller
+            .resident_projection_for_directory(&directory)
+        {
+            (
+                MillerColumnKind::Directory {
+                    chain_index: column.chain_index,
+                    directory,
+                    source: MillerDirectorySource::Resident(resident.id.clone()),
+                },
+                resident.entries.as_slice(),
+                (!resident.entries.is_empty()).then_some(segment.cursor),
+                segment.viewport_start,
+            )
+        } else if file_manager
+            .cwd
+            .parent()
+            .is_some_and(|parent| parent == directory)
+        {
+            match file_manager.parent.as_ref() {
+                Some(parent) => (
+                    MillerColumnKind::Directory {
+                        chain_index: column.chain_index,
+                        directory,
+                        source: MillerDirectorySource::PreparedParent,
+                    },
+                    parent.entries.as_slice(),
+                    parent.cursor,
+                    segment.viewport_start,
+                ),
+                None => (
+                    MillerColumnKind::Directory {
+                        chain_index: column.chain_index,
+                        directory,
+                        source: MillerDirectorySource::Unavailable,
+                    },
+                    &[][..],
+                    None,
+                    0,
+                ),
+            }
+        } else {
+            (
+                MillerColumnKind::Directory {
+                    chain_index: column.chain_index,
+                    directory,
+                    source: MillerDirectorySource::Unavailable,
+                },
+                &[][..],
+                None,
+                0,
+            )
+        };
         columns.push(MillerColumnView {
-            chain_index: column.chain_index,
-            directory: segment.directory.clone(),
+            projection_index: column.chain_index,
+            kind,
             rect: column.rect,
+            content_rect,
+            cursor,
+            viewport_start,
+            rows: project_visible_rows(content_rect, entries, viewport_start),
         });
     }
 
     let mut dividers = Vec::with_capacity(geometry.dividers.len());
     for divider in geometry.dividers {
-        let (Some(left), Some(right)) = (
-            chain.get(divider.left_chain_index),
-            chain.get(divider.right_chain_index),
+        let (Some(left_column), Some(right_column)) = (
+            columns
+                .iter()
+                .position(|column| column.projection_index == divider.left_chain_index),
+            columns
+                .iter()
+                .position(|column| column.projection_index == divider.right_chain_index),
         ) else {
             continue;
         };
         dividers.push(MillerDividerView {
-            left_chain_index: divider.left_chain_index,
-            right_chain_index: divider.right_chain_index,
-            left_directory: left.directory.clone(),
-            right_directory: right.directory.clone(),
+            left_column,
+            right_column,
             rect: divider.rect,
         });
     }
@@ -149,6 +336,43 @@ pub(crate) fn project_miller_view(
         columns,
         dividers,
     }
+}
+
+fn column_content_rect(column: Rect) -> Rect {
+    Rect::new(
+        column.x,
+        column.y.saturating_add(1),
+        column.width,
+        column.height.saturating_sub(1),
+    )
+}
+
+fn project_visible_rows(
+    content: Rect,
+    entries: &[crate::fm::FileEntry],
+    viewport_start: usize,
+) -> Vec<MillerRowView> {
+    let visible_rows = content.height as usize;
+    if content.width == 0 || visible_rows == 0 || entries.is_empty() {
+        return Vec::new();
+    }
+    let start = viewport_start.min(entries.len().saturating_sub(visible_rows));
+    let count = visible_rows.min(entries.len().saturating_sub(start));
+    (0..count)
+        .map(|offset| {
+            let entry_index = start + offset;
+            MillerRowView {
+                entry_index,
+                entry_path: entries[entry_index].path.clone(),
+                rect: Rect::new(
+                    content.x,
+                    content.y.saturating_add(offset as u16),
+                    content.width,
+                    1,
+                ),
+            }
+        })
+        .collect()
 }
 
 /// Compute the bounded horizontal viewport: starting at `first_visible`
@@ -248,6 +472,145 @@ mod tests {
 
     fn widths(count: usize) -> Vec<u16> {
         vec![crate::fm::miller::MILLER_COLUMN_PREFERRED_WIDTH; count]
+    }
+
+    fn entry(path: impl Into<PathBuf>, is_dir: bool) -> crate::fm::FileEntry {
+        let path = path.into();
+        crate::fm::FileEntry {
+            name: path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+            path,
+            is_dir,
+            operation_supported: true,
+        }
+    }
+
+    // P1.4: every rendered directory source is explicit prepared state. The
+    // snapshot also carries only bounded visible rows, never whole entry
+    // vectors or an implicit filesystem fallback.
+    #[test]
+    fn typed_projection_carries_all_sources_and_bounded_visible_rows() {
+        let unavailable = PathBuf::from("/virtual/unavailable");
+        let resident = PathBuf::from("/virtual/resident");
+        let parent = PathBuf::from("/virtual/parent");
+        let current = parent.join("current");
+        let chain = [
+            unavailable.clone(),
+            resident.clone(),
+            parent.clone(),
+            current.clone(),
+        ];
+        let mut file_manager = FmState::test_empty(current.clone());
+        file_manager.miller.chain = chain
+            .iter()
+            .cloned()
+            .map(crate::fm::miller::MillerPathSegment::new)
+            .collect();
+        file_manager.miller.focused_directory = current.clone();
+        file_manager.entries = (0..9)
+            .map(|index| entry(current.join(format!("current-{index}.txt")), false))
+            .collect();
+        file_manager.cursor = 7;
+        file_manager.viewport_start = 5;
+        file_manager.parent = Some(crate::fm::FmParent {
+            entries: vec![entry(&current, true), entry(parent.join("peer"), true)],
+            cursor: Some(0),
+        });
+        file_manager.preview = FmPreview::Directory(
+            (0..7)
+                .map(|index| {
+                    entry(
+                        current.join("selected").join(format!("child-{index}")),
+                        true,
+                    )
+                })
+                .collect(),
+        );
+        let resident_id = crate::fm::miller::MillerColumnId {
+            directory: resident.clone(),
+            generation: 42,
+        };
+        file_manager.miller.visit(
+            current.clone(),
+            Some(crate::fm::miller::MillerDirectoryProjection {
+                id: resident_id.clone(),
+                entries: vec![entry(resident.join("cached.txt"), false)],
+                status: crate::fm::FmDirectoryStatus::Available,
+                writable: true,
+            }),
+        );
+
+        let snapshot = project_miller_view(Rect::new(3, 2, 144, 5), &file_manager, 9);
+
+        assert_eq!(snapshot.columns.len(), 5);
+        assert_eq!(snapshot.dividers.len(), 4);
+        assert!(matches!(
+            &snapshot.columns[0].kind,
+            MillerColumnKind::Directory {
+                directory,
+                source: MillerDirectorySource::Unavailable,
+                ..
+            } if directory == &unavailable
+        ));
+        assert!(matches!(
+            &snapshot.columns[1].kind,
+            MillerColumnKind::Directory {
+                directory,
+                source: MillerDirectorySource::Resident(id),
+                ..
+            } if directory == &resident && id == &resident_id
+        ));
+        assert!(matches!(
+            &snapshot.columns[2].kind,
+            MillerColumnKind::Directory {
+                directory,
+                source: MillerDirectorySource::PreparedParent,
+                ..
+            } if directory == &parent
+        ));
+        assert!(matches!(
+            &snapshot.columns[3].kind,
+            MillerColumnKind::Current {
+                directory,
+                generation: 0,
+                ..
+            } if directory == &current
+        ));
+        assert!(matches!(
+            &snapshot.columns[4].kind,
+            MillerColumnKind::Preview {
+                parent_chain_index: 3,
+                generation: 0,
+                ..
+            }
+        ));
+        for column in &snapshot.columns {
+            assert!(
+                column.rows.len() <= column.content_rect.height as usize,
+                "visible row identities stay bounded by the projected content rect"
+            );
+            assert!(column
+                .rows
+                .iter()
+                .all(|row| row.rect.intersection(column.content_rect) == row.rect));
+        }
+        assert_eq!(
+            snapshot.columns[3]
+                .rows
+                .iter()
+                .map(|row| row.entry_index)
+                .collect::<Vec<_>>(),
+            vec![5, 6, 7, 8],
+            "current rows preserve the prepared viewport window"
+        );
+        assert_eq!(
+            snapshot.columns[4].rows.len(),
+            4,
+            "preview directory rows are clipped to the same bounded content height"
+        );
     }
 
     // FM1.3: the nine plan widths — at most five columns, every visible

@@ -10,7 +10,7 @@
                      // FM1.3 horizontal viewport consume this bounded model.
 
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{FileEntry, FmDirectoryStatus};
 
@@ -190,6 +190,20 @@ impl MillerState {
         self.resident_non_current
             .iter()
             .find(|projection| projection.id == *id)
+    }
+
+    /// Resolve the single live non-current projection for a directory.
+    ///
+    /// `visit` removes an older projection for the same path before inserting
+    /// a new generation, so a path lookup is unambiguous. Render/projection
+    /// callers use this prepared cache only; they never load the filesystem.
+    pub(crate) fn resident_projection_for_directory(
+        &self,
+        directory: &Path,
+    ) -> Option<&MillerDirectoryProjection> {
+        self.resident_non_current
+            .iter()
+            .find(|projection| projection.id.directory == directory)
     }
 
     /// Assert every frozen bound and identity invariant (test builds).

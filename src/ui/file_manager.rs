@@ -302,7 +302,20 @@ pub(crate) fn compute_file_manager_row_geometry_with(
     let Some(areas) = file_manager_areas_with(area, overrides) else {
         return FileManagerRowGeometry::default();
     };
-    let list = panel_areas(areas.columns.current)[1];
+    compute_file_manager_row_geometry_in_content(
+        panel_areas(areas.columns.current)[1],
+        entries,
+        viewport_start,
+    )
+}
+
+/// Derive CURRENT row/action compatibility geometry from the exact content
+/// rect already owned by the Miller frame snapshot.
+pub(crate) fn compute_file_manager_row_geometry_in_content(
+    list: Rect,
+    entries: &[FileEntry],
+    viewport_start: usize,
+) -> FileManagerRowGeometry {
     let visible_rows = list.height as usize;
     let entry_count = entries.len();
     if list.width == 0 || visible_rows == 0 || entry_count == 0 {

@@ -303,7 +303,7 @@ fn compute_view_internal(
     let FileManagerRowGeometry {
         rows: file_manager_row_areas,
         actions: file_manager_row_action_areas,
-    } = sync_file_manager_view(app, terminal_area);
+    } = sync_file_manager_view(app, &file_manager_miller);
     let file_manager_action_bar = app.file_manager.as_ref().map(|file_manager| {
         compute_file_manager_action_bar_model(
             file_manager,
@@ -498,7 +498,7 @@ fn compute_mobile_view(
     let FileManagerRowGeometry {
         rows: file_manager_row_areas,
         actions: file_manager_row_action_areas,
-    } = sync_file_manager_view(app, terminal_area);
+    } = sync_file_manager_view(app, &file_manager_miller);
     let file_manager_action_bar = app.file_manager.as_ref().map(|file_manager| {
         compute_file_manager_action_bar_model(
             file_manager,
@@ -600,24 +600,22 @@ fn compute_mobile_view(
     app.sync_copy_mode_search_geometry();
 }
 
-fn sync_file_manager_view(app: &mut AppState, area: Rect) -> FileManagerRowGeometry {
-    let overrides = app
-        .file_manager
-        .as_ref()
-        .map(|file_manager| file_manager.trio_overrides)
-        .unwrap_or_default();
-    let visible_rows = file_manager::file_manager_visible_rows_with(area, overrides);
-    if let Some(file_manager) = app.file_manager.as_mut() {
-        file_manager.sync_viewport(visible_rows);
-        file_manager::compute_file_manager_row_geometry_with(
-            area,
-            &file_manager.entries,
-            file_manager.viewport_start,
-            overrides,
-        )
-    } else {
-        FileManagerRowGeometry::default()
-    }
+fn sync_file_manager_view(app: &AppState, snapshot: &MillerViewSnapshot) -> FileManagerRowGeometry {
+    let Some(file_manager) = app.file_manager.as_ref() else {
+        return FileManagerRowGeometry::default();
+    };
+    let Some(current) = snapshot
+        .columns
+        .iter()
+        .find(|column| column.kind.is_current())
+    else {
+        return FileManagerRowGeometry::default();
+    };
+    file_manager::compute_file_manager_row_geometry_in_content(
+        current.content_rect,
+        &file_manager.entries,
+        file_manager.viewport_start,
+    )
 }
 
 fn sync_miller_view(app: &mut AppState, area: Rect) -> MillerViewSnapshot {
@@ -631,9 +629,23 @@ fn sync_miller_view(app: &mut AppState, area: Rect) -> MillerViewSnapshot {
     let Some(file_manager) = app.file_manager.as_mut() else {
         return MillerViewSnapshot::default();
     };
-    let snapshot =
+    let mut snapshot =
         file_manager::miller::project_miller_view(viewport_area, file_manager, files_generation);
     file_manager.miller.horizontal.first_visible = snapshot.first_visible;
+    let current_visible_rows = snapshot
+        .columns
+        .iter()
+        .find(|column| column.kind.is_current())
+        .map_or(0, |column| column.content_rect.height as usize);
+    let previous_viewport_start = file_manager.viewport_start;
+    file_manager.sync_viewport(current_visible_rows);
+    if file_manager.viewport_start != previous_viewport_start {
+        snapshot = file_manager::miller::project_miller_view(
+            viewport_area,
+            file_manager,
+            files_generation,
+        );
+    }
     snapshot
 }
 
@@ -930,6 +942,8 @@ mod tests {
             .map(crate::fm::miller::MillerPathSegment::new)
             .collect();
         file_manager.miller.focused_directory = directories[focused_index].clone();
+        file_manager.cwd = directories[focused_index].clone();
+        file_manager.parent = None;
 
         let mut app = crate::app::state::AppState::test_new();
         app.workspaces = vec![Workspace::test_new("one")];
@@ -1239,14 +1253,9 @@ mod tests {
             .file_manager_miller
             .columns
             .iter()
-            .find(|column| column.directory == cwd)
+            .find(|column| column.kind.directory() == Some(&cwd))
             .expect("current column projected");
-        let current_content = Rect::new(
-            current_column.rect.x,
-            current_column.rect.y.saturating_add(1),
-            current_column.rect.width,
-            current_column.rect.height.saturating_sub(1),
-        );
+        let current_content = current_column.content_rect;
         assert!(
             !app.view.file_manager_row_areas.is_empty(),
             "the repository cwd fixture must expose visible current rows"
@@ -1303,13 +1312,14 @@ mod tests {
         for width in [16, 57, 86, 115, 144, 400] {
             let file_manager = app.file_manager.as_mut().expect("open FM");
             file_manager.miller.horizontal.first_visible = 0;
-            let preferred_widths = file_manager
+            let focused_index = file_manager.miller.chain.len() - 1;
+            let mut preferred_widths = file_manager
                 .miller
                 .chain
                 .iter()
+                .take(focused_index + 1)
                 .map(|segment| segment.preferred_width)
                 .collect::<Vec<_>>();
-            let focused_index = file_manager.miller.chain.len() - 1;
             let frame = Rect::new(0, 0, width, 16);
             let expected_body = Rect::new(
                 frame.x,
@@ -1317,10 +1327,32 @@ mod tests {
                 frame.width,
                 frame.height.saturating_sub(2),
             );
+            let expected_focused_index = if expected_body.width
+                >= crate::fm::miller::MILLER_COLUMN_MIN_WIDTH * 2
+                    + file_manager::miller::MILLER_DIVIDER_WIDTH
+            {
+                let pair_budget = expected_body
+                    .width
+                    .saturating_sub(file_manager::miller::MILLER_DIVIDER_WIDTH);
+                let current_max = pair_budget
+                    .saturating_sub(crate::fm::miller::MILLER_COLUMN_MIN_WIDTH)
+                    .min(crate::fm::miller::MILLER_COLUMN_MAX_WIDTH);
+                let current_width = preferred_widths[focused_index]
+                    .clamp(crate::fm::miller::MILLER_COLUMN_MIN_WIDTH, current_max);
+                let preview_width = pair_budget.saturating_sub(current_width).clamp(
+                    crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
+                    crate::fm::miller::MILLER_COLUMN_PREFERRED_WIDTH,
+                );
+                preferred_widths[focused_index] = current_width;
+                preferred_widths.push(preview_width);
+                focused_index + 1
+            } else {
+                focused_index
+            };
             let expected = file_manager::miller::miller_viewport_geometry(
                 expected_body,
                 &preferred_widths,
-                focused_index,
+                expected_focused_index,
                 0,
             );
 
@@ -1357,24 +1389,30 @@ mod tests {
                 "production projection publishes one divider per adjacent pair"
             );
             for (projected, geometry) in snapshot.columns.iter().zip(&expected.columns) {
-                assert_eq!(projected.chain_index, geometry.chain_index);
+                assert_eq!(projected.projection_index, geometry.chain_index);
                 assert_eq!(projected.rect, geometry.rect);
-                assert_eq!(
-                    projected.directory, directories[geometry.chain_index],
-                    "column identity comes from the exact logical segment"
-                );
+                if geometry.chain_index == focused_index + 1 {
+                    assert!(
+                        projected.kind.is_preview(),
+                        "the synthetic final projection is the typed inline preview"
+                    );
+                } else {
+                    assert_eq!(
+                        projected.kind.directory(),
+                        Some(&directories[geometry.chain_index]),
+                        "column identity comes from the exact logical segment"
+                    );
+                }
             }
             for (projected, geometry) in snapshot.dividers.iter().zip(&expected.dividers) {
-                assert_eq!(projected.left_chain_index, geometry.left_chain_index);
-                assert_eq!(projected.right_chain_index, geometry.right_chain_index);
                 assert_eq!(projected.rect, geometry.rect);
                 assert_eq!(
-                    projected.left_directory,
-                    directories[geometry.left_chain_index]
+                    snapshot.columns[projected.left_column].projection_index,
+                    geometry.left_chain_index
                 );
                 assert_eq!(
-                    projected.right_directory,
-                    directories[geometry.right_chain_index]
+                    snapshot.columns[projected.right_column].projection_index,
+                    geometry.right_chain_index
                 );
             }
             assert_eq!(
@@ -1426,18 +1464,21 @@ mod tests {
         compute_view(&mut app, Rect::new(0, 0, 86, 16));
 
         let snapshot = &app.view.file_manager_miller;
-        assert_eq!(snapshot.first_visible, 2);
+        assert_eq!(
+            snapshot.first_visible, 3,
+            "current plus preview stay visible, so the stale ancestor origin clamps forward"
+        );
         assert_eq!(
             snapshot
                 .columns
                 .iter()
-                .map(|column| column.chain_index)
+                .map(|column| column.kind.chain_index())
                 .collect::<Vec<_>>(),
-            vec![2, 3, 4],
-            "the requested nonzero model window is the production projection authority"
+            vec![Some(3), Some(4), None],
+            "the bounded window carries the nearest ancestor, current, and typed preview"
         );
         let file_manager = app.file_manager.as_ref().expect("open FM");
-        assert_eq!(file_manager.miller.horizontal.first_visible, 2);
+        assert_eq!(file_manager.miller.horizontal.first_visible, 3);
         assert_eq!(file_manager.miller.focused_directory, directories[4]);
         assert_eq!(file_manager.miller.revision, original_revision);
         assert_eq!(
@@ -1529,10 +1570,10 @@ mod tests {
         assert!(snapshot.first_visible > wide_first_visible);
         assert_eq!(snapshot.focused_chain_index, Some(6));
         assert!(
-            snapshot
-                .columns
-                .iter()
-                .any(|column| column.chain_index == 6 && column.directory == directories[6]),
+            snapshot.columns.iter().any(|column| {
+                column.kind.chain_index() == Some(6)
+                    && column.kind.directory() == Some(&directories[6])
+            }),
             "the focused logical column remains visible after shrink"
         );
         let body = file_manager::file_manager_miller_viewport_area(Rect::new(0, 0, 57, 16));
