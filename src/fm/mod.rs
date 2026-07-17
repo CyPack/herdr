@@ -3565,4 +3565,63 @@ mod tests {
             "the retired branch segment (and its focus) leaves the chain"
         );
     }
+
+    // FIP-3.1 CHARACTERIZATION (passes before the kind migration): freezes
+    // sort order and symlink/special classification so FIP-3.3/3.4 must keep
+    // operational behavior byte-for-byte (TP-FIP-ICON-12).
+    #[test]
+    fn snapshot_sort_and_symlink_classification_baseline() {
+        let td = TempDir::new("icon-baseline");
+        fs::create_dir_all(td.root.join("bdir")).expect("dir");
+        fs::create_dir_all(td.root.join("adir")).expect("dir");
+        fs::write(td.root.join("afile.txt"), b"x").expect("file");
+        fs::write(td.root.join("zfile.txt"), b"x").expect("file");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(td.root.join("adir"), td.root.join("link-dir"))
+                .expect("link-dir");
+            std::os::unix::fs::symlink(td.root.join("afile.txt"), td.root.join("link-file"))
+                .expect("link-file");
+            std::os::unix::fs::symlink(td.root.join("missing"), td.root.join("broken"))
+                .expect("broken");
+        }
+        let snapshot = read_directory_snapshot(&td.root, false);
+        let names: Vec<&str> = snapshot
+            .entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect();
+        #[cfg(unix)]
+        assert_eq!(
+            names,
+            vec![
+                "adir",
+                "bdir",
+                "link-dir",
+                "afile.txt",
+                "broken",
+                "link-file",
+                "zfile.txt"
+            ],
+            "directories (symlink-dir included) first, then names"
+        );
+        let by_name = |name: &str| {
+            snapshot
+                .entries
+                .iter()
+                .find(|entry| entry.name == name)
+                .expect("entry present")
+        };
+        assert!(by_name("adir").is_dir && by_name("adir").operation_supported);
+        assert!(!by_name("afile.txt").is_dir && by_name("afile.txt").operation_supported);
+        #[cfg(unix)]
+        {
+            assert!(by_name("link-dir").is_dir && by_name("link-dir").operation_supported);
+            assert!(!by_name("link-file").is_dir && by_name("link-file").operation_supported);
+            assert!(
+                !by_name("broken").is_dir && !by_name("broken").operation_supported,
+                "a broken symlink lists as an unsupported file"
+            );
+        }
+    }
 }
