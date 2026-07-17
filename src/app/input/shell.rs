@@ -458,6 +458,25 @@ mod tests {
     }
 
     #[test]
+    fn resize_profile_counts_only_committed_persistence_and_pty_requests() {
+        let mut state = state_with_sidebar_capture();
+
+        let (_, profile) = crate::render_prof::observe_for_test(|| {
+            for step in 0..100_u16 {
+                state.preview_sidebar_resize(Position::new(20 + (step % 10), 5));
+            }
+            state.commit_sidebar_resize();
+        });
+
+        assert_eq!(profile.counter("shell.persistence_write"), 1);
+        assert_eq!(profile.counter("shell.pty_resize_request"), 1);
+        assert!(
+            state.session_dirty,
+            "the persistence counter corresponds to the debounced dirty request"
+        );
+    }
+
+    #[test]
     fn active_sidebar_capture_enter_commits_preview() {
         let mut state = state_with_sidebar_capture();
         handle_shell_resize_key_for_test(

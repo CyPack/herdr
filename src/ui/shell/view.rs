@@ -175,3 +175,27 @@ fn flatten_region_hits(regions: &RegionRects, generation: u64) -> Vec<ShellHitAr
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn geometry_cache_profile_counts_desktop_and_empty_hits_and_misses() {
+        let layout = ShellLayout::default();
+        let desktop_key = ShellGeometryKey::new(Rect::new(0, 0, 120, 40), 1, 2, 3);
+        let mobile_key = ShellGeometryKey::new(Rect::new(0, 0, 40, 20), 4, 5, 6);
+
+        let (_, profile) = crate::render_prof::observe_for_test(|| {
+            let desktop =
+                compute_shell_view(&layout, desktop_key, ShellView::default(), &|_region| 0);
+            let _desktop_hit = compute_shell_view(&layout, desktop_key, desktop, &|_region| 0);
+
+            let mobile = compute_empty_shell_view(mobile_key, ShellView::default());
+            let _mobile_hit = compute_empty_shell_view(mobile_key, mobile);
+        });
+
+        assert_eq!(profile.counter("shell.geometry_cache.miss"), 2);
+        assert_eq!(profile.counter("shell.geometry_cache.hit"), 2);
+    }
+}

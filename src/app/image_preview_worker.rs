@@ -824,12 +824,19 @@ mod tests {
             "the typed transaction previews the new pair"
         );
         crate::ui::compute_view(&mut app.state, frame);
-        for _ in 0..100 {
-            assert!(
-                !app.sync_image_preview_worker(),
-                "preview sync cannot submit an image target"
-            );
-        }
+        let (_, preview_profile) = crate::render_prof::observe_for_test(|| {
+            for _ in 0..100 {
+                assert!(
+                    !app.sync_image_preview_worker(),
+                    "preview sync cannot submit an image target"
+                );
+            }
+        });
+        assert_eq!(
+            preview_profile.counter("fm.image_target.refresh"),
+            0,
+            "transient drag geometry cannot refresh the image target"
+        );
         assert_eq!(
             app.image_preview_worker.slot.generation, generation_before,
             "preview produces zero worker generations"
@@ -849,9 +856,16 @@ mod tests {
         );
 
         crate::ui::compute_view(&mut app.state, frame);
+        let (started, committed_profile) =
+            crate::render_prof::observe_for_test(|| app.sync_image_preview_worker());
         assert!(
-            app.sync_image_preview_worker(),
+            started,
             "the first committed frame starts one replacement target"
+        );
+        assert_eq!(
+            committed_profile.counter("fm.image_target.refresh"),
+            1,
+            "the first committed frame refreshes the target exactly once"
         );
         assert_eq!(
             app.image_preview_worker.slot.generation,

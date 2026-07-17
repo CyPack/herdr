@@ -1471,6 +1471,16 @@ mod tests {
             "repeating the same pointer position is a no-op, not a second preview change"
         );
         assert_eq!(profile.counter("fm.miller_resize.committed"), 1);
+        assert_eq!(
+            profile.counter("shell.persistence_write"),
+            0,
+            "Miller resize is client-local and cannot request persistence"
+        );
+        assert_eq!(
+            profile.counter("shell.pty_resize_request"),
+            0,
+            "Miller resize cannot resize hidden terminal runtimes"
+        );
         assert!(
             !app.state.shell_interaction.miller_resize_active(),
             "commit retires capture authority"
