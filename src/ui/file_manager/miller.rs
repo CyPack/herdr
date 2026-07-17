@@ -1061,6 +1061,62 @@ mod tests {
         assert_eq!(resident_cursor(&duplicated), None);
     }
 
+    // TP-FIP-FOCUS-07: when the re-resolved focused row falls outside the
+    // cached viewport window, the resident column clamps its viewport so the
+    // exact focused row is visible.
+    #[test]
+    fn resident_viewport_clamps_resolved_focus_visible() {
+        let resident_dir = PathBuf::from("/virtual/resident");
+        let current = resident_dir.join("child-25");
+        let entries: Vec<crate::fm::FileEntry> = (0..30)
+            .map(|index| entry(resident_dir.join(format!("child-{index:02}")), true))
+            .collect();
+        let focused = entries[25].path.clone();
+        let mut file_manager = FmState::test_empty(current.clone());
+        file_manager.miller.chain = vec![
+            crate::fm::miller::MillerPathSegment::new(resident_dir.clone()),
+            crate::fm::miller::MillerPathSegment::new(current.clone()),
+        ]
+        .into();
+        file_manager.miller.chain[0].focused_child = Some(focused.clone());
+        file_manager.miller.chain[0].viewport_start = 0; // stale window
+        file_manager.miller.focused_directory = current.clone();
+        file_manager.miller.visit(
+            current.clone(),
+            Some(crate::fm::miller::MillerDirectoryProjection {
+                id: crate::fm::miller::MillerColumnId {
+                    directory: resident_dir.clone(),
+                    generation: 7,
+                },
+                entries,
+                status: crate::fm::FmDirectoryStatus::Available,
+                writable: true,
+            }),
+        );
+
+        let snapshot = project_miller_view(Rect::new(0, 0, 144, 8), &file_manager, 3);
+        let column = snapshot
+            .columns
+            .iter()
+            .find(|column| {
+                matches!(
+                    &column.kind,
+                    MillerColumnKind::Directory {
+                        source: MillerDirectorySource::Resident(_),
+                        ..
+                    }
+                )
+            })
+            .expect("resident column visible");
+        assert_eq!(column.cursor, Some(25));
+        assert!(
+            column.rows.iter().any(|row| row.entry_index == 25),
+            "the focused row must be inside the visible window \
+             (viewport_start={})",
+            column.viewport_start
+        );
+    }
+
     // FM1.3: the nine plan widths — at most five columns, every visible
     // column COMPLETE (>= min width), dividers disjoint one-cell strips,
     // the focused column visible, and every rect inside the Stage.

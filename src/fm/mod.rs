@@ -3472,4 +3472,97 @@ mod tests {
             .expect("departing segment stays in chain");
         assert_eq!(segment.focused_child.as_deref(), Some(beta.as_path()));
     }
+
+    // TP-FIP-FOCUS-02: descending four levels binds every resident ancestor
+    // to its exact next path segment, not just the immediate parent.
+    #[test]
+    fn four_level_descent_binds_every_resident_ancestor_focus() {
+        let td = TempDir::new("focus-chain");
+        let l1 = td.root.join("b1");
+        let l2 = l1.join("b2");
+        let l3 = l2.join("b3");
+        // A sibling before each target keeps every entered child at a
+        // nonzero index.
+        for sibling in [td.root.join("a0"), l1.join("a0"), l2.join("a0"), l3.clone()] {
+            fs::create_dir_all(sibling).expect("fixture dir");
+        }
+        let mut state = FmState::new(&td.root);
+        for target in [&l1, &l2, &l3] {
+            let index = state
+                .entries
+                .iter()
+                .position(|entry| entry.path == **target)
+                .expect("target row");
+            assert!(index > 0, "each entered child must be nonzero");
+            state.cursor = index;
+            state.enter();
+        }
+        assert_eq!(state.cwd, l3);
+        for (directory, child) in [(&td.root, &l1), (&l1, &l2), (&l2, &l3)] {
+            let segment = state
+                .miller
+                .chain
+                .iter()
+                .find(|segment| segment.directory == **directory)
+                .expect("ancestor segment stays in chain");
+            assert_eq!(
+                segment.focused_child.as_deref(),
+                Some(child.as_path()),
+                "ancestor {directory:?} must bind its exact next segment"
+            );
+        }
+    }
+
+    // TP-FIP-FOCUS-05/06: changing branch through an ancestor retires the
+    // descendant focus with its segments, and the re-entered ancestor binds
+    // the NEW child.
+    #[test]
+    fn branch_change_retires_descendant_focus_and_rebinds_ancestor() {
+        let td = TempDir::new("focus-branch");
+        let alpha = td.root.join("alpha");
+        let beta = td.root.join("beta");
+        let alpha_child = alpha.join("inner");
+        fs::create_dir_all(&alpha_child).expect("fixture dir");
+        fs::create_dir_all(&beta).expect("fixture dir");
+        let mut state = FmState::new(&td.root);
+
+        let alpha_index = state
+            .entries
+            .iter()
+            .position(|entry| entry.path == alpha)
+            .expect("alpha row");
+        state.cursor = alpha_index;
+        state.enter();
+        state.leave();
+        // Root now binds alpha; switch the branch to beta.
+        let beta_index = state
+            .entries
+            .iter()
+            .position(|entry| entry.path == beta)
+            .expect("beta row");
+        assert!(beta_index > 0, "beta must sit at a nonzero index");
+        state.cursor = beta_index;
+        state.enter();
+
+        assert_eq!(state.cwd, beta);
+        let root_segment = state
+            .miller
+            .chain
+            .iter()
+            .find(|segment| segment.directory == td.root)
+            .expect("root segment");
+        assert_eq!(
+            root_segment.focused_child.as_deref(),
+            Some(beta.as_path()),
+            "the re-entered ancestor binds the NEW branch child"
+        );
+        assert!(
+            !state
+                .miller
+                .chain
+                .iter()
+                .any(|segment| segment.directory == alpha),
+            "the retired branch segment (and its focus) leaves the chain"
+        );
+    }
 }
