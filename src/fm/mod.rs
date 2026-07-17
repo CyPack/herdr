@@ -3434,4 +3434,35 @@ mod tests {
             other => panic!("expected navigated image candidate, got {other:?}"),
         }
     }
+
+    // TP-FIP-FOCUS-01: entering a child at a nonzero index must bind that
+    // exact child path to the departing segment, never leave it unset for a
+    // row-zero fallback.
+    #[test]
+    fn entering_nonzero_child_binds_exact_focused_child_in_departing_segment() {
+        let td = TempDir::new("focus-bind");
+        for name in ["alpha", "beta", "gamma"] {
+            fs::create_dir_all(td.root.join(name)).expect("fixture dir");
+        }
+        let mut state = FmState::new(&td.root);
+        let beta = td.root.join("beta");
+        let beta_index = state
+            .entries
+            .iter()
+            .position(|entry| entry.path == beta)
+            .expect("beta row");
+        assert!(beta_index > 0, "test requires a nonzero child index");
+        state.cursor = beta_index;
+
+        state.enter();
+
+        assert_eq!(state.cwd, beta);
+        let segment = state
+            .miller
+            .chain
+            .iter()
+            .find(|segment| segment.directory == td.root)
+            .expect("departing segment stays in chain");
+        assert_eq!(segment.focused_child.as_deref(), Some(beta.as_path()));
+    }
 }
