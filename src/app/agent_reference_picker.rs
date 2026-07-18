@@ -134,6 +134,9 @@ impl crate::app::App {
         }
         let rows = self.agent_reference_picker_rows();
         if rows.is_empty() {
+            // A dead-end action is explained, never silent (live-screen
+            // evidence 2026-07-18): the user sees WHY nothing can open.
+            self.show_file_manager_agent_handoff_failure("no live agent to receive references");
             return false;
         }
         self.state.agent_reference_picker = Some(AgentReferencePickerState {
