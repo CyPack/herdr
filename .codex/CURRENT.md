@@ -20,6 +20,19 @@
 > Manual tests use `.local/herdr-trail-test.sh`, which starts and ends with
 > semantic cleanup limited to its owned throwaway root; stable Herdr/socket
 > and user processes remain outside its authority.
+> TRAIL-T7.8 fractional cell scrolling is CLOSED and code-published through
+> `26da2437` (`4e6e922b` RED, `febe65ef` GREEN, `97d5fe01` VIS-12,
+> `26da2437` row-action fixture alignment). One event advances by
+> `ceil(reference_column_width/3)` cells; mixed 18/30/48 widths use 6/10/16
+> cells, partial edge columns render and hit-test from one Trail snapshot,
+> Unicode labels slice by display cells, stale generation/revision fails
+> closed, manual resize clamps without stealing authority, and navigation
+> rearms active-end follow. Fresh gates: Rust 3,512/3,512 + 2 skip, Chromium
+> 20/20 with a 15-pixel one-cell mutation failure, both Clippy targets,
+> maintenance 68/68, Bun 5/5 + 12/12, fmt/diff/production-unwrap/source audit
+> clean. Single-worker graph is ready at 21,296 nodes / 98,085 edges and
+> returns current offset geometry/input bodies. CyPack `feat/native-fm` and
+> `master` both equal `26da243712f5f79c3eda49cd07a88892f775246d`.
 > Ghostty headful image acceptance remains a separate human evidence item; it
 > does not reopen product code. Default next independent lane is FIP-6.3 mouse
 > harness investigation, then custom-layout B-chain only under its own plan.

@@ -111,7 +111,7 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
   fmt/diff/production-unwrap taraması temiz. Manuel test yardımcısı
   `.local/herdr-trail-test.sh` yalnız test-sahipli server/root için başlangıç
   ve kapanış temizliği uygular; stable Herdr/socket'a dokunmaz.
-- [ ] **TRAIL-T7.8** Kesirli hücre-tabanlı yatay kaydırma — ONAYLI TASARIM:
+- [x] **TRAIL-T7.8** Kesirli hücre-tabanlı yatay kaydırma — ONAYLI TASARIM:
   `docs/superpowers/specs/2026-07-18-herdr-miller-fractional-scroll-design.md`;
   uygulama planı:
   `docs/superpowers/plans/2026-07-18-herdr-miller-fractional-scroll-implementation.md`.
@@ -120,17 +120,22 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
   VIS-12 Chromium → full gate/graf/yayın.
   - [x] **T7.8.0** Graph-first araştırma, bağımlılık analizi, PRD ve kod-seviyesi
     TDD planı.
-  - [ ] **T7.8.1 RED** Compile-valid fractional step, mixed-width, clipping,
-    stale, auto-follow ve resize davranış testleri.
-  - [ ] **T7.8.2 GREEN-STATE** `first_visible` mutable otoritesini client-local
-    mutlak hücre ofsetine ve saf interval/clamp/auto-follow geometrisine taşı.
-  - [ ] **T7.8.3 GREEN-RENDER/INPUT** Kısmi kolon/row/action clipping'i,
-    Unicode hücre dilimi ve generation+revision-bound Trail input cutover.
-  - [ ] **T7.8.4 VIS-12** Gerçek Ratatui hücre fixture'ı + Playwright Chromium
-    mutation kanıtı + yalnız spec-scoped baseline.
-  - [ ] **T7.8.5 CLOSURE** Full Rust, Chromium, iki clippy, maintenance,
-    Bun, fmt/diff/unwrap/source audit; continuity; tek-worker graph reindex;
-    CyPack `feat/native-fm`+`master` FF yayın.
+  - [x] **T7.8.1 RED** `4e6e922b`: compile-valid mixed-width 1/3-step testi
+    whole-column davranışında gerçek assertion ile kırmızı.
+  - [x] **T7.8.2 GREEN-STATE** `febe65ef`: mutable `first_visible` otoritesi
+    client-local mutlak hücre ofseti + saf interval/clamp/auto-follow
+    geometrisine taşındı.
+  - [x] **T7.8.3 GREEN-RENDER/INPUT** `febe65ef`: kısmi kolon/row/action
+    clipping'i, Unicode display-cell dilimi ve generation+revision-bound Trail
+    input cutover; `26da2437` sentetik row-action fixture genişliğini aynı
+    mantıksal otoriteye hizaladı.
+  - [x] **T7.8.4 VIS-12** `97d5fe01`: gerçek Ratatui hücre fixture'ı,
+    Playwright Chromium baseline ve tek-hücre mutation kırmızısı; VIS-10/11
+    kasıtlı değişimleri spec-scoped uzlaştırıldı.
+  - [x] **T7.8.5 CLOSURE** Full Rust 3,512/3,512 + 2 skip, Chromium 20/20,
+    Linux+Windows clippy, maintenance 68/68, Bun 5/5 + 12/12,
+    fmt/diff/unwrap/source audit temiz; graph 21,296/98,085 ready; CyPack
+    `feat/native-fm`+`master` `26da2437` SHA eşitliğiyle FF yayımlandı.
 
 ### FIP-D — Saha Kusurları (2026-07-18 canlı ekran kanıtı, kullanıcı raporu)
 

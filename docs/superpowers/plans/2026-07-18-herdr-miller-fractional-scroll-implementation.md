@@ -64,7 +64,7 @@ independently once the shared snapshot interface exists. VIS-12 depends on both.
 - Consumes: current `handle_miller_horizontal_scroll`, `compute_view`, `TrailViewSnapshot`.
 - Produces: failing tests named below without referencing nonexistent APIs.
 
-- [ ] **Step 1: Add the one-third movement RED**
+- [x] **Step 1: Add the one-third movement RED**
 
 Create `horizontal_wheel_moves_by_fractional_cells_and_keeps_partial_column_visible`.
 Build an eight-level Trail with 30-cell per-index widths, compute a narrow frame, scroll left
@@ -81,7 +81,7 @@ The offsets are recovered from the visible logical column identity and its clipp
 the test compiles against the current snapshot. Current behavior must fail because it advances
 one complete column and cannot produce a partial leading rect.
 
-- [ ] **Step 2: Add clipping and mixed-width REDs**
+- [x] **Step 2: Add clipping and mixed-width REDs**
 
 Add:
 
@@ -98,7 +98,7 @@ columns, exact stage intersection for rows/actions/dividers, a leading label sli
 the clipped prefix, navigation returning the active column to view, and manual resize preserving
 `follow_active == false`.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 Run:
 
@@ -110,7 +110,7 @@ cargo nextest run --locked --no-fail-fast fractional_scroll
 Expected: behavior assertion failures showing whole-column movement/no partial column; no
 compile error, panic, empty selection, or unrelated failure is accepted as RED.
 
-- [ ] **Step 4: Run protected characterization**
+- [x] **Step 4: Run protected characterization**
 
 Run:
 
@@ -122,7 +122,7 @@ cargo nextest run --locked --no-fail-fast ten_thousand_miller_actions_preserve_a
 
 Expected: existing tests pass before production edits.
 
-- [ ] **Step 5: Commit RED**
+- [x] **Step 5: Commit RED**
 
 Run `cargo fmt`, then run `cargo fmt --check` separately. Target-stage only the two Rust test
 files and commit:
@@ -175,7 +175,7 @@ pub(crate) fn miller_viewport_geometry_at_offset(
 ) -> MillerViewportGeometry;
 ```
 
-- [ ] **Step 1: Replace the mutable index**
+- [x] **Step 1: Replace the mutable index**
 
 Initialize `offset_cells = 0`. On Trail visit/sync keep the current bounded offset but set
 `follow_active = true`; do not derive or store a mutable first-visible index. Update the
@@ -185,14 +185,14 @@ test-only invariant to require:
 assert!(self.horizontal.offset_cells <= miller_total_content_width(&widths));
 ```
 
-- [ ] **Step 2: Implement logical interval geometry**
+- [x] **Step 2: Implement logical interval geometry**
 
 Build every clamped column/divider interval in `u32`, clamp requested offset to
 `total_width.saturating_sub(stage.width)`, intersect each interval with the viewport, and emit
 only nonempty visible rectangles. Convert to `u16` only after subtracting the viewport origin.
 Derive `first_visible` from the first emitted column.
 
-- [ ] **Step 3: Implement auto-follow**
+- [x] **Step 3: Implement auto-follow**
 
 For a focused interval `[start, end)`, return:
 
@@ -203,13 +203,13 @@ if width > stage_width { start } else { end.saturating_sub(stage_width) }
 then clamp to `max_offset`. This keeps the active column complete when possible and allows a
 partial ancestor at the left edge.
 
-- [ ] **Step 4: Preserve resize compatibility**
+- [x] **Step 4: Preserve resize compatibility**
 
 Keep `miller_viewport_geometry(stage, widths, focused, requested_first_visible)` as a pure
 compatibility wrapper that converts the requested column to its logical start offset and calls
 the new core. It is not mutable viewport authority.
 
-- [ ] **Step 5: Run focused GREEN**
+- [x] **Step 5: Run focused GREEN**
 
 Run:
 
@@ -252,33 +252,33 @@ pub(crate) fn project_trail_view_at_offset(
 ) -> TrailViewSnapshot;
 ```
 
-- [ ] **Step 1: Project clipped columns**
+- [x] **Step 1: Project clipped columns**
 
 Use `miller_viewport_geometry_at_offset`. Carry `logical_width` and `source_x` into
 `TrailColumnView`. Build logical name/action intervals first, intersect them with the visible
 column interval, and publish only nonempty stage-contained rects. A partially clipped action
 must be omitted rather than become a smaller clickable command.
 
-- [ ] **Step 2: Add Unicode display-cell slicing**
+- [x] **Step 2: Add Unicode display-cell slicing**
 
 Extract the complete logical entry label at `logical_width`, then slice it by
 `source_x..source_x+visible_width` using `UnicodeWidthChar`. Never split a double-width glyph;
 replace a clipped continuation cell with one blank cell. Keep the existing non-clipped
 `render_entry_row` wrapper for other consumers.
 
-- [ ] **Step 3: Publish scroll steps**
+- [x] **Step 3: Publish scroll steps**
 
 Derive the right reference column at `offset_cells` and the left reference column at
 `offset_cells.saturating_sub(1)`. Divider positions choose the nearest column in the movement
 direction. Store `max(1, width.div_ceil(3))` for both directions.
 
-- [ ] **Step 4: Make compute the state transition authority**
+- [x] **Step 4: Make compute the state transition authority**
 
 Change `sync_trail_view` to accept the offset. In mutable `sync_miller_view`, compute and commit
 auto-follow or manual clamp before both resize and Trail snapshots are projected. Set
 `TrailViewSnapshot.files_generation` and `model_revision` from the same Files instance.
 
-- [ ] **Step 5: Run focused projection/render tests**
+- [x] **Step 5: Run focused projection/render tests**
 
 Run:
 
@@ -311,26 +311,26 @@ impl TrailViewSnapshot {
 }
 ```
 
-- [ ] **Step 1: Move input authority to Trail snapshot**
+- [x] **Step 1: Move input authority to Trail snapshot**
 
 Reject absent generation, revision mismatch, empty columns, and zero-width geometry. Read the
 current `offset_cells`, apply `scroll_step_left/right`, and clamp to
 `0..=max_offset_cells`.
 
-- [ ] **Step 2: Update the App handler**
+- [x] **Step 2: Update the App handler**
 
 Read `self.state.view.file_manager_trail`, validate the active Files generation, write only
 `file_manager.miller.horizontal.offset_cells`, and set `follow_active = false`. Remove the
 scroll-target method from `MillerViewSnapshot`.
 
-- [ ] **Step 3: Update existing regressions**
+- [x] **Step 3: Update existing regressions**
 
 Convert existing `first_visible` assertions to absolute offset/derived first-visible
 assertions. Mutate the Trail snapshot generation/revision in stale tests. Preserve cursor,
 entries, multi-selection, preview, chain, revision, overlay precedence, and outside-stage
 assertions.
 
-- [ ] **Step 4: Run input GREEN**
+- [x] **Step 4: Run input GREEN**
 
 Run:
 
@@ -343,7 +343,7 @@ cargo nextest run --locked --no-fail-fast ten_thousand_miller_actions_preserve_a
 
 Expected: all selected tests pass with no warning or skipped selected test.
 
-- [ ] **Step 5: Commit GREEN**
+- [x] **Step 5: Commit GREEN**
 
 Run `cargo fmt`, then `cargo fmt --check` separately. Review the production diff and added
 `unwrap()` scan, target-stage only owned Rust files, and commit:
@@ -363,25 +363,25 @@ git commit -m "fix: add fractional miller trail scrolling"
 - Consumes: real Ratatui `TrailViewSnapshot` and `render_trail_view`.
 - Produces: deterministic cell fixture `vis-12-fractional-miller-scroll.json`.
 
-- [ ] **Step 1: Add deterministic fixture**
+- [x] **Step 1: Add deterministic fixture**
 
 Create a narrow ASCII-profile Trail with at least four columns, different widths, and an
 `offset_cells` value inside the second column. Export the actual Ratatui buffer; do not draw an
 HTML mock.
 
-- [ ] **Step 2: Add Chromium assertion**
+- [x] **Step 2: Add Chromium assertion**
 
 Load the fixture through the existing cell-grid harness. Assert the fixture metadata identifies
 VIS-12 and screenshot the exact terminal grid. The screenshot must visibly contain a clipped
 leading column and the beginning of the trailing column.
 
-- [ ] **Step 3: Prove mutation sensitivity**
+- [x] **Step 3: Prove mutation sensitivity**
 
 Temporarily alter one exported cell in the generated artifact, run only
 `fractional-scroll.spec.ts`, require screenshot failure, restore/regenerate the exact fixture,
 and rerun green. Do not commit the mutation.
 
-- [ ] **Step 4: Approve only the new baseline**
+- [x] **Step 4: Approve only the new baseline**
 
 Run:
 
@@ -395,7 +395,7 @@ npx playwright test
 Expected: the focused VIS-12 spec passes, then the full Chromium suite reports 20/20 if no
 other spec count changed.
 
-- [ ] **Step 5: Commit visual evidence**
+- [x] **Step 5: Commit visual evidence**
 
 Target-stage only the exporter, VIS-12 spec, and VIS-12 PNG. Commit:
 
@@ -415,7 +415,7 @@ git commit -m "test: approve fractional miller scroll visual"
 - Consumes: completed RED/GREEN/VIS commits and fresh gate output.
 - Produces: exact closure SHAs, counts, graph evidence, and clean publication state.
 
-- [ ] **Step 1: Run complete gates**
+- [x] **Step 1: Run complete gates**
 
 Run in this order with no concurrent Cargo process:
 
@@ -434,14 +434,14 @@ git diff --check
 
 Expected: zero failures/warnings; record exact pass/skip counts.
 
-- [ ] **Step 2: Run source and safety audits**
+- [x] **Step 2: Run source and safety audits**
 
 Require no added production `unwrap()`, no production read of mutable
 `horizontal.first_visible`, no stage-external Trail hit rect, and only `.superpowers/` as
 untracked user-owned state. Run `.local/herdr-trail-test.sh --help` or its documented
 noninteractive verification path only if it does not address stable Herdr.
 
-- [ ] **Step 3: Record closure**
+- [x] **Step 3: Record closure**
 
 Mark T7.8 subtasks complete, add exact commits and gate counts to continuity/evidence, run the
 OPEN_TASKS exact-copy synchronizer with offset-aware marker search, and require exact diff.
@@ -451,7 +451,7 @@ Run `cargo fmt --check` separately before the docs commit:
 git commit -m "docs: record fractional miller scroll closure"
 ```
 
-- [ ] **Step 4: Refresh Codebase Memory**
+- [x] **Step 4: Refresh Codebase Memory**
 
 Run only:
 
@@ -463,7 +463,7 @@ Require `ready`, record node/edge counts, and retrieve fresh snippets for
 `MillerHorizontalViewport`, `miller_viewport_geometry_at_offset`, and
 `handle_miller_horizontal_scroll`.
 
-- [ ] **Step 5: Publish CyPack fast-forward**
+- [x] **Step 5: Publish CyPack fast-forward**
 
 Fetch origin, require both remote refs are ancestors of local HEAD, then:
 

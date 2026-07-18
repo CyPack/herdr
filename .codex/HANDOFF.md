@@ -154,7 +154,16 @@ full 3,508/3,508 + 2 skip, Chromium 19/19, Linux+Windows clippy
 `-D warnings`, maintenance 68/68, Bun 5/5 + 12/12, fmt/diff/production
 unwrap taraması temiz. `.local/herdr-trail-test.sh` manuel akışı yalnız
 test-sahipli server/root için başlangıç ve kapanış semantik temizliği yapar;
-stable Herdr/socket ve kullanıcı süreçlerine dokunmaz. Sıradaki bağımsız
+stable Herdr/socket ve kullanıcı süreçlerine dokunmaz. TRAIL-T7.8 KAPANDI
+(`4e6e922b` RED / `febe65ef` GREEN / `97d5fe01` VIS-12 / `26da2437`
+fixture-alignment ve yayın): mutable `first_visible` otoritesi mutlak
+`offset_cells` ile değişti; wheel yön-duyarlı kolon genişliğinin üçte biri
+kadar ilerler; clipped kolon/row/action geometri, Unicode display-cell dilimi
+ve generation+revision-bound Trail snapshot render/input'ın tek kaynağıdır.
+Taze gate: full Rust 3,512/3,512 + 2 skip, Chromium 20/20 ve tek-hücre
+mutation 15-pixel kırmızı, Linux+Windows clippy, maintenance 68/68, Bun
+5/5 + 12/12, fmt/diff/unwrap/source audit temiz. Tek-worker graph
+21,296/98,085 ready; CyPack iki ref `26da2437` ile birebir. Sıradaki bağımsız
 işler: FIP-6.3 E2E harness investigation
 ve kullanıcı önceliğine göre custom-layout B-zinciri. FIP-3 TAMAMEN KAPANDI (2026-07-18): 3.4 characterized migration
 (`bcecfdc8` — FileEntry alanları kind-türevi metodlara döndü, çifte symlink
@@ -479,34 +488,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 13 ve
-89, toplam 102 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 7 ve
+89, toplam 96 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 13 unchecked
-
-- [ ] **TRAIL-T7.8** Kesirli hücre-tabanlı yatay kaydırma — ONAYLI TASARIM:
-  `docs/superpowers/specs/2026-07-18-herdr-miller-fractional-scroll-design.md`;
-  uygulama planı:
-  `docs/superpowers/plans/2026-07-18-herdr-miller-fractional-scroll-implementation.md`.
-  Dependency chain: mutlak `offset_cells` → saf clipped Miller geometri →
-  `TrailViewSnapshot` tek render/input otoritesi → 1/3-kolon wheel →
-  VIS-12 Chromium → full gate/graf/yayın.
-  - [x] **T7.8.0** Graph-first araştırma, bağımlılık analizi, PRD ve kod-seviyesi
-    TDD planı.
-  - [ ] **T7.8.1 RED** Compile-valid fractional step, mixed-width, clipping,
-    stale, auto-follow ve resize davranış testleri.
-  - [ ] **T7.8.2 GREEN-STATE** `first_visible` mutable otoritesini client-local
-    mutlak hücre ofsetine ve saf interval/clamp/auto-follow geometrisine taşı.
-  - [ ] **T7.8.3 GREEN-RENDER/INPUT** Kısmi kolon/row/action clipping'i,
-    Unicode hücre dilimi ve generation+revision-bound Trail input cutover.
-  - [ ] **T7.8.4 VIS-12** Gerçek Ratatui hücre fixture'ı + Playwright Chromium
-    mutation kanıtı + yalnız spec-scoped baseline.
-  - [ ] **T7.8.5 CLOSURE** Full Rust, Chromium, iki clippy, maintenance,
-    Bun, fmt/diff/unwrap/source audit; continuity; tek-worker graph reindex;
-    CyPack `feat/native-fm`+`master` FF yayın.
+### Source: `.codex/TASKS.md` — 7 unchecked
 
 - [ ] **FIP-1.6** Add Playwright `TP-FIP-VIS-01` plus isolated real-mouse
   `TP-FIP-E2E-01` evidence without touching the stable Herdr socket.
