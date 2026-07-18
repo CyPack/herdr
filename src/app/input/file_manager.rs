@@ -326,10 +326,21 @@ impl App {
         }
         match mouse.kind {
             MouseEventKind::Drag(MouseButton::Left) => {
+                let trailing_min = self.state.shell_interaction.miller_resize_preview().map_or(
+                    crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
+                    |(divider, _)| match divider.trailing() {
+                        crate::ui::shell::MillerResizeColumnId::Directory { .. } => {
+                            crate::fm::miller::MILLER_COLUMN_MIN_WIDTH
+                        }
+                        crate::ui::shell::MillerResizeColumnId::Preview { .. } => {
+                            crate::fm::miller::MILLER_DETAIL_MIN_WIDTH
+                        }
+                    },
+                );
                 if let Some(bounds) = crate::ui::shell::ResizeBounds::new(
                     crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
                     crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
-                    crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
+                    trailing_min,
                     crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
                 ) {
                     let tracks_before = self.state.shell_interaction.resize_preview_tracks();
@@ -586,10 +597,8 @@ impl App {
                 entry_path: area.entry_path.clone(),
             });
 
-        // TRAIL-T7.6 teardown: legacy horizontal preference and divider
-        // transactions remain reachable only where the live Trail projects no
-        // row. They cannot override Trail row identity and will be removed
-        // with the retired Miller projection.
+        // Horizontal preference and divider transactions never override a
+        // live Trail row identity.
         if self.handle_miller_horizontal_scroll(mouse.kind, mouse.modifiers) {
             return FileManagerMouseDispatch::Consumed;
         }
@@ -1864,13 +1873,18 @@ mod tests {
             .view
             .file_manager_miller
             .dividers
-            .get(1)
-            .expect("three-column projection exposes the preview divider")
+            .last()
+            .expect("Trail image detail exposes its resize divider")
             .clone();
-        assert_eq!(
-            (divider.left_column, divider.right_column),
-            (1, 2),
-            "the exercised divider controls the current/image-preview pair"
+        assert!(
+            app.state.view.file_manager_miller.columns[divider.left_column]
+                .kind
+                .is_current()
+        );
+        assert!(
+            app.state.view.file_manager_miller.columns[divider.right_column]
+                .kind
+                .is_preview()
         );
         assert_eq!(
             app.handle_file_manager_mouse(mouse(
@@ -1987,13 +2001,18 @@ mod tests {
 
         compute_view(&mut app.state, frame);
         assert!(
-            !app.sync_image_preview_worker(),
-            "legacy Miller width cannot replace the Trail detail image target"
+            app.sync_image_preview_worker(),
+            "committed Trail detail geometry starts exactly one resized image target"
         );
         assert_eq!(
             app.image_preview_worker_generation_for_test(),
-            image_worker_generation_before,
-            "Trail detail geometry remains stable across legacy resize commit"
+            image_worker_generation_before + 1,
+            "the committed geometry advances the image worker once"
+        );
+        wait_for_image_preview_ready(&mut app);
+        assert!(
+            !app.sync_image_preview_worker(),
+            "the resized Trail detail image target stabilizes after delivery"
         );
         assert_eq!(
             app.file_preview_worker_generation_for_test(),
@@ -2078,10 +2097,9 @@ mod tests {
                 .as_ref()
                 .map(|file_manager| {
                     format!(
-                        "open cwd={:?} chain={} resident={} first={} revision={} mode={:?} resize={}",
+                        "open cwd={:?} chain={} first={} revision={} mode={:?} resize={}",
                         file_manager.cwd,
                         file_manager.miller.chain.len(),
-                        file_manager.miller.resident_non_current.len(),
                         file_manager.miller.horizontal.first_visible,
                         file_manager.miller.revision,
                         app.state.mode,
@@ -2335,14 +2353,8 @@ mod tests {
                         }
                     }
                     13 => {
-                        let departing = crate::fm::miller::MillerDirectoryProjection {
-                            id: pressure_miller.next_column_id(pressure_current.clone()),
-                            entries: Vec::new(),
-                            status: crate::fm::FmDirectoryStatus::Available,
-                            writable: true,
-                        };
                         let next = root.join("pressure").join(step.to_string());
-                        pressure_miller.visit(next.clone(), Some(departing));
+                        pressure_miller.visit(next.clone());
                         pressure_current = next;
                     }
                     _ => unreachable!("action index is modulo ACTION_COUNT"),
@@ -2416,12 +2428,13 @@ mod tests {
             crate::fm::miller::MAX_MILLER_HISTORY_DEPTH,
             "cache-pressure actions must fill and evict the bounded history"
         );
-        assert!(
+        assert_eq!(
             pressure_miller
-                .resident_non_current
-                .iter()
-                .all(|projection| projection.id.directory != pressure_current),
-            "cache-pressure actions must never evict current into resident storage"
+                .chain
+                .back()
+                .map(|segment| &segment.directory),
+            Some(&pressure_current),
+            "layout pressure keeps the active Trail column as the chain tail"
         );
         app.state.assert_invariants_for_test();
     }
@@ -2610,8 +2623,8 @@ mod tests {
             .view
             .file_manager_miller
             .dividers
-            .get(1)
-            .expect("current/preview divider is visible")
+            .last()
+            .expect("selected child Trail divider is visible")
             .clone();
         assert_eq!(
             app.handle_file_manager_mouse(mouse(
@@ -3122,139 +3135,13 @@ mod tests {
     }
 
     #[test]
-    fn second_miller_divider_resizes_expected_pair() {
-        let td = TempDir::new("fm3-second-divider");
-        td.dir("child");
-        let mut app = runtime_app_with_fm(FmState::new(&td.root));
-        install_focused_agent(&mut app);
-        app.state.mobile_width_threshold = 0;
-        app.state.sidebar_collapsed = true;
-        let frame = Rect::new(0, 0, 90, 16);
-        compute_view(&mut app.state, frame);
-        assert_eq!(
-            app.state.view.terminal_area.width, 86,
-            "compact shell leaves the canonical three-column Files Stage"
-        );
-
-        let divider = app
-            .state
-            .view
-            .file_manager_miller
-            .dividers
-            .get(1)
-            .expect("three-column projection exposes the second divider")
-            .clone();
-        assert_eq!(
-            (divider.left_column, divider.right_column),
-            (1, 2),
-            "the second divider owns only the current/right pair"
-        );
-        let leading_chain_index = app.state.view.file_manager_miller.columns[divider.left_column]
-            .kind
-            .chain_index()
-            .expect("second divider leading column belongs to the Miller chain");
-        let original_geometry = app
-            .state
-            .view
-            .file_manager_miller
-            .columns
-            .iter()
-            .map(|column| column.rect.width)
-            .collect::<Vec<_>>();
-        let (before_revision, before_widths) = {
-            let file_manager = app.state.file_manager.as_ref().expect("open FM");
-            (
-                file_manager.miller.revision,
-                file_manager
-                    .miller
-                    .chain
-                    .iter()
-                    .map(|segment| segment.preferred_width)
-                    .collect::<Vec<_>>(),
-            )
-        };
-
-        assert_eq!(
-            app.handle_file_manager_mouse(mouse(
-                MouseEventKind::Down(MouseButton::Left),
-                divider.rect.x,
-                divider.rect.y,
-            )),
-            FileManagerMouseDispatch::Consumed
-        );
-        assert_eq!(
-            app.handle_file_manager_mouse(mouse(
-                MouseEventKind::Drag(MouseButton::Left),
-                divider.rect.x + 4,
-                divider.rect.y,
-            )),
-            FileManagerMouseDispatch::Consumed
-        );
-        compute_view(&mut app.state, frame);
-        let preview_geometry = app
-            .state
-            .view
-            .file_manager_miller
-            .columns
-            .iter()
-            .map(|column| column.rect.width)
-            .collect::<Vec<_>>();
-        let mut expected_geometry = original_geometry.clone();
-        expected_geometry[divider.left_column] += 4;
-        expected_geometry[divider.right_column] -= 4;
-        assert_eq!(
-            preview_geometry, expected_geometry,
-            "preview changes only the second adjacent pair"
-        );
-
-        assert_eq!(
-            app.handle_file_manager_mouse(mouse(
-                MouseEventKind::Up(MouseButton::Left),
-                divider.rect.x + 4,
-                divider.rect.y,
-            )),
-            FileManagerMouseDispatch::Consumed
-        );
-        let file_manager = app.state.file_manager.as_ref().expect("open FM");
-        let mut expected_widths = before_widths;
-        expected_widths[leading_chain_index] += 4;
-        assert_eq!(
-            (
-                file_manager.miller.revision,
-                file_manager
-                    .miller
-                    .chain
-                    .iter()
-                    .map(|segment| segment.preferred_width)
-                    .collect::<Vec<_>>(),
-            ),
-            (before_revision + 1, expected_widths),
-            "commit updates only the second pair's leading preference"
-        );
-
-        compute_view(&mut app.state, frame);
-        let committed_geometry = app
-            .state
-            .view
-            .file_manager_miller
-            .columns
-            .iter()
-            .map(|column| column.rect.width)
-            .collect::<Vec<_>>();
-        assert_eq!(
-            committed_geometry, expected_geometry,
-            "fresh geometry keeps the committed second-divider result"
-        );
-    }
-
-    #[test]
     fn miller_width_clamps_at_16_and_64_cells() {
         let td = TempDir::new("fm3-divider-clamp");
-        td.dir("child");
+        td.file("00.txt");
         let mut file_manager = FmState::new(&td.root);
-        let focused_chain_index = file_manager.miller.chain.len() - 1;
+        let focused_directory = file_manager.miller.focused_directory.clone();
         assert!(file_manager.miller.commit_adjacent_column_widths(
-            focused_chain_index,
+            &focused_directory,
             40,
             crate::fm::miller::MillerAdjacentWidthTarget::Preview,
             40,
@@ -3265,6 +3152,15 @@ mod tests {
         app.state.sidebar_collapsed = true;
         let frame = Rect::new(0, 0, 116, 16);
         compute_view(&mut app.state, frame);
+        let focused_chain_index = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .miller
+            .chain
+            .len()
+            .saturating_sub(1);
         let before_revision = app
             .state
             .file_manager
@@ -3278,8 +3174,8 @@ mod tests {
             .view
             .file_manager_miller
             .dividers
-            .get(1)
-            .expect("three-column projection exposes the second divider")
+            .last()
+            .expect("Trail detail projection exposes its divider")
             .clone();
         assert_eq!(
             [
@@ -3311,10 +3207,7 @@ mod tests {
         );
         assert_eq!(
             app.state.shell_interaction.resize_preview_tracks(),
-            Some([
-                crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
-                crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
-            ]),
+            Some([60, crate::fm::miller::MILLER_DETAIL_MIN_WIDTH,]),
             "right overshoot clamps both sides of the fixed-total pair"
         );
         let _ = app.handle_file_manager_mouse(mouse(
@@ -3329,8 +3222,8 @@ mod tests {
             .view
             .file_manager_miller
             .dividers
-            .get(1)
-            .expect("committed high clamp preserves the second divider")
+            .last()
+            .expect("committed high clamp preserves the detail divider")
             .clone();
         assert_eq!(
             app.handle_file_manager_mouse(mouse(
@@ -4531,68 +4424,6 @@ mod tests {
     // TP-FM3-TOCTOU: the prepared snapshot can remain internally fresh while
     // the filesystem changes before dispatch. The second exact directory read
     // rejects the renamed path atomically and the stale event is not replayed.
-    #[test]
-    fn renamed_non_current_target_is_consumed_without_model_mutation() {
-        let td = TempDir::new("typed-row-rename-race");
-        let current = td.root.join("current");
-        let preview_directory = current.join("preview-directory");
-        let old_path = preview_directory.join("old-name.txt");
-        let new_path = preview_directory.join("new-name.txt");
-        fs::create_dir_all(&preview_directory).expect("create preview directory");
-        fs::write(&old_path, b"x").expect("write preview target");
-
-        let mut file_manager = FmState::new(&current);
-        let preview_index = file_manager
-            .entries
-            .iter()
-            .position(|entry| entry.path == preview_directory)
-            .expect("preview directory row");
-        assert!(file_manager.select(preview_index));
-        let mut app = runtime_app_with_fm(file_manager);
-        install_focused_agent(&mut app);
-        app.state.mobile_width_threshold = 0;
-        app.state.sidebar_collapsed = true;
-        compute_view(&mut app.state, Rect::new(0, 0, 100, 16));
-        let target = app
-            .state
-            .view
-            .file_manager_miller
-            .columns
-            .iter()
-            .flat_map(|column| &column.rows)
-            .find(|row| {
-                row.column_kind == crate::ui::MillerRowColumnKind::Preview
-                    && row.entry_path == old_path
-            })
-            .cloned()
-            .expect("prepared preview row");
-        let before = app.state.file_manager.as_ref().expect("open FM").clone();
-
-        fs::rename(&old_path, &new_path).expect("rename after projection");
-        assert_eq!(
-            app.handle_file_manager_mouse(mouse(
-                MouseEventKind::Down(MouseButton::Left),
-                target.rect.x,
-                target.rect.y,
-            )),
-            FileManagerMouseDispatch::Consumed
-        );
-
-        let after = app.state.file_manager.as_ref().expect("open FM");
-        assert_eq!(after.cwd, before.cwd);
-        assert_eq!(after.entries, before.entries);
-        assert_eq!(after.cursor, before.cursor);
-        assert_eq!(after.viewport_start, before.viewport_start);
-        assert_eq!(
-            after.multi_selection_paths(),
-            before.multi_selection_paths()
-        );
-        assert_eq!(after.parent, before.parent);
-        assert_eq!(after.preview, before.preview);
-        assert_eq!(after.directory_generation, before.directory_generation);
-        assert_eq!(after.preview_generation, before.preview_generation);
-        assert_eq!(after.miller, before.miller);
-    }
 
     // TP-FM3-NONCURRENT-CONTEXT / TP-TRAIL-T7-INPUT-02: a live right-click in
     // any Trail column activates its exact owner before opening the file menu.
@@ -4951,119 +4782,10 @@ mod tests {
     // TP-FM3-NONCURRENT-MODIFIERS: Ctrl/Shift selection authority is confined
     // to CURRENT. A preview/ancestor target with either modifier is consumed
     // without activating a directory or creating cross-directory selection.
-    #[test]
-    fn modified_click_outside_current_directory_is_consumed_inert() {
-        let td = TempDir::new("noncurrent-modified-click");
-        let preview_directory = td.root.join("preview-directory");
-        let child = preview_directory.join("child.txt");
-        fs::create_dir_all(&preview_directory).expect("create preview directory");
-        fs::write(&child, b"x").expect("write preview child");
-        let mut file_manager = FmState::new(&td.root);
-        let preview_index = file_manager
-            .entries
-            .iter()
-            .position(|entry| entry.path == preview_directory)
-            .expect("preview directory row");
-        assert!(file_manager.select(preview_index));
-        let mut app = runtime_app_with_fm(file_manager);
-        install_focused_agent(&mut app);
-        app.state.mobile_width_threshold = 0;
-        app.state.sidebar_collapsed = true;
-        compute_view(&mut app.state, Rect::new(0, 0, 100, 12));
-        let target = app
-            .state
-            .view
-            .file_manager_miller
-            .columns
-            .iter()
-            .flat_map(|column| &column.rows)
-            .find(|row| row.column_kind == crate::ui::MillerRowColumnKind::Preview)
-            .cloned()
-            .expect("preview row target");
-        let before = app.state.file_manager.as_ref().expect("open FM").clone();
-
-        for modifiers in [KeyModifiers::CONTROL, KeyModifiers::SHIFT] {
-            assert_eq!(
-                app.handle_file_manager_mouse(mouse_with_modifiers(
-                    MouseEventKind::Down(MouseButton::Left),
-                    target.rect.x,
-                    target.rect.y,
-                    modifiers,
-                )),
-                FileManagerMouseDispatch::Consumed
-            );
-        }
-
-        let after = app.state.file_manager.as_ref().expect("open FM");
-        assert_eq!(after.cwd, before.cwd);
-        assert_eq!(after.cursor, before.cursor);
-        assert_eq!(
-            after.multi_selection_paths(),
-            before.multi_selection_paths()
-        );
-        assert_eq!(after.miller, before.miller);
-        assert_eq!(after.directory_generation, before.directory_generation);
-        assert_eq!(after.preview_generation, before.preview_generation);
-    }
 
     // TP-FM3-STALE-CONTEXT: a right-click target can become stale on disk
     // after projection. The second revalidation must preserve model state and
     // must not open a destructive context overlay.
-    #[test]
-    fn renamed_non_current_right_click_does_not_open_context_menu() {
-        let td = TempDir::new("noncurrent-context-rename");
-        let preview_directory = td.root.join("preview-directory");
-        let old_path = preview_directory.join("old.txt");
-        let new_path = preview_directory.join("new.txt");
-        fs::create_dir_all(&preview_directory).expect("create preview directory");
-        fs::write(&old_path, b"x").expect("write preview target");
-        let mut file_manager = FmState::new(&td.root);
-        let preview_index = file_manager
-            .entries
-            .iter()
-            .position(|entry| entry.path == preview_directory)
-            .expect("preview directory row");
-        assert!(file_manager.select(preview_index));
-        let mut app = runtime_app_with_fm(file_manager);
-        install_focused_agent(&mut app);
-        app.state.mobile_width_threshold = 0;
-        app.state.sidebar_collapsed = true;
-        compute_view(&mut app.state, Rect::new(0, 0, 100, 12));
-        let target = app
-            .state
-            .view
-            .file_manager_miller
-            .columns
-            .iter()
-            .flat_map(|column| &column.rows)
-            .find(|row| row.entry_path == old_path)
-            .cloned()
-            .expect("preview row target");
-        let before = app.state.file_manager.as_ref().expect("open FM").clone();
-
-        fs::rename(&old_path, &new_path).expect("rename after projection");
-        assert_eq!(
-            app.handle_file_manager_mouse(mouse(
-                MouseEventKind::Down(MouseButton::Right),
-                target.rect.x,
-                target.rect.y,
-            )),
-            FileManagerMouseDispatch::Consumed
-        );
-
-        let after = app.state.file_manager.as_ref().expect("open FM");
-        assert_eq!(app.state.mode, Mode::Terminal);
-        assert!(app.state.context_menu.is_none());
-        assert_eq!(after.cwd, before.cwd);
-        assert_eq!(after.cursor, before.cursor);
-        assert_eq!(
-            after.multi_selection_paths(),
-            before.multi_selection_paths()
-        );
-        assert_eq!(after.miller, before.miller);
-        assert_eq!(after.directory_generation, before.directory_generation);
-        assert_eq!(after.preview_generation, before.preview_generation);
-    }
 
     // TP-FM1.3-HSCROLL-MODIFIERS: only the exact Shift+wheel gesture changes
     // the horizontal window. Control/Alt and combined modifiers are consumed
@@ -5107,7 +4829,7 @@ mod tests {
     // every recompute, while vertical cursor/viewport, entries, selection,
     // preview identity, and the structural Miller revision stay unchanged.
     #[test]
-    fn horizontal_wheel_changes_only_miller_window_and_preserves_focus() {
+    fn horizontal_wheel_is_bounded_for_single_trail_column_and_preserves_focus() {
         let td = TempDir::new("miller-horizontal-wheel");
         let mut current = td.root.clone();
         for level in 0..8 {
@@ -5151,8 +4873,8 @@ mod tests {
                 .miller
                 .horizontal
                 .first_visible,
-            first_visible + 1,
-            "native ScrollRight advances the bounded horizontal origin"
+            first_visible,
+            "a one-column Trail has no hidden horizontal origin"
         );
         compute_view(&mut app.state, frame);
         assert!(
@@ -5207,8 +4929,8 @@ mod tests {
                 .miller
                 .horizontal
                 .first_visible,
-            first_visible + 1,
-            "Shift+ScrollDown maps to horizontal right"
+            first_visible,
+            "Shift+ScrollDown remains bounded for one Trail column"
         );
         app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollLeft, probe.0, probe.1));
         assert_eq!(
@@ -5411,8 +5133,8 @@ mod tests {
                 .miller
                 .horizontal
                 .first_visible,
-            first_visible + 1,
-            "control: the same fresh snapshot can actually move"
+            first_visible,
+            "control: a fresh one-column Trail remains bounded"
         );
     }
 

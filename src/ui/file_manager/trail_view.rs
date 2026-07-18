@@ -16,6 +16,7 @@ use super::miller::miller_viewport_geometry;
 use crate::app::state::AppState;
 use crate::fm::miller::{
     MILLER_COLUMN_MAX_WIDTH, MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_PREFERRED_WIDTH,
+    MILLER_DETAIL_MIN_WIDTH,
 };
 use crate::fm::trail::TrailState;
 use crate::fm::trail_snapshots::TrailSnapshots;
@@ -59,7 +60,7 @@ pub(crate) struct TrailDividerView {
 /// side panel, never an overlay — the sibling columns stay visible left of
 /// it, so the panel may take at most half the stage.
 pub(crate) const TRAIL_DETAIL_PANEL_DEFAULT_WIDTH: u16 = 36;
-pub(crate) const TRAIL_DETAIL_PANEL_MIN_WIDTH: u16 = 20;
+pub(crate) const TRAIL_DETAIL_PANEL_MIN_WIDTH: u16 = MILLER_DETAIL_MIN_WIDTH;
 
 /// The resizable right-side detail panel, present exactly when a FILE is
 /// selected (LAW 3). `content_rect` excludes the border frame.
@@ -103,6 +104,22 @@ pub(crate) fn project_trail_view(
     snaps: &TrailSnapshots,
     preferred_widths: &[u16],
 ) -> TrailViewSnapshot {
+    project_trail_view_with_detail_width(
+        stage,
+        trail,
+        snaps,
+        preferred_widths,
+        TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
+    )
+}
+
+pub(crate) fn project_trail_view_with_detail_width(
+    stage: Rect,
+    trail: &TrailState,
+    snaps: &TrailSnapshots,
+    preferred_widths: &[u16],
+    detail_preferred_width: u16,
+) -> TrailViewSnapshot {
     let trail_cols = trail.cols();
     let snap_cols = snaps.cols();
     let aligned = trail_cols.len() == snap_cols.len()
@@ -120,9 +137,12 @@ pub(crate) fn project_trail_view(
     let panel_width = (snaps.detail().is_some()
         && stage.width >= TRAIL_DETAIL_PANEL_MIN_WIDTH.saturating_mul(2))
     .then(|| {
-        TRAIL_DETAIL_PANEL_DEFAULT_WIDTH
+        detail_preferred_width
+            .clamp(
+                TRAIL_DETAIL_PANEL_MIN_WIDTH,
+                crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
+            )
             .min(stage.width / 2)
-            .max(TRAIL_DETAIL_PANEL_MIN_WIDTH)
     });
     let (column_stage, detail_panel) = match panel_width {
         Some(width) if stage.width >= width + MILLER_COLUMN_MIN_WIDTH => {

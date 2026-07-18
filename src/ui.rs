@@ -38,11 +38,8 @@ pub(crate) use self::file_manager::compute_file_manager_action_bar_model;
 pub(crate) use self::file_manager::file_manager_preview_content_area;
 #[cfg(test)]
 pub(crate) use self::file_manager::miller::project_miller_view;
-#[cfg(test)]
-pub(crate) use self::file_manager::miller::MillerRowColumnKind;
 pub(crate) use self::file_manager::miller::{
-    miller_resize_column_is_live, MillerColumnKind, MillerColumnView, MillerDirectorySource,
-    MillerViewSnapshot,
+    miller_resize_column_is_live, MillerColumnKind, MillerColumnView, MillerViewSnapshot,
 };
 #[cfg(test)]
 pub(crate) use self::file_manager::trail_view::project_trail_view;
@@ -318,7 +315,7 @@ fn compute_view_internal(
     let FileManagerRowGeometry {
         rows: file_manager_row_areas,
         actions: file_manager_row_action_areas,
-    } = sync_file_manager_view(app, &file_manager_miller);
+    } = sync_file_manager_view(app, &file_manager_trail);
     let file_manager_action_bar = app.file_manager.as_ref().map(|file_manager| {
         compute_file_manager_action_bar_model(
             file_manager,
@@ -515,7 +512,7 @@ fn compute_mobile_view(
     let FileManagerRowGeometry {
         rows: file_manager_row_areas,
         actions: file_manager_row_action_areas,
-    } = sync_file_manager_view(app, &file_manager_miller);
+    } = sync_file_manager_view(app, &file_manager_trail);
     let file_manager_action_bar = app.file_manager.as_ref().map(|file_manager| {
         compute_file_manager_action_bar_model(
             file_manager,
@@ -618,22 +615,33 @@ fn compute_mobile_view(
     app.sync_copy_mode_search_geometry();
 }
 
-fn sync_file_manager_view(app: &AppState, snapshot: &MillerViewSnapshot) -> FileManagerRowGeometry {
+fn sync_file_manager_view(app: &AppState, snapshot: &TrailViewSnapshot) -> FileManagerRowGeometry {
     let Some(file_manager) = app.file_manager.as_ref() else {
         return FileManagerRowGeometry::default();
     };
-    let Some(current) = snapshot
+    let Some(column) = snapshot
         .columns
         .iter()
-        .find(|column| column.kind.is_current())
+        .find(|column| column.directory == file_manager.cwd)
     else {
         return FileManagerRowGeometry::default();
     };
-    file_manager::compute_file_manager_row_geometry_in_content(
-        current.content_rect,
-        &file_manager.entries,
-        file_manager.viewport_start,
-    )
+    FileManagerRowGeometry {
+        rows: column
+            .rows
+            .iter()
+            .map(|row| crate::app::state::FileManagerRowArea {
+                rect: row.name_rect,
+                entry_idx: row.entry_index,
+                entry_path: row.entry_path.clone(),
+            })
+            .collect(),
+        actions: column
+            .rows
+            .iter()
+            .flat_map(|row| row.actions.iter().cloned())
+            .collect(),
+    }
 }
 
 fn sync_miller_view(app: &mut AppState, area: Rect) -> MillerViewSnapshot {
@@ -648,6 +656,15 @@ fn sync_miller_view(app: &mut AppState, area: Rect) -> MillerViewSnapshot {
     let Some(file_manager) = app.file_manager.as_mut() else {
         return MillerViewSnapshot::default();
     };
+    let trail_directories = file_manager
+        .trail
+        .cols()
+        .iter()
+        .map(|column| column.directory.clone())
+        .collect::<Vec<_>>();
+    file_manager
+        .miller
+        .sync_trail_directories(&trail_directories);
     let mut snapshot = file_manager::miller::project_miller_view_with_resize_preview(
         viewport_area,
         file_manager,
@@ -658,7 +675,7 @@ fn sync_miller_view(app: &mut AppState, area: Rect) -> MillerViewSnapshot {
     let current_visible_rows = snapshot
         .columns
         .iter()
-        .find(|column| column.kind.is_current())
+        .find(|column| column.kind.is_directory(&file_manager.cwd))
         .map_or(0, |column| column.content_rect.height as usize);
     let previous_viewport_start = file_manager.viewport_start;
     file_manager.sync_viewport(current_visible_rows);
@@ -683,11 +700,19 @@ fn sync_trail_view(app: &AppState, area: Rect) -> TrailViewSnapshot {
     let Some(file_manager) = app.file_manager.as_ref() else {
         return TrailViewSnapshot::default();
     };
-    let mut snapshot = file_manager::trail_view::project_trail_view(
+    let preferred_widths = file_manager.miller.preferred_widths_for(
+        file_manager
+            .trail
+            .cols()
+            .iter()
+            .map(|column| column.directory.clone()),
+    );
+    let mut snapshot = file_manager::trail_view::project_trail_view_with_detail_width(
         file_manager::file_manager_miller_viewport_area(area),
         &file_manager.trail,
         &file_manager.trail_snapshots,
-        &[],
+        &preferred_widths,
+        file_manager.miller.preview_preferred_width,
     );
     snapshot.files_generation = Some(files_generation);
     snapshot
@@ -1170,8 +1195,8 @@ mod tests {
                 .iter()
                 .map(|row| row.entry_idx)
                 .collect::<Vec<_>>(),
-            vec![2, 3, 4],
-            "Files owns the full stage since SF6.1, so height 6 shows three rows"
+            vec![0, 1, 2, 3],
+            "the active Trail column owns all four visible rows below Files chrome"
         );
         assert!(app
             .view
@@ -1184,7 +1209,7 @@ mod tests {
                 .iter()
                 .map(|area| (area.entry_idx, area.action))
                 .collect::<Vec<_>>(),
-            [2, 3, 4]
+            [0, 1, 2, 3]
                 .into_iter()
                 .flat_map(|entry_idx| {
                     crate::app::state::FileManagerRowAction::ALL.map(|action| (entry_idx, action))
@@ -1226,274 +1251,11 @@ mod tests {
 
     // P1.4: the inline preview is existing published Files behavior. A
     // snapshot cutover must type and place it instead of silently dropping it.
-    #[test]
-    fn windowed_projection_preserves_inline_preview_column() {
-        let cwd = std::env::current_dir().expect("current directory");
-        let mut file_manager = crate::fm::FmState::new(cwd.clone());
-        file_manager.miller.chain =
-            std::iter::once(crate::fm::miller::MillerPathSegment::new(cwd.clone())).collect();
-        file_manager.miller.focused_directory = cwd;
-
-        let mut app = crate::app::state::AppState::test_new();
-        app.workspaces = vec![Workspace::test_new("one")];
-        app.active = Some(0);
-        app.selected = 0;
-        app.mode = Mode::Terminal;
-        app.mobile_width_threshold = 0;
-        app.sidebar_collapsed = true;
-        app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
-        app.try_open_file_manager_with(|_| Some(file_manager))
-            .expect("Files activation");
-
-        compute_view(&mut app, Rect::new(0, 0, 16, 16));
-        assert_eq!(
-            app.view.file_manager_miller.columns.len(),
-            1,
-            "one-column width must keep the operational current directory visible"
-        );
-
-        compute_view(&mut app, Rect::new(0, 0, 33, 16));
-        assert_eq!(
-            app.view.file_manager_miller.columns.len(),
-            2,
-            "two-column width must preserve current plus the inline preview column"
-        );
-        assert_eq!(
-            app.view.file_manager_miller.dividers.len(),
-            1,
-            "current and inline preview are separated by one projected divider"
-        );
-    }
-
-    #[test]
-    fn current_legacy_row_adapter_derives_from_snapshot_column() {
-        let cwd = std::env::current_dir().expect("current directory");
-        let mut file_manager = crate::fm::FmState::new(cwd.clone());
-        let mut directories = (0..4)
-            .map(|index| std::path::PathBuf::from(format!("/virtual/ancestor-{index}")))
-            .collect::<Vec<_>>();
-        directories.push(cwd.clone());
-        file_manager.miller.chain = directories
-            .iter()
-            .cloned()
-            .map(crate::fm::miller::MillerPathSegment::new)
-            .collect();
-        file_manager.miller.focused_directory = cwd.clone();
-
-        let mut app = crate::app::state::AppState::test_new();
-        app.workspaces = vec![Workspace::test_new("one")];
-        app.active = Some(0);
-        app.selected = 0;
-        app.mode = Mode::Terminal;
-        app.mobile_width_threshold = 0;
-        app.sidebar_collapsed = true;
-        app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
-        app.try_open_file_manager_with(|_| Some(file_manager))
-            .expect("Files activation");
-
-        compute_view(&mut app, Rect::new(0, 0, 115, 16));
-
-        let current_column = app
-            .view
-            .file_manager_miller
-            .columns
-            .iter()
-            .find(|column| column.kind.directory() == Some(&cwd))
-            .expect("current column projected");
-        let current_content = current_column.content_rect;
-        assert!(
-            !app.view.file_manager_row_areas.is_empty(),
-            "the repository cwd fixture must expose visible current rows"
-        );
-        assert!(
-            app.view
-                .file_manager_row_areas
-                .iter()
-                .all(|row| row.rect.intersection(current_content) == row.rect),
-            "current row rects must derive from the snapshot current content rect: \
-             current={current_content:?}, rows={:?}",
-            app.view.file_manager_row_areas
-        );
-        assert!(
-            app.view
-                .file_manager_row_action_areas
-                .iter()
-                .all(|action| action.rect.intersection(current_content) == action.rect),
-            "current action rects must stay inside the same snapshot current content rect"
-        );
-    }
 
     // P1 RED: the pure FM1.3 geometry exists, but production `compute_view`
     // must consume it and persist the clamped horizontal origin. This uses a
     // prepared in-memory logical chain; compute is forbidden from loading any
     // of these synthetic paths.
-    #[test]
-    fn compute_view_projects_one_to_five_miller_columns() {
-        let mut file_manager =
-            crate::fm::FmState::new(std::env::current_dir().expect("current directory"));
-        let directories = (0..7)
-            .map(|index| std::path::PathBuf::from(format!("/virtual/segment-{index}")))
-            .collect::<Vec<_>>();
-        file_manager.miller.chain = directories
-            .iter()
-            .cloned()
-            .map(crate::fm::miller::MillerPathSegment::new)
-            .collect();
-        file_manager.miller.focused_directory =
-            directories.last().expect("focused segment").clone();
-
-        let mut app = crate::app::state::AppState::test_new();
-        app.workspaces = vec![Workspace::test_new("one")];
-        app.active = Some(0);
-        app.selected = 0;
-        app.mode = Mode::Terminal;
-        app.mobile_width_threshold = 0;
-        app.sidebar_collapsed = true;
-        app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
-        app.try_open_file_manager_with(|_| Some(file_manager))
-            .expect("Files activation");
-
-        let mut observed_column_counts = Vec::new();
-        for width in [16, 57, 86, 115, 144, 400] {
-            let file_manager = app.file_manager.as_mut().expect("open FM");
-            file_manager.miller.horizontal.first_visible = 0;
-            let focused_index = file_manager.miller.chain.len() - 1;
-            let mut preferred_widths = file_manager
-                .miller
-                .chain
-                .iter()
-                .take(focused_index + 1)
-                .map(|segment| segment.preferred_width)
-                .collect::<Vec<_>>();
-            let frame = Rect::new(0, 0, width, 16);
-            let expected_body = Rect::new(
-                frame.x,
-                frame.y + 1,
-                frame.width,
-                frame.height.saturating_sub(2),
-            );
-            let expected_focused_index = if expected_body.width
-                >= crate::fm::miller::MILLER_COLUMN_MIN_WIDTH * 2
-                    + file_manager::miller::MILLER_DIVIDER_WIDTH
-            {
-                let pair_budget = expected_body
-                    .width
-                    .saturating_sub(file_manager::miller::MILLER_DIVIDER_WIDTH);
-                let current_max = pair_budget
-                    .saturating_sub(crate::fm::miller::MILLER_COLUMN_MIN_WIDTH)
-                    .min(crate::fm::miller::MILLER_COLUMN_MAX_WIDTH);
-                let current_width = preferred_widths[focused_index]
-                    .clamp(crate::fm::miller::MILLER_COLUMN_MIN_WIDTH, current_max);
-                let preview_width = pair_budget.saturating_sub(current_width).clamp(
-                    crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
-                    crate::fm::miller::MILLER_COLUMN_PREFERRED_WIDTH,
-                );
-                preferred_widths[focused_index] = current_width;
-                preferred_widths.push(preview_width);
-                focused_index + 1
-            } else {
-                focused_index
-            };
-            let expected = file_manager::miller::miller_viewport_geometry(
-                expected_body,
-                &preferred_widths,
-                expected_focused_index,
-                0,
-            );
-
-            compute_view(&mut app, frame);
-
-            let snapshot = &app.view.file_manager_miller;
-            assert_eq!(
-                snapshot.files_generation,
-                app.stage.active_instance_generation(),
-                "the frame snapshot carries the active Files singleton generation"
-            );
-            assert_eq!(
-                snapshot.model_revision,
-                app.file_manager.as_ref().expect("open FM").miller.revision
-            );
-            assert_eq!(
-                snapshot.first_visible, expected.first_visible,
-                "the frame snapshot owns the clamped window at width {width}"
-            );
-            assert_eq!(
-                snapshot.focused_chain_index,
-                Some(focused_index),
-                "the exact focused logical segment is projected"
-            );
-            assert_eq!(
-                snapshot.columns.len(),
-                expected.columns.len(),
-                "production projection publishes every complete visible column"
-            );
-            observed_column_counts.push(snapshot.columns.len());
-            assert_eq!(
-                snapshot.dividers.len(),
-                expected.dividers.len(),
-                "production projection publishes one divider per adjacent pair"
-            );
-            for (projected, geometry) in snapshot.columns.iter().zip(&expected.columns) {
-                assert_eq!(projected.projection_index, geometry.chain_index);
-                assert_eq!(projected.rect, geometry.rect);
-                if geometry.chain_index == focused_index + 1 {
-                    assert!(
-                        projected.kind.is_preview(),
-                        "the synthetic final projection is the typed inline preview"
-                    );
-                } else {
-                    assert_eq!(
-                        projected.kind.directory(),
-                        Some(&directories[geometry.chain_index]),
-                        "column identity comes from the exact logical segment"
-                    );
-                }
-            }
-            for (projected, geometry) in snapshot.dividers.iter().zip(&expected.dividers) {
-                assert_eq!(projected.rect, geometry.rect);
-                assert_eq!(
-                    snapshot.columns[projected.left_column].projection_index,
-                    geometry.left_chain_index
-                );
-                assert_eq!(
-                    snapshot.columns[projected.right_column].projection_index,
-                    geometry.right_chain_index
-                );
-            }
-            assert_eq!(
-                app.file_manager
-                    .as_ref()
-                    .expect("open FM")
-                    .miller
-                    .horizontal
-                    .first_visible,
-                expected.first_visible,
-                "production compute must persist the clamped Miller window at width {width}"
-            );
-            assert!(
-                (1..=crate::fm::miller::MAX_RESIDENT_MILLER_COLUMNS)
-                    .contains(&expected.columns.len()),
-                "the width {width} fixture must exercise one to five complete columns"
-            );
-            assert_eq!(
-                expected.dividers.len(),
-                expected.columns.len().saturating_sub(1),
-                "every adjacent visible pair has one divider at width {width}"
-            );
-        }
-        assert_eq!(
-            observed_column_counts,
-            vec![1, 2, 3, 4, 5, 5],
-            "production projection exercises every supported visible-column count"
-        );
-
-        compute_view(&mut app, Rect::new(0, 0, 0, 16));
-        assert!(
-            app.view.file_manager_miller.columns.is_empty()
-                && app.view.file_manager_miller.dividers.is_empty(),
-            "zero-width Files projection publishes no stale Miller targets"
-        );
-    }
 
     // TP-TRAIL-T7-RENDER-01: compute_view publishes the exact Trail geometry
     // for the live Native Files frame and retires it with the surface.
@@ -1533,49 +1295,6 @@ mod tests {
     }
 
     #[test]
-    fn windowed_projection_uses_model_first_visible() {
-        let (mut app, directories) = prepared_miller_projection_app(7, 4);
-        let original_revision = app.file_manager.as_ref().expect("open FM").miller.revision;
-        app.file_manager
-            .as_mut()
-            .expect("open FM")
-            .miller
-            .horizontal
-            .first_visible = 2;
-
-        compute_view(&mut app, Rect::new(0, 0, 86, 16));
-
-        let snapshot = &app.view.file_manager_miller;
-        assert_eq!(
-            snapshot.first_visible, 3,
-            "current plus preview stay visible, so the stale ancestor origin clamps forward"
-        );
-        assert_eq!(
-            snapshot
-                .columns
-                .iter()
-                .map(|column| column.kind.chain_index())
-                .collect::<Vec<_>>(),
-            vec![Some(3), Some(4), None],
-            "the bounded window carries the nearest ancestor, current, and typed preview"
-        );
-        let file_manager = app.file_manager.as_ref().expect("open FM");
-        assert_eq!(file_manager.miller.horizontal.first_visible, 3);
-        assert_eq!(file_manager.miller.focused_directory, directories[4]);
-        assert_eq!(file_manager.miller.revision, original_revision);
-        assert_eq!(
-            file_manager
-                .miller
-                .chain
-                .iter()
-                .map(|segment| segment.directory.clone())
-                .collect::<Vec<_>>(),
-            directories,
-            "projection must not rewrite the logical chain"
-        );
-    }
-
-    #[test]
     fn zero_files_area_retires_windowed_miller_targets() {
         let (mut app, _) = prepared_miller_projection_app(7, 6);
 
@@ -1603,77 +1322,6 @@ mod tests {
         assert!(
             app.view.file_manager_header_action_areas.is_empty(),
             "a header-only mobile frame must expose no Files body targets"
-        );
-    }
-
-    #[test]
-    fn windowed_projection_does_not_read_filesystem() {
-        let (mut app, directories) = prepared_miller_projection_app(7, 6);
-        assert!(
-            directories.iter().all(|directory| !directory.exists()),
-            "precondition: every logical segment is intentionally absent on disk"
-        );
-        let file_manager = app.file_manager.as_ref().expect("open FM");
-        let original_cwd = file_manager.cwd.clone();
-        let original_entries = file_manager.entries.clone();
-        let original_revision = file_manager.miller.revision;
-
-        compute_view(&mut app, Rect::new(0, 0, 144, 16));
-
-        let file_manager = app.file_manager.as_ref().expect("open FM");
-        assert_eq!(file_manager.cwd, original_cwd);
-        assert_eq!(file_manager.entries, original_entries);
-        assert_eq!(file_manager.miller.revision, original_revision);
-        assert_eq!(
-            file_manager
-                .miller
-                .chain
-                .iter()
-                .map(|segment| segment.directory.clone())
-                .collect::<Vec<_>>(),
-            directories,
-            "compute consumes prepared state without loading synthetic directories"
-        );
-        assert_eq!(app.view.file_manager_miller.columns.len(), 5);
-    }
-
-    #[test]
-    fn focused_column_remains_visible_after_projection_shrink() {
-        let (mut app, directories) = prepared_miller_projection_app(7, 6);
-
-        compute_view(&mut app, Rect::new(0, 0, 144, 16));
-        assert_eq!(app.view.file_manager_miller.columns.len(), 5);
-        let wide_first_visible = app.view.file_manager_miller.first_visible;
-
-        compute_view(&mut app, Rect::new(0, 0, 57, 16));
-
-        let snapshot = &app.view.file_manager_miller;
-        assert_eq!(snapshot.columns.len(), 2);
-        assert!(snapshot.first_visible > wide_first_visible);
-        assert_eq!(snapshot.focused_chain_index, Some(6));
-        assert!(
-            snapshot.columns.iter().any(|column| {
-                column.kind.chain_index() == Some(6)
-                    && column.kind.directory() == Some(&directories[6])
-            }),
-            "the focused logical column remains visible after shrink"
-        );
-        let body = file_manager::file_manager_miller_viewport_area(Rect::new(0, 0, 57, 16));
-        assert!(snapshot.columns.iter().all(|column| {
-            column.rect.x >= body.x
-                && column.rect.y >= body.y
-                && column.rect.right() <= body.right()
-                && column.rect.bottom() <= body.bottom()
-        }));
-        assert_eq!(
-            app.file_manager
-                .as_ref()
-                .expect("open FM")
-                .miller
-                .chain
-                .len(),
-            7,
-            "responsive shrink changes only the viewport window"
         );
     }
 
@@ -1740,15 +1388,13 @@ mod tests {
             std::hint::black_box(render_full_frame_for_test(&app, large));
         });
 
+        let file_manager = app.file_manager.as_ref().expect("open Files");
         assert_eq!(
-            app.file_manager
-                .as_ref()
-                .expect("open Files")
-                .miller
-                .chain
-                .len(),
-            crate::fm::miller::MAX_MILLER_HISTORY_DEPTH
+            file_manager.miller.chain.len(),
+            file_manager.trail.cols().len(),
+            "layout preferences mirror the canonical Trail topology"
         );
+        assert!(file_manager.miller.chain.len() <= crate::fm::miller::MAX_MILLER_HISTORY_DEPTH);
         assert!((1..=5).contains(&app.view.file_manager_miller.columns.len()));
         if cfg!(debug_assertions) {
             return;
@@ -2484,7 +2130,7 @@ mod tests {
         ] {
             assert!(center.contains(label), "expanded center missing {label:?}");
         }
-        for legacy in ["PARENT", "CURRENT", "PREVIEW", "(unavailable)"] {
+        for legacy in ["PARENT", "CURRENT", "PREVIEW"] {
             assert!(
                 !center.contains(legacy),
                 "live Trail must not render legacy marker {legacy:?}"

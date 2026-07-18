@@ -133,10 +133,6 @@ pub(crate) struct FmPreparedNavigation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FmCurrentRefreshReason {
-    // Retained only for the T7.1 prepared-request characterization family;
-    // T7.6 deletes this legacy watcher request after Trail refresh closure.
-    #[allow(dead_code)]
-    Watcher,
     ToggleHidden,
     OperationFallback,
 }
@@ -513,17 +509,6 @@ pub struct FmState {
 }
 
 impl FmState {
-    // Retained only for the T7.1 stale prepared-request characterization;
-    // production watcher authority moved to `refresh_active_trail_col`.
-    #[allow(dead_code)]
-    pub(crate) fn request_current_refresh(&self, files_generation: u32) -> FmCurrentRefreshRequest {
-        self.current_refresh_request(
-            files_generation,
-            FmCurrentRefreshReason::Watcher,
-            self.show_hidden,
-        )
-    }
-
     pub(crate) fn request_hidden_toggle(&self, files_generation: u32) -> FmCurrentRefreshRequest {
         self.current_refresh_request(
             files_generation,
@@ -639,14 +624,6 @@ impl FmState {
             return false;
         }
 
-        let departing_directory = self.cwd.clone();
-        let departing = self.departing_projection();
-        if prepared.request.reason == FmNavigationReason::Enter {
-            // Bind the entered child to its source segment before ownership
-            // transfer so the resident column can highlight the exact path.
-            self.miller
-                .bind_focused_child(&departing_directory, &prepared.request.target_directory);
-        }
         self.clear_multi_selection();
         self.cwd = prepared.request.target_directory.clone();
         self.entries = prepared.entries;
@@ -659,8 +636,7 @@ impl FmState {
         self.preview = prepared.preview;
         self.preview_viewport_start = 0;
         self.preview_generation = prepared.preview_generation;
-        self.miller
-            .visit(prepared.request.target_directory, Some(departing));
+        self.miller.visit(prepared.request.target_directory);
 
         if prepared.request.reason == FmNavigationReason::ActivateSelection {
             let Some(path) = self
@@ -1335,18 +1311,6 @@ impl FmState {
             if let Some(prepared) = prepare_navigation_io(request) {
                 let _ = self.apply_prepared_navigation(prepared);
             }
-        }
-    }
-
-    /// Move the departing current directory's complete projection out of the
-    /// operational vectors (ownership transfer, no clone) so the Miller cache
-    /// can retain it under a fresh column generation.
-    fn departing_projection(&mut self) -> miller::MillerDirectoryProjection {
-        miller::MillerDirectoryProjection {
-            id: self.miller.next_column_id(self.cwd.clone()),
-            entries: std::mem::take(&mut self.entries),
-            status: self.cwd_status,
-            writable: self.cwd_writable,
         }
     }
 
@@ -2619,8 +2583,8 @@ mod tests {
         state.multi_selection.anchor = Some(selected_path.clone());
         state.rebuild_trail_bridge();
 
-        let request = state.request_current_refresh(29);
-        assert_eq!(request.reason, FmCurrentRefreshReason::Watcher);
+        let request = state.request_hidden_toggle(29);
+        assert_eq!(request.reason, FmCurrentRefreshReason::ToggleHidden);
         assert_eq!(request.files_generation, 29);
         assert_eq!(request.source_directory, root);
         assert_eq!(request.source_directory_generation, 11);
@@ -2632,7 +2596,7 @@ mod tests {
         );
         assert_eq!(request.fallback_cursor, 1);
         assert!(!request.source_show_hidden);
-        assert!(!request.target_show_hidden);
+        assert!(request.target_show_hidden);
 
         let prepared = FmPreparedCurrentRefresh {
             request,
@@ -2707,7 +2671,7 @@ mod tests {
         base.directory_generation = 11;
         base.preview_generation = 17;
         base.miller.revision = 23;
-        let request = base.request_current_refresh(29);
+        let request = base.request_hidden_toggle(29);
         let prepared = FmPreparedCurrentRefresh {
             request,
             entries: vec![
@@ -3192,7 +3156,7 @@ mod tests {
         assert_eq!(state.multi_selection_anchor(), selection_anchor.as_deref());
     }
 
-    // TRAIL-T7.6 teardown: legacy parent/current/preview state preparation.
+    // Prepared context remains render-independent for operations and detail.
     // TP-A2.2.2/3: Miller context is loaded into pure state before render. The
     // parent cursor identifies cwd and a selected directory exposes its child
     // entries without filesystem access from the renderer.
@@ -3216,7 +3180,7 @@ mod tests {
         }
     }
 
-    // TRAIL-T7.6 teardown: legacy selected-file preview classification.
+    // Selected-file detail classification remains explicit.
     // TP-A2.2.3: a selected file is explicitly classified; it is not confused
     // with an empty directory preview.
     #[test]
@@ -3427,7 +3391,7 @@ mod tests {
         }
     }
 
-    // TRAIL-T7.6 teardown: legacy parent-context absence at filesystem root.
+    // Filesystem root has no parent operation context.
     // TP-A2.2.5: filesystem root has no parent context.
     #[test]
     fn miller_context_at_root_has_no_parent() {
@@ -3435,7 +3399,7 @@ mod tests {
         assert!(st.parent.is_none());
     }
 
-    // TRAIL-T7.6 teardown: legacy parent-context hidden-directory handling.
+    // Hidden directory parent operation context remains exact.
     // No-happy-path: entering a dot-directory while hidden files are disabled
     // must not erase cwd from its own parent context.
     #[test]
@@ -3454,7 +3418,7 @@ mod tests {
             .any(|entry| entry.name == "visible-peer"));
     }
 
-    // TRAIL-T7.6 teardown: legacy preview-context refresh projection.
+    // Detail refresh follows the exact selected path.
     // TP-A4.3: a refresh follows the selected path across re-sorting and
     // rebuilds the right Miller column from the resulting selection.
     #[test]
@@ -3855,16 +3819,16 @@ mod tests {
         state.enter();
 
         assert_eq!(state.cwd, beta);
-        let segment = state
-            .miller
-            .chain
+        let column = state
+            .trail
+            .cols()
             .iter()
-            .find(|segment| segment.directory == td.root)
-            .expect("departing segment stays in chain");
-        assert_eq!(segment.focused_child.as_deref(), Some(beta.as_path()));
+            .find(|column| column.directory == td.root)
+            .expect("departing column stays in Trail");
+        assert_eq!(column.selected.as_deref(), Some(beta.as_path()));
     }
 
-    // TRAIL-T7.6 teardown: legacy resident-ancestor focus cache.
+    // Deep Trail ancestors retain exact selected-child identity.
     // TP-FIP-FOCUS-02: descending four levels binds every resident ancestor
     // to its exact next path segment, not just the immediate parent.
     #[test]
@@ -3891,16 +3855,16 @@ mod tests {
         }
         assert_eq!(state.cwd, l3);
         for (directory, child) in [(&td.root, &l1), (&l1, &l2), (&l2, &l3)] {
-            let segment = state
-                .miller
-                .chain
+            let column = state
+                .trail
+                .cols()
                 .iter()
-                .find(|segment| segment.directory == **directory)
-                .expect("ancestor segment stays in chain");
+                .find(|column| column.directory == **directory)
+                .expect("ancestor column stays in Trail");
             assert_eq!(
-                segment.focused_child.as_deref(),
+                column.selected.as_deref(),
                 Some(child.as_path()),
-                "ancestor {directory:?} must bind its exact next segment"
+                "ancestor {directory:?} must bind its exact next Trail segment"
             );
         }
     }
@@ -3937,24 +3901,24 @@ mod tests {
         state.enter();
 
         assert_eq!(state.cwd, beta);
-        let root_segment = state
-            .miller
-            .chain
+        let root_column = state
+            .trail
+            .cols()
             .iter()
-            .find(|segment| segment.directory == td.root)
-            .expect("root segment");
+            .find(|column| column.directory == td.root)
+            .expect("root Trail column");
         assert_eq!(
-            root_segment.focused_child.as_deref(),
+            root_column.selected.as_deref(),
             Some(beta.as_path()),
             "the re-entered ancestor binds the NEW branch child"
         );
         assert!(
             !state
-                .miller
-                .chain
+                .trail
+                .cols()
                 .iter()
-                .any(|segment| segment.directory == alpha),
-            "the retired branch segment (and its focus) leaves the chain"
+                .any(|column| column.directory == alpha),
+            "the retired branch column leaves the Trail"
         );
     }
 

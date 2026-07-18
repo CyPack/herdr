@@ -1,6 +1,6 @@
 //! Snapshot bridge for the Miller trail (trail program T2): pairs every
 //! `TrailCol` with one loaded `FmDirectorySnapshot` so a visible column is by
-//! construction a loaded directory — a "(unavailable)" placeholder column is
+//! construction a loaded directory — an unloaded placeholder column is
 //! structurally impossible (canonical trail UX contract, LAW 1). Directory
 //! selection is fail-closed: the target is read FIRST and the trail only
 //! branches when the read succeeds (same policy as `prepare_navigation_io`).

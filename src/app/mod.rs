@@ -4612,6 +4612,7 @@ mod tests {
     async fn route_client_input_files_escape_cancels_miller_resize_without_pty_leak() {
         let root = unique_temp_path("headless-files-resize-escape");
         std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("selected.txt"), b"resize fixture").unwrap();
 
         let mut app = test_app();
         let mut workspace = Workspace::test_new("test");

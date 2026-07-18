@@ -657,14 +657,6 @@ mod tests {
                 .all(|segment| segment.directory != old_branch),
             "the retired branch segment cannot remain addressable"
         );
-        assert!(
-            file_manager
-                .miller
-                .resident_non_current
-                .iter()
-                .all(|projection| projection.id.directory != old_branch),
-            "the retired branch projection cannot remain resident"
-        );
         assert!(!app.sync_file_preview_worker());
 
         first_release_tx.send(()).expect("release first result");

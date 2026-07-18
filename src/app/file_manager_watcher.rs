@@ -1102,7 +1102,7 @@ mod tests {
             .file_manager
             .as_ref()
             .expect("file manager open")
-            .request_current_refresh(files_generation);
+            .request_hidden_toggle(files_generation);
         std::fs::write(td.root.join("stale.txt"), b"stale").expect("write stale payload entry");
         let prepared = crate::fm::prepare_current_refresh_io(request);
 

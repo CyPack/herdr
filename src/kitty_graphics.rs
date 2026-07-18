@@ -143,15 +143,6 @@ fn file_manager_trail_image_content_area(
 }
 
 #[cfg(test)]
-fn legacy_file_manager_image_target(
-    file_manager_area: Rect,
-    cell_size: HostCellSize,
-) -> Option<ImagePreviewTarget> {
-    let content_area = crate::ui::file_manager_preview_content_area(file_manager_area)?;
-    image_geometry_for_content_area(content_area, cell_size).map(|(_, target)| target)
-}
-
-#[cfg(test)]
 fn file_manager_image_placement(
     file_manager_area: Rect,
     cell_size: HostCellSize,
@@ -1277,96 +1268,6 @@ mod tests {
         assert_eq!(images.len(), 1);
         assert!(placements.is_empty());
         assert!(sources.is_empty());
-    }
-
-    #[test]
-    fn file_manager_image_target_uses_only_the_responsive_preview_content_area() {
-        let cells = HostCellSize {
-            width_px: 8,
-            height_px: 16,
-        };
-
-        assert_eq!(
-            legacy_file_manager_image_target(Rect::new(10, 5, 24, 10), cells),
-            None,
-            "one-column layout has no preview slot"
-        );
-        assert_eq!(
-            legacy_file_manager_image_target(Rect::new(10, 5, 25, 10), cells),
-            Some(ImagePreviewTarget {
-                width_px: 96,
-                height_px: 112,
-            }),
-            "two-column preview excludes the FM header, status, and PREVIEW title"
-        );
-        assert_eq!(
-            legacy_file_manager_image_target(Rect::new(10, 5, 38, 10), cells),
-            Some(ImagePreviewTarget {
-                width_px: 96,
-                height_px: 112,
-            }),
-            "three-column preview consumes the same named preview content seam"
-        );
-        assert_eq!(
-            legacy_file_manager_image_target(Rect::new(10, 5, 38, 2), cells),
-            None,
-            "header-only preview column has no image content rows"
-        );
-        assert_eq!(
-            legacy_file_manager_image_target(Rect::new(10, 5, 38, 10), HostCellSize::default()),
-            None,
-            "unknown host cell pixels cannot produce a decode target"
-        );
-        assert_eq!(
-            legacy_file_manager_image_target(
-                Rect::new(10, 5, 38, 10),
-                HostCellSize {
-                    width_px: u32::MAX,
-                    height_px: u32::MAX,
-                },
-            ),
-            None,
-            "pixel multiplication overflow is rejected"
-        );
-    }
-
-    // TRAIL-T7.6 teardown: the legacy Miller-only fixture remains until the
-    // old projection is deleted. Its sole surviving contract is fail-closed:
-    // a PREVIEW column without an exact Trail image detail cannot authorize
-    // decode work.
-    #[test]
-    fn file_manager_image_target_rejects_legacy_preview_only_geometry() {
-        let frame = Rect::new(0, 0, 57, 10);
-        let cells = HostCellSize {
-            width_px: 8,
-            height_px: 16,
-        };
-        let current = std::path::PathBuf::from("/virtual/current");
-        let mut file_manager = crate::fm::FmState::test_empty(current.clone());
-        file_manager.miller.chain =
-            std::iter::once(crate::fm::miller::MillerPathSegment::new(current.clone())).collect();
-        file_manager.miller.focused_directory = current;
-        let mut app = crate::app::state::AppState::test_new();
-        app.workspaces = vec![crate::workspace::Workspace::test_new("one")];
-        app.active = Some(0);
-        app.selected = 0;
-        app.mode = crate::app::state::Mode::Terminal;
-        app.mobile_width_threshold = 0;
-        app.sidebar_collapsed = true;
-        app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
-        app.try_open_file_manager_with(|_| Some(file_manager))
-            .expect("Files activation");
-        crate::ui::compute_view(&mut app, frame);
-
-        assert_eq!(
-            file_manager_image_target(
-                &app.view.file_manager_trail,
-                app.file_manager.as_ref().expect("open FM"),
-                cells,
-            ),
-            None,
-            "legacy preview geometry alone cannot authorize image work"
-        );
     }
 
     // TP-TRAIL-T7-IMAGE-02: host placement and decode target share the live
