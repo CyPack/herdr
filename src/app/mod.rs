@@ -628,7 +628,6 @@ impl App {
             request_file_manager_delete: None,
             request_file_manager_context_action: None,
             request_file_manager_agent_handoff: None,
-            request_file_manager_claude_split: None,
             file_manager_sidebar,
             request_file_manager_sidebar_navigation: None,
             should_quit: false,

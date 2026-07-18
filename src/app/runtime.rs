@@ -203,7 +203,6 @@ impl App {
         changed |= self.sync_file_manager_agent_handoff();
         changed |= self.sync_file_manager_agent_handoff_send();
         changed |= self.sync_agent_attachment_delivery();
-        changed |= self.sync_file_manager_claude_split();
         changed |= self.sync_file_manager_plugin_action();
         changed |= self.sync_file_manager_sidebar_navigation();
         changed |= self.sync_file_manager_watcher_at(now);

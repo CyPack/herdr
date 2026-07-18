@@ -752,18 +752,6 @@ pub struct FileManagerAgentHandoffRequest {
     pub terminal_id: crate::terminal::TerminalId,
 }
 
-/// Exact client-local authority for creating one Claude agent split from the
-/// native FM. Input only prepares this data; the App-owned scheduled boundary
-/// revalidates every identity before spawning a PTY or sending bytes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileManagerClaudeSplitRequest {
-    pub path: PathBuf,
-    pub cwd: PathBuf,
-    pub workspace_id: String,
-    pub source_pane_id: PaneId,
-    pub source_terminal_id: crate::terminal::TerminalId,
-}
-
 /// Exact client-local native-FM identities owned by the Rename text modal.
 /// Opening or rendering this state performs no filesystem work.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2153,9 +2141,6 @@ pub struct AppState {
     /// One exact current path and focused agent terminal identity awaiting the
     /// App-owned C5 send boundary. Preparing it performs no runtime side effect.
     pub request_file_manager_agent_handoff: Option<FileManagerAgentHandoffRequest>,
-    /// One exact current path plus non-agent source pane identity awaiting the
-    /// App-owned C5 split-and-launch boundary. Preparing it is side-effect free.
-    pub request_file_manager_claude_split: Option<FileManagerClaudeSplitRequest>,
     /// Prepared, bounded Files-sidebar data. Filesystem/environment discovery
     /// happens only when this projection is refreshed, never during render.
     pub file_manager_sidebar: FileManagerSidebarModel,
@@ -2629,7 +2614,6 @@ impl AppState {
             request_file_manager_delete: None,
             request_file_manager_context_action: None,
             request_file_manager_agent_handoff: None,
-            request_file_manager_claude_split: None,
             file_manager_sidebar: FileManagerSidebarModel::default(),
             request_file_manager_sidebar_navigation: None,
             should_quit: false,
