@@ -811,6 +811,47 @@ mod tests {
         );
     }
 
+    // FMR-1 RED: Unix directory entries whose names are not valid UTF-8 are
+    // omitted from actionable rows, but that omission must remain visible.
+    #[cfg(unix)]
+    #[test]
+    fn directory_visibility_non_utf8_only_column_explains_omitted_names() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let td = TempDir::new("directory-visibility-non-utf8");
+        fs::write(td.root.join(OsString::from_vec(vec![b'f', 0x80])), b"x")
+            .expect("non-UTF-8 fixture");
+        let trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        assert!(
+            snaps.cols()[0].entries().is_empty(),
+            "non-UTF-8 name has no actionable text row"
+        );
+
+        let stage = Rect::new(0, 0, 40, 8);
+        let view = project_trail_view(stage, &trail, &snaps, &[]);
+        let app = crate::app::state::AppState::test_new();
+        let backend = TestBackend::new(stage.width, stage.height);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| render_trail_view(&app, frame, &view, &snaps))
+            .expect("render trail");
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(
+            rendered.contains("unreadable names omitted"),
+            "a non-UTF-8-only directory must not look genuinely empty: {rendered:?}"
+        );
+    }
+
     // Hit resolution: a position inside a row rect resolves to EXACTLY that
     // row — the projection is the single hit authority.
     #[test]
