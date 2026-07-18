@@ -9,10 +9,10 @@
 use std::path::PathBuf;
 
 use ratatui::layout::Rect;
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, Borders};
 use ratatui::Frame;
 
-use super::miller::{miller_viewport_geometry, MILLER_DIVIDER_WIDTH};
+use super::miller::miller_viewport_geometry;
 use crate::app::state::AppState;
 use crate::fm::miller::{
     MILLER_COLUMN_MAX_WIDTH, MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_PREFERRED_WIDTH,
@@ -80,8 +80,81 @@ pub(crate) fn project_trail_view(
     snaps: &TrailSnapshots,
     preferred_widths: &[u16],
 ) -> TrailViewSnapshot {
-    let _ = (stage, trail, snaps, preferred_widths);
-    TrailViewSnapshot::default()
+    let trail_cols = trail.cols();
+    let snap_cols = snaps.cols();
+    let aligned = trail_cols.len() == snap_cols.len()
+        && trail_cols
+            .iter()
+            .zip(snap_cols.iter())
+            .all(|(col, snap)| snap.directory() == col.directory.as_path());
+    if trail_cols.is_empty() || !aligned {
+        return TrailViewSnapshot::default();
+    }
+
+    let widths: Vec<u16> = (0..trail_cols.len())
+        .map(|index| trail_column_width(preferred_widths, index))
+        .collect();
+    // Requesting origin 0 clamps up to the floor that keeps the DEEPEST
+    // column inside a complete-column window: auto-scroll right (LAW 2).
+    let geometry = miller_viewport_geometry(stage, &widths, trail.deepest(), 0);
+
+    let columns = geometry
+        .columns
+        .iter()
+        .map(|column| {
+            let trail_index = column.chain_index;
+            let entries = snap_cols[trail_index].entries();
+            let selected_entry = trail_cols[trail_index]
+                .selected
+                .as_deref()
+                .and_then(|selected| entries.iter().position(|entry| entry.path == selected));
+            let height = usize::from(column.rect.height);
+            let viewport_start = selected_entry
+                .filter(|&selected| height > 0 && selected >= height)
+                .map(|selected| selected + 1 - height)
+                .unwrap_or(0);
+            let rows = entries
+                .iter()
+                .enumerate()
+                .skip(viewport_start)
+                .take(height)
+                .map(|(entry_index, entry)| TrailRowView {
+                    trail_index,
+                    entry_index,
+                    entry_path: entry.path.clone(),
+                    rect: Rect::new(
+                        column.rect.x,
+                        column.rect.y + (entry_index - viewport_start) as u16,
+                        column.rect.width,
+                        1,
+                    ),
+                })
+                .collect();
+            TrailColumnView {
+                trail_index,
+                directory: trail_cols[trail_index].directory.clone(),
+                rect: column.rect,
+                selected_entry,
+                viewport_start,
+                rows,
+            }
+        })
+        .collect();
+    let dividers = geometry
+        .dividers
+        .iter()
+        .map(|divider| TrailDividerView {
+            left_trail_index: divider.left_chain_index,
+            right_trail_index: divider.right_chain_index,
+            rect: divider.rect,
+        })
+        .collect();
+
+    TrailViewSnapshot {
+        first_visible: geometry.first_visible,
+        columns,
+        dividers,
+    }
 }
 
 /// Paint the projected trail: rows via the shared entry-row renderer (icons,
@@ -93,10 +166,27 @@ pub(crate) fn render_trail_view(
     view: &TrailViewSnapshot,
     snaps: &TrailSnapshots,
 ) {
-    let _ = (app, frame, view, snaps);
-    let _ = (MILLER_DIVIDER_WIDTH, miller_viewport_geometry);
-    #[allow(clippy::no_effect_underscore_binding)]
-    let _unused: Option<Paragraph> = None;
+    let styles = super::file_manager_visual_styles(&app.palette);
+    for divider in &view.dividers {
+        frame.render_widget(
+            Block::default()
+                .borders(Borders::LEFT)
+                .border_style(styles.divider),
+            divider.rect,
+        );
+    }
+    for column in &view.columns {
+        let Some(snap) = snaps.cols().get(column.trail_index) else {
+            continue;
+        };
+        for row in &column.rows {
+            let Some(entry) = snap.entries().get(row.entry_index) else {
+                continue;
+            };
+            let selected = column.selected_entry == Some(row.entry_index);
+            super::render_entry_row(app, frame, row.rect, entry, selected, false);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -275,9 +365,8 @@ mod tests {
                 assert!(row.rect.right() <= column.rect.right());
                 assert!(row.rect.bottom() <= column.rect.bottom());
                 for prior in &seen {
-                    assert_eq!(
-                        prior.intersection(row.rect),
-                        Rect::default(),
+                    assert!(
+                        prior.intersection(row.rect).is_empty(),
                         "row rects never overlap"
                     );
                 }

@@ -292,6 +292,86 @@ mod tests {
             export_cell_fixture("vis-06-picker-disabled-tiny", &render_state(&app, 60, 20)),
         );
         let _ = std::fs::remove_dir_all(&icon_base);
+
+        // VIS-07/08 (trail program T3): the standalone Miller trail render —
+        // four accumulated columns with the selection emphasized in every
+        // ancestor (LAW 1/2), then the same trail after an ancestor-sibling
+        // reselect cut the old branch (rebranch proof). Deterministic fixed
+        // tree; ASCII icon profile for browser-visible glyphs.
+        let trail_base = std::path::PathBuf::from("/tmp/herdr-vis07-root");
+        let _ = std::fs::remove_dir_all(&trail_base);
+        let trail_root = trail_base.join("inner");
+        let src = trail_root.join("src");
+        let core = src.join("core");
+        let detail = core.join("detail");
+        std::fs::create_dir_all(&detail).expect("trail tree");
+        std::fs::create_dir_all(trail_root.join("docs")).expect("docs dir");
+        std::fs::create_dir_all(trail_root.join("assets")).expect("assets dir");
+        for (dir, files) in [
+            (&trail_root, &["notes.md", "readme.md"][..]),
+            (&src, &["lib.rs", "main.rs"][..]),
+            (&core, &["engine.rs", "state.rs"][..]),
+            (&detail, &["alpha.rs", "beta.rs"][..]),
+            (&trail_root.join("docs"), &["guide.md", "spec.md"][..]),
+        ] {
+            for file in files {
+                std::fs::write(dir.join(file), b"x").expect("trail file");
+            }
+        }
+
+        let mut trail_app = crate::app::state::AppState::test_new();
+        trail_app.file_icon_profile = crate::fm::entry_kind::IconProfile::Ascii;
+        let mut trail = crate::fm::trail::TrailState::new(&trail_root);
+        let mut snaps = crate::fm::trail_snapshots::TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        for (col, dir) in [(0usize, &src), (1, &core), (2, &detail)] {
+            assert_eq!(
+                snaps.select_dir(&mut trail, col, dir),
+                crate::fm::FmDirectoryStatus::Available,
+                "trail fixture descent must load"
+            );
+        }
+        assert!(trail.select_file(3, &detail.join("alpha.rs")));
+        let render_trail = |trail: &crate::fm::trail::TrailState,
+                            snaps: &crate::fm::trail_snapshots::TrailSnapshots,
+                            width: u16,
+                            height: u16| {
+            let backend = TestBackend::new(width, height);
+            let mut terminal = Terminal::new(backend).expect("trail terminal");
+            let stage = Rect::new(0, 0, width, height);
+            let view =
+                crate::ui::file_manager::trail_view::project_trail_view(stage, trail, snaps, &[]);
+            assert!(!view.columns.is_empty(), "trail fixture must project");
+            terminal
+                .draw(|frame| {
+                    crate::ui::file_manager::trail_view::render_trail_view(
+                        &trail_app, frame, &view, snaps,
+                    );
+                })
+                .expect("render trail frame");
+            terminal.backend().buffer().clone()
+        };
+        write_fixture(
+            &out_dir,
+            export_cell_fixture("vis-07-trail-depth", &render_trail(&trail, &snaps, 120, 40)),
+        );
+
+        // Rebranch: reselect the sibling `docs` at the ROOT column — the old
+        // src/core/detail branch is discarded and the trail regrows.
+        assert_eq!(
+            snaps.select_dir(&mut trail, 0, &trail_root.join("docs")),
+            crate::fm::FmDirectoryStatus::Available
+        );
+        assert!(trail.select_file(1, &trail_root.join("docs").join("guide.md")));
+        snaps.sync(&trail);
+        write_fixture(
+            &out_dir,
+            export_cell_fixture(
+                "vis-08-trail-rebranch",
+                &render_trail(&trail, &snaps, 120, 40),
+            ),
+        );
+        let _ = std::fs::remove_dir_all(&trail_base);
     }
 
     #[test]
