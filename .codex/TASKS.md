@@ -78,7 +78,17 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
   Files legacy navigation/double-click/non-current-scroll seam'leri
   kaldırıldı. Final gate: full 3,552/3,552 + 2 skip, Chromium 18/18,
   Linux+Windows clippy `-D warnings`, Python 64/64, Bun 5/5 + 12/12,
-  fmt/diff/unwrap temiz. SIRADAKİ: T7.5 watcher+kitty/FIP-D4.
+  fmt/diff/unwrap temiz. T7.5 watcher+kitty/FIP-D4 ürün kodu KAPANDI
+  (`8a3a944b` RED / `95f6e541` GREEN): watcher transitional `cwd` yerine
+  exact aktif Trail kolonunu izler ve yalnız aynı snapshot'ı path-bazlı
+  yeniler; decode worker ile Kitty placement aynı generation-bound Trail
+  detail `content_rect` otoritesini tüketir; stale path/geometri ve legacy
+  PREVIEW tek başına fail-closed kalır; cache/resize/error aileleri korundu.
+  Final gate: focused 3/3, watcher/image/Kitty 57/57, full 3,555/3,555 +
+  2 skip, Chromium 18/18, Linux+Windows clippy `-D warnings`, Python 64/64,
+  Bun 5/5 + 12/12, fmt/diff/unwrap temiz. Ghostty headful canlı foto kabul
+  kanıtı kullanıcıyla izole reçetede ayrıca bekliyor. SIRADAKİ: T7.6
+  seçici eski-model sökümü + "(unavailable)" grep=0 + kapanış.
   (T7.1 characterization → T7.2 FmState köprüsü → T7.3 render swap →
   T7.4 girdi swap + FIP-D1 canlı kapanış → T7.5 watcher+kitty/FIP-D4 →
   T7.6 söküm+kapanış; yüzey haritası satır sayılarıyla planda).
@@ -102,10 +112,14 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
   detay/önizleme paneli, en derin kolon auto-scroll. TAM KONTRAT:
   `docs/superpowers/specs/2026-07-18-herdr-miller-trail-ux-contract.md` —
   B-zinciri design spec'inin girdi YASASI.
-- [ ] **FIP-D4** Önizleme Ghostty'de foto GÖSTERMİYOR — "(Kitty graphics
-  req.)" basıyor; Ghostty kitty-graphics destekler. Kusur host-yetenek
-  algılamada veya server-side render graphics passthrough'unda. Canlı ekran
-  kanıtı 2026-07-18; iz: preview render + kitty_graphics modülleri.
+- [x] **FIP-D4** Trail foto önizleme ürün kodu kapandı
+  (`8a3a944b` RED / `95f6e541` GREEN): decode target ve Kitty placement exact
+  generation-bound Trail detail `content_rect` kullanıyor; legacy PREVIEW,
+  stale path/geometri ve non-image durumları yetki vermiyor; typed
+  loading/ready/error/fallback davranışı korunuyor. Rust full suite, iki
+  clippy ve Chromium suite temiz. Ghostty'de izole headful canlı foto kabul
+  kanıtı kullanıcı aksiyonu olarak açık tutulur; bu ürün-kodu checkbox'ını
+  yeniden açmaz.
 
 ### FIP-G — Planning Gate
 

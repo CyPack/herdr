@@ -126,8 +126,17 @@ row-action ve right-click otoritesi; ancestor rebranch, exact path/index,
 stale-frame ve atomic bulk tavanı; Native Files legacy navigation,
 double-click ve non-current scroll seam'leri kaldırıldı. Taze gate: full
 3,552/3,552 + 2 skip, Chromium 18/18, Linux+Windows clippy `-D warnings`,
-Python 64/64, Bun 5/5 + 12/12, fmt/diff/unwrap temiz. SIRADAKİ:
-TRAIL-T7.5 watcher+kitty/FIP-D4.
+Python 64/64, Bun 5/5 + 12/12, fmt/diff/unwrap temiz. TRAIL-T7.5 +
+FIP-D4 ürün kodu KAPANDI (`8a3a944b` RED / `95f6e541` GREEN): watcher exact
+aktif Trail kolonuna bağlandı ve yalnız aynı snapshot'ı path-bazlı yeniler;
+decode worker ile Kitty placement aynı generation-bound Trail detail
+`content_rect` otoritesini tüketir; stale path/geometri ve legacy PREVIEW
+fail-closed kalır; cache/resize/error aileleri korundu. Taze gate: focused
+3/3, watcher/image/Kitty 57/57, full 3,555/3,555 + 2 skip, Chromium 18/18,
+Linux+Windows clippy `-D warnings`, Python 64/64, Bun 5/5 + 12/12,
+fmt/diff/unwrap temiz. Ghostty headful canlı foto kabul kanıtı izole reçetede
+kullanıcıyla ayrıca bekliyor. SIRADAKİ: TRAIL-T7.6 seçici eski-model sökümü,
+"(unavailable)" grep=0 ve program kapanışı.
 Sonrası: FIP-5 picker, kullanıcı direktifi custom-layout programı. FIP-3 TAMAMEN KAPANDI (2026-07-18): 3.4 characterized migration
 (`bcecfdc8` — FileEntry alanları kind-türevi metodlara döndü, çifte symlink
 stat kalktı, 3-kategori grep 0 kalıntı); 3.7 icon edge ailesi (`91e33f6f` RED
@@ -451,13 +460,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 10 ve
-89, toplam 99 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 9 ve
+89, toplam 98 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 10 unchecked
+### Source: `.codex/TASKS.md` — 9 unchecked
 
 - [ ] **TRAIL-T7** Eski parent/current/resident modelinin characterized sökümü
   ("(unavailable)" grep=0) + tüm gate'ler + yayın. CERRAHİ PLAN HAZIR:
@@ -487,7 +496,17 @@ sayar ve exact diff yapar.
   Files legacy navigation/double-click/non-current-scroll seam'leri
   kaldırıldı. Final gate: full 3,552/3,552 + 2 skip, Chromium 18/18,
   Linux+Windows clippy `-D warnings`, Python 64/64, Bun 5/5 + 12/12,
-  fmt/diff/unwrap temiz. SIRADAKİ: T7.5 watcher+kitty/FIP-D4.
+  fmt/diff/unwrap temiz. T7.5 watcher+kitty/FIP-D4 ürün kodu KAPANDI
+  (`8a3a944b` RED / `95f6e541` GREEN): watcher transitional `cwd` yerine
+  exact aktif Trail kolonunu izler ve yalnız aynı snapshot'ı path-bazlı
+  yeniler; decode worker ile Kitty placement aynı generation-bound Trail
+  detail `content_rect` otoritesini tüketir; stale path/geometri ve legacy
+  PREVIEW tek başına fail-closed kalır; cache/resize/error aileleri korundu.
+  Final gate: focused 3/3, watcher/image/Kitty 57/57, full 3,555/3,555 +
+  2 skip, Chromium 18/18, Linux+Windows clippy `-D warnings`, Python 64/64,
+  Bun 5/5 + 12/12, fmt/diff/unwrap temiz. Ghostty headful canlı foto kabul
+  kanıtı kullanıcıyla izole reçetede ayrıca bekliyor. SIRADAKİ: T7.6
+  seçici eski-model sökümü + "(unavailable)" grep=0 + kapanış.
   (T7.1 characterization → T7.2 FmState köprüsü → T7.3 render swap →
   T7.4 girdi swap + FIP-D1 canlı kapanış → T7.5 watcher+kitty/FIP-D4 →
   T7.6 söküm+kapanış; yüzey haritası satır sayılarıyla planda).
@@ -500,11 +519,6 @@ sayar ve exact diff yapar.
   detay/önizleme paneli, en derin kolon auto-scroll. TAM KONTRAT:
   `docs/superpowers/specs/2026-07-18-herdr-miller-trail-ux-contract.md` —
   B-zinciri design spec'inin girdi YASASI.
-
-- [ ] **FIP-D4** Önizleme Ghostty'de foto GÖSTERMİYOR — "(Kitty graphics
-  req.)" basıyor; Ghostty kitty-graphics destekler. Kusur host-yetenek
-  algılamada veya server-side render graphics passthrough'unda. Canlı ekran
-  kanıtı 2026-07-18; iz: preview render + kitty_graphics modülleri.
 
 - [ ] **FIP-1.6** Add Playwright `TP-FIP-VIS-01` plus isolated real-mouse
   `TP-FIP-E2E-01` evidence without touching the stable Herdr socket.

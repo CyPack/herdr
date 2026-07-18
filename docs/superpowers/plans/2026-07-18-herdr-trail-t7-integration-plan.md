@@ -105,6 +105,20 @@ missing/inaccessible/stale hedefte atomik inert kalır.
 | TP-TRAIL-T7-IMAGE-03 | FIP-D4 hata ve non-Kitty yollarında sessiz boşluk veya retry loop kabul etmez | Loading/Ready/typed failure aynı Trail panelinde deterministik render edilir; Kitty kapalıysa açık fallback kalır; stable failure yeni worker generation üretmez | mevcut `preview_error_states_render_without_retry_loop`, `image_preview_has_explicit_non_kitty_fallback_and_ready_content_is_clear` |
 | TP-TRAIL-T7-IMAGE-04 | Görsel kabul gerçek Ratatui hücrelerinden Chromium ile kalmalıdır; Kitty byte delivery headful Ghostty kanıtına ek, onun yerine geçmez | Playwright Chromium tüm 18 baseline'ı korur; image detail panel hücre fixture'ı değişirse mutation kanıtı ve yalnız spec-scoped update; Ghostty izole reçetesiyle final canlı foto kanıtı | `cd tests/visual && npx playwright test`; T7.5 kapanışında headful kanıt durumu |
 
+### T7.5 kapanış kanıtı
+
+`8a3a944b` RED / `95f6e541` GREEN. Watcher artık transitional `cwd/current`
+yerine exact aktif Trail kolonuna bağlanır; yenileme aynı index'teki snapshot'a
+path-bazlı yakınsar ve ancestor branch'i çökertmez. Image decode worker ve
+Kitty placement tek generation-bound Trail detail `content_rect` otoritesini
+paylaşır; legacy PREVIEW geometrisi, stale path/geometri ve non-image seçimler
+tek başına iş başlatamaz. Focused yeni aile 3/3, watcher/image/Kitty ailesi
+57/57, full Rust 3,555/3,555 + 2 skip, Playwright Chromium 18/18,
+Linux+Windows clippy `-D warnings`, Python 64/64, Bun 5/5 + 12/12 ve
+fmt/diff/unwrap taramaları temizdir. Ürün kodu FIP-D4 kapanışı sağlandı;
+Ghostty'de izole headful canlı foto kabul kanıtı kullanıcıyla ayrı bir fiziksel
+terminal doğrulaması olarak açık tutulur ve T7.6 kodunu bloklamaz.
+
 ## Kabul (plan §4 ile aynı)
 
 Kontrat 5 yasa ≥1 Rust testi + ≥1 Chromium baseline ile kanıtlı (T1-T6'da sağlandı; T7 canlı
