@@ -1,12 +1,13 @@
 # Current State — 2026-07-17
 
-> **CURRENT OVERRIDE — MILLER TRAIL T7 ACTIVE (2026-07-18).** T1-T6 remain
-> closed and published. T7.1 characterization is closed at `7d75f0e4`: the
-> protected lifecycle/exact-path/operation/watcher behaviors are pinned, the
-> legacy parent/current/preview/resident tests are marked for T7.6 teardown,
-> and fresh gates are 3,535/3,535 Rust + 2 skip, 18/18 Chromium, both Clippy
-> targets, Python 64/64, and Bun 5/5 + 12/12. Exact next task is **T7.2
-> FmState trail bridge** from
+> **CURRENT OVERRIDE — MILLER TRAIL T7 ACTIVE (2026-07-18).** T1-T6 and T7.1
+> remain closed. T7.2 FmState trail bridge is closed at `62696987` RED /
+> `19efb656` GREEN: FmState owns TrailState+TrailSnapshots, `selected()` resolves
+> exact path through aligned trail snapshots, enter/leave preserves the root
+> and accumulates columns, prepared apply stays disk-I/O-free, and hidden-file
+> policy reaches future branches. Fresh gates are 3,541/3,541 Rust + 2 skip,
+> 18/18 Chromium, both Clippy targets, Python 64/64, and Bun 5/5 + 12/12.
+> Exact next task is **T7.3 render swap** from
 > `docs/superpowers/plans/2026-07-18-herdr-trail-t7-integration-plan.md`.
 > `TRAIL-T7` remains open until T7.6; FIP-D1 closes at T7.4 and FIP-D4 at
 > T7.5. Stable Herdr/socket and user-owned `.superpowers/` remain untouched.

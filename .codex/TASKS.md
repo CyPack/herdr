@@ -58,7 +58,13 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
   rename/delete/multi-select/watcher exact-path ailelerinin kanonik pinleri,
   eski parent/current/preview/resident testlerinde `TRAIL-T7.6 teardown`
   işaretleri; full 3,535/3,535 + 2 skip, görsel 18/18, iki clippy, Python
-  64/64, Bun 5/5 + 12/12 temiz. SIRADAKİ: T7.2 FmState trail köprüsü.
+  64/64, Bun 5/5 + 12/12 temiz. T7.2 FmState köprüsü KAPANDI
+  (`62696987` RED / `19efb656` GREEN): FmState TrailState+TrailSnapshots
+  sahibi; `selected()` exact path'i trail snapshot'tan çözer; enter/leave
+  root'u koruyarak trail'i biriktirir; prepared apply disk-I/O'suz, hidden
+  policy future branch'lere taşınır; full 3,541/3,541 + 2 skip, Chromium
+  18/18, iki clippy, Python 64/64, Bun 5/5 + 12/12 temiz. SIRADAKİ: T7.3
+  render swap.
   (T7.1 characterization → T7.2 FmState köprüsü → T7.3 render swap →
   T7.4 girdi swap + FIP-D1 canlı kapanış → T7.5 watcher+kitty/FIP-D4 →
   T7.6 söküm+kapanış; yüzey haritası satır sayılarıyla planda).
