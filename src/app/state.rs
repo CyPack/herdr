@@ -745,12 +745,6 @@ pub struct FileManagerDeleteRequest {
 
 /// Exact client-local authority prepared for a native-FM handoff. C5.2 only
 /// binds one current path to one focused agent terminal; sending remains an
-/// App-owned runtime action in the next stage.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileManagerAgentHandoffRequest {
-    pub path: PathBuf,
-    pub terminal_id: crate::terminal::TerminalId,
-}
 
 /// Exact client-local native-FM identities owned by the Rename text modal.
 /// Opening or rendering this state performs no filesystem work.
@@ -1455,6 +1449,7 @@ pub enum Mode {
     GlobalMenu,
     KeybindHelp,
     Navigator,
+    AgentReferencePicker,
 }
 
 impl Mode {
@@ -2140,7 +2135,12 @@ pub struct AppState {
     pub request_file_manager_context_action: Option<FileManagerContextActionIntent>,
     /// One exact current path and focused agent terminal identity awaiting the
     /// App-owned C5 send boundary. Preparing it performs no runtime side effect.
-    pub request_file_manager_agent_handoff: Option<FileManagerAgentHandoffRequest>,
+    pub request_file_manager_agent_handoff:
+        Option<crate::app::agent_reference_picker::AgentReferenceRequest>,
+    /// Blocking client-local agent target picker for the reference action.
+    /// It owns no watcher, worker, process, pane, or server state.
+    pub agent_reference_picker:
+        Option<crate::app::agent_reference_picker::AgentReferencePickerState>,
     /// Prepared, bounded Files-sidebar data. Filesystem/environment discovery
     /// happens only when this projection is refreshed, never during render.
     pub file_manager_sidebar: FileManagerSidebarModel,
@@ -2614,6 +2614,7 @@ impl AppState {
             request_file_manager_delete: None,
             request_file_manager_context_action: None,
             request_file_manager_agent_handoff: None,
+            agent_reference_picker: None,
             file_manager_sidebar: FileManagerSidebarModel::default(),
             request_file_manager_sidebar_navigation: None,
             should_quit: false,

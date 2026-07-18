@@ -792,6 +792,8 @@ impl compose::Component for OverlayLayer {
                 render_context_menu(app, frame);
             }
             Mode::Settings => render_settings_overlay(app, frame, frame.area()),
+            // FIP-5 picker render lands with the popup-ownership task.
+            Mode::AgentReferencePicker => {}
             Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane | Mode::RenameFile => {
                 render_rename_overlay(app, frame, frame.area())
             }

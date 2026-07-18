@@ -140,7 +140,8 @@ impl AppState {
             | Mode::Settings
             | Mode::GlobalMenu
             | Mode::KeybindHelp
-            | Mode::Navigator => true,
+            | Mode::Navigator
+            | Mode::AgentReferencePicker => true,
         }
     }
 

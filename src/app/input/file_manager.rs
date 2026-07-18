@@ -641,9 +641,9 @@ mod tests {
     use super::*;
     use crate::app::state::{
         ContextMenuKind, FileManagerActionBarModel, FileManagerActionDisabledReason,
-        FileManagerActionState, FileManagerAgentHandoffRequest, FileManagerContextMenuAction,
-        FileManagerContextMenuTargetKind, FileManagerHeaderAction, FileManagerHeaderActionArea,
-        FileManagerRowAction, FileManagerRowActionArea, FileManagerRowArea,
+        FileManagerActionState, FileManagerContextMenuAction, FileManagerContextMenuTargetKind,
+        FileManagerHeaderAction, FileManagerHeaderActionArea, FileManagerRowAction,
+        FileManagerRowActionArea, FileManagerRowArea,
     };
     use crate::app::Mode;
     use crate::fm::{FmState, MAX_MULTI_SELECTION_PATHS};
@@ -5881,13 +5881,13 @@ mod tests {
         );
         assert!(app.state.request_file_manager_agent_handoff.is_none());
         assert!(app.sync_file_manager_agent_handoff());
-        assert_eq!(
-            app.state.request_file_manager_agent_handoff,
-            Some(FileManagerAgentHandoffRequest {
-                path: entry_path.clone(),
-                terminal_id,
-            })
-        );
+        let request = app
+            .state
+            .request_file_manager_agent_handoff
+            .as_ref()
+            .expect("typed current-agent request");
+        assert_eq!(request.path, entry_path);
+        assert_eq!(request.terminal_id, terminal_id);
         assert_eq!(
             fs::read(entry_path).expect("send-agent source remains unchanged"),
             before
@@ -5911,10 +5911,13 @@ mod tests {
 
         assert!(app.sync_file_manager_agent_handoff());
         assert!(app.state.request_file_manager_context_action.is_none());
-        assert_eq!(
-            app.state.request_file_manager_agent_handoff,
-            Some(FileManagerAgentHandoffRequest { path, terminal_id })
-        );
+        let request = app
+            .state
+            .request_file_manager_agent_handoff
+            .as_ref()
+            .expect("typed current-agent request");
+        assert_eq!(request.path, path);
+        assert_eq!(request.terminal_id, terminal_id);
         assert!(!app.sync_file_manager_agent_handoff());
     }
 

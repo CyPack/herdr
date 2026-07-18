@@ -5,6 +5,7 @@
 //! - `input.rs` — key/mouse → action translation
 
 pub(crate) mod actions;
+mod agent_reference_picker;
 mod agent_resume;
 mod agents;
 mod api;
@@ -628,6 +629,7 @@ impl App {
             request_file_manager_delete: None,
             request_file_manager_context_action: None,
             request_file_manager_agent_handoff: None,
+            agent_reference_picker: None,
             file_manager_sidebar,
             request_file_manager_sidebar_navigation: None,
             should_quit: false,
@@ -1889,6 +1891,9 @@ impl App {
             }
             Mode::Navigator => {
                 input::handle_navigator_key(&mut self.state, &self.terminal_runtimes, key_event);
+            }
+            Mode::AgentReferencePicker => {
+                self.handle_agent_reference_picker_key(key_event);
             }
             Mode::AttachFile => {
                 self.route_agent_attachment_picker_key(key_event);

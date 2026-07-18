@@ -222,6 +222,9 @@ impl App {
                 Mode::Navigator => {
                     handle_navigator_key(&mut self.state, &self.terminal_runtimes, key_event)
                 }
+                Mode::AgentReferencePicker => {
+                    self.handle_agent_reference_picker_key(key_event);
+                }
                 Mode::Terminal => unreachable!(),
                 Mode::AttachFile => unreachable!(),
             },

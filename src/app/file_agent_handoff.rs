@@ -1,6 +1,5 @@
-use crate::app::state::{
-    FileManagerAgentHandoffRequest, FileManagerContextMenuAction, FileManagerOperationState,
-};
+use crate::app::agent_reference_picker::AgentReferenceRequest;
+use crate::app::state::{FileManagerContextMenuAction, FileManagerOperationState};
 use bytes::Bytes;
 
 const MAX_AGENT_ATTACHMENT_PAYLOAD_BYTES: usize = 1024 * 1024;
@@ -119,8 +118,17 @@ impl crate::app::App {
         {
             return false;
         }
-        self.state.request_file_manager_agent_handoff =
-            Some(FileManagerAgentHandoffRequest { path, terminal_id });
+        self.state.request_file_manager_agent_handoff = Some(AgentReferenceRequest {
+            path,
+            source_files_generation: self
+                .state
+                .stage
+                .active_instance_generation()
+                .unwrap_or_default(),
+            workspace_id: workspace.id.clone(),
+            pane_id,
+            terminal_id,
+        });
         true
     }
 
@@ -247,10 +255,7 @@ impl crate::app::App {
         true
     }
 
-    fn file_manager_agent_handoff_is_current(
-        &self,
-        request: &FileManagerAgentHandoffRequest,
-    ) -> bool {
+    fn file_manager_agent_handoff_is_current(&self, request: &AgentReferenceRequest) -> bool {
         if self.file_operation_worker.is_busy()
             || self
                 .state
@@ -326,7 +331,29 @@ impl crate::app::App {
 mod tests {
     use bytes::Bytes;
 
-    use crate::app::state::{FileManagerAgentHandoffRequest, Mode};
+    use crate::app::agent_reference_picker::AgentReferenceRequest;
+    use crate::app::state::Mode;
+
+    fn reference_request_for(
+        app: &crate::app::App,
+        path: std::path::PathBuf,
+        terminal_id: crate::terminal::TerminalId,
+    ) -> AgentReferenceRequest {
+        AgentReferenceRequest {
+            path,
+            source_files_generation: 0,
+            workspace_id: app
+                .state
+                .workspaces
+                .first()
+                .map(|workspace| workspace.id.clone())
+                .unwrap_or_default(),
+            pane_id: app.state.workspaces[0]
+                .focused_pane_id()
+                .expect("focused pane for reference request"),
+            terminal_id,
+        }
+    }
 
     struct HandoffFixture {
         root: std::path::PathBuf,
@@ -504,10 +531,8 @@ mod tests {
         let fixture = HandoffFixture::new("literal");
         let path = fixture.file("space 'quote' $(touch nope) `echo` ünicode.txt");
         let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 4);
-        app.state.request_file_manager_agent_handoff = Some(FileManagerAgentHandoffRequest {
-            path: path.clone(),
-            terminal_id,
-        });
+        app.state.request_file_manager_agent_handoff =
+            Some(reference_request_for(&app, path.clone(), terminal_id));
 
         assert!(app.sync_file_manager_agent_handoff_send());
         assert!(app.state.request_file_manager_agent_handoff.is_none());
@@ -592,10 +617,8 @@ mod tests {
         let fixture = HandoffFixture::new("deleted-before-send");
         let path = fixture.file("volatile.txt");
         let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 4);
-        app.state.request_file_manager_agent_handoff = Some(FileManagerAgentHandoffRequest {
-            path: path.clone(),
-            terminal_id,
-        });
+        app.state.request_file_manager_agent_handoff =
+            Some(reference_request_for(&app, path.clone(), terminal_id));
         std::fs::remove_file(&path).expect("delete between prepare and send");
 
         assert!(app.sync_file_manager_agent_handoff_send());
@@ -618,10 +641,8 @@ mod tests {
         let fixture = HandoffFixture::new("kind-change-before-send");
         let path = fixture.file("mutating.txt");
         let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 4);
-        app.state.request_file_manager_agent_handoff = Some(FileManagerAgentHandoffRequest {
-            path: path.clone(),
-            terminal_id,
-        });
+        app.state.request_file_manager_agent_handoff =
+            Some(reference_request_for(&app, path.clone(), terminal_id));
         std::fs::remove_file(&path).expect("remove before kind change");
         let status = std::process::Command::new("mkfifo")
             .arg(&path)
@@ -656,7 +677,7 @@ mod tests {
         assert!(app.state.request_file_manager_agent_handoff.is_none());
 
         app.state.request_file_manager_agent_handoff =
-            Some(FileManagerAgentHandoffRequest { path, terminal_id });
+            Some(reference_request_for(&app, path, terminal_id));
         assert!(app.sync_file_manager_agent_handoff_send());
         assert!(
             receiver.try_recv().is_err(),
@@ -712,10 +733,8 @@ mod tests {
         let fixture = HandoffFixture::new("lost-agent");
         let path = fixture.file("selected.txt");
         let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 2);
-        app.state.request_file_manager_agent_handoff = Some(FileManagerAgentHandoffRequest {
-            path,
-            terminal_id: terminal_id.clone(),
-        });
+        app.state.request_file_manager_agent_handoff =
+            Some(reference_request_for(&app, path, terminal_id.clone()));
         app.state
             .terminals
             .get_mut(&terminal_id)
@@ -741,10 +760,8 @@ mod tests {
         let fixture = HandoffFixture::new("vanished-workspace");
         let path = fixture.file("selected.txt");
         let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 2);
-        app.state.request_file_manager_agent_handoff = Some(FileManagerAgentHandoffRequest {
-            path: path.clone(),
-            terminal_id,
-        });
+        app.state.request_file_manager_agent_handoff =
+            Some(reference_request_for(&app, path.clone(), terminal_id));
         app.state.workspaces.clear();
         app.state.active = None;
 
@@ -768,10 +785,11 @@ mod tests {
         let fixture = HandoffFixture::new("changed-terminal");
         let path = fixture.file("selected.txt");
         let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 2);
-        app.state.request_file_manager_agent_handoff = Some(FileManagerAgentHandoffRequest {
-            path: path.clone(),
-            terminal_id: terminal_id.clone(),
-        });
+        app.state.request_file_manager_agent_handoff = Some(reference_request_for(
+            &app,
+            path.clone(),
+            terminal_id.clone(),
+        ));
         // Focus moves to a new split pane whose terminal is NOT the prepared
         // target; the prepared request must not follow the focus.
         app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
@@ -802,10 +820,8 @@ mod tests {
         let fixture = HandoffFixture::new("stale-path");
         let path = fixture.file("selected.txt");
         let (mut stale, terminal_id, mut stale_receiver) = app_with_agent_handoff(&fixture.root, 2);
-        stale.state.request_file_manager_agent_handoff = Some(FileManagerAgentHandoffRequest {
-            path: path.clone(),
-            terminal_id,
-        });
+        stale.state.request_file_manager_agent_handoff =
+            Some(reference_request_for(&stale, path.clone(), terminal_id));
         stale
             .state
             .file_manager
@@ -827,10 +843,8 @@ mod tests {
 
         let (mut missing, terminal_id, mut missing_receiver) =
             app_with_agent_handoff(&fixture.root, 2);
-        missing.state.request_file_manager_agent_handoff = Some(FileManagerAgentHandoffRequest {
-            path,
-            terminal_id: terminal_id.clone(),
-        });
+        missing.state.request_file_manager_agent_handoff =
+            Some(reference_request_for(&missing, path, terminal_id.clone()));
         let runtime = missing
             .terminal_runtimes
             .remove(&terminal_id)
@@ -862,7 +876,7 @@ mod tests {
             .try_send_bytes(Bytes::from_static(b"occupied"))
             .expect("fill handoff input lane");
         app.state.request_file_manager_agent_handoff =
-            Some(FileManagerAgentHandoffRequest { path, terminal_id });
+            Some(reference_request_for(&app, path, terminal_id));
 
         assert!(app.sync_file_manager_agent_handoff_send());
         assert!(app.state.request_file_manager_agent_handoff.is_none());
