@@ -58,16 +58,16 @@ impl TrailColSnapshot {
         self.snapshot.status
     }
 
-    pub(crate) fn hidden_omitted(&self) -> usize {
-        self.snapshot.omissions.hidden
-    }
-
-    pub(crate) fn non_utf8_omitted(&self) -> usize {
-        self.snapshot.omissions.non_utf8
-    }
-
-    pub(crate) fn entry_errors(&self) -> usize {
-        self.snapshot.omissions.entry_errors
+    pub(crate) fn omission_message(&self) -> Option<&'static str> {
+        if self.snapshot.omissions.hidden > 0 {
+            Some("hidden items omitted")
+        } else if self.snapshot.omissions.non_utf8 > 0 {
+            Some("unreadable names omitted")
+        } else if self.snapshot.omissions.entry_errors > 0 {
+            Some("some entries unreadable")
+        } else {
+            None
+        }
     }
 }
 

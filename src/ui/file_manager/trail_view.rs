@@ -49,6 +49,8 @@ pub(crate) struct TrailColumnView {
     pub selected_entry: Option<usize>,
     pub viewport_start: usize,
     pub rows: Vec<TrailRowView>,
+    /// Prepared non-actionable explanation for omitted entries.
+    pub status_rect: Option<Rect>,
 }
 
 /// Divider between two adjacent visible columns.
@@ -215,12 +217,13 @@ fn project_trail_view_inner(
                 .selected
                 .as_deref()
                 .and_then(|selected| entries.iter().position(|entry| entry.path == selected));
-            let height = usize::from(column.rect.height);
+            let has_status = snap_cols[trail_index].omission_message().is_some();
+            let height = usize::from(column.rect.height.saturating_sub(u16::from(has_status)));
             let viewport_start = selected_entry
                 .filter(|&selected| height > 0 && selected >= height)
                 .map(|selected| selected + 1 - height)
                 .unwrap_or(0);
-            let rows = entries
+            let rows: Vec<TrailRowView> = entries
                 .iter()
                 .enumerate()
                 .skip(viewport_start)
@@ -285,6 +288,14 @@ fn project_trail_view_inner(
                     }
                 })
                 .collect();
+            let status_rect = has_status.then(|| {
+                Rect::new(
+                    column.rect.x,
+                    column.rect.y.saturating_add(rows.len() as u16),
+                    column.rect.width,
+                    1,
+                )
+            });
             TrailColumnView {
                 trail_index,
                 directory: trail_cols[trail_index].directory.clone(),
@@ -294,6 +305,7 @@ fn project_trail_view_inner(
                 selected_entry,
                 viewport_start,
                 rows,
+                status_rect,
             }
         })
         .collect();
@@ -421,19 +433,8 @@ pub(crate) fn render_trail_view(
         let Some(snap) = snaps.cols().get(column.trail_index) else {
             continue;
         };
-        if column.rows.is_empty() {
-            let message = if snap.hidden_omitted() > 0 {
-                Some("hidden items omitted")
-            } else if snap.non_utf8_omitted() > 0 {
-                Some("unreadable names omitted")
-            } else if snap.entry_errors() > 0 {
-                Some("some entries unreadable")
-            } else {
-                None
-            };
-            if let Some(message) = message {
-                frame.render_widget(ratatui::widgets::Paragraph::new(message), column.rect);
-            }
+        if let (Some(rect), Some(message)) = (column.status_rect, snap.omission_message()) {
+            frame.render_widget(ratatui::widgets::Paragraph::new(message), rect);
         }
         for row in &column.rows {
             let Some(entry) = snap.entries().get(row.entry_index) else {
