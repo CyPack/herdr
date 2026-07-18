@@ -780,6 +780,27 @@ mod tests {
         assert_eq!(detail.path, file);
     }
 
+    // TP-TRAIL-T7-BRIDGE-02: the bridge resolves the trail's deepest exact
+    // path back to the loaded FileEntry without consulting a legacy cursor.
+    #[test]
+    fn selected_entry_resolves_deepest_exact_path() {
+        let td = TempDir::new("selected-entry");
+        let nested = td.root.join("nested");
+        fs::create_dir_all(&nested).expect("nested");
+        let file = nested.join("chosen.md");
+        fs::write(&file, b"chosen").expect("file");
+
+        let mut snaps = TrailSnapshots::new(false);
+        let trail = snaps
+            .open_trail_to(&td.root, &file)
+            .expect("deep link resolves");
+        let selected = snaps
+            .selected_entry(&trail)
+            .expect("trail selection resolves to its loaded entry");
+        assert_eq!(selected.path, file);
+        assert_eq!(selected.kind, FileEntryKind::RegularFile);
+    }
+
     // LAW 5 deep-link: a DIRECTORY target ends with its own open column.
     #[test]
     fn deep_link_to_directory_opens_its_column() {

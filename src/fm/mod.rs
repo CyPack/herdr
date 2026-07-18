@@ -1602,6 +1602,61 @@ mod tests {
         assert_eq!(st.selected().map(|e| e.name.as_str()), Some("d"));
     }
 
+    // TP-TRAIL-T7-BRIDGE-03: FmState owns one index-aligned trail/snapshot
+    // bridge immediately after opening; selected() is the trail's exact path.
+    #[test]
+    fn fmstate_owns_aligned_trail_bridge_on_open() {
+        let td = TempDir::new("trail-bridge-open");
+        td.dir("alpha");
+        td.file("zeta.txt");
+
+        let state = FmState::new(&td.root);
+        let selected = state.selected().expect("cursor selects alpha");
+        assert_eq!(
+            state.trail.selected_path(),
+            Some(selected.path.as_path()),
+            "trail is the selected-path authority"
+        );
+        assert_eq!(
+            state
+                .trail_snapshots
+                .selected_entry(&state.trail)
+                .map(|entry| entry.path.as_path()),
+            Some(selected.path.as_path())
+        );
+        assert_eq!(state.trail.cols().len(), state.trail_snapshots.cols().len());
+        for (trail_col, snapshot) in state.trail.cols().iter().zip(state.trail_snapshots.cols()) {
+            assert_eq!(trail_col.directory, snapshot.directory());
+        }
+    }
+
+    // TP-TRAIL-T7-BRIDGE-04: cursor movement rebuilds exact-path trail
+    // selection while explicit bulk authority remains independent.
+    #[test]
+    fn cursor_move_rebuilds_trail_selection_without_bulk_authority() {
+        let td = TempDir::new("trail-bridge-cursor");
+        td.file("00.txt");
+        td.file("01.txt");
+        let mut state = FmState::new(&td.root);
+        assert!(state.multi_selection_paths().is_empty());
+
+        state.move_down();
+
+        let expected = td.root.join("01.txt");
+        assert_eq!(state.selected().map(|entry| &entry.path), Some(&expected));
+        assert_eq!(state.trail.selected_path(), Some(expected.as_path()));
+        assert_eq!(
+            state
+                .trail_snapshots
+                .selected_entry(&state.trail)
+                .map(|entry| &entry.path),
+            Some(&expected)
+        );
+        assert_eq!(state.trail.cols().len(), state.trail_snapshots.cols().len());
+        assert!(state.multi_selection_paths().is_empty());
+        assert!(state.multi_selection_anchor().is_none());
+    }
+
     // TP-N4.1-SELECTION-STATE: cursor focus remains independent from the
     // explicit path-identity set that will later authorize bulk operations.
     #[test]

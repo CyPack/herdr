@@ -28,6 +28,17 @@ persisted horizontal state). CLAUDE.md gereği: characterization ÖNCE, adversar
 | TP-TRAIL-T7-CHAR-04 | Watcher sonrası exact-path reconciliation; rename/delete selection'ı bayat bırakamaz | Rename edilen seçili path explicit set ve anchor'dan düşer; cursor güvenli canlı satıra clamp olur; stale pre-reopen completion yeni Files instance'ına uygulanmaz | `watcher_rename_prunes_selected_path_and_keeps_cursor_safe`; `prior_generation_completion_cannot_reload_reopened_same_cwd` | KALIR; refresh taşıyıcısı `TrailSnapshots::refresh_col` olur |
 | TP-TRAIL-T7-CHAR-05 | Eski parent/current/preview ve resident projection render sözleşmesi yalnız kontrollü söküm sınırıdır | T7.3/T7.6'ya kadar testler yeşil kalır ve `TRAIL-T7.6 teardown` etiketiyle topluca bulunur; ara commit bunları sessizce değiştiremez | `windowed_render_uses_current_resident_parent_unavailable_and_preview_sources`; `windowed_render_rejects_stale_current_and_preview_generation`; `miller_columns_render_parent_current_and_directory_preview`; FM parent/preview/resident model testleri | SİL/DEĞİŞTİR; aynı commit'te trail eşdeğer kanıtı yeşil olmalı |
 
+## T7.2 FmState köprüsü test noktaları
+
+| ID | Korunan davranış / neden | Beklenen sonuç | RED kanıtı |
+|---|---|---|---|
+| TP-TRAIL-T7-BRIDGE-01 | Tek exact-path seçim otoritesi; agent handoff ve operasyon çağıranları row index'ten path üretmemeli | `TrailState::selected_path()` en derin işaretli kolonu döndürür; directory seçiminde son boş child kolonuna rağmen seçilen klasör kaybolmaz | `selected_path_uses_deepest_marked_column` |
+| TP-TRAIL-T7-BRIDGE-02 | Trail path'ini canlı `FileEntry`'ye bağlayan tek snapshot seam'i | `TrailSnapshots::selected_entry()` trail'in exact path'ini index-aligned snapshot'lardan bulur; deep-link dosyasında aynı path/kind döner | `selected_entry_resolves_deepest_exact_path` |
+| TP-TRAIL-T7-BRIDGE-03 | `FmState` trail ve snapshot'ların lifecycle sahibidir; canlı açılışta legacy cursor ile trail ayrışamaz | `FmState::new` sonrası seçili row, trail selected path ve snapshot entry aynıdır; her trail kolonu aynı index'teki snapshot directory ile hizalıdır | `fmstate_owns_aligned_trail_bridge_on_open` |
+| TP-TRAIL-T7-BRIDGE-04 | Cursor hareketi agent/operation seçimini trail exact-path otoritesine taşır; explicit bulk set bağımsız kalır | `move_down` sonrası `selected()` yeni trail-selected entry'dir, trail/snapshot hizası korunur ve multi-selection değişmez | `cursor_move_rebuilds_trail_selection_without_bulk_authority` |
+| TP-TRAIL-T7-BRIDGE-05 | Empty/missing durum fail-closed kalır; test modeli disk/PTY gerektirmez | `test_empty` tek kök trail taşır, snapshot/selection boş kalır; geçersiz cursor bir path icat etmez | Mevcut `test_empty` aileleri + full suite; GREEN sırasında regression taraması |
+| TP-TRAIL-T7-BRIDGE-06 | Watcher/navigation apply yeni modelde atomik yakınsar | Prepared refresh/navigation kabul edildiğinde cwd, cursor, trail selected ve snapshots aynı commit noktasında hizalanır; reddedilen payload hiçbir bridge alanını değiştirmez | Mevcut prepared refresh/navigation characterization aileleri + GREEN sonrası focused expression |
+
 ## Alt-adımlar (her biri kendi RED/GREEN + gate + FF yayını)
 
 - **T7.1 Characterization**: korunacak davranışları pinle — Files aç/kapa generation,

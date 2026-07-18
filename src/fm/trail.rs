@@ -159,6 +159,21 @@ mod tests {
         );
     }
 
+    // TP-TRAIL-T7-BRIDGE-01: exact-path selection is read from the deepest
+    // marked column, not from the final column (which is empty after a folder
+    // branch). This is the single path authority consumed by FmState.
+    #[test]
+    fn selected_path_uses_deepest_marked_column() {
+        let mut trail = TrailState::new("/root");
+        assert_eq!(trail.selected_path(), None);
+
+        assert!(trail.select_dir(0, &p("/root/a")));
+        assert_eq!(trail.selected_path(), Some(p("/root/a").as_path()));
+
+        assert!(trail.select_file(1, &p("/root/a/notes.md")));
+        assert_eq!(trail.selected_path(), Some(p("/root/a/notes.md").as_path()));
+    }
+
     // LAW 1: selecting a SIBLING in an ancestor column cuts the old branch
     // and regrows from that point — there is no "back", only the trail.
     #[test]
