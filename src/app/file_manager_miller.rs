@@ -220,7 +220,7 @@ impl crate::app::App {
             _ => return false,
         };
         let active_generation = self.state.stage.active_instance_generation();
-        let snapshot = &self.state.view.file_manager_miller;
+        let snapshot = &self.state.view.file_manager_trail;
         let target = (snapshot.files_generation == active_generation)
             .then(|| {
                 self.state
@@ -230,7 +230,7 @@ impl crate::app::App {
             })
             .flatten();
         if let (Some(file_manager), Some(target)) = (self.state.file_manager.as_mut(), target) {
-            file_manager.miller.horizontal.first_visible = target;
+            file_manager.miller.horizontal.offset_cells = target;
             file_manager.miller.horizontal.follow_active = false;
         }
         true

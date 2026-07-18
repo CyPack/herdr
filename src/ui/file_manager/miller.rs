@@ -19,6 +19,8 @@ const MAX_VISIBLE_TRAIL_COLUMNS: usize = 5;
 pub(crate) struct MillerColumnRect {
     pub chain_index: usize,
     pub rect: Rect,
+    pub logical_width: u16,
+    pub source_x: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +34,8 @@ pub(crate) struct MillerDividerRect {
 pub(crate) struct MillerViewportGeometry {
     pub columns: Vec<MillerColumnRect>,
     pub dividers: Vec<MillerDividerRect>,
+    pub offset_cells: u32,
+    pub max_offset_cells: u32,
     pub first_visible: usize,
 }
 
@@ -107,36 +111,10 @@ pub(crate) struct MillerViewSnapshot {
     pub first_visible_min: usize,
     pub first_visible_max: usize,
     pub first_visible: usize,
+    pub horizontal_offset_cells: u32,
+    pub horizontal_max_offset_cells: u32,
     pub columns: Vec<MillerColumnView>,
     pub dividers: Vec<MillerDividerView>,
-}
-
-impl MillerViewSnapshot {
-    pub(crate) fn horizontal_scroll_target(
-        &self,
-        file_manager: &FmState,
-        delta: i8,
-    ) -> Option<usize> {
-        if self.files_generation.is_none()
-            || self.model_revision != file_manager.miller.revision
-            || self.columns.is_empty()
-            || self.first_visible_min > self.first_visible_max
-        {
-            return None;
-        }
-        let current = file_manager
-            .miller
-            .horizontal
-            .first_visible
-            .clamp(self.first_visible_min, self.first_visible_max);
-        Some(if delta < 0 {
-            current.saturating_sub(1).max(self.first_visible_min)
-        } else if delta > 0 {
-            current.saturating_add(1).min(self.first_visible_max)
-        } else {
-            current
-        })
-    }
 }
 
 #[cfg(test)]
@@ -185,21 +163,15 @@ pub(crate) fn project_miller_view_with_resize_preview(
         Rect::new(stage.x, stage.y, stage.width - width, stage.height)
     });
     let focused_index = file_manager.trail.deepest();
-    let auto_first_visible =
-        first_visible_floor(column_stage.width, &preferred_widths, focused_index);
     let first_visible_min = 0;
     let first_visible_max = focused_index;
-    let requested = if file_manager.miller.horizontal.follow_active {
-        auto_first_visible
+    let requested_offset = if file_manager.miller.horizontal.follow_active {
+        miller_auto_follow_offset(column_stage.width, &preferred_widths, focused_index)
     } else {
-        file_manager
-            .miller
-            .horizontal
-            .first_visible
-            .clamp(first_visible_min, first_visible_max)
+        file_manager.miller.horizontal.offset_cells
     };
     let geometry =
-        miller_viewport_geometry(column_stage, &preferred_widths, focused_index, requested);
+        miller_viewport_geometry_at_offset(column_stage, &preferred_widths, requested_offset);
 
     let mut columns = geometry
         .columns
@@ -294,6 +266,8 @@ pub(crate) fn project_miller_view_with_resize_preview(
         first_visible_min,
         first_visible_max,
         first_visible: geometry.first_visible,
+        horizontal_offset_cells: geometry.offset_cells,
+        horizontal_max_offset_cells: geometry.max_offset_cells,
         columns,
         dividers,
     }
@@ -405,6 +379,7 @@ pub(crate) fn miller_resize_column_is_live(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn miller_viewport_geometry(
     stage: Rect,
     preferred_widths: &[u16],
@@ -419,45 +394,155 @@ pub(crate) fn miller_viewport_geometry(
     let first_visible = requested_first_visible
         .min(chain_len - 1)
         .min(focused_index);
-    let mut columns = Vec::new();
-    let mut dividers = Vec::new();
-    let mut x = stage.x;
-    let mut remaining = stage.width;
-    let mut chain_index = first_visible;
-    while chain_index < chain_len && columns.len() < MAX_VISIBLE_TRAIL_COLUMNS {
-        let preferred =
-            preferred_widths[chain_index].clamp(MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_MAX_WIDTH);
-        let divider_cost = u16::from(!columns.is_empty()) * MILLER_DIVIDER_WIDTH;
-        let Some(after_divider) = remaining.checked_sub(divider_cost) else {
-            break;
-        };
-        if after_divider < MILLER_COLUMN_MIN_WIDTH {
-            break;
-        }
-        let width = preferred.min(after_divider);
-        if divider_cost > 0 {
-            dividers.push(MillerDividerRect {
-                left_chain_index: chain_index - 1,
-                right_chain_index: chain_index,
-                rect: Rect::new(x, stage.y, MILLER_DIVIDER_WIDTH, stage.height),
-            });
-            x += MILLER_DIVIDER_WIDTH;
-        }
-        columns.push(MillerColumnRect {
-            chain_index,
-            rect: Rect::new(x, stage.y, width, stage.height),
+    let offset = preferred_widths
+        .iter()
+        .take(first_visible)
+        .fold(0_u32, |offset, width| {
+            offset
+                .saturating_add(u32::from(
+                    (*width).clamp(MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_MAX_WIDTH),
+                ))
+                .saturating_add(u32::from(MILLER_DIVIDER_WIDTH))
         });
-        x += width;
-        remaining = stage.width - (x - stage.x);
-        chain_index += 1;
+    miller_viewport_geometry_at_offset(stage, preferred_widths, offset)
+}
+
+pub(crate) fn miller_viewport_geometry_at_offset(
+    stage: Rect,
+    preferred_widths: &[u16],
+    requested_offset_cells: u32,
+) -> MillerViewportGeometry {
+    if stage.width < MILLER_COLUMN_MIN_WIDTH || stage.height == 0 || preferred_widths.is_empty() {
+        return MillerViewportGeometry::default();
     }
+
+    let widths = preferred_widths
+        .iter()
+        .map(|width| (*width).clamp(MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_MAX_WIDTH))
+        .collect::<Vec<_>>();
+    let total_width = widths
+        .iter()
+        .enumerate()
+        .fold(0_u32, |total, (index, width)| {
+            total.saturating_add(u32::from(*width)).saturating_add(
+                u32::from(index + 1 < widths.len()) * u32::from(MILLER_DIVIDER_WIDTH),
+            )
+        });
+    let max_offset_cells = total_width.saturating_sub(u32::from(stage.width));
+    let offset_cells = requested_offset_cells.min(max_offset_cells);
+    let viewport_end = offset_cells.saturating_add(u32::from(stage.width));
+    let mut logical_x = 0_u32;
+    let mut columns = Vec::new();
+    let mut divider_intervals = Vec::new();
+
+    for (chain_index, width) in widths.iter().copied().enumerate() {
+        let column_start = logical_x;
+        let column_end = column_start.saturating_add(u32::from(width));
+        let visible_start = column_start.max(offset_cells);
+        let visible_end = column_end.min(viewport_end);
+        if visible_start < visible_end && columns.len() < MAX_VISIBLE_TRAIL_COLUMNS {
+            let destination_x = stage
+                .x
+                .saturating_add((visible_start - offset_cells) as u16);
+            columns.push(MillerColumnRect {
+                chain_index,
+                rect: Rect::new(
+                    destination_x,
+                    stage.y,
+                    (visible_end - visible_start) as u16,
+                    stage.height,
+                ),
+                logical_width: width,
+                source_x: (visible_start - column_start) as u16,
+            });
+        }
+        logical_x = column_end;
+        if chain_index + 1 < widths.len() {
+            let divider_end = logical_x.saturating_add(u32::from(MILLER_DIVIDER_WIDTH));
+            divider_intervals.push((chain_index, chain_index + 1, logical_x, divider_end));
+            logical_x = divider_end;
+        }
+    }
+
+    let dividers = divider_intervals
+        .into_iter()
+        .filter_map(|(left_chain_index, right_chain_index, start, end)| {
+            let visible_start = start.max(offset_cells);
+            let visible_end = end.min(viewport_end);
+            let both_columns_visible = columns
+                .iter()
+                .any(|column| column.chain_index == left_chain_index)
+                && columns
+                    .iter()
+                    .any(|column| column.chain_index == right_chain_index);
+            (visible_start < visible_end && both_columns_visible).then(|| MillerDividerRect {
+                left_chain_index,
+                right_chain_index,
+                rect: Rect::new(
+                    stage
+                        .x
+                        .saturating_add((visible_start - offset_cells) as u16),
+                    stage.y,
+                    (visible_end - visible_start) as u16,
+                    stage.height,
+                ),
+            })
+        })
+        .collect::<Vec<_>>();
+    let first_visible = columns.first().map_or(0, |column| column.chain_index);
+
     MillerViewportGeometry {
         columns,
         dividers,
+        offset_cells,
+        max_offset_cells,
         first_visible,
     }
 }
 
+pub(crate) fn miller_auto_follow_offset(
+    stage_width: u16,
+    preferred_widths: &[u16],
+    focused_index: usize,
+) -> u32 {
+    if stage_width == 0 || preferred_widths.is_empty() {
+        return 0;
+    }
+    let focused_index = focused_index.min(preferred_widths.len() - 1);
+    let start = preferred_widths
+        .iter()
+        .take(focused_index)
+        .fold(0_u32, |offset, width| {
+            offset
+                .saturating_add(u32::from(
+                    (*width).clamp(MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_MAX_WIDTH),
+                ))
+                .saturating_add(u32::from(MILLER_DIVIDER_WIDTH))
+        });
+    let width =
+        preferred_widths[focused_index].clamp(MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_MAX_WIDTH);
+    let end = start.saturating_add(u32::from(width));
+    let requested = if width > stage_width {
+        start
+    } else {
+        end.saturating_sub(u32::from(stage_width))
+    };
+    let total_width = preferred_widths
+        .iter()
+        .enumerate()
+        .fold(0_u32, |total, (index, width)| {
+            total
+                .saturating_add(u32::from(
+                    (*width).clamp(MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_MAX_WIDTH),
+                ))
+                .saturating_add(
+                    u32::from(index + 1 < preferred_widths.len()) * u32::from(MILLER_DIVIDER_WIDTH),
+                )
+        });
+    requested.min(total_width.saturating_sub(u32::from(stage_width)))
+}
+
+#[cfg(test)]
 pub(crate) fn first_visible_floor(stage_width: u16, widths: &[u16], focused_index: usize) -> usize {
     let mut remaining = stage_width;
     let mut start = focused_index;
@@ -492,10 +577,62 @@ mod tests {
             view.columns.last().map(|column| column.chain_index),
             Some(7)
         );
-        assert!(view
-            .columns
-            .iter()
-            .all(|column| column.rect.width >= MILLER_COLUMN_MIN_WIDTH));
+        assert_eq!(
+            view.columns
+                .iter()
+                .find(|column| column.chain_index == 7)
+                .map(|column| column.rect.width),
+            Some(28),
+            "the focused column stays complete while an edge column may be clipped"
+        );
+        assert!(view.columns.iter().all(|column| {
+            !column.rect.is_empty()
+                && column.rect.x >= area.x
+                && column.rect.right() <= area.right()
+        }));
+    }
+
+    #[test]
+    fn miller_viewport_offset_clips_both_edges_and_clamps_to_content() {
+        let area = Rect::new(5, 2, 40, 12);
+        let view = miller_viewport_geometry_at_offset(area, &[30, 30, 30], 10);
+
+        assert_eq!(view.offset_cells, 10);
+        assert_eq!(view.max_offset_cells, 52);
+        assert_eq!(view.first_visible, 0);
+        assert_eq!(
+            view.columns
+                .iter()
+                .map(|column| (
+                    column.chain_index,
+                    column.rect,
+                    column.logical_width,
+                    column.source_x,
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, Rect::new(5, 2, 20, 12), 30, 10),
+                (1, Rect::new(26, 2, 19, 12), 30, 0),
+            ]
+        );
+        assert_eq!(
+            view.dividers
+                .iter()
+                .map(|divider| divider.rect)
+                .collect::<Vec<_>>(),
+            vec![Rect::new(25, 2, 1, 12)]
+        );
+
+        let clamped = miller_viewport_geometry_at_offset(area, &[30, 30, 30], u32::MAX);
+        assert_eq!(clamped.offset_cells, clamped.max_offset_cells);
+        assert_eq!(
+            clamped.columns.last().map(|column| column.chain_index),
+            Some(2)
+        );
+        assert_eq!(
+            clamped.columns.last().map(|column| column.rect.right()),
+            Some(area.right())
+        );
     }
 
     #[test]

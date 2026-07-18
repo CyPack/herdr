@@ -672,7 +672,7 @@ fn sync_miller_view(app: &mut AppState, area: Rect) -> MillerViewSnapshot {
         resize_preview,
     );
     if !snapshot.columns.is_empty() {
-        file_manager.miller.horizontal.first_visible = snapshot.first_visible;
+        file_manager.miller.horizontal.offset_cells = snapshot.horizontal_offset_cells;
     }
     let current_visible_rows = snapshot
         .columns
@@ -715,9 +715,10 @@ fn sync_trail_view(app: &AppState, area: Rect) -> TrailViewSnapshot {
         &file_manager.trail_snapshots,
         &preferred_widths,
         file_manager.miller.preview_preferred_width,
-        file_manager.miller.horizontal.first_visible,
+        file_manager.miller.horizontal.offset_cells,
     );
     snapshot.files_generation = Some(files_generation);
+    snapshot.model_revision = file_manager.miller.revision;
     snapshot
 }
 

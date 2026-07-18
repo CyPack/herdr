@@ -20,6 +20,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 use std::collections::BTreeSet;
+use unicode_width::UnicodeWidthChar;
 
 use super::text::truncate_end;
 use super::widgets::{centered_popup_rect, render_panel_shell};
@@ -1214,15 +1215,41 @@ fn render_entry_row(
     cursor_focused: bool,
     multi_selected: bool,
 ) {
+    render_entry_row_clipped(
+        app,
+        frame,
+        row,
+        row.width,
+        0,
+        entry,
+        cursor_focused,
+        multi_selected,
+    );
+}
+
+pub(crate) fn render_entry_row_clipped(
+    app: &AppState,
+    frame: &mut Frame,
+    row: Rect,
+    logical_width: u16,
+    source_x: u16,
+    entry: &FileEntry,
+    cursor_focused: bool,
+    multi_selected: bool,
+) {
+    if row.is_empty() {
+        return;
+    }
     let p = &app.palette;
     let styles = file_manager_visual_styles(p);
     let suffix = if entry.is_dir() { "/" } else { "" };
     let icon =
         crate::fm::entry_kind::visual_class(entry.kind, &entry.name).glyph(app.file_icon_profile);
-    let label = truncate_end(
+    let full_label = truncate_end(
         &format!(" {icon} {}{}", entry.display_name(), suffix),
-        row.width as usize,
+        logical_width as usize,
     );
+    let label = display_cell_slice(&full_label, source_x, row.width);
     let style = if cursor_focused {
         styles.cursor
     } else if multi_selected {
@@ -1233,6 +1260,37 @@ fn render_entry_row(
         styles.file
     };
     frame.render_widget(Paragraph::new(label).style(style), row);
+}
+
+fn display_cell_slice(text: &str, source_x: u16, width: u16) -> String {
+    let start = usize::from(source_x);
+    let end = start.saturating_add(usize::from(width));
+    let mut cell = 0usize;
+    let mut visible = String::new();
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        let ch_start = cell;
+        let ch_end = cell.saturating_add(ch_width);
+        cell = ch_end;
+        if ch_width == 0 {
+            if ch_start >= start && ch_start < end {
+                visible.push(ch);
+            }
+            continue;
+        }
+        if ch_end <= start {
+            continue;
+        }
+        if ch_start >= end {
+            break;
+        }
+        if ch_start < start || ch_end > end {
+            visible.push(' ');
+        } else {
+            visible.push(ch);
+        }
+    }
+    visible
 }
 
 fn render_row_action(
@@ -2661,6 +2719,38 @@ mod tests {
             VisualClass::SourceCode.glyph(IconProfile::Ascii),
             "the icon cell must follow the app icon profile"
         );
+    }
+
+    #[test]
+    fn partial_leading_entry_row_renders_visible_label_suffix() {
+        use crate::fm::entry_kind::{FileEntryKind, IconProfile};
+        let mut app = crate::app::state::AppState::test_new();
+        app.file_icon_profile = IconProfile::Ascii;
+        let entry = crate::fm::FileEntry {
+            name: "main.rs".to_string(),
+            path: std::path::PathBuf::from("/x/main.rs"),
+            kind: FileEntryKind::RegularFile,
+        };
+        let backend = TestBackend::new(6, 1);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| {
+                render_entry_row_clipped(
+                    &app,
+                    frame,
+                    Rect::new(0, 0, 6, 1),
+                    20,
+                    4,
+                    &entry,
+                    false,
+                    false,
+                );
+            })
+            .expect("draw clipped entry row");
+        let rendered = (0..6)
+            .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+            .collect::<String>();
+        assert_eq!(rendered, "ain.rs");
     }
 
     // TP-FIP-ICON-08: a narrow column keeps the complete icon glyph and

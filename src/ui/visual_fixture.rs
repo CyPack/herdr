@@ -388,7 +388,7 @@ mod tests {
                 &snaps,
                 &[],
                 crate::ui::file_manager::trail_view::TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
-                requested_first_visible,
+                requested_first_visible as u32,
             );
             assert_eq!(
                 view.first_visible, requested_first_visible,

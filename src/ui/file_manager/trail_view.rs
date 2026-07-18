@@ -12,7 +12,7 @@ use ratatui::layout::Rect;
 use ratatui::widgets::{Block, Borders};
 use ratatui::Frame;
 
-use super::miller::{first_visible_floor, miller_viewport_geometry};
+use super::miller::{miller_auto_follow_offset, miller_viewport_geometry_at_offset};
 use crate::app::state::AppState;
 use crate::fm::miller::{
     MILLER_COLUMN_MAX_WIDTH, MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_PREFERRED_WIDTH,
@@ -32,6 +32,7 @@ pub(crate) struct TrailRowView {
     pub rect: Rect,
     /// Name/icon target left of the operation affordances.
     pub name_rect: Rect,
+    pub name_source_x: u16,
     pub actions: Vec<crate::app::state::FileManagerRowActionArea>,
 }
 
@@ -41,6 +42,8 @@ pub(crate) struct TrailColumnView {
     pub trail_index: usize,
     pub directory: PathBuf,
     pub rect: Rect,
+    pub logical_width: u16,
+    pub source_x: u16,
     /// Entry index of the trail selection inside this column, when visible
     /// in the loaded listing.
     pub selected_entry: Option<usize>,
@@ -77,7 +80,12 @@ pub(crate) struct TrailViewSnapshot {
     /// close/reopen, so input must reject a geometrically valid old frame even
     /// when it names the same directory and path.
     pub files_generation: Option<u32>,
+    pub model_revision: u64,
     pub first_visible: usize,
+    pub offset_cells: u32,
+    pub max_offset_cells: u32,
+    pub scroll_step_left: u32,
+    pub scroll_step_right: u32,
     pub columns: Vec<TrailColumnView>,
     pub dividers: Vec<TrailDividerView>,
     pub detail_panel: Option<TrailDetailPanelView>,
@@ -120,7 +128,7 @@ pub(crate) fn project_trail_view_with_origin(
     snaps: &TrailSnapshots,
     preferred_widths: &[u16],
     detail_preferred_width: u16,
-    requested_first_visible: usize,
+    requested_offset_cells: u32,
 ) -> TrailViewSnapshot {
     project_trail_view_inner(
         stage,
@@ -128,7 +136,7 @@ pub(crate) fn project_trail_view_with_origin(
         snaps,
         preferred_widths,
         detail_preferred_width,
-        Some(requested_first_visible),
+        Some(requested_offset_cells),
     )
 }
 
@@ -138,7 +146,7 @@ fn project_trail_view_inner(
     snaps: &TrailSnapshots,
     preferred_widths: &[u16],
     detail_preferred_width: u16,
-    requested_first_visible: Option<usize>,
+    requested_offset_cells: Option<u32>,
 ) -> TrailViewSnapshot {
     let trail_cols = trail.cols();
     let snap_cols = snaps.cols();
@@ -193,10 +201,9 @@ fn project_trail_view_inner(
     let widths: Vec<u16> = (0..trail_cols.len())
         .map(|index| trail_column_width(preferred_widths, index))
         .collect();
-    let requested_first_visible = requested_first_visible
-        .unwrap_or_else(|| first_visible_floor(stage.width, &widths, trail.deepest()));
-    let geometry =
-        miller_viewport_geometry(stage, &widths, trail.deepest(), requested_first_visible);
+    let requested_offset_cells = requested_offset_cells
+        .unwrap_or_else(|| miller_auto_follow_offset(stage.width, &widths, trail.deepest()));
+    let geometry = miller_viewport_geometry_at_offset(stage, &widths, requested_offset_cells);
 
     let columns = geometry
         .columns
@@ -225,32 +232,47 @@ fn project_trail_view_inner(
                         column.rect.width,
                         1,
                     );
-                    let visible_action_count =
-                        usize::from(rect.width.saturating_sub(1) / super::ROW_ACTION_WIDTH)
-                            .min(crate::app::state::FileManagerRowAction::ALL.len());
-                    let actions_width = visible_action_count as u16 * super::ROW_ACTION_WIDTH;
-                    let name_rect =
-                        Rect::new(rect.x, rect.y, rect.width.saturating_sub(actions_width), 1);
+                    let action_count = usize::from(
+                        column.logical_width.saturating_sub(1) / super::ROW_ACTION_WIDTH,
+                    )
+                    .min(crate::app::state::FileManagerRowAction::ALL.len());
+                    let actions_width = action_count as u16 * super::ROW_ACTION_WIDTH;
+                    let logical_name_width = column.logical_width.saturating_sub(actions_width);
+                    let visible_start = column.source_x;
+                    let visible_end = visible_start.saturating_add(column.rect.width);
+                    let name_visible_start = visible_start.min(logical_name_width);
+                    let name_visible_end = visible_end.min(logical_name_width);
+                    let name_width = name_visible_end.saturating_sub(name_visible_start);
+                    let name_rect = Rect::new(
+                        rect.x
+                            .saturating_add(name_visible_start.saturating_sub(visible_start)),
+                        rect.y,
+                        name_width,
+                        1,
+                    );
                     let actions = crate::app::state::FileManagerRowAction::ALL
                         .iter()
                         .copied()
-                        .take(visible_action_count)
+                        .take(action_count)
                         .enumerate()
-                        .map(
-                            |(action_idx, action)| crate::app::state::FileManagerRowActionArea {
-                                rect: Rect::new(
-                                    name_rect.right().saturating_add(
-                                        action_idx as u16 * super::ROW_ACTION_WIDTH,
+                        .filter_map(|(action_idx, action)| {
+                            let logical_start = logical_name_width
+                                .saturating_add(action_idx as u16 * super::ROW_ACTION_WIDTH);
+                            let logical_end = logical_start.saturating_add(super::ROW_ACTION_WIDTH);
+                            (logical_start >= visible_start && logical_end <= visible_end).then(
+                                || crate::app::state::FileManagerRowActionArea {
+                                    rect: Rect::new(
+                                        rect.x.saturating_add(logical_start - visible_start),
+                                        rect.y,
+                                        super::ROW_ACTION_WIDTH,
+                                        1,
                                     ),
-                                    rect.y,
-                                    super::ROW_ACTION_WIDTH,
-                                    1,
-                                ),
-                                entry_idx: entry_index,
-                                entry_path: entry.path.clone(),
-                                action,
-                            },
-                        )
+                                    entry_idx: entry_index,
+                                    entry_path: entry.path.clone(),
+                                    action,
+                                },
+                            )
+                        })
                         .collect();
                     TrailRowView {
                         trail_index,
@@ -258,6 +280,7 @@ fn project_trail_view_inner(
                         entry_path: entry.path.clone(),
                         rect,
                         name_rect,
+                        name_source_x: name_visible_start,
                         actions,
                     }
                 })
@@ -266,6 +289,8 @@ fn project_trail_view_inner(
                 trail_index,
                 directory: trail_cols[trail_index].directory.clone(),
                 rect: column.rect,
+                logical_width: column.logical_width,
+                source_x: column.source_x,
                 selected_entry,
                 viewport_start,
                 rows,
@@ -284,10 +309,81 @@ fn project_trail_view_inner(
 
     TrailViewSnapshot {
         files_generation: None,
+        model_revision: 0,
         first_visible: geometry.first_visible,
+        offset_cells: geometry.offset_cells,
+        max_offset_cells: geometry.max_offset_cells,
+        scroll_step_left: fractional_scroll_step(&widths, geometry.offset_cells, -1),
+        scroll_step_right: fractional_scroll_step(&widths, geometry.offset_cells, 1),
         columns,
         dividers,
         detail_panel,
+    }
+}
+
+fn fractional_scroll_step(widths: &[u16], offset_cells: u32, delta: i8) -> u32 {
+    if widths.is_empty() {
+        return 1;
+    }
+    let probe = if delta < 0 {
+        offset_cells.saturating_sub(1)
+    } else {
+        offset_cells
+    };
+    let mut logical_x = 0_u32;
+    for (index, width) in widths.iter().copied().enumerate() {
+        let width = trail_column_width(&[width], 0);
+        let column_end = logical_x.saturating_add(u32::from(width));
+        if probe < column_end {
+            return u32::from(width.div_ceil(3).max(1));
+        }
+        logical_x = column_end;
+        if index + 1 < widths.len() {
+            let divider_end = logical_x.saturating_add(1);
+            if probe < divider_end {
+                let reference = if delta < 0 {
+                    width
+                } else {
+                    trail_column_width(widths, index + 1)
+                };
+                return u32::from(reference.div_ceil(3).max(1));
+            }
+            logical_x = divider_end;
+        }
+    }
+    u32::from(
+        trail_column_width(widths, widths.len().saturating_sub(1))
+            .div_ceil(3)
+            .max(1),
+    )
+}
+
+impl TrailViewSnapshot {
+    pub(crate) fn horizontal_scroll_target(
+        &self,
+        file_manager: &crate::fm::FmState,
+        delta: i8,
+    ) -> Option<u32> {
+        if self.files_generation.is_none()
+            || self.model_revision != file_manager.miller.revision
+            || self.columns.is_empty()
+        {
+            return None;
+        }
+        let current = file_manager
+            .miller
+            .horizontal
+            .offset_cells
+            .min(self.max_offset_cells);
+        Some(if delta < 0 {
+            current.saturating_sub(self.scroll_step_left)
+        } else if delta > 0 {
+            current
+                .saturating_add(self.scroll_step_right)
+                .min(self.max_offset_cells)
+        } else {
+            current
+        })
     }
 }
 
@@ -334,7 +430,16 @@ pub(crate) fn render_trail_view(
                 .file_manager
                 .as_ref()
                 .is_some_and(|fm| fm.multi_selection_paths().contains(&entry.path));
-            super::render_entry_row(app, frame, row.name_rect, entry, selected, multi_selected);
+            super::render_entry_row_clipped(
+                app,
+                frame,
+                row.name_rect,
+                column.logical_width,
+                row.name_source_x,
+                entry,
+                selected,
+                multi_selected,
+            );
             for action in &row.actions {
                 super::render_row_action(app, frame, action, selected, multi_selected);
             }

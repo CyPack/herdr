@@ -30,14 +30,14 @@ impl MillerPathSegment {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct MillerHorizontalViewport {
-    pub first_visible: usize,
+    pub offset_cells: u32,
     pub follow_active: bool,
 }
 
 impl Default for MillerHorizontalViewport {
     fn default() -> Self {
         Self {
-            first_visible: 0,
+            offset_cells: 0,
             follow_active: true,
         }
     }
@@ -91,10 +91,7 @@ impl MillerState {
         while self.chain.len() > MAX_MILLER_HISTORY_DEPTH {
             self.chain.pop_front();
         }
-        self.horizontal.first_visible = self
-            .horizontal
-            .first_visible
-            .min(self.chain.len().saturating_sub(1));
+        self.clamp_horizontal_offset_to_content();
         self.horizontal.follow_active = true;
         self.focused_directory = directory;
         self.revision = self.revision.saturating_add(1);
@@ -127,12 +124,20 @@ impl MillerState {
         };
         self.chain = chain;
         self.focused_directory = focused_directory;
-        self.horizontal.first_visible = self
-            .horizontal
-            .first_visible
-            .min(self.chain.len().saturating_sub(1));
+        self.clamp_horizontal_offset_to_content();
         self.horizontal.follow_active = true;
         self.revision = self.revision.saturating_add(1);
+    }
+
+    fn clamp_horizontal_offset_to_content(&mut self) {
+        self.horizontal.offset_cells = self.horizontal.offset_cells.min(self.total_content_width());
+    }
+
+    fn total_content_width(&self) -> u32 {
+        let columns_width = self.chain.iter().fold(0_u32, |width, segment| {
+            width.saturating_add(u32::from(segment.preferred_width))
+        });
+        columns_width.saturating_add(self.chain.len().saturating_sub(1) as u32)
     }
 
     pub(crate) fn preferred_widths_for(
@@ -157,6 +162,7 @@ impl MillerState {
             return false;
         };
         segment.preferred_width = width.clamp(MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_MAX_WIDTH);
+        self.clamp_horizontal_offset_to_content();
         self.revision = self.revision.saturating_add(1);
         true
     }
@@ -213,6 +219,7 @@ impl MillerState {
                 self.preview_preferred_width = trailing_width;
             }
         }
+        self.clamp_horizontal_offset_to_content();
         self.revision = self.revision.saturating_add(1);
         true
     }
@@ -221,7 +228,7 @@ impl MillerState {
     pub(crate) fn assert_miller_invariants_for_test(&self) {
         assert!(!self.chain.is_empty());
         assert!(self.chain.len() <= MAX_MILLER_HISTORY_DEPTH);
-        assert!(self.horizontal.first_visible < self.chain.len());
+        assert!(self.horizontal.offset_cells <= self.total_content_width());
         assert_eq!(
             self.chain.back().map(|segment| &segment.directory),
             Some(&self.focused_directory)

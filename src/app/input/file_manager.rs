@@ -2097,10 +2097,10 @@ mod tests {
                 .as_ref()
                 .map(|file_manager| {
                     format!(
-                        "open cwd={:?} chain={} first={} revision={} mode={:?} resize={}",
+                        "open cwd={:?} chain={} offset={} revision={} mode={:?} resize={}",
                         file_manager.cwd,
                         file_manager.miller.chain.len(),
-                        file_manager.miller.horizontal.first_visible,
+                        file_manager.miller.horizontal.offset_cells,
                         file_manager.miller.revision,
                         app.state.mode,
                         app.state.shell_interaction.miller_resize_active(),
@@ -2168,20 +2168,30 @@ mod tests {
                             };
                             let _ = app.handle_miller_horizontal_scroll(kind, KeyModifiers::NONE);
                         } else if let Some(file_manager) = app.state.file_manager.as_mut() {
-                            let last = file_manager.miller.chain.len().saturating_sub(1);
-                            file_manager.miller.horizontal.first_visible = if random & 1 == 0 {
+                            let columns_width =
+                                file_manager
+                                    .miller
+                                    .chain
+                                    .iter()
+                                    .fold(0_u32, |width, segment| {
+                                        width.saturating_add(u32::from(segment.preferred_width))
+                                    });
+                            let maximum_offset = columns_width.saturating_add(
+                                file_manager.miller.chain.len().saturating_sub(1) as u32,
+                            );
+                            file_manager.miller.horizontal.offset_cells = if random & 1 == 0 {
                                 file_manager
                                     .miller
                                     .horizontal
-                                    .first_visible
+                                    .offset_cells
                                     .saturating_sub(1)
                             } else {
                                 file_manager
                                     .miller
                                     .horizontal
-                                    .first_visible
+                                    .offset_cells
                                     .saturating_add(1)
-                                    .min(last)
+                                    .min(maximum_offset)
                             };
                         }
                     }
@@ -2345,8 +2355,18 @@ mod tests {
                     }
                     12 => {
                         if let Some(file_manager) = app.state.file_manager.as_mut() {
-                            file_manager.miller.horizontal.first_visible =
-                                file_manager.miller.chain.len().saturating_sub(1);
+                            let columns_width =
+                                file_manager
+                                    .miller
+                                    .chain
+                                    .iter()
+                                    .fold(0_u32, |width, segment| {
+                                        width.saturating_add(u32::from(segment.preferred_width))
+                                    });
+                            file_manager.miller.horizontal.offset_cells = columns_width
+                                .saturating_add(
+                                    file_manager.miller.chain.len().saturating_sub(1) as u32
+                                );
                             if file_manager.cwd != root {
                                 file_manager.leave();
                             }
@@ -4819,8 +4839,8 @@ mod tests {
         assert_eq!(after.cursor, before.cursor);
         assert_eq!(after.viewport_start, before.viewport_start);
         assert_eq!(
-            after.miller.horizontal.first_visible,
-            before.miller.horizontal.first_visible
+            after.miller.horizontal.offset_cells,
+            before.miller.horizontal.offset_cells
         );
     }
 
@@ -4859,7 +4879,7 @@ mod tests {
                 .expect("open FM")
                 .miller
                 .horizontal;
-            horizontal.first_visible = 0;
+            horizontal.offset_cells = 0;
             horizontal.follow_active = false;
             compute_view(&mut app.state, frame);
             let stage = app.state.view.terminal_area;
@@ -4905,6 +4925,81 @@ mod tests {
         }
     }
 
+    #[test]
+    fn fractional_scroll_resize_clamps_and_navigation_rearms_auto_follow() {
+        let td = TempDir::new("trail-fractional-lifecycle");
+        let root = td.root.join("root");
+        let mut current = root.clone();
+        for level in 0..7 {
+            current.push(format!("level-{level}"));
+        }
+        fs::create_dir_all(&current).expect("create deep Trail fixture");
+        let mut file_manager =
+            FmState::open_trail_to(&root, &current, false).expect("open deep Trail");
+        for segment in &mut file_manager.miller.chain {
+            segment.preferred_width = 30;
+        }
+        let mut app = runtime_app_with_fm(file_manager);
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+
+        compute_view(&mut app.state, Rect::new(0, 0, 64, 14));
+        let narrow_max = app.state.view.file_manager_trail.max_offset_cells;
+        assert!(narrow_max > 0);
+        {
+            let horizontal = &mut app
+                .state
+                .file_manager
+                .as_mut()
+                .expect("open FM")
+                .miller
+                .horizontal;
+            horizontal.offset_cells = narrow_max;
+            horizontal.follow_active = false;
+        }
+
+        compute_view(&mut app.state, Rect::new(0, 0, 110, 14));
+        let wider_max = app.state.view.file_manager_trail.max_offset_cells;
+        let horizontal = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .miller
+            .horizontal;
+        assert_eq!(horizontal.offset_cells, wider_max);
+        assert!(wider_max <= narrow_max);
+        assert!(
+            !horizontal.follow_active,
+            "resize clamps manual scroll without stealing viewport authority"
+        );
+
+        app.state.file_manager.as_mut().expect("open FM").leave();
+        assert!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .miller
+                .horizontal
+                .follow_active,
+            "Trail navigation rearms active-column auto-follow"
+        );
+        compute_view(&mut app.state, Rect::new(0, 0, 110, 14));
+        let file_manager = app.state.file_manager.as_ref().expect("open FM");
+        let active = file_manager.trail.deepest();
+        assert!(
+            app.state
+                .view
+                .file_manager_trail
+                .columns
+                .iter()
+                .any(|column| column.trail_index == active),
+            "the rearmed projection keeps the active Trail column visible"
+        );
+    }
+
     // TP-TRAIL-HSCROLL-01: the canonical Circet Miller viewport auto-follows
     // the active end when a deep Trail opens, then lets the user scroll back
     // to still-live ancestor columns. The chosen origin must survive the next
@@ -4932,11 +5027,12 @@ mod tests {
         let frame = Rect::new(0, 0, 70, 14);
         compute_view(&mut app.state, frame);
 
-        let initial_origin = app.state.view.file_manager_trail.first_visible;
+        let initial_offset = app.state.view.file_manager_trail.offset_cells;
         assert!(
-            initial_origin > 0,
+            initial_offset > 0,
             "a deep Trail must initially auto-follow its active end"
         );
+        let step_left = app.state.view.file_manager_trail.scroll_step_left;
         let center = app.state.view.terminal_area;
         let probe = (center.x.saturating_add(1), center.y.saturating_add(2));
 
@@ -4949,7 +5045,7 @@ mod tests {
             )),
             FileManagerMouseDispatch::Consumed
         );
-        let expected_origin = initial_origin - 1;
+        let expected_offset = initial_offset.saturating_sub(step_left);
         assert_eq!(
             app.state
                 .file_manager
@@ -4957,24 +5053,15 @@ mod tests {
                 .expect("open FM")
                 .miller
                 .horizontal
-                .first_visible,
-            expected_origin,
-            "Shift+wheel left exposes the preceding live ancestor column"
+                .offset_cells,
+            expected_offset,
+            "Shift+wheel left exposes a fractional slice of the preceding live ancestor"
         );
 
         compute_view(&mut app.state, frame);
         assert_eq!(
-            app.state.view.file_manager_trail.first_visible, expected_origin,
-            "the Trail renderer must preserve the user-selected horizontal origin"
-        );
-        assert_eq!(
-            app.state
-                .view
-                .file_manager_trail
-                .columns
-                .first()
-                .map(|column| column.trail_index),
-            Some(expected_origin)
+            app.state.view.file_manager_trail.offset_cells, expected_offset,
+            "the Trail renderer must preserve the user-selected cell offset"
         );
         assert_eq!(
             app.state.file_manager.as_ref().expect("open FM").trail,
@@ -5009,7 +5096,14 @@ mod tests {
         compute_view(&mut app.state, frame);
 
         let before = app.state.file_manager.as_ref().expect("open FM").clone();
-        let first_visible = app.state.view.file_manager_miller.first_visible;
+        let initial_offset = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .miller
+            .horizontal
+            .offset_cells;
         let probe = app
             .state
             .view
@@ -5031,8 +5125,8 @@ mod tests {
                 .expect("open FM")
                 .miller
                 .horizontal
-                .first_visible,
-            first_visible,
+                .offset_cells,
+            initial_offset,
             "a one-column Trail has no hidden horizontal origin"
         );
         compute_view(&mut app.state, frame);
@@ -5068,8 +5162,8 @@ mod tests {
                 .expect("open FM")
                 .miller
                 .horizontal
-                .first_visible,
-            first_visible,
+                .offset_cells,
+            initial_offset,
             "Shift+ScrollUp maps to horizontal left"
         );
         compute_view(&mut app.state, frame);
@@ -5087,8 +5181,8 @@ mod tests {
                 .expect("open FM")
                 .miller
                 .horizontal
-                .first_visible,
-            first_visible,
+                .offset_cells,
+            initial_offset,
             "Shift+ScrollDown remains bounded for one Trail column"
         );
         app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollLeft, probe.0, probe.1));
@@ -5099,8 +5193,8 @@ mod tests {
                 .expect("open FM")
                 .miller
                 .horizontal
-                .first_visible,
-            first_visible,
+                .offset_cells,
+            initial_offset,
             "native ScrollLeft returns to the bounded origin"
         );
 
@@ -5114,20 +5208,15 @@ mod tests {
                 .expect("open FM")
                 .miller
                 .horizontal
-                .first_visible,
-            first_visible,
+                .offset_cells,
+            initial_offset,
             "left input clamps at the fullest focused window"
         );
 
         for _ in 0..64 {
             app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollRight, probe.0, probe.1));
         }
-        let focused_chain_index = app
-            .state
-            .view
-            .file_manager_miller
-            .focused_chain_index
-            .expect("focused chain identity");
+        let maximum_offset = app.state.view.file_manager_trail.max_offset_cells;
         assert_eq!(
             app.state
                 .file_manager
@@ -5135,9 +5224,9 @@ mod tests {
                 .expect("open FM")
                 .miller
                 .horizontal
-                .first_visible,
-            focused_chain_index,
-            "right input clamps before it can hide current"
+                .offset_cells,
+            maximum_offset,
+            "right input clamps at the final content cell"
         );
         compute_view(&mut app.state, frame);
         assert!(
@@ -5199,19 +5288,19 @@ mod tests {
 
         let center = app.state.view.terminal_area;
         let probe = (center.x, center.y.saturating_add(2));
-        let first_visible = app
+        let initial_offset = app
             .state
             .file_manager
             .as_ref()
             .expect("open FM")
             .miller
             .horizontal
-            .first_visible;
+            .offset_cells;
 
-        app.state.view.file_manager_miller.model_revision = app
+        app.state.view.file_manager_trail.model_revision = app
             .state
             .view
-            .file_manager_miller
+            .file_manager_trail
             .model_revision
             .saturating_add(1);
         assert_eq!(
@@ -5225,16 +5314,16 @@ mod tests {
                 .expect("open FM")
                 .miller
                 .horizontal
-                .first_visible,
-            first_visible,
+                .offset_cells,
+            initial_offset,
             "stale structural revision cannot move the window"
         );
 
         compute_view(&mut app.state, Rect::new(0, 0, 144, 18));
-        app.state.view.file_manager_miller.files_generation = app
+        app.state.view.file_manager_trail.files_generation = app
             .state
             .view
-            .file_manager_miller
+            .file_manager_trail
             .files_generation
             .map(|generation| generation.saturating_add(1));
         app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollRight, probe.0, probe.1));
@@ -5245,8 +5334,8 @@ mod tests {
                 .expect("open FM")
                 .miller
                 .horizontal
-                .first_visible,
-            first_visible,
+                .offset_cells,
+            initial_offset,
             "wrong Files generation cannot move the window"
         );
 
@@ -5275,8 +5364,8 @@ mod tests {
                 .expect("open FM")
                 .miller
                 .horizontal
-                .first_visible,
-            first_visible
+                .offset_cells,
+            initial_offset
         );
 
         assert_eq!(
@@ -5291,8 +5380,8 @@ mod tests {
                 .expect("open FM")
                 .miller
                 .horizontal
-                .first_visible,
-            first_visible,
+                .offset_cells,
+            initial_offset,
             "control: a fresh one-column Trail remains bounded"
         );
     }
