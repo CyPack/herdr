@@ -51,13 +51,21 @@ impl TrailState {
 
     /// Move focus one column toward the root. Returns false at the root.
     pub(crate) fn move_active_left(&mut self) -> bool {
-        false
+        if self.active_col == 0 {
+            return false;
+        }
+        self.active_col -= 1;
+        true
     }
 
     /// Move focus one column deeper. Returns false when no deeper column
     /// exists.
     pub(crate) fn move_active_right(&mut self) -> bool {
-        false
+        if self.active_col >= self.deepest() {
+            return false;
+        }
+        self.active_col += 1;
+        true
     }
 
     pub(crate) fn cols(&self) -> &[TrailCol] {
@@ -83,6 +91,8 @@ impl TrailState {
         if self.cols.len() > MAX_TRAIL_DEPTH {
             self.cols.remove(0);
         }
+        // A folder select focuses the NEW column (LAW 2).
+        self.active_col = self.deepest();
         true
     }
 
@@ -93,13 +103,15 @@ impl TrailState {
     }
 
     /// Shared truncate-and-mark step: cut every column deeper than
-    /// `col_idx`, then record the exact selected child path.
+    /// `col_idx`, then record the exact selected child path. Focus follows
+    /// the selection and truncation can never leave it dangling.
     fn mark_selection(&mut self, col_idx: usize, child: &Path) -> bool {
         if col_idx >= self.cols.len() {
             return false;
         }
         self.cols.truncate(col_idx + 1);
         self.cols[col_idx].selected = Some(child.to_path_buf());
+        self.active_col = col_idx;
         true
     }
 }

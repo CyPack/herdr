@@ -134,8 +134,32 @@ impl TrailSnapshots {
         entry_index: usize,
         expected_path: &Path,
     ) -> TrailActivateOutcome {
-        let _ = (trail, col_idx, entry_index, expected_path);
-        TrailActivateOutcome::Rejected
+        let Some(entry) = self
+            .cols
+            .get(col_idx)
+            .and_then(|col| col.snapshot.entries.get(entry_index))
+        else {
+            return TrailActivateOutcome::Rejected;
+        };
+        if entry.path != expected_path {
+            return TrailActivateOutcome::Rejected;
+        }
+        if entry.kind.is_directory_target() {
+            let target = entry.path.clone();
+            if self.select_dir(trail, col_idx, &target) == FmDirectoryStatus::Available {
+                TrailActivateOutcome::Branched
+            } else {
+                TrailActivateOutcome::Rejected
+            }
+        } else {
+            let target = entry.path.clone();
+            if trail.select_file(col_idx, &target) {
+                self.sync(trail);
+                TrailActivateOutcome::SelectedFile
+            } else {
+                TrailActivateOutcome::Rejected
+            }
+        }
     }
 
     /// Keyboard selection move inside the ACTIVE column: step the selection
@@ -146,8 +170,28 @@ impl TrailSnapshots {
         trail: &mut TrailState,
         delta: isize,
     ) -> TrailActivateOutcome {
-        let _ = (trail, delta);
-        TrailActivateOutcome::Rejected
+        let col_idx = trail.active_col();
+        let Some(col) = self.cols.get(col_idx) else {
+            return TrailActivateOutcome::Rejected;
+        };
+        let entries = &col.snapshot.entries;
+        if entries.is_empty() {
+            return TrailActivateOutcome::Rejected;
+        }
+        let current = trail.cols()[col_idx]
+            .selected
+            .as_deref()
+            .and_then(|selected| entries.iter().position(|entry| entry.path == selected));
+        let landed = match current {
+            Some(index) => index
+                .saturating_add_signed(delta)
+                .min(entries.len().saturating_sub(1)),
+            // No selection yet: the first step lands on the edge row.
+            None if delta >= 0 => 0,
+            None => entries.len() - 1,
+        };
+        let expected = entries[landed].path.clone();
+        self.activate_entry(trail, col_idx, landed, &expected)
     }
 
     /// Re-read one column from disk (watcher refresh path). Selection lives

@@ -161,8 +161,11 @@ pub(crate) fn project_trail_view(
 /// rects ARE the hit areas — input never recomputes geometry. Positions on
 /// dividers, empty column space, or outside the projection resolve to None.
 pub(crate) fn trail_row_at(view: &TrailViewSnapshot, x: u16, y: u16) -> Option<&TrailRowView> {
-    let _ = (view, x, y);
-    None
+    let position = ratatui::layout::Position::new(x, y);
+    view.columns
+        .iter()
+        .flat_map(|column| column.rows.iter())
+        .find(|row| row.rect.contains(position))
 }
 
 /// Paint the projected trail: rows via the shared entry-row renderer (icons,
