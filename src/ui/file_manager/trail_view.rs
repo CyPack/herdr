@@ -521,6 +521,11 @@ fn render_trail_detail_panel(
                 lines.push(Line::from("(image preview)"));
             }
         }
+        crate::fm::trail_snapshots::TrailDetailPreview::MetadataOnly(reason) => {
+            lines.push(Line::from(format!("kind: {:?}", detail.kind)));
+            lines.push(Line::from(""));
+            lines.push(Line::from(format!("(metadata only: {reason})")));
+        }
         crate::fm::trail_snapshots::TrailDetailPreview::Unpreviewable(reason) => {
             lines.push(Line::from(format!("kind: {:?}", detail.kind)));
             lines.push(Line::from(""));
@@ -1062,6 +1067,39 @@ mod tests {
             body.contains("hello trail"),
             "panel body shows the prepared text content"
         );
+    }
+
+    #[test]
+    fn panel_render_shows_explicit_metadata_only_reason() {
+        let td = TempDir::new("panel-metadata");
+        fs::write(td.root.join("manual.pdf"), b"%PDF fixture").expect("file");
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        let document = td.root.join("manual.pdf");
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 0, 0, &document),
+            crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
+        );
+
+        let stage = Rect::new(0, 0, 180, 12);
+        let view = project_trail_view_with_origin(stage, &trail, &snaps, &[], 64, 0);
+        let panel = view.detail_panel.clone().expect("panel is open");
+        let app = crate::app::state::AppState::test_new();
+        let backend = TestBackend::new(180, 12);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| render_trail_view(&app, frame, &view, &snaps))
+            .expect("render trail");
+        let buffer = terminal.backend().buffer();
+        let body = (panel.content_rect.y..panel.content_rect.bottom())
+            .flat_map(|y| {
+                (panel.content_rect.x..panel.content_rect.right())
+                    .map(move |x| buffer[(x, y)].symbol())
+            })
+            .collect::<String>();
+        assert!(body.contains("metadata only"));
+        assert!(body.contains("optional viewer"));
     }
 
     // Bounded sanity: even an over-deep trail projects only complete

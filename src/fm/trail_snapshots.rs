@@ -15,6 +15,9 @@ use super::{
     FmPreview,
 };
 use crate::fm::entry_kind::FileEntryKind;
+use crate::fm::preview_capability::{
+    preview_capability, PreviewCapability, PreviewFallback, PreviewProviderSet,
+};
 use crate::fm::TextPreview;
 
 /// Prepared detail-panel content for the selected FILE (contract LAW 3):
@@ -35,6 +38,7 @@ pub(crate) enum TrailDetailPreview {
     /// A recognized image; pixel delivery is the Kitty-graphics track
     /// (FIP-D4) and completes at integration.
     Image,
+    MetadataOnly(String),
     Unpreviewable(String),
 }
 
@@ -475,21 +479,36 @@ impl TrailSnapshots {
 /// image paths take the image track (Kitty delivery is FIP-D4), everything
 /// else is a bounded text preview or an EXPLICIT unpreviewable reason.
 fn prepare_trail_detail(path: &Path, kind: FileEntryKind) -> TrailDetail {
-    let preview = if super::is_image_preview_path(path) {
-        TrailDetailPreview::Image
-    } else {
-        match super::text_preview::read_text_preview(
-            path,
-            super::text_preview::TextPreviewLimits::default(),
-        ) {
-            Ok(preview) => TrailDetailPreview::Text(preview),
-            Err(error) => TrailDetailPreview::Unpreviewable(error.to_string()),
+    let preview = match preview_capability(path, kind, &PreviewProviderSet::default()) {
+        PreviewCapability::NativeImage => TrailDetailPreview::Image,
+        PreviewCapability::NativeText => prepare_native_text_detail(path),
+        PreviewCapability::MetadataOnly { reason } => {
+            TrailDetailPreview::MetadataOnly(reason.label().to_owned())
+        }
+        PreviewCapability::OptionalPlugin { fallback, .. } => match fallback {
+            PreviewFallback::NativeText => prepare_native_text_detail(path),
+            PreviewFallback::MetadataOnly(reason) => {
+                TrailDetailPreview::MetadataOnly(reason.label().to_owned())
+            }
+        },
+        PreviewCapability::Unsupported { reason } => {
+            TrailDetailPreview::Unpreviewable(reason.label().to_owned())
         }
     };
     TrailDetail {
         path: path.to_path_buf(),
         kind,
         preview,
+    }
+}
+
+fn prepare_native_text_detail(path: &Path) -> TrailDetailPreview {
+    match super::text_preview::read_text_preview(
+        path,
+        super::text_preview::TextPreviewLimits::default(),
+    ) {
+        Ok(preview) => TrailDetailPreview::Text(preview),
+        Err(error) => TrailDetailPreview::Unpreviewable(error.to_string()),
     }
 }
 
@@ -878,13 +897,37 @@ mod tests {
         );
     }
 
-    // LAW 3 honesty: a file that cannot be previewed carries an EXPLICIT
-    // reason — the panel never renders a silent blank.
+    // Binary types are classified before any text read, so native detail does
+    // not misrepresent them as corrupt text.
     #[test]
-    fn unreadable_file_detail_is_explicit() {
+    fn binary_file_detail_is_metadata_only() {
         let td = TempDir::new("detail-bad");
         let blob = td.root.join("blob.bin");
         fs::write(&blob, [0u8, 159, 146, 150]).expect("binary file");
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 0, 0, &blob),
+            TrailActivateOutcome::SelectedFile
+        );
+        let detail = snaps.detail().expect("selection still prepares a detail");
+        match &detail.preview {
+            TrailDetailPreview::MetadataOnly(reason) => {
+                assert_eq!(reason, "binary file");
+            }
+            other => panic!("expected explicit binary metadata, got {other:?}"),
+        }
+    }
+
+    // LAW 3 honesty: an unknown text-like file that fails bounded UTF-8
+    // preparation still carries an EXPLICIT reason.
+    #[test]
+    fn unreadable_text_file_detail_is_explicit() {
+        let td = TempDir::new("detail-invalid-text");
+        let blob = td.root.join("blob.dat");
+        fs::write(&blob, [159, 146, 150]).expect("invalid UTF-8 file");
         let mut trail = TrailState::new(&td.root);
         let mut snaps = TrailSnapshots::new(false);
         snaps.sync(&trail);

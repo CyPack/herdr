@@ -26,6 +26,21 @@ pub(crate) enum PreviewReason {
     UnsafePath,
 }
 
+impl PreviewReason {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::DirectoryUsesTrail => "directory contents are shown in the trail",
+            Self::DocumentMetadata => "document preview requires an optional viewer",
+            Self::ArchiveMetadata => "archive preview requires an optional viewer",
+            Self::MediaMetadata => "media preview requires an optional viewer",
+            Self::BinaryMetadata => "binary file",
+            Self::BrokenSymlink => "broken symlink",
+            Self::SpecialFile => "special file",
+            Self::UnsafePath => "path cannot be previewed safely",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PreviewCapability {
     NativeText,
@@ -58,13 +73,125 @@ pub(crate) struct PreviewProviderSet {
 
 pub(crate) fn preview_capability(
     path: &Path,
-    _kind: FileEntryKind,
-    _providers: &PreviewProviderSet,
+    kind: FileEntryKind,
+    providers: &PreviewProviderSet,
 ) -> PreviewCapability {
+    if matches!(
+        kind,
+        FileEntryKind::Directory | FileEntryKind::SymlinkDirectory
+    ) {
+        return PreviewCapability::Unsupported {
+            reason: PreviewReason::DirectoryUsesTrail,
+        };
+    }
+    if kind == FileEntryKind::BrokenSymlink {
+        return PreviewCapability::Unsupported {
+            reason: PreviewReason::BrokenSymlink,
+        };
+    }
+    if kind == FileEntryKind::UnsupportedSpecial {
+        return PreviewCapability::Unsupported {
+            reason: PreviewReason::SpecialFile,
+        };
+    }
+
+    let Some(path_text) = path.as_os_str().to_str() else {
+        return PreviewCapability::Unsupported {
+            reason: PreviewReason::UnsafePath,
+        };
+    };
+    if path_text.chars().any(char::is_control) {
+        return PreviewCapability::Unsupported {
+            reason: PreviewReason::UnsafePath,
+        };
+    }
+
     if super::is_image_preview_path(path) {
-        PreviewCapability::NativeImage
-    } else {
-        PreviewCapability::NativeText
+        return PreviewCapability::NativeImage;
+    }
+
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(path_text)
+        .to_ascii_lowercase();
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+
+    if matches_extension(extension.as_deref(), &["md", "markdown", "mdown"]) {
+        return plugin_or_fallback(providers.markdown.as_ref(), PreviewFallback::NativeText);
+    }
+    if matches_extension(
+        extension.as_deref(),
+        &[
+            "pdf", "doc", "docx", "odt", "rtf", "xls", "xlsx", "ods", "ppt", "pptx", "odp",
+        ],
+    ) {
+        return plugin_or_fallback(
+            providers.documents.as_ref(),
+            PreviewFallback::MetadataOnly(PreviewReason::DocumentMetadata),
+        );
+    }
+    if name.ends_with(".tar.gz")
+        || name.ends_with(".tar.bz2")
+        || name.ends_with(".tar.xz")
+        || matches_extension(
+            extension.as_deref(),
+            &["zip", "tar", "gz", "bz2", "xz", "7z", "rar", "zst"],
+        )
+    {
+        return plugin_or_fallback(
+            providers.archives.as_ref(),
+            PreviewFallback::MetadataOnly(PreviewReason::ArchiveMetadata),
+        );
+    }
+    if matches_extension(
+        extension.as_deref(),
+        &[
+            "mp3", "flac", "wav", "ogg", "m4a", "aac", "mp4", "mkv", "mov", "avi", "webm", "mpeg",
+            "mpg",
+        ],
+    ) {
+        return plugin_or_fallback(
+            providers.media.as_ref(),
+            PreviewFallback::MetadataOnly(PreviewReason::MediaMetadata),
+        );
+    }
+    if matches_extension(
+        extension.as_deref(),
+        &[
+            "bin", "exe", "dll", "so", "dylib", "class", "wasm", "o", "a", "pyc",
+        ],
+    ) {
+        return PreviewCapability::MetadataOnly {
+            reason: PreviewReason::BinaryMetadata,
+        };
+    }
+
+    PreviewCapability::NativeText
+}
+
+fn matches_extension(extension: Option<&str>, candidates: &[&str]) -> bool {
+    extension.is_some_and(|extension| candidates.contains(&extension))
+}
+
+fn plugin_or_fallback(
+    provider: Option<&PreviewPluginProvider>,
+    fallback: PreviewFallback,
+) -> PreviewCapability {
+    if let Some(provider) = provider
+        .filter(|provider| provider.platform_supported && !provider.action_id.trim().is_empty())
+    {
+        return PreviewCapability::OptionalPlugin {
+            action_id: provider.action_id.clone(),
+            fallback,
+        };
+    }
+    match fallback {
+        PreviewFallback::NativeText => PreviewCapability::NativeText,
+        PreviewFallback::MetadataOnly(reason) => PreviewCapability::MetadataOnly { reason },
     }
 }
 
@@ -253,7 +380,7 @@ mod tests {
         use std::ffi::OsStr;
         use std::os::unix::ffi::OsStrExt;
 
-        let path = Path::new(OsStr::from_bytes(b"bad-\\xff.txt"));
+        let path = Path::new(OsStr::from_bytes(b"bad-\xff.txt"));
         assert_eq!(
             preview_capability(
                 path,
