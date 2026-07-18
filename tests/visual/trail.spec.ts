@@ -82,3 +82,18 @@ test("vis-10 trail deep link matches approved snapshot", async ({ page }) => {
     "vis-10-trail-deep-link.png",
   );
 });
+
+// VIS-13 (FMR-1): filtered entries are explicit without replacing the
+// actionable rows in the same Trail column.
+test("vis-13 trail directory omissions match approved snapshot", async ({
+  page,
+}) => {
+  await page.goto(`file://${harness}`);
+  await page.evaluate(
+    (f) => (window as any).renderFixture(f),
+    loadGenerated("vis-13-trail-directory-omissions"),
+  );
+  await expect(page.locator("#grid")).toHaveScreenshot(
+    "vis-13-trail-directory-omissions.png",
+  );
+});

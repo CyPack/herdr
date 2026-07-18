@@ -519,6 +519,23 @@ mod tests {
                 &render_trail(&deep_trail, &deep_snaps, 120, 40),
             ),
         );
+
+        // VIS-13 (FMR-1): a mixed directory keeps its actionable file row
+        // while a separate non-actionable status row explains hidden items.
+        let omission_root = trail_base.join("omissions");
+        std::fs::create_dir_all(&omission_root).expect("omission fixture dir");
+        std::fs::write(omission_root.join("visible.txt"), b"x").expect("visible fixture");
+        std::fs::write(omission_root.join(".secret"), b"x").expect("hidden fixture");
+        let omission_trail = crate::fm::trail::TrailState::new(&omission_root);
+        let mut omission_snaps = crate::fm::trail_snapshots::TrailSnapshots::new(false);
+        omission_snaps.sync(&omission_trail);
+        write_fixture(
+            &out_dir,
+            export_cell_fixture(
+                "vis-13-trail-directory-omissions",
+                &render_trail(&omission_trail, &omission_snaps, 80, 20),
+            ),
+        );
         let _ = std::fs::remove_dir_all(&trail_base);
     }
 
