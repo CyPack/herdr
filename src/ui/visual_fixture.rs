@@ -193,6 +193,58 @@ mod tests {
             export_cell_fixture("vis-02-resident-focus", &render_state(&app, 160, 40)),
         );
         let _ = std::fs::remove_dir_all(&base);
+
+        // TP-FIP-VIS-03/04: a mixed-kind directory rendered with the
+        // deterministic ASCII icon profile (Nerd private-use glyphs render
+        // empty in the browser font). Same base/inner isolation pattern.
+        let icon_base = std::path::PathBuf::from("/tmp/herdr-vis03-root");
+        let _ = std::fs::remove_dir_all(&icon_base);
+        let icon_root = icon_base.join("inner");
+        std::fs::create_dir_all(icon_root.join("alpha")).expect("fixture dir");
+        for file in [
+            "main.rs",
+            "config.toml",
+            "notes.md",
+            "photo.png",
+            "pack.zip",
+        ] {
+            std::fs::write(icon_root.join(file), b"x").expect("fixture file");
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(icon_root.join("alpha"), icon_root.join("link-dir"))
+                .expect("link-dir");
+            std::os::unix::fs::symlink(icon_root.join("main.rs"), icon_root.join("link-file"))
+                .expect("link-file");
+            std::os::unix::fs::symlink(icon_root.join("missing"), icon_root.join("broken"))
+                .expect("broken");
+            let status = std::process::Command::new("mkfifo")
+                .arg(icon_root.join("fifo"))
+                .status()
+                .expect("mkfifo runs");
+            assert!(status.success(), "fifo fixture must exist");
+        }
+
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![crate::workspace::Workspace::test_new("vis")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = crate::app::state::Mode::Terminal;
+        app.mobile_width_threshold = 0;
+        app.file_icon_profile = crate::fm::entry_kind::IconProfile::Ascii;
+        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(icon_root.clone())))
+            .expect("files stage must open for the icon fixture");
+        crate::ui::compute_view(&mut app, Rect::new(0, 0, 120, 40));
+        write_fixture(
+            &out_dir,
+            export_cell_fixture("vis-03-icons-ascii", &render_state(&app, 120, 40)),
+        );
+        crate::ui::compute_view(&mut app, Rect::new(0, 0, 60, 16));
+        write_fixture(
+            &out_dir,
+            export_cell_fixture("vis-04-icons-tiny", &render_state(&app, 60, 16)),
+        );
+        let _ = std::fs::remove_dir_all(&icon_base);
     }
 
     #[test]
