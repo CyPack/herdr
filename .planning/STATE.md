@@ -2,6 +2,19 @@
 
 - Updated: 2026-07-18
 - Branch: `feat/native-fm`
+- Current override: **FMR investigation active.** The reboot regression is
+  partly explained by executable drift: `/home/ayaz/.local/bin/herdr` is a
+  2026-07-12 build while `target/debug/herdr` is the 2026-07-18 build carrying
+  T7.7-T7.9. Both have live processes; neither was touched. Git HEAD and both
+  CyPack refs remain `6a972703`, so fixes were not stored in `/tmp`.
+  Four scroll checkpoints are preserved at
+  `.codex/evidence/miller-scroll-version-lab/` for later common-matrix
+  ranking. The active product question is invisible directory classification,
+  followed by the missing full sidebar click→scheduled consumer→loaded Trail
+  test. Preview/render and plugin integration follows only after navigation
+  truth is green. Research:
+  `.codex/evidence/files-visibility-preview-plugin-research.md`; plan:
+  `docs/superpowers/plans/2026-07-18-herdr-files-visibility-preview-plugin-integration.md`.
 - Current override: **Miller Trail T1-T7 closed** at `e8abc7b0` RED /
   `3c36f104` GREEN. Trail is the single production state/render/input/watcher/
   image authority; legacy parent/current/resident projection and transitional

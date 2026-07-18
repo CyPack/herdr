@@ -10,6 +10,79 @@ FIP-G.1/FIP-G.2 are closed; the approved code-level plan is
 (commit `dd81ef59`). The next executable task is **FIP-0.1** (baseline freeze),
 then the plan's Tasks 2-29 in order.
 
+### FMR — Files Visibility, Preview/Render, Plugin and Mouse Reliability
+
+Activated by the user's 2026-07-18 field report. Research:
+`.codex/evidence/files-visibility-preview-plugin-research.md`. Plan:
+`docs/superpowers/plans/2026-07-18-herdr-files-visibility-preview-plugin-integration.md`.
+The active focus is FMR-1. Product code remains unchanged until its exact
+directory class and executable identity produce a behavior-specific RED.
+
+- [ ] **FMR-0 Scroll version lab and ranking.** Four reboot-safe source
+  checkpoints are collected side by side under
+  `.codex/evidence/miller-scroll-version-lab/`.
+  - [x] Extract Trail baseline, horizontal viewport, fractional 1/3, and
+    plain-wheel fallback closure commits with the same eight owned source
+    files.
+  - [x] Record immutable commit/parent identities and pairwise diff commands.
+  - [ ] Run the same isolated mouse, resize, rebranch, stale-authority,
+    Chromium, complexity, and rollback matrix across all four versions.
+  - [ ] Rank from raw evidence and select/reject a production candidate;
+    recency alone cannot win.
+- [ ] **FMR-1 Invisible directory investigation and analysis — ACTIVE.**
+  - [x] Graph the exact row → Trail activation → directory snapshot → pure
+    projection/render chain.
+  - [x] Prove current silent classes: hidden-only filtering, per-entry
+    `flatten()` loss, non-UTF-8 omission, directory-level read failure, and
+    full-view fail-closed snapshot misalignment.
+  - [x] Prove reboot did not lose commits: normal installed binary is dated
+    2026-07-12 while current debug binary is dated 2026-07-18.
+  - [ ] Add table-driven REDs for genuine empty, hidden-only, partial entry
+    failure, non-UTF-8, permission, symlink-directory, stale alignment, and
+    fifth-to-sixth-column activation.
+  - [ ] Implement only the confirmed root fix and explicit prepared status;
+    no depth-limit or generic refresh patch without evidence.
+- [ ] **FMR-2 Files sidebar shortcut mouse regression.**
+  - [x] Map compute geometry → exact model-revalidated path hit → one-shot
+    request → scheduled consumer → `open_trail_to`.
+  - [x] Identify the coverage gap: mouse test stops at request; consumer test
+    injects request manually.
+  - [ ] Add one end-to-end primary-click → scheduled-task → loaded Trail RED
+    with generation, stale, collapsed, overlay, modifier, inaccessible, Home,
+    Downloads/pin, and symlink-directory cases.
+  - [ ] If current source is green, classify the live defect as executable
+    drift and do not invent a mouse code change.
+- [ ] **FMR-3 File type preview and render capability matrix.**
+  - [x] Inventory current native `Image` / bounded `Text` /
+    `Unpreviewable(reason)` behavior.
+  - [ ] Define pure native text/image, metadata-only, optional-plugin, and
+    unsupported capabilities for Markdown, PDF, office, archive, audio,
+    video, binary, broken/special, oversized, control, and non-UTF-8 cases.
+  - [ ] Preserve generation cancellation, bounded work, escape sanitization,
+    pure render, explicit fallback, and zero navigation/runtime mutation.
+  - [ ] Verify Rust semantics plus Playwright Chromium fixtures.
+- [ ] **FMR-4 Reference projects and plugin research.**
+  - [x] Inspect `edmundmiller/herdr-plugin-hunk`: context/pane workflow
+    reference, not a native Files preview provider; one commit, no release,
+    no detected license.
+  - [x] Inspect `herdr-file-viewer`, `herdr-quicklook`, `herdr-reviewr`,
+    `herdr-markdown-viewer`, official plugin examples, and the topic-based
+    marketplace.
+  - [x] Record broader Yazi, Superfile, Broot, Chafa, and canonical Circet
+    Miller references.
+  - [ ] Re-verify exact versions/licenses/security boundaries immediately
+    before adopting any code or runtime dependency.
+- [ ] **FMR-5 Integration architecture and delivery.**
+  - [x] Select hybrid boundary: native core owns directory/path/Trail/mouse
+    truth and lightweight bounded preview; optional plugins own heavyweight
+    expert panes.
+  - [ ] Execute dependency order P0 provenance → P1 visibility → P2 status →
+    P3 sidebar mouse → P4 capability matrix → P5 plugin adapter → P6 gates →
+    P7 ranking.
+  - [ ] Keep RED/GREEN commits atomic, run full Rust/Linux/Windows/
+    Playwright/Bun/Python gates, reindex graph, update continuity, and publish
+    only fast-forward CyPack refs.
+
 ### TRAIL — Miller Trail Programı (kanonik UX kontratı, 2026-07-18)
 
 Girdi yasası: `docs/superpowers/specs/2026-07-18-herdr-miller-trail-ux-contract.md`.

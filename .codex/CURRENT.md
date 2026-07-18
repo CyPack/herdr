@@ -1,5 +1,31 @@
 # Current State — 2026-07-17
 
+> **CURRENT OVERRIDE — FMR INVESTIGATION ACTIVE (2026-07-18).** The user
+> reported invisible directory contents and inert Files-sidebar shortcuts,
+> requested a file preview/render and plugin-reference program, and asked that
+> recent scroll implementations be preserved side by side for later ranking.
+> Four immutable source checkpoints now live under
+> `.codex/evidence/miller-scroll-version-lab/`; ranking is deliberately open
+> until one common isolated/Chromium matrix runs across all four. Fresh graph
+> evidence is 21,304 nodes / 98,123 edges and resolves the current T7.9
+> fallback plus directory/sidebar/preview seams. Runtime provenance found the
+> installed `/home/ayaz/.local/bin/herdr` dated 2026-07-12 and the current
+> `target/debug/herdr` dated 2026-07-18 both running: reboot did not lose Git
+> commits, but normal `herdr` starts the older installed behavior. Source
+> analysis also found that hidden-only entries, per-entry iterator failures,
+> non-UTF-8 names, directory-level read failures, and Trail/snapshot
+> misalignment currently have distinct causes but can project as empty/inert.
+> The exact root class must produce a table-driven RED before product code
+> changes. Sidebar coverage currently splits mouse request creation from a
+> manually invoked consumer; FMR-2 closes that end-to-end seam. Research and
+> the approved dependency plan are
+> `.codex/evidence/files-visibility-preview-plugin-research.md` and
+> `docs/superpowers/plans/2026-07-18-herdr-files-visibility-preview-plugin-integration.md`.
+> Hunk is a pane/diff workflow reference, not a native preview provider;
+> heavyweight preview integration remains optional/plugin-owned while native
+> Files retains path, Trail, mouse, status, and lightweight preview authority.
+> No process/socket or product Rust code was mutated during this investigation.
+
 > **CURRENT OVERRIDE — MILLER TRAIL T1-T7 CLOSED (2026-07-18).** T7.6 is
 > closed at `e8abc7b0` RED / `3c36f104` GREEN. Production Files now has one
 > root-to-active Trail state/render/input/watcher/image authority; the legacy
