@@ -33,6 +33,18 @@
 > clean. Single-worker graph is ready at 21,296 nodes / 98,085 edges and
 > returns current offset geometry/input bodies. CyPack `feat/native-fm` and
 > `master` both equal `26da243712f5f79c3eda49cd07a88892f775246d`.
+> TRAIL-T7.9 plain-wheel live-terminal fallback is CLOSED locally through
+> `a63e39e7` plan / `1ca992c6` RED / `051f2829` GREEN. The isolated debug log
+> proved 318 modifierless `ScrollUp`/`ScrollDown` events and zero native
+> horizontal or Shift-wheel events. Plain wheel over a live visible row still
+> owns vertical selection; the same event over empty live Trail column body
+> now reaches the existing one-third horizontal reducer. Detail/header/
+> outside/stale authority remains inert. Fresh gates: focused 1/1 + 4/4 + 3/3
+> + 2/2 + 1/1, full Nextest exit 0 with 3,513-test inventory, Chromium 20/20,
+> both Clippy targets, Python 68/68, Bun 5/5 + 12/12, fmt/diff clean. Fresh
+> graph is 21,304/98,123 and returns the new regression plus updated production
+> body. Fork publication and exact remote SHA verification follow in the
+> closure commit.
 > Ghostty headful image acceptance remains a separate human evidence item; it
 > does not reopen product code. Default next independent lane is FIP-6.3 mouse
 > harness investigation, then custom-layout B-chain only under its own plan.

@@ -163,8 +163,16 @@ ve generation+revision-bound Trail snapshot render/input'ın tek kaynağıdır.
 Taze gate: full Rust 3,512/3,512 + 2 skip, Chromium 20/20 ve tek-hücre
 mutation 15-pixel kırmızı, Linux+Windows clippy, maintenance 68/68, Bun
 5/5 + 12/12, fmt/diff/unwrap/source audit temiz. Tek-worker graph
-21,296/98,085 ready; CyPack iki ref `26da2437` ile birebir. Sıradaki bağımsız
-işler: FIP-6.3 E2E harness investigation
+21,296/98,085 ready; CyPack iki ref `26da2437` ile birebir. TRAIL-T7.9
+modifier'sız wheel canlı-terminal fallback'i KAPANDI (`a63e39e7`
+plan / `1ca992c6` RED / `051f2829` GREEN): izole debug logunda 318
+modifier'sız `ScrollUp/ScrollDown`, sıfır native yatay/Shift olayı görüldü.
+Görünür satır düz wheel dikey seçim otoritesini korur; boş canlı Trail kolon
+gövdesindeki aynı olay mevcut 1/3-kolon yatay reducer'ına düşer.
+Detail/header/outside/stale fail-closed kalır. Focused aileler
+1/1+4/4+3/3+2/2+1/1, full Nextest exit 0 ve 3,513 test envanteri, Chromium
+20/20, iki Clippy, Python 68/68, Bun 5/5+12/12, fmt/diff temiz; graph
+21,304/98,123 ready. Sıradaki bağımsız işler: FIP-6.3 E2E harness investigation
 ve kullanıcı önceliğine göre custom-layout B-zinciri. FIP-3 TAMAMEN KAPANDI (2026-07-18): 3.4 characterized migration
 (`bcecfdc8` — FileEntry alanları kind-türevi metodlara döndü, çifte symlink
 stat kalktı, 3-kategori grep 0 kalıntı); 3.7 icon edge ailesi (`91e33f6f` RED
