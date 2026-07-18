@@ -231,6 +231,7 @@ impl crate::app::App {
             .flatten();
         if let (Some(file_manager), Some(target)) = (self.state.file_manager.as_mut(), target) {
             file_manager.miller.horizontal.first_visible = target;
+            file_manager.miller.horizontal.follow_active = false;
         }
         true
     }

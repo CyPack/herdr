@@ -23,6 +23,22 @@ test("vis-07 trail depth matches approved snapshot", async ({ page }) => {
   await expect(page.locator("#grid")).toHaveScreenshot("vis-07-trail-depth.png");
 });
 
+// VIS-11 (trail LAW 2 manual viewport): after the initial auto-follow, the
+// user can scroll left to the loaded root ancestors without the next frame
+// snapping back to the active end.
+test("vis-11 trail horizontal scroll matches approved snapshot", async ({
+  page,
+}) => {
+  await page.goto(`file://${harness}`);
+  await page.evaluate(
+    (f) => (window as any).renderFixture(f),
+    loadGenerated("vis-11-trail-horizontal-scroll"),
+  );
+  await expect(page.locator("#grid")).toHaveScreenshot(
+    "vis-11-trail-horizontal-scroll.png",
+  );
+});
+
 // VIS-08 (trail LAW 1 rebranch): after reselecting a sibling in the ROOT
 // column the old branch is discarded — only root + the new docs column
 // remain, with the file selection emphasized, never a placeholder column.

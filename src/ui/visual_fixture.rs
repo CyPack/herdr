@@ -373,6 +373,41 @@ mod tests {
             export_cell_fixture("vis-07-trail-depth", &render_trail(&trail, &snaps, 120, 40)),
         );
 
+        // VIS-11 (scrollable Trail viewport): after auto-following the active
+        // end, a user-selected origin exposes the still-live root ancestors
+        // in a narrow viewport instead of snapping back to the deepest column.
+        let render_scrolled_trail = |requested_first_visible: usize| {
+            let width = 60;
+            let height = 20;
+            let backend = TestBackend::new(width, height);
+            let mut terminal = Terminal::new(backend).expect("scrolled trail terminal");
+            let stage = Rect::new(0, 0, width, height);
+            let view = crate::ui::file_manager::trail_view::project_trail_view_with_origin(
+                stage,
+                &trail,
+                &snaps,
+                &[],
+                crate::ui::file_manager::trail_view::TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
+                requested_first_visible,
+            );
+            assert_eq!(
+                view.first_visible, requested_first_visible,
+                "fixture must preserve the explicit horizontal origin"
+            );
+            terminal
+                .draw(|frame| {
+                    crate::ui::file_manager::trail_view::render_trail_view(
+                        &trail_app, frame, &view, &snaps,
+                    );
+                })
+                .expect("render scrolled trail frame");
+            terminal.backend().buffer().clone()
+        };
+        write_fixture(
+            &out_dir,
+            export_cell_fixture("vis-11-trail-horizontal-scroll", &render_scrolled_trail(0)),
+        );
+
         // Rebranch: reselect the sibling `docs` at the ROOT column — the old
         // src/core/detail branch is discarded and the trail regrows.
         assert_eq!(

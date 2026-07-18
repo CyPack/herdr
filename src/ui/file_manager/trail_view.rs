@@ -12,7 +12,7 @@ use ratatui::layout::Rect;
 use ratatui::widgets::{Block, Borders};
 use ratatui::Frame;
 
-use super::miller::miller_viewport_geometry;
+use super::miller::{first_visible_floor, miller_viewport_geometry};
 use crate::app::state::AppState;
 use crate::fm::miller::{
     MILLER_COLUMN_MAX_WIDTH, MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_PREFERRED_WIDTH,
@@ -104,21 +104,41 @@ pub(crate) fn project_trail_view(
     snaps: &TrailSnapshots,
     preferred_widths: &[u16],
 ) -> TrailViewSnapshot {
-    project_trail_view_with_detail_width(
+    project_trail_view_inner(
         stage,
         trail,
         snaps,
         preferred_widths,
         TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
+        None,
     )
 }
 
-pub(crate) fn project_trail_view_with_detail_width(
+pub(crate) fn project_trail_view_with_origin(
     stage: Rect,
     trail: &TrailState,
     snaps: &TrailSnapshots,
     preferred_widths: &[u16],
     detail_preferred_width: u16,
+    requested_first_visible: usize,
+) -> TrailViewSnapshot {
+    project_trail_view_inner(
+        stage,
+        trail,
+        snaps,
+        preferred_widths,
+        detail_preferred_width,
+        Some(requested_first_visible),
+    )
+}
+
+fn project_trail_view_inner(
+    stage: Rect,
+    trail: &TrailState,
+    snaps: &TrailSnapshots,
+    preferred_widths: &[u16],
+    detail_preferred_width: u16,
+    requested_first_visible: Option<usize>,
 ) -> TrailViewSnapshot {
     let trail_cols = trail.cols();
     let snap_cols = snaps.cols();
@@ -173,9 +193,10 @@ pub(crate) fn project_trail_view_with_detail_width(
     let widths: Vec<u16> = (0..trail_cols.len())
         .map(|index| trail_column_width(preferred_widths, index))
         .collect();
-    // Requesting origin 0 clamps up to the floor that keeps the DEEPEST
-    // column inside a complete-column window: auto-scroll right (LAW 2).
-    let geometry = miller_viewport_geometry(stage, &widths, trail.deepest(), 0);
+    let requested_first_visible = requested_first_visible
+        .unwrap_or_else(|| first_visible_floor(stage.width, &widths, trail.deepest()));
+    let geometry =
+        miller_viewport_geometry(stage, &widths, trail.deepest(), requested_first_visible);
 
     let columns = geometry
         .columns

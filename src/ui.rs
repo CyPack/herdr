@@ -671,7 +671,9 @@ fn sync_miller_view(app: &mut AppState, area: Rect) -> MillerViewSnapshot {
         files_generation,
         resize_preview,
     );
-    file_manager.miller.horizontal.first_visible = snapshot.first_visible;
+    if !snapshot.columns.is_empty() {
+        file_manager.miller.horizontal.first_visible = snapshot.first_visible;
+    }
     let current_visible_rows = snapshot
         .columns
         .iter()
@@ -707,12 +709,13 @@ fn sync_trail_view(app: &AppState, area: Rect) -> TrailViewSnapshot {
             .iter()
             .map(|column| column.directory.clone()),
     );
-    let mut snapshot = file_manager::trail_view::project_trail_view_with_detail_width(
+    let mut snapshot = file_manager::trail_view::project_trail_view_with_origin(
         file_manager::file_manager_miller_viewport_area(area),
         &file_manager.trail,
         &file_manager.trail_snapshots,
         &preferred_widths,
         file_manager.miller.preview_preferred_width,
+        file_manager.miller.horizontal.first_visible,
     );
     snapshot.files_generation = Some(files_generation);
     snapshot
@@ -2118,6 +2121,12 @@ mod tests {
         let desktop = Rect::new(0, 0, 120, 24);
         compute_view(&mut app, desktop);
         assert_eq!(app.view.layout, ViewLayout::Desktop);
+        assert!(
+            app.file_manager
+                .as_ref()
+                .is_some_and(|file_manager| file_manager.miller.horizontal.follow_active),
+            "rendering alone must preserve active-column auto-follow"
+        );
         let expanded_sidebar_width = app.view.sidebar_rect.width;
         let expanded = render_full_frame_for_test(&app, desktop);
         let center = buffer_rect_text(&expanded, app.view.terminal_area);

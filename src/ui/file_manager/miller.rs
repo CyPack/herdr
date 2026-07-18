@@ -185,14 +185,19 @@ pub(crate) fn project_miller_view_with_resize_preview(
         Rect::new(stage.x, stage.y, stage.width - width, stage.height)
     });
     let focused_index = file_manager.trail.deepest();
-    let first_visible_min =
+    let auto_first_visible =
         first_visible_floor(column_stage.width, &preferred_widths, focused_index);
+    let first_visible_min = 0;
     let first_visible_max = focused_index;
-    let requested = file_manager
-        .miller
-        .horizontal
-        .first_visible
-        .clamp(first_visible_min, first_visible_max);
+    let requested = if file_manager.miller.horizontal.follow_active {
+        auto_first_visible
+    } else {
+        file_manager
+            .miller
+            .horizontal
+            .first_visible
+            .clamp(first_visible_min, first_visible_max)
+    };
     let geometry =
         miller_viewport_geometry(column_stage, &preferred_widths, focused_index, requested);
 
@@ -411,10 +416,8 @@ pub(crate) fn miller_viewport_geometry(
         return MillerViewportGeometry::default();
     }
     let focused_index = focused_index.min(chain_len - 1);
-    let floor = first_visible_floor(stage.width, preferred_widths, focused_index);
     let first_visible = requested_first_visible
         .min(chain_len - 1)
-        .max(floor)
         .min(focused_index);
     let mut columns = Vec::new();
     let mut dividers = Vec::new();
@@ -455,7 +458,7 @@ pub(crate) fn miller_viewport_geometry(
     }
 }
 
-fn first_visible_floor(stage_width: u16, widths: &[u16], focused_index: usize) -> usize {
+pub(crate) fn first_visible_floor(stage_width: u16, widths: &[u16], focused_index: usize) -> usize {
     let mut remaining = stage_width;
     let mut start = focused_index;
     let mut count = 0usize;
@@ -480,9 +483,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn viewport_keeps_focused_column_complete() {
+    fn auto_follow_origin_keeps_focused_column_complete() {
         let widths = vec![28; 8];
-        let view = miller_viewport_geometry(Rect::new(4, 2, 90, 12), &widths, 7, 0);
+        let area = Rect::new(4, 2, 90, 12);
+        let auto_origin = first_visible_floor(area.width, &widths, 7);
+        let view = miller_viewport_geometry(area, &widths, 7, auto_origin);
         assert_eq!(
             view.columns.last().map(|column| column.chain_index),
             Some(7)

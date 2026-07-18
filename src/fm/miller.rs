@@ -28,9 +28,19 @@ impl MillerPathSegment {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct MillerHorizontalViewport {
     pub first_visible: usize,
+    pub follow_active: bool,
+}
+
+impl Default for MillerHorizontalViewport {
+    fn default() -> Self {
+        Self {
+            first_visible: 0,
+            follow_active: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,6 +95,7 @@ impl MillerState {
             .horizontal
             .first_visible
             .min(self.chain.len().saturating_sub(1));
+        self.horizontal.follow_active = true;
         self.focused_directory = directory;
         self.revision = self.revision.saturating_add(1);
     }
@@ -120,6 +131,7 @@ impl MillerState {
             .horizontal
             .first_visible
             .min(self.chain.len().saturating_sub(1));
+        self.horizontal.follow_active = true;
         self.revision = self.revision.saturating_add(1);
     }
 
