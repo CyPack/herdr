@@ -39,6 +39,68 @@ pub(crate) struct AgentReferenceRequest {
     pub terminal_id: crate::terminal::TerminalId,
 }
 
+impl crate::app::state::AppState {
+    /// Centered popup rect over the terminal area: bounded width, one row
+    /// per target plus the header. Pure presentation geometry.
+    pub(crate) fn agent_reference_picker_popup_rect(&self) -> Option<ratatui::layout::Rect> {
+        let picker = self.agent_reference_picker.as_ref()?;
+        let area = self.view.terminal_area;
+        let width = 44u16.min(area.width.saturating_sub(2)).max(4);
+        let height = (picker.rows.len() as u16)
+            .saturating_add(4)
+            .min(area.height.saturating_sub(2))
+            .max(4);
+        if area.width < 8 || area.height < 6 {
+            return None;
+        }
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        Some(ratatui::layout::Rect::new(x, y, width, height))
+    }
+
+    /// One hit rect per visible picker row, aligned with the rendered list.
+    pub(crate) fn agent_reference_picker_row_hit_areas(&self) -> Vec<ratatui::layout::Rect> {
+        let Some(picker) = self.agent_reference_picker.as_ref() else {
+            return Vec::new();
+        };
+        let Some(popup) = self.agent_reference_picker_popup_rect() else {
+            return Vec::new();
+        };
+        let inner = ratatui::layout::Rect::new(
+            popup.x + 1,
+            popup.y + 3,
+            popup.width.saturating_sub(2),
+            popup.height.saturating_sub(4),
+        );
+        picker
+            .rows
+            .iter()
+            .enumerate()
+            .take(inner.height as usize)
+            .map(|(idx, _)| {
+                ratatui::layout::Rect::new(inner.x, inner.y + idx as u16, inner.width, 1)
+            })
+            .collect()
+    }
+
+    /// Row index under one exact cell, or None outside every row.
+    pub(crate) fn agent_reference_picker_row_at(&self, column: u16, row: u16) -> Option<usize> {
+        self.agent_reference_picker_row_hit_areas()
+            .iter()
+            .position(|rect| {
+                column >= rect.x && column < rect.right() && row >= rect.y && row < rect.bottom()
+            })
+    }
+
+    /// Close the picker and restore the pre-overlay focus owner. Closing
+    /// discards only client-local presentation state and sends zero bytes.
+    pub(crate) fn close_agent_reference_picker(&mut self) {
+        if self.agent_reference_picker.take().is_some() {
+            crate::app::input::leave_modal(self);
+        }
+    }
+}
+
 impl crate::app::App {
     /// Open the blocking agent picker for one supported, still-deliverable
     /// path. Opening performs no runtime work and prepares no delivery
@@ -175,16 +237,8 @@ impl crate::app::App {
             pane_id: row.pane_id,
             terminal_id: row.terminal_id,
         });
-        self.close_agent_reference_picker();
+        self.state.close_agent_reference_picker();
         true
-    }
-
-    /// Close the picker and restore the pre-overlay focus owner. Closing
-    /// discards only client-local presentation state.
-    pub(crate) fn close_agent_reference_picker(&mut self) {
-        if self.state.agent_reference_picker.take().is_some() {
-            crate::app::input::leave_modal(&mut self.state);
-        }
     }
 
     /// Blocking-overlay key routing owner for the picker mode. The
@@ -192,7 +246,7 @@ impl crate::app::App {
     /// closes with zero bytes.
     pub(crate) fn handle_agent_reference_picker_key(&mut self, key: crossterm::event::KeyEvent) {
         match key.code {
-            crossterm::event::KeyCode::Esc => self.close_agent_reference_picker(),
+            crossterm::event::KeyCode::Esc => self.state.close_agent_reference_picker(),
             crossterm::event::KeyCode::Enter => {
                 let _ = self.activate_agent_reference_picker_selection();
             }
@@ -295,6 +349,207 @@ mod tests {
                 paths: vec![path],
             });
         assert!(app.sync_file_manager_agent_handoff());
+    }
+
+    // TP-FIP-REF-15: the picker is a blocking overlay — background gestures
+    // are consumed fail-closed while it is open.
+    #[tokio::test]
+    async fn picker_enters_overlay_mode_and_blocks_background_input() {
+        let fixture = PickerFixture::new("blocks-background");
+        let path = fixture.file("selected.txt");
+        let (mut app, _, _) = app_with_two_agents(&fixture.root);
+        app.state.view.terminal_area = ratatui::layout::Rect::new(0, 0, 120, 40);
+        dispatch_reference_action(&mut app, path);
+        assert_eq!(app.state.mode, Mode::AgentReferencePicker);
+        let fm_cursor_before = app.state.file_manager.as_ref().expect("open FM").cursor;
+
+        app.handle_mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::ScrollDown,
+            column: 5,
+            row: 5,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+
+        assert!(
+            app.state.agent_reference_picker.is_some(),
+            "a background wheel gesture must not close the picker"
+        );
+        assert_eq!(
+            app.state.file_manager.as_ref().expect("open FM").cursor,
+            fm_cursor_before,
+            "background surfaces must not act while the picker is open"
+        );
+    }
+
+    // TP-FIP-REF-15: Escape and an outside click both close the picker with
+    // zero bytes and restore the pre-overlay focus owner.
+    #[tokio::test]
+    async fn escape_and_outside_click_close_picker_with_zero_bytes() {
+        let fixture = PickerFixture::new("close-paths");
+        let path = fixture.file("selected.txt");
+        let (mut app, _, _) = app_with_two_agents(&fixture.root);
+        app.state.view.terminal_area = ratatui::layout::Rect::new(0, 0, 120, 40);
+        dispatch_reference_action(&mut app, path.clone());
+        app.handle_agent_reference_picker_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        assert!(app.state.agent_reference_picker.is_none());
+        assert_ne!(app.state.mode, Mode::AgentReferencePicker);
+        assert!(app.state.request_file_manager_agent_handoff.is_none());
+
+        dispatch_reference_action(&mut app, path);
+        let popup = app
+            .state
+            .agent_reference_picker_popup_rect()
+            .expect("picker popup rect");
+        let outside = (popup.x.saturating_sub(2), popup.y.saturating_sub(2));
+        app.handle_mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: outside.0,
+            row: outside.1,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+        assert!(
+            app.state.agent_reference_picker.is_none(),
+            "an outside click must close the picker"
+        );
+        assert!(app.state.request_file_manager_agent_handoff.is_none());
+    }
+
+    // TP-FIP-REF-15/04: keyboard movement and mouse clicks share ONE
+    // selection authority; Enter and a row click activate the same target.
+    #[tokio::test]
+    async fn keyboard_up_down_enter_and_mouse_click_share_selection() {
+        let fixture = PickerFixture::new("shared-selection");
+        let path = fixture.file("selected.txt");
+        let (mut app, _, neighbor_terminal) = app_with_two_agents(&fixture.root);
+        app.state.view.terminal_area = ratatui::layout::Rect::new(0, 0, 120, 40);
+        dispatch_reference_action(&mut app, path.clone());
+        let key =
+            |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
+        app.handle_agent_reference_picker_key(key(crossterm::event::KeyCode::Down));
+        assert_eq!(
+            app.state
+                .agent_reference_picker
+                .as_ref()
+                .expect("open picker")
+                .selected,
+            1,
+            "Down must move the shared selection"
+        );
+        app.handle_agent_reference_picker_key(key(crossterm::event::KeyCode::Up));
+        assert_eq!(
+            app.state
+                .agent_reference_picker
+                .as_ref()
+                .expect("open picker")
+                .selected,
+            0
+        );
+        app.handle_agent_reference_picker_key(key(crossterm::event::KeyCode::Down));
+        app.handle_agent_reference_picker_key(key(crossterm::event::KeyCode::Enter));
+        let request = app
+            .state
+            .request_file_manager_agent_handoff
+            .take()
+            .expect("Enter activates the selected row");
+        assert_eq!(request.terminal_id, neighbor_terminal);
+
+        dispatch_reference_action(&mut app, path);
+        let row0 = app.state.agent_reference_picker_row_hit_areas()[0];
+        app.handle_mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: row0.x + 1,
+            row: row0.y,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+        let request = app
+            .state
+            .request_file_manager_agent_handoff
+            .as_ref()
+            .expect("a row click activates that exact row");
+        assert_ne!(request.terminal_id, neighbor_terminal);
+        assert!(app.state.agent_reference_picker.is_none());
+    }
+
+    // TP-FIP-REF-16: a non-live row can be activated by neither keyboard nor
+    // mouse; the picker stays open with zero bytes prepared.
+    #[tokio::test]
+    async fn disabled_row_cannot_be_activated_by_keyboard_or_mouse() {
+        let fixture = PickerFixture::new("disabled-row");
+        let path = fixture.file("selected.txt");
+        let (mut app, _, _) = app_with_two_agents(&fixture.root);
+        app.state.view.terminal_area = ratatui::layout::Rect::new(0, 0, 120, 40);
+        dispatch_reference_action(&mut app, path);
+        app.state
+            .agent_reference_picker
+            .as_mut()
+            .expect("open picker")
+            .rows[0]
+            .live = false;
+
+        app.handle_agent_reference_picker_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        assert!(app.state.request_file_manager_agent_handoff.is_none());
+        assert!(app.state.agent_reference_picker.is_some());
+
+        let row0 = app.state.agent_reference_picker_row_hit_areas()[0];
+        app.handle_mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: row0.x + 1,
+            row: row0.y,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+        assert!(app.state.request_file_manager_agent_handoff.is_none());
+        assert!(app.state.agent_reference_picker.is_some());
+    }
+
+    // TP-FIP-REF-16: a stale source path opens nothing — the intent is
+    // consumed without a picker or any prepared authority.
+    #[tokio::test]
+    async fn stale_source_row_or_context_does_not_open_picker() {
+        let fixture = PickerFixture::new("stale-source");
+        let path = fixture.file("selected.txt");
+        let (mut app, _, _) = app_with_two_agents(&fixture.root);
+        std::fs::remove_file(&path).expect("delete before dispatch");
+        app.state
+            .file_manager
+            .as_mut()
+            .expect("open FM")
+            .entries
+            .clear();
+
+        app.state.request_file_manager_context_action =
+            Some(crate::app::state::FileManagerContextActionIntent {
+                action: FileManagerContextMenuAction::SendAgent,
+                paths: vec![path],
+            });
+        assert!(app.sync_file_manager_agent_handoff());
+        assert!(app.state.agent_reference_picker.is_none());
+        assert!(app.state.request_file_manager_agent_handoff.is_none());
+        assert_ne!(app.state.mode, Mode::AgentReferencePicker);
+    }
+
+    // TP-FIP-REF-17: an explicit multi-selection disables the reference
+    // action — the intent carries multiple paths and opens nothing.
+    #[tokio::test]
+    async fn multi_selection_disables_reference_action() {
+        let fixture = PickerFixture::new("multi-selection");
+        let first = fixture.file("first.txt");
+        let second = fixture.file("second.txt");
+        let (mut app, _, _) = app_with_two_agents(&fixture.root);
+
+        app.state.request_file_manager_context_action =
+            Some(crate::app::state::FileManagerContextActionIntent {
+                action: FileManagerContextMenuAction::SendAgent,
+                paths: vec![first, second],
+            });
+        assert!(app.sync_file_manager_agent_handoff());
+        assert!(app.state.agent_reference_picker.is_none());
+        assert!(app.state.request_file_manager_agent_handoff.is_none());
     }
 
     // TP-FIP-REF-01: the reference action opens a blocking picker built from
