@@ -1,17 +1,19 @@
 # Current State — 2026-07-17
 
-> **CURRENT OVERRIDE — MILLER TRAIL T7 ACTIVE (2026-07-18).** T1-T6 and
-> T7.1-T7.3 remain closed. T7.3 live render swap is closed at `e63482f2` RED /
-> `4d95ae72` GREEN: `ViewState` publishes exact Trail geometry, the production
-> Files middle panel renders root-to-active columns plus the optional detail
-> panel, header/action/status remain stable, narrow detail geometry fails
-> closed, and image worker states stay visible. VIS-01..06 were reviewed and
-> updated only after Chromium mutation failures. Fresh gates are 3,545/3,545
-> Rust + 2 skip, 18/18 Chromium, both Clippy targets, Python 64/64, and Bun
-> 5/5 + 12/12. Exact next task is **T7.4 input swap + FIP-D1 live closure** from
-> `docs/superpowers/plans/2026-07-18-herdr-trail-t7-integration-plan.md`.
-> `TRAIL-T7` remains open until T7.6; FIP-D1 closes at T7.4 and FIP-D4 at
-> T7.5. Stable Herdr/socket and user-owned `.superpowers/` remain untouched.
+> **CURRENT OVERRIDE — MILLER TRAIL T1-T7 CLOSED (2026-07-18).** T7.6 is
+> closed at `e8abc7b0` RED / `3c36f104` GREEN. Production Files now has one
+> root-to-active Trail state/render/input/watcher/image authority; the legacy
+> parent/current/resident projection, transitional watcher/image seams, and
+> teardown-only tests are gone. Path-identified width preferences retain the
+> pure `miller_viewport_geometry`; detail resize uses one 20–64 contract across
+> mouse, keyboard, commit, and render. Exact `"(unavailable)"` and teardown
+> marker grep are zero. Fresh gates: source audit 4/4, Rust 3,507/3,507 + 2
+> skip, Chromium 18/18, both Clippy targets, maintenance 68/68, Bun 5/5 +
+> 12/12, fmt/diff clean. `TRAIL-T7` and FIP-D1/D3/D4 product code are closed.
+> Ghostty headful image acceptance remains a separate human evidence item; it
+> does not reopen product code. Default next independent lane is FIP-6.3 mouse
+> harness investigation, then custom-layout B-chain only under its own plan.
+> Stable Herdr/socket and user-owned `.superpowers/` remain untouched.
 >
 > **CURRENT OVERRIDE — FILES INTERACTION POLISH ACTIVE.** The previously
 > approved SF0-SF6 + FM1-FM5 program remains complete and published. A new,

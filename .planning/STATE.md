@@ -2,13 +2,14 @@
 
 - Updated: 2026-07-18
 - Branch: `feat/native-fm`
-- Current override: **Miller Trail T7 active**. T7.3 render swap closed at
-  `e63482f2` RED / `4d95ae72` GREEN; exact next task is T7.4 input swap +
-  FIP-D1 live sidebar closure. ViewState publishes exact Trail geometry and
-  production Files renders it; legacy input geometry remains only for the
-  sequential T7.4 migration. Full evidence: Rust 3,545/3,545 + 2 skip,
-  Chromium 18/18, Linux/Windows Clippy, Python 64/64, Bun 5/5 + 12/12.
-  `TRAIL-T7` remains open through T7.6.
+- Current override: **Miller Trail T1-T7 closed** at `e8abc7b0` RED /
+  `3c36f104` GREEN. Trail is the single production state/render/input/watcher/
+  image authority; legacy parent/current/resident projection and transitional
+  watcher/image seams are removed. Exact `"(unavailable)"` and teardown marker
+  grep are zero. Full evidence: source audit 4/4, Rust 3,507/3,507 + 2 skip,
+  Chromium 18/18, Linux/Windows Clippy, maintenance 68/68, Bun 5/5 + 12/12.
+  FIP-D1/D3/D4 product code is closed. Default next independent lane is
+  FIP-6.3 mouse harness investigation; custom-layout remains a later program.
 - Active program: **Files Interaction Polish (FIP)**. The approved design is
   `docs/superpowers/specs/2026-07-17-herdr-files-interaction-polish-design.md`.
 - FIP-G.1/FIP-G.2 CLOSED 2026-07-18: the code-level TDD plan is
@@ -22,7 +23,7 @@
 - Excluded scope: drag-and-drop, auto-submit/Enter, implicit Claude split/chat,
   protocol/runtime ownership expansion, speculative ComponentRegistry, popup
   framework, Apps/Desktop, and unrelated change-pipeline implementation.
-- Open registry: 41 product items plus 89 paused non-product items = 130.
+- Open registry: 7 product items plus 89 paused non-product items = 96.
   FIP-0 and FIP-1 (Rust+VIS; E2E-01 deferred to FIP-6.3) closed 2026-07-18;
   only FIP-2.1 is priority eligible. USER DIRECTIVE 2026-07-18: after FIP-2,
   design the custom-layout infrastructure program (mockup:

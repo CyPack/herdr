@@ -1,6 +1,20 @@
 # NEXT SESSION TRIGGER — Herdr Files Interaction Polish
 
-Updated: 2026-07-17 CEST
+Updated: 2026-07-18 CEST
+
+## Current Override — Miller Trail Closed
+
+Miller Trail T1-T7 and FIP-D1/D3/D4 product code are closed through
+`e8abc7b0` RED / `3c36f104` GREEN. Do not restart T7 or restore the retired
+parent/current/resident projection. Fresh closure gates are Rust 3,507/3,507
++ 2 skip, Chromium 18/18, both Clippy targets, maintenance 68/68, Bun 5/5 +
+12/12, and source audit 4/4 with exact `"(unavailable)"` grep=0.
+
+The default next independent lane is FIP-6.3 E2E mouse-harness investigation.
+It must begin from `.codex/HANDOFF.md` and `.codex/TASKS.md`, preserve the
+stable socket, and follow the isolated runtime recipe. Custom-layout B-chain
+is separate and starts only from its own approved design/plan. Recount the
+7 + 89 unchecked registry tasks; do not infer priority from older text below.
 
 Continue `/home/ayaz/projects/herdr` on branch `feat/native-fm` from the
 canonical Files Interaction Polish handoff. This is `mid_flight_adoption`.

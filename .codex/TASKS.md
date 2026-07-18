@@ -50,7 +50,7 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
   test, VIS-10 baseline (görsel 18/18), full 3,534/3,534 + 2 skip, iki
   clippy temiz. NOT: canlı sidebar tıkının bu seam'e BAĞLANMASI T7
   entegrasyonunda — FIP-D1 ürün-düzeyi kapanışı orada doğrulanır.
-- [ ] **TRAIL-T7** Eski parent/current/resident modelinin characterized sökümü
+- [x] **TRAIL-T7** Eski parent/current/resident modelinin characterized sökümü
   ("(unavailable)" grep=0) + tüm gate'ler + yayın. CERRAHİ PLAN HAZIR:
   `docs/superpowers/plans/2026-07-18-herdr-trail-t7-integration-plan.md`
   T7.1 characterization KAPANDI (`7d75f0e4`): test-noktası tablosu,
@@ -87,8 +87,14 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
   Final gate: focused 3/3, watcher/image/Kitty 57/57, full 3,555/3,555 +
   2 skip, Chromium 18/18, Linux+Windows clippy `-D warnings`, Python 64/64,
   Bun 5/5 + 12/12, fmt/diff/unwrap temiz. Ghostty headful canlı foto kabul
-  kanıtı kullanıcıyla izole reçetede ayrıca bekliyor. SIRADAKİ: T7.6
-  seçici eski-model sökümü + "(unavailable)" grep=0 + kapanış.
+  kanıtı kullanıcıyla izole reçetede ayrıca bekliyor. T7.6 KAPANDI
+  (`e8abc7b0` RED / `3c36f104` GREEN): parent/current/resident projection,
+  legacy watcher/image seam'leri ve geçiş test mezarlığı kaldırıldı; saf
+  `miller_viewport_geometry` ile path-kimli Trail width/resize köprüsü kaldı;
+  detail mouse/keyboard/commit/render sınırı 20–64 tek otoriteye bağlandı;
+  exact `"(unavailable)"` ve teardown marker grep=0. Final gate: source audit
+  4/4, full 3,507/3,507 + 2 skip, Chromium 18/18, Linux+Windows clippy
+  `-D warnings`, maintenance 68/68, Bun 5/5 + 12/12, fmt/diff temiz.
   (T7.1 characterization → T7.2 FmState köprüsü → T7.3 render swap →
   T7.4 girdi swap + FIP-D1 canlı kapanış → T7.5 watcher+kitty/FIP-D4 →
   T7.6 söküm+kapanış; yüzey haritası satır sayılarıyla planda).
@@ -104,14 +110,17 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
   `open_trail_to(path,path,show_hidden)` kurar, Files instance generation'ını
   korur; missing/inaccessible/stale hedef atomik inert kalır. Mouse hit +
   watcher/sidebar birim aileleri ve full suite yeşil. KAPALI.
-- [ ] **FIP-D3** Miller navigasyonu TRAIL modeline yeniden kurulacak — kullanıcı
+- [x] **FIP-D3** Miller navigasyonu TRAIL modeline yeniden kuruldu — kullanıcı
   kanonik referansı verdi: circet-miller (`CircetMillerSection.tsx`, canlı
   `127.0.0.1:8771/p/circet-miller`). Yasa: kolonlar kökten birikir, her görünür
   kolon YÜKLÜ+tıklanabilir, "(unavailable)" ASLA render edilmez, ata-kardeş tık
   trail'i keser+yeniden dallar, dosya tıkı kolon eklemez → resizable sağ
   detay/önizleme paneli, en derin kolon auto-scroll. TAM KONTRAT:
   `docs/superpowers/specs/2026-07-18-herdr-miller-trail-ux-contract.md` —
-  B-zinciri design spec'inin girdi YASASI.
+  B-zinciri design spec'inin girdi YASASI. T1-T7 zinciri
+  `3c36f104` ile ürün otoritesine bağlandı; legacy projection ve
+  `"(unavailable)"` kaynağı grep=0, Chromium VIS-07..10 + canlı Trail
+  render/input/watcher/Kitty test aileleri yeşil. KAPALI.
 - [x] **FIP-D4** Trail foto önizleme ürün kodu kapandı
   (`8a3a944b` RED / `95f6e541` GREEN): decode target ve Kitty placement exact
   generation-bound Trail detail `content_rect` kullanıyor; legacy PREVIEW,

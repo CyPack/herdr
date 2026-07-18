@@ -135,9 +135,16 @@ fail-closed kalır; cache/resize/error aileleri korundu. Taze gate: focused
 3/3, watcher/image/Kitty 57/57, full 3,555/3,555 + 2 skip, Chromium 18/18,
 Linux+Windows clippy `-D warnings`, Python 64/64, Bun 5/5 + 12/12,
 fmt/diff/unwrap temiz. Ghostty headful canlı foto kabul kanıtı izole reçetede
-kullanıcıyla ayrıca bekliyor. SIRADAKİ: TRAIL-T7.6 seçici eski-model sökümü,
-"(unavailable)" grep=0 ve program kapanışı.
-Sonrası: FIP-5 picker, kullanıcı direktifi custom-layout programı. FIP-3 TAMAMEN KAPANDI (2026-07-18): 3.4 characterized migration
+kullanıcıyla ayrıca bekliyor. TRAIL-T7.6 + FIP-D3 KAPANDI (`e8abc7b0` RED /
+`3c36f104` GREEN): parent/current/resident projection, legacy watcher/image
+seam'leri ve geçiş test mezarlığı kaldırıldı; Trail topolojisi path-kimli
+layout preferences ve typed resize otoritesinin tek kaynağı; detail sınırı
+mouse/keyboard/commit/render boyunca 20–64; source audit 4/4, exact
+`"(unavailable)"` ve teardown marker grep=0. Final gate: full 3,507/3,507 +
+2 skip, Chromium 18/18, Linux+Windows clippy `-D warnings`, maintenance
+68/68, Bun 5/5 + 12/12, fmt/diff temiz. Miller Trail T1-T7 PROGRAMI
+TAMAMEN KAPALI. Sıradaki bağımsız işler: FIP-6.3 E2E harness investigation
+ve kullanıcı önceliğine göre custom-layout B-zinciri. FIP-3 TAMAMEN KAPANDI (2026-07-18): 3.4 characterized migration
 (`bcecfdc8` — FileEntry alanları kind-türevi metodlara döndü, çifte symlink
 stat kalktı, 3-kategori grep 0 kalıntı); 3.7 icon edge ailesi (`91e33f6f` RED
 / `706130cf` GREEN — display-cell truncation, disjoint action rect'leri,
@@ -460,65 +467,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 9 ve
-89, toplam 98 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 7 ve
+89, toplam 96 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 9 unchecked
-
-- [ ] **TRAIL-T7** Eski parent/current/resident modelinin characterized sökümü
-  ("(unavailable)" grep=0) + tüm gate'ler + yayın. CERRAHİ PLAN HAZIR:
-  `docs/superpowers/plans/2026-07-18-herdr-trail-t7-integration-plan.md`
-  T7.1 characterization KAPANDI (`7d75f0e4`): test-noktası tablosu,
-  adversarial Files generation lifecycle testi, agent-reference ve
-  rename/delete/multi-select/watcher exact-path ailelerinin kanonik pinleri,
-  eski parent/current/preview/resident testlerinde `TRAIL-T7.6 teardown`
-  işaretleri; full 3,535/3,535 + 2 skip, görsel 18/18, iki clippy, Python
-  64/64, Bun 5/5 + 12/12 temiz. T7.2 FmState köprüsü KAPANDI
-  (`62696987` RED / `19efb656` GREEN): FmState TrailState+TrailSnapshots
-  sahibi; `selected()` exact path'i trail snapshot'tan çözer; enter/leave
-  root'u koruyarak trail'i biriktirir; prepared apply disk-I/O'suz, hidden
-  policy future branch'lere taşınır; full 3,541/3,541 + 2 skip, Chromium
-  18/18, iki clippy, Python 64/64, Bun 5/5 + 12/12 temiz. T7.3 render swap
-  KAPANDI (`e63482f2` RED / `4d95ae72` GREEN): `ViewState` canlı
-  `TrailViewSnapshot` yayımlar; üretim orta paneli exact trail
-  row/divider/detail geometrisini çizer; header/action/status korunur; dar
-  detail panel panic'i fail-closed giderildi; image Pending/Loading/Error
-  durumları trail detail panelinde korunur; VIS-01..06 kasıtlı Trail
-  baseline'ları Chromium'da mutation kanıtıyla yenilendi. Full 3,545/3,545 +
-  2 skip, Chromium 18/18, iki clippy, Python 64/64, Bun 5/5 + 12/12 temiz.
-  T7.4 girdi swap + FIP-D1 KAPANDI (`4cf63908` RED / `0f775b83` GREEN):
-  mouse/klavye/sidebar/row-action/right-click otoritesi generation-bound
-  Trail geometrisine taşındı; ancestor rebranch, exact path/index,
-  stale-frame, bulk tavanı ve 10.000 aksiyon invariants'ı kanıtlandı; Native
-  Files legacy navigation/double-click/non-current-scroll seam'leri
-  kaldırıldı. Final gate: full 3,552/3,552 + 2 skip, Chromium 18/18,
-  Linux+Windows clippy `-D warnings`, Python 64/64, Bun 5/5 + 12/12,
-  fmt/diff/unwrap temiz. T7.5 watcher+kitty/FIP-D4 ürün kodu KAPANDI
-  (`8a3a944b` RED / `95f6e541` GREEN): watcher transitional `cwd` yerine
-  exact aktif Trail kolonunu izler ve yalnız aynı snapshot'ı path-bazlı
-  yeniler; decode worker ile Kitty placement aynı generation-bound Trail
-  detail `content_rect` otoritesini tüketir; stale path/geometri ve legacy
-  PREVIEW tek başına fail-closed kalır; cache/resize/error aileleri korundu.
-  Final gate: focused 3/3, watcher/image/Kitty 57/57, full 3,555/3,555 +
-  2 skip, Chromium 18/18, Linux+Windows clippy `-D warnings`, Python 64/64,
-  Bun 5/5 + 12/12, fmt/diff/unwrap temiz. Ghostty headful canlı foto kabul
-  kanıtı kullanıcıyla izole reçetede ayrıca bekliyor. SIRADAKİ: T7.6
-  seçici eski-model sökümü + "(unavailable)" grep=0 + kapanış.
-  (T7.1 characterization → T7.2 FmState köprüsü → T7.3 render swap →
-  T7.4 girdi swap + FIP-D1 canlı kapanış → T7.5 watcher+kitty/FIP-D4 →
-  T7.6 söküm+kapanış; yüzey haritası satır sayılarıyla planda).
-
-- [ ] **FIP-D3** Miller navigasyonu TRAIL modeline yeniden kurulacak — kullanıcı
-  kanonik referansı verdi: circet-miller (`CircetMillerSection.tsx`, canlı
-  `127.0.0.1:8771/p/circet-miller`). Yasa: kolonlar kökten birikir, her görünür
-  kolon YÜKLÜ+tıklanabilir, "(unavailable)" ASLA render edilmez, ata-kardeş tık
-  trail'i keser+yeniden dallar, dosya tıkı kolon eklemez → resizable sağ
-  detay/önizleme paneli, en derin kolon auto-scroll. TAM KONTRAT:
-  `docs/superpowers/specs/2026-07-18-herdr-miller-trail-ux-contract.md` —
-  B-zinciri design spec'inin girdi YASASI.
+### Source: `.codex/TASKS.md` — 7 unchecked
 
 - [ ] **FIP-1.6** Add Playwright `TP-FIP-VIS-01` plus isolated real-mouse
   `TP-FIP-E2E-01` evidence without touching the stable Herdr socket.
