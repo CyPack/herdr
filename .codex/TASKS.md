@@ -15,8 +15,8 @@ then the plan's Tasks 2-29 in order.
 Activated by the user's 2026-07-18 field report. Research:
 `.codex/evidence/files-visibility-preview-plugin-research.md`. Plan:
 `docs/superpowers/plans/2026-07-18-herdr-files-visibility-preview-plugin-integration.md`.
-The active focus is FMR-1. Product code remains unchanged until its exact
-directory class and executable identity produce a behavior-specific RED.
+FMR-1 is closed with its classified runtime matrix and VIS-13 Chromium proof.
+The active focus is FMR-2: the full sidebar click-to-loaded-Trail seam.
 
 - [ ] **FMR-0 Scroll version lab and ranking.** Four reboot-safe source
   checkpoints are collected side by side under
@@ -29,7 +29,9 @@ directory class and executable identity produce a behavior-specific RED.
     Chromium, complexity, and rollback matrix across all four versions.
   - [ ] Rank from raw evidence and select/reject a production candidate;
     recency alone cannot win.
-- [ ] **FMR-1 Invisible directory investigation and analysis — ACTIVE.**
+- [x] **FMR-1 Invisible directory investigation and analysis.** Closed through
+  `b385ca3a` RED / `de136da5` VIS-13 baseline; full evidence:
+  `.codex/evidence/files-visibility-runtime-matrix.md`.
   - [x] Graph the exact row → Trail activation → directory snapshot → pure
     projection/render chain.
   - [x] Prove current silent classes: hidden-only filtering, per-entry
@@ -37,11 +39,13 @@ directory class and executable identity produce a behavior-specific RED.
     full-view fail-closed snapshot misalignment.
   - [x] Prove reboot did not lose commits: normal installed binary is dated
     2026-07-12 while current debug binary is dated 2026-07-18.
-  - [ ] Add table-driven REDs for genuine empty, hidden-only, partial entry
-    failure, non-UTF-8, permission, symlink-directory, stale alignment, and
-    fifth-to-sixth-column activation.
-  - [ ] Implement only the confirmed root fix and explicit prepared status;
-    no depth-limit or generic refresh patch without evidence.
+  - [x] Complete the classified matrix for genuine empty, hidden-only,
+    partial entry failure, non-UTF-8, permission, symlink-directory, stale
+    alignment, and fifth-to-sixth-column activation.
+  - [x] Replace silent per-entry losses with bounded omission counts and a
+    non-actionable Trail status row; no depth-limit or generic refresh patch.
+  - [x] Prove VIS-13 with Playwright Chromium: actionable row plus separate
+    hidden-omission status; full visual suite 21/21.
 - [ ] **FMR-2 Files sidebar shortcut mouse regression.**
   - [x] Map compute geometry → exact model-revalidated path hit → one-shot
     request → scheduled consumer → `open_trail_to`.

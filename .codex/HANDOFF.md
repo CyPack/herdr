@@ -4,7 +4,7 @@ Updated: 2026-07-18 CEST
 
 ## 0. SONRAKI ADIM — TEK AKTİF İŞ
 
-**CURRENT OVERRIDE — FMR-1 ACTIVE.** Kullanıcının reboot sonrası kaybolmuş
+**CURRENT OVERRIDE — FMR-2 ACTIVE.** Kullanıcının reboot sonrası kaybolmuş
 görünen scroll/sidebar davranışı için Git ve runtime provenance doğrulandı:
 HEAD ve iki CyPack ref'i `6a972703`; commitler kalıcı. Ancak normal
 `/home/ayaz/.local/bin/herdr` 2026-07-12 tarihli, mevcut
@@ -12,16 +12,19 @@ HEAD ve iki CyPack ref'i `6a972703`; commitler kalıcı. Ancak normal
 süreçleri var. Hiçbir süreç veya socket'e dokunulmadı. Dört scroll closure
 checkpoint'i `.codex/evidence/miller-scroll-version-lab/` altında aynı sekiz
 kaynak dosyasıyla yan yana toplandı; ranking ortak isolated/Chromium matrisi
-çalışana kadar AÇIK. Aktif inceleme görünmeyen klasör sınıflarıdır:
-hidden-only filtre, per-entry `flatten()` kaybı, non-UTF-8 omission,
-directory-level read failure ve Trail/snapshot misalignment ayrı RED
-fixture'larında ayrılacak. Ardından sidebar shortcut'ın mouse request testi
-ile elle çağrılan consumer testi tek production zincirinde birleştirilecek.
+çalışana kadar AÇIK. FMR-1 görünmeyen klasör sınıfları KAPANDI
+(`b385ca3a` RED / `de136da5` VIS-13): hidden-only, non-UTF-8 ve per-entry
+iterator failure bounded prepared omission state'e taşındı; exact-path
+actionable satırları koruyan tıklanamaz Trail status satırı eklendi. Full
+Rust 3,517/3,517 + 2 skip, Chromium 21/21 ve iki clippy temiz. Kanıt:
+`.codex/evidence/files-visibility-runtime-matrix.md`. Aktif iş sidebar
+shortcut'ın mouse request testi ile elle çağrılan consumer testini tek
+production zincirinde birleştirmektir.
 Araştırma:
 `.codex/evidence/files-visibility-preview-plugin-research.md`. Plan:
 `docs/superpowers/plans/2026-07-18-herdr-files-visibility-preview-plugin-integration.md`.
 Hunk diff/pane orchestration referansıdır; native Files preview provider'ı
-değildir. Product Rust değişikliği henüz yoktur.
+değildir. Mevcut user process/socket'lerine dokunulmadı.
 
 FIP-G.1 ve FIP-G.2 KAPANDI (2026-07-18). Onaylı code-level TDD planı:
 `docs/superpowers/plans/2026-07-18-herdr-files-interaction-polish-implementation.md`
@@ -515,13 +518,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 13 ve
-89, toplam 102 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 12 ve
+89, toplam 101 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 13 unchecked
+### Source: `.codex/TASKS.md` — 12 unchecked
 
 - [ ] **FMR-0 Scroll version lab and ranking.** Four reboot-safe source
   checkpoints are collected side by side under
@@ -534,20 +537,6 @@ sayar ve exact diff yapar.
     Chromium, complexity, and rollback matrix across all four versions.
   - [ ] Rank from raw evidence and select/reject a production candidate;
     recency alone cannot win.
-
-- [ ] **FMR-1 Invisible directory investigation and analysis — ACTIVE.**
-  - [x] Graph the exact row → Trail activation → directory snapshot → pure
-    projection/render chain.
-  - [x] Prove current silent classes: hidden-only filtering, per-entry
-    `flatten()` loss, non-UTF-8 omission, directory-level read failure, and
-    full-view fail-closed snapshot misalignment.
-  - [x] Prove reboot did not lose commits: normal installed binary is dated
-    2026-07-12 while current debug binary is dated 2026-07-18.
-  - [ ] Add table-driven REDs for genuine empty, hidden-only, partial entry
-    failure, non-UTF-8, permission, symlink-directory, stale alignment, and
-    fifth-to-sixth-column activation.
-  - [ ] Implement only the confirmed root fix and explicit prepared status;
-    no depth-limit or generic refresh patch without evidence.
 
 - [ ] **FMR-2 Files sidebar shortcut mouse regression.**
   - [x] Map compute geometry → exact model-revalidated path hit → one-shot
@@ -618,7 +607,6 @@ sayar ve exact diff yapar.
 
 - [ ] S7 popup stack with ownership, focus, close ordering, and nested popup
   tests.
-
 ### Source: `.codex/CHANGE-PIPELINE-TASKS.md` — 89 unchecked
 
 - [ ] **T3.1** Write RED `TP-CHG-MODULE` tests for module identity, version,

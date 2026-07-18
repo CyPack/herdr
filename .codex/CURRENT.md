@@ -1,6 +1,6 @@
 # Current State — 2026-07-17
 
-> **CURRENT OVERRIDE — FMR INVESTIGATION ACTIVE (2026-07-18).** The user
+> **CURRENT OVERRIDE — FMR-2 SIDEBAR MOUSE SEAM ACTIVE (2026-07-18).** The user
 > reported invisible directory contents and inert Files-sidebar shortcuts,
 > requested a file preview/render and plugin-reference program, and asked that
 > recent scroll implementations be preserved side by side for later ranking.
@@ -12,19 +12,22 @@
 > installed `/home/ayaz/.local/bin/herdr` dated 2026-07-12 and the current
 > `target/debug/herdr` dated 2026-07-18 both running: reboot did not lose Git
 > commits, but normal `herdr` starts the older installed behavior. Source
-> analysis also found that hidden-only entries, per-entry iterator failures,
-> non-UTF-8 names, directory-level read failures, and Trail/snapshot
-> misalignment currently have distinct causes but can project as empty/inert.
-> The exact root class must produce a table-driven RED before product code
-> changes. Sidebar coverage currently splits mouse request creation from a
-> manually invoked consumer; FMR-2 closes that end-to-end seam. Research and
+> FMR-1 is closed through `b385ca3a` RED / `de136da5` VIS-13 baseline:
+> hidden-only, non-UTF-8, and per-entry iterator failures now remain bounded,
+> explicit prepared omission state; Trail reserves a non-actionable status
+> row without replacing exact-path actionable rows. Directory-level failures
+> and stale alignment remain fail-closed. Fresh gates: Rust 3,517/3,517 + 2
+> skip, Chromium 21/21, Linux/Windows clippy and fmt clean. Evidence:
+> `.codex/evidence/files-visibility-runtime-matrix.md`. Sidebar coverage
+> currently splits mouse request creation from a manually invoked consumer;
+> FMR-2 closes that end-to-end seam. Research and
 > the approved dependency plan are
 > `.codex/evidence/files-visibility-preview-plugin-research.md` and
 > `docs/superpowers/plans/2026-07-18-herdr-files-visibility-preview-plugin-integration.md`.
 > Hunk is a pane/diff workflow reference, not a native preview provider;
 > heavyweight preview integration remains optional/plugin-owned while native
 > Files retains path, Trail, mouse, status, and lightweight preview authority.
-> No process/socket or product Rust code was mutated during this investigation.
+> No existing process/socket was touched.
 
 > **CURRENT OVERRIDE — MILLER TRAIL T1-T7 CLOSED (2026-07-18).** T7.6 is
 > closed at `e8abc7b0` RED / `3c36f104` GREEN. Production Files now has one

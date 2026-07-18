@@ -4,6 +4,14 @@ Date: 2026-07-18
 Branch/HEAD at research start: `feat/native-fm` /
 `6a972703113b473babd26a6ab18d14d1c937ac46`
 
+## Closure update
+
+FMR-1 is now closed. The research-start observations about `flatten()` and
+silent non-UTF-8/hidden omission describe the pre-fix source. Current closure
+evidence, TDD commits, VIS-13, and fresh gates are recorded in
+`.codex/evidence/files-visibility-runtime-matrix.md`. FMR-2 sidebar mouse is
+the active dependency.
+
 ## Verified repository and runtime state
 
 - Git HEAD and CyPack `feat/native-fm`/`master` are exactly `6a972703`.
