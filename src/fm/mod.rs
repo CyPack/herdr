@@ -133,6 +133,9 @@ pub(crate) struct FmPreparedNavigation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FmCurrentRefreshReason {
+    // Retained only for the T7.1 prepared-request characterization family;
+    // T7.6 deletes this legacy watcher request after Trail refresh closure.
+    #[allow(dead_code)]
     Watcher,
     ToggleHidden,
     OperationFallback,
@@ -510,6 +513,9 @@ pub struct FmState {
 }
 
 impl FmState {
+    // Retained only for the T7.1 stale prepared-request characterization;
+    // production watcher authority moved to `refresh_active_trail_col`.
+    #[allow(dead_code)]
     pub(crate) fn request_current_refresh(&self, files_generation: u32) -> FmCurrentRefreshRequest {
         self.current_refresh_request(
             files_generation,
@@ -980,6 +986,92 @@ impl FmState {
             state.install_trail_projection_without_selection(0)?;
         }
         Some(state)
+    }
+
+    /// Exact directory owned by the single Trail focus authority.
+    pub(crate) fn active_trail_directory(&self) -> Option<&Path> {
+        self.trail
+            .cols()
+            .get(self.trail.active_col())
+            .map(|col| col.directory.as_path())
+    }
+
+    /// Refresh the active Trail snapshot from disk and reconcile its
+    /// exact-path selection. The transitional operation projection follows a
+    /// deepest active column, while ancestor-only focus refreshes never
+    /// overwrite a deeper file preview.
+    pub(crate) fn refresh_active_trail_col(&mut self, expected_directory: &Path) -> Option<bool> {
+        let col_idx = self.trail.active_col();
+        if self.active_trail_directory()? != expected_directory {
+            return None;
+        }
+        let previous_snapshot = self.trail_snapshots.cols().get(col_idx)?.clone();
+        let previous_trail = self.trail.clone();
+        let previous_detail = self.trail_snapshots.detail().cloned();
+        let previous_projection = (
+            self.cwd.clone(),
+            self.entries.clone(),
+            self.cursor,
+            self.cwd_status,
+            self.cwd_writable,
+            self.preview.clone(),
+        );
+
+        if !self.trail_snapshots.refresh_col(col_idx)
+            || !self
+                .trail_snapshots
+                .reconcile_refreshed_col(&mut self.trail, col_idx)
+        {
+            return None;
+        }
+
+        if col_idx == self.trail.deepest() {
+            let selected = self
+                .trail
+                .cols()
+                .get(col_idx)
+                .and_then(|col| col.selected.as_deref());
+            let selected_index = selected.and_then(|path| {
+                self.trail_snapshots
+                    .cols()
+                    .get(col_idx)?
+                    .entries()
+                    .iter()
+                    .position(|entry| entry.path == path)
+            });
+            if let Some(selected_index) = selected_index {
+                let selected_path = self
+                    .trail_snapshots
+                    .cols()
+                    .get(col_idx)?
+                    .entries()
+                    .get(selected_index)?
+                    .path
+                    .clone();
+                if !self.install_trail_operation_projection(col_idx, selected_index, &selected_path)
+                {
+                    return None;
+                }
+            } else {
+                self.install_trail_projection_without_selection(col_idx)?;
+            }
+        }
+
+        let refreshed_snapshot = self.trail_snapshots.cols().get(col_idx)?;
+        let current_projection = (
+            self.cwd.clone(),
+            self.entries.clone(),
+            self.cursor,
+            self.cwd_status,
+            self.cwd_writable,
+            self.preview.clone(),
+        );
+        Some(
+            previous_snapshot != *refreshed_snapshot
+                || previous_trail != self.trail
+                || previous_detail != self.trail_snapshots.detail().cloned()
+                || previous_projection != current_projection,
+        )
     }
 
     fn install_trail_operation_projection(

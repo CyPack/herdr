@@ -332,13 +332,12 @@ fn render_trail_detail_panel(
     if panel.content_rect.width == 0 || panel.content_rect.height == 0 {
         return;
     }
-    let mut lines = vec![
-        Line::from(format!("kind: {:?}", detail.kind)),
-        Line::from(""),
-    ];
+    let mut lines = Vec::new();
     let mut live_image_preview = None;
     match &detail.preview {
         crate::fm::trail_snapshots::TrailDetailPreview::Text(preview) => {
+            lines.push(Line::from(format!("kind: {:?}", detail.kind)));
+            lines.push(Line::from(""));
             for text_line in preview.content.lines() {
                 lines.push(Line::from(text_line.to_string()));
             }
@@ -362,18 +361,14 @@ fn render_trail_detail_panel(
             }
         }
         crate::fm::trail_snapshots::TrailDetailPreview::Unpreviewable(reason) => {
+            lines.push(Line::from(format!("kind: {:?}", detail.kind)));
+            lines.push(Line::from(""));
             lines.push(Line::from(format!("(no preview: {reason})")));
         }
     }
     frame.render_widget(Paragraph::new(lines), panel.content_rect);
     if let Some(preview) = live_image_preview {
-        let preview_area = Rect::new(
-            panel.content_rect.x,
-            panel.content_rect.y.saturating_add(2),
-            panel.content_rect.width,
-            panel.content_rect.height.saturating_sub(2),
-        );
-        super::render_image_preview_status(app, frame, preview_area, preview);
+        super::render_image_preview_status(app, frame, panel.content_rect, preview);
     }
 }
 

@@ -1987,22 +1987,13 @@ mod tests {
 
         compute_view(&mut app.state, frame);
         assert!(
-            app.sync_image_preview_worker(),
-            "fresh committed geometry starts one final image target"
-        );
-        assert_eq!(
-            app.image_preview_worker_generation_for_test(),
-            image_worker_generation_before + 1,
-            "commit refreshes the active image target exactly once"
-        );
-        wait_for_image_preview_ready(&mut app);
-        assert!(
             !app.sync_image_preview_worker(),
-            "the committed ready target remains stable"
+            "legacy Miller width cannot replace the Trail detail image target"
         );
         assert_eq!(
             app.image_preview_worker_generation_for_test(),
-            image_worker_generation_before + 1
+            image_worker_generation_before,
+            "Trail detail geometry remains stable across legacy resize commit"
         );
         assert_eq!(
             app.file_preview_worker_generation_for_test(),

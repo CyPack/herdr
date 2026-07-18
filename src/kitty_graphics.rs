@@ -106,12 +106,40 @@ fn image_geometry_for_content_area(
 }
 
 pub(crate) fn file_manager_image_target(
-    snapshot: &crate::ui::MillerViewSnapshot,
+    snapshot: &crate::ui::TrailViewSnapshot,
     file_manager: &crate::fm::FmState,
     cell_size: HostCellSize,
 ) -> Option<ImagePreviewTarget> {
-    image_geometry_for_content_area(snapshot.preview_content_rect(file_manager)?, cell_size)
-        .map(|(_, target)| target)
+    image_geometry_for_content_area(
+        file_manager_trail_image_content_area(snapshot, file_manager)?,
+        cell_size,
+    )
+    .map(|(_, target)| target)
+}
+
+fn file_manager_trail_image_content_area(
+    snapshot: &crate::ui::TrailViewSnapshot,
+    file_manager: &crate::fm::FmState,
+) -> Option<Rect> {
+    let detail = file_manager.trail_snapshots.detail()?;
+    if !matches!(
+        &detail.preview,
+        crate::fm::trail_snapshots::TrailDetailPreview::Image
+    ) {
+        return None;
+    }
+    let crate::fm::FmPreview::File(crate::fm::FmFilePreview::Image(preview)) =
+        &file_manager.preview
+    else {
+        return None;
+    };
+    if preview.source_path != detail.path {
+        return None;
+    }
+    snapshot
+        .detail_panel
+        .as_ref()
+        .map(|panel| panel.content_rect)
 }
 
 #[cfg(test)]
@@ -218,10 +246,8 @@ fn collect_file_manager_image_placement(
     let crate::fm::FmImagePreviewState::Ready { target, prepared } = &preview.state else {
         return None;
     };
-    let content_area = app
-        .view
-        .file_manager_miller
-        .preview_content_rect(file_manager)?;
+    let content_area =
+        file_manager_trail_image_content_area(&app.view.file_manager_trail, file_manager)?;
     if image_geometry_for_content_area(content_area, cell_size).map(|(_, target)| target)?
         != *target
     {
@@ -1304,12 +1330,12 @@ mod tests {
         );
     }
 
-    // P3 RED: decode target and host placement must consume the same typed
-    // preview content rect as text render. Width 57 is adversarial because the
-    // legacy trio independently creates three narrow columns while the frozen
-    // Miller snapshot owns current + preview at 28 cells each.
+    // TRAIL-T7.6 teardown: the legacy Miller-only fixture remains until the
+    // old projection is deleted. Its sole surviving contract is fail-closed:
+    // a PREVIEW column without an exact Trail image detail cannot authorize
+    // decode work.
     #[test]
-    fn file_manager_image_target_matches_windowed_snapshot_preview_rect() {
+    fn file_manager_image_target_rejects_legacy_preview_only_geometry() {
         let frame = Rect::new(0, 0, 57, 10);
         let cells = HostCellSize {
             width_px: 8,
@@ -1331,27 +1357,15 @@ mod tests {
         app.try_open_file_manager_with(|_| Some(file_manager))
             .expect("Files activation");
         crate::ui::compute_view(&mut app, frame);
-        let preview_content = app
-            .view
-            .file_manager_miller
-            .columns
-            .iter()
-            .find(|column| column.kind.is_preview())
-            .expect("typed preview column")
-            .content_rect;
-        let expected = ImagePreviewTarget {
-            width_px: u32::from(preview_content.width) * cells.width_px,
-            height_px: u32::from(preview_content.height) * cells.height_px,
-        };
 
         assert_eq!(
             file_manager_image_target(
-                &app.view.file_manager_miller,
+                &app.view.file_manager_trail,
                 app.file_manager.as_ref().expect("open FM"),
                 cells,
             ),
-            Some(expected),
-            "decode target must match the exact windowed preview content rect"
+            None,
+            "legacy preview geometry alone cannot authorize image work"
         );
     }
 
@@ -1518,37 +1532,69 @@ mod tests {
         app.mobile_width_threshold = 0;
         app.sidebar_collapsed = true;
         app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
-        let frame = Rect::new(10, 5, 38, 10);
+        let frame = Rect::new(0, 0, 120, 30);
+        let image_path = std::path::PathBuf::from("/tmp/preview.png");
         let mut file_manager = FmState::test_empty("/tmp");
         file_manager.cwd_writable = true;
+        file_manager.entries = vec![crate::fm::FileEntry {
+            name: "preview.png".into(),
+            path: image_path.clone(),
+            kind: crate::fm::entry_kind::FileEntryKind::RegularFile,
+        }];
         file_manager.preview = FmPreview::File(FmFilePreview::Image(FmImagePreview {
-            source_path: "/tmp/preview.png".into(),
+            source_path: image_path,
             generation: 1,
-            state: FmImagePreviewState::Ready {
-                target: ImagePreviewTarget {
-                    width_px: 128,
-                    height_px: 112,
-                },
-                prepared: first,
-            },
+            state: FmImagePreviewState::Pending,
         }));
         file_manager.preview_generation = 1;
+        file_manager.sync_trail_bridge_for_test();
         app.try_open_file_manager_with(|_| Some(file_manager))
             .expect("Files activation");
         crate::ui::compute_view(&mut app, frame);
+        let content = app
+            .view
+            .file_manager_trail
+            .detail_panel
+            .as_ref()
+            .expect("Trail image detail")
+            .content_rect;
+        let expected_target = ImagePreviewTarget {
+            width_px: u32::from(content.width) * cells.width_px,
+            height_px: u32::from(content.height) * cells.height_px,
+        };
+        let preview = app
+            .file_manager
+            .as_mut()
+            .and_then(|fm| match &mut fm.preview {
+                FmPreview::File(FmFilePreview::Image(preview)) => Some(preview),
+                _ => None,
+            })
+            .expect("mutable image preview");
+        preview.state = FmImagePreviewState::Ready {
+            target: expected_target,
+            prepared: first,
+        };
         let runtimes = TerminalRuntimeRegistry::new();
         let mut cache = HostGraphicsCache::default();
 
         let uncached = collect_file_manager_image_placement(&app, cells, &cache.images)
             .expect("ready image placement");
+        assert_eq!(uncached.area, content);
         assert!(!uncached.placement.data.is_empty());
 
         let first_bytes = encode_local_pane_graphics(&app, &runtimes, cells, &mut cache);
         let first_text = String::from_utf8_lossy(&first_bytes);
         assert!(first_text.contains("a=t,t=d,f=32,s=80,v=64"));
         assert!(first_text.contains("a=p"));
-        assert!(first_text.contains("c=10,r=4"));
-        assert!(first_text.contains("\x1b[9;36H"));
+        assert!(first_text.contains(&format!(
+            "c={},r={}",
+            uncached.placement.render.grid_cols, uncached.placement.render.grid_rows
+        )));
+        assert!(first_text.contains(&format!(
+            "\x1b[{};{}H",
+            i32::from(content.y) + uncached.placement.render.viewport_row + 1,
+            i32::from(content.x) + uncached.placement.render.viewport_col + 1
+        )));
 
         let cached = collect_file_manager_image_placement(&app, cells, &cache.images)
             .expect("cached image placement metadata");
@@ -1571,10 +1617,7 @@ mod tests {
             .expect("mutable image preview");
         preview.generation = 2;
         preview.state = FmImagePreviewState::Ready {
-            target: ImagePreviewTarget {
-                width_px: 128,
-                height_px: 112,
-            },
+            target: expected_target,
             prepared: PreparedImagePreview {
                 width: 80,
                 height: 64,

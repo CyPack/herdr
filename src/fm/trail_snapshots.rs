@@ -392,6 +392,70 @@ impl TrailSnapshots {
         col.snapshot = read_directory_snapshot(&col.directory, self.show_hidden);
         true
     }
+
+    /// Reconcile exact-path Trail authority after one loaded column changed.
+    /// A still-live directory branch is preserved, a still-live file detail
+    /// is freshly prepared, and a missing/type-changed selection truncates
+    /// atomically at the refreshed column.
+    pub(crate) fn reconcile_refreshed_col(
+        &mut self,
+        trail: &mut TrailState,
+        col_idx: usize,
+    ) -> bool {
+        let Some(trail_col) = trail.cols().get(col_idx) else {
+            return false;
+        };
+        let Some(snapshot) = self.cols.get(col_idx) else {
+            return false;
+        };
+        if snapshot.directory != trail_col.directory {
+            return false;
+        }
+
+        let Some(selected_path) = trail_col.selected.clone() else {
+            if col_idx < trail.deepest() {
+                let _ = trail.clear_selection_at(col_idx);
+                self.cols.truncate(col_idx + 1);
+                self.detail = None;
+            }
+            return true;
+        };
+        let selected = snapshot
+            .entries()
+            .iter()
+            .find(|entry| entry.path == selected_path)
+            .cloned();
+        let Some(selected) = selected else {
+            let _ = trail.clear_selection_at(col_idx);
+            self.cols.truncate(col_idx + 1);
+            self.detail = None;
+            return true;
+        };
+
+        if selected.is_dir() {
+            let branch_is_aligned = trail
+                .cols()
+                .get(col_idx + 1)
+                .is_some_and(|next| next.directory == selected.path)
+                && self
+                    .cols
+                    .get(col_idx + 1)
+                    .is_some_and(|next| next.directory == selected.path);
+            if !branch_is_aligned {
+                let _ = trail.clear_selection_at(col_idx);
+                self.cols.truncate(col_idx + 1);
+                self.detail = None;
+            }
+            return true;
+        }
+
+        if !trail.select_file(col_idx, &selected.path) {
+            return false;
+        }
+        self.cols.truncate(col_idx + 1);
+        self.detail = Some(prepare_trail_detail(&selected.path, selected.kind));
+        true
+    }
 }
 
 /// Prepare the detail-panel content for one selected file, outside render:

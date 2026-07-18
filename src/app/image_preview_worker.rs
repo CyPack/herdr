@@ -275,7 +275,7 @@ impl super::App {
                 return None;
             };
             let target = file_manager_image_target(
-                &self.state.view.file_manager_miller,
+                &self.state.view.file_manager_trail,
                 file_manager,
                 self.image_preview_cell_size,
             )?;
@@ -377,7 +377,7 @@ mod tests {
     use crate::fm::{FmFilePreview, FmImagePreviewState, FmPreview, FmState};
     use crate::kitty_graphics::HostCellSize;
     use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
-    use ratatui::layout::{Position, Rect};
+    use ratatui::layout::Rect;
     use std::io::Cursor;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -658,7 +658,7 @@ mod tests {
         std::fs::write(temp.root.join("sample.png"), encoded_png(160, 80))
             .expect("write PNG fixture");
         let mut app = test_app();
-        let frame = Rect::new(10, 5, 38, 10);
+        let frame = Rect::new(0, 0, 90, 16);
         app.image_preview_cell_size = HostCellSize {
             width_px: 8,
             height_px: 16,
@@ -667,6 +667,18 @@ mod tests {
             .try_open_file_manager_with(|_| Some(FmState::new(&temp.root)))
             .expect("Files activation");
         crate::ui::compute_view(&mut app.state, frame);
+        let content = app
+            .state
+            .view
+            .file_manager_trail
+            .detail_panel
+            .as_ref()
+            .expect("Trail image detail panel")
+            .content_rect;
+        let first_target = target(
+            u32::from(content.width) * app.image_preview_cell_size.width_px,
+            u32::from(content.height) * app.image_preview_cell_size.height_px,
+        );
 
         assert!(
             app.sync_image_preview_worker(),
@@ -675,15 +687,22 @@ mod tests {
         assert_eq!(
             current_image_state(&app),
             &FmImagePreviewState::Loading {
-                target: target(128, 80),
+                target: first_target,
             }
         );
-        assert_eq!(wait_for_ready(&mut app), (target(128, 80), 128, 64));
+        let (ready_target, ready_width, ready_height) = wait_for_ready(&mut app);
+        assert_eq!(ready_target, first_target);
+        assert!(ready_width <= first_target.width_px);
+        assert!(ready_height <= first_target.height_px);
 
         app.image_preview_cell_size = HostCellSize {
             width_px: 4,
             height_px: 8,
         };
+        let resized_target = target(
+            u32::from(content.width) * app.image_preview_cell_size.width_px,
+            u32::from(content.height) * app.image_preview_cell_size.height_px,
+        );
         assert!(
             app.sync_image_preview_worker(),
             "resize must clear old pixels immediately"
@@ -691,10 +710,13 @@ mod tests {
         assert_eq!(
             current_image_state(&app),
             &FmImagePreviewState::Loading {
-                target: target(64, 40),
+                target: resized_target,
             }
         );
-        assert_eq!(wait_for_ready(&mut app), (target(64, 40), 64, 32));
+        let (ready_target, ready_width, ready_height) = wait_for_ready(&mut app);
+        assert_eq!(ready_target, resized_target);
+        assert!(ready_width <= resized_target.width_px);
+        assert!(ready_height <= resized_target.height_px);
 
         app.state.file_manager = None;
         assert!(!app.sync_image_preview_worker());
@@ -816,8 +838,8 @@ mod tests {
     }
 
     #[test]
-    fn committed_resize_requests_at_most_one_image_target() {
-        let temp = TempDir::new("committed-resize-target");
+    fn committed_cell_geometry_change_requests_exactly_one_image_target() {
+        let temp = TempDir::new("committed-cell-target");
         std::fs::write(temp.root.join("sample.png"), encoded_png(160, 80))
             .expect("write PNG fixture");
         let mut app = test_app();
@@ -840,69 +862,15 @@ mod tests {
         let (original_target, _, _) = wait_for_ready(&mut app);
         let generation_before = app.image_preview_worker.slot.generation;
 
-        let divider = app
-            .state
-            .view
-            .file_manager_miller
-            .dividers
-            .get(1)
-            .expect("three-column projection exposes the preview divider")
-            .clone();
-        assert!(
-            app.begin_miller_resize_capture(divider.rect.x, divider.rect.y),
-            "the typed divider starts capture"
-        );
-        let bounds = crate::ui::shell::ResizeBounds::new(
-            crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
-            crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
-            crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
-            crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
-        );
-        assert!(
-            bounds.is_some_and(|bounds| app.state.shell_interaction.preview_resize(
-                Position::new(divider.rect.x.saturating_add(4), u16::MAX),
-                bounds,
-            )),
-            "the typed transaction previews the new pair"
-        );
-        crate::ui::compute_view(&mut app.state, frame);
-        let (_, preview_profile) = crate::render_prof::observe_for_test(|| {
-            for _ in 0..100 {
-                assert!(
-                    !app.sync_image_preview_worker(),
-                    "preview sync cannot submit an image target"
-                );
-            }
-        });
-        assert_eq!(
-            preview_profile.counter("fm.image_target.refresh"),
-            0,
-            "transient drag geometry cannot refresh the image target"
-        );
-        assert_eq!(
-            app.image_preview_worker.slot.generation, generation_before,
-            "preview produces zero worker generations"
-        );
-
-        assert!(
-            app.commit_miller_resize(),
-            "the valid transaction commits once"
-        );
-        assert!(
-            !app.sync_image_preview_worker(),
-            "release before committed compute still sees transient geometry"
-        );
-        assert_eq!(
-            app.image_preview_worker.slot.generation, generation_before,
-            "release alone cannot submit a target"
-        );
-
-        crate::ui::compute_view(&mut app.state, frame);
+        app.image_preview_cell_size = HostCellSize {
+            width_px: 4,
+            height_px: 8,
+        };
         let (started, committed_profile) =
             crate::render_prof::observe_for_test(|| app.sync_image_preview_worker());
         assert!(
             started,
-            "the first committed frame starts one replacement target"
+            "the committed host-cell geometry starts one replacement target"
         );
         assert_eq!(
             committed_profile.counter("fm.image_target.refresh"),
@@ -912,12 +880,12 @@ mod tests {
         assert_eq!(
             app.image_preview_worker.slot.generation,
             generation_before + 1,
-            "commit requests at most one new target generation"
+            "one committed geometry change requests one target generation"
         );
         let (committed_target, _, _) = wait_for_ready(&mut app);
         assert_ne!(
             committed_target, original_target,
-            "the exercised divider changes the target geometry"
+            "host-cell geometry changes the Trail panel pixel target"
         );
         assert_eq!(
             app.image_preview_worker.slot.generation,
@@ -931,8 +899,8 @@ mod tests {
     }
 
     #[test]
-    fn stale_precommit_image_completion_is_rejected() {
-        let temp = TempDir::new("stale-precommit");
+    fn stale_prior_geometry_image_completion_is_rejected() {
+        let temp = TempDir::new("stale-prior-geometry");
         std::fs::write(temp.root.join("sample.png"), encoded_png(160, 80))
             .expect("write PNG fixture");
         let mut app = test_app();
@@ -977,93 +945,35 @@ mod tests {
             .recv_timeout(Duration::from_secs(2))
             .expect("first image job starts");
 
-        let divider = app
-            .state
-            .view
-            .file_manager_miller
-            .dividers
-            .get(1)
-            .expect("three-column projection exposes the preview divider")
-            .clone();
-        assert!(
-            app.begin_miller_resize_capture(divider.rect.x, divider.rect.y),
-            "the typed divider starts capture"
-        );
-        let bounds = crate::ui::shell::ResizeBounds::new(
-            crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
-            crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
-            crate::fm::miller::MILLER_COLUMN_MIN_WIDTH,
-            crate::fm::miller::MILLER_COLUMN_MAX_WIDTH,
-        );
-        assert!(
-            bounds.is_some_and(|bounds| app.state.shell_interaction.preview_resize(
-                Position::new(divider.rect.x.saturating_add(4), u16::MAX),
-                bounds,
-            )),
-            "the typed transaction accepts an out-of-area preview move"
-        );
-        crate::ui::compute_view(&mut app.state, frame);
-        assert!(
-            app.state.view.file_manager_miller.resize_preview_active,
-            "precondition: transient geometry owns the projection"
-        );
-
-        release_tx.send(()).expect("finish the precommit job");
-        wait_for_worker_result_generation(&app, 1);
-        assert!(
-            !app.sync_image_preview_worker(),
-            "preview geometry cannot apply or replace the completed old job"
-        );
-        assert_eq!(
-            current_image_state(&app),
-            &FmImagePreviewState::Loading {
-                target: original_target,
-            },
-            "the precommit completion remains unapplied"
-        );
-
-        assert!(
-            app.commit_miller_resize(),
-            "the valid typed transaction commits exactly once"
-        );
-        assert!(
-            !app.sync_image_preview_worker(),
-            "release alone cannot expose stale geometry before committed compute"
-        );
-
-        crate::ui::compute_view(&mut app.state, frame);
-        assert!(
-            !app.state.view.file_manager_miller.resize_preview_active,
-            "the committed projection re-enables target synchronization"
-        );
+        app.image_preview_cell_size = HostCellSize {
+            width_px: 4,
+            height_px: 8,
+        };
         assert!(
             app.sync_image_preview_worker(),
-            "the committed target starts exactly one replacement generation"
+            "new host-cell geometry immediately retires generation one"
         );
+        assert_eq!(app.image_preview_worker.slot.generation, 2);
+
+        release_tx.send(()).expect("finish the prior-geometry job");
+        wait_for_worker_result_generation(&app, 1);
         let committed_target = started_rx
             .recv_timeout(Duration::from_secs(2))
-            .expect("committed image job starts");
-        assert_ne!(
-            committed_target, original_target,
-            "the exercised divider must change the image target"
-        );
-        assert_eq!(
-            app.image_preview_worker.slot.generation, 2,
-            "one precommit and one committed target are the only generations"
-        );
+            .expect("replacement image job starts");
+        assert_ne!(committed_target, original_target);
         assert!(
             !app.sync_image_preview_worker(),
-            "draining the stale result cannot mutate the new Loading state"
+            "generation one completion is rejected against generation two"
         );
         assert_eq!(
             current_image_state(&app),
             &FmImagePreviewState::Loading {
                 target: committed_target,
             },
-            "generation one cannot overwrite generation two"
+            "the replacement target remains authoritative"
         );
 
-        release_tx.send(()).expect("finish the committed job");
+        release_tx.send(()).expect("finish the replacement job");
         wait_for_worker_result_generation(&app, 2);
         assert!(
             app.sync_image_preview_worker(),

@@ -459,11 +459,10 @@ impl super::App {
     }
 
     pub(super) fn sync_file_manager_watcher_at(&mut self, now: std::time::Instant) -> bool {
-        let target = self
-            .state
-            .file_manager
-            .as_ref()
-            .map(|file_manager| file_manager.cwd.clone());
+        let target =
+            self.state.file_manager.as_ref().and_then(|file_manager| {
+                file_manager.active_trail_directory().map(Path::to_path_buf)
+            });
 
         let watcher_sync = self.file_manager_watcher.sync(target.as_deref(), now);
         if matches!(watcher_sync, FmWatcherSync::Started { .. })
@@ -507,17 +506,15 @@ impl super::App {
             return false;
         }
 
-        let Some(files_generation) = self.active_files_generation() else {
+        let Some(_files_generation) = self.active_files_generation() else {
             return false;
         };
-        let Some(request) = self.state.file_manager.as_ref().and_then(|file_manager| {
-            (watched_dir.as_deref() == Some(file_manager.cwd.as_path()))
-                .then(|| file_manager.request_current_refresh(files_generation))
+        let Some(changed) = self.state.file_manager.as_mut().and_then(|file_manager| {
+            let watched_dir = watched_dir.as_deref()?;
+            (Some(watched_dir) == file_manager.active_trail_directory())
+                .then(|| file_manager.refresh_active_trail_col(watched_dir))
+                .flatten()
         }) else {
-            return false;
-        };
-
-        let Some(changed) = self.execute_file_manager_current_refresh(request) else {
             return false;
         };
         self.file_manager_watcher.reconcile_revision = self
@@ -1456,10 +1453,14 @@ mod tests {
 
         assert!(app.sync_file_manager_watcher_at(now));
         let file_manager = app.state.file_manager.as_ref().expect("file manager open");
-        assert_eq!(file_manager.cursor, old_index);
+        assert!(
+            file_manager.entries.is_empty() || file_manager.cursor < file_manager.entries.len(),
+            "legacy cursor projection remains safely clamped"
+        );
         assert_eq!(
-            file_manager.selected().map(|entry| entry.name.as_str()),
-            Some("c.txt")
+            file_manager.selected(),
+            None,
+            "a missing exact Trail selection cannot invent a replacement path"
         );
         assert!(!file_manager.multi_selection_paths().contains(&old_path));
         assert!(file_manager.multi_selection_paths().is_empty());
@@ -1467,7 +1468,7 @@ mod tests {
     }
 
     #[test]
-    fn ancestor_revalidation_does_not_create_persistent_watcher() {
+    fn legacy_ancestor_projection_does_not_rebind_active_trail_watcher() {
         let tree = TempDir::new("ancestor-watcher");
         let child = tree.root.join("child");
         std::fs::create_dir(&child).expect("create watched child");
@@ -1505,19 +1506,19 @@ mod tests {
         assert!(!app.sync_file_manager_watcher());
         assert_eq!(
             app.file_manager_watcher.watched_dir(),
-            Some(tree.root.as_path())
+            Some(child.as_path()),
+            "legacy cwd movement cannot replace active Trail authority"
         );
         assert!(app.file_manager_watcher.has_backend());
-        assert!(app.file_manager_watcher.generation() > child_generation);
-        let ancestor_generation = app.file_manager_watcher.generation();
+        assert_eq!(app.file_manager_watcher.generation(), child_generation);
 
         assert!(
             !app.sync_file_manager_watcher(),
-            "ancestor projection revalidation keeps the single current watcher stable"
+            "legacy ancestor projection keeps the active Trail watcher stable"
         );
         assert_eq!(
             app.file_manager_watcher.generation(),
-            ancestor_generation,
+            child_generation,
             "no second persistent ancestor watcher may be created"
         );
 
