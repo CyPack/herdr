@@ -81,10 +81,14 @@ trail-program.md (T1-T7). T1 KAPANDI (`3b0c2ed0`/`7d5edecb`). T2 KAPANDI
 (`12a53be4` RED / `59cdb470` GREEN — fm::trail_snapshots::TrailSnapshots:
 index+path hizalı sync, fail-closed select_dir, refresh_col path-bazlı
 seçim koruması, sliding-window hizalama; aile 5/5, full 3,505/3,505 + 2
-skip, iki clippy temiz). Saha kusurları: FIP-D2 kapalı (agentless toast),
+skip, iki clippy temiz). T3 KAPANDI (`0c6b0d87` RED / `1982e20e` GREEN —
+ui::file_manager::trail_view: project_trail_view + render_trail_view,
+deepest auto-scroll, per-index genişlik, ata-kolon seçim vurgusu, stale
+hizasızlık inert; aile 7/7, VIS-07/08 baseline, görsel suite 16/16, full
+3,512/3,512 + 2 skip). Saha kusurları: FIP-D2 kapalı (agentless toast),
 FIP-D1 (sidebar favorites ölü) T6'da, FIP-D3 trail kontratıyla süperseed,
 FIP-D4 (Ghostty foto önizleme "Kitty graphics req.") açık. SIRADAKİ:
-TRAIL-T3 (render+geometri+VIS-07/08) ∥ TRAIL-T4 (girdi).
+TRAIL-T4 (girdi aileleri — tık + klavye).
 Sonrası: FIP-5 picker, kullanıcı direktifi custom-layout programı. FIP-3 TAMAMEN KAPANDI (2026-07-18): 3.4 characterized migration
 (`bcecfdc8` — FileEntry alanları kind-türevi metodlara döndü, çifte symlink
 stat kalktı, 3-kategori grep 0 kalıntı); 3.7 icon edge ailesi (`91e33f6f` RED
@@ -408,16 +412,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 15 ve
-89, toplam 104’dür. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 14 ve
+89, toplam 103’tür. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 15 unchecked
-
-- [ ] **TRAIL-T3** Render+geometri: soldan sağa kolonlar, per-index genişlik,
-  en-derin-kolon auto-scroll; VIS-07/08 Chromium baseline'ları.
+### Source: `.codex/TASKS.md` — 14 unchecked
 
 - [ ] **TRAIL-T4** Girdi: klasör/ata-kardeş/dosya tık aileleri + klavye;
   generation-safe hit'ler.

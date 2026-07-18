@@ -23,8 +23,13 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
   (index+path hizalı sync), fail-closed select_dir (Available olmayan hedef
   kolon OLAMAZ), refresh_col path-bazlı seçimi korur, sliding-window hizalı;
   aile 5/5, full 3,505/3,505 + 2 skip, iki clippy temiz.
-- [ ] **TRAIL-T3** Render+geometri: soldan sağa kolonlar, per-index genişlik,
-  en-derin-kolon auto-scroll; VIS-07/08 Chromium baseline'ları.
+- [x] **TRAIL-T3** Render+geometri (`0c6b0d87` RED / `1982e20e` GREEN):
+  `ui::file_manager::trail_view` — project_trail_view (miller_viewport_geometry
+  reuse, deepest auto-scroll YASA-2, per-index genişlik YASA-4, dikey seçim
+  scroll, satır rect'leri = hit tek kaynak, stale hizasızlık inert) +
+  render_trail_view (her ata kolonda seçim vurgusu YASA-1, shared entry-row);
+  aile 7/7, VIS-07/08 Chromium baseline (görsel suite 16/16), full
+  3,512/3,512 + 2 skip, iki clippy temiz.
 - [ ] **TRAIL-T4** Girdi: klasör/ata-kardeş/dosya tık aileleri + klavye;
   generation-safe hit'ler.
 - [ ] **TRAIL-T5** Resizable detay/önizleme paneli + VIS-09; FIP-D4
