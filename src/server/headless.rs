@@ -4405,6 +4405,7 @@ mod tests {
                 },
             })
             .collect();
+        file_manager.sync_trail_bridge_for_test();
         server.app.state.mobile_width_threshold = 0;
         server.app.state.sidebar_collapsed = true;
         server

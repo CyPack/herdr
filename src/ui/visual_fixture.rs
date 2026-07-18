@@ -153,6 +153,10 @@ mod tests {
         }
         std::fs::create_dir_all(root.join("beta").join("deep")).expect("fixture deep dir");
         std::fs::write(root.join("beta").join("inner.txt"), b"x").expect("fixture inner file");
+        // Browser fonts do not carry Nerd PUA glyphs. The visual oracle uses
+        // the deterministic ASCII profile so every semantic entry icon is
+        // visible in Chromium.
+        app.file_icon_profile = crate::fm::entry_kind::IconProfile::Ascii;
         app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(root.clone())))
             .expect("files stage must open for the fixture");
         crate::ui::compute_view(&mut app, Rect::new(0, 0, 120, 40));
@@ -161,9 +165,9 @@ mod tests {
             export_cell_fixture("vis-01-files", &render_state(&app, 120, 40)),
         );
 
-        // TP-FIP-VIS-02: descend through the NONZERO child `beta` (index 1)
-        // and then into `deep`; the resident `inner` column must highlight
-        // `beta`, never row zero.
+        // TP-FIP-VIS-02 / TP-TRAIL-T7-RENDER-05: descend through the NONZERO
+        // child `beta` (index 1) and then into `deep`; the accumulating Trail
+        // must retain exact ancestor highlights, never substitute row zero.
         {
             let fm = app.file_manager.as_mut().expect("open file manager");
             let beta = root.join("beta");
@@ -173,7 +177,7 @@ mod tests {
                 .position(|entry| entry.path == beta)
                 .expect("beta row");
             assert!(beta_index > 0, "fixture requires a nonzero child index");
-            fm.cursor = beta_index;
+            assert!(fm.select(beta_index));
             fm.enter();
             let deep = beta.join("deep");
             let deep_index = fm
@@ -181,12 +185,12 @@ mod tests {
                 .iter()
                 .position(|entry| entry.path == deep)
                 .expect("deep row");
-            fm.cursor = deep_index;
+            assert!(fm.select(deep_index));
             fm.enter();
             assert_eq!(fm.cwd, deep);
         }
-        // 160 cells wide so the resident `inner` column stays inside the
-        // bounded window next to parent/current/preview.
+        // 160 cells wide so the loaded `inner → beta → deep` Trail stays
+        // visible as complete columns in the bounded window.
         crate::ui::compute_view(&mut app, Rect::new(0, 0, 160, 40));
         write_fixture(
             &out_dir,
@@ -239,7 +243,20 @@ mod tests {
             &out_dir,
             export_cell_fixture("vis-03-icons-ascii", &render_state(&app, 120, 40)),
         );
+        {
+            let fm = app.file_manager.as_mut().expect("open icon file manager");
+            let main_index = fm
+                .entries
+                .iter()
+                .position(|entry| entry.path == icon_root.join("main.rs"))
+                .expect("main.rs row");
+            assert!(fm.select(main_index));
+        }
         crate::ui::compute_view(&mut app, Rect::new(0, 0, 60, 16));
+        assert!(
+            !app.view.file_manager_trail.columns.is_empty(),
+            "tiny icon fixture must exercise one complete Trail column"
+        );
         write_fixture(
             &out_dir,
             export_cell_fixture("vis-04-icons-tiny", &render_state(&app, 60, 16)),

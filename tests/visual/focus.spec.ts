@@ -11,9 +11,10 @@ function loadGenerated(name: string): unknown {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
-// TP-FIP-VIS-02: after descending through the nonzero child `beta` into
-// `deep`, the resident column visibly highlights `beta`, not the first row.
-test("vis-02 resident column highlights the exact entered child", async ({ page }) => {
+// TP-FIP-VIS-02 / TP-TRAIL-T7-RENDER-05: after descending through the
+// nonzero child `beta` into `deep`, the accumulating Trail keeps both exact
+// ancestor selections visible and never substitutes the first row.
+test("vis-02 trail retains exact ancestor highlights", async ({ page }) => {
   await page.goto(`file://${harness}`);
   await page.evaluate(
     (f) => (window as any).renderFixture(f),

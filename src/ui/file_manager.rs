@@ -1,9 +1,10 @@
-//! Native file manager — Miller-capable directory-list render (A2.2).
+//! Native file manager — accumulating Miller Trail render.
 //!
 //! Draws the open [`FmState`](crate::fm::FmState) into a rect: a one-row current
-//! directory header followed by responsive parent/current/preview columns. Pure
-//! draw (reads state, never mutates or touches the filesystem), matching herdr's
-//! `compute_view`/`render` split. Client-side presentation only.
+//! directory header followed by the canonical root-to-active Trail and optional
+//! detail panel. Pure draw (reads state, never mutates or touches the
+//! filesystem), matching herdr's `compute_view`/`render` split. Client-side
+//! presentation only.
 //!
 //! This is the first non-terminal *content* swapped into a named region
 //! (`CenterContent`): when `app.file_manager` is open, the base layer draws this
@@ -11,7 +12,6 @@
 //! geometry build on the same pure client-side projection.
 
 pub(crate) mod miller;
-#[allow(dead_code)] // consumed from FIP trail program T4 (input) onward
 pub(crate) mod trail_view;
 
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -661,6 +661,22 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         );
     }
 
+    let live_trail_surface = area == app.view.terminal_area
+        && app.stage.surface_view() == crate::ui::surface_host::StageSurfaceView::NativeFiles;
+    if live_trail_surface {
+        trail_view::render_trail_view(
+            app,
+            frame,
+            &app.view.file_manager_trail,
+            &fm.trail_snapshots,
+        );
+        render_file_manager_status(app, frame, status_area, fm, styles);
+        return;
+    }
+
+    // TRAIL-T7.6 teardown: component-only compatibility render keeps the
+    // characterized legacy source matrix executable while production render
+    // and the next input layer migrate independently.
     let fallback_snapshot;
     let snapshot = if area == app.view.terminal_area {
         &app.view.file_manager_miller
@@ -863,13 +879,24 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         }
     }
 
-    if status_area.width > 0 && status_area.height > 0 {
-        if let Some((status, style)) =
-            file_manager_status_line(fm, app.file_manager_operation.as_ref(), styles)
-        {
-            let status = truncate_end(&format!(" {status}"), status_area.width as usize);
-            frame.render_widget(Paragraph::new(status).style(style), status_area);
-        }
+    render_file_manager_status(app, frame, status_area, fm, styles);
+}
+
+fn render_file_manager_status(
+    app: &AppState,
+    frame: &mut Frame,
+    status_area: Rect,
+    fm: &FmState,
+    styles: FileManagerVisualStyles,
+) {
+    if status_area.width == 0 || status_area.height == 0 {
+        return;
+    }
+    if let Some((status, style)) =
+        file_manager_status_line(fm, app.file_manager_operation.as_ref(), styles)
+    {
+        let status = truncate_end(&format!(" {status}"), status_area.width as usize);
+        frame.render_widget(Paragraph::new(status).style(style), status_area);
     }
 }
 
@@ -1185,30 +1212,43 @@ fn render_file_preview(app: &AppState, frame: &mut Frame, area: Rect, preview: &
             frame.render_widget(Paragraph::new(lines), content_area);
         }
         FmFilePreview::Image(preview) => {
-            let label_and_style = if !app.kitty_graphics_enabled {
-                Some(("(Kitty graphics req.)", styles.warning))
-            } else {
-                match &preview.state {
-                    FmImagePreviewState::Pending => {
-                        Some(("(image preview pending)", styles.enabled_action))
-                    }
-                    FmImagePreviewState::Loading { .. } => {
-                        Some(("(loading image...)", styles.enabled_action))
-                    }
-                    FmImagePreviewState::Ready { .. } => None,
-                    FmImagePreviewState::Unavailable { error, .. } => Some((
-                        image_preview_error_label(*error),
-                        image_preview_error_style(*error, styles),
-                    )),
-                }
-            };
-            let Some((label, style)) = label_and_style else {
-                return;
-            };
-            let label = truncate_end(&format!("  {label}"), content_area.width as usize);
-            frame.render_widget(Paragraph::new(label).style(style), content_area);
+            render_image_preview_status(app, frame, content_area, preview);
         }
     }
+}
+
+pub(super) fn render_image_preview_status(
+    app: &AppState,
+    frame: &mut Frame,
+    area: Rect,
+    preview: &crate::fm::FmImagePreview,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let styles = file_manager_visual_styles(&app.palette);
+    let label_and_style = if !app.kitty_graphics_enabled {
+        Some(("(Kitty graphics req.)", styles.warning))
+    } else {
+        match &preview.state {
+            FmImagePreviewState::Pending => {
+                Some(("(image preview pending)", styles.enabled_action))
+            }
+            FmImagePreviewState::Loading { .. } => {
+                Some(("(loading image...)", styles.enabled_action))
+            }
+            FmImagePreviewState::Ready { .. } => None,
+            FmImagePreviewState::Unavailable { error, .. } => Some((
+                image_preview_error_label(*error),
+                image_preview_error_style(*error, styles),
+            )),
+        }
+    };
+    let Some((label, style)) = label_and_style else {
+        return;
+    };
+    let label = truncate_end(&format!("  {label}"), area.width as usize);
+    frame.render_widget(Paragraph::new(label).style(style), area);
 }
 
 fn image_preview_error_style(error: ImagePreviewError, styles: FileManagerVisualStyles) -> Style {
@@ -1647,7 +1687,9 @@ mod tests {
         let td = TempDir::new("production-trail-render");
         td.dir("alpha");
         td.file("notes.txt");
-        let mut app = app_with_fm(FmState::new(&td.root));
+        let mut app = AppState::test_new();
+        app.try_open_file_manager_with(|_| Some(FmState::new(&td.root)))
+            .expect("Files activation");
         let frame = Rect::new(0, 0, 86, 8);
         let body = file_manager_miller_viewport_area(frame);
         app.view.terminal_area = frame;
@@ -1671,7 +1713,9 @@ mod tests {
         let td = TempDir::new("production-trail-purity");
         td.dir("alpha");
         td.file("notes.txt");
-        let mut app = app_with_fm(FmState::new(&td.root));
+        let mut app = AppState::test_new();
+        app.try_open_file_manager_with(|_| Some(FmState::new(&td.root)))
+            .expect("Files activation");
         let frame = Rect::new(0, 0, 86, 8);
         let body = file_manager_miller_viewport_area(frame);
         app.view.terminal_area = frame;

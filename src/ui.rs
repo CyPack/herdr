@@ -42,6 +42,7 @@ pub(crate) use self::file_manager::miller::{
     miller_resize_column_is_live, MillerColumnKind, MillerColumnView, MillerDirectorySource,
     MillerRowColumnKind, MillerViewSnapshot,
 };
+pub(crate) use self::file_manager::trail_view::TrailViewSnapshot;
 use self::file_manager::{
     agent_attachment_picker_visible_rows, compute_agent_attachment_picker_row_areas,
     compute_file_manager_header_action_areas, render_agent_attachment_picker, render_file_manager,
@@ -309,6 +310,7 @@ fn compute_view_internal(
         (Rect::default(), main_area)
     };
     let file_manager_miller = sync_miller_view(app, terminal_area);
+    let file_manager_trail = sync_trail_view(app, terminal_area);
     let FileManagerRowGeometry {
         rows: file_manager_row_areas,
         actions: file_manager_row_action_areas,
@@ -462,6 +464,7 @@ fn compute_view_internal(
         file_manager_sidebar_row_areas,
         app_dock_entry_areas,
         file_manager_miller,
+        file_manager_trail,
         file_manager_row_areas,
         file_manager_row_action_areas,
         file_manager_header_action_areas,
@@ -504,6 +507,7 @@ fn compute_mobile_view(
         (area, Rect::default())
     };
     let file_manager_miller = sync_miller_view(app, terminal_area);
+    let file_manager_trail = sync_trail_view(app, terminal_area);
     let FileManagerRowGeometry {
         rows: file_manager_row_areas,
         actions: file_manager_row_action_areas,
@@ -587,6 +591,7 @@ fn compute_mobile_view(
         file_manager_sidebar_row_areas: Vec::new(),
         app_dock_entry_areas: Vec::new(),
         file_manager_miller,
+        file_manager_trail,
         file_manager_row_areas,
         file_manager_row_action_areas,
         file_manager_header_action_areas,
@@ -662,6 +667,21 @@ fn sync_miller_view(app: &mut AppState, area: Rect) -> MillerViewSnapshot {
         );
     }
     snapshot
+}
+
+fn sync_trail_view(app: &AppState, area: Rect) -> TrailViewSnapshot {
+    if app.stage.surface_view() != surface_host::StageSurfaceView::NativeFiles {
+        return TrailViewSnapshot::default();
+    }
+    let Some(file_manager) = app.file_manager.as_ref() else {
+        return TrailViewSnapshot::default();
+    };
+    file_manager::trail_view::project_trail_view(
+        file_manager::file_manager_miller_viewport_area(area),
+        &file_manager.trail,
+        &file_manager.trail_snapshots,
+        &[],
+    )
 }
 
 fn sync_agent_attachment_picker_view(
@@ -1478,7 +1498,8 @@ mod tests {
         app.mobile_width_threshold = 0;
         app.sidebar_collapsed = true;
         app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
-        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::test_empty("/trail-root")))
+        let root = std::env::current_dir().expect("current directory");
+        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(root)))
             .expect("Files activation");
 
         compute_view(&mut app, Rect::new(0, 0, 86, 12));
@@ -2445,8 +2466,20 @@ mod tests {
         let expanded_sidebar_width = app.view.sidebar_rect.width;
         let expanded = render_full_frame_for_test(&app, desktop);
         let center = buffer_rect_text(&expanded, app.view.terminal_area);
-        for label in ["PARENT", "CURRENT", "PREVIEW", "copy 0/1", "Esc cancel"] {
+        for label in [
+            "child/",
+            "peer.txt",
+            "preview.txt",
+            "copy 0/1",
+            "Esc cancel",
+        ] {
             assert!(center.contains(label), "expanded center missing {label:?}");
+        }
+        for legacy in ["PARENT", "CURRENT", "PREVIEW", "(unavailable)"] {
+            assert!(
+                !center.contains(legacy),
+                "live Trail must not render legacy marker {legacy:?}"
+            );
         }
         let current_row = app
             .view
@@ -2479,9 +2512,10 @@ mod tests {
             &render_full_frame_for_test(&app, mobile_two),
             app.view.terminal_area,
         );
+        assert!(two.contains("preview.txt"));
         assert!(!two.contains("PARENT"));
-        assert!(two.contains("CURRENT"));
-        assert!(two.contains("PREVIEW"));
+        assert!(!two.contains("CURRENT"));
+        assert!(!two.contains("PREVIEW"));
         assert!(two.contains("copy 0/1"));
 
         let mobile_one = Rect::new(0, 0, 20, 15);
@@ -2491,7 +2525,8 @@ mod tests {
             &render_full_frame_for_test(&app, mobile_one),
             app.view.terminal_area,
         );
-        assert!(one.contains("CURRENT"));
+        assert!(one.contains("preview.txt"));
+        assert!(!one.contains("CURRENT"));
         assert!(!one.contains("PARENT"));
         assert!(!one.contains("PREVIEW"));
         assert!(one.contains("copy 0/1"));

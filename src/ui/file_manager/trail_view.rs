@@ -109,9 +109,12 @@ pub(crate) fn project_trail_view(
     // LAW 3: a selected FILE reserves the resizable right-side panel BEFORE
     // the columns are laid out — a side panel, never an overlay. The panel
     // only appears when enough width remains for at least one column.
-    let panel_width = snaps.detail().is_some().then(|| {
+    let panel_width = (snaps.detail().is_some()
+        && stage.width >= TRAIL_DETAIL_PANEL_MIN_WIDTH.saturating_mul(2))
+    .then(|| {
         TRAIL_DETAIL_PANEL_DEFAULT_WIDTH
-            .clamp(TRAIL_DETAIL_PANEL_MIN_WIDTH, (stage.width / 2).max(1))
+            .min(stage.width / 2)
+            .max(TRAIL_DETAIL_PANEL_MIN_WIDTH)
     });
     let (column_stage, detail_panel) = match panel_width {
         Some(width) if stage.width >= width + MILLER_COLUMN_MIN_WIDTH => {
@@ -209,6 +212,7 @@ pub(crate) fn project_trail_view(
 /// Resolve one screen position against this exact projected frame. The row
 /// rects ARE the hit areas — input never recomputes geometry. Positions on
 /// dividers, empty column space, or outside the projection resolve to None.
+#[allow(dead_code)] // T7.4 consumes this seam when mouse input swaps to Trail.
 pub(crate) fn trail_row_at(view: &TrailViewSnapshot, x: u16, y: u16) -> Option<&TrailRowView> {
     let position = ratatui::layout::Position::new(x, y);
     view.columns
@@ -244,7 +248,11 @@ pub(crate) fn render_trail_view(
                 continue;
             };
             let selected = column.selected_entry == Some(row.entry_index);
-            super::render_entry_row(app, frame, row.rect, entry, selected, false);
+            let multi_selected = app
+                .file_manager
+                .as_ref()
+                .is_some_and(|fm| fm.multi_selection_paths().contains(&entry.path));
+            super::render_entry_row(app, frame, row.rect, entry, selected, multi_selected);
         }
     }
     if let (Some(panel), Some(detail)) = (&view.detail_panel, snaps.detail()) {
@@ -284,6 +292,7 @@ fn render_trail_detail_panel(
         Line::from(format!("kind: {:?}", detail.kind)),
         Line::from(""),
     ];
+    let mut live_image_preview = None;
     match &detail.preview {
         crate::fm::trail_snapshots::TrailDetailPreview::Text(preview) => {
             for text_line in preview.content.lines() {
@@ -294,13 +303,34 @@ fn render_trail_detail_panel(
             }
         }
         crate::fm::trail_snapshots::TrailDetailPreview::Image => {
-            lines.push(Line::from("(image preview)"));
+            live_image_preview = app.file_manager.as_ref().and_then(|fm| match &fm.preview {
+                crate::fm::FmPreview::File(crate::fm::FmFilePreview::Image(preview))
+                    if preview.source_path == detail.path =>
+                {
+                    Some(preview)
+                }
+                crate::fm::FmPreview::None
+                | crate::fm::FmPreview::Directory(_)
+                | crate::fm::FmPreview::File(_) => None,
+            });
+            if live_image_preview.is_none() {
+                lines.push(Line::from("(image preview)"));
+            }
         }
         crate::fm::trail_snapshots::TrailDetailPreview::Unpreviewable(reason) => {
             lines.push(Line::from(format!("(no preview: {reason})")));
         }
     }
     frame.render_widget(Paragraph::new(lines), panel.content_rect);
+    if let Some(preview) = live_image_preview {
+        let preview_area = Rect::new(
+            panel.content_rect.x,
+            panel.content_rect.y.saturating_add(2),
+            panel.content_rect.width,
+            panel.content_rect.height.saturating_sub(2),
+        );
+        super::render_image_preview_status(app, frame, preview_area, preview);
+    }
 }
 
 #[cfg(test)]
@@ -636,6 +666,29 @@ mod tests {
             panel.content_rect.width < panel.rect.width,
             "content excludes the border frame"
         );
+    }
+
+    // TP-TRAIL-T7-RENDER-04: a selected file on a narrow stage must preserve
+    // one complete Trail column and omit the optional side panel. Geometry
+    // clamping must never panic when half the stage is below the panel floor.
+    #[test]
+    fn narrow_detail_stage_omits_panel_without_panicking() {
+        let td = TempDir::new("panel-narrow");
+        fs::write(td.root.join("doc.md"), b"hello").expect("file");
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        let doc = td.root.join("doc.md");
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 0, 0, &doc),
+            crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
+        );
+
+        let view = project_trail_view(Rect::new(0, 0, 30, 8), &trail, &snaps, &[]);
+
+        assert!(view.detail_panel.is_none());
+        assert_eq!(view.columns.len(), 1);
+        assert_eq!(view.columns[0].directory, td.root);
     }
 
     // LAW 3: no file selection → no panel; the columns own the whole stage.

@@ -1385,6 +1385,10 @@ pub struct ViewState {
     #[allow(dead_code)] // P1 establishes compute ownership; P2 removes this
     // once render/input consume the snapshot.
     pub(crate) file_manager_miller: crate::ui::MillerViewSnapshot,
+    /// Canonical Trail columns, rows, dividers, and optional detail panel for
+    /// the current Files frame. Render consumes this exact projection; T7.4
+    /// input will hit-test the same immutable geometry.
+    pub(crate) file_manager_trail: crate::ui::TrailViewSnapshot,
     /// Visible CURRENT rows for the native file manager. Empty while FM is
     /// closed or when its content area has no drawable rows.
     pub file_manager_row_areas: Vec<FileManagerRowArea>,
@@ -2676,6 +2680,7 @@ impl AppState {
                 file_manager_sidebar_row_areas: Vec::new(),
                 app_dock_entry_areas: Vec::new(),
                 file_manager_miller: Default::default(),
+                file_manager_trail: Default::default(),
                 file_manager_row_areas: Vec::new(),
                 file_manager_row_action_areas: Vec::new(),
                 file_manager_header_action_areas: Vec::new(),
