@@ -3445,4 +3445,226 @@ mod tests {
             );
         }
     }
+
+    // TP-FIP-ICON-08: a narrow column keeps the complete icon glyph and
+    // truncates the name by display cells, never by bytes. Wide CJK cells
+    // are asserted at glyph-start positions only (continuation cells skipped).
+    #[test]
+    fn narrow_column_keeps_complete_icon_and_truncates_name_by_display_cells() {
+        use crate::fm::entry_kind::{FileEntryKind, IconProfile, VisualClass};
+        let app = crate::app::state::AppState::test_new();
+        let entry = crate::fm::FileEntry {
+            name: "配置文件清单.toml".to_string(),
+            path: std::path::PathBuf::from("/x/config-list.toml"),
+            kind: FileEntryKind::RegularFile,
+        };
+        let width = 10u16;
+        let backend = TestBackend::new(width, 1);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| {
+                render_entry_row(&app, frame, Rect::new(0, 0, width, 1), &entry, false, false);
+            })
+            .expect("draw entry row");
+        let buffer = terminal.backend().buffer();
+        assert_eq!(
+            buffer[(1u16, 0u16)].symbol(),
+            VisualClass::ConfigData.glyph(IconProfile::Nerd),
+            "the icon must survive truncation complete"
+        );
+        assert_eq!(
+            buffer[(3u16, 0u16)].symbol(),
+            "配",
+            "the name must start right after icon + separator"
+        );
+        assert_eq!(
+            buffer[(9u16, 0u16)].symbol(),
+            "…",
+            "display-cell truncation must end the row with an ellipsis"
+        );
+    }
+
+    // TP-FIP-ICON-08: row-action cells and the name/icon rect stay disjoint;
+    // painting a long label never bleeds into the first action cell.
+    #[test]
+    fn icon_never_overlaps_row_action_cells() {
+        let entries: Vec<crate::fm::FileEntry> = (0..3)
+            .map(|i| crate::fm::FileEntry {
+                name: format!("very-long-entry-name-that-overflows-{i}.rs"),
+                path: std::path::PathBuf::from(format!("/x/very-long-{i}.rs")),
+                kind: crate::fm::entry_kind::FileEntryKind::RegularFile,
+            })
+            .collect();
+        let list = Rect::new(0, 0, 30, 3);
+        let geometry = compute_file_manager_row_geometry_in_content(list, &entries, 0);
+        assert!(
+            !geometry.actions.is_empty(),
+            "fixture must expose at least one row action"
+        );
+        for row in &geometry.rows {
+            assert!(
+                row.rect.width > 2,
+                "name rect must keep the icon column and separator"
+            );
+            for action in geometry
+                .actions
+                .iter()
+                .filter(|action| action.rect.y == row.rect.y)
+            {
+                assert!(
+                    row.rect.right() <= action.rect.x,
+                    "name/icon cells and action cells must stay disjoint"
+                );
+            }
+        }
+
+        let app = crate::app::state::AppState::test_new();
+        let name_rect = geometry.rows[0].rect;
+        let first_action_x = geometry
+            .actions
+            .iter()
+            .filter(|action| action.rect.y == name_rect.y)
+            .map(|action| action.rect.x)
+            .min()
+            .expect("row 0 must own actions");
+        let backend = TestBackend::new(30, 3);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| {
+                render_entry_row(&app, frame, name_rect, &entries[0], false, false);
+            })
+            .expect("draw entry row");
+        let buffer = terminal.backend().buffer();
+        assert_eq!(
+            buffer[(first_action_x, name_rect.y)].symbol(),
+            " ",
+            "a long label must never paint into an action cell"
+        );
+    }
+
+    // TP-FIP-ICON-09: the cursor style owns the whole row including the icon
+    // cell, and multi-selection stays visually distinct from the cursor.
+    #[test]
+    fn cursor_style_wins_over_icon_class_and_multi_select_stays_distinct() {
+        let app = crate::app::state::AppState::test_new();
+        let styles = file_manager_visual_styles(&app.palette);
+        assert_ne!(
+            styles.cursor, styles.multi_selection,
+            "cursor and multi-selection must stay distinguishable"
+        );
+        let entry = crate::fm::FileEntry {
+            name: "main.rs".to_string(),
+            path: std::path::PathBuf::from("/x/main.rs"),
+            kind: crate::fm::entry_kind::FileEntryKind::RegularFile,
+        };
+        let render = |cursor_focused: bool, multi_selected: bool| {
+            let backend = TestBackend::new(24, 1);
+            let mut terminal = Terminal::new(backend).expect("test terminal");
+            terminal
+                .draw(|frame| {
+                    render_entry_row(
+                        &app,
+                        frame,
+                        Rect::new(0, 0, 24, 1),
+                        &entry,
+                        cursor_focused,
+                        multi_selected,
+                    );
+                })
+                .expect("draw entry row");
+            terminal.backend().buffer().clone()
+        };
+
+        let focused = render(true, false);
+        assert_eq!(focused[(1u16, 0u16)].style().bg, styles.cursor.bg);
+        assert_eq!(focused[(1u16, 0u16)].style().fg, styles.cursor.fg);
+
+        // Cursor wins even when the row is also inside the multi-selection.
+        let focused_in_selection = render(true, true);
+        assert_eq!(
+            focused_in_selection[(1u16, 0u16)].style().bg,
+            styles.cursor.bg
+        );
+
+        let multi = render(false, true);
+        assert_eq!(multi[(1u16, 0u16)].style().bg, styles.multi_selection.bg);
+        assert_eq!(multi[(1u16, 0u16)].style().fg, styles.multi_selection.fg);
+    }
+
+    // TP-FIP-ICON-13: a hostile file name containing control characters
+    // renders as printable escapes and never shifts or clips row content.
+    #[test]
+    fn control_characters_in_name_render_escaped_and_do_not_shift_rows() {
+        let app = crate::app::state::AppState::test_new();
+        let hostile = crate::fm::FileEntry {
+            name: "a\nb.rs".to_string(),
+            path: std::path::PathBuf::from("/x/hostile"),
+            kind: crate::fm::entry_kind::FileEntryKind::RegularFile,
+        };
+        let below = crate::fm::FileEntry {
+            name: "z.txt".to_string(),
+            path: std::path::PathBuf::from("/x/z.txt"),
+            kind: crate::fm::entry_kind::FileEntryKind::RegularFile,
+        };
+        let backend = TestBackend::new(24, 2);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| {
+                render_entry_row(&app, frame, Rect::new(0, 0, 24, 1), &hostile, false, false);
+                render_entry_row(&app, frame, Rect::new(0, 1, 24, 1), &below, false, false);
+            })
+            .expect("draw entry rows");
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(3u16, 0u16)].symbol(), "a");
+        assert_eq!(
+            buffer[(4u16, 0u16)].symbol(),
+            "\u{240a}",
+            "a newline in the name must render as the printable ␊ escape"
+        );
+        assert_eq!(
+            buffer[(5u16, 0u16)].symbol(),
+            "b",
+            "content after the control character must stay on the same row"
+        );
+        assert_eq!(
+            buffer[(3u16, 1u16)].symbol(),
+            "z",
+            "the following row must stay unshifted"
+        );
+    }
+
+    // TP-FIP-ICON-11: render consumes prepared entry data only. A path that
+    // vanished after snapshot renders byte-identically to a live one.
+    #[test]
+    fn render_entry_row_performs_no_filesystem_io() {
+        let app = crate::app::state::AppState::test_new();
+        let td = TempDir::new("render-purity");
+        let live_path = td.root.join("report.md");
+        fs::write(&live_path, b"x").expect("write fixture");
+        let live = crate::fm::FileEntry {
+            name: "report.md".to_string(),
+            path: live_path,
+            kind: crate::fm::entry_kind::FileEntryKind::RegularFile,
+        };
+        let gone = crate::fm::FileEntry {
+            name: "report.md".to_string(),
+            path: td.root.join("deleted-under-us").join("report.md"),
+            kind: crate::fm::entry_kind::FileEntryKind::RegularFile,
+        };
+        let render = |entry: &crate::fm::FileEntry| {
+            let backend = TestBackend::new(24, 1);
+            let mut terminal = Terminal::new(backend).expect("test terminal");
+            terminal
+                .draw(|frame| {
+                    render_entry_row(&app, frame, Rect::new(0, 0, 24, 1), entry, false, false);
+                })
+                .expect("draw entry row");
+            terminal.backend().buffer().clone()
+        };
+        assert_eq!(
+            render(&live),
+            render(&gone),
+            "render output must not depend on filesystem state"
+        );
+    }
 }
