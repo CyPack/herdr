@@ -723,6 +723,60 @@ mod tests {
         assert!(app.state.request_file_manager_sidebar_navigation.is_none());
     }
 
+    // TP-TRAIL-T7-INPUT-05: an accessible Files sidebar target replaces the
+    // current navigation model through the LAW-5 deep-link seam. The live
+    // Files instance is preserved, while the new trail starts at the exact
+    // target with no implicit first-row selection.
+    #[test]
+    fn sidebar_navigation_opens_fresh_trail_root_and_preserves_generation() {
+        use crate::app::state::{
+            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel,
+        };
+        let td = TempDir::new("sidebar-trail-root");
+        let initial = td.root.join("initial");
+        let target = td.root.join("target");
+        std::fs::create_dir_all(&initial).expect("create initial directory");
+        std::fs::create_dir_all(&target).expect("create target directory");
+        std::fs::write(target.join("visible.txt"), b"visible").expect("write target entry");
+
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
+            .expect("open initial Files instance");
+        let generation = app
+            .state
+            .stage
+            .active_instance_generation()
+            .expect("active Files generation");
+        app.state.sidebar_tab = crate::app::state::SidebarTab::Files;
+        app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+            Vec::new(),
+            vec![FileManagerSidebarItem {
+                label: "Target".into(),
+                path: target.clone(),
+                icon: FileManagerSidebarIcon::Pin,
+                accessible: true,
+                ejectable: false,
+            }],
+            Vec::new(),
+        );
+        app.state.request_file_manager_sidebar_navigation = Some(target.clone());
+
+        assert!(app.sync_file_manager_sidebar_navigation());
+
+        let file_manager = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(
+            app.state.stage.active_instance_generation(),
+            Some(generation),
+            "sidebar navigation stays inside the current Files instance"
+        );
+        assert_eq!(file_manager.cwd, target);
+        assert_eq!(file_manager.trail.cols().len(), 1);
+        assert_eq!(file_manager.trail.cols()[0].directory, target);
+        assert_eq!(file_manager.trail.cols()[0].selected, None);
+        assert_eq!(file_manager.trail_snapshots.cols().len(), 1);
+    }
+
     fn wait_for_file_manager_state(
         app: &mut crate::app::App,
         description: &str,

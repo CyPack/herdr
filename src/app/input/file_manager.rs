@@ -4008,6 +4008,132 @@ mod tests {
         assert!(matches!(fm.preview, crate::fm::FmPreview::File(_)));
     }
 
+    // TP-TRAIL-T7-INPUT-02/06: production Files input resolves the immutable
+    // Trail row, even when every legacy Miller/current-row hit projection is
+    // absent. The accepted file activation reconciles the transitional
+    // operation projection to the exact owning directory and row.
+    #[test]
+    fn mouse_activation_uses_exact_trail_row_without_legacy_geometry() {
+        let td = TempDir::new("trail-mouse-authority");
+        td.file("00.txt");
+        td.file("01.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 80, 16));
+        let target = app
+            .state
+            .view
+            .file_manager_trail
+            .columns
+            .first()
+            .and_then(|column| column.rows.get(1))
+            .cloned()
+            .expect("second Trail row");
+        app.state.view.file_manager_miller = Default::default();
+        app.state.view.file_manager_row_areas.clear();
+        app.state.view.file_manager_row_action_areas.clear();
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                target.rect.x,
+                target.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+
+        let file_manager = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(file_manager.cwd, td.root);
+        assert_eq!(file_manager.cursor, target.entry_index);
+        assert_eq!(
+            file_manager.selected().map(|entry| &entry.path),
+            Some(&target.entry_path)
+        );
+    }
+
+    // TP-TRAIL-T7-INPUT-03: Left/Right change the Trail's one active-column
+    // focus. They do not emit legacy parent-directory navigation requests.
+    #[test]
+    fn keyboard_navigation_uses_active_trail_column() {
+        let td = TempDir::new("trail-keyboard-authority");
+        td.dir("alpha");
+        fs::write(td.root.join("alpha").join("inside.txt"), b"x").expect("nested file");
+        let mut state = app_with_fm(FmState::new(&td.root));
+        assert_eq!(
+            state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .trail
+                .active_col(),
+            1,
+            "directory preview opens the child Trail column"
+        );
+
+        assert_eq!(
+            handle_file_manager_key(&mut state, key(KeyCode::Left)),
+            FileManagerKeyDispatch::Consumed
+        );
+        assert_eq!(
+            state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .trail
+                .active_col(),
+            0
+        );
+    }
+
+    // TP-TRAIL-T7-INPUT-04: right-click derives exact operation identity from
+    // the live Trail row rect/path. Retired current-row geometry cannot grant
+    // or revoke that authority.
+    #[test]
+    fn trail_row_hit_drives_operation_identity_without_legacy_geometry() {
+        let td = TempDir::new("trail-operation-hit");
+        td.file("00.txt");
+        td.file("01.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 80, 16));
+        let target = app
+            .state
+            .view
+            .file_manager_trail
+            .columns
+            .first()
+            .and_then(|column| column.rows.get(1))
+            .cloned()
+            .expect("second Trail row");
+        app.state.view.file_manager_miller = Default::default();
+        app.state.view.file_manager_row_areas.clear();
+        app.state.view.file_manager_row_action_areas.clear();
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Right),
+                target.rect.x,
+                target.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+
+        let ContextMenuKind::File { model } = &app
+            .state
+            .context_menu
+            .as_ref()
+            .expect("Trail row opens file menu")
+            .kind
+        else {
+            panic!("expected file context menu")
+        };
+        assert_eq!(model.paths, vec![target.entry_path]);
+    }
+
     // TP-FM3-CURRENT-CUTOVER: CURRENT plain-click authority comes from the
     // generation-safe Miller row target, not the legacy compatibility row
     // list. Removing the legacy list must not disable an exact live click.
