@@ -97,3 +97,18 @@ test("vis-13 trail directory omissions match approved snapshot", async ({
     "vis-13-trail-directory-omissions.png",
   );
 });
+
+// VIS-14 (FMR-3): a PDF selection stays in native Trail authority and renders
+// an explicit metadata-only fallback instead of binary garbage or a blank.
+test("vis-14 trail metadata preview matches approved snapshot", async ({
+  page,
+}) => {
+  await page.goto(`file://${harness}`);
+  await page.evaluate(
+    (f) => (window as any).renderFixture(f),
+    loadGenerated("vis-14-trail-metadata-preview"),
+  );
+  await expect(page.locator("#grid")).toHaveScreenshot(
+    "vis-14-trail-metadata-preview.png",
+  );
+});

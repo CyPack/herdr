@@ -504,6 +504,22 @@ mod tests {
             ),
         );
 
+        // VIS-14 (FMR-3): heavyweight document types stay explicit and
+        // bounded in native Files instead of being misread as text.
+        let manual = trail_root.join("docs").join("manual.pdf");
+        std::fs::write(&manual, b"%PDF fixture").expect("metadata fixture");
+        let mut metadata_snaps = crate::fm::trail_snapshots::TrailSnapshots::new(false);
+        let metadata_trail = metadata_snaps
+            .open_trail_to(&trail_root, &manual)
+            .expect("metadata detail fixture resolves");
+        write_fixture(
+            &out_dir,
+            export_cell_fixture(
+                "vis-14-trail-metadata-preview",
+                &render_trail(&metadata_trail, &metadata_snaps, 120, 40),
+            ),
+        );
+
         // VIS-10 (trail LAW 5 / FIP-D1): a sidebar deep-link builds the whole
         // trail from scratch — fresh snapshots, ancestor chain resolved down
         // to the file, detail panel open. This is the acceptance visual for
