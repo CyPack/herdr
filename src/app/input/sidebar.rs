@@ -2368,6 +2368,115 @@ mod tests {
         );
     }
 
+    // FMR-2: close the seam left between request-only mouse coverage and the
+    // manually invoked sidebar consumer. This drives the real scheduled-task
+    // chain and asserts the final loaded Trail projection.
+    #[test]
+    fn sidebar_shortcut_mouse_click_consumes_to_loaded_trail() {
+        use crate::app::state::{
+            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
+        };
+
+        let root = unique_temp_path("sidebar-shortcut-mouse-e2e");
+        let initial = root.join("initial");
+        let target = root.join("target");
+        fs::create_dir_all(&initial).expect("create initial directory");
+        fs::create_dir_all(&target).expect("create sidebar target");
+        fs::write(target.join("visible.txt"), b"visible").expect("write target entry");
+
+        let mut app = app_for_mouse_test();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
+            .expect("open initial Files instance");
+        let generation = app
+            .state
+            .stage
+            .active_instance_generation()
+            .expect("active Files generation");
+        app.state.sidebar_tab = SidebarTab::Files;
+        app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+            vec![FileManagerSidebarItem {
+                label: "Home".into(),
+                path: target.clone(),
+                icon: FileManagerSidebarIcon::Home,
+                accessible: true,
+                ejectable: false,
+            }],
+            Vec::new(),
+            Vec::new(),
+        );
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let row = app.state.view.file_manager_sidebar_row_areas[0].clone();
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            row.rect.x,
+            row.rect.y,
+        ));
+        assert_eq!(
+            app.state.request_file_manager_sidebar_navigation,
+            Some(target.clone()),
+            "primary click prepares the exact current-model path"
+        );
+
+        assert!(
+            app.handle_scheduled_tasks(std::time::Instant::now(), false),
+            "scheduled production consumer observes the one-shot request"
+        );
+        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+        assert_eq!(
+            app.state.stage.active_instance_generation(),
+            Some(generation),
+            "navigation stays inside the existing Files instance"
+        );
+        let file_manager = app.state.file_manager.as_ref().expect("loaded Files state");
+        assert_eq!(file_manager.cwd, target);
+        assert_eq!(file_manager.trail.cols().len(), 1);
+        assert_eq!(file_manager.trail.cols()[0].directory, target);
+        assert_eq!(file_manager.trail_snapshots.cols().len(), 1);
+        assert!(file_manager.trail_snapshots.cols()[0]
+            .entries()
+            .iter()
+            .any(|entry| entry.name == "visible.txt"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sidebar_shortcut_mouse_modified_click_is_inert() {
+        use crate::app::state::{
+            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
+        };
+
+        let mut app = app_for_mouse_test();
+        app.state.sidebar_tab = SidebarTab::Files;
+        app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+            vec![FileManagerSidebarItem {
+                label: "Home".into(),
+                path: std::path::PathBuf::from("/home/a"),
+                icon: FileManagerSidebarIcon::Home,
+                accessible: true,
+                ejectable: false,
+            }],
+            Vec::new(),
+            Vec::new(),
+        );
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let row = app.state.view.file_manager_sidebar_row_areas[0].clone();
+
+        app.handle_mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: row.rect.x,
+            row: row.rect.y,
+            modifiers: crossterm::event::KeyModifiers::CONTROL,
+        });
+
+        assert!(
+            app.state.request_file_manager_sidebar_navigation.is_none(),
+            "modified shortcut clicks cannot authorize directory navigation"
+        );
+    }
+
     // TP-C6.1-GEOMETRY/NAV: cached geometry cannot authorize a path after the
     // prepared model changes underneath it.
     #[test]
