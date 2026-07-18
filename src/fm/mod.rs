@@ -19,6 +19,7 @@ pub(crate) mod image_preview;
 pub(crate) mod miller;
 mod natsort;
 pub(crate) mod operations;
+pub(crate) mod preview_capability;
 pub(crate) mod rename;
 mod text_preview;
 #[allow(dead_code)] // consumed from FIP trail program T3 (render) onward
