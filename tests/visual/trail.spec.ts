@@ -36,3 +36,19 @@ test("vis-08 trail rebranch matches approved snapshot", async ({ page }) => {
     "vis-08-trail-rebranch.png",
   );
 });
+
+// VIS-09 (trail LAW 3): a file activation opens the resizable right-side
+// detail panel — bordered, titled with the file name, showing the prepared
+// text preview — while the sibling columns stay visible left of it.
+test("vis-09 trail detail panel matches approved snapshot", async ({
+  page,
+}) => {
+  await page.goto(`file://${harness}`);
+  await page.evaluate(
+    (f) => (window as any).renderFixture(f),
+    loadGenerated("vis-09-trail-detail-panel"),
+  );
+  await expect(page.locator("#grid")).toHaveScreenshot(
+    "vis-09-trail-detail-panel.png",
+  );
+});

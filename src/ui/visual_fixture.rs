@@ -371,6 +371,33 @@ mod tests {
                 &render_trail(&trail, &snaps, 120, 40),
             ),
         );
+
+        // VIS-09 (trail LAW 3): activating a FILE through the input seam
+        // opens the resizable right-side detail panel with the prepared text
+        // preview while the sibling columns stay visible.
+        std::fs::write(
+            trail_root.join("docs").join("guide.md"),
+            b"# Guide\n\ntrail detail panel preview",
+        )
+        .expect("guide content");
+        let docs_col = &snaps.cols()[1];
+        let guide = trail_root.join("docs").join("guide.md");
+        let guide_index = docs_col
+            .entries()
+            .iter()
+            .position(|entry| entry.path == guide)
+            .expect("guide row");
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 1, guide_index, &guide),
+            crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
+        );
+        write_fixture(
+            &out_dir,
+            export_cell_fixture(
+                "vis-09-trail-detail-panel",
+                &render_trail(&trail, &snaps, 120, 40),
+            ),
+        );
         let _ = std::fs::remove_dir_all(&trail_base);
     }
 

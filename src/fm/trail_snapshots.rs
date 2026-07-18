@@ -178,14 +178,19 @@ impl TrailSnapshots {
         if entry.kind.is_directory_target() {
             let target = entry.path.clone();
             if self.select_dir(trail, col_idx, &target) == FmDirectoryStatus::Available {
+                // A directory selection owns the stage again: the file
+                // panel can never dangle across a branch (LAW 3).
+                self.detail = None;
                 TrailActivateOutcome::Branched
             } else {
                 TrailActivateOutcome::Rejected
             }
         } else {
             let target = entry.path.clone();
+            let kind = entry.kind;
             if trail.select_file(col_idx, &target) {
                 self.sync(trail);
+                self.detail = Some(prepare_trail_detail(&target, kind));
                 TrailActivateOutcome::SelectedFile
             } else {
                 TrailActivateOutcome::Rejected
@@ -235,6 +240,28 @@ impl TrailSnapshots {
         };
         col.snapshot = read_directory_snapshot(&col.directory, self.show_hidden);
         true
+    }
+}
+
+/// Prepare the detail-panel content for one selected file, outside render:
+/// image paths take the image track (Kitty delivery is FIP-D4), everything
+/// else is a bounded text preview or an EXPLICIT unpreviewable reason.
+fn prepare_trail_detail(path: &Path, kind: FileEntryKind) -> TrailDetail {
+    let preview = if super::is_image_preview_path(path) {
+        TrailDetailPreview::Image
+    } else {
+        match super::text_preview::read_text_preview(
+            path,
+            super::text_preview::TextPreviewLimits::default(),
+        ) {
+            Ok(preview) => TrailDetailPreview::Text(preview),
+            Err(error) => TrailDetailPreview::Unpreviewable(error.to_string()),
+        }
+    };
+    TrailDetail {
+        path: path.to_path_buf(),
+        kind,
+        preview,
     }
 }
 
