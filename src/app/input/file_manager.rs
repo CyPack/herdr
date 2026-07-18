@@ -3591,7 +3591,7 @@ mod tests {
                 .as_ref()
                 .expect("open FM")
                 .trail_snapshots,
-            &[],
+            &[20],
         );
         trail.files_generation = Some(files_generation);
         app.state.view.file_manager_trail = trail;
