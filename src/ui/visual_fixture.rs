@@ -398,6 +398,22 @@ mod tests {
                 &render_trail(&trail, &snaps, 120, 40),
             ),
         );
+
+        // VIS-10 (trail LAW 5 / FIP-D1): a sidebar deep-link builds the whole
+        // trail from scratch — fresh snapshots, ancestor chain resolved down
+        // to the file, detail panel open. This is the acceptance visual for
+        // "favorites click constructs the trail correctly".
+        let mut deep_snaps = crate::fm::trail_snapshots::TrailSnapshots::new(false);
+        let deep_trail = deep_snaps
+            .open_trail_to(&trail_root, &core.join("state.rs"))
+            .expect("deep link fixture resolves");
+        write_fixture(
+            &out_dir,
+            export_cell_fixture(
+                "vis-10-trail-deep-link",
+                &render_trail(&deep_trail, &deep_snaps, 120, 40),
+            ),
+        );
         let _ = std::fs::remove_dir_all(&trail_base);
     }
 

@@ -52,3 +52,17 @@ test("vis-09 trail detail panel matches approved snapshot", async ({
     "vis-09-trail-detail-panel.png",
   );
 });
+
+// VIS-10 (trail LAW 5 / FIP-D1 acceptance): a sidebar deep-link constructs
+// the whole trail from a fresh state — every ancestor column open with its
+// selection emphasized and the target file's detail panel open.
+test("vis-10 trail deep link matches approved snapshot", async ({ page }) => {
+  await page.goto(`file://${harness}`);
+  await page.evaluate(
+    (f) => (window as any).renderFixture(f),
+    loadGenerated("vis-10-trail-deep-link"),
+  );
+  await expect(page.locator("#grid")).toHaveScreenshot(
+    "vis-10-trail-deep-link.png",
+  );
+});

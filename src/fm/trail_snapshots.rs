@@ -237,8 +237,41 @@ impl TrailSnapshots {
     /// target outside the root or an unreadable middle component stops the
     /// descent honestly at the last loadable column.
     pub(crate) fn open_trail_to(&mut self, root: &Path, target: &Path) -> Option<TrailState> {
-        let _ = (root, target);
-        None
+        let root_snapshot = read_directory_snapshot(root, self.show_hidden);
+        if root_snapshot.status != FmDirectoryStatus::Available {
+            return None;
+        }
+        self.cols.clear();
+        self.detail = None;
+        self.cols.push(TrailColSnapshot {
+            directory: root.to_path_buf(),
+            snapshot: root_snapshot,
+        });
+        let mut trail = TrailState::new(root);
+
+        let Ok(relative) = target.strip_prefix(root) else {
+            // A target outside the root never descends anywhere.
+            return Some(trail);
+        };
+        let mut current = root.to_path_buf();
+        for component in relative.components() {
+            current = current.join(component);
+            let deepest = trail.deepest();
+            let Some(entry_index) = self.cols[deepest]
+                .entries()
+                .iter()
+                .position(|entry| entry.path == current)
+            else {
+                break;
+            };
+            let expected = current.clone();
+            if self.activate_entry(&mut trail, deepest, entry_index, &expected)
+                == TrailActivateOutcome::Rejected
+            {
+                break;
+            }
+        }
+        Some(trail)
     }
 
     /// Re-read one column from disk (watcher refresh path). Selection lives
