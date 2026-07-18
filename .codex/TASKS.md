@@ -21,12 +21,18 @@ then the plan's Tasks 2-29 in order.
   `sync_file_manager_sidebar_navigation`. Kopukluk hit-area üretimi veya
   consumer guard'ında — canlıda repro + iz sürme gerekli (E2E harness'ı
   düzelince orada; alternatif: hit-area birim karakterizasyonu).
-- [ ] **FIP-D3** Miller ata kolonları "(unavailable)" gösteriyor (ekranda
-  `ayaz (unavailable)`, `projects (unavailable)`) — kafa karıştırıcı.
-  Yazi/superfile yüklenmemiş atayı HİÇ göstermez. Tasarım kararı custom-layout
-  /FM programına: (a) bounded lazy ancestor snapshot yükleme VEYA (b) yalnız
-  içerikli kolonları render etme. Superfile referans ekranı kullanıcıdan
-  alındı (sidebar: FAVORITES/Pinned/Disks + search + metadata paneli).
+- [ ] **FIP-D3** Miller navigasyonu TRAIL modeline yeniden kurulacak — kullanıcı
+  kanonik referansı verdi: circet-miller (`CircetMillerSection.tsx`, canlı
+  `127.0.0.1:8771/p/circet-miller`). Yasa: kolonlar kökten birikir, her görünür
+  kolon YÜKLÜ+tıklanabilir, "(unavailable)" ASLA render edilmez, ata-kardeş tık
+  trail'i keser+yeniden dallar, dosya tıkı kolon eklemez → resizable sağ
+  detay/önizleme paneli, en derin kolon auto-scroll. TAM KONTRAT:
+  `docs/superpowers/specs/2026-07-18-herdr-miller-trail-ux-contract.md` —
+  B-zinciri design spec'inin girdi YASASI.
+- [ ] **FIP-D4** Önizleme Ghostty'de foto GÖSTERMİYOR — "(Kitty graphics
+  req.)" basıyor; Ghostty kitty-graphics destekler. Kusur host-yetenek
+  algılamada veya server-side render graphics passthrough'unda. Canlı ekran
+  kanıtı 2026-07-18; iz: preview render + kitty_graphics modülleri.
 
 ### FIP-G — Planning Gate
 
