@@ -61,6 +61,10 @@ impl TrailColSnapshot {
     pub(crate) fn hidden_omitted(&self) -> usize {
         self.snapshot.omissions.hidden
     }
+
+    pub(crate) fn non_utf8_omitted(&self) -> usize {
+        self.snapshot.omissions.non_utf8
+    }
 }
 
 /// Outcome of one input activation against the loaded trail.

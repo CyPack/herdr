@@ -99,6 +99,7 @@ struct FmDirectorySnapshot {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct FmDirectoryOmissions {
     hidden: usize,
+    non_utf8: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -276,6 +277,7 @@ fn read_directory_snapshot(dir: &Path, show_hidden: bool) -> FmDirectorySnapshot
         // Non-UTF-8 names cannot be rendered as a `str`; skip them in v1.
         let file_name = entry.file_name();
         let Some(name) = file_name.to_str() else {
+            omissions.non_utf8 += 1;
             continue;
         };
         if !show_hidden && name.starts_with('.') {
