@@ -5,7 +5,7 @@
 //! - `input.rs` — key/mouse → action translation
 
 pub(crate) mod actions;
-mod agent_reference_picker;
+pub(crate) mod agent_reference_picker;
 mod agent_resume;
 mod agents;
 mod api;

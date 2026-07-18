@@ -244,6 +244,53 @@ mod tests {
             &out_dir,
             export_cell_fixture("vis-04-icons-tiny", &render_state(&app, 60, 16)),
         );
+
+        // TP-FIP-VIS-05/06: the blocking agent picker over the Files stage —
+        // current agent first and preselected, then a disabled (vanished)
+        // second row on a tiny screen. Rows are constructed deterministically
+        // from the fixture workspace's real pane/terminal identities.
+        let workspace_id = app.workspaces[0].id.clone();
+        let pane_id = app.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.workspaces[0]
+            .terminal_id(pane_id)
+            .expect("fixture terminal identity")
+            .clone();
+        let row = |label: &str, is_current: bool, live: bool| {
+            crate::app::agent_reference_picker::AgentReferencePickerRow {
+                label: label.to_string(),
+                is_current,
+                workspace_id: workspace_id.clone(),
+                pane_id,
+                terminal_id: terminal_id.clone(),
+                live,
+            }
+        };
+        app.agent_reference_picker = Some(
+            crate::app::agent_reference_picker::AgentReferencePickerState {
+                source_path: icon_root.join("main.rs"),
+                source_files_generation: 0,
+                rows: vec![
+                    row("claude — vis", true, true),
+                    row("codex — build", false, true),
+                ],
+                selected: 0,
+            },
+        );
+        app.mode = crate::app::state::Mode::AgentReferencePicker;
+        crate::ui::compute_view(&mut app, Rect::new(0, 0, 120, 40));
+        write_fixture(
+            &out_dir,
+            export_cell_fixture("vis-05-picker", &render_state(&app, 120, 40)),
+        );
+
+        if let Some(picker) = app.agent_reference_picker.as_mut() {
+            picker.rows[1].live = false;
+        }
+        crate::ui::compute_view(&mut app, Rect::new(0, 0, 60, 20));
+        write_fixture(
+            &out_dir,
+            export_cell_fixture("vis-06-picker-disabled-tiny", &render_state(&app, 60, 20)),
+        );
         let _ = std::fs::remove_dir_all(&icon_base);
     }
 
