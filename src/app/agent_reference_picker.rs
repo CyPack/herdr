@@ -241,6 +241,13 @@ impl crate::app::App {
         true
     }
 
+    /// Per-frame liveness recompute for open picker rows. RED stub: the
+    /// GREEN seam re-derives `live` from the current agents projection so a
+    /// vanished pane renders disabled instead of silently working.
+    pub(super) fn sync_agent_reference_picker(&mut self) -> bool {
+        false
+    }
+
     /// Blocking-overlay key routing owner for the picker mode. The
     /// popup-ownership task wires full selection movement; Esc always
     /// closes with zero bytes.
@@ -361,6 +368,106 @@ mod tests {
                 paths: vec![path],
             });
         assert!(app.sync_file_manager_agent_handoff());
+    }
+
+    // TP-FIP-5.5: a target pane closed while the picker is open renders
+    // disabled on the next recompute instead of silently disappearing.
+    #[tokio::test]
+    async fn target_pane_closed_while_picker_open_disables_row_on_recompute() {
+        let fixture = PickerFixture::new("pane-closed-recompute");
+        let path = fixture.file("selected.txt");
+        let (mut app, _, neighbor_terminal) = app_with_two_agents(&fixture.root);
+        dispatch_reference_action(&mut app, path);
+        let neighbor_row = app
+            .state
+            .agent_reference_picker
+            .as_ref()
+            .expect("open picker")
+            .rows
+            .iter()
+            .position(|row| row.terminal_id == neighbor_terminal)
+            .expect("neighbor row");
+        let neighbor_pane = app
+            .state
+            .agent_reference_picker
+            .as_ref()
+            .expect("open picker")
+            .rows[neighbor_row]
+            .pane_id;
+
+        let _ = app.state.workspaces[0].remove_pane(neighbor_pane);
+        assert!(app.sync_agent_reference_picker());
+
+        let picker = app
+            .state
+            .agent_reference_picker
+            .as_ref()
+            .expect("picker stays open");
+        assert!(
+            !picker.rows[neighbor_row].live,
+            "a closed pane must render disabled on recompute"
+        );
+    }
+
+    // TP-FIP-5.5: activating a target that disappeared after open fails
+    // closed with zero bytes and one visible failure.
+    #[tokio::test]
+    async fn activation_of_disappeared_target_fails_closed_with_visible_failure() {
+        let fixture = PickerFixture::new("vanished-activation");
+        let path = fixture.file("selected.txt");
+        let (mut app, focused_terminal, _) = app_with_two_agents(&fixture.root);
+        dispatch_reference_action(&mut app, path);
+        let focused_pane = app
+            .state
+            .agent_reference_picker
+            .as_ref()
+            .expect("open picker")
+            .rows[0]
+            .pane_id;
+        assert_eq!(
+            app.state
+                .agent_reference_picker
+                .as_ref()
+                .expect("open picker")
+                .rows[0]
+                .terminal_id,
+            focused_terminal
+        );
+        let _ = app.state.workspaces[0].remove_pane(focused_pane);
+
+        assert!(!app.activate_agent_reference_picker_selection());
+        assert!(app.state.request_file_manager_agent_handoff.is_none());
+        assert!(
+            app.state.agent_reference_picker.is_none(),
+            "a vanished-target activation closes the picker"
+        );
+        assert_eq!(
+            app.state.toast.as_ref().map(|toast| toast.context.as_str()),
+            Some("agent handoff authority changed"),
+            "the failure must be visible"
+        );
+    }
+
+    // TP-FIP-5.5: a terminal that stopped being an agent between open and
+    // activation prepares nothing — zero bytes ever cross.
+    #[tokio::test]
+    async fn terminal_identity_change_between_open_and_activation_sends_zero_bytes() {
+        let fixture = PickerFixture::new("identity-change-activation");
+        let path = fixture.file("selected.txt");
+        let (mut app, focused_terminal, _) = app_with_two_agents(&fixture.root);
+        dispatch_reference_action(&mut app, path);
+        app.state
+            .terminals
+            .get_mut(&focused_terminal)
+            .expect("focused terminal state")
+            .clear_agent_name();
+
+        assert!(!app.activate_agent_reference_picker_selection());
+        assert!(app.state.request_file_manager_agent_handoff.is_none());
+        assert_eq!(
+            app.state.toast.as_ref().map(|toast| toast.context.as_str()),
+            Some("agent handoff authority changed")
+        );
     }
 
     // TP-FIP-REF-15: the picker is a blocking overlay — background gestures
