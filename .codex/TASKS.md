@@ -63,8 +63,15 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
   sahibi; `selected()` exact path'i trail snapshot'tan çözer; enter/leave
   root'u koruyarak trail'i biriktirir; prepared apply disk-I/O'suz, hidden
   policy future branch'lere taşınır; full 3,541/3,541 + 2 skip, Chromium
-  18/18, iki clippy, Python 64/64, Bun 5/5 + 12/12 temiz. SIRADAKİ: T7.3
-  render swap.
+  18/18, iki clippy, Python 64/64, Bun 5/5 + 12/12 temiz. T7.3 render swap
+  KAPANDI (`e63482f2` RED / `4d95ae72` GREEN): `ViewState` canlı
+  `TrailViewSnapshot` yayımlar; üretim orta paneli exact trail
+  row/divider/detail geometrisini çizer; header/action/status korunur; dar
+  detail panel panic'i fail-closed giderildi; image Pending/Loading/Error
+  durumları trail detail panelinde korunur; VIS-01..06 kasıtlı Trail
+  baseline'ları Chromium'da mutation kanıtıyla yenilendi. Full 3,545/3,545 +
+  2 skip, Chromium 18/18, iki clippy, Python 64/64, Bun 5/5 + 12/12 temiz.
+  SIRADAKİ: T7.4 girdi swap + FIP-D1 canlı kapanış.
   (T7.1 characterization → T7.2 FmState köprüsü → T7.3 render swap →
   T7.4 girdi swap + FIP-D1 canlı kapanış → T7.5 watcher+kitty/FIP-D4 →
   T7.6 söküm+kapanış; yüzey haritası satır sayılarıyla planda).

@@ -111,7 +111,16 @@ exact-path otoritesi aligned trail snapshot'tan türetilir; enter/leave root'u
 koruyarak kolon biriktirir; prepared refresh/navigation apply disk-I/O'suz;
 hidden policy future branch'lere taşınır. Taze gate: full 3,541/3,541 + 2
 skip, Chromium 18/18, Linux+Windows clippy, Python 64/64, Bun 5/5 + 12/12,
-fmt temiz. SIRADAKİ: TRAIL-T7.3 render swap.
+fmt temiz. TRAIL-T7.3 KAPANDI (`e63482f2` RED / `4d95ae72` GREEN):
+`ViewState::file_manager_trail` canlı frame'in exact geometri otoritesi;
+üretim `render_file_manager` orta paneli root-to-active Trail + detail paneli
+çizer, legacy component karakterizasyonu T7.6'ya kadar izole kalır.
+Dar-detail `clamp(min>max)` panic'i yeni regression testiyle kapandı; image
+Pending/Loading/Unavailable durumları Trail detail panelinde görünür kalır.
+VIS-01..06 kasıtlı Trail baseline değişimleri ham mutation fail'i + gözle
+inceleme + spec-scoped update ile onaylandı. Taze gate: full 3,545/3,545 + 2
+skip, Chromium 18/18, Linux+Windows clippy, Python 64/64, Bun 5/5 + 12/12,
+fmt/diff/unwrap taraması temiz. SIRADAKİ: TRAIL-T7.4 girdi swap + FIP-D1.
 Sonrası: FIP-5 picker, kullanıcı direktifi custom-layout programı. FIP-3 TAMAMEN KAPANDI (2026-07-18): 3.4 characterized migration
 (`bcecfdc8` — FileEntry alanları kind-türevi metodlara döndü, çifte symlink
 stat kalktı, 3-kategori grep 0 kalıntı); 3.7 icon edge ailesi (`91e33f6f` RED
@@ -456,8 +465,15 @@ sayar ve exact diff yapar.
   sahibi; `selected()` exact path'i trail snapshot'tan çözer; enter/leave
   root'u koruyarak trail'i biriktirir; prepared apply disk-I/O'suz, hidden
   policy future branch'lere taşınır; full 3,541/3,541 + 2 skip, Chromium
-  18/18, iki clippy, Python 64/64, Bun 5/5 + 12/12 temiz. SIRADAKİ: T7.3
-  render swap.
+  18/18, iki clippy, Python 64/64, Bun 5/5 + 12/12 temiz. T7.3 render swap
+  KAPANDI (`e63482f2` RED / `4d95ae72` GREEN): `ViewState` canlı
+  `TrailViewSnapshot` yayımlar; üretim orta paneli exact trail
+  row/divider/detail geometrisini çizer; header/action/status korunur; dar
+  detail panel panic'i fail-closed giderildi; image Pending/Loading/Error
+  durumları trail detail panelinde korunur; VIS-01..06 kasıtlı Trail
+  baseline'ları Chromium'da mutation kanıtıyla yenilendi. Full 3,545/3,545 +
+  2 skip, Chromium 18/18, iki clippy, Python 64/64, Bun 5/5 + 12/12 temiz.
+  SIRADAKİ: T7.4 girdi swap + FIP-D1 canlı kapanış.
   (T7.1 characterization → T7.2 FmState köprüsü → T7.3 render swap →
   T7.4 girdi swap + FIP-D1 canlı kapanış → T7.5 watcher+kitty/FIP-D4 →
   T7.6 söküm+kapanış; yüzey haritası satır sayılarıyla planda).

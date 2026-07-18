@@ -2,12 +2,13 @@
 
 - Updated: 2026-07-18
 - Branch: `feat/native-fm`
-- Current override: **Miller Trail T7 active**. T7.2 FmState trail bridge
-  closed at `62696987` RED / `19efb656` GREEN; exact next task is T7.3 render
-  swap. FmState owns the accumulating trail and aligned snapshots; exact-path
-  selection is trail-derived; prepared apply is disk-I/O-free. Full evidence:
-  Rust 3,541/3,541 + 2 skip, Chromium 18/18, Linux/Windows Clippy, Python
-  64/64, Bun 5/5 + 12/12. `TRAIL-T7` remains open through T7.6.
+- Current override: **Miller Trail T7 active**. T7.3 render swap closed at
+  `e63482f2` RED / `4d95ae72` GREEN; exact next task is T7.4 input swap +
+  FIP-D1 live sidebar closure. ViewState publishes exact Trail geometry and
+  production Files renders it; legacy input geometry remains only for the
+  sequential T7.4 migration. Full evidence: Rust 3,545/3,545 + 2 skip,
+  Chromium 18/18, Linux/Windows Clippy, Python 64/64, Bun 5/5 + 12/12.
+  `TRAIL-T7` remains open through T7.6.
 - Active program: **Files Interaction Polish (FIP)**. The approved design is
   `docs/superpowers/specs/2026-07-17-herdr-files-interaction-polish-design.md`.
 - FIP-G.1/FIP-G.2 CLOSED 2026-07-18: the code-level TDD plan is
