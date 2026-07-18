@@ -10,6 +10,16 @@
 > marker grep are zero. Fresh gates: source audit 4/4, Rust 3,507/3,507 + 2
 > skip, Chromium 18/18, both Clippy targets, maintenance 68/68, Bun 5/5 +
 > 12/12, fmt/diff clean. `TRAIL-T7` and FIP-D1/D3/D4 product code are closed.
+> Post-closure horizontal viewport correction TRAIL-T7.7 is also closed at
+> `06d24f3e` RED / `35c1393c` GREEN (visual baseline reconciliation
+> `2d2c231f`). Manual Shift-wheel/native horizontal wheel now preserves the
+> requested live ancestor origin across frames; navigation and responsive
+> resize retain active-end auto-follow. VIS-11 covers the narrow scrolled
+> viewport. Fresh gates: Rust 3,508/3,508 + 2 skip, Chromium 19/19, both
+> Clippy targets, maintenance 68/68, Bun 5/5 + 12/12, fmt/diff clean.
+> Manual tests use `.local/herdr-trail-test.sh`, which starts and ends with
+> semantic cleanup limited to its owned throwaway root; stable Herdr/socket
+> and user processes remain outside its authority.
 > Ghostty headful image acceptance remains a separate human evidence item; it
 > does not reopen product code. Default next independent lane is FIP-6.3 mouse
 > harness investigation, then custom-layout B-chain only under its own plan.

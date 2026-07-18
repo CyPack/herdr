@@ -143,7 +143,19 @@ mouse/keyboard/commit/render boyunca 20–64; source audit 4/4, exact
 `"(unavailable)"` ve teardown marker grep=0. Final gate: full 3,507/3,507 +
 2 skip, Chromium 18/18, Linux+Windows clippy `-D warnings`, maintenance
 68/68, Bun 5/5 + 12/12, fmt/diff temiz. Miller Trail T1-T7 PROGRAMI
-TAMAMEN KAPALI. Sıradaki bağımsız işler: FIP-6.3 E2E harness investigation
+TAMAMEN KAPALI. KULLANICI SAHA DÜZELTMESİ TRAIL-T7.7 KAPANDI (`06d24f3e`
+RED / `35c1393c` GREEN; baseline uzlaştırması `2d2c231f`): canlı Trail yatay
+origin'i artık render tarafından tüketiliyor; Shift+wheel/native yatay wheel
+ile sola açılan ata kolonları sonraki frame'de geri sıçramıyor. Yeni
+branch/klasör ve responsive resize `follow_active` ile aktif uca otomatik
+takibi yeniden kuruyor; render tek başına manuel moda geçmiyor. VIS-11
+60x20 dar viewport baseline'ı eklendi. Taze gate: focused 1/1, Trail 76/76,
+full 3,508/3,508 + 2 skip, Chromium 19/19, Linux+Windows clippy
+`-D warnings`, maintenance 68/68, Bun 5/5 + 12/12, fmt/diff/production
+unwrap taraması temiz. `.local/herdr-trail-test.sh` manuel akışı yalnız
+test-sahipli server/root için başlangıç ve kapanış semantik temizliği yapar;
+stable Herdr/socket ve kullanıcı süreçlerine dokunmaz. Sıradaki bağımsız
+işler: FIP-6.3 E2E harness investigation
 ve kullanıcı önceliğine göre custom-layout B-zinciri. FIP-3 TAMAMEN KAPANDI (2026-07-18): 3.4 characterized migration
 (`bcecfdc8` — FileEntry alanları kind-türevi metodlara döndü, çifte symlink
 stat kalktı, 3-kategori grep 0 kalıntı); 3.7 icon edge ailesi (`91e33f6f` RED

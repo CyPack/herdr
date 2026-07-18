@@ -98,6 +98,19 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
   (T7.1 characterization → T7.2 FmState köprüsü → T7.3 render swap →
   T7.4 girdi swap + FIP-D1 canlı kapanış → T7.5 watcher+kitty/FIP-D4 →
   T7.6 söküm+kapanış; yüzey haritası satır sayılarıyla planda).
+- [x] **TRAIL-T7.7** Yatay viewport scroll düzeltmesi (`06d24f3e` RED /
+  `35c1393c` GREEN; görsel baseline uzlaştırması `2d2c231f`): canlı Trail
+  render'ı artık kullanıcı seçili `first_visible` origin'ini tüketir;
+  Shift+wheel/native yatay wheel manuel modu açar ve sonraki frame sola
+  kaydırılmış ataları korur. Yeni klasör/branch ve responsive resize ise
+  `follow_active` ile en derin kolonu referanstaki gibi otomatik takip eder;
+  render tek başına manuel moda geçmez. VIS-11 dar 60x20 Chromium baseline'ı
+  soldaki canlı ata kolonlarını kanıtlar. Taze gate: focused 1/1 + Trail
+  76/76, full Rust 3,508/3,508 + 2 skip, Chromium 19/19,
+  Linux+Windows clippy `-D warnings`, maintenance 68/68, Bun 5/5 + 12/12,
+  fmt/diff/production-unwrap taraması temiz. Manuel test yardımcısı
+  `.local/herdr-trail-test.sh` yalnız test-sahipli server/root için başlangıç
+  ve kapanış temizliği uygular; stable Herdr/socket'a dokunmaz.
 
 ### FIP-D — Saha Kusurları (2026-07-18 canlı ekran kanıtı, kullanıcı raporu)
 
