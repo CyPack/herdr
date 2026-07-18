@@ -230,6 +230,17 @@ impl TrailSnapshots {
         self.activate_entry(trail, col_idx, landed, &expected)
     }
 
+    /// LAW 5 sidebar/deep-link entry: build a FRESH trail rooted at `root`,
+    /// then descend the ancestor chain toward `target`, selecting every
+    /// directory on the way; a file target ends as the selected file with
+    /// its detail prepared. Fail-closed: an unreadable root returns None; a
+    /// target outside the root or an unreadable middle component stops the
+    /// descent honestly at the last loadable column.
+    pub(crate) fn open_trail_to(&mut self, root: &Path, target: &Path) -> Option<TrailState> {
+        let _ = (root, target);
+        None
+    }
+
     /// Re-read one column from disk (watcher refresh path). Selection lives
     /// in the trail as an exact path and is never touched here. The column
     /// keeps its explicit status even when the directory disappeared —
@@ -691,6 +702,112 @@ mod tests {
         );
         let detail = snaps.detail().expect("image selection prepares a detail");
         assert_eq!(detail.preview, TrailDetailPreview::Image);
+    }
+
+    // LAW 5: a sidebar favorite click builds a fresh single-column trail
+    // rooted at the favorite — loaded, nothing selected, no dangling panel.
+    #[test]
+    fn favorite_click_builds_root_trail() {
+        let td = TempDir::new("fav-root");
+        fs::write(td.root.join("a.txt"), b"x").expect("file");
+        let mut snaps = TrailSnapshots::new(false);
+        let trail = snaps
+            .open_trail_to(&td.root, &td.root)
+            .expect("a readable favorite opens");
+        assert_eq!(trail.cols().len(), 1);
+        assert_eq!(trail.cols()[0].directory, td.root);
+        assert_eq!(trail.cols()[0].selected, None);
+        assert_eq!(snaps.cols().len(), 1);
+        assert_eq!(snaps.cols()[0].status(), FmDirectoryStatus::Available);
+        assert!(snaps.detail().is_none());
+    }
+
+    // LAW 5 deep-link: a FILE target resolves its whole ancestor chain —
+    // every ancestor column open and selected, the file selected at the end
+    // with its detail prepared.
+    #[test]
+    fn deep_link_builds_ancestor_chain() {
+        let td = TempDir::new("deeplink");
+        let a = td.root.join("a");
+        let b = a.join("b");
+        fs::create_dir_all(&b).expect("nested");
+        let file = b.join("file.md");
+        fs::write(&file, b"deep link body").expect("file");
+
+        let mut snaps = TrailSnapshots::new(false);
+        let trail = snaps
+            .open_trail_to(&td.root, &file)
+            .expect("deep link resolves");
+        assert_eq!(trail.cols().len(), 3, "root → a → b");
+        assert_eq!(trail.cols()[0].selected.as_deref(), Some(a.as_path()));
+        assert_eq!(trail.cols()[1].selected.as_deref(), Some(b.as_path()));
+        assert_eq!(trail.cols()[2].selected.as_deref(), Some(file.as_path()));
+        assert_eq!(snaps.cols().len(), 3);
+        let detail = snaps.detail().expect("file target prepares the panel");
+        assert_eq!(detail.path, file);
+    }
+
+    // LAW 5 deep-link: a DIRECTORY target ends with its own open column.
+    #[test]
+    fn deep_link_to_directory_opens_its_column() {
+        let td = TempDir::new("deeplink-dir");
+        let a = td.root.join("a");
+        let b = a.join("b");
+        fs::create_dir_all(&b).expect("nested");
+
+        let mut snaps = TrailSnapshots::new(false);
+        let trail = snaps
+            .open_trail_to(&td.root, &b)
+            .expect("directory deep link resolves");
+        assert_eq!(trail.cols().len(), 3, "root → a → b, b's column open");
+        assert_eq!(trail.cols()[2].directory, b);
+        assert_eq!(trail.cols()[2].selected, None);
+        assert!(snaps.detail().is_none(), "a directory opens no panel");
+    }
+
+    // Fail-closed: a target OUTSIDE the root never descends anywhere — the
+    // trail opens at the root only.
+    #[test]
+    fn target_outside_root_falls_back_to_root() {
+        let td = TempDir::new("outside");
+        let elsewhere = TempDir::new("elsewhere");
+        let mut snaps = TrailSnapshots::new(false);
+        let trail = snaps
+            .open_trail_to(&td.root, &elsewhere.root)
+            .expect("the root itself still opens");
+        assert_eq!(trail.cols().len(), 1, "no descent outside the root");
+        assert_eq!(trail.cols()[0].directory, td.root);
+    }
+
+    // Honest partial descent: a vanished middle component stops the chain
+    // at the last loadable column instead of inventing anything.
+    #[test]
+    fn unreadable_component_stops_descent_honestly() {
+        let td = TempDir::new("partial");
+        let a = td.root.join("a");
+        fs::create_dir_all(&a).expect("a");
+        let ghost_file = a.join("ghost").join("file.md");
+
+        let mut snaps = TrailSnapshots::new(false);
+        let trail = snaps
+            .open_trail_to(&td.root, &ghost_file)
+            .expect("descent still opens what exists");
+        assert_eq!(trail.cols().len(), 2, "root → a, ghost never appears");
+        assert_eq!(trail.cols()[1].directory, a);
+        assert!(snaps.detail().is_none());
+    }
+
+    // Fail-closed: an unreadable ROOT opens nothing at all.
+    #[test]
+    fn unreadable_root_is_rejected() {
+        let td = TempDir::new("bad-root");
+        let missing = td.root.join("missing-root");
+        let mut snaps = TrailSnapshots::new(false);
+        assert!(
+            snaps.open_trail_to(&missing, &missing).is_none(),
+            "an unreadable root is rejected outright"
+        );
+        assert!(snaps.cols().is_empty(), "no columns were built");
     }
 
     // Stale-hit safety: an out-of-range column index changes nothing.
