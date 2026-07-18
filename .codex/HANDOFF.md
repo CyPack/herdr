@@ -77,10 +77,14 @@ Stable socket inode/mode/mtime birebir korundu. SONRAKİ BÜYÜK PROGRAM
 AKTİF: MILLER TRAIL (2026-07-18) — kullanıcı kanonik referansı circet-miller
 verdi; kontrat: docs/superpowers/specs/2026-07-18-herdr-miller-trail-ux-
 contract.md (5 yasa), plan: docs/superpowers/plans/2026-07-18-herdr-miller-
-trail-program.md (T1-T7). T1 KAPANDI (`3b0c2ed0`/`7d5edecb`, full
-3,500/3,500). Saha kusurları: FIP-D2 kapalı (agentless toast), FIP-D1
-(sidebar favorites ölü) T6'da, FIP-D3 trail kontratıyla süperseed, FIP-D4
-(Ghostty foto önizleme "Kitty graphics req.") açık. SIRADAKİ: TRAIL-T2.
+trail-program.md (T1-T7). T1 KAPANDI (`3b0c2ed0`/`7d5edecb`). T2 KAPANDI
+(`12a53be4` RED / `59cdb470` GREEN — fm::trail_snapshots::TrailSnapshots:
+index+path hizalı sync, fail-closed select_dir, refresh_col path-bazlı
+seçim koruması, sliding-window hizalama; aile 5/5, full 3,505/3,505 + 2
+skip, iki clippy temiz). Saha kusurları: FIP-D2 kapalı (agentless toast),
+FIP-D1 (sidebar favorites ölü) T6'da, FIP-D3 trail kontratıyla süperseed,
+FIP-D4 (Ghostty foto önizleme "Kitty graphics req.") açık. SIRADAKİ:
+TRAIL-T3 (render+geometri+VIS-07/08) ∥ TRAIL-T4 (girdi).
 Sonrası: FIP-5 picker, kullanıcı direktifi custom-layout programı. FIP-3 TAMAMEN KAPANDI (2026-07-18): 3.4 characterized migration
 (`bcecfdc8` — FileEntry alanları kind-türevi metodlara döndü, çifte symlink
 stat kalktı, 3-kategori grep 0 kalıntı); 3.7 icon edge ailesi (`91e33f6f` RED
@@ -404,16 +408,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 16 ve
-89, toplam 105’dir. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 15 ve
+89, toplam 104’dür. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 16 unchecked
-
-- [ ] **TRAIL-T2** Snapshot köprüsü: her kolon = yüklü read_directory_snapshot;
-  watcher path-bazlı seçim koruması; bounded.
+### Source: `.codex/TASKS.md` — 15 unchecked
 
 - [ ] **TRAIL-T3** Render+geometri: soldan sağa kolonlar, per-index genişlik,
   en-derin-kolon auto-scroll; VIS-07/08 Chromium baseline'ları.
@@ -717,8 +718,6 @@ sayar ve exact diff yapar.
 
 - [ ] **T10.9** Perform final self-review: requirements, tests, failure paths,
   Git state, publication state, graph freshness, and remaining blockers.
-
-### End of Machine-Exact Task Copy
 
 <!-- OPEN_TASKS_END -->
 

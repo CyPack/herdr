@@ -18,8 +18,11 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
 - [x] **TRAIL-T1** Saf trail çekirdeği (`3b0c2ed0` RED / `7d5edecb` GREEN):
   TrailState/TrailCol, truncate+branch, dosya-tık-kolon-eklemez, sliding depth
   bound, stale-index no-op; aile 5/5, full 3,500/3,500.
-- [ ] **TRAIL-T2** Snapshot köprüsü: her kolon = yüklü read_directory_snapshot;
-  watcher path-bazlı seçim koruması; bounded.
+- [x] **TRAIL-T2** Snapshot köprüsü (`12a53be4` RED / `59cdb470` GREEN):
+  `fm::trail_snapshots::TrailSnapshots` — her kolon = yüklü snapshot
+  (index+path hizalı sync), fail-closed select_dir (Available olmayan hedef
+  kolon OLAMAZ), refresh_col path-bazlı seçimi korur, sliding-window hizalı;
+  aile 5/5, full 3,505/3,505 + 2 skip, iki clippy temiz.
 - [ ] **TRAIL-T3** Render+geometri: soldan sağa kolonlar, per-index genişlik,
   en-derin-kolon auto-scroll; VIS-07/08 Chromium baseline'ları.
 - [ ] **TRAIL-T4** Girdi: klasör/ata-kardeş/dosya tık aileleri + klavye;
