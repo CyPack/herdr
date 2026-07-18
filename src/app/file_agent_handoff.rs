@@ -1067,6 +1067,39 @@ mod tests {
         assert!(receiver.try_recv().is_err(), "frame retry stays silent");
     }
 
+    // TP-FIP-REF-03: a non-agent focused terminal must NOT trigger an
+    // implicit Claude split/chat for the reference action. No typed split
+    // request, no send request, and no new pane or terminal may appear.
+    #[tokio::test]
+    async fn non_agent_focus_prepares_no_claude_split_for_reference_action() {
+        let fixture = HandoffFixture::new("no-implicit-split");
+        let path = fixture.file("selected.txt");
+        let (mut app, _, _) = app_with_non_agent_handoff(&fixture.root, false);
+        let before_panes = app.state.workspaces[0].tabs[0].layout.pane_ids();
+        let before_terminals: std::collections::HashSet<_> =
+            app.state.terminals.keys().cloned().collect();
+
+        let _ = app.open_file_manager_row_agent_handoff(path);
+
+        assert!(
+            app.state.request_file_manager_claude_split.is_none(),
+            "the reference action must never prepare an implicit Claude split"
+        );
+        assert!(app.state.request_file_manager_agent_handoff.is_none());
+        assert_eq!(
+            app.state.workspaces[0].tabs[0].layout.pane_ids(),
+            before_panes
+        );
+        assert_eq!(
+            app.state
+                .terminals
+                .keys()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>(),
+            before_terminals
+        );
+    }
+
     // TP-FIP-REF-06: a directory is a first-class reference target; its exact
     // UTF-8 path bytes cross the boundary once with no submit byte.
     #[tokio::test]
