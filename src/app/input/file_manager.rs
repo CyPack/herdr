@@ -4925,6 +4925,67 @@ mod tests {
         }
     }
 
+    // TP-TRAIL-WHEEL-FALLBACK-01: some terminal hosts report the user's
+    // horizontal Miller gesture as an unmodified vertical wheel event. A
+    // wheel over a live column's empty body must still reach the existing
+    // fractional horizontal reducer without stealing visible-row navigation.
+    #[test]
+    fn plain_wheel_over_empty_trail_body_uses_fractional_horizontal_fallback() {
+        let td = TempDir::new("trail-plain-wheel-fallback");
+        let root = td.root.join("root");
+        let mut current = root.clone();
+        for level in 0..7 {
+            current.push(format!("level-{level}"));
+        }
+        fs::create_dir_all(&current).expect("create deep Trail fixture");
+
+        let mut file_manager =
+            FmState::open_trail_to(&root, &current, false).expect("open deep Trail");
+        for segment in &mut file_manager.miller.chain {
+            segment.preferred_width = 30;
+        }
+        let mut app = runtime_app_with_fm(file_manager);
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        let frame = Rect::new(0, 0, 64, 14);
+        compute_view(&mut app.state, frame);
+
+        let view = &app.state.view.file_manager_trail;
+        let initial_offset = view.offset_cells;
+        let step_left = view.scroll_step_left;
+        let column = view.columns.first().expect("visible Trail column");
+        let probe = (column.rect.x, column.rect.bottom().saturating_sub(1));
+        assert!(
+            crate::ui::trail_row_at(view, probe.0, probe.1).is_none(),
+            "the probe must exercise empty column body, not row navigation"
+        );
+        assert!(initial_offset > step_left);
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollUp, probe.0, probe.1)),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .miller
+                .horizontal
+                .offset_cells,
+            initial_offset - step_left,
+            "plain wheel over empty Trail body must use the fractional horizontal reducer"
+        );
+
+        compute_view(&mut app.state, frame);
+        assert_eq!(
+            app.state.view.file_manager_trail.offset_cells,
+            initial_offset - step_left,
+            "the fallback-selected origin must survive the next frame"
+        );
+    }
+
     #[test]
     fn fractional_scroll_resize_clamps_and_navigation_rearms_auto_follow() {
         let td = TempDir::new("trail-fractional-lifecycle");
