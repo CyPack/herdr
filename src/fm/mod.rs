@@ -21,6 +21,8 @@ mod natsort;
 pub(crate) mod operations;
 pub(crate) mod rename;
 mod text_preview;
+#[allow(dead_code)] // consumed from FIP trail program T2 onward
+pub(crate) mod trail;
 pub(crate) mod watcher;
 
 use std::collections::BTreeSet;
