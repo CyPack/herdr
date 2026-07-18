@@ -479,13 +479,34 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 7 ve
-89, toplam 96 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 13 ve
+89, toplam 102 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 7 unchecked
+### Source: `.codex/TASKS.md` — 13 unchecked
+
+- [ ] **TRAIL-T7.8** Kesirli hücre-tabanlı yatay kaydırma — ONAYLI TASARIM:
+  `docs/superpowers/specs/2026-07-18-herdr-miller-fractional-scroll-design.md`;
+  uygulama planı:
+  `docs/superpowers/plans/2026-07-18-herdr-miller-fractional-scroll-implementation.md`.
+  Dependency chain: mutlak `offset_cells` → saf clipped Miller geometri →
+  `TrailViewSnapshot` tek render/input otoritesi → 1/3-kolon wheel →
+  VIS-12 Chromium → full gate/graf/yayın.
+  - [x] **T7.8.0** Graph-first araştırma, bağımlılık analizi, PRD ve kod-seviyesi
+    TDD planı.
+  - [ ] **T7.8.1 RED** Compile-valid fractional step, mixed-width, clipping,
+    stale, auto-follow ve resize davranış testleri.
+  - [ ] **T7.8.2 GREEN-STATE** `first_visible` mutable otoritesini client-local
+    mutlak hücre ofsetine ve saf interval/clamp/auto-follow geometrisine taşı.
+  - [ ] **T7.8.3 GREEN-RENDER/INPUT** Kısmi kolon/row/action clipping'i,
+    Unicode hücre dilimi ve generation+revision-bound Trail input cutover.
+  - [ ] **T7.8.4 VIS-12** Gerçek Ratatui hücre fixture'ı + Playwright Chromium
+    mutation kanıtı + yalnız spec-scoped baseline.
+  - [ ] **T7.8.5 CLOSURE** Full Rust, Chromium, iki clippy, maintenance,
+    Bun, fmt/diff/unwrap/source audit; continuity; tek-worker graph reindex;
+    CyPack `feat/native-fm`+`master` FF yayın.
 
 - [ ] **FIP-1.6** Add Playwright `TP-FIP-VIS-01` plus isolated real-mouse
   `TP-FIP-E2E-01` evidence without touching the stable Herdr socket.

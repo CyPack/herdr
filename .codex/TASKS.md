@@ -111,6 +111,26 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
   fmt/diff/production-unwrap taraması temiz. Manuel test yardımcısı
   `.local/herdr-trail-test.sh` yalnız test-sahipli server/root için başlangıç
   ve kapanış temizliği uygular; stable Herdr/socket'a dokunmaz.
+- [ ] **TRAIL-T7.8** Kesirli hücre-tabanlı yatay kaydırma — ONAYLI TASARIM:
+  `docs/superpowers/specs/2026-07-18-herdr-miller-fractional-scroll-design.md`;
+  uygulama planı:
+  `docs/superpowers/plans/2026-07-18-herdr-miller-fractional-scroll-implementation.md`.
+  Dependency chain: mutlak `offset_cells` → saf clipped Miller geometri →
+  `TrailViewSnapshot` tek render/input otoritesi → 1/3-kolon wheel →
+  VIS-12 Chromium → full gate/graf/yayın.
+  - [x] **T7.8.0** Graph-first araştırma, bağımlılık analizi, PRD ve kod-seviyesi
+    TDD planı.
+  - [ ] **T7.8.1 RED** Compile-valid fractional step, mixed-width, clipping,
+    stale, auto-follow ve resize davranış testleri.
+  - [ ] **T7.8.2 GREEN-STATE** `first_visible` mutable otoritesini client-local
+    mutlak hücre ofsetine ve saf interval/clamp/auto-follow geometrisine taşı.
+  - [ ] **T7.8.3 GREEN-RENDER/INPUT** Kısmi kolon/row/action clipping'i,
+    Unicode hücre dilimi ve generation+revision-bound Trail input cutover.
+  - [ ] **T7.8.4 VIS-12** Gerçek Ratatui hücre fixture'ı + Playwright Chromium
+    mutation kanıtı + yalnız spec-scoped baseline.
+  - [ ] **T7.8.5 CLOSURE** Full Rust, Chromium, iki clippy, maintenance,
+    Bun, fmt/diff/unwrap/source audit; continuity; tek-worker graph reindex;
+    CyPack `feat/native-fm`+`master` FF yayın.
 
 ### FIP-D — Saha Kusurları (2026-07-18 canlı ekran kanıtı, kullanıcı raporu)
 
