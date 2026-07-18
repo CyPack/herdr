@@ -136,16 +136,16 @@ then the plan's Tasks 2-29 in order.
 
 ### FIP-6 — Production Closure
 
-- [ ] **FIP-6.1** Run focused nextest for every Rust `TP-FIP-*` behavior.
-- [ ] **FIP-6.2** Run the Playwright Chromium suite from fresh deterministic
+- [x] **FIP-6.1** Run focused nextest for every Rust `TP-FIP-*` behavior.
+- [x] **FIP-6.2** Run the Playwright Chromium suite from fresh deterministic
   fixtures with failure screenshots/traces and no skipped-success claim.
 - [ ] **FIP-6.3** Run isolated terminal mouse and PTY-byte smokes using
   `.local/ISOLATED-DEV-TEST.md`; prove exact path bytes and zero CR/LF.
-- [ ] **FIP-6.4** Run format, full nextest, maintenance scripts, Linux Clippy,
+- [x] **FIP-6.4** Run format, full nextest, maintenance scripts, Linux Clippy,
   canonical Windows Clippy, Bun, and Python gates required by current Herdr.
-- [ ] **FIP-6.5** Verify render purity, latency/resource budgets, state
+- [x] **FIP-6.5** Verify render purity, latency/resource budgets, state
   invariants, failure recovery, and zero new unbounded queue/cache/worker.
-- [ ] **FIP-6.6** Refresh Codebase Memory and re-read every changed owner,
+- [x] **FIP-6.6** Refresh Codebase Memory and re-read every changed owner,
   caller, and data-flow seam rather than trusting `ready`.
 - [ ] **FIP-6.7** Update `.codex` current/tasks/evidence, planning state,
   lessons, and next-session handoff with exact fresh evidence.

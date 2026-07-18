@@ -62,7 +62,18 @@ vanished-target aktivasyonu görünür failure + sıfır byte); 5.7 (`233ec07d` 
 "Send to Agent" → "Add Reference to Agent..." tüm literaller, grep 0);
 5.8 (`51d045c9` — VIS-05/06 baseline'ları: picker 120x40 + disabled-row tiny
 60x20, görsel suite 14/14). Full 3,494/3,494 + 2 skip; iki Clippy temiz.
-Kalan: FIP-6 kapanış (6.1-6.8 + devredilen E2E-01).
+FIP-6 BÜYÜK ORANDA KAPANDI (2026-07-18): 6.1 focused aileler
+(11+9+17+35+20, hepsi non-zero), 6.2 taze görsel 14/14, 6.4 tüm gate'ler
+(full 3,494 + fmt + iki Clippy + python 64 + bun 5/5+12/12 + diff-check +
+unwrap-scan temiz), 6.5 purity (windowed byte-identical + no-fs-io), 6.6
+reindex + snippet doğrulama, 6.7/6.8 continuity + FF yayın. TEK AÇIK: 6.3
+E2E-01/02 — izole tmux harness'ta SGR mouse SERVER PARSER'A ULAŞIYOR
+(herdr-server.log DEBUG Mouse events kanıtlı) ama handle_mouse dispatch
+sidebar-tab/new-tab/new-workspace için NO-OP; klavye (C-b prefix hint)
+çalışıyor. Olası server-modu mouse regresyonu VEYA harness ortam farkı —
+taze session'da adanmış investigation gerekli (.codex/evidence/
+fip-progress.md son bölüm). zsh tuzağı: tmux send-keys -H'e ${=seq}.
+Stable socket inode/mode/mtime birebir korundu.
 Sonrası: FIP-5 picker, kullanıcı direktifi custom-layout programı. FIP-3 TAMAMEN KAPANDI (2026-07-18): 3.4 characterized migration
 (`bcecfdc8` — FileEntry alanları kind-türevi metodlara döndü, çifte symlink
 stat kalktı, 3-kategori grep 0 kalıntı); 3.7 icon edge ailesi (`91e33f6f` RED
@@ -102,12 +113,12 @@ drag-and-drop kapsam dışı.
 - Eski SF0-SF6 + FM1-FM5 programı tamam ve yayınlıdır; yeniden uygulanmaz.
 - Yeni aktif program Files Interaction Polish’tir.
 - Açık görev envanteri (FIP-4 kapanışı sonrası, 2026-07-18):
-  - `.codex/TASKS.md`: 12
+  - `.codex/TASKS.md`: 7
   - `.codex/CHANGE-PIPELINE-TASKS.md`: 89
-  - toplam: 101
-- Sadece FIP-6.1 in-progress yapılabilir; diğer 100 görev pending/paused kalır.
+  - toplam: 96
+- Sadece FIP-6.3 (E2E investigation) veya FIP-1.6 kapanışı in-progress yapılabilir; diğer görevler pending/paused kalır.
 - Fresh continuity gates (2026-07-18 planning-gate closure):
-  - exact task copy 101/101 (FIP-5 kapanışı sonrası);
+  - exact task copy 96/96 (FIP-6 kapanış koşusu sonrası);
   - 57 unique `TP-FIP-*` (fresh deterministic count; the earlier "55" excluded
     the two E2E IDs — all 57 are mapped in the implementation plan);
   - Nextest run `4da2ee18-b784-4c38-aaab-98a2e8787511`,
@@ -386,13 +397,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 12 ve
-89, toplam 101’dir. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 7 ve
+89, toplam 96’dir. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 12 unchecked
+### Source: `.codex/TASKS.md` — 7 unchecked
 
 - [ ] **FIP-1.6** Add Playwright `TP-FIP-VIS-01` plus isolated real-mouse
   `TP-FIP-E2E-01` evidence without touching the stable Herdr socket.
@@ -401,22 +412,8 @@ sayar ve exact diff yapar.
   real-mouse `TP-FIP-E2E-01` smoke is explicitly deferred to the FIP-6.3
   closure run on the final build; do not claim it before that run.
 
-- [ ] **FIP-6.1** Run focused nextest for every Rust `TP-FIP-*` behavior.
-
-- [ ] **FIP-6.2** Run the Playwright Chromium suite from fresh deterministic
-  fixtures with failure screenshots/traces and no skipped-success claim.
-
 - [ ] **FIP-6.3** Run isolated terminal mouse and PTY-byte smokes using
   `.local/ISOLATED-DEV-TEST.md`; prove exact path bytes and zero CR/LF.
-
-- [ ] **FIP-6.4** Run format, full nextest, maintenance scripts, Linux Clippy,
-  canonical Windows Clippy, Bun, and Python gates required by current Herdr.
-
-- [ ] **FIP-6.5** Verify render purity, latency/resource budgets, state
-  invariants, failure recovery, and zero new unbounded queue/cache/worker.
-
-- [ ] **FIP-6.6** Refresh Codebase Memory and re-read every changed owner,
-  caller, and data-flow seam rather than trusting `ready`.
 
 - [ ] **FIP-6.7** Update `.codex` current/tasks/evidence, planning state,
   lessons, and next-session handoff with exact fresh evidence.
