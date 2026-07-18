@@ -36,8 +36,13 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
   move_selection (aktif kolonda klavye, tık semantiği), TrailState.active_col
   (LAW-2 tek odak otoritesi, left/right clamp, transition-follow); aile 9 yeni
   test, full 3,521/3,521 + 2 skip, iki clippy + görsel 16/16 temiz.
-- [ ] **TRAIL-T5** Resizable detay/önizleme paneli + VIS-09; FIP-D4
-  (kitty graphics Ghostty) paralel iz.
+- [x] **TRAIL-T5** Detay/önizleme paneli (`33c12968` RED / `55e12fea` GREEN):
+  TrailDetail{path,kind,preview} activate-anında hazırlanır (render dışı IO);
+  Text (read_text_preview) / Image (kitty izi FIP-D4'te) / Unpreviewable
+  (açık sebep — sessiz boşluk yasak); klasör aktivasyonu paneli kapatır;
+  sağda klamplı side-panel (overlay değil, kolonlar görünür kalır), bordered
+  başlık=dosya adı; VIS-09 baseline (görsel 17/17), full 3,528/3,528 + 2
+  skip, iki clippy temiz. NOT: kitty pixel delivery FIP-D4 izi AÇIK.
 - [ ] **TRAIL-T6** Sidebar favorites → trail kurma (FIP-D1 kökten kapanır) + VIS-10.
 - [ ] **TRAIL-T7** Eski parent/current/resident modelinin characterized sökümü
   ("(unavailable)" grep=0) + tüm gate'ler + yayın.
