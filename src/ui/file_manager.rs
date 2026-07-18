@@ -1698,6 +1698,7 @@ mod tests {
                 crate::fm::entry_kind::FileEntryKind::RegularFile
             },
         }]);
+        fm.sync_trail_bridge_for_test();
         fm.miller.visit(
             current,
             Some(crate::fm::miller::MillerDirectoryProjection {

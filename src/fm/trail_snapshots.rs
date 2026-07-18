@@ -10,7 +10,10 @@
 use std::path::{Path, PathBuf};
 
 use super::trail::TrailState;
-use super::{read_directory_snapshot, FileEntry, FmDirectorySnapshot, FmDirectoryStatus};
+use super::{
+    read_directory_snapshot, FileEntry, FmDirectorySnapshot, FmDirectoryStatus, FmFilePreview,
+    FmPreview,
+};
 use crate::fm::entry_kind::FileEntryKind;
 use crate::fm::TextPreview;
 
@@ -36,6 +39,7 @@ pub(crate) enum TrailDetailPreview {
 }
 
 /// One trail column with its loaded directory listing.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TrailColSnapshot {
     directory: PathBuf,
     snapshot: FmDirectorySnapshot,
@@ -68,6 +72,7 @@ pub(crate) enum TrailActivateOutcome {
 }
 
 /// Loaded snapshots kept index-aligned with a `TrailState`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TrailSnapshots {
     cols: Vec<TrailColSnapshot>,
     show_hidden: bool,
@@ -91,6 +96,108 @@ impl TrailSnapshots {
     /// is selected (LAW 3). A directory selection has no detail.
     pub(crate) fn detail(&self) -> Option<&TrailDetail> {
         self.detail.as_ref()
+    }
+
+    /// Resolve the trail's single exact-path selection through the
+    /// index-aligned loaded snapshots. The deepest marked column wins, while
+    /// the unselected child column after a directory branch is skipped.
+    pub(crate) fn selected_entry<'a>(&'a self, trail: &TrailState) -> Option<&'a FileEntry> {
+        trail
+            .cols()
+            .iter()
+            .zip(&self.cols)
+            .rev()
+            .find_map(|(trail_col, snapshot)| {
+                let selected = trail_col.selected.as_deref()?;
+                snapshot
+                    .entries()
+                    .iter()
+                    .find(|entry| entry.path == selected)
+            })
+    }
+
+    /// Rebuild the transitional FmState bridge from already-prepared current
+    /// directory and preview data. This is intentionally disk-free so typed
+    /// refresh/navigation apply remains a pure model transition.
+    pub(super) fn integrate_current(
+        &mut self,
+        trail: &mut TrailState,
+        root: &Path,
+        root_snapshot: FmDirectorySnapshot,
+        selected: Option<&FileEntry>,
+        preview: &FmPreview,
+        show_hidden: bool,
+    ) {
+        self.show_hidden = show_hidden;
+        self.detail = None;
+
+        let mut col_idx = trail.cols().iter().rposition(|col| col.directory == root);
+        let prefix_is_aligned = col_idx.is_some_and(|idx| {
+            self.cols
+                .get(idx)
+                .is_some_and(|snapshot| snapshot.directory == root)
+                || (idx == 0 && self.cols.is_empty())
+        });
+        if !prefix_is_aligned {
+            *trail = TrailState::new(root);
+            self.cols.clear();
+            col_idx = Some(0);
+        }
+        let mut col_idx = col_idx.unwrap_or(0);
+        if !trail.clear_selection_at(col_idx) {
+            *trail = TrailState::new(root);
+            self.cols.clear();
+            col_idx = 0;
+        }
+        self.cols.truncate(col_idx + 1);
+        let current = TrailColSnapshot {
+            directory: root.to_path_buf(),
+            snapshot: root_snapshot,
+        };
+        if col_idx < self.cols.len() {
+            self.cols[col_idx] = current;
+        } else {
+            self.cols.push(current);
+        }
+        let Some(selected) = selected else {
+            return;
+        };
+
+        match preview {
+            FmPreview::Directory(entries) if selected.is_dir() => {
+                if trail.select_dir(col_idx, &selected.path) {
+                    self.cols.push(TrailColSnapshot {
+                        directory: selected.path.clone(),
+                        snapshot: FmDirectorySnapshot {
+                            entries: entries.clone(),
+                            status: FmDirectoryStatus::Available,
+                        },
+                    });
+                }
+            }
+            FmPreview::File(file_preview) if !selected.is_dir() => {
+                if trail.select_file(col_idx, &selected.path) {
+                    self.detail = Some(TrailDetail {
+                        path: selected.path.clone(),
+                        kind: selected.kind,
+                        preview: match file_preview {
+                            FmFilePreview::Text(preview) => {
+                                TrailDetailPreview::Text(preview.clone())
+                            }
+                            FmFilePreview::Image(_) => TrailDetailPreview::Image,
+                            FmFilePreview::Unavailable(error) => {
+                                TrailDetailPreview::Unpreviewable(error.to_string())
+                            }
+                        },
+                    });
+                }
+            }
+            FmPreview::None | FmPreview::Directory(_) | FmPreview::File(_) => {
+                // A mismatched/failed prepared preview must not invent a
+                // visible child column. Retain only the exact selected path.
+                let _ = trail.select_file(col_idx, &selected.path);
+            }
+        }
     }
 
     /// Realign with the trail: keep a cached snapshot only when the same

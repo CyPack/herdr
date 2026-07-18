@@ -834,6 +834,7 @@ mod tests {
                 })
                 .collect(),
         );
+        file_manager.sync_trail_bridge_for_test();
         let resident_id = crate::fm::miller::MillerColumnId {
             directory: resident.clone(),
             generation: 42,

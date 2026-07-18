@@ -87,6 +87,7 @@ pub enum FmDirectoryStatus {
     Unavailable,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct FmDirectorySnapshot {
     entries: Vec<FileEntry>,
     status: FmDirectoryStatus,
@@ -498,6 +499,11 @@ pub struct FmState {
     /// Explicit path identities selected for future bulk actions. This is
     /// intentionally separate from cursor focus and private to the FM model.
     multi_selection: FmMultiSelection,
+    /// Canonical accumulating path trail used by the live Files surface.
+    pub(crate) trail: trail::TrailState,
+    /// Loaded snapshots index-aligned with `trail`; selected entry resolution
+    /// never falls back to the legacy cursor.
+    pub(crate) trail_snapshots: trail_snapshots::TrailSnapshots,
     /// Bounded Miller chain and resident non-current projections (FM1). The
     /// current directory's `entries` above stay the operational authority.
     pub(crate) miller: miller::MillerState,
@@ -591,6 +597,7 @@ impl FmState {
         self.preview = prepared.preview;
         self.preview_viewport_start = 0;
         self.preview_generation = prepared.preview_generation;
+        self.rebuild_trail_bridge();
         true
     }
 
@@ -660,6 +667,7 @@ impl FmState {
             self.multi_selection.paths.insert(path.clone());
             self.multi_selection.anchor = Some(path);
         }
+        self.rebuild_trail_bridge();
         true
     }
 
@@ -748,6 +756,7 @@ impl FmState {
         let cwd_writable =
             snapshot.status == FmDirectoryStatus::Available && directory_is_writable(&cwd);
         let miller = miller::MillerState::seed(cwd.clone());
+        let trail = trail::TrailState::new(&cwd);
         let mut state = Self {
             cwd,
             entries: snapshot.entries,
@@ -762,6 +771,8 @@ impl FmState {
             preview_viewport_start: 0,
             preview_generation: 0,
             multi_selection: FmMultiSelection::default(),
+            trail,
+            trail_snapshots: trail_snapshots::TrailSnapshots::new(show_hidden),
             miller,
         };
         state.refresh_context();
@@ -774,6 +785,8 @@ impl FmState {
         let cwd = cwd.into();
         Self {
             miller: miller::MillerState::seed(cwd.clone()),
+            trail: trail::TrailState::new(&cwd),
+            trail_snapshots: trail_snapshots::TrailSnapshots::new(false),
             cwd,
             entries: Vec::new(),
             cursor: 0,
@@ -828,7 +841,7 @@ impl FmState {
 
     /// The currently highlighted entry, if any.
     pub fn selected(&self) -> Option<&FileEntry> {
-        self.entries.get(self.cursor)
+        self.trail_snapshots.selected_entry(&self.trail)
     }
 
     /// Move the cursor down one row, stopping at the last entry.
@@ -1201,9 +1214,41 @@ impl FmState {
             _ => None,
         };
         let selected = self
-            .selected()
+            .cursor_entry()
             .map(|entry| (entry.path.clone(), entry.is_dir()));
         self.preview = prepare_preview(selected, self.show_hidden, generation, previous_text);
+        self.rebuild_trail_bridge();
+    }
+
+    /// Transitional T7.2 adapter: mirror the legacy prepared current model
+    /// into the canonical trail without filesystem work. This method is the
+    /// only place allowed to derive trail selection from the legacy cursor.
+    fn rebuild_trail_bridge(&mut self) {
+        let selected = self.cursor_entry().cloned();
+        let root_snapshot = FmDirectorySnapshot {
+            entries: self.entries.clone(),
+            status: self.cwd_status,
+        };
+        self.trail_snapshots.integrate_current(
+            &mut self.trail,
+            &self.cwd,
+            root_snapshot,
+            selected.as_ref(),
+            &self.preview,
+            self.show_hidden,
+        );
+    }
+
+    /// Install direct synthetic fixture fields into the canonical trail.
+    #[cfg(test)]
+    pub(crate) fn sync_trail_bridge_for_test(&mut self) {
+        self.rebuild_trail_bridge();
+    }
+
+    /// Legacy row lookup retained only as the T7.2 migration input. Public
+    /// selection authority is `selected()` above and resolves through trail.
+    fn cursor_entry(&self) -> Option<&FileEntry> {
+        self.entries.get(self.cursor)
     }
 }
 
@@ -2154,6 +2199,34 @@ mod tests {
         assert_eq!(st.entries.len(), 1);
     }
 
+    // TP-TRAIL-T7-BRIDGE-05: rebuilding after a hidden-toggle must update the
+    // snapshot bridge's future directory-read policy, not only its current
+    // cloned entries.
+    #[test]
+    fn hidden_toggle_propagates_to_future_trail_branches() {
+        let td = TempDir::new("trail-hidden-policy");
+        let alpha = td.root.join("alpha");
+        let nested = alpha.join("nested");
+        fs::create_dir_all(&nested).expect("create nested fixture");
+        fs::write(nested.join(".secret"), b"x").expect("write hidden fixture");
+        fs::write(nested.join("visible"), b"x").expect("write visible fixture");
+        let mut state = FmState::new(&td.root);
+
+        state.toggle_hidden();
+        assert!(state.show_hidden);
+        assert_eq!(
+            state
+                .trail_snapshots
+                .select_dir(&mut state.trail, 1, &nested),
+            FmDirectoryStatus::Available
+        );
+        assert_eq!(
+            names(state.trail_snapshots.cols()[2].entries()),
+            vec![".secret", "visible"],
+            "future trail branches inherit the active hidden-file policy"
+        );
+    }
+
     // TP-A3.1: entering a selected directory reads its contents, cursor at top.
     #[test]
     fn enter_directory_appends_segment_and_focuses_child() {
@@ -2180,6 +2253,67 @@ mod tests {
         st.miller.assert_miller_invariants_for_test();
     }
 
+    // TP-TRAIL-T7-BRIDGE-06: legacy directory navigation may update cwd, but
+    // the canonical trail keeps its root and accumulates the exact ancestor
+    // chain across enter/leave transitions.
+    #[test]
+    fn trail_bridge_accumulates_across_enter_and_leave() {
+        let td = TempDir::new("trail-navigation");
+        let alpha = td.root.join("alpha");
+        let beta = alpha.join("beta");
+        fs::create_dir_all(&beta).expect("create nested directories");
+        fs::write(beta.join("leaf.txt"), b"x").expect("write leaf");
+        let mut state = FmState::new(&td.root);
+
+        assert_eq!(
+            state
+                .trail
+                .cols()
+                .iter()
+                .map(|col| col.directory.as_path())
+                .collect::<Vec<_>>(),
+            vec![td.root.as_path(), alpha.as_path()]
+        );
+
+        state.enter();
+        assert_eq!(state.cwd, alpha);
+        assert_eq!(state.trail.selected_path(), Some(beta.as_path()));
+        assert_eq!(
+            state
+                .trail
+                .cols()
+                .iter()
+                .map(|col| col.directory.as_path())
+                .collect::<Vec<_>>(),
+            vec![td.root.as_path(), alpha.as_path(), beta.as_path()]
+        );
+
+        state.enter();
+        assert_eq!(state.cwd, beta);
+        assert_eq!(
+            state.trail.selected_path(),
+            Some(beta.join("leaf.txt").as_path())
+        );
+        assert_eq!(
+            state.trail.cols()[0].directory,
+            td.root,
+            "enter never rebases the trail root"
+        );
+
+        state.leave();
+        assert_eq!(state.cwd, alpha);
+        assert_eq!(state.trail.selected_path(), Some(beta.as_path()));
+        assert_eq!(
+            state
+                .trail
+                .cols()
+                .iter()
+                .map(|col| col.directory.as_path())
+                .collect::<Vec<_>>(),
+            vec![td.root.as_path(), alpha.as_path(), beta.as_path()]
+        );
+    }
+
     // TP-FM4-PURE-REQUEST: input first creates an immutable, generation-bound
     // transition request. Request construction cannot read disk or mutate
     // selection, preview, chain, cache, cursor, or any generation.
@@ -2196,6 +2330,7 @@ mod tests {
                 crate::fm::entry_kind::FileEntryKind::RegularFile
             },
         }];
+        state.rebuild_trail_bridge();
         state.directory_generation = 17;
         state.preview_generation = 23;
         state.miller.revision = 31;
@@ -2243,6 +2378,7 @@ mod tests {
                 crate::fm::entry_kind::FileEntryKind::RegularFile
             },
         }];
+        state.rebuild_trail_bridge();
         let request = state
             .request_enter_navigation()
             .expect("pure enter request");
@@ -2332,6 +2468,7 @@ mod tests {
         state.preview_generation = 17;
         state.multi_selection.paths = BTreeSet::from([root.join("a.txt"), selected_path.clone()]);
         state.multi_selection.anchor = Some(selected_path.clone());
+        state.rebuild_trail_bridge();
 
         let request = state.request_current_refresh(29);
         assert_eq!(request.reason, FmCurrentRefreshReason::Watcher);
@@ -2535,6 +2672,7 @@ mod tests {
                 crate::fm::entry_kind::FileEntryKind::RegularFile
             },
         }];
+        state.rebuild_trail_bridge();
         let request = state
             .request_enter_navigation()
             .expect("pure enter request");
@@ -3208,7 +3346,7 @@ mod tests {
         td.file("b.txt");
         td.file("c.txt");
         let mut state = FmState::new(&td.root);
-        state.cursor = 1;
+        assert!(state.select(1));
         assert_eq!(
             state.selected().map(|entry| entry.name.as_str()),
             Some("b.txt")
@@ -3240,7 +3378,7 @@ mod tests {
         td.file("b.txt");
         td.file("c.txt");
         let mut state = FmState::new(&td.root);
-        state.cursor = 1;
+        assert!(state.select(1));
 
         fs::rename(td.root.join("b.txt"), td.root.join("z.txt")).expect("rename selected file");
         state.reload();
@@ -3261,11 +3399,12 @@ mod tests {
         td.file("a.txt");
         td.file("z.txt");
         let mut state = FmState::with_hidden(&td.root, true);
-        state.cursor = state
+        let selected_index = state
             .entries
             .iter()
             .position(|entry| entry.name == "a.txt")
             .expect("visible selection");
+        assert!(state.select(selected_index));
         let selected_path = td.root.join("a.txt");
 
         state.toggle_hidden();
@@ -3562,7 +3701,7 @@ mod tests {
             .position(|entry| entry.path == beta)
             .expect("beta row");
         assert!(beta_index > 0, "test requires a nonzero child index");
-        state.cursor = beta_index;
+        assert!(state.select(beta_index));
 
         state.enter();
 
@@ -3598,7 +3737,7 @@ mod tests {
                 .position(|entry| entry.path == **target)
                 .expect("target row");
             assert!(index > 0, "each entered child must be nonzero");
-            state.cursor = index;
+            assert!(state.select(index));
             state.enter();
         }
         assert_eq!(state.cwd, l3);
@@ -3635,7 +3774,7 @@ mod tests {
             .iter()
             .position(|entry| entry.path == alpha)
             .expect("alpha row");
-        state.cursor = alpha_index;
+        assert!(state.select(alpha_index));
         state.enter();
         state.leave();
         // Root now binds alpha; switch the branch to beta.
@@ -3645,7 +3784,7 @@ mod tests {
             .position(|entry| entry.path == beta)
             .expect("beta row");
         assert!(beta_index > 0, "beta must sit at a nonzero index");
-        state.cursor = beta_index;
+        assert!(state.select(beta_index));
         state.enter();
 
         assert_eq!(state.cwd, beta);

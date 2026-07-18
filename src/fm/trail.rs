@@ -72,6 +72,29 @@ impl TrailState {
         &self.cols
     }
 
+    /// Exact selected path from the deepest marked column. A directory branch
+    /// ends with one unselected child column, so reading only `last()` would
+    /// lose the directory that opened it.
+    pub(crate) fn selected_path(&self) -> Option<&Path> {
+        self.cols
+            .iter()
+            .rev()
+            .find_map(|col| col.selected.as_deref())
+    }
+
+    /// Clear one column's selection and every deeper branch while preserving
+    /// all ancestors. Used by the T7 bridge before applying a freshly prepared
+    /// current-directory selection.
+    pub(crate) fn clear_selection_at(&mut self, col_idx: usize) -> bool {
+        if col_idx >= self.cols.len() {
+            return false;
+        }
+        self.cols.truncate(col_idx + 1);
+        self.cols[col_idx].selected = None;
+        self.active_col = col_idx;
+        true
+    }
+
     /// Index of the deepest column.
     pub(crate) fn deepest(&self) -> usize {
         self.cols.len().saturating_sub(1)

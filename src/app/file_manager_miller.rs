@@ -597,6 +597,7 @@ mod tests {
             current.join("current.txt").join("preview-child"),
             true,
         )]);
+        file_manager.sync_trail_bridge_for_test();
         file_manager.miller.visit(
             current,
             Some(MillerDirectoryProjection {
