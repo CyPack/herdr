@@ -15,8 +15,8 @@ then the plan's Tasks 2-29 in order.
 Activated by the user's 2026-07-18 field report. Research:
 `.codex/evidence/files-visibility-preview-plugin-research.md`. Plan:
 `docs/superpowers/plans/2026-07-18-herdr-files-visibility-preview-plugin-integration.md`.
-FMR-1 is closed with its classified runtime matrix and VIS-13 Chromium proof.
-The active focus is FMR-2: the full sidebar click-to-loaded-Trail seam.
+FMR-1 and FMR-2 are closed with classified runtime matrices. The active focus
+is FMR-3: the file type preview/render capability matrix.
 
 - [ ] **FMR-0 Scroll version lab and ranking.** Four reboot-safe source
   checkpoints are collected side by side under
@@ -46,16 +46,19 @@ The active focus is FMR-2: the full sidebar click-to-loaded-Trail seam.
     non-actionable Trail status row; no depth-limit or generic refresh patch.
   - [x] Prove VIS-13 with Playwright Chromium: actionable row plus separate
     hidden-omission status; full visual suite 21/21.
-- [ ] **FMR-2 Files sidebar shortcut mouse regression.**
+- [x] **FMR-2 Files sidebar shortcut mouse regression.** Closed through
+  `0b69b557` RED / `0b8ab32f` GREEN / `918ae4df` characterization; evidence:
+  `.codex/evidence/files-sidebar-mouse-runtime-matrix.md`.
   - [x] Map compute geometry → exact model-revalidated path hit → one-shot
     request → scheduled consumer → `open_trail_to`.
   - [x] Identify the coverage gap: mouse test stops at request; consumer test
     injects request manually.
-  - [ ] Add one end-to-end primary-click → scheduled-task → loaded Trail RED
+  - [x] Add one end-to-end primary-click → scheduled-task → loaded Trail
     with generation, stale, collapsed, overlay, modifier, inaccessible, Home,
     Downloads/pin, and symlink-directory cases.
-  - [ ] If current source is green, classify the live defect as executable
-    drift and do not invent a mouse code change.
+  - [x] Classify the plain-click live defect as executable drift; separately
+    close the discovered modifier-authority leak without inventing new
+    plain-click semantics.
 - [ ] **FMR-3 File type preview and render capability matrix.**
   - [x] Inventory current native `Image` / bounded `Text` /
     `Unpreviewable(reason)` behavior.

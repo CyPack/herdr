@@ -1,6 +1,6 @@
 # Current State — 2026-07-17
 
-> **CURRENT OVERRIDE — FMR-2 SIDEBAR MOUSE SEAM ACTIVE (2026-07-18).** The user
+> **CURRENT OVERRIDE — FMR-3 PREVIEW CAPABILITY MATRIX ACTIVE (2026-07-18).** The user
 > reported invisible directory contents and inert Files-sidebar shortcuts,
 > requested a file preview/render and plugin-reference program, and asked that
 > recent scroll implementations be preserved side by side for later ranking.
@@ -16,11 +16,18 @@
 > hidden-only, non-UTF-8, and per-entry iterator failures now remain bounded,
 > explicit prepared omission state; Trail reserves a non-actionable status
 > row without replacing exact-path actionable rows. Directory-level failures
-> and stale alignment remain fail-closed. Fresh gates: Rust 3,517/3,517 + 2
-> skip, Chromium 21/21, Linux/Windows clippy and fmt clean. Evidence:
-> `.codex/evidence/files-visibility-runtime-matrix.md`. Sidebar coverage
-> currently splits mouse request creation from a manually invoked consumer;
-> FMR-2 closes that end-to-end seam. Research and
+> and stale alignment remain fail-closed. FMR-2 is also closed through
+> `0b69b557` RED / `0b8ab32f` GREEN / `918ae4df` characterization. A real
+> primary shortcut click now covers the production scheduled-consumer chain
+> through an exact loaded Trail; current plain-click source was already
+> green, confirming installed-binary drift. Characterization found and closed
+> a separate modifier-authority leak: only plain primary presses may enter the
+> shortcut navigation path. Home, configured/symlink pin, generation, stale,
+> collapsed, overlay, modifier, inaccessible, non-primary, and exactly-once
+> cases are covered. Fresh gates: Rust 3,521/3,521 + 2 skip, Chromium 21/21,
+> Linux/Windows clippy and fmt clean. Evidence:
+> `.codex/evidence/files-sidebar-mouse-runtime-matrix.md`. FMR-3 now defines
+> the file type preview/render capability matrix. Research and
 > the approved dependency plan are
 > `.codex/evidence/files-visibility-preview-plugin-research.md` and
 > `docs/superpowers/plans/2026-07-18-herdr-files-visibility-preview-plugin-integration.md`.

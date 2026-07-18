@@ -4,7 +4,7 @@ Updated: 2026-07-18 CEST
 
 ## 0. SONRAKI ADIM — TEK AKTİF İŞ
 
-**CURRENT OVERRIDE — FMR-2 ACTIVE.** Kullanıcının reboot sonrası kaybolmuş
+**CURRENT OVERRIDE — FMR-3 ACTIVE.** Kullanıcının reboot sonrası kaybolmuş
 görünen scroll/sidebar davranışı için Git ve runtime provenance doğrulandı:
 HEAD ve iki CyPack ref'i `6a972703`; commitler kalıcı. Ancak normal
 `/home/ayaz/.local/bin/herdr` 2026-07-12 tarihli, mevcut
@@ -16,10 +16,17 @@ kaynak dosyasıyla yan yana toplandı; ranking ortak isolated/Chromium matrisi
 (`b385ca3a` RED / `de136da5` VIS-13): hidden-only, non-UTF-8 ve per-entry
 iterator failure bounded prepared omission state'e taşındı; exact-path
 actionable satırları koruyan tıklanamaz Trail status satırı eklendi. Full
-Rust 3,517/3,517 + 2 skip, Chromium 21/21 ve iki clippy temiz. Kanıt:
-`.codex/evidence/files-visibility-runtime-matrix.md`. Aktif iş sidebar
-shortcut'ın mouse request testi ile elle çağrılan consumer testini tek
-production zincirinde birleştirmektir.
+Rust 3,517/3,517 + 2 skip, Chromium 21/21 ve iki clippy temiz. FMR-2 de
+`0b69b557` RED / `0b8ab32f` GREEN / `918ae4df` characterization ile KAPANDI:
+gerçek Home ve configured/symlink shortcut tıklamaları production
+request→scheduled-consumer→loaded-Trail zincirini kapsıyor. Plain-click
+kaynak davranışı zaten yeşildi ve executable drift'i doğruladı; ayrıca
+bulunan modifier-authority sızıntısı yalnız plain primary press kabul edilerek
+kapatıldı. Stale, collapsed, overlay, modifier, inaccessible, non-primary,
+generation ve exactly-once aileleri yeşil. Fresh kapılar: Rust 3,521/3,521 + 2
+skip, Chromium 21/21, iki clippy ve fmt temiz. Kanıt:
+`.codex/evidence/files-sidebar-mouse-runtime-matrix.md`. Aktif iş FMR-3 file
+type preview/render capability matrixidir.
 Araştırma:
 `.codex/evidence/files-visibility-preview-plugin-research.md`. Plan:
 `docs/superpowers/plans/2026-07-18-herdr-files-visibility-preview-plugin-integration.md`.
@@ -518,13 +525,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 12 ve
-89, toplam 101 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 11 ve
+89, toplam 100 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 12 unchecked
+### Source: `.codex/TASKS.md` — 11 unchecked
 
 - [ ] **FMR-0 Scroll version lab and ranking.** Four reboot-safe source
   checkpoints are collected side by side under
@@ -537,17 +544,6 @@ sayar ve exact diff yapar.
     Chromium, complexity, and rollback matrix across all four versions.
   - [ ] Rank from raw evidence and select/reject a production candidate;
     recency alone cannot win.
-
-- [ ] **FMR-2 Files sidebar shortcut mouse regression.**
-  - [x] Map compute geometry → exact model-revalidated path hit → one-shot
-    request → scheduled consumer → `open_trail_to`.
-  - [x] Identify the coverage gap: mouse test stops at request; consumer test
-    injects request manually.
-  - [ ] Add one end-to-end primary-click → scheduled-task → loaded Trail RED
-    with generation, stale, collapsed, overlay, modifier, inaccessible, Home,
-    Downloads/pin, and symlink-directory cases.
-  - [ ] If current source is green, classify the live defect as executable
-    drift and do not invent a mouse code change.
 
 - [ ] **FMR-3 File type preview and render capability matrix.**
   - [x] Inventory current native `Image` / bounded `Text` /
@@ -607,6 +603,7 @@ sayar ve exact diff yapar.
 
 - [ ] S7 popup stack with ownership, focus, close ordering, and nested popup
   tests.
+
 ### Source: `.codex/CHANGE-PIPELINE-TASKS.md` — 89 unchecked
 
 - [ ] **T3.1** Write RED `TP-CHG-MODULE` tests for module identity, version,

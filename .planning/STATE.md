@@ -2,7 +2,7 @@
 
 - Updated: 2026-07-18
 - Branch: `feat/native-fm`
-- Current override: **FMR-2 sidebar mouse seam active.** The reboot regression is
+- Current override: **FMR-3 preview capability matrix active.** The reboot regression is
   partly explained by executable drift: `/home/ayaz/.local/bin/herdr` is a
   2026-07-12 build while `target/debug/herdr` is the 2026-07-18 build carrying
   T7.7-T7.9. Both have live processes; neither was touched. Git HEAD and both
@@ -12,10 +12,16 @@
   ranking. FMR-1 directory visibility is closed through `b385ca3a` RED /
   `de136da5` VIS-13 baseline: hidden, non-UTF-8, and iterator-error omissions
   are bounded prepared state with a non-actionable Trail status row. Fresh
-  gates are Rust 3,517/3,517 + 2 skip, Chromium 21/21, Linux/Windows clippy,
-  and fmt clean. The active product question is now the missing full sidebar
-  click→scheduled consumer→loaded Trail test. Preview/render and plugin
-  integration follows only after navigation truth is green. Research:
+  FMR-2 is closed through `0b69b557` RED / `0b8ab32f` GREEN / `918ae4df`
+  characterization. Real Home and configured/symlink shortcut clicks cover
+  the production request→scheduled-consumer→loaded-Trail seam; stale,
+  collapsed, overlay, modifier, inaccessible, non-primary, generation, and
+  exactly-once authority are covered. Current plain-click source was already
+  green, confirming executable drift; a distinct modifier leak was closed by
+  requiring a plain primary press. Fresh gates are Rust 3,521/3,521 + 2 skip,
+  Chromium 21/21, Linux/Windows clippy, and fmt clean. The active product
+  question is now the native/metadata/plugin/unsupported file type preview
+  matrix. Research:
   `.codex/evidence/files-visibility-preview-plugin-research.md`; plan:
   `docs/superpowers/plans/2026-07-18-herdr-files-visibility-preview-plugin-integration.md`.
 - Current override: **Miller Trail T1-T7 closed** at `e8abc7b0` RED /
@@ -39,8 +45,8 @@
 - Excluded scope: drag-and-drop, auto-submit/Enter, implicit Claude split/chat,
   protocol/runtime ownership expansion, speculative ComponentRegistry, popup
   framework, Apps/Desktop, and unrelated change-pipeline implementation.
-- Open registry: 12 product task blocks plus 89 paused non-product blocks =
-  101. FMR-2 is the single active product focus.
+- Open registry: 11 product task blocks plus 89 paused non-product blocks =
+  100. FMR-3 is the single active product focus.
   FIP-0 and FIP-1 (Rust+VIS; E2E-01 deferred to FIP-6.3) closed 2026-07-18;
   only FIP-2.1 is priority eligible. USER DIRECTIVE 2026-07-18: after FIP-2,
   design the custom-layout infrastructure program (mockup:
