@@ -524,7 +524,8 @@ fn render_trail_detail_panel(
         crate::fm::trail_snapshots::TrailDetailPreview::MetadataOnly(reason) => {
             lines.push(Line::from(format!("kind: {:?}", detail.kind)));
             lines.push(Line::from(""));
-            lines.push(Line::from(format!("(metadata only: {reason})")));
+            lines.push(Line::from("(metadata only)"));
+            lines.push(Line::from(reason.clone()));
         }
         crate::fm::trail_snapshots::TrailDetailPreview::Unpreviewable(reason) => {
             lines.push(Line::from(format!("kind: {:?}", detail.kind)));
@@ -1099,7 +1100,7 @@ mod tests {
             })
             .collect::<String>();
         assert!(body.contains("metadata only"));
-        assert!(body.contains("optional viewer"));
+        assert!(body.contains("optional document viewer"));
     }
 
     // Bounded sanity: even an over-deep trail projects only complete

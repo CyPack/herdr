@@ -30,9 +30,9 @@ impl PreviewReason {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::DirectoryUsesTrail => "directory contents are shown in the trail",
-            Self::DocumentMetadata => "document preview requires an optional viewer",
-            Self::ArchiveMetadata => "archive preview requires an optional viewer",
-            Self::MediaMetadata => "media preview requires an optional viewer",
+            Self::DocumentMetadata => "optional document viewer",
+            Self::ArchiveMetadata => "optional archive viewer",
+            Self::MediaMetadata => "optional media viewer",
             Self::BinaryMetadata => "binary file",
             Self::BrokenSymlink => "broken symlink",
             Self::SpecialFile => "special file",
