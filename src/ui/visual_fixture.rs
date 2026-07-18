@@ -348,6 +348,8 @@ mod tests {
                 "trail fixture descent must load"
             );
         }
+        let fractional_trail = trail.clone();
+        let fractional_snaps = snaps.clone();
         assert!(trail.select_file(3, &detail.join("alpha.rs")));
         let render_trail = |trail: &crate::fm::trail::TrailState,
                             snaps: &crate::fm::trail_snapshots::TrailSnapshots,
@@ -407,6 +409,57 @@ mod tests {
             &out_dir,
             export_cell_fixture("vis-11-trail-horizontal-scroll", &render_scrolled_trail(0)),
         );
+
+        // VIS-12 (fractional Trail viewport): the viewport begins ten cells
+        // inside the 30-cell second column, so the leading column is clipped
+        // to 20 cells and the 48-cell trailing column begins at the right
+        // edge. The fixture is the real Ratatui buffer, not an HTML layout
+        // reconstruction.
+        {
+            let width = 60;
+            let height = 20;
+            let preferred_widths = [18_u16, 30, 48, 24];
+            let offset_cells = 18_u32 + 1 + 10;
+            let stage = Rect::new(0, 0, width, height);
+            let view = crate::ui::file_manager::trail_view::project_trail_view_with_origin(
+                stage,
+                &fractional_trail,
+                &fractional_snaps,
+                &preferred_widths,
+                crate::ui::file_manager::trail_view::TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
+                offset_cells,
+            );
+            let leading = view.columns.first().expect("fractional leading column");
+            let trailing = view.columns.last().expect("fractional trailing column");
+            assert_eq!(
+                (leading.trail_index, leading.source_x, leading.rect.width),
+                (1, 10, 20)
+            );
+            assert_eq!(trailing.trail_index, 2);
+            assert!(
+                trailing.rect.width > 0 && trailing.rect.width < trailing.logical_width,
+                "fixture must expose the beginning of a clipped trailing column"
+            );
+            let backend = TestBackend::new(width, height);
+            let mut terminal = Terminal::new(backend).expect("fractional trail terminal");
+            terminal
+                .draw(|frame| {
+                    crate::ui::file_manager::trail_view::render_trail_view(
+                        &trail_app,
+                        frame,
+                        &view,
+                        &fractional_snaps,
+                    );
+                })
+                .expect("render fractional trail frame");
+            write_fixture(
+                &out_dir,
+                export_cell_fixture(
+                    "vis-12-fractional-miller-scroll",
+                    terminal.backend().buffer(),
+                ),
+            );
+        }
 
         // Rebranch: reselect the sibling `docs` at the ROOT column — the old
         // src/core/detail branch is discarded and the trail regrows.
