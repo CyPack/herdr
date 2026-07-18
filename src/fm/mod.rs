@@ -1573,6 +1573,23 @@ mod tests {
         assert_eq!(profile.counter("fm.filesystem.read_failure"), 1);
     }
 
+    #[test]
+    fn directory_visibility_counts_iterator_entry_errors() {
+        let read = std::iter::once(Err::<std::fs::DirEntry, _>(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "synthetic entry failure",
+        )));
+
+        let (entries, omissions, entry_errors) = collect_directory_entries(read, false);
+
+        assert!(entries.is_empty());
+        assert_eq!(omissions, FmDirectoryOmissions::default());
+        assert_eq!(
+            entry_errors, 1,
+            "an individual iterator failure must not disappear into flattening"
+        );
+    }
+
     // TP-FM3-DIRECTORY-GENERATION: cursor/preview movement must not retire a
     // second click from the same prepared directory snapshot, while any
     // filesystem reload must retire every prior current/parent row target.
