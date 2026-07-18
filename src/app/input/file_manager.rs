@@ -4824,6 +4824,84 @@ mod tests {
         );
     }
 
+    // TP-TRAIL-HSCROLL-01: the canonical Circet Miller viewport auto-follows
+    // the active end when a deep Trail opens, then lets the user scroll back
+    // to still-live ancestor columns. The chosen origin must survive the next
+    // pure projection instead of snapping right again.
+    #[test]
+    fn shift_wheel_scrolls_deep_trail_left_and_persists_render_origin() {
+        let td = TempDir::new("trail-horizontal-scroll");
+        let root = td.root.join("root");
+        let mut current = root.clone();
+        for level in 0..7 {
+            current.push(format!("level-{level}"));
+        }
+        fs::create_dir_all(&current).expect("create deep Trail fixture");
+
+        let mut file_manager =
+            FmState::open_trail_to(&root, &current, false).expect("open deep Trail");
+        for segment in &mut file_manager.miller.chain {
+            segment.preferred_width = crate::fm::miller::MILLER_COLUMN_MIN_WIDTH;
+        }
+        let original_trail = file_manager.trail.clone();
+        let mut app = runtime_app_with_fm(file_manager);
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        let frame = Rect::new(0, 0, 70, 14);
+        compute_view(&mut app.state, frame);
+
+        let initial_origin = app.state.view.file_manager_trail.first_visible;
+        assert!(
+            initial_origin > 0,
+            "a deep Trail must initially auto-follow its active end"
+        );
+        let center = app.state.view.terminal_area;
+        let probe = (center.x.saturating_add(1), center.y.saturating_add(2));
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse_with_modifiers(
+                MouseEventKind::ScrollUp,
+                probe.0,
+                probe.1,
+                KeyModifiers::SHIFT,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        let expected_origin = initial_origin - 1;
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .miller
+                .horizontal
+                .first_visible,
+            expected_origin,
+            "Shift+wheel left exposes the preceding live ancestor column"
+        );
+
+        compute_view(&mut app.state, frame);
+        assert_eq!(
+            app.state.view.file_manager_trail.first_visible, expected_origin,
+            "the Trail renderer must preserve the user-selected horizontal origin"
+        );
+        assert_eq!(
+            app.state
+                .view
+                .file_manager_trail
+                .columns
+                .first()
+                .map(|column| column.trail_index),
+            Some(expected_origin)
+        );
+        assert_eq!(
+            app.state.file_manager.as_ref().expect("open FM").trail,
+            original_trail,
+            "horizontal scroll changes viewport state only"
+        );
+    }
+
     // TP-FM1.3-HSCROLL: native horizontal wheel events and Shift+wheel move
     // ONLY the bounded Miller window. Current/preview remain visible after
     // every recompute, while vertical cursor/viewport, entries, selection,
