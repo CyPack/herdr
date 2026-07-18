@@ -435,7 +435,14 @@ impl super::App {
             return true;
         }
 
-        let next = crate::fm::FmState::new(&path);
+        let show_hidden = self
+            .state
+            .file_manager
+            .as_ref()
+            .is_some_and(|file_manager| file_manager.show_hidden);
+        let Some(next) = crate::fm::FmState::open_trail_to(&path, &path, show_hidden) else {
+            return true;
+        };
         // Close the inexpensive metadata/read race as far as a path-based API
         // can: if the target disappeared or changed type during preparation,
         // keep the prior projection instead of opening an invalid cwd.

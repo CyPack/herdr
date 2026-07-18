@@ -7,12 +7,11 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
-use crate::app::file_manager_miller::ResolvedMillerRow;
 use crate::app::state::{
     AppState, ContextMenuKind, ContextMenuState, FileManagerContextMenuModel,
     FileManagerHeaderAction, FileManagerRowAction, MenuListState,
 };
-use crate::app::{App, FileManagerClickState, Mode};
+use crate::app::{App, Mode};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum FileManagerMouseDispatch {
@@ -29,8 +28,7 @@ pub(super) enum FileManagerMouseDispatch {
 pub(super) enum FileManagerKeyDispatch {
     Consumed,
     CancelOperation,
-    Navigate(crate::fm::FmNavigationRequest),
-    Refresh(crate::fm::FmCurrentRefreshRequest),
+    Refresh(Box<crate::fm::FmCurrentRefreshRequest>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,50 +73,58 @@ pub(super) fn handle_file_manager_key(
         }
         (KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J'), KeyModifiers::SHIFT) => {
             if let Some(fm) = state.file_manager.as_mut() {
-                let target = fm
-                    .cursor
-                    .saturating_add(1)
-                    .min(fm.entries.len().saturating_sub(1));
-                fm.extend_selection(target);
+                let before = fm.clone();
+                if fm.move_trail_selection(1)
+                    != crate::fm::trail_snapshots::TrailActivateOutcome::Rejected
+                    && !fm.extend_selection(fm.cursor)
+                {
+                    *fm = before;
+                }
             }
         }
         (KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K'), KeyModifiers::SHIFT) => {
             if let Some(fm) = state.file_manager.as_mut() {
-                fm.extend_selection(fm.cursor.saturating_sub(1));
+                let before = fm.clone();
+                if fm.move_trail_selection(-1)
+                    != crate::fm::trail_snapshots::TrailActivateOutcome::Rejected
+                    && !fm.extend_selection(fm.cursor)
+                {
+                    *fm = before;
+                }
             }
         }
         (KeyCode::Char(' '), KeyModifiers::NONE) => {
             if let Some(fm) = state.file_manager.as_mut() {
-                let cursor = fm.cursor;
-                fm.toggle_selection(cursor);
+                if fm.activate_selected_trail_entry()
+                    != crate::fm::trail_snapshots::TrailActivateOutcome::Rejected
+                {
+                    let _ = fm.toggle_selection(fm.cursor);
+                }
             }
         }
         (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
             if let Some(fm) = state.file_manager.as_mut() {
-                fm.move_down();
+                let _ = fm.move_trail_selection(1);
             }
         }
         (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) => {
             if let Some(fm) = state.file_manager.as_mut() {
-                fm.move_up();
+                let _ = fm.move_trail_selection(-1);
             }
         }
-        (KeyCode::Enter | KeyCode::Right | KeyCode::Char('l'), KeyModifiers::NONE) => {
-            if let Some(request) = state
-                .file_manager
-                .as_ref()
-                .and_then(crate::fm::FmState::request_enter_navigation)
-            {
-                return FileManagerKeyDispatch::Navigate(request);
+        (KeyCode::Enter, KeyModifiers::NONE) => {
+            if let Some(fm) = state.file_manager.as_mut() {
+                let _ = fm.activate_selected_trail_entry();
+            }
+        }
+        (KeyCode::Right | KeyCode::Char('l'), KeyModifiers::NONE) => {
+            if let Some(fm) = state.file_manager.as_mut() {
+                let _ = fm.trail.move_active_right();
             }
         }
         (KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h'), KeyModifiers::NONE) => {
-            if let Some(request) = state
-                .file_manager
-                .as_ref()
-                .and_then(crate::fm::FmState::request_leave_navigation)
-            {
-                return FileManagerKeyDispatch::Navigate(request);
+            if let Some(fm) = state.file_manager.as_mut() {
+                let _ = fm.trail.move_active_left();
             }
         }
         (KeyCode::Char('.'), KeyModifiers::NONE) => {
@@ -129,7 +135,7 @@ pub(super) fn handle_file_manager_key(
             if let Some(request) = state.file_manager.as_ref().and_then(|file_manager| {
                 files_generation.map(|generation| file_manager.request_hidden_toggle(generation))
             }) {
-                return FileManagerKeyDispatch::Refresh(request);
+                return FileManagerKeyDispatch::Refresh(Box::new(request));
             }
         }
         _ => {}
@@ -259,16 +265,21 @@ impl App {
             FileManagerRowAction::Rename => crate::app::state::FileManagerContextMenuAction::Rename,
             FileManagerRowAction::Delete => crate::app::state::FileManagerContextMenuAction::Delete,
         };
-        let Some((entry_idx, mut projected)) = self.state.file_manager.as_ref().and_then(|fm| {
-            (fm.multi_selection_paths().len() <= 1).then_some(())?;
-            let entry_idx = fm
-                .entries
-                .iter()
-                .position(|entry| entry.operation_supported() && entry.path == entry_path)?;
-            Some((entry_idx, fm.clone()))
-        }) else {
+        let Some((trail_col, trail_entry, mut projected)) =
+            self.state.file_manager.as_ref().and_then(|fm| {
+                (fm.multi_selection_paths().len() <= 1).then_some(())?;
+                let (trail_col, trail_entry) = fm.trail_entry_identity(&entry_path)?;
+                Some((trail_col, trail_entry, fm.clone()))
+            })
+        else {
             return false;
         };
+        if projected.activate_trail_entry(trail_col, trail_entry, &entry_path)
+            == crate::fm::trail_snapshots::TrailActivateOutcome::Rejected
+        {
+            return false;
+        }
+        let entry_idx = projected.cursor;
         if !projected.replace_selection(entry_idx) {
             return false;
         }
@@ -293,12 +304,12 @@ impl App {
         {
             return false;
         }
-        if !self
-            .state
-            .file_manager
-            .as_mut()
-            .is_some_and(|fm| fm.replace_selection(entry_idx))
-        {
+        let live_selection_ready = self.state.file_manager.as_mut().is_some_and(|fm| {
+            fm.activate_trail_entry(trail_col, trail_entry, &entry_path)
+                != crate::fm::trail_snapshots::TrailActivateOutcome::Rejected
+                && fm.replace_selection(fm.cursor)
+        });
+        if !live_selection_ready {
             return false;
         }
         self.state.request_file_manager_context_action =
@@ -345,18 +356,16 @@ impl App {
     fn handle_file_manager_right_click(
         &mut self,
         mouse: &MouseEvent,
-        miller_row_target: Option<&ResolvedMillerRow>,
         entry_target: Option<&(usize, std::path::PathBuf)>,
     ) -> bool {
         if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)) {
             return false;
         }
-        self.last_file_manager_click = None;
         if !mouse.modifiers.is_empty() {
             return true;
         }
 
-        let mut context_entry_target = entry_target.cloned().or_else(|| {
+        let context_entry_target = entry_target.cloned().or_else(|| {
             self.state
                 .view
                 .file_manager_row_action_areas
@@ -372,11 +381,6 @@ impl App {
                         .then(|| (area.entry_idx, area.entry_path.clone()))
                 })
         });
-        if context_entry_target.is_none() {
-            if let Some(row) = miller_row_target {
-                context_entry_target = self.activate_miller_context_row(row);
-            }
-        }
         let Some((entry_idx, entry_path)) = context_entry_target else {
             return true;
         };
@@ -426,82 +430,87 @@ impl App {
     fn handle_file_manager_row_mouse(
         &mut self,
         mouse: &MouseEvent,
-        miller_row_target: Option<&ResolvedMillerRow>,
-        entry_target: Option<(usize, std::path::PathBuf)>,
+        trail_row_target: Option<&crate::ui::TrailRowView>,
     ) {
-        let entry_idx = entry_target.as_ref().map(|(entry_idx, _)| *entry_idx);
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) if mouse.modifiers == KeyModifiers::CONTROL => {
-                self.last_file_manager_click = None;
-                if let (Some(file_manager), Some(entry_idx)) =
-                    (self.state.file_manager.as_mut(), entry_idx)
+                if let Some((entry_idx, _entry_path, _outcome)) =
+                    trail_row_target.and_then(|row| self.activate_trail_row(row))
                 {
-                    file_manager.toggle_selection(entry_idx);
+                    if let Some(file_manager) = self.state.file_manager.as_mut() {
+                        let _ = file_manager.toggle_selection(entry_idx);
+                    }
                 }
             }
             MouseEventKind::Down(MouseButton::Left) if mouse.modifiers == KeyModifiers::SHIFT => {
-                self.last_file_manager_click = None;
-                if let (Some(file_manager), Some(entry_idx)) =
-                    (self.state.file_manager.as_mut(), entry_idx)
+                if let Some((entry_idx, _entry_path, _outcome)) =
+                    trail_row_target.and_then(|row| self.activate_trail_row(row))
                 {
-                    file_manager.extend_selection(entry_idx);
+                    if let Some(file_manager) = self.state.file_manager.as_mut() {
+                        let _ = file_manager.extend_selection(entry_idx);
+                    }
                 }
             }
             MouseEventKind::Down(MouseButton::Left) if mouse.modifiers.is_empty() => {
-                if miller_row_target
-                    .is_some_and(|row| self.handle_miller_non_current_plain_click(row))
-                {
-                    return;
-                }
-                let Some((entry_idx, entry_path)) = entry_target else {
-                    self.last_file_manager_click = None;
+                let Some(row) = trail_row_target else {
                     return;
                 };
-
-                let click = FileManagerClickState {
-                    entry_path,
-                    at: std::time::Instant::now(),
-                };
-                let is_double_click = self
-                    .last_file_manager_click
-                    .as_ref()
-                    .is_some_and(|last| last.is_double_click_for(&click));
-                self.last_file_manager_click = if is_double_click { None } else { Some(click) };
-
-                let enter_request = self.state.file_manager.as_mut().and_then(|file_manager| {
-                    (file_manager.replace_selection(entry_idx) && is_double_click)
-                        .then(|| file_manager.request_enter_navigation())
-                        .flatten()
-                });
-                if let Some(request) = enter_request {
-                    let _ = self.execute_file_manager_navigation(request);
+                if let Some((entry_idx, _entry_path, outcome)) = self.activate_trail_row(row) {
+                    if let Some(file_manager) = self.state.file_manager.as_mut() {
+                        match outcome {
+                            crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile => {
+                                let _ = file_manager.replace_selection(entry_idx);
+                            }
+                            crate::fm::trail_snapshots::TrailActivateOutcome::Branched => {
+                                file_manager.clear_multi_selection();
+                            }
+                            crate::fm::trail_snapshots::TrailActivateOutcome::Rejected => {}
+                        }
+                    }
                 }
             }
             MouseEventKind::ScrollUp if mouse.modifiers.is_empty() => {
-                self.last_file_manager_click = None;
-                if entry_idx.is_some() {
-                    if let Some(file_manager) = self.state.file_manager.as_mut() {
-                        file_manager.move_up();
+                if let (Some(file_manager), Some(row)) =
+                    (self.state.file_manager.as_mut(), trail_row_target)
+                {
+                    if file_manager.focus_trail_col(row.trail_index) {
+                        let _ = file_manager.move_trail_selection(-1);
                     }
-                } else if let Some(row) = miller_row_target {
-                    let _ = self.scroll_miller_non_current_row(row, -1);
                 }
             }
             MouseEventKind::ScrollDown if mouse.modifiers.is_empty() => {
-                self.last_file_manager_click = None;
-                if entry_idx.is_some() {
-                    if let Some(file_manager) = self.state.file_manager.as_mut() {
-                        file_manager.move_down();
+                if let (Some(file_manager), Some(row)) =
+                    (self.state.file_manager.as_mut(), trail_row_target)
+                {
+                    if file_manager.focus_trail_col(row.trail_index) {
+                        let _ = file_manager.move_trail_selection(1);
                     }
-                } else if let Some(row) = miller_row_target {
-                    let _ = self.scroll_miller_non_current_row(row, 1);
                 }
             }
-            MouseEventKind::Down(MouseButton::Left) => {
-                self.last_file_manager_click = None;
-            }
+            MouseEventKind::Down(MouseButton::Left) => {}
             _ => {}
         }
+    }
+
+    fn activate_trail_row(
+        &mut self,
+        row: &crate::ui::TrailRowView,
+    ) -> Option<(
+        usize,
+        std::path::PathBuf,
+        crate::fm::trail_snapshots::TrailActivateOutcome,
+    )> {
+        let file_manager = self.state.file_manager.as_mut()?;
+        let outcome =
+            file_manager.activate_trail_entry(row.trail_index, row.entry_index, &row.entry_path);
+        if outcome == crate::fm::trail_snapshots::TrailActivateOutcome::Rejected {
+            return None;
+        }
+        let entry_idx = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == row.entry_path)?;
+        (file_manager.cursor == entry_idx).then(|| (entry_idx, row.entry_path.clone(), outcome))
     }
 
     /// Route native-FM center-content mouse input before the hidden terminal
@@ -516,7 +525,6 @@ impl App {
         if self.state.stage.surface_view() != crate::ui::surface_host::StageSurfaceView::NativeFiles
             || self.state.file_manager.is_none()
         {
-            self.last_file_manager_click = None;
             return FileManagerMouseDispatch::NotHandled;
         }
         if self.state.mode == Mode::ContextMenu {
@@ -533,21 +541,7 @@ impl App {
         let center = self.state.view.terminal_area;
         let in_center = rect_contains(center, mouse.column, mouse.row);
         if !in_center {
-            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
-                self.last_file_manager_click = None;
-            }
             return FileManagerMouseDispatch::NotHandled;
-        }
-
-        if self.handle_miller_horizontal_scroll(mouse.kind, mouse.modifiers) {
-            return FileManagerMouseDispatch::Consumed;
-        }
-
-        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
-            && mouse.modifiers.is_empty()
-            && self.begin_miller_resize_capture(mouse.column, mouse.row)
-        {
-            return FileManagerMouseDispatch::Consumed;
         }
 
         let header_action = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
@@ -562,40 +556,55 @@ impl App {
                     .map(|area| area.action)
             });
 
-        let miller_row_target = self.resolve_miller_mouse_row(mouse.column, mouse.row);
-        let entry_target = miller_row_target
-            .as_ref()
-            .and_then(|row| row.current_entry_target());
-
+        let active_files_generation = self.state.stage.active_instance_generation();
+        let trail_frame_is_live =
+            self.state.view.file_manager_trail.files_generation == active_files_generation;
+        let trail_row_target = trail_frame_is_live
+            .then(|| {
+                crate::ui::trail_row_at(
+                    &self.state.view.file_manager_trail,
+                    mouse.column,
+                    mouse.row,
+                )
+                .cloned()
+            })
+            .flatten();
         let row_action = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
             .then_some(())
             .filter(|_| mouse.modifiers.is_empty())
-            .and_then(|()| {
-                self.state
-                    .view
-                    .file_manager_row_action_areas
+            .and(trail_row_target.as_ref())
+            .and_then(|row| {
+                row.actions
                     .iter()
                     .find(|area| rect_contains(area.rect, mouse.column, mouse.row))
+                    .filter(|area| {
+                        area.entry_idx == row.entry_index && area.entry_path == row.entry_path
+                    })
             })
-            .and_then(|area| {
-                let entry = self
-                    .state
-                    .file_manager
-                    .as_ref()
-                    .and_then(|file_manager| file_manager.entries.get(area.entry_idx))?;
-                (entry.operation_supported() && entry.path == area.entry_path).then(|| {
-                    FileManagerMouseDispatch::RowAction {
-                        action: area.action,
-                        entry_path: area.entry_path.clone(),
-                    }
-                })
+            .map(|area| FileManagerMouseDispatch::RowAction {
+                action: area.action,
+                entry_path: area.entry_path.clone(),
             });
+
+        // TRAIL-T7.6 teardown: legacy horizontal preference and divider
+        // transactions remain reachable only where the live Trail projects no
+        // row. They cannot override Trail row identity and will be removed
+        // with the retired Miller projection.
+        if self.handle_miller_horizontal_scroll(mouse.kind, mouse.modifiers) {
+            return FileManagerMouseDispatch::Consumed;
+        }
+        if trail_row_target.is_none()
+            && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+            && mouse.modifiers.is_empty()
+            && self.begin_miller_resize_capture(mouse.column, mouse.row)
+        {
+            return FileManagerMouseDispatch::Consumed;
+        }
 
         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
             && mouse.modifiers.is_empty()
         {
             if let Some(header_action) = header_action {
-                self.last_file_manager_click = None;
                 let enabled = self
                     .state
                     .view
@@ -610,20 +619,24 @@ impl App {
                 };
             }
             if let Some(row_action) = row_action {
-                self.last_file_manager_click = None;
                 return row_action;
             }
         }
 
-        if self.handle_file_manager_right_click(
-            &mouse,
-            miller_row_target.as_ref(),
-            entry_target.as_ref(),
-        ) {
+        let right_click_target = (matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right))
+            && mouse.modifiers.is_empty())
+        .then(|| {
+            trail_row_target
+                .as_ref()
+                .and_then(|row| self.activate_trail_row(row))
+                .map(|(entry_idx, entry_path, _outcome)| (entry_idx, entry_path))
+        })
+        .flatten();
+        if self.handle_file_manager_right_click(&mouse, right_click_target.as_ref()) {
             return FileManagerMouseDispatch::Consumed;
         }
 
-        self.handle_file_manager_row_mouse(&mouse, miller_row_target.as_ref(), entry_target);
+        self.handle_file_manager_row_mouse(&mouse, trail_row_target.as_ref());
 
         FileManagerMouseDispatch::Consumed
     }
@@ -750,20 +763,6 @@ mod tests {
             .open_agent_attachment_picker()
             .expect("open attachment picker");
         state
-    }
-
-    fn apply_test_navigation(state: &mut AppState, dispatch: FileManagerKeyDispatch) {
-        if let FileManagerKeyDispatch::Navigate(request) = dispatch {
-            let prepared =
-                crate::fm::prepare_navigation_io(request).expect("test navigation preparation");
-            assert!(
-                state
-                    .file_manager
-                    .as_mut()
-                    .is_some_and(|file_manager| file_manager.apply_prepared_navigation(prepared)),
-                "test App adapter must apply the live prepared result"
-            );
-        }
     }
 
     // TP-FM4-APP-ADAPTER: attachment-picker input emits navigation intent but
@@ -2378,9 +2377,26 @@ mod tests {
                 );
                 file_manager.miller.assert_miller_invariants_for_test();
                 assert_eq!(
-                    file_manager.miller.focused_directory, file_manager.cwd,
-                    "operational cwd and Miller focus must converge"
+                    file_manager.trail.cols().len(),
+                    file_manager.trail_snapshots.cols().len(),
+                    "Trail state and immutable snapshots must retain one-to-one columns"
                 );
+                assert!(
+                    file_manager.trail.active_col() < file_manager.trail.cols().len(),
+                    "active Trail column must remain live"
+                );
+                for (column, snapshot) in file_manager
+                    .trail
+                    .cols()
+                    .iter()
+                    .zip(file_manager.trail_snapshots.cols())
+                {
+                    assert_eq!(
+                        column.directory,
+                        snapshot.directory(),
+                        "Trail column and snapshot owner must converge"
+                    );
+                }
                 pressure_miller.assert_miller_invariants_for_test();
                 if step % 256 == 0 {
                     app.state.assert_invariants_for_test();
@@ -3663,7 +3679,55 @@ mod tests {
             app.state.file_manager.as_ref().expect("open FM"),
             files_generation,
         );
+        let mut trail = crate::ui::project_trail_view(
+            Rect::new(26, 2, 20, 4),
+            &app.state.file_manager.as_ref().expect("open FM").trail,
+            &app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .trail_snapshots,
+            &[],
+        );
+        trail.files_generation = Some(files_generation);
+        app.state.view.file_manager_trail = trail;
         app
+    }
+
+    fn trail_row_by_path(app: &crate::app::App, path: &std::path::Path) -> crate::ui::TrailRowView {
+        app.state
+            .view
+            .file_manager_trail
+            .columns
+            .iter()
+            .flat_map(|column| &column.rows)
+            .find(|row| row.entry_path == path)
+            .cloned()
+            .expect("exact Trail row")
+    }
+
+    fn trail_row_by_index(app: &crate::app::App, entry_index: usize) -> crate::ui::TrailRowView {
+        app.state
+            .view
+            .file_manager_trail
+            .columns
+            .iter()
+            .flat_map(|column| &column.rows)
+            .find(|row| row.entry_index == entry_index)
+            .cloned()
+            .expect("indexed Trail row")
+    }
+
+    fn trail_action(
+        app: &crate::app::App,
+        entry_index: usize,
+        action: FileManagerRowAction,
+    ) -> FileManagerRowActionArea {
+        trail_row_by_index(app, entry_index)
+            .actions
+            .into_iter()
+            .find(|area| area.action == action)
+            .expect("exact Trail row action")
     }
 
     fn install_row_actions(app: &mut crate::app::App, entry_idx: usize) -> PathBuf {
@@ -3786,7 +3850,8 @@ mod tests {
         assert_eq!(app.file_manager.as_ref().unwrap().cursor, 1);
     }
 
-    // TP-A3.6: Enter descends into a directory; Backspace returns to the parent.
+    // TP-A3.6 / TP-TRAIL-T7-INPUT-03: Enter opens the selected Trail branch;
+    // Backspace moves focus to its exact parent column without filesystem I/O.
     #[test]
     fn enter_and_backspace_navigate_directories() {
         let td = TempDir::new("nav");
@@ -3795,48 +3860,52 @@ mod tests {
         let mut app = app_with_fm(FmState::new(&td.root));
 
         let dispatch = handle_file_manager_key(&mut app, key(KeyCode::Enter));
-        apply_test_navigation(&mut app, dispatch);
+        assert_eq!(dispatch, FileManagerKeyDispatch::Consumed);
+        let file_manager = app.file_manager.as_ref().expect("open FM");
         assert_eq!(
-            app.file_manager.as_ref().unwrap().cwd,
+            file_manager.trail.active_col(),
+            1,
+            "enter focuses the opened child column"
+        );
+        assert_eq!(
+            file_manager.trail.cols()[1].directory,
             td.root.join("sub"),
-            "enter descends into the directory"
+            "enter opens the exact selected directory"
         );
 
         let dispatch = handle_file_manager_key(&mut app, key(KeyCode::Backspace));
-        apply_test_navigation(&mut app, dispatch);
+        assert_eq!(dispatch, FileManagerKeyDispatch::Consumed);
         assert_eq!(
-            app.file_manager.as_ref().unwrap().cwd,
-            td.root,
-            "backspace returns to the parent"
+            app.file_manager
+                .as_ref()
+                .expect("open FM")
+                .trail
+                .active_col(),
+            0,
+            "backspace focuses the parent Trail column"
         );
     }
 
-    // TP-FM4-APP-ADAPTER: input emits a typed request but performs no
-    // filesystem preparation or model transition. The App layer owns prepare
-    // and generation-safe apply after this pure dispatch step.
+    // TP-TRAIL-T7-INPUT-03: Native Files Enter mutates only the in-memory Trail
+    // model and never emits the retired legacy navigation request.
     #[test]
-    fn keyboard_enter_emits_navigation_request_without_mutating_state() {
+    fn keyboard_enter_opens_exact_trail_branch_without_legacy_request() {
         let td = TempDir::new("typed-keyboard-navigation");
         td.dir("child");
         let child = td.root.join("child");
         let mut state = app_with_fm(FmState::new(&td.root));
-        let before = state.file_manager.as_ref().expect("open FM").clone();
 
         let dispatch = handle_file_manager_key(&mut state, key(KeyCode::Enter));
 
-        let FileManagerKeyDispatch::Navigate(request) = dispatch else {
-            panic!("directory Enter must emit a typed navigation request");
-        };
-        assert_eq!(request.reason, crate::fm::FmNavigationReason::Enter);
-        assert_eq!(request.source_directory, td.root);
-        assert_eq!(request.target_directory, child);
+        assert_eq!(dispatch, FileManagerKeyDispatch::Consumed);
         let after = state.file_manager.as_ref().expect("open FM");
-        assert_eq!(after.cwd, before.cwd);
-        assert_eq!(after.entries, before.entries);
-        assert_eq!(after.cursor, before.cursor);
-        assert_eq!(after.directory_generation, before.directory_generation);
-        assert_eq!(after.preview_generation, before.preview_generation);
-        assert_eq!(after.miller, before.miller);
+        assert_eq!(after.trail.active_col(), 1);
+        assert_eq!(after.trail.cols().len(), 2);
+        assert_eq!(after.trail.cols()[1].directory, child);
+        assert_eq!(
+            after.trail.cols()[0].selected.as_deref(),
+            Some(child.as_path())
+        );
     }
 
     // P5 RED: '.' emits one exact hidden-refresh intent without reading disk
@@ -3890,7 +3959,7 @@ mod tests {
         let stale_replay = request.clone();
 
         assert_eq!(
-            app.execute_file_manager_current_refresh(request),
+            app.execute_file_manager_current_refresh(*request),
             Some(true)
         );
         let toggled = app.state.file_manager.as_ref().expect("open FM");
@@ -3904,7 +3973,7 @@ mod tests {
         let once = toggled.clone();
 
         assert_eq!(
-            app.execute_file_manager_current_refresh(stale_replay),
+            app.execute_file_manager_current_refresh(*stale_replay),
             None,
             "the first request cannot replay after its generations retire"
         );
@@ -3925,7 +3994,7 @@ mod tests {
         assert!(request.source_show_hidden);
         assert!(!request.target_show_hidden);
         assert_eq!(
-            app.execute_file_manager_current_refresh(request),
+            app.execute_file_manager_current_refresh(*request),
             Some(true)
         );
         let restored = app.state.file_manager.as_ref().expect("open FM");
@@ -3988,16 +4057,23 @@ mod tests {
         assert!(app.file_manager.is_some());
     }
 
-    // TP-A3.3-DISPATCH: one left press on a visible CURRENT row selects its
-    // absolute entry and refreshes the preview cache for that selection.
+    // TP-A3.3-DISPATCH / TP-TRAIL-T7-INPUT-02: one left press on an exact
+    // Trail row selects its absolute entry and refreshes the operation preview.
     #[test]
     fn single_click_selects_current_row_and_refreshes_preview() {
         let td = TempDir::new("mouse-single");
         td.dir("alpha-dir");
         td.file("beta.txt");
-        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let file_manager =
+            FmState::open_trail_to(&td.root, &td.root, false).expect("fresh Trail root");
+        let mut app = runtime_app_with_fm(file_manager);
+        let target = trail_row_by_path(&app, &td.root.join("beta.txt"));
 
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 27, 3));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            target.name_rect.x,
+            target.name_rect.y,
+        ));
 
         let fm = app.state.file_manager.as_ref().expect("file manager open");
         assert_eq!(fm.cursor, 1);
@@ -4060,7 +4136,9 @@ mod tests {
         let td = TempDir::new("trail-keyboard-authority");
         td.dir("alpha");
         fs::write(td.root.join("alpha").join("inside.txt"), b"x").expect("nested file");
-        let mut state = app_with_fm(FmState::new(&td.root));
+        let file_manager = FmState::open_trail_to(&td.root, &td.root.join("alpha"), false)
+            .expect("open child Trail");
+        let mut state = app_with_fm(file_manager);
         assert_eq!(
             state
                 .file_manager
@@ -4134,9 +4212,173 @@ mod tests {
         assert_eq!(model.paths, vec![target.entry_path]);
     }
 
-    // TP-FM3-CURRENT-CUTOVER: CURRENT plain-click authority comes from the
-    // generation-safe Miller row target, not the legacy compatibility row
-    // list. Removing the legacy list must not disable an exact live click.
+    // TP-TRAIL-T7-INPUT-01: a delayed frame from a closed Files instance
+    // cannot act on a reopened instance, even when cwd and row paths match.
+    #[test]
+    fn stale_trail_frame_cannot_activate_reopened_files_instance() {
+        let td = TempDir::new("trail-stale-generation");
+        td.file("00.txt");
+        td.file("01.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 80, 16));
+        let stale_frame = app.state.view.file_manager_trail.clone();
+        let stale_target = stale_frame.columns[0].rows[1].clone();
+        let stale_generation = stale_frame
+            .files_generation
+            .expect("projected Files generation");
+
+        app.state.close_file_manager();
+        app.state
+            .try_open_file_manager_with(|_| Some(FmState::new(&td.root)))
+            .expect("reopen same cwd");
+        let reopened_generation = app
+            .state
+            .stage
+            .active_instance_generation()
+            .expect("reopened Files generation");
+        assert_ne!(stale_generation, reopened_generation);
+        app.state.view.file_manager_trail = stale_frame;
+        let before = app.state.file_manager.as_ref().expect("open FM").clone();
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                stale_target.rect.x,
+                stale_target.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+
+        let after = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(after.trail, before.trail);
+        assert_eq!(after.cwd, before.cwd);
+        assert_eq!(after.cursor, before.cursor);
+        assert_eq!(
+            after.multi_selection_paths(),
+            before.multi_selection_paths()
+        );
+        assert!(app.state.request_file_manager_context_action.is_none());
+    }
+
+    // TP-TRAIL-T7-INPUT-02: an ancestor-column hit revalidates the exact path,
+    // truncates the retired branch, and opens the selected sibling column.
+    #[test]
+    fn mouse_activation_rebranches_exact_ancestor_trail_row() {
+        let td = TempDir::new("trail-ancestor-rebranch");
+        td.dir("alpha");
+        td.dir("zeta");
+        fs::create_dir_all(td.root.join("alpha").join("deep")).expect("deep branch");
+        let alpha = td.root.join("alpha");
+        let deep = alpha.join("deep");
+        let zeta = td.root.join("zeta");
+        let file_manager =
+            FmState::open_trail_to(&td.root, &deep, false).expect("deep Trail fixture");
+        let mut app = runtime_app_with_fm(file_manager);
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 120, 16));
+        let target = app
+            .state
+            .view
+            .file_manager_trail
+            .columns
+            .iter()
+            .find(|column| column.trail_index == 0)
+            .and_then(|column| column.rows.iter().find(|row| row.entry_path == zeta))
+            .cloned()
+            .expect("zeta ancestor row");
+
+        let _ = app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            target.rect.x,
+            target.rect.y,
+        ));
+
+        let file_manager = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(file_manager.trail.cols().len(), 2);
+        assert_eq!(
+            file_manager.trail.cols()[0].selected.as_deref(),
+            Some(zeta.as_path())
+        );
+        assert_eq!(file_manager.trail.cols()[1].directory, zeta);
+        assert!(!file_manager
+            .trail
+            .cols()
+            .iter()
+            .any(|column| column.directory == alpha || column.directory == deep));
+    }
+
+    // TP-TRAIL-T7-INPUT-02: remembered geometry whose exact path no longer
+    // matches the live snapshot is consumed without changing Trail state.
+    #[test]
+    fn stale_trail_row_path_is_inert() {
+        let td = TempDir::new("trail-stale-path");
+        td.file("00.txt");
+        td.file("01.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 80, 16));
+        let row = app.state.view.file_manager_trail.columns[0].rows[1].clone();
+        app.state.view.file_manager_trail.columns[0].rows[1].entry_path =
+            td.root.join("vanished.txt");
+        let before = app.state.file_manager.as_ref().expect("open FM").clone();
+
+        let _ = app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            row.rect.x,
+            row.rect.y,
+        ));
+
+        let after = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(after.trail, before.trail);
+        assert_eq!(
+            after.multi_selection_paths(),
+            before.multi_selection_paths()
+        );
+    }
+
+    // TP-TRAIL-T7-INPUT-04: Ctrl selection consumes the same Trail row hit
+    // authority; clearing legacy row geometry cannot disable or redirect it.
+    #[test]
+    fn trail_row_hit_drives_explicit_bulk_selection() {
+        let td = TempDir::new("trail-bulk-hit");
+        td.file("00.txt");
+        td.file("01.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 80, 16));
+        let target = app.state.view.file_manager_trail.columns[0].rows[1].clone();
+        app.state.view.file_manager_miller = Default::default();
+        app.state.view.file_manager_row_areas.clear();
+        let mut event = mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            target.rect.x,
+            target.rect.y,
+        );
+        event.modifiers = KeyModifiers::CONTROL;
+
+        let _ = app.handle_file_manager_mouse(event);
+
+        let file_manager = app.state.file_manager.as_ref().expect("open FM");
+        assert!(file_manager
+            .multi_selection_paths()
+            .contains(&target.entry_path));
+        assert_eq!(
+            file_manager.selected().map(|entry| &entry.path),
+            Some(&target.entry_path)
+        );
+    }
+
+    // TP-FM3-CURRENT-CUTOVER / TP-TRAIL-T7-INPUT-02: plain-click authority
+    // comes from the generation-safe Trail row, not either legacy row list.
     #[test]
     fn current_plain_click_uses_typed_miller_target_without_legacy_rows() {
         let td = TempDir::new("typed-current-click");
@@ -4148,16 +4390,8 @@ mod tests {
         app.state.mobile_width_threshold = 0;
         app.state.sidebar_collapsed = true;
         compute_view(&mut app.state, Rect::new(0, 0, 80, 16));
-        let target = app
-            .state
-            .view
-            .file_manager_miller
-            .columns
-            .iter()
-            .find(|column| column.kind.is_current())
-            .and_then(|column| column.rows.get(1))
-            .cloned()
-            .expect("second typed CURRENT row");
+        let target = trail_row_by_index(&app, 1);
+        app.state.view.file_manager_miller = Default::default();
         app.state.view.file_manager_row_areas.clear();
 
         assert_eq!(
@@ -4232,10 +4466,8 @@ mod tests {
         assert!(app.state.context_menu.is_none());
     }
 
-    // TP-FM3-ALL-COLUMN-PLAIN: one plain click in each actionable visible
-    // column focuses the exact live entry under that column. Non-current
-    // columns first become the operational directory; a plain click never
-    // enters the clicked child itself.
+    // TP-FM3-ALL-COLUMN-PLAIN / TP-TRAIL-T7-INPUT-02: one plain click in each
+    // visible Trail column focuses its exact live entry and rebranches there.
     #[test]
     fn plain_click_focuses_exact_live_row_in_every_visible_column() {
         let td = TempDir::new("typed-all-column-click");
@@ -4247,21 +4479,8 @@ mod tests {
         fs::write(preview_directory.join("child.txt"), b"x").expect("write preview child");
         fs::write(current.join("peer.txt"), b"x").expect("write current peer");
 
-        let mut file_manager = FmState::new(&td.root);
-        for expected in [&a, &b, &current] {
-            let entry_index = file_manager
-                .entries
-                .iter()
-                .position(|entry| &entry.path == expected)
-                .expect("next directory row");
-            assert!(file_manager.select(entry_index));
-            file_manager.enter();
-        }
-        assert_eq!(file_manager.cwd, current);
-        assert_eq!(
-            file_manager.selected().map(|entry| &entry.path),
-            Some(&preview_directory)
-        );
+        let file_manager =
+            FmState::open_trail_to(&td.root, &current, false).expect("deep Trail fixture");
 
         let frame = Rect::new(0, 0, 200, 18);
         let mut template = runtime_app_with_fm(file_manager.clone());
@@ -4272,27 +4491,23 @@ mod tests {
         let targets = template
             .state
             .view
-            .file_manager_miller
+            .file_manager_trail
             .columns
             .iter()
-            .flat_map(|column| column.rows.first())
-            .cloned()
+            .flat_map(|column| {
+                column
+                    .rows
+                    .first()
+                    .cloned()
+                    .map(|row| (row, column.directory.clone()))
+            })
             .collect::<Vec<_>>();
         assert!(
             targets.len() >= 4,
-            "fixture must expose resident/current/preview rows"
+            "fixture must expose ancestor and active Trail rows"
         );
-        assert!(targets
-            .iter()
-            .any(|row| row.column_kind == crate::ui::MillerRowColumnKind::Current));
-        assert!(targets
-            .iter()
-            .any(|row| row.column_kind == crate::ui::MillerRowColumnKind::Preview));
-        assert!(targets
-            .iter()
-            .any(|row| { row.column_kind == crate::ui::MillerRowColumnKind::ResidentDirectory }));
 
-        for target in targets {
+        for (target, owner_directory) in targets {
             let mut app = runtime_app_with_fm(file_manager.clone());
             install_focused_agent(&mut app);
             app.state.mobile_width_threshold = 0;
@@ -4302,8 +4517,8 @@ mod tests {
             assert_eq!(
                 app.handle_file_manager_mouse(mouse(
                     MouseEventKind::Down(MouseButton::Left),
-                    target.rect.x,
-                    target.rect.y,
+                    target.name_rect.x,
+                    target.name_rect.y,
                 )),
                 FileManagerMouseDispatch::Consumed
             );
@@ -4311,8 +4526,8 @@ mod tests {
             let actual = app.state.file_manager.as_ref().expect("open FM");
             assert_eq!(
                 actual.cwd.as_path(),
-                target.directory_path.as_path(),
-                "plain click first activates the row's owning directory"
+                owner_directory.as_path(),
+                "plain click activates the row's owning Trail directory"
             );
             assert_eq!(
                 actual.selected().map(|entry| &entry.path),
@@ -4388,9 +4603,8 @@ mod tests {
         assert_eq!(after.miller, before.miller);
     }
 
-    // TP-FM3-NONCURRENT-CONTEXT: a live right-click in a non-current column
-    // revalidates and activates its owning directory, then opens the existing
-    // typed file menu for the exact new CURRENT selection.
+    // TP-FM3-NONCURRENT-CONTEXT / TP-TRAIL-T7-INPUT-02: a live right-click in
+    // any Trail column activates its exact owner before opening the file menu.
     #[test]
     fn right_click_live_non_current_row_opens_exact_context_menu() {
         let td = TempDir::new("typed-noncurrent-context");
@@ -4400,37 +4614,20 @@ mod tests {
         fs::create_dir_all(&preview_directory).expect("create preview directory");
         fs::write(&target_path, b"x").expect("write context target");
 
-        let mut file_manager = FmState::new(&current);
-        let preview_index = file_manager
-            .entries
-            .iter()
-            .position(|entry| entry.path == preview_directory)
-            .expect("preview directory row");
-        assert!(file_manager.select(preview_index));
+        let file_manager = FmState::open_trail_to(&current, &preview_directory, false)
+            .expect("preview-directory Trail");
         let mut app = runtime_app_with_fm(file_manager);
         install_focused_agent(&mut app);
         app.state.mobile_width_threshold = 0;
         app.state.sidebar_collapsed = true;
         compute_view(&mut app.state, Rect::new(0, 0, 100, 16));
-        let target = app
-            .state
-            .view
-            .file_manager_miller
-            .columns
-            .iter()
-            .flat_map(|column| &column.rows)
-            .find(|row| {
-                row.column_kind == crate::ui::MillerRowColumnKind::Preview
-                    && row.entry_path == target_path
-            })
-            .cloned()
-            .expect("live preview target");
+        let target = trail_row_by_path(&app, &target_path);
 
         assert_eq!(
             app.handle_file_manager_mouse(mouse(
                 MouseEventKind::Down(MouseButton::Right),
-                target.rect.x,
-                target.rect.y,
+                target.name_rect.x,
+                target.name_rect.y,
             )),
             FileManagerMouseDispatch::Consumed
         );
@@ -4454,10 +4651,9 @@ mod tests {
         assert_eq!(model.paths, vec![target_path]);
     }
 
-    // TP-FM3-CROSS-COLUMN-DOUBLE: a first click may move a preview/resident
-    // column into CURRENT. After the required frame recompute, a second click
-    // on the same stable entry path preserves the existing directory-enter
-    // double-click semantics across that column transition.
+    // TP-FM3-CROSS-COLUMN-DOUBLE / TP-TRAIL-T7-INPUT-02: selecting an exact
+    // directory row opens its branch immediately; a fresh frame preserves that
+    // stable path and a repeated activation remains idempotent.
     #[test]
     fn double_click_non_current_directory_revalidates_then_enters() {
         let td = TempDir::new("typed-noncurrent-double");
@@ -4467,99 +4663,97 @@ mod tests {
         fs::create_dir_all(&child_directory).expect("create nested directory");
         fs::write(child_directory.join("inside.txt"), b"x").expect("write nested fixture");
 
-        let mut file_manager = FmState::new(&current);
-        let preview_index = file_manager
-            .entries
-            .iter()
-            .position(|entry| entry.path == preview_directory)
-            .expect("preview directory row");
-        assert!(file_manager.select(preview_index));
+        let file_manager = FmState::open_trail_to(&current, &preview_directory, false)
+            .expect("preview-directory Trail");
         let mut app = runtime_app_with_fm(file_manager);
         install_focused_agent(&mut app);
         app.state.mobile_width_threshold = 0;
         app.state.sidebar_collapsed = true;
         let frame = Rect::new(0, 0, 100, 16);
         compute_view(&mut app.state, frame);
-        let preview_target = app
-            .state
-            .view
-            .file_manager_miller
-            .columns
-            .iter()
-            .flat_map(|column| &column.rows)
-            .find(|row| {
-                row.column_kind == crate::ui::MillerRowColumnKind::Preview
-                    && row.entry_path == child_directory
-            })
-            .cloned()
-            .expect("preview directory target");
+        let preview_target = trail_row_by_path(&app, &child_directory);
 
         app.handle_file_manager_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
-            preview_target.rect.x,
-            preview_target.rect.y,
+            preview_target.name_rect.x,
+            preview_target.name_rect.y,
         ));
         assert_eq!(
             app.state.file_manager.as_ref().expect("open FM").cwd,
             preview_directory
         );
         compute_view(&mut app.state, frame);
-        let current_target = app
-            .state
-            .view
-            .file_manager_miller
-            .columns
-            .iter()
-            .find(|column| column.kind.is_current())
-            .and_then(|column| {
-                column
-                    .rows
-                    .iter()
-                    .find(|row| row.entry_path == child_directory)
-            })
-            .cloned()
-            .expect("same path moved into CURRENT");
+        let current_target = trail_row_by_path(&app, &child_directory);
 
         app.handle_file_manager_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
-            current_target.rect.x,
-            current_target.rect.y,
+            current_target.name_rect.x,
+            current_target.name_rect.y,
         ));
 
+        let file_manager = app.state.file_manager.as_ref().expect("open FM");
         assert_eq!(
-            app.state.file_manager.as_ref().expect("open FM").cwd,
-            child_directory,
-            "second stable-path click enters only after fresh revalidation"
+            file_manager
+                .trail
+                .cols()
+                .last()
+                .map(|column| &column.directory),
+            Some(&child_directory),
+            "repeated stable-path activation preserves the exact child branch"
+        );
+        assert_eq!(
+            file_manager.trail.active_col(),
+            file_manager.trail.cols().len().saturating_sub(1)
         );
     }
 
-    // TP-A3.3-DISPATCH: the second unmodified press on the same directory row
-    // inside the double-click window selects then enters that directory.
+    // TP-A3.3-DISPATCH: one Trail activation selects a directory and opens its
+    // child column; repeated activation remains on that exact branch.
     #[test]
-    fn directory_double_click_enters_selected_directory() {
+    fn repeated_directory_activation_preserves_open_trail_branch() {
         let td = TempDir::new("mouse-double-directory");
         td.dir("alpha-dir");
         fs::write(td.root.join("alpha-dir").join("child.txt"), b"x").expect("write child fixture");
-        let mut app = runtime_app_with_fm(FmState::new(&td.root));
-        let click = mouse(MouseEventKind::Down(MouseButton::Left), 27, 2);
+        let file_manager =
+            FmState::open_trail_to(&td.root, &td.root, false).expect("fresh Trail root");
+        let mut app = runtime_app_with_fm(file_manager);
+        let target = trail_row_by_path(&app, &td.root.join("alpha-dir"));
+        let click = mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            target.name_rect.x,
+            target.name_rect.y,
+        );
 
         app.handle_mouse(click);
         app.handle_mouse(click);
 
         let fm = app.state.file_manager.as_ref().expect("file manager open");
-        assert_eq!(fm.cwd, td.root.join("alpha-dir"));
+        assert_eq!(fm.cwd, td.root, "operation projection keeps the row owner");
         assert_eq!(fm.cursor, 0);
+        assert_eq!(fm.trail.cols().len(), 2);
+        assert_eq!(
+            fm.trail.cols()[1].directory,
+            td.root.join("alpha-dir"),
+            "the selected directory remains the exact open child branch"
+        );
     }
 
-    // TP-A3.3-DISPATCH: double-clicking a file keeps it selected and never
-    // changes cwd; file opening belongs to a later product module.
+    // TP-A3.3-DISPATCH: repeated activation of a file keeps it selected and
+    // never opens a child Trail column.
     #[test]
     fn file_double_click_stays_selected_without_entering() {
         let td = TempDir::new("mouse-double-file");
         td.dir("alpha-dir");
         td.file("beta.txt");
-        let mut app = runtime_app_with_fm(FmState::new(&td.root));
-        let click = mouse(MouseEventKind::Down(MouseButton::Left), 27, 3);
+        let file_manager =
+            FmState::open_trail_to(&td.root, &td.root, false).expect("fresh Trail root");
+        let mut app = runtime_app_with_fm(file_manager);
+        let target = trail_row_by_path(&app, &td.root.join("beta.txt"));
+        let click = mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            target.name_rect.x,
+            target.name_rect.y,
+        );
 
         app.handle_mouse(click);
         app.handle_mouse(click);
@@ -4573,17 +4767,29 @@ mod tests {
         );
     }
 
-    // TP-A3.3-DISPATCH: rapid clicks on different absolute entries are two
-    // selections, not a directory activation gesture.
+    // TP-A3.3-DISPATCH: activation of two different Trail rows rebranches to
+    // the second exact directory without inheriting the first child branch.
     #[test]
     fn rapid_clicks_on_different_rows_do_not_activate_directory() {
         let td = TempDir::new("mouse-different-rows");
         td.dir("alpha-dir");
         td.dir("beta-dir");
-        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let file_manager =
+            FmState::open_trail_to(&td.root, &td.root, false).expect("fresh Trail root");
+        let mut app = runtime_app_with_fm(file_manager);
+        let alpha = trail_row_by_path(&app, &td.root.join("alpha-dir"));
+        let beta = trail_row_by_path(&app, &td.root.join("beta-dir"));
 
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 27, 2));
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 27, 3));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            alpha.name_rect.x,
+            alpha.name_rect.y,
+        ));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            beta.name_rect.x,
+            beta.name_rect.y,
+        ));
 
         let fm = app.state.file_manager.as_ref().expect("file manager open");
         assert_eq!(fm.cwd, td.root);
@@ -4592,6 +4798,8 @@ mod tests {
             fm.selected().map(|entry| entry.name.as_str()),
             Some("beta-dir")
         );
+        assert_eq!(fm.trail.cols().len(), 2);
+        assert_eq!(fm.trail.cols()[1].directory, td.root.join("beta-dir"));
     }
 
     // TP-A3.3-DISPATCH: wheel input over CURRENT moves one bounded row per
@@ -4621,103 +4829,54 @@ mod tests {
         assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 0);
     }
 
-    // TP-FM3-RESIDENT-WHEEL: plain wheel over a resident ancestor advances
-    // only that owning segment's bounded cursor/viewport. CURRENT selection,
-    // horizontal window, generations, and other segments remain unchanged.
+    // TP-FM3-RESIDENT-WHEEL / TP-TRAIL-T7-INPUT-03: wheel over an ancestor
+    // Trail column moves that column's selection and rebranches from it.
     #[test]
-    fn plain_wheel_moves_only_hovered_resident_column_viewport() {
-        let td = TempDir::new("resident-wheel");
-        td.file("current-a.txt");
-        td.file("current-b.txt");
-        let current = td.root.clone();
-        let resident = PathBuf::from("/virtual/resident-wheel");
-        let mut file_manager = FmState::new(&current);
-        file_manager.miller.chain = [resident.clone(), current.clone()]
-            .into_iter()
-            .map(crate::fm::miller::MillerPathSegment::new)
-            .collect();
-        file_manager.miller.focused_directory = current;
-        file_manager.miller.resident_non_current.push_back(
-            crate::fm::miller::MillerDirectoryProjection {
-                id: crate::fm::miller::MillerColumnId {
-                    directory: resident.clone(),
-                    generation: 77,
-                },
-                entries: (0..12)
-                    .map(|index| crate::fm::FileEntry {
-                        name: format!("{index:02}.txt"),
-                        path: resident.join(format!("{index:02}.txt")),
-                        kind: if false {
-                            crate::fm::entry_kind::FileEntryKind::Directory
-                        } else {
-                            crate::fm::entry_kind::FileEntryKind::RegularFile
-                        },
-                    })
-                    .collect(),
-                status: crate::fm::FmDirectoryStatus::Available,
-                writable: true,
-            },
-        );
+    fn plain_wheel_rebranches_only_hovered_ancestor_trail_column() {
+        let td = TempDir::new("ancestor-trail-wheel");
+        for name in ["00-alpha", "01-bravo", "02-current"] {
+            td.dir(name);
+        }
+        let current = td.root.join("02-current");
+        let file_manager =
+            FmState::open_trail_to(&td.root, &current, false).expect("ancestor Trail fixture");
         let mut app = runtime_app_with_fm(file_manager);
         install_focused_agent(&mut app);
         app.state.mobile_width_threshold = 0;
         app.state.sidebar_collapsed = true;
-        compute_view(&mut app.state, Rect::new(0, 0, 200, 8));
-        let resident_column = app
+        compute_view(&mut app.state, Rect::new(0, 0, 120, 10));
+        let ancestor_row = app
             .state
             .view
-            .file_manager_miller
+            .file_manager_trail
             .columns
-            .iter()
-            .find(|column| {
-                column.rows.first().is_some_and(|row| {
-                    row.column_kind == crate::ui::MillerRowColumnKind::ResidentDirectory
-                })
-            })
+            .first()
+            .and_then(|column| column.rows.first())
             .cloned()
-            .expect("visible resident column");
-        let probe = resident_column.rows[0].rect;
-        let visible_rows = resident_column.content_rect.height as usize;
-        let before = app.state.file_manager.as_ref().expect("open FM").clone();
+            .expect("ancestor Trail row");
 
-        let wheel_events = visible_rows.saturating_add(2);
-        for _ in 0..wheel_events {
-            assert_eq!(
-                app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollDown, probe.x, probe.y,)),
-                FileManagerMouseDispatch::Consumed
-            );
-        }
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::ScrollUp,
+                ancestor_row.name_rect.x,
+                ancestor_row.name_rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
 
         let after = app.state.file_manager.as_ref().expect("open FM");
-        let resident_segment = &after.miller.chain[0];
-        let expected_cursor = wheel_events.min(11);
-        let expected_viewport = expected_cursor
-            .saturating_add(1)
-            .saturating_sub(visible_rows);
-        assert_eq!(resident_segment.cursor, expected_cursor);
-        assert_eq!(resident_segment.viewport_start, expected_viewport);
-        assert_eq!(after.cursor, before.cursor);
-        assert_eq!(after.viewport_start, before.viewport_start);
+        assert_eq!(after.trail.active_col(), 1);
         assert_eq!(
-            after.multi_selection_paths(),
-            before.multi_selection_paths()
+            after.trail.cols()[0].selected.as_deref(),
+            Some(td.root.join("01-bravo").as_path())
         );
-        assert_eq!(
-            after.miller.horizontal, before.miller.horizontal,
-            "vertical column wheel cannot pan the horizontal window"
-        );
-        assert_eq!(after.miller.chain[1], before.miller.chain[1]);
-        assert_eq!(after.directory_generation, before.directory_generation);
-        assert_eq!(after.preview_generation, before.preview_generation);
-        assert_eq!(after.miller.revision, before.miller.revision);
+        assert_eq!(after.trail.cols()[1].directory, td.root.join("01-bravo"));
     }
 
-    // TP-FM3-PREVIEW-WHEEL: PREVIEW has no chain segment, so it owns one
-    // bounded client-local viewport. Plain wheel scrolls only that directory
-    // preview; CURRENT focus, horizontal origin, chain, and generations stay
-    // byte-for-byte stable.
+    // TP-FM3-PREVIEW-WHEEL / TP-TRAIL-T7-INPUT-03: wheel over the active child
+    // Trail column moves its selected entry without changing its owner path.
     #[test]
-    fn plain_wheel_moves_only_hovered_preview_viewport() {
+    fn plain_wheel_moves_only_hovered_child_trail_selection() {
         let td = TempDir::new("preview-wheel");
         let preview_directory = td.root.join("preview-directory");
         fs::create_dir_all(&preview_directory).expect("create preview directory");
@@ -4725,76 +4884,48 @@ mod tests {
             fs::write(preview_directory.join(format!("{index:02}.txt")), b"x")
                 .expect("write preview entry");
         }
-        let mut file_manager = FmState::new(&td.root);
-        let preview_index = file_manager
-            .entries
-            .iter()
-            .position(|entry| entry.path == preview_directory)
-            .expect("preview directory row");
-        assert!(file_manager.select(preview_index));
+        let file_manager = FmState::open_trail_to(&td.root, &preview_directory, false)
+            .expect("child Trail fixture");
         let mut app = runtime_app_with_fm(file_manager);
         install_focused_agent(&mut app);
         app.state.mobile_width_threshold = 0;
         app.state.sidebar_collapsed = true;
         let frame = Rect::new(0, 0, 100, 8);
         compute_view(&mut app.state, frame);
-        let preview_column = app
+        let child_column = app
             .state
             .view
-            .file_manager_miller
+            .file_manager_trail
             .columns
-            .iter()
-            .find(|column| column.kind.is_preview())
+            .last()
             .cloned()
-            .expect("visible preview column");
-        let probe = preview_column.rows[0].rect;
-        let before = app.state.file_manager.as_ref().expect("open FM").clone();
+            .expect("visible child Trail column");
+        let probe = child_column.rows[0].name_rect;
 
         for _ in 0..3 {
             app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollDown, probe.x, probe.y));
         }
-        compute_view(&mut app.state, frame);
-
-        let first_preview_entry = app
-            .state
-            .view
-            .file_manager_miller
-            .columns
-            .iter()
-            .find(|column| column.kind.is_preview())
-            .and_then(|column| column.rows.first())
-            .map(|row| row.entry_index);
-        assert_eq!(
-            first_preview_entry,
-            Some(3),
-            "three wheel steps advance only the preview viewport"
-        );
         let after = app.state.file_manager.as_ref().expect("open FM");
-        assert_eq!(after.preview_viewport_start, 3);
-        assert_eq!(after.cwd, before.cwd);
-        assert_eq!(after.cursor, before.cursor);
-        assert_eq!(after.viewport_start, before.viewport_start);
+        assert_eq!(after.trail.active_col(), 1);
+        assert_eq!(after.trail.cols()[1].directory, preview_directory);
         assert_eq!(
-            after.multi_selection_paths(),
-            before.multi_selection_paths()
+            after.trail.cols()[1].selected.as_deref(),
+            Some(preview_directory.join("02.txt").as_path())
         );
-        assert_eq!(after.miller, before.miller);
-        assert_eq!(after.directory_generation, before.directory_generation);
-        assert_eq!(after.preview_generation, before.preview_generation);
     }
 
-    // TP-FM3-PARENT-WHEEL: a prepared immediate-parent column uses the same
-    // bounded owning-column semantics as a resident ancestor. It may move its
-    // local highlight/viewport but never CURRENT or horizontal state.
+    // TP-FM3-PARENT-WHEEL / TP-TRAIL-T7-INPUT-03: repeated wheel movement in
+    // one Trail column remains bounded at its first entry.
     #[test]
-    fn plain_wheel_moves_only_hovered_prepared_parent_viewport() {
+    fn plain_wheel_clamps_hovered_parent_trail_selection() {
         let td = TempDir::new("prepared-parent-wheel");
         for index in 0..10 {
             td.dir(&format!("{index:02}-sibling"));
         }
         let current = td.root.join("zz-current");
         fs::create_dir(&current).expect("create current directory");
-        let file_manager = FmState::new(&current);
+        let file_manager =
+            FmState::open_trail_to(&td.root, &current, false).expect("parent Trail fixture");
         let mut app = runtime_app_with_fm(file_manager);
         install_focused_agent(&mut app);
         app.state.mobile_width_threshold = 0;
@@ -4803,52 +4934,27 @@ mod tests {
         let parent_column = app
             .state
             .view
-            .file_manager_miller
+            .file_manager_trail
             .columns
-            .iter()
-            .find(|column| {
-                column.rows.first().is_some_and(|row| {
-                    row.column_kind == crate::ui::MillerRowColumnKind::PreparedParent
-                })
-            })
+            .first()
             .cloned()
-            .expect("visible prepared parent");
+            .expect("visible parent Trail column");
         let target = parent_column.rows[0].clone();
-        let visible_rows = parent_column.content_rect.height as usize;
-        let before = app.state.file_manager.as_ref().expect("open FM").clone();
-        let before_parent_cursor = before
-            .parent
-            .as_ref()
-            .and_then(|parent| parent.cursor)
-            .expect("current row in prepared parent");
 
-        for _ in 0..3 {
+        for _ in 0..30 {
             app.handle_file_manager_mouse(mouse(
                 MouseEventKind::ScrollUp,
-                target.rect.x,
-                target.rect.y,
+                target.name_rect.x,
+                target.name_rect.y,
             ));
         }
 
         let after = app.state.file_manager.as_ref().expect("open FM");
-        let expected_cursor = before_parent_cursor.saturating_sub(3);
         assert_eq!(
-            after.parent.as_ref().and_then(|parent| parent.cursor),
-            Some(expected_cursor)
+            after.trail.cols()[0].selected.as_deref(),
+            Some(td.root.join("00-sibling").as_path())
         );
-        let segment = &after.miller.chain[target.chain_index.expect("parent chain index")];
-        assert_eq!(segment.cursor, expected_cursor);
-        assert_eq!(
-            segment.viewport_start,
-            before_parent_cursor.saturating_sub(visible_rows),
-            "first upward step brings the offscreen parent cursor into view; later steps remain within that window"
-        );
-        assert_eq!(after.cwd, before.cwd);
-        assert_eq!(after.cursor, before.cursor);
-        assert_eq!(after.viewport_start, before.viewport_start);
-        assert_eq!(after.miller.horizontal, before.miller.horizontal);
-        assert_eq!(after.directory_generation, before.directory_generation);
-        assert_eq!(after.preview_generation, before.preview_generation);
+        assert_eq!(after.trail.cols()[1].directory, td.root.join("00-sibling"));
     }
 
     // TP-FM3-NONCURRENT-MODIFIERS: Ctrl/Shift selection authority is confined
@@ -5633,8 +5739,8 @@ mod tests {
         assert_eq!(fm.multi_selection_anchor(), before_anchor.as_deref());
     }
 
-    // TP-N4.1-SELECTION-STATE: a stale typed row target and unrecognized modifier
-    // combinations are consumed without mutating cursor, paths, or anchor.
+    // TP-N4.1-SELECTION-STATE / TP-TRAIL-T7-INPUT-05: a stale Trail row target
+    // and unrecognized modifier combinations are consumed without mutation.
     #[test]
     fn stale_and_unrecognized_selection_gestures_fail_closed() {
         let td = TempDir::new("multi-selection-stale-gesture");
@@ -5647,15 +5753,17 @@ mod tests {
             .as_mut()
             .expect("open fm")
             .replace_selection(0));
-        app.state
+        let target = app
+            .state
             .view
-            .file_manager_miller
+            .file_manager_trail
             .columns
             .iter_mut()
             .flat_map(|column| &mut column.rows)
             .find(|row| row.entry_index == 1)
-            .expect("second typed current row")
-            .entry_index = usize::MAX;
+            .expect("second Trail row");
+        target.entry_index = usize::MAX;
+        let probe = target.name_rect;
         let before_paths = app
             .state
             .file_manager
@@ -5667,8 +5775,8 @@ mod tests {
         assert_eq!(
             app.handle_file_manager_mouse(mouse_with_modifiers(
                 MouseEventKind::Down(MouseButton::Left),
-                27,
-                3,
+                probe.x,
+                probe.y,
                 KeyModifiers::CONTROL,
             )),
             FileManagerMouseDispatch::Consumed
@@ -5687,9 +5795,9 @@ mod tests {
         );
     }
 
-    // TP-TRAIL-T7-CHAR-03 / TP-N4.1-SELECTION-STATE: row hit geometry snapshots
-    // stable path identity so a watcher reorder at the same valid index can be
-    // rejected on input.
+    // TP-TRAIL-T7-CHAR-03 / TP-N4.1-SELECTION-STATE: Trail hit geometry
+    // snapshots stable path identity, so the same valid index carrying a
+    // reordered path is rejected on input.
     #[test]
     fn row_selection_snapshot_carries_stable_path_identity() {
         let td = TempDir::new("multi-selection-row-identity");
@@ -5698,10 +5806,8 @@ mod tests {
         let mut app = runtime_app_with_fm(FmState::new(&td.root));
         let expected = td.root.join("00.txt");
 
-        assert_eq!(
-            app.state.view.file_manager_row_areas[0].entry_path,
-            expected
-        );
+        let target = trail_row_by_index(&app, 0);
+        assert_eq!(target.entry_path, expected);
 
         let preserved = td.root.join("01.txt");
         assert!(app
@@ -5711,14 +5817,21 @@ mod tests {
             .expect("open fm")
             .replace_selection(1));
         app.state
-            .file_manager
-            .as_mut()
-            .expect("open fm")
-            .entries
-            .swap(0, 1);
+            .view
+            .file_manager_trail
+            .columns
+            .iter_mut()
+            .flat_map(|column| &mut column.rows)
+            .find(|row| row.entry_index == 0)
+            .expect("first Trail row")
+            .entry_path = td.root.join("reordered.txt");
 
         assert_eq!(
-            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 27, 2,)),
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                target.name_rect.x,
+                target.name_rect.y,
+            )),
             FileManagerMouseDispatch::Consumed
         );
         let fm = app.state.file_manager.as_ref().expect("open fm");
@@ -6266,20 +6379,28 @@ mod tests {
         td.file("beta.txt");
         let mut app = runtime_app_with_fm(FmState::new(&td.root));
         install_row_actions(&mut app, 1);
+        let row = trail_row_by_index(&app, 1);
+        let action = row.actions[0].clone();
 
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 27, 3));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            row.name_rect.x,
+            row.name_rect.y,
+        ));
         assert_eq!(app.state.file_manager.as_ref().expect("open FM").cursor, 1);
 
         for event in [
-            mouse(MouseEventKind::Down(MouseButton::Middle), 43, 3),
+            mouse(
+                MouseEventKind::Down(MouseButton::Middle),
+                action.rect.x,
+                action.rect.y,
+            ),
             mouse_with_modifiers(
                 MouseEventKind::Down(MouseButton::Left),
-                43,
-                3,
+                action.rect.x,
+                action.rect.y,
                 KeyModifiers::CONTROL,
             ),
-            mouse(MouseEventKind::Down(MouseButton::Left), 43, 4),
-            mouse(MouseEventKind::Down(MouseButton::Left), 43, 1),
         ] {
             assert_eq!(
                 app.handle_file_manager_mouse(event),
@@ -6287,9 +6408,17 @@ mod tests {
             );
         }
 
-        app.state.view.file_manager_row_action_areas.clear();
+        for column in &mut app.state.view.file_manager_trail.columns {
+            for row in &mut column.rows {
+                row.actions.clear();
+            }
+        }
         assert_eq!(
-            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 3,)),
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                action.rect.x,
+                action.rect.y,
+            )),
             FileManagerMouseDispatch::Consumed,
             "hidden action is not inferred from its former coordinates"
         );
@@ -6300,7 +6429,11 @@ mod tests {
 
         app.state.file_manager = None;
         assert_eq!(
-            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 3,)),
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                action.rect.x,
+                action.rect.y,
+            )),
             FileManagerMouseDispatch::NotHandled
         );
     }
@@ -6310,33 +6443,63 @@ mod tests {
     // the snapshotted path must still match and the live target must remain
     // supported before a tag can escape.
     #[test]
-    fn row_action_dispatch_rejects_reordered_and_unsupported_targets() {
+    fn row_action_dispatch_rejects_reordered_and_unrecognized_targets() {
         let td = TempDir::new("row-action-stale");
         td.file("alpha.txt");
         td.file("beta.txt");
         let mut app = runtime_app_with_fm(FmState::new(&td.root));
         install_row_actions(&mut app, 0);
+        let action = trail_action(&app, 0, FileManagerRowAction::Rename);
         app.state
-            .file_manager
-            .as_mut()
-            .expect("open FM")
-            .entries
-            .swap(0, 1);
+            .view
+            .file_manager_trail
+            .columns
+            .iter_mut()
+            .flat_map(|column| &mut column.rows)
+            .find(|row| row.entry_index == 0)
+            .and_then(|row| {
+                row.actions
+                    .iter_mut()
+                    .find(|area| area.action == FileManagerRowAction::Rename)
+            })
+            .expect("rename action")
+            .entry_path = td.root.join("reordered.txt");
 
         assert_eq!(
-            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 2,)),
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                action.rect.x,
+                action.rect.y,
+            )),
             FileManagerMouseDispatch::Consumed,
             "same index with a different path is stale"
         );
 
         let mut app = runtime_app_with_fm(FmState::new(&td.root));
         install_row_actions(&mut app, 0);
-        app.state.file_manager.as_mut().expect("open FM").entries[0].kind =
-            crate::fm::entry_kind::FileEntryKind::UnsupportedSpecial;
+        let action = trail_action(&app, 0, FileManagerRowAction::Rename);
+        app.state
+            .view
+            .file_manager_trail
+            .columns
+            .iter_mut()
+            .flat_map(|column| &mut column.rows)
+            .find(|row| row.entry_index == 0)
+            .and_then(|row| {
+                row.actions
+                    .iter_mut()
+                    .find(|area| area.action == FileManagerRowAction::Rename)
+            })
+            .expect("rename action")
+            .entry_idx = usize::MAX;
         assert_eq!(
-            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 2,)),
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                action.rect.x,
+                action.rect.y,
+            )),
             FileManagerMouseDispatch::Consumed,
-            "unsupported live target fails closed"
+            "unrecognized live target fails closed"
         );
     }
 
@@ -6407,10 +6570,8 @@ mod tests {
         );
     }
 
-    // TP-C3.2-POPUP-GEOMETRY: the same snapshotted current-row geometry used
-    // by render/input opens the existing popup at one/two/three-column Miller
-    // widths. First, middle, and last visible rows remain reachable and the
-    // popup clamps to the complete screen rectangle at every edge.
+    // TP-C3.2-POPUP-GEOMETRY: the same Trail row geometry used by render/input
+    // opens the popup at every Miller-width breakpoint and clamps it onscreen.
     #[test]
     fn right_click_popup_is_bounded_at_all_miller_breakpoints() {
         let td = TempDir::new("file-context-breakpoints");
@@ -6423,8 +6584,16 @@ mod tests {
             app.state.mobile_width_threshold = 0;
             app.state.sidebar_collapsed = true;
             compute_view(&mut app.state, Rect::new(0, 0, width, 12));
-            let rows = app.state.view.file_manager_row_areas.clone();
-            assert!(!rows.is_empty(), "width {width} exposes current rows");
+            let rows = app
+                .state
+                .view
+                .file_manager_trail
+                .columns
+                .iter()
+                .flat_map(|column| &column.rows)
+                .cloned()
+                .collect::<Vec<_>>();
+            assert!(!rows.is_empty(), "width {width} exposes Trail rows");
             let row_indices = [0, rows.len() / 2, rows.len() - 1];
 
             for row_index in row_indices {
@@ -6432,8 +6601,8 @@ mod tests {
                 assert_eq!(
                     app.handle_file_manager_mouse(mouse(
                         MouseEventKind::Down(MouseButton::Right),
-                        row.rect.x,
-                        row.rect.y,
+                        row.name_rect.x,
+                        row.name_rect.y,
                     )),
                     FileManagerMouseDispatch::Consumed,
                     "width {width}, visible row {row_index}"
@@ -6457,9 +6626,8 @@ mod tests {
         }
     }
 
-    // TP-C3.2-POPUP-GEOMETRY: stale row identity, non-row center regions,
-    // modified right-click, and zero geometry are consumed without opening a
-    // menu or changing the existing selection.
+    // TP-C3.2-POPUP-GEOMETRY / TP-TRAIL-T7-INPUT-05: stale Trail identity,
+    // non-row regions, modified right-click, and zero geometry fail closed.
     #[test]
     fn right_click_file_menu_fails_closed_for_stale_and_non_targets() {
         let td = TempDir::new("file-context-stale");
@@ -6479,15 +6647,23 @@ mod tests {
             .expect("open FM")
             .multi_selection_paths()
             .clone();
+        let stale = trail_row_by_index(&app, 0);
         app.state
-            .file_manager
-            .as_mut()
-            .expect("open FM")
-            .entries
-            .swap(0, 1);
+            .view
+            .file_manager_trail
+            .columns
+            .iter_mut()
+            .flat_map(|column| &mut column.rows)
+            .find(|row| row.entry_index == 0)
+            .expect("first Trail row")
+            .entry_path = td.root.join("stale.txt");
 
         for event in [
-            mouse(MouseEventKind::Down(MouseButton::Right), 27, 2),
+            mouse(
+                MouseEventKind::Down(MouseButton::Right),
+                stale.name_rect.x,
+                stale.name_rect.y,
+            ),
             mouse(MouseEventKind::Down(MouseButton::Right), 27, 0),
             mouse(MouseEventKind::Down(MouseButton::Right), 27, 1),
             mouse(MouseEventKind::Down(MouseButton::Right), 45, 5),

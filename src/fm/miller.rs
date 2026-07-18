@@ -67,27 +67,6 @@ pub(crate) struct MillerHorizontalViewport {
     pub first_visible: usize,
 }
 
-/// Exact non-current column authority for one vertical wheel transition.
-/// Input obtains this only after generation-safe row resolution; the model
-/// revalidates the identity again before changing bounded presentation state.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum MillerColumnScrollTarget {
-    Resident {
-        chain_index: usize,
-        directory: PathBuf,
-        generation: u64,
-    },
-    PreparedParent {
-        chain_index: usize,
-        directory: PathBuf,
-        generation: u64,
-    },
-    Preview {
-        directory: PathBuf,
-        generation: u64,
-    },
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MillerAdjacentWidthTarget {
     Chain(usize),

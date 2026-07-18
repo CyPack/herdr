@@ -68,6 +68,16 @@ impl TrailState {
         true
     }
 
+    /// Focus one exact live column. Mouse wheel/bulk modifiers use this before
+    /// applying their row-local action; stale projected indices are inert.
+    pub(crate) fn focus_col(&mut self, col_idx: usize) -> bool {
+        if col_idx >= self.cols.len() {
+            return false;
+        }
+        self.active_col = col_idx;
+        true
+    }
+
     pub(crate) fn cols(&self) -> &[TrailCol] {
         &self.cols
     }

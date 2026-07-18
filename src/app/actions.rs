@@ -361,7 +361,8 @@ impl AppState {
             .unwrap_or_else(|| {
                 std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
             });
-        if let Err(error) = self.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(cwd)))
+        if let Err(error) = self
+            .try_open_file_manager_with(|_| crate::fm::FmState::open_trail_to(&cwd, &cwd, false))
         {
             warn!(?error, "failed to open native file manager");
         }
@@ -533,6 +534,7 @@ impl AppState {
         // same transaction, so no stale row/header rectangle can act between
         // this close and the next compute.
         self.view.file_manager_miller = Default::default();
+        self.view.file_manager_trail = Default::default();
         self.view.file_manager_row_areas = Vec::new();
         self.view.file_manager_row_action_areas = Vec::new();
         self.view.file_manager_header_action_areas = Vec::new();

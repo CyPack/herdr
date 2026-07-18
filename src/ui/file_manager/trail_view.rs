@@ -27,7 +27,11 @@ pub(crate) struct TrailRowView {
     pub trail_index: usize,
     pub entry_index: usize,
     pub entry_path: PathBuf,
+    /// Full row, including the right-edge operation affordances.
     pub rect: Rect,
+    /// Name/icon target left of the operation affordances.
+    pub name_rect: Rect,
+    pub actions: Vec<crate::app::state::FileManagerRowActionArea>,
 }
 
 /// One visible trail column with its bounded row window.
@@ -68,6 +72,10 @@ pub(crate) struct TrailDetailPanelView {
 /// Immutable trail frame projection: geometry authority for render and input.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct TrailViewSnapshot {
+    /// Files instance that owns this frame. Model generations restart across
+    /// close/reopen, so input must reject a geometrically valid old frame even
+    /// when it names the same directory and path.
+    pub files_generation: Option<u32>,
     pub first_visible: usize,
     pub columns: Vec<TrailColumnView>,
     pub dividers: Vec<TrailDividerView>,
@@ -169,16 +177,48 @@ pub(crate) fn project_trail_view(
                 .enumerate()
                 .skip(viewport_start)
                 .take(height)
-                .map(|(entry_index, entry)| TrailRowView {
-                    trail_index,
-                    entry_index,
-                    entry_path: entry.path.clone(),
-                    rect: Rect::new(
+                .map(|(entry_index, entry)| {
+                    let rect = Rect::new(
                         column.rect.x,
                         column.rect.y + (entry_index - viewport_start) as u16,
                         column.rect.width,
                         1,
-                    ),
+                    );
+                    let visible_action_count =
+                        usize::from(rect.width.saturating_sub(1) / super::ROW_ACTION_WIDTH)
+                            .min(crate::app::state::FileManagerRowAction::ALL.len());
+                    let actions_width = visible_action_count as u16 * super::ROW_ACTION_WIDTH;
+                    let name_rect =
+                        Rect::new(rect.x, rect.y, rect.width.saturating_sub(actions_width), 1);
+                    let actions = crate::app::state::FileManagerRowAction::ALL
+                        .iter()
+                        .copied()
+                        .take(visible_action_count)
+                        .enumerate()
+                        .map(
+                            |(action_idx, action)| crate::app::state::FileManagerRowActionArea {
+                                rect: Rect::new(
+                                    name_rect.right().saturating_add(
+                                        action_idx as u16 * super::ROW_ACTION_WIDTH,
+                                    ),
+                                    rect.y,
+                                    super::ROW_ACTION_WIDTH,
+                                    1,
+                                ),
+                                entry_idx: entry_index,
+                                entry_path: entry.path.clone(),
+                                action,
+                            },
+                        )
+                        .collect();
+                    TrailRowView {
+                        trail_index,
+                        entry_index,
+                        entry_path: entry.path.clone(),
+                        rect,
+                        name_rect,
+                        actions,
+                    }
                 })
                 .collect();
             TrailColumnView {
@@ -202,6 +242,7 @@ pub(crate) fn project_trail_view(
         .collect();
 
     TrailViewSnapshot {
+        files_generation: None,
         first_visible: geometry.first_visible,
         columns,
         dividers,
@@ -252,7 +293,10 @@ pub(crate) fn render_trail_view(
                 .file_manager
                 .as_ref()
                 .is_some_and(|fm| fm.multi_selection_paths().contains(&entry.path));
-            super::render_entry_row(app, frame, row.rect, entry, selected, multi_selected);
+            super::render_entry_row(app, frame, row.name_rect, entry, selected, multi_selected);
+            for action in &row.actions {
+                super::render_row_action(app, frame, action, selected, multi_selected);
+            }
         }
     }
     if let (Some(panel), Some(detail)) = (&view.detail_panel, snaps.detail()) {

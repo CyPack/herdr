@@ -38,11 +38,15 @@ pub(crate) use self::file_manager::compute_file_manager_action_bar_model;
 pub(crate) use self::file_manager::file_manager_preview_content_area;
 #[cfg(test)]
 pub(crate) use self::file_manager::miller::project_miller_view;
+#[cfg(test)]
+pub(crate) use self::file_manager::miller::MillerRowColumnKind;
 pub(crate) use self::file_manager::miller::{
     miller_resize_column_is_live, MillerColumnKind, MillerColumnView, MillerDirectorySource,
-    MillerRowColumnKind, MillerViewSnapshot,
+    MillerViewSnapshot,
 };
-pub(crate) use self::file_manager::trail_view::TrailViewSnapshot;
+#[cfg(test)]
+pub(crate) use self::file_manager::trail_view::project_trail_view;
+pub(crate) use self::file_manager::trail_view::{trail_row_at, TrailRowView, TrailViewSnapshot};
 use self::file_manager::{
     agent_attachment_picker_visible_rows, compute_agent_attachment_picker_row_areas,
     compute_file_manager_header_action_areas, render_agent_attachment_picker, render_file_manager,
@@ -673,15 +677,20 @@ fn sync_trail_view(app: &AppState, area: Rect) -> TrailViewSnapshot {
     if app.stage.surface_view() != surface_host::StageSurfaceView::NativeFiles {
         return TrailViewSnapshot::default();
     }
+    let Some(files_generation) = app.stage.active_instance_generation() else {
+        return TrailViewSnapshot::default();
+    };
     let Some(file_manager) = app.file_manager.as_ref() else {
         return TrailViewSnapshot::default();
     };
-    file_manager::trail_view::project_trail_view(
+    let mut snapshot = file_manager::trail_view::project_trail_view(
         file_manager::file_manager_miller_viewport_area(area),
         &file_manager.trail,
         &file_manager.trail_snapshots,
         &[],
-    )
+    );
+    snapshot.files_generation = Some(files_generation);
+    snapshot
 }
 
 fn sync_agent_attachment_picker_view(

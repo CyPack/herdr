@@ -52,7 +52,6 @@ const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const PENDING_AGENT_RESUME_THEME_WAIT: Duration = Duration::from_millis(750);
 const SESSION_SAVE_DEBOUNCE: Duration = Duration::from_secs(5);
 const SIDEBAR_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(350);
-const FILE_MANAGER_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(350);
 const PANE_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(350);
 const PANE_COPY_HIGHLIGHT_DURATION: Duration = Duration::from_millis(500);
 const COPY_FEEDBACK_DURATION: Duration = Duration::from_secs(2);
@@ -105,42 +104,6 @@ impl PaneClickState {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct FileManagerClickState {
-    entry_path: std::path::PathBuf,
-    at: Instant,
-}
-
-impl FileManagerClickState {
-    fn is_double_click_for(&self, next: &Self) -> bool {
-        self.entry_path == next.entry_path
-            && next.at.duration_since(self.at) <= FILE_MANAGER_DOUBLE_CLICK_WINDOW
-    }
-}
-
-#[cfg(test)]
-#[test]
-fn file_manager_double_click_requires_same_entry_inside_window() {
-    let at = Instant::now();
-    let first = FileManagerClickState {
-        entry_path: "/tmp/entry-2".into(),
-        at,
-    };
-
-    assert!(first.is_double_click_for(&FileManagerClickState {
-        entry_path: "/tmp/entry-2".into(),
-        at: at + FILE_MANAGER_DOUBLE_CLICK_WINDOW,
-    }));
-    assert!(!first.is_double_click_for(&FileManagerClickState {
-        entry_path: "/tmp/entry-3".into(),
-        at: at + FILE_MANAGER_DOUBLE_CLICK_WINDOW,
-    }));
-    assert!(!first.is_double_click_for(&FileManagerClickState {
-        entry_path: "/tmp/entry-2".into(),
-        at: at + FILE_MANAGER_DOUBLE_CLICK_WINDOW + Duration::from_millis(1),
-    }));
-}
-
 pub struct App {
     pub state: AppState,
     pub(crate) terminal_runtimes: crate::terminal::TerminalRuntimeRegistry,
@@ -172,7 +135,6 @@ pub struct App {
     pub(crate) pending_api_worktree_remove_paths: HashMap<std::path::PathBuf, u64>,
     pub(crate) next_api_worktree_operation_id: u64,
     pub(crate) last_sidebar_divider_click: Option<Instant>,
-    pub(crate) last_file_manager_click: Option<FileManagerClickState>,
     pub(crate) last_pane_click: Option<PaneClickState>,
     pub(crate) next_resize_poll: Instant,
     /// Next per-cwd git-branch poll for the agent panel; None runs immediately.
@@ -868,7 +830,6 @@ impl App {
             pending_api_worktree_remove_paths: HashMap::new(),
             next_api_worktree_operation_id: 1,
             last_sidebar_divider_click: None,
-            last_file_manager_click: None,
             last_pane_click: None,
             next_resize_poll: Instant::now() + RESIZE_POLL_INTERVAL,
             next_tab_branch_poll: None,

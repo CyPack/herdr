@@ -690,19 +690,6 @@ impl FmState {
         ))
     }
 
-    pub(crate) fn request_activate_navigation(
-        &self,
-        directory: &Path,
-        entry_path: &Path,
-    ) -> FmNavigationRequest {
-        self.navigation_request(
-            FmNavigationReason::ActivateSelection,
-            directory.to_path_buf(),
-            Some(entry_path.to_path_buf()),
-            0,
-        )
-    }
-
     fn navigation_request(
         &self,
         reason: FmNavigationReason,
@@ -844,6 +831,218 @@ impl FmState {
         self.trail_snapshots.selected_entry(&self.trail)
     }
 
+    /// Activate one exact row from the immutable Trail frame. The Trail
+    /// snapshot revalidates column/index/path before mutation; accepted hits
+    /// then refresh the temporary legacy operation projection from the owning
+    /// Trail column without deriving any Trail state back from the cursor.
+    pub(crate) fn activate_trail_entry(
+        &mut self,
+        col_idx: usize,
+        entry_index: usize,
+        expected_path: &Path,
+    ) -> trail_snapshots::TrailActivateOutcome {
+        let outcome = self.trail_snapshots.activate_entry(
+            &mut self.trail,
+            col_idx,
+            entry_index,
+            expected_path,
+        );
+        if outcome != trail_snapshots::TrailActivateOutcome::Rejected
+            && !self.install_trail_operation_projection(col_idx, entry_index, expected_path)
+        {
+            return trail_snapshots::TrailActivateOutcome::Rejected;
+        }
+        outcome
+    }
+
+    /// Move selection inside the one active Trail column with the same
+    /// directory-branch/file-detail semantics as mouse activation.
+    pub(crate) fn move_trail_selection(
+        &mut self,
+        delta: isize,
+    ) -> trail_snapshots::TrailActivateOutcome {
+        let owner_col = self.trail.active_col();
+        let outcome = self.trail_snapshots.move_selection(&mut self.trail, delta);
+        if outcome == trail_snapshots::TrailActivateOutcome::Rejected {
+            return outcome;
+        }
+        let Some(expected_path) = self
+            .trail
+            .cols()
+            .get(owner_col)
+            .and_then(|col| col.selected.clone())
+        else {
+            return trail_snapshots::TrailActivateOutcome::Rejected;
+        };
+        let Some(entry_index) = self
+            .trail_snapshots
+            .cols()
+            .get(owner_col)
+            .and_then(|snapshot| {
+                snapshot
+                    .entries()
+                    .iter()
+                    .position(|entry| entry.path == expected_path)
+            })
+        else {
+            return trail_snapshots::TrailActivateOutcome::Rejected;
+        };
+        if !self.install_trail_operation_projection(owner_col, entry_index, &expected_path) {
+            return trail_snapshots::TrailActivateOutcome::Rejected;
+        }
+        outcome
+    }
+
+    /// Re-activate the selected row in the active Trail column (Enter).
+    pub(crate) fn activate_selected_trail_entry(
+        &mut self,
+    ) -> trail_snapshots::TrailActivateOutcome {
+        let col_idx = self.trail.active_col();
+        let Some(expected_path) = self
+            .trail
+            .cols()
+            .get(col_idx)
+            .and_then(|col| col.selected.clone())
+        else {
+            return trail_snapshots::TrailActivateOutcome::Rejected;
+        };
+        let Some(entry_index) = self
+            .trail_snapshots
+            .cols()
+            .get(col_idx)
+            .and_then(|snapshot| {
+                snapshot
+                    .entries()
+                    .iter()
+                    .position(|entry| entry.path == expected_path)
+            })
+        else {
+            return trail_snapshots::TrailActivateOutcome::Rejected;
+        };
+        self.activate_trail_entry(col_idx, entry_index, &expected_path)
+    }
+
+    /// Move the shared keyboard/mouse focus to one exact live Trail column.
+    pub(crate) fn focus_trail_col(&mut self, col_idx: usize) -> bool {
+        self.trail.focus_col(col_idx)
+    }
+
+    /// Resolve one exact operation-supported path through the loaded Trail
+    /// snapshots. Ambiguous duplicate identities fail closed.
+    pub(crate) fn trail_entry_identity(&self, expected_path: &Path) -> Option<(usize, usize)> {
+        let mut matches =
+            self.trail_snapshots
+                .cols()
+                .iter()
+                .enumerate()
+                .flat_map(|(col_idx, snapshot)| {
+                    snapshot
+                        .entries()
+                        .iter()
+                        .enumerate()
+                        .filter(move |(_, entry)| {
+                            entry.operation_supported() && entry.path == expected_path
+                        })
+                        .map(move |(entry_idx, _)| (col_idx, entry_idx))
+                });
+        let matched = matches.next()?;
+        matches.next().is_none().then_some(matched)
+    }
+
+    /// Build a fresh LAW-5 trail for a sidebar/deep-link target. No first row
+    /// is selected implicitly; the caller receives None when the root itself
+    /// cannot be read.
+    pub(crate) fn open_trail_to(root: &Path, target: &Path, show_hidden: bool) -> Option<Self> {
+        let mut state = Self::with_hidden(root, show_hidden);
+        let mut snapshots = trail_snapshots::TrailSnapshots::new(show_hidden);
+        let trail = snapshots.open_trail_to(root, target)?;
+        state.trail = trail;
+        state.trail_snapshots = snapshots;
+        state.clear_multi_selection();
+        let selected = state.trail.selected_path().map(Path::to_path_buf);
+        if let Some(selected) = selected {
+            let col_idx = state
+                .trail
+                .cols()
+                .iter()
+                .rposition(|col| col.selected.as_deref() == Some(selected.as_path()))?;
+            let entry_index = state
+                .trail_snapshots
+                .cols()
+                .get(col_idx)?
+                .entries()
+                .iter()
+                .position(|entry| entry.path == selected)?;
+            if !state.install_trail_operation_projection(col_idx, entry_index, &selected) {
+                return None;
+            }
+        } else {
+            state.install_trail_projection_without_selection(0)?;
+        }
+        Some(state)
+    }
+
+    fn install_trail_operation_projection(
+        &mut self,
+        col_idx: usize,
+        entry_index: usize,
+        expected_path: &Path,
+    ) -> bool {
+        let Some(snapshot) = self.trail_snapshots.cols().get(col_idx) else {
+            return false;
+        };
+        if snapshot
+            .entries()
+            .get(entry_index)
+            .is_none_or(|entry| entry.path != expected_path)
+        {
+            return false;
+        }
+        let directory = snapshot.directory().to_path_buf();
+        let entries = snapshot.entries().to_vec();
+        let status = snapshot.status();
+        self.install_trail_projection(directory, entries, status, Some(entry_index));
+        true
+    }
+
+    fn install_trail_projection_without_selection(&mut self, col_idx: usize) -> Option<()> {
+        let snapshot = self.trail_snapshots.cols().get(col_idx)?;
+        let directory = snapshot.directory().to_path_buf();
+        let entries = snapshot.entries().to_vec();
+        let status = snapshot.status();
+        self.install_trail_projection(directory, entries, status, None);
+        Some(())
+    }
+
+    fn install_trail_projection(
+        &mut self,
+        directory: PathBuf,
+        entries: Vec<FileEntry>,
+        status: FmDirectoryStatus,
+        selected_index: Option<usize>,
+    ) {
+        self.cwd = directory;
+        self.entries = entries;
+        self.cwd_status = status;
+        self.cwd_writable =
+            status == FmDirectoryStatus::Available && directory_is_writable(&self.cwd);
+        self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
+        self.reconcile_multi_selection();
+        self.cursor = selected_index.unwrap_or(0);
+        self.clamp_cursor();
+        self.viewport_start = 0;
+        self.parent = self.read_parent_context();
+        self.preview_viewport_start = 0;
+        self.preview_generation = self.preview_generation.wrapping_add(1).max(1);
+        let generation = self.preview_generation;
+        self.preview = selected_index
+            .and_then(|index| self.entries.get(index))
+            .map(|entry| (entry.path.clone(), entry.is_dir()))
+            .map_or(FmPreview::None, |selected| {
+                prepare_preview(Some(selected), self.show_hidden, generation, None)
+            });
+    }
+
     /// Move the cursor down one row, stopping at the last entry.
     pub fn move_down(&mut self) {
         if self.cursor + 1 < self.entries.len() {
@@ -872,99 +1071,6 @@ impl FmState {
             self.refresh_preview();
         }
         true
-    }
-
-    /// Move one non-current Miller column's local vertical presentation state.
-    /// This performs no filesystem/runtime work and changes neither directory
-    /// nor preview generations. Invalid or stale identities are inert.
-    pub(crate) fn scroll_miller_column(
-        &mut self,
-        target: &miller::MillerColumnScrollTarget,
-        delta: i8,
-        visible_rows: usize,
-    ) -> bool {
-        if visible_rows == 0 {
-            return false;
-        }
-        match target {
-            miller::MillerColumnScrollTarget::Resident {
-                chain_index,
-                directory,
-                generation,
-            } => {
-                let Some(entry_count) = self
-                    .miller
-                    .resident_non_current
-                    .iter()
-                    .find(|projection| {
-                        projection.id.directory == *directory
-                            && projection.id.generation == *generation
-                    })
-                    .map(|projection| projection.entries.len())
-                else {
-                    return false;
-                };
-                let Some(segment) = self.miller.chain.get_mut(*chain_index) else {
-                    return false;
-                };
-                if segment.directory != *directory {
-                    return false;
-                }
-                scroll_miller_segment(segment, entry_count, delta, visible_rows)
-            }
-            miller::MillerColumnScrollTarget::PreparedParent {
-                chain_index,
-                directory,
-                generation,
-            } => {
-                if self.directory_generation != *generation
-                    || self.cwd.parent() != Some(directory.as_path())
-                {
-                    return false;
-                }
-                let Some(parent) = self.parent.as_mut() else {
-                    return false;
-                };
-                let entry_count = parent.entries.len();
-                let previous_cursor = parent.cursor.unwrap_or(0);
-                let cursor = stepped_miller_cursor(previous_cursor, entry_count, delta);
-                parent.cursor = (!parent.entries.is_empty()).then_some(cursor);
-                let Some(segment) = self.miller.chain.get_mut(*chain_index) else {
-                    return false;
-                };
-                if segment.directory != *directory {
-                    return false;
-                }
-                let previous = (segment.cursor, segment.viewport_start);
-                segment.cursor = cursor;
-                sync_miller_segment_viewport(segment, entry_count, visible_rows);
-                previous != (segment.cursor, segment.viewport_start)
-            }
-            miller::MillerColumnScrollTarget::Preview {
-                directory,
-                generation,
-            } => {
-                if self.preview_generation != *generation
-                    || self.selected().map(|entry| &entry.path) != Some(directory)
-                {
-                    return false;
-                }
-                let entry_count = match &self.preview {
-                    FmPreview::Directory(entries) => entries.len(),
-                    FmPreview::None | FmPreview::File(_) => return false,
-                };
-                let max_start = entry_count.saturating_sub(visible_rows);
-                let previous = self.preview_viewport_start;
-                self.preview_viewport_start = if delta < 0 {
-                    self.preview_viewport_start.saturating_sub(1)
-                } else if delta > 0 {
-                    self.preview_viewport_start.saturating_add(1).min(max_start)
-                } else {
-                    self.preview_viewport_start.min(max_start)
-                };
-                self.preview_viewport_start != previous
-            }
-        }
     }
 
     /// Path identities in the explicit multi-selection set. Cursor movement
@@ -1281,55 +1387,6 @@ fn current_refresh_cursor(request: &FmCurrentRefreshRequest, entries: &[FileEntr
         .and_then(|path| unique_entry_index(entries, path))
         .unwrap_or(request.fallback_cursor)
         .min(entries.len() - 1)
-}
-
-fn scroll_miller_segment(
-    segment: &mut miller::MillerPathSegment,
-    entry_count: usize,
-    delta: i8,
-    visible_rows: usize,
-) -> bool {
-    let previous = (segment.cursor, segment.viewport_start);
-    segment.cursor = stepped_miller_cursor(segment.cursor, entry_count, delta);
-    sync_miller_segment_viewport(segment, entry_count, visible_rows);
-    previous != (segment.cursor, segment.viewport_start)
-}
-
-fn stepped_miller_cursor(cursor: usize, entry_count: usize, delta: i8) -> usize {
-    if entry_count == 0 {
-        return 0;
-    }
-    if delta < 0 {
-        cursor.saturating_sub(1)
-    } else if delta > 0 {
-        cursor.saturating_add(1).min(entry_count - 1)
-    } else {
-        cursor.min(entry_count - 1)
-    }
-}
-
-fn sync_miller_segment_viewport(
-    segment: &mut miller::MillerPathSegment,
-    entry_count: usize,
-    visible_rows: usize,
-) {
-    if entry_count == 0 || visible_rows == 0 {
-        segment.cursor = 0;
-        segment.viewport_start = 0;
-        return;
-    }
-    segment.cursor = segment.cursor.min(entry_count - 1);
-    let max_start = entry_count.saturating_sub(visible_rows);
-    segment.viewport_start = segment.viewport_start.min(max_start);
-    if segment.cursor < segment.viewport_start {
-        segment.viewport_start = segment.cursor;
-    } else if segment.cursor >= segment.viewport_start.saturating_add(visible_rows) {
-        segment.viewport_start = segment
-            .cursor
-            .saturating_add(1)
-            .saturating_sub(visible_rows);
-    }
-    segment.viewport_start = segment.viewport_start.min(max_start);
 }
 
 #[cfg(test)]
