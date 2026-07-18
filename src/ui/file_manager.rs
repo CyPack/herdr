@@ -2599,7 +2599,7 @@ mod tests {
                 "Rename".to_string(),
                 "Delete".to_string(),
                 "Compress".to_string(),
-                "Send to Agent".to_string(),
+                "Add Reference to Agent...".to_string(),
             ]
         );
 

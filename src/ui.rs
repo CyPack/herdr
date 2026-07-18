@@ -2501,7 +2501,13 @@ mod tests {
         assert!(app.view.terminal_area.contains(context_rect.as_position()));
         let context = render_full_frame_for_test(&app, area);
         let context_text = buffer_rect_text(&context, context_rect);
-        for label in ["Open", "Copy", "Rename", "Delete", "Send to Agent"] {
+        for label in [
+            "Open",
+            "Copy",
+            "Rename",
+            "Delete",
+            "Add Reference to Agent...",
+        ] {
             assert!(context_text.contains(label), "context missing {label:?}");
         }
         assert_eq!(

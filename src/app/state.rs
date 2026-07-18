@@ -924,7 +924,7 @@ impl FileManagerContextMenuAction {
             Self::Rename => "Rename",
             Self::Delete => "Delete",
             Self::Compress => "Compress",
-            Self::SendAgent => "Send to Agent",
+            Self::SendAgent => "Add Reference to Agent...",
             Self::Plugin { action_id, .. } => action_id,
         }
     }
@@ -3792,7 +3792,7 @@ mod tests {
                 "Rename",
                 "Delete",
                 "Compress",
-                "Send to Agent",
+                "Add Reference to Agent...",
             ]
         );
         for action in [
@@ -3935,7 +3935,7 @@ mod tests {
                 "Rename",
                 "Delete",
                 "Compress",
-                "Send to Agent",
+                "Add Reference to Agent...",
             ]
         );
     }
