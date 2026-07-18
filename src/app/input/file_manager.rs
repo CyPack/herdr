@@ -597,9 +597,33 @@ impl App {
                 entry_path: area.entry_path.clone(),
             });
 
+        // Some terminal hosts report a horizontal trackpad/wheel gesture as
+        // an unmodified vertical wheel event. Preserve visible-row vertical
+        // navigation, but normalize the same event over empty live Trail
+        // column body into the existing fractional horizontal reducer.
+        let plain_wheel_over_empty_trail = trail_frame_is_live
+            && trail_row_target.is_none()
+            && mouse.modifiers.is_empty()
+            && matches!(
+                mouse.kind,
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+            )
+            && self
+                .state
+                .view
+                .file_manager_trail
+                .columns
+                .iter()
+                .any(|column| rect_contains(column.rect, mouse.column, mouse.row));
+        let horizontal_kind = match (mouse.kind, plain_wheel_over_empty_trail) {
+            (MouseEventKind::ScrollUp, true) => MouseEventKind::ScrollLeft,
+            (MouseEventKind::ScrollDown, true) => MouseEventKind::ScrollRight,
+            (kind, _) => kind,
+        };
+
         // Horizontal preference and divider transactions never override a
         // live Trail row identity.
-        if self.handle_miller_horizontal_scroll(mouse.kind, mouse.modifiers) {
+        if self.handle_miller_horizontal_scroll(horizontal_kind, mouse.modifiers) {
             return FileManagerMouseDispatch::Consumed;
         }
         if trail_row_target.is_none()
