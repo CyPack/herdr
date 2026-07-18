@@ -30,8 +30,12 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
   render_trail_view (her ata kolonda seçim vurgusu YASA-1, shared entry-row);
   aile 7/7, VIS-07/08 Chromium baseline (görsel suite 16/16), full
   3,512/3,512 + 2 skip, iki clippy temiz.
-- [ ] **TRAIL-T4** Girdi: klasör/ata-kardeş/dosya tık aileleri + klavye;
-  generation-safe hit'ler.
+- [x] **TRAIL-T4** Girdi (`42c95ee8` RED / `81ad452a` GREEN): trail_row_at
+  (projeksiyon rect'leri = tek hit otoritesi), activate_entry (klasör→branch,
+  dosya→mark, expected-path uyuşmazlığı→Rejected generation-safe),
+  move_selection (aktif kolonda klavye, tık semantiği), TrailState.active_col
+  (LAW-2 tek odak otoritesi, left/right clamp, transition-follow); aile 9 yeni
+  test, full 3,521/3,521 + 2 skip, iki clippy + görsel 16/16 temiz.
 - [ ] **TRAIL-T5** Resizable detay/önizleme paneli + VIS-09; FIP-D4
   (kitty graphics Ghostty) paralel iz.
 - [ ] **TRAIL-T6** Sidebar favorites → trail kurma (FIP-D1 kökten kapanır) + VIS-10.
