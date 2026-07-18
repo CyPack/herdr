@@ -3446,6 +3446,34 @@ mod tests {
         }
     }
 
+    // TP-FIP-ICON-10 / VIS-03 seam: entry rows honor the client-local icon
+    // profile so the deterministic ASCII fallback drives cross-machine
+    // visual fixtures (Nerd private-use glyphs render empty in the browser).
+    #[test]
+    fn entry_row_honors_ascii_icon_profile() {
+        use crate::fm::entry_kind::{FileEntryKind, IconProfile, VisualClass};
+        let mut app = crate::app::state::AppState::test_new();
+        app.file_icon_profile = IconProfile::Ascii;
+        let entry = crate::fm::FileEntry {
+            name: "main.rs".to_string(),
+            path: std::path::PathBuf::from("/x/main.rs"),
+            kind: FileEntryKind::RegularFile,
+        };
+        let backend = TestBackend::new(24, 1);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| {
+                render_entry_row(&app, frame, Rect::new(0, 0, 24, 1), &entry, false, false);
+            })
+            .expect("draw entry row");
+        let buffer = terminal.backend().buffer();
+        assert_eq!(
+            buffer[(1u16, 0u16)].symbol(),
+            VisualClass::SourceCode.glyph(IconProfile::Ascii),
+            "the icon cell must follow the app icon profile"
+        );
+    }
+
     // TP-FIP-ICON-08: a narrow column keeps the complete icon glyph and
     // truncates the name by display cells, never by bytes. Wide CJK cells
     // are asserted at glyph-start positions only (continuation cells skipped).

@@ -2128,6 +2128,11 @@ pub struct AppState {
     /// Closing the FM does not discard clipboard content; no filesystem work
     /// is performed merely by storing these paths.
     pub file_manager_clipboard: Vec<PathBuf>,
+    /// Client-local icon glyph profile for native-FM entry rows. `Nerd`
+    /// matches the sidebar/AppDock icon language; `Ascii` is the
+    /// deterministic no-font fallback and the canonical cross-machine
+    /// visual-fixture profile. Never persisted, never wire protocol.
+    pub file_icon_profile: crate::fm::entry_kind::IconProfile,
     /// Pure client-local projection of the App-owned bounded operation worker.
     /// Render/input consume this state but never perform filesystem work.
     pub file_manager_operation: Option<FileManagerOperationState>,
@@ -2615,6 +2620,7 @@ impl AppState {
             agent_attachment_picker: None,
             request_agent_attachment_delivery: None,
             file_manager_clipboard: Vec::new(),
+            file_icon_profile: crate::fm::entry_kind::IconProfile::Nerd,
             file_manager_operation: None,
             file_manager_delete_confirmation: None,
             file_manager_rename: None,

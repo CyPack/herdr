@@ -619,6 +619,7 @@ impl App {
             agent_attachment_picker: None,
             request_agent_attachment_delivery: None,
             file_manager_clipboard: Vec::new(),
+            file_icon_profile: crate::fm::entry_kind::IconProfile::Nerd,
             file_manager_operation: None,
             file_manager_delete_confirmation: None,
             file_manager_rename: None,
