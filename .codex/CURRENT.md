@@ -1,6 +1,6 @@
 # Current State — 2026-07-17
 
-> **CURRENT OVERRIDE — FMR-3 PREVIEW CAPABILITY MATRIX ACTIVE (2026-07-18).** The user
+> **CURRENT OVERRIDE — FMR-4/FMR-5 PLUGIN BOUNDARY ACTIVE (2026-07-18).** The user
 > reported invisible directory contents and inert Files-sidebar shortcuts,
 > requested a file preview/render and plugin-reference program, and asked that
 > recent scroll implementations be preserved side by side for later ranking.
@@ -26,8 +26,14 @@
 > collapsed, overlay, modifier, inaccessible, non-primary, and exactly-once
 > cases are covered. Fresh gates: Rust 3,521/3,521 + 2 skip, Chromium 21/21,
 > Linux/Windows clippy and fmt clean. Evidence:
-> `.codex/evidence/files-sidebar-mouse-runtime-matrix.md`. FMR-3 now defines
-> the file type preview/render capability matrix. Research and
+> `.codex/evidence/files-sidebar-mouse-runtime-matrix.md`. FMR-3 is closed
+> through `4c87a18f` RED / `ea75a269` GREEN / `b79b55f6` VIS-14. A pure
+> capability layer selects native text/image, metadata-only, optional-plugin
+> with bounded fallback, or explicit unsupported state without I/O or
+> navigation mutation. PDF/office/archive/media/binary no longer fall through
+> binary-as-text; VIS-14 shows the readable PDF metadata fallback. Fresh gates:
+> Rust 3,526/3,526 + 2 skip, Chromium 22/22, both clippy targets and fmt clean.
+> FMR-4/FMR-5 adoption verification and adapter boundary are next. Research and
 > the approved dependency plan are
 > `.codex/evidence/files-visibility-preview-plugin-research.md` and
 > `docs/superpowers/plans/2026-07-18-herdr-files-visibility-preview-plugin-integration.md`.

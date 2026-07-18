@@ -15,8 +15,9 @@ then the plan's Tasks 2-29 in order.
 Activated by the user's 2026-07-18 field report. Research:
 `.codex/evidence/files-visibility-preview-plugin-research.md`. Plan:
 `docs/superpowers/plans/2026-07-18-herdr-files-visibility-preview-plugin-integration.md`.
-FMR-1 and FMR-2 are closed with classified runtime matrices. The active focus
-is FMR-3: the file type preview/render capability matrix.
+FMR-1 through FMR-3 are closed with classified runtime and capability
+matrices. The active focus is FMR-4/FMR-5 adoption verification and the
+optional plugin adapter boundary.
 
 - [ ] **FMR-0 Scroll version lab and ranking.** Four reboot-safe source
   checkpoints are collected side by side under
@@ -59,15 +60,17 @@ is FMR-3: the file type preview/render capability matrix.
   - [x] Classify the plain-click live defect as executable drift; separately
     close the discovered modifier-authority leak without inventing new
     plain-click semantics.
-- [ ] **FMR-3 File type preview and render capability matrix.**
+- [x] **FMR-3 File type preview and render capability matrix.** Closed through
+  `4c87a18f` RED / `ea75a269` GREEN / `b79b55f6` VIS-14 baseline; evidence:
+  `.codex/evidence/files-preview-capability-test-points.md`.
   - [x] Inventory current native `Image` / bounded `Text` /
     `Unpreviewable(reason)` behavior.
-  - [ ] Define pure native text/image, metadata-only, optional-plugin, and
+  - [x] Define pure native text/image, metadata-only, optional-plugin, and
     unsupported capabilities for Markdown, PDF, office, archive, audio,
     video, binary, broken/special, oversized, control, and non-UTF-8 cases.
-  - [ ] Preserve generation cancellation, bounded work, escape sanitization,
+  - [x] Preserve generation cancellation, bounded work, escape sanitization,
     pure render, explicit fallback, and zero navigation/runtime mutation.
-  - [ ] Verify Rust semantics plus Playwright Chromium fixtures.
+  - [x] Verify Rust semantics plus Playwright Chromium VIS-14.
 - [ ] **FMR-4 Reference projects and plugin research.**
   - [x] Inspect `edmundmiller/herdr-plugin-hunk`: context/pane workflow
     reference, not a native Files preview provider; one commit, no release,

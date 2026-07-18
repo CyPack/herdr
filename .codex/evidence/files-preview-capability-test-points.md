@@ -20,3 +20,14 @@ Date: 2026-07-18
 The classifier consumes only prepared kind, exact path name/extension, and an
 injected provider set. It performs no filesystem/config/PATH lookup, process
 spawn, socket access, or navigation mutation.
+
+## Closure
+
+- TDD: `4c87a18f` RED, `ea75a269` GREEN.
+- Readable metadata fallback: `b61e719b`.
+- VIS-14 oracle/baseline: `5d917b5d` / `b79b55f6`.
+- Rust: 3,526/3,526 PASS, 2 skipped.
+- Linux and Windows clippy: clean.
+- Playwright Chromium: 22/22 PASS; Trail + mutation subset 9/9.
+- VIS-14 was visually inspected: exact PDF selection, preserved Trail columns,
+  and full `metadata only` / `optional document viewer` status are visible.

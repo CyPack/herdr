@@ -4,7 +4,7 @@ Updated: 2026-07-18 CEST
 
 ## 0. SONRAKI ADIM — TEK AKTİF İŞ
 
-**CURRENT OVERRIDE — FMR-3 ACTIVE.** Kullanıcının reboot sonrası kaybolmuş
+**CURRENT OVERRIDE — FMR-4/FMR-5 ACTIVE.** Kullanıcının reboot sonrası kaybolmuş
 görünen scroll/sidebar davranışı için Git ve runtime provenance doğrulandı:
 HEAD ve iki CyPack ref'i `6a972703`; commitler kalıcı. Ancak normal
 `/home/ayaz/.local/bin/herdr` 2026-07-12 tarihli, mevcut
@@ -25,8 +25,13 @@ bulunan modifier-authority sızıntısı yalnız plain primary press kabul edile
 kapatıldı. Stale, collapsed, overlay, modifier, inaccessible, non-primary,
 generation ve exactly-once aileleri yeşil. Fresh kapılar: Rust 3,521/3,521 + 2
 skip, Chromium 21/21, iki clippy ve fmt temiz. Kanıt:
-`.codex/evidence/files-sidebar-mouse-runtime-matrix.md`. Aktif iş FMR-3 file
-type preview/render capability matrixidir.
+`.codex/evidence/files-sidebar-mouse-runtime-matrix.md`. FMR-3 de `4c87a18f`
+RED / `ea75a269` GREEN / `b79b55f6` VIS-14 ile KAPANDI: pure capability
+katmanı native text/image, metadata-only, optional-plugin bounded fallback ve
+unsupported kararlarını I/O/navigation mutation olmadan hazırlıyor.
+PDF/office/archive/media/binary binary-as-text'e düşmüyor. Fresh kapılar Rust
+3,526/3,526 + 2 skip, Chromium 22/22, iki clippy ve fmt temiz. Aktif iş
+FMR-4/FMR-5 adoption verification + optional plugin adapter sınırıdır.
 Araştırma:
 `.codex/evidence/files-visibility-preview-plugin-research.md`. Plan:
 `docs/superpowers/plans/2026-07-18-herdr-files-visibility-preview-plugin-integration.md`.
@@ -525,13 +530,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 11 ve
-89, toplam 100 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 10 ve
+89, toplam 99 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 11 unchecked
+### Source: `.codex/TASKS.md` — 10 unchecked
 
 - [ ] **FMR-0 Scroll version lab and ranking.** Four reboot-safe source
   checkpoints are collected side by side under
@@ -544,16 +549,6 @@ sayar ve exact diff yapar.
     Chromium, complexity, and rollback matrix across all four versions.
   - [ ] Rank from raw evidence and select/reject a production candidate;
     recency alone cannot win.
-
-- [ ] **FMR-3 File type preview and render capability matrix.**
-  - [x] Inventory current native `Image` / bounded `Text` /
-    `Unpreviewable(reason)` behavior.
-  - [ ] Define pure native text/image, metadata-only, optional-plugin, and
-    unsupported capabilities for Markdown, PDF, office, archive, audio,
-    video, binary, broken/special, oversized, control, and non-UTF-8 cases.
-  - [ ] Preserve generation cancellation, bounded work, escape sanitization,
-    pure render, explicit fallback, and zero navigation/runtime mutation.
-  - [ ] Verify Rust semantics plus Playwright Chromium fixtures.
 
 - [ ] **FMR-4 Reference projects and plugin research.**
   - [x] Inspect `edmundmiller/herdr-plugin-hunk`: context/pane workflow
