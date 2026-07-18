@@ -136,6 +136,21 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
     Linux+Windows clippy, maintenance 68/68, Bun 5/5 + 12/12,
     fmt/diff/unwrap/source audit temiz; graph 21,296/98,085 ready; CyPack
     `feat/native-fm`+`master` `26da2437` SHA eşitliğiyle FF yayımlandı.
+- [ ] **TRAIL-T7.9** Modifier'sız wheel canlı terminal fallback forward-fix'i:
+  `docs/superpowers/specs/2026-07-18-herdr-miller-plain-wheel-scroll-forward-fix.md`.
+  İzole debug logu kullanıcının hareketini 318 kez `ScrollUp/ScrollDown +
+  NONE` olarak parse etti; native yatay/Shift olay sayısı sıfır. Satır
+  üzerindeki düz wheel dikey seçim otoritesini korurken, canlı Trail kolonunun
+  boş gövdesindeki düz wheel mevcut 1/3-kolon yatay reducer'ına düşecek.
+  Detail/header/outside/stale/tek-kolon davranışı fail-closed kalacak.
+  - [ ] **T7.9.1 RED** Canlı boş kolon gövdesindeki modifier'sız wheel olayını
+    exact fractional offset beklentisiyle yeniden üret.
+  - [ ] **T7.9.2 GREEN** Immutable Trail geometri otoritesinden boş-kolon
+    fallback hedefi çıkar ve mevcut yatay reducer'a bağla.
+  - [ ] **T7.9.3 REGRESSION** Görünür satır wheel dikey seçimini, native
+    horizontal/Shift yönlerini, stale/outside/tek-kolon sınırlarını doğrula.
+  - [ ] **T7.9.4 GATES** Full Rust, iki Clippy, Playwright Chromium,
+    maintenance, fmt/diff/source audit, continuity, graph ve CyPack FF yayını.
 
 ### FIP-D — Saha Kusurları (2026-07-18 canlı ekran kanıtı, kullanıcı raporu)
 
