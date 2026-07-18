@@ -51,9 +51,29 @@ impl TrailSnapshots {
     }
 
     /// Realign with the trail: keep a cached snapshot only when the same
-    /// index still lists the same directory, otherwise load it fresh.
+    /// index still lists the same directory, otherwise load it fresh. This
+    /// single pass covers append, truncate, and the sliding-window drop.
     pub(crate) fn sync(&mut self, trail: &TrailState) {
-        let _ = trail;
+        let cols = trail.cols();
+        self.cols.truncate(cols.len());
+        for (idx, col) in cols.iter().enumerate() {
+            let cached = self
+                .cols
+                .get(idx)
+                .is_some_and(|snap| snap.directory == col.directory);
+            if cached {
+                continue;
+            }
+            let loaded = TrailColSnapshot {
+                snapshot: read_directory_snapshot(&col.directory, self.show_hidden),
+                directory: col.directory.clone(),
+            };
+            if idx < self.cols.len() {
+                self.cols[idx] = loaded;
+            } else {
+                self.cols.push(loaded);
+            }
+        }
     }
 
     /// Fail-closed folder selection: read the target first; branch the trail
@@ -65,15 +85,40 @@ impl TrailSnapshots {
         col_idx: usize,
         child: &Path,
     ) -> FmDirectoryStatus {
-        let _ = (trail, col_idx, child);
-        FmDirectoryStatus::Unavailable
+        if col_idx >= trail.cols().len() {
+            return FmDirectoryStatus::Unavailable;
+        }
+        let snapshot = read_directory_snapshot(child, self.show_hidden);
+        if snapshot.status != FmDirectoryStatus::Available {
+            return snapshot.status;
+        }
+        if !trail.select_dir(col_idx, child) {
+            return FmDirectoryStatus::Unavailable;
+        }
+        // Mirror the trail transition exactly: truncate to the branch point,
+        // append the pre-read column, then realign for the sliding window.
+        self.cols.truncate(col_idx + 1);
+        self.cols.push(TrailColSnapshot {
+            snapshot,
+            directory: child.to_path_buf(),
+        });
+        if self.cols.len() > trail.cols().len() {
+            self.cols.remove(0);
+        }
+        self.sync(trail);
+        FmDirectoryStatus::Available
     }
 
     /// Re-read one column from disk (watcher refresh path). Selection lives
-    /// in the trail as an exact path and is never touched here.
+    /// in the trail as an exact path and is never touched here. The column
+    /// keeps its explicit status even when the directory disappeared —
+    /// honest state, never a silent placeholder.
     pub(crate) fn refresh_col(&mut self, col_idx: usize) -> bool {
-        let _ = col_idx;
-        false
+        let Some(col) = self.cols.get_mut(col_idx) else {
+            return false;
+        };
+        col.snapshot = read_directory_snapshot(&col.directory, self.show_hidden);
+        true
     }
 }
 
