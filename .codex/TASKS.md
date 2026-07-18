@@ -43,7 +43,13 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
   sağda klamplı side-panel (overlay değil, kolonlar görünür kalır), bordered
   başlık=dosya adı; VIS-09 baseline (görsel 17/17), full 3,528/3,528 + 2
   skip, iki clippy temiz. NOT: kitty pixel delivery FIP-D4 izi AÇIK.
-- [ ] **TRAIL-T6** Sidebar favorites → trail kurma (FIP-D1 kökten kapanır) + VIS-10.
+- [x] **TRAIL-T6** Sidebar→trail kurma (`0a9189fc` RED / `c8e5dd4d` GREEN):
+  `open_trail_to(root, target)` — fail-closed kök, ancestor zinciri
+  activate_entry ile inilir (dizin→kolon, dosya→seçim+detail), kök-dışı
+  target köke düşer, okunamaz orta bileşen dürüst kısmi iniş; aile 6 yeni
+  test, VIS-10 baseline (görsel 18/18), full 3,534/3,534 + 2 skip, iki
+  clippy temiz. NOT: canlı sidebar tıkının bu seam'e BAĞLANMASI T7
+  entegrasyonunda — FIP-D1 ürün-düzeyi kapanışı orada doğrulanır.
 - [ ] **TRAIL-T7** Eski parent/current/resident modelinin characterized sökümü
   ("(unavailable)" grep=0) + tüm gate'ler + yayın.
 

@@ -92,10 +92,14 @@ move_selection klavyesi, TrailState.active_col LAW-2 odak; full
 TrailDetail activate-anı hazırlık, Text/Image/Unpreviewable açık durumlar,
 klasör aktivasyonu paneli kapatır, sağ klamplı side-panel + bordered
 render; VIS-09 baseline, görsel 17/17, full 3,528/3,528 + 2 skip). Saha
-kusurları: FIP-D2 kapalı (agentless toast), FIP-D1 (sidebar favorites
-ölü) T6'da, FIP-D3 trail kontratıyla süperseed, FIP-D4 (Ghostty foto
-önizleme kitty pixel delivery) AÇIK iz. SIRADAKİ: TRAIL-T6 (sidebar
-favorites → trail kurma + VIS-10; FIP-D1 kökten kapanır).
+kusurları: FIP-D2 kapalı (agentless toast), FIP-D3 trail kontratıyla
+süperseed, FIP-D4 (kitty pixel delivery) AÇIK iz. T6 KAPANDI (`0a9189fc`
+RED / `c8e5dd4d` GREEN — open_trail_to deep-link kurucusu: fail-closed
+kök, ancestor zinciri, kök-dışı fallback, dürüst kısmi iniş; VIS-10
+baseline, görsel 18/18, full 3,534/3,534 + 2 skip). FIP-D1'in ÜRÜN-düzeyi
+kapanışı T7 entegrasyonunda (canlı sidebar tıkı bu seam'e bağlanınca).
+SIRADAKİ: TRAIL-T7 (eski parent/current/resident modelinin characterized
+sökümü + entegrasyon + "(unavailable)" grep=0 + gate'ler + yayın).
 Sonrası: FIP-5 picker, kullanıcı direktifi custom-layout programı. FIP-3 TAMAMEN KAPANDI (2026-07-18): 3.4 characterized migration
 (`bcecfdc8` — FileEntry alanları kind-türevi metodlara döndü, çifte symlink
 stat kalktı, 3-kategori grep 0 kalıntı); 3.7 icon edge ailesi (`91e33f6f` RED
@@ -419,15 +423,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 12 ve
-89, toplam 101 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 11 ve
+89, toplam 100 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 12 unchecked
-
-- [ ] **TRAIL-T6** Sidebar favorites → trail kurma (FIP-D1 kökten kapanır) + VIS-10.
+### Source: `.codex/TASKS.md` — 11 unchecked
 
 - [ ] **TRAIL-T7** Eski parent/current/resident modelinin characterized sökümü
   ("(unavailable)" grep=0) + tüm gate'ler + yayın.
