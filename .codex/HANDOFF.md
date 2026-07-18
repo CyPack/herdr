@@ -46,7 +46,16 @@ Claude split makinesi TAMAMEN silindi: −594 satır, FileManagerClaudeSplitRequ
 tipi + state alanı + launch/complete/rollback/sync + eski-davranış testleri;
 M1 attachment picker ve normal pane split'leri korunuyor); 4.7 (`94a4cd96` —
 REF-08/09/10 vanished-workspace/changed-terminal/exactly-once ailesi, ürün
-değişikliği gerekmedi). Full 3,482/3,482 + 2 skip; iki Clippy hedefi temiz.
+değişikliği gerekmedi). FIP-5.1/5.2 de KAPANDI (`b515e293` RED / `2a3a7946`
+GREEN): AgentReferencePicker modeli + blocking Mode::AgentReferencePicker +
+AgentReferenceRequest (path+files_generation+workspace+pane+terminal) tipiyle
+genişletilen delivery slotu; reference action artık canlı agents
+projeksiyonundan picker açıyor (focused agent ilk + preselected), explicit
+aktivasyon tam kimlik snapshot'lıyor, send seam FOCUSED değil SEÇİLEN pane
+binding'ini doğruluyor; eski focus-türevi testler yeni kontrata yeniden
+yazıldı. Full 3,485/3,485 + 2 skip; iki Clippy hedefi temiz. Kalan FIP-5:
+5.3/5.4 popup ownership (render+keyboard/mouse+outside-click), 5.5/5.6 target
+disappearance, 5.7 copy rename, 5.8 VIS-05/06.
 Sonrası: FIP-5 picker, kullanıcı direktifi custom-layout programı. FIP-3 TAMAMEN KAPANDI (2026-07-18): 3.4 characterized migration
 (`bcecfdc8` — FileEntry alanları kind-türevi metodlara döndü, çifte symlink
 stat kalktı, 3-kategori grep 0 kalıntı); 3.7 icon edge ailesi (`91e33f6f` RED
@@ -86,12 +95,12 @@ drag-and-drop kapsam dışı.
 - Eski SF0-SF6 + FM1-FM5 programı tamam ve yayınlıdır; yeniden uygulanmaz.
 - Yeni aktif program Files Interaction Polish’tir.
 - Açık görev envanteri (FIP-4 kapanışı sonrası, 2026-07-18):
-  - `.codex/TASKS.md`: 20
+  - `.codex/TASKS.md`: 18
   - `.codex/CHANGE-PIPELINE-TASKS.md`: 89
-  - toplam: 109
-- Sadece FIP-5.1 in-progress yapılabilir; diğer 108 görev pending/paused kalır.
+  - toplam: 107
+- Sadece FIP-5.3 in-progress yapılabilir; diğer 106 görev pending/paused kalır.
 - Fresh continuity gates (2026-07-18 planning-gate closure):
-  - exact task copy 109/109 (FIP-4 kapanışı sonrası);
+  - exact task copy 107/107 (FIP-5.1/5.2 sonrası);
   - 57 unique `TP-FIP-*` (fresh deterministic count; the earlier "55" excluded
     the two E2E IDs — all 57 are mapped in the implementation plan);
   - Nextest run `4da2ee18-b784-4c38-aaab-98a2e8787511`,
@@ -370,13 +379,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 20 ve
-89, toplam 109’dur. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 18 ve
+89, toplam 107’dur. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 20 unchecked
+### Source: `.codex/TASKS.md` — 18 unchecked
 
 - [ ] **FIP-1.6** Add Playwright `TP-FIP-VIS-01` plus isolated real-mouse
   `TP-FIP-E2E-01` evidence without touching the stable Herdr socket.
@@ -384,12 +393,6 @@ sayar ve exact diff yapar.
   fixtures, both stage snapshots approved, visual suite 9/9). The isolated
   real-mouse `TP-FIP-E2E-01` smoke is explicitly deferred to the FIP-6.3
   closure run on the final build; do not claim it before that run.
-
-- [ ] **FIP-5.1 RED** Pin that `Add Reference to Agent...` opens a picker from
-  the existing live Agents projection.
-
-- [ ] **FIP-5.2 GREEN** Project current chat first/preselected when live and
-  every other live agent exactly once with stable identities.
 
 - [ ] **FIP-5.3 RED** Pin keyboard, mouse, overlay ownership, outside-click,
   Escape, disabled row, and cancel paths.

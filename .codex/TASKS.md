@@ -117,9 +117,9 @@ then the plan's Tasks 2-29 in order.
 
 ### FIP-5 — Explicit Agent Target Picker
 
-- [ ] **FIP-5.1 RED** Pin that `Add Reference to Agent...` opens a picker from
+- [x] **FIP-5.1 RED** Pin that `Add Reference to Agent...` opens a picker from
   the existing live Agents projection.
-- [ ] **FIP-5.2 GREEN** Project current chat first/preselected when live and
+- [x] **FIP-5.2 GREEN** Project current chat first/preselected when live and
   every other live agent exactly once with stable identities.
 - [ ] **FIP-5.3 RED** Pin keyboard, mouse, overlay ownership, outside-click,
   Escape, disabled row, and cancel paths.
