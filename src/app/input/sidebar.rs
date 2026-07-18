@@ -2477,6 +2477,104 @@ mod tests {
         );
     }
 
+    #[test]
+    fn sidebar_shortcut_mouse_non_primary_and_inaccessible_rows_are_inert() {
+        use crate::app::state::{
+            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
+        };
+
+        let path = std::path::PathBuf::from("/home/a");
+        let item = |accessible| FileManagerSidebarItem {
+            label: "Home".into(),
+            path: path.clone(),
+            icon: FileManagerSidebarIcon::Home,
+            accessible,
+            ejectable: false,
+        };
+        let mut app = app_for_mouse_test();
+        app.state.sidebar_tab = SidebarTab::Files;
+        app.state.file_manager_sidebar =
+            FileManagerSidebarModel::from_sources(vec![item(false)], Vec::new(), Vec::new());
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let row = app.state.view.file_manager_sidebar_row_areas[0].clone();
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            row.rect.x,
+            row.rect.y,
+        ));
+        assert!(
+            app.state.request_file_manager_sidebar_navigation.is_none(),
+            "inaccessible current-model rows fail closed"
+        );
+
+        app.state.file_manager_sidebar =
+            FileManagerSidebarModel::from_sources(vec![item(true)], Vec::new(), Vec::new());
+        for kind in [
+            MouseEventKind::Down(MouseButton::Middle),
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            app.handle_mouse(mouse(kind, row.rect.x, row.rect.y));
+            assert!(
+                app.state.request_file_manager_sidebar_navigation.is_none(),
+                "{kind:?} cannot authorize shortcut navigation"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sidebar_shortcut_mouse_symlink_directory_loads_exact_trail() {
+        use crate::app::state::{
+            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
+        };
+
+        let root = unique_temp_path("sidebar-shortcut-symlink-e2e");
+        let initial = root.join("initial");
+        let target = root.join("target");
+        let link = root.join("linked-target");
+        fs::create_dir_all(&initial).expect("create initial directory");
+        fs::create_dir_all(&target).expect("create target directory");
+        fs::write(target.join("inside.txt"), b"inside").expect("write target entry");
+        std::os::unix::fs::symlink(&target, &link).expect("create directory symlink");
+
+        let mut app = app_for_mouse_test();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
+            .expect("open initial Files instance");
+        app.state.sidebar_tab = SidebarTab::Files;
+        app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+            Vec::new(),
+            vec![FileManagerSidebarItem {
+                label: "Linked".into(),
+                path: link.clone(),
+                icon: FileManagerSidebarIcon::Pin,
+                accessible: true,
+                ejectable: false,
+            }],
+            Vec::new(),
+        );
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let row = app.state.view.file_manager_sidebar_row_areas[0].clone();
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            row.rect.x,
+            row.rect.y,
+        ));
+        assert!(app.handle_scheduled_tasks(std::time::Instant::now(), false));
+
+        let file_manager = app.state.file_manager.as_ref().expect("loaded Files state");
+        assert_eq!(file_manager.cwd, link);
+        assert_eq!(file_manager.trail.cols()[0].directory, link);
+        assert!(file_manager.trail_snapshots.cols()[0]
+            .entries()
+            .iter()
+            .any(|entry| entry.name == "inside.txt"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     // TP-C6.1-GEOMETRY/NAV: cached geometry cannot authorize a path after the
     // prepared model changes underneath it.
     #[test]
