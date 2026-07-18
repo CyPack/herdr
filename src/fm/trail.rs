@@ -52,14 +52,35 @@ impl TrailState {
     /// LAW 1: selecting a FOLDER in column `col_idx` truncates every deeper
     /// column, marks the selection, and appends one new column listing the
     /// selected folder. Returns false (no change) for an out-of-range column.
-    pub(crate) fn select_dir(&mut self, _col_idx: usize, _child: &Path) -> bool {
-        false
+    pub(crate) fn select_dir(&mut self, col_idx: usize, child: &Path) -> bool {
+        if !self.mark_selection(col_idx, child) {
+            return false;
+        }
+        self.cols.push(TrailCol {
+            directory: child.to_path_buf(),
+            selected: None,
+        });
+        if self.cols.len() > MAX_TRAIL_DEPTH {
+            self.cols.remove(0);
+        }
+        true
     }
 
     /// LAW 1: selecting a FILE truncates deeper columns and marks the
     /// selection but NEVER appends a column (the detail panel owns files).
-    pub(crate) fn select_file(&mut self, _col_idx: usize, _child: &Path) -> bool {
-        false
+    pub(crate) fn select_file(&mut self, col_idx: usize, child: &Path) -> bool {
+        self.mark_selection(col_idx, child)
+    }
+
+    /// Shared truncate-and-mark step: cut every column deeper than
+    /// `col_idx`, then record the exact selected child path.
+    fn mark_selection(&mut self, col_idx: usize, child: &Path) -> bool {
+        if col_idx >= self.cols.len() {
+            return false;
+        }
+        self.cols.truncate(col_idx + 1);
+        self.cols[col_idx].selected = Some(child.to_path_buf());
+        true
     }
 }
 
