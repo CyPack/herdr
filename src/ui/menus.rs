@@ -337,6 +337,49 @@ pub(super) fn render_context_menu(app: &AppState, frame: &mut Frame) {
     frame.render_stateful_widget(list, inner, &mut state);
 }
 
+/// Render the blocking "Add Reference to Agent..." picker. Geometry comes
+/// from the same pure AppState helpers the mouse hit-testing uses, so the
+/// painted rows and the clickable rows can never drift apart.
+pub(super) fn render_agent_reference_picker(app: &AppState, frame: &mut Frame) {
+    let Some(picker) = app.agent_reference_picker.as_ref() else {
+        return;
+    };
+    let Some(popup) = app.agent_reference_picker_popup_rect() else {
+        return;
+    };
+    let p = &app.palette;
+    if render_panel_shell(frame, popup, p.accent, p.panel_bg).is_none() {
+        return;
+    }
+    let header = Rect::new(popup.x + 1, popup.y + 1, popup.width.saturating_sub(2), 1);
+    frame.render_widget(
+        Paragraph::new("Add Reference to Agent...")
+            .style(Style::default().fg(p.text).add_modifier(Modifier::BOLD)),
+        header,
+    );
+    for (idx, (row, rect)) in picker
+        .rows
+        .iter()
+        .zip(app.agent_reference_picker_row_hit_areas())
+        .enumerate()
+    {
+        let marker = if idx == picker.selected { ">" } else { " " };
+        let current = if row.is_current { " (current)" } else { "" };
+        let label = crate::ui::text::truncate_end(
+            &format!("{marker} {}{current}", row.label),
+            rect.width as usize,
+        );
+        let style = if !row.live {
+            Style::default().fg(p.overlay0)
+        } else if idx == picker.selected {
+            Style::default().bg(p.surface1).fg(p.text)
+        } else {
+            Style::default().fg(p.subtext0)
+        };
+        frame.render_widget(Paragraph::new(label).style(style), rect);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

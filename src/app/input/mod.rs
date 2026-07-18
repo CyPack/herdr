@@ -608,6 +608,9 @@ impl App {
                         self.apply_rename_mouse_action_via_api(action)
                     }
                     MouseAction::ConfirmCloseAccept => self.confirm_close_accept_via_api(),
+                    MouseAction::AgentReferencePickerActivate => {
+                        let _ = self.activate_agent_reference_picker_selection();
+                    }
                     MouseAction::ContextMenu { menu, idx } => {
                         self.apply_context_menu_action_via_api(menu, idx)
                     }

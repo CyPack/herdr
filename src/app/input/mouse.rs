@@ -26,6 +26,7 @@ use super::{
 };
 
 pub(super) enum MouseAction {
+    AgentReferencePickerActivate,
     Settings(SettingsAction),
     FocusWorkspace {
         ws_idx: usize,
@@ -188,6 +189,40 @@ impl AppState {
             && mouse.row < sidebar.y + sidebar.height;
 
         if self.handle_right_click_passthrough(terminal_runtimes, mouse, in_sidebar) {
+            return None;
+        }
+
+        // The agent reference picker is a topmost blocking overlay: a row
+        // click selects and activates that exact row, an outside click
+        // closes with zero bytes, and every other gesture is consumed
+        // fail-closed (TP-FIP-REF-15).
+        if self.mode == Mode::AgentReferencePicker {
+            if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                if let Some(idx) = self.agent_reference_picker_row_at(mouse.column, mouse.row) {
+                    let enabled = self
+                        .agent_reference_picker
+                        .as_ref()
+                        .is_some_and(|picker| picker.rows.get(idx).is_some_and(|row| row.live));
+                    if enabled {
+                        if let Some(picker) = self.agent_reference_picker.as_mut() {
+                            picker.selected = idx;
+                        }
+                        return Some(MouseAction::AgentReferencePickerActivate);
+                    }
+                    return None;
+                }
+                let inside_popup = self
+                    .agent_reference_picker_popup_rect()
+                    .is_some_and(|popup| {
+                        mouse.column >= popup.x
+                            && mouse.column < popup.right()
+                            && mouse.row >= popup.y
+                            && mouse.row < popup.bottom()
+                    });
+                if !inside_popup {
+                    self.close_agent_reference_picker();
+                }
+            }
             return None;
         }
 

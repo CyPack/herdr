@@ -250,6 +250,18 @@ impl crate::app::App {
             crossterm::event::KeyCode::Enter => {
                 let _ = self.activate_agent_reference_picker_selection();
             }
+            crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
+                if let Some(picker) = self.state.agent_reference_picker.as_mut() {
+                    picker.selected = picker.selected.saturating_sub(1);
+                }
+            }
+            crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
+                if let Some(picker) = self.state.agent_reference_picker.as_mut() {
+                    if picker.selected.saturating_add(1) < picker.rows.len() {
+                        picker.selected += 1;
+                    }
+                }
+            }
             _ => {}
         }
     }
