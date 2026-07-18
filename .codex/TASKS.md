@@ -71,7 +71,14 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
   durumları trail detail panelinde korunur; VIS-01..06 kasıtlı Trail
   baseline'ları Chromium'da mutation kanıtıyla yenilendi. Full 3,545/3,545 +
   2 skip, Chromium 18/18, iki clippy, Python 64/64, Bun 5/5 + 12/12 temiz.
-  SIRADAKİ: T7.4 girdi swap + FIP-D1 canlı kapanış.
+  T7.4 girdi swap + FIP-D1 KAPANDI (`4cf63908` RED / `0f775b83` GREEN):
+  mouse/klavye/sidebar/row-action/right-click otoritesi generation-bound
+  Trail geometrisine taşındı; ancestor rebranch, exact path/index,
+  stale-frame, bulk tavanı ve 10.000 aksiyon invariants'ı kanıtlandı; Native
+  Files legacy navigation/double-click/non-current-scroll seam'leri
+  kaldırıldı. Final gate: full 3,552/3,552 + 2 skip, Chromium 18/18,
+  Linux+Windows clippy `-D warnings`, Python 64/64, Bun 5/5 + 12/12,
+  fmt/diff/unwrap temiz. SIRADAKİ: T7.5 watcher+kitty/FIP-D4.
   (T7.1 characterization → T7.2 FmState köprüsü → T7.3 render swap →
   T7.4 girdi swap + FIP-D1 canlı kapanış → T7.5 watcher+kitty/FIP-D4 →
   T7.6 söküm+kapanış; yüzey haritası satır sayılarıyla planda).
@@ -81,12 +88,12 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
 - [x] **FIP-D2** Agentless reference SESSİZ no-op → görünür hata toast'ı
   (`84dea7b8` RED / `8fe128c4` GREEN: "no live agent to receive references";
   sıfır byte, picker açılmaz). KAPALI.
-- [ ] **FIP-D1** Files-tab sidebar öğeleri (FAVORITES Home/Desktop/…, LOCATIONS
-  Root) tıklanınca navigasyon YOK. Rota kodda mevcut: mouse.rs:621-635
-  `file_manager_sidebar_path_at` → `request_file_manager_sidebar_navigation` →
-  `sync_file_manager_sidebar_navigation`. Kopukluk hit-area üretimi veya
-  consumer guard'ında — canlıda repro + iz sürme gerekli (E2E harness'ı
-  düzelince orada; alternatif: hit-area birim karakterizasyonu).
+- [x] **FIP-D1** Files-tab sidebar öğeleri (FAVORITES Home/Desktop/…, LOCATIONS
+  Root) Trail navigasyonuna bağlandı (`4cf63908` RED / `0f775b83` GREEN):
+  mevcut hit-area/request zinciri App filesystem boundary'sinde fresh
+  `open_trail_to(path,path,show_hidden)` kurar, Files instance generation'ını
+  korur; missing/inaccessible/stale hedef atomik inert kalır. Mouse hit +
+  watcher/sidebar birim aileleri ve full suite yeşil. KAPALI.
 - [ ] **FIP-D3** Miller navigasyonu TRAIL modeline yeniden kurulacak — kullanıcı
   kanonik referansı verdi: circet-miller (`CircetMillerSection.tsx`, canlı
   `127.0.0.1:8771/p/circet-miller`). Yasa: kolonlar kökten birikir, her görünür

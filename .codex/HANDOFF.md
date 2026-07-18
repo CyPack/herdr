@@ -120,7 +120,14 @@ Pending/Loading/Unavailable durumları Trail detail panelinde görünür kalır.
 VIS-01..06 kasıtlı Trail baseline değişimleri ham mutation fail'i + gözle
 inceleme + spec-scoped update ile onaylandı. Taze gate: full 3,545/3,545 + 2
 skip, Chromium 18/18, Linux+Windows clippy, Python 64/64, Bun 5/5 + 12/12,
-fmt/diff/unwrap taraması temiz. SIRADAKİ: TRAIL-T7.4 girdi swap + FIP-D1.
+fmt/diff/unwrap taraması temiz. TRAIL-T7.4 + FIP-D1 KAPANDI (`4cf63908` RED /
+`0f775b83` GREEN): generation-bound Trail frame mouse/klavye/sidebar,
+row-action ve right-click otoritesi; ancestor rebranch, exact path/index,
+stale-frame ve atomic bulk tavanı; Native Files legacy navigation,
+double-click ve non-current scroll seam'leri kaldırıldı. Taze gate: full
+3,552/3,552 + 2 skip, Chromium 18/18, Linux+Windows clippy `-D warnings`,
+Python 64/64, Bun 5/5 + 12/12, fmt/diff/unwrap temiz. SIRADAKİ:
+TRAIL-T7.5 watcher+kitty/FIP-D4.
 Sonrası: FIP-5 picker, kullanıcı direktifi custom-layout programı. FIP-3 TAMAMEN KAPANDI (2026-07-18): 3.4 characterized migration
 (`bcecfdc8` — FileEntry alanları kind-türevi metodlara döndü, çifte symlink
 stat kalktı, 3-kategori grep 0 kalıntı); 3.7 icon edge ailesi (`91e33f6f` RED
@@ -444,13 +451,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 11 ve
-89, toplam 100 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 10 ve
+89, toplam 99 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 11 unchecked
+### Source: `.codex/TASKS.md` — 10 unchecked
 
 - [ ] **TRAIL-T7** Eski parent/current/resident modelinin characterized sökümü
   ("(unavailable)" grep=0) + tüm gate'ler + yayın. CERRAHİ PLAN HAZIR:
@@ -473,17 +480,17 @@ sayar ve exact diff yapar.
   durumları trail detail panelinde korunur; VIS-01..06 kasıtlı Trail
   baseline'ları Chromium'da mutation kanıtıyla yenilendi. Full 3,545/3,545 +
   2 skip, Chromium 18/18, iki clippy, Python 64/64, Bun 5/5 + 12/12 temiz.
-  SIRADAKİ: T7.4 girdi swap + FIP-D1 canlı kapanış.
+  T7.4 girdi swap + FIP-D1 KAPANDI (`4cf63908` RED / `0f775b83` GREEN):
+  mouse/klavye/sidebar/row-action/right-click otoritesi generation-bound
+  Trail geometrisine taşındı; ancestor rebranch, exact path/index,
+  stale-frame, bulk tavanı ve 10.000 aksiyon invariants'ı kanıtlandı; Native
+  Files legacy navigation/double-click/non-current-scroll seam'leri
+  kaldırıldı. Final gate: full 3,552/3,552 + 2 skip, Chromium 18/18,
+  Linux+Windows clippy `-D warnings`, Python 64/64, Bun 5/5 + 12/12,
+  fmt/diff/unwrap temiz. SIRADAKİ: T7.5 watcher+kitty/FIP-D4.
   (T7.1 characterization → T7.2 FmState köprüsü → T7.3 render swap →
   T7.4 girdi swap + FIP-D1 canlı kapanış → T7.5 watcher+kitty/FIP-D4 →
   T7.6 söküm+kapanış; yüzey haritası satır sayılarıyla planda).
-
-- [ ] **FIP-D1** Files-tab sidebar öğeleri (FAVORITES Home/Desktop/…, LOCATIONS
-  Root) tıklanınca navigasyon YOK. Rota kodda mevcut: mouse.rs:621-635
-  `file_manager_sidebar_path_at` → `request_file_manager_sidebar_navigation` →
-  `sync_file_manager_sidebar_navigation`. Kopukluk hit-area üretimi veya
-  consumer guard'ında — canlıda repro + iz sürme gerekli (E2E harness'ı
-  düzelince orada; alternatif: hit-area birim karakterizasyonu).
 
 - [ ] **FIP-D3** Miller navigasyonu TRAIL modeline yeniden kurulacak — kullanıcı
   kanonik referansı verdi: circet-miller (`CircetMillerSection.tsx`, canlı

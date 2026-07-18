@@ -73,7 +73,7 @@ persisted horizontal state). CLAUDE.md gereği: characterization ÖNCE, adversar
 
 ## T7.4 Girdi swap test noktaları
 
-| ID | Korunan davranış / neden | Beklenen sonuç | RED kanıtı |
+| ID | Korunan davranış / neden | Beklenen sonuç | Test kanıtı |
 |---|---|---|---|
 | TP-TRAIL-T7-INPUT-01 | Render ve input aynı immutable Trail geometrisini tüketmelidir; aynı path ile kapanıp yeniden açılan Files instance eski frame'i canlandıramaz | `TrailViewSnapshot` aktif Files generation'ını taşır; generation uyuşmazsa mouse hit tüketilir ama trail, cwd, seçim ve operation intent değişmez | `stale_trail_frame_cannot_activate_reopened_files_instance` |
 | TP-TRAIL-T7-INPUT-02 | Mouse row identity yalnız `(trail_index, entry_index, exact path)` üçlüsünden gelir; legacy parent/current/preview geometri otoritesi değildir | Tek tık dosyayı Trail detail seçimine taşır; klasör tek tıkta branch açar; ancestor tıkı eski alt dalı keser; index/path uyuşmazlığı fail-closed kalır | `mouse_activation_uses_exact_trail_row_and_rebranches_ancestor`; `stale_trail_row_path_is_inert` |
@@ -81,6 +81,18 @@ persisted horizontal state). CLAUDE.md gereği: characterization ÖNCE, adversar
 | TP-TRAIL-T7-INPUT-04 | Explicit bulk selection ve row operation hit'leri artık canlı Trail rect/path'lerinden türemelidir; stale legacy row alanları yetki veremez | Ctrl/Shift yalnız exact canlı Trail satırını seçer; rename/delete/send-agent Trail path'ini taşır; bulk/in-flight/read-only kontrolleri korunur; legacy row/action geometrisi değiştirilse dahi sonuç değişmez | `trail_row_hit_drives_bulk_and_operation_identity_without_legacy_geometry` |
 | TP-TRAIL-T7-INPUT-05 | Sidebar Files satırı yalnız request hazırlar; App filesystem boundary'si FAVORITES/LOCATIONS hedefini fresh Trail olarak açar (LAW 5, FIP-D1) | Yetkili erişilebilir klasör için `open_trail_to(root=target,target=target)` sonucu tek kök kolon, boş seçim ve aynı Files generation içinde canlı FmState olur; inaccessible/missing/stale request mevcut trail'i atomik korur | `sidebar_navigation_opens_fresh_trail_root_and_preserves_generation`; mevcut sidebar stale/inaccessible aileleri |
 | TP-TRAIL-T7-INPUT-06 | T7.6'ya kadar operations/watcher uyumluluk alanları Trail seçimiyle çelişemez | Kabul edilen Trail aktivasyonu exact sahip kolonun `cwd/entries/cursor` projeksiyonunu günceller; `selected()` Trail path'inden gelir; explicit selection yalnız live projection path'lerini içerir; `FmState` test invariants korunur | `trail_activation_reconciles_legacy_operation_projection`; characterization agent/rename/delete/multi-select aileleri |
+
+### T7.4 kapanış kanıtı
+
+`4cf63908` RED / `0f775b83` GREEN. Native Files mouse ve klavye girdisi,
+sidebar deep-link, row actions, right-click ve bulk selection aynı
+generation-bound `TrailViewSnapshot` otoritesine bağlandı. Eski Native
+navigation dispatch'i, double-click state'i ve non-current Miller vertical
+scroll seam'leri kaldırıldı; render/resize için hâlâ canlı Miller geometri
+uyumluluğu T7.6'ya bırakıldı. Final state: Rust 3,552/3,552 + 2 skip,
+Playwright Chromium 18/18, Linux ve Windows clippy `-D warnings`, Python 64/64,
+Bun 5/5 + 12/12, fmt/diff/unwrap temiz. FIP-D1 ürün rotası fresh Trail açar ve
+missing/inaccessible/stale hedefte atomik inert kalır.
 
 ## Kabul (plan §4 ile aynı)
 
