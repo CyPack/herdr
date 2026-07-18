@@ -10,6 +10,24 @@ FIP-G.1/FIP-G.2 are closed; the approved code-level plan is
 (commit `dd81ef59`). The next executable task is **FIP-0.1** (baseline freeze),
 then the plan's Tasks 2-29 in order.
 
+### FIP-D — Saha Kusurları (2026-07-18 canlı ekran kanıtı, kullanıcı raporu)
+
+- [x] **FIP-D2** Agentless reference SESSİZ no-op → görünür hata toast'ı
+  (`84dea7b8` RED / `8fe128c4` GREEN: "no live agent to receive references";
+  sıfır byte, picker açılmaz). KAPALI.
+- [ ] **FIP-D1** Files-tab sidebar öğeleri (FAVORITES Home/Desktop/…, LOCATIONS
+  Root) tıklanınca navigasyon YOK. Rota kodda mevcut: mouse.rs:621-635
+  `file_manager_sidebar_path_at` → `request_file_manager_sidebar_navigation` →
+  `sync_file_manager_sidebar_navigation`. Kopukluk hit-area üretimi veya
+  consumer guard'ında — canlıda repro + iz sürme gerekli (E2E harness'ı
+  düzelince orada; alternatif: hit-area birim karakterizasyonu).
+- [ ] **FIP-D3** Miller ata kolonları "(unavailable)" gösteriyor (ekranda
+  `ayaz (unavailable)`, `projects (unavailable)`) — kafa karıştırıcı.
+  Yazi/superfile yüklenmemiş atayı HİÇ göstermez. Tasarım kararı custom-layout
+  /FM programına: (a) bounded lazy ancestor snapshot yükleme VEYA (b) yalnız
+  içerikli kolonları render etme. Superfile referans ekranı kullanıcıdan
+  alındı (sidebar: FAVORITES/Pinned/Disks + search + metadata paneli).
+
 ### FIP-G — Planning Gate
 
 - [x] **FIP-G.1** Use `superpowers:writing-plans` to convert the approved

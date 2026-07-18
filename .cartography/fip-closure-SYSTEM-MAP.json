@@ -1,23 +1,209 @@
 {
   "map": "fip-closure-e2e-investigation",
   "updated": "2026-07-18",
-  "layers": ["L0-harness", "L1-client-input", "L2-server-dispatch", "L3-hit-route", "L4-product"],
+  "layers": [
+    "L0-harness",
+    "L1-client-input",
+    "L2-server-dispatch",
+    "L3-hit-route",
+    "L4-product"
+  ],
   "nodes": [
-    {"id": "sgr-injection", "layer": "L0", "claim": "tmux send-keys -H ile SGR press/release enjeksiyonu calisir; zsh'ta ${=seq} sart", "evidence": [{"type": "executable", "ref": "cat -v deneyi + herdr-client.log DEBUG Mouse", "confidence": 0.95}], "status": "verified"},
-    {"id": "client-framer", "layer": "L1", "claim": "RawInputByteFramer mouse baytlarini frame'leyip ClientMessage::Input ile forward eder", "evidence": [{"type": "source_code", "ref": "src/client/input.rs:60-129", "confidence": 0.9}, {"type": "executable", "ref": "herdr-client.log 'raw input event parsed ... Mouse'", "confidence": 0.95}], "status": "verified"},
-    {"id": "server-parse", "layer": "L2", "claim": "Server raw_input parser ayni baytlari Mouse(Down/Up Left col=20 row=0) olarak parse eder", "evidence": [{"type": "executable", "ref": "herdr-server.log DEBUG 08:00:01", "confidence": 0.95}], "status": "verified"},
-    {"id": "route-exists", "layer": "L2", "claim": "route_client_events Mouse kolu mouse_capture=true iken handle_mouse_event_headless -> handle_mouse cagirir", "evidence": [{"type": "source_code", "ref": "src/app/mod.rs:1770-1776,1912-1914", "confidence": 0.9}], "status": "verified"},
-    {"id": "dispatch-noop", "layer": "L3", "claim": "handle_mouse canli headless'ta sidebar-tab/new-tab/new-workspace tiklarinda state degistirmiyor (capture sabit)", "evidence": [{"type": "executable", "ref": "3 hedefte tmux capture diff yok", "confidence": 0.9}], "status": "verified"},
-    {"id": "keyboard-ok", "layer": "L3", "claim": "Ayni oturumda klavye dispatch calisiyor (C-b prefix hint gorunur)", "evidence": [{"type": "executable", "ref": "tmux capture satir 21", "confidence": 0.95}], "status": "verified"},
-    {"id": "hit-area-freshness", "layer": "L3", "claim": "HIPOTEZ: view.sidebar_tab_hit_areas headless'ta bos/bayat veya shell.region generation gate reddi", "evidence": [{"type": "source_code", "ref": "src/app/input/sidebar.rs:687-700 (rect testi); compute_view sahipligi dogrulanmadi", "confidence": 0.5}], "status": "open"},
-    {"id": "env-gap", "layer": "L0", "claim": "HIPOTEZ: harness ortam farki (TERM=screen-256color, focus-event yoklugu)", "evidence": [{"type": "filesystem", "ref": "tmux default TERM", "confidence": 0.3}], "status": "open"},
-    {"id": "socket-isolation", "layer": "L0", "claim": "Stable socket inode/mode/mtime birebir korundu", "evidence": [{"type": "executable", "ref": "stat 21223953 600 1783871657 (once/sonra)", "confidence": 0.95}], "status": "verified"},
-    {"id": "product-contracts", "layer": "L4", "claim": "FIP-1..5 urun kontratlari Rust 3494/3494 + Playwright 14/14 ile kapali", "evidence": [{"type": "executable", "ref": "nextest Summary + playwright output (afd9cfea)", "confidence": 0.95}], "status": "verified"}
+    {
+      "id": "sgr-injection",
+      "layer": "L0",
+      "claim": "tmux send-keys -H ile SGR press/release enjeksiyonu calisir; zsh'ta ${=seq} sart",
+      "evidence": [
+        {
+          "type": "executable",
+          "ref": "cat -v deneyi + herdr-client.log DEBUG Mouse",
+          "confidence": 0.95
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "client-framer",
+      "layer": "L1",
+      "claim": "RawInputByteFramer mouse baytlarini frame'leyip ClientMessage::Input ile forward eder",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "src/client/input.rs:60-129",
+          "confidence": 0.9
+        },
+        {
+          "type": "executable",
+          "ref": "herdr-client.log 'raw input event parsed ... Mouse'",
+          "confidence": 0.95
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "server-parse",
+      "layer": "L2",
+      "claim": "Server raw_input parser ayni baytlari Mouse(Down/Up Left col=20 row=0) olarak parse eder",
+      "evidence": [
+        {
+          "type": "executable",
+          "ref": "herdr-server.log DEBUG 08:00:01",
+          "confidence": 0.95
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "route-exists",
+      "layer": "L2",
+      "claim": "route_client_events Mouse kolu mouse_capture=true iken handle_mouse_event_headless -> handle_mouse cagirir",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "src/app/mod.rs:1770-1776,1912-1914",
+          "confidence": 0.9
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "dispatch-noop",
+      "layer": "L3",
+      "claim": "handle_mouse canli headless'ta sidebar-tab/new-tab/new-workspace tiklarinda state degistirmiyor (capture sabit)",
+      "evidence": [
+        {
+          "type": "executable",
+          "ref": "3 hedefte tmux capture diff yok",
+          "confidence": 0.9
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "keyboard-ok",
+      "layer": "L3",
+      "claim": "Ayni oturumda klavye dispatch calisiyor (C-b prefix hint gorunur)",
+      "evidence": [
+        {
+          "type": "executable",
+          "ref": "tmux capture satir 21",
+          "confidence": 0.95
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "hit-area-freshness",
+      "layer": "L3",
+      "claim": "HIPOTEZ (yalniz HARNESS icin): tmux ortaminda view hit-area/generation reddi; URUNDE dispatch calisiyor (A1 kaniti). Ayrica FIP-D1: sidebar favorites tiklari urunde de olu - ayri iz",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "src/app/input/sidebar.rs:687-700 (rect testi); compute_view sahipligi dogrulanmadi",
+          "confidence": 0.5
+        }
+      ],
+      "status": "open"
+    },
+    {
+      "id": "env-gap",
+      "layer": "L0",
+      "claim": "A1 CEVAPLANDI: canli Ghostty ortaminda mouse dispatch CALISIYOR (kullanici ekran kaniti, Files stage acik) -> no-op HARNESS sorunu (A2a dali); tmux/TERM/focus farki arastirilacak",
+      "evidence": [
+        {
+          "type": "filesystem",
+          "ref": "tmux default TERM",
+          "confidence": 0.3
+        },
+        {
+          "type": "filesystem",
+          "ref": "kullanici ekran goruntusu 2026-07-18 (Files stage + Miller + ikonlar render)",
+          "confidence": 0.9
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "socket-isolation",
+      "layer": "L0",
+      "claim": "Stable socket inode/mode/mtime birebir korundu",
+      "evidence": [
+        {
+          "type": "executable",
+          "ref": "stat 21223953 600 1783871657 (once/sonra)",
+          "confidence": 0.95
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "product-contracts",
+      "layer": "L4",
+      "claim": "FIP-1..5 urun kontratlari Rust 3494/3494 + Playwright 14/14 ile kapali",
+      "evidence": [
+        {
+          "type": "executable",
+          "ref": "nextest Summary + playwright output (afd9cfea)",
+          "confidence": 0.95
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "fm-d1-sidebar-dead",
+      "layer": "L3",
+      "claim": "Files-tab sidebar ogeleri (FAVORITES/LOCATIONS) tiklaninca navigasyon yok (URUN kusuru, canli kanit)",
+      "evidence": [
+        {
+          "type": "filesystem",
+          "ref": "kullanici ekran + rapor 2026-07-18; rota: mouse.rs:621-635 -> sync_file_manager_sidebar_navigation",
+          "confidence": 0.85
+        }
+      ],
+      "status": "open"
+    },
+    {
+      "id": "fm-d3-unavailable-ancestors",
+      "layer": "L4",
+      "claim": "Miller ata kolonlari '(unavailable)' render ediyor; yazi/superfile yuklenmemis atayi gostermez - UX karari gerekli",
+      "evidence": [
+        {
+          "type": "filesystem",
+          "ref": "kullanici ekran 2026-07-18 (ayaz/projects unavailable)",
+          "confidence": 0.9
+        }
+      ],
+      "status": "open"
+    }
   ],
   "edges": [
-    ["sgr-injection", "client-framer"], ["client-framer", "server-parse"],
-    ["server-parse", "route-exists"], ["route-exists", "dispatch-noop"],
-    ["dispatch-noop", "hit-area-freshness"], ["dispatch-noop", "env-gap"]
+    [
+      "sgr-injection",
+      "client-framer"
+    ],
+    [
+      "client-framer",
+      "server-parse"
+    ],
+    [
+      "server-parse",
+      "route-exists"
+    ],
+    [
+      "route-exists",
+      "dispatch-noop"
+    ],
+    [
+      "dispatch-noop",
+      "hit-area-freshness"
+    ],
+    [
+      "dispatch-noop",
+      "env-gap"
+    ]
   ],
-  "V": {"open_nodes": 2, "rule": "V=0 => E2E-01/02 kosulabilir; K=2 tur sabit => insan-dogrulamasina eskale"}
+  "V": {
+    "open_nodes": 3,
+    "rule": "V=0 => E2E-01/02 kosulabilir; K=2 tur sabit => insan-dogrulamasina eskale"
+  }
 }
