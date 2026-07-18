@@ -271,9 +271,28 @@ fn read_directory_snapshot(dir: &Path, show_hidden: bool) -> FmDirectorySnapshot
         }
     };
 
+    let (mut entries, omissions, _entry_errors) = collect_directory_entries(read, show_hidden);
+    sort_entries(&mut entries);
+    FmDirectorySnapshot {
+        entries,
+        status: FmDirectoryStatus::Available,
+        omissions,
+    }
+}
+
+/// Convert one directory iterator into presentation-safe actionable entries.
+/// The third result is reserved for explicit iterator-error accounting; it is
+/// deliberately zero until the FMR-1 error-classification RED is installed.
+fn collect_directory_entries(
+    read: impl IntoIterator<Item = std::io::Result<std::fs::DirEntry>>,
+    show_hidden: bool,
+) -> (Vec<FileEntry>, FmDirectoryOmissions, usize) {
     let mut entries = Vec::new();
     let mut omissions = FmDirectoryOmissions::default();
-    for entry in read.flatten() {
+    for result in read {
+        let Ok(entry) = result else {
+            continue;
+        };
         // Non-UTF-8 names cannot be rendered as a `str`; skip them in v1.
         let file_name = entry.file_name();
         let Some(name) = file_name.to_str() else {
@@ -290,13 +309,7 @@ fn read_directory_snapshot(dir: &Path, show_hidden: bool) -> FmDirectorySnapshot
             name: name.to_string(),
         });
     }
-
-    sort_entries(&mut entries);
-    FmDirectorySnapshot {
-        entries,
-        status: FmDirectoryStatus::Available,
-        omissions,
-    }
+    (entries, omissions, 0)
 }
 
 fn classify_directory_error(kind: std::io::ErrorKind) -> FmDirectoryStatus {
