@@ -421,6 +421,12 @@ pub(crate) fn render_trail_view(
         let Some(snap) = snaps.cols().get(column.trail_index) else {
             continue;
         };
+        if column.rows.is_empty() && snap.hidden_omitted() > 0 {
+            frame.render_widget(
+                ratatui::widgets::Paragraph::new("hidden items omitted"),
+                column.rect,
+            );
+        }
         for row in &column.rows {
             let Some(entry) = snap.entries().get(row.entry_index) else {
                 continue;

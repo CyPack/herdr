@@ -91,6 +91,14 @@ pub enum FmDirectoryStatus {
 struct FmDirectorySnapshot {
     entries: Vec<FileEntry>,
     status: FmDirectoryStatus,
+    omissions: FmDirectoryOmissions,
+}
+
+/// Bounded counts for entries omitted from the actionable listing. Paths and
+/// names never cross this prepared-state boundary.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct FmDirectoryOmissions {
+    hidden: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +132,7 @@ pub(crate) struct FmPreparedNavigation {
     pub request: FmNavigationRequest,
     pub entries: Vec<FileEntry>,
     pub status: FmDirectoryStatus,
+    omissions: FmDirectoryOmissions,
     pub writable: bool,
     pub cursor: usize,
     pub parent: Option<FmParent>,
@@ -163,6 +172,7 @@ pub(crate) struct FmPreparedCurrentRefresh {
     pub request: FmCurrentRefreshRequest,
     pub entries: Vec<FileEntry>,
     pub status: FmDirectoryStatus,
+    omissions: FmDirectoryOmissions,
     pub writable: bool,
     pub cursor: usize,
     pub parent: Option<FmParent>,
@@ -255,30 +265,35 @@ fn read_directory_snapshot(dir: &Path, show_hidden: bool) -> FmDirectorySnapshot
             return FmDirectorySnapshot {
                 entries: Vec::new(),
                 status: classify_directory_error(err.kind()),
+                omissions: FmDirectoryOmissions::default(),
             };
         }
     };
 
-    let mut entries: Vec<FileEntry> = read
-        .flatten()
-        .filter_map(|entry| {
-            // Non-UTF-8 names cannot be rendered as a `str`; skip them in v1.
-            let name = entry.file_name().to_str()?.to_string();
-            if !show_hidden && name.starts_with('.') {
-                return None;
-            }
-            Some(FileEntry {
-                kind: entry_kind::classify_dir_entry(&entry),
-                path: entry.path(),
-                name,
-            })
-        })
-        .collect();
+    let mut entries = Vec::new();
+    let mut omissions = FmDirectoryOmissions::default();
+    for entry in read.flatten() {
+        // Non-UTF-8 names cannot be rendered as a `str`; skip them in v1.
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str() else {
+            continue;
+        };
+        if !show_hidden && name.starts_with('.') {
+            omissions.hidden += 1;
+            continue;
+        }
+        entries.push(FileEntry {
+            kind: entry_kind::classify_dir_entry(&entry),
+            path: entry.path(),
+            name: name.to_string(),
+        });
+    }
 
     sort_entries(&mut entries);
     FmDirectorySnapshot {
         entries,
         status: FmDirectoryStatus::Available,
+        omissions,
     }
 }
 
@@ -340,6 +355,7 @@ pub(crate) fn prepare_navigation_io(request: FmNavigationRequest) -> Option<FmPr
         request,
         entries: snapshot.entries,
         status: snapshot.status,
+        omissions: snapshot.omissions,
         cursor,
         parent,
         preview,
@@ -373,6 +389,7 @@ pub(crate) fn prepare_current_refresh_io(
         request,
         entries: snapshot.entries,
         status: snapshot.status,
+        omissions: snapshot.omissions,
         cursor,
         parent,
         preview,
@@ -480,6 +497,8 @@ pub struct FmState {
     pub cwd_writable: bool,
     /// Prepared result of reading cwd; render must not repeat this I/O.
     pub cwd_status: FmDirectoryStatus,
+    /// Bounded explanation for entries omitted from the current listing.
+    cwd_omissions: FmDirectoryOmissions,
     /// Monotonic identity of the prepared current-directory and parent entry
     /// snapshots. Cursor/preview changes do not advance this generation;
     /// every filesystem reload does, so rapid double-click remains valid
@@ -578,6 +597,7 @@ impl FmState {
         self.entries = prepared.entries;
         self.show_hidden = prepared.request.target_show_hidden;
         self.cwd_status = prepared.status;
+        self.cwd_omissions = prepared.omissions;
         self.cwd_writable = prepared.writable;
         self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
         self.reconcile_multi_selection();
@@ -630,6 +650,7 @@ impl FmState {
         self.cursor = prepared.cursor;
         self.viewport_start = 0;
         self.cwd_status = prepared.status;
+        self.cwd_omissions = prepared.omissions;
         self.cwd_writable = prepared.writable;
         self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
         self.parent = prepared.parent;
@@ -734,6 +755,7 @@ impl FmState {
             show_hidden,
             cwd_writable,
             cwd_status: snapshot.status,
+            cwd_omissions: snapshot.omissions,
             directory_generation: 1,
             parent: None,
             preview: FmPreview::None,
@@ -763,6 +785,7 @@ impl FmState {
             show_hidden: false,
             cwd_writable: false,
             cwd_status: FmDirectoryStatus::Available,
+            cwd_omissions: FmDirectoryOmissions::default(),
             directory_generation: 1,
             parent: None,
             preview: FmPreview::None,
@@ -790,6 +813,7 @@ impl FmState {
         let snapshot = read_directory_snapshot(&self.cwd, self.show_hidden);
         self.entries = snapshot.entries;
         self.cwd_status = snapshot.status;
+        self.cwd_omissions = snapshot.omissions;
         self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
         self.cwd_writable =
             self.cwd_status == FmDirectoryStatus::Available && directory_is_writable(&self.cwd);
@@ -1390,6 +1414,7 @@ impl FmState {
         let root_snapshot = FmDirectorySnapshot {
             entries: self.entries.clone(),
             status: self.cwd_status,
+            omissions: self.cwd_omissions,
         };
         self.trail_snapshots.integrate_current(
             &mut self.trail,
@@ -2508,6 +2533,7 @@ mod tests {
                 },
             }],
             status: FmDirectoryStatus::Available,
+            omissions: FmDirectoryOmissions::default(),
             writable: true,
             cursor: 0,
             parent: Some(FmParent {
@@ -2621,6 +2647,7 @@ mod tests {
                 },
             ],
             status: FmDirectoryStatus::Available,
+            omissions: FmDirectoryOmissions::default(),
             writable: true,
             cursor: 0,
             parent: None,
@@ -2695,6 +2722,7 @@ mod tests {
                 },
             ],
             status: FmDirectoryStatus::Available,
+            omissions: FmDirectoryOmissions::default(),
             writable: true,
             cursor: 0,
             parent: None,
@@ -2794,6 +2822,7 @@ mod tests {
             request,
             entries: Vec::new(),
             status: FmDirectoryStatus::Available,
+            omissions: FmDirectoryOmissions::default(),
             writable: true,
             cursor: 0,
             parent: None,

@@ -57,6 +57,10 @@ impl TrailColSnapshot {
     pub(crate) fn status(&self) -> FmDirectoryStatus {
         self.snapshot.status
     }
+
+    pub(crate) fn hidden_omitted(&self) -> usize {
+        self.snapshot.omissions.hidden
+    }
 }
 
 /// Outcome of one input activation against the loaded trail.
@@ -171,6 +175,7 @@ impl TrailSnapshots {
                         snapshot: FmDirectorySnapshot {
                             entries: entries.clone(),
                             status: FmDirectoryStatus::Available,
+                            omissions: Default::default(),
                         },
                     });
                 }
