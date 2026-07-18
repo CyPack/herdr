@@ -51,12 +51,27 @@ pub(crate) struct TrailDividerView {
     pub rect: Rect,
 }
 
+/// Default and clamp bounds for the resizable detail panel (LAW 3/4): a
+/// side panel, never an overlay — the sibling columns stay visible left of
+/// it, so the panel may take at most half the stage.
+pub(crate) const TRAIL_DETAIL_PANEL_DEFAULT_WIDTH: u16 = 36;
+pub(crate) const TRAIL_DETAIL_PANEL_MIN_WIDTH: u16 = 20;
+
+/// The resizable right-side detail panel, present exactly when a FILE is
+/// selected (LAW 3). `content_rect` excludes the border frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TrailDetailPanelView {
+    pub rect: Rect,
+    pub content_rect: Rect,
+}
+
 /// Immutable trail frame projection: geometry authority for render and input.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct TrailViewSnapshot {
     pub first_visible: usize,
     pub columns: Vec<TrailColumnView>,
     pub dividers: Vec<TrailDividerView>,
+    pub detail_panel: Option<TrailDetailPanelView>,
 }
 
 /// Effective per-index column width: the caller-provided preference when one
@@ -90,6 +105,39 @@ pub(crate) fn project_trail_view(
     if trail_cols.is_empty() || !aligned {
         return TrailViewSnapshot::default();
     }
+
+    // LAW 3: a selected FILE reserves the resizable right-side panel BEFORE
+    // the columns are laid out — a side panel, never an overlay. The panel
+    // only appears when enough width remains for at least one column.
+    let panel_width = snaps.detail().is_some().then(|| {
+        TRAIL_DETAIL_PANEL_DEFAULT_WIDTH
+            .clamp(TRAIL_DETAIL_PANEL_MIN_WIDTH, (stage.width / 2).max(1))
+    });
+    let (column_stage, detail_panel) = match panel_width {
+        Some(width) if stage.width >= width + MILLER_COLUMN_MIN_WIDTH => {
+            let panel = Rect::new(
+                stage.right().saturating_sub(width),
+                stage.y,
+                width,
+                stage.height,
+            );
+            let content = Rect::new(
+                panel.x.saturating_add(1),
+                panel.y.saturating_add(1),
+                panel.width.saturating_sub(2),
+                panel.height.saturating_sub(2),
+            );
+            (
+                Rect::new(stage.x, stage.y, stage.width - width, stage.height),
+                Some(TrailDetailPanelView {
+                    rect: panel,
+                    content_rect: content,
+                }),
+            )
+        }
+        _ => (stage, None),
+    };
+    let stage = column_stage;
 
     let widths: Vec<u16> = (0..trail_cols.len())
         .map(|index| trail_column_width(preferred_widths, index))
@@ -154,6 +202,7 @@ pub(crate) fn project_trail_view(
         first_visible: geometry.first_visible,
         columns,
         dividers,
+        detail_panel,
     }
 }
 
@@ -198,6 +247,60 @@ pub(crate) fn render_trail_view(
             super::render_entry_row(app, frame, row.rect, entry, selected, false);
         }
     }
+    if let (Some(panel), Some(detail)) = (&view.detail_panel, snaps.detail()) {
+        render_trail_detail_panel(app, frame, panel, detail);
+    }
+}
+
+/// Paint the detail panel: bordered frame titled with the file name, a kind
+/// line, then the prepared preview — text content, the image track note, or
+/// the EXPLICIT unpreviewable reason (LAW 3: never a silent blank).
+fn render_trail_detail_panel(
+    app: &AppState,
+    frame: &mut Frame,
+    panel: &TrailDetailPanelView,
+    detail: &crate::fm::trail_snapshots::TrailDetail,
+) {
+    use ratatui::text::Line;
+    use ratatui::widgets::Paragraph;
+
+    let styles = super::file_manager_visual_styles(&app.palette);
+    let name = detail
+        .path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| detail.path.to_string_lossy().into_owned());
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(styles.divider)
+            .title(format!(" {name} ")),
+        panel.rect,
+    );
+    if panel.content_rect.width == 0 || panel.content_rect.height == 0 {
+        return;
+    }
+    let mut lines = vec![
+        Line::from(format!("kind: {:?}", detail.kind)),
+        Line::from(""),
+    ];
+    match &detail.preview {
+        crate::fm::trail_snapshots::TrailDetailPreview::Text(preview) => {
+            for text_line in preview.content.lines() {
+                lines.push(Line::from(text_line.to_string()));
+            }
+            if preview.truncated {
+                lines.push(Line::from("… (truncated)"));
+            }
+        }
+        crate::fm::trail_snapshots::TrailDetailPreview::Image => {
+            lines.push(Line::from("(image preview)"));
+        }
+        crate::fm::trail_snapshots::TrailDetailPreview::Unpreviewable(reason) => {
+            lines.push(Line::from(format!("(no preview: {reason})")));
+        }
+    }
+    frame.render_widget(Paragraph::new(lines), panel.content_rect);
 }
 
 #[cfg(test)]
@@ -496,6 +599,102 @@ mod tests {
         assert!(
             trail_row_at(&view, stage.right().saturating_sub(1), stage.bottom() - 1).is_none(),
             "outside every projected column resolves to nothing"
+        );
+    }
+
+    // LAW 3: a selected FILE reserves a resizable right-side panel; the
+    // sibling columns stay visible left of it — a side panel, not an overlay.
+    #[test]
+    fn detail_panel_reserves_resizable_width() {
+        let td = TempDir::new("panel");
+        fs::write(td.root.join("doc.md"), b"hello").expect("file");
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        let doc = td.root.join("doc.md");
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 0, 0, &doc),
+            crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
+        );
+
+        let stage = Rect::new(0, 0, 100, 12);
+        let view = project_trail_view(stage, &trail, &snaps, &[]);
+        let panel = view
+            .detail_panel
+            .as_ref()
+            .expect("a selected file opens the panel");
+        assert_eq!(panel.rect.width, TRAIL_DETAIL_PANEL_DEFAULT_WIDTH);
+        assert_eq!(panel.rect.right(), stage.right(), "panel sits at the right");
+        assert!(!view.columns.is_empty(), "sibling columns stay visible");
+        for column in &view.columns {
+            assert!(
+                column.rect.right() <= panel.rect.x,
+                "columns never run under the panel"
+            );
+        }
+        assert!(
+            panel.content_rect.width < panel.rect.width,
+            "content excludes the border frame"
+        );
+    }
+
+    // LAW 3: no file selection → no panel; the columns own the whole stage.
+    #[test]
+    fn no_detail_no_panel() {
+        let td = TempDir::new("panel-none");
+        let (trail, snaps) = deep_loaded_trail(&td.root, 1, 1);
+        let stage = Rect::new(0, 0, 100, 12);
+        let view = project_trail_view(stage, &trail, &snaps, &[]);
+        assert!(view.detail_panel.is_none());
+    }
+
+    // LAW 3 rendering: the panel shows the file NAME in its title, the kind
+    // line, and the prepared text content — never a silent blank.
+    #[test]
+    fn panel_render_shows_name_kind_and_content() {
+        let td = TempDir::new("panel-render");
+        fs::write(td.root.join("doc.md"), b"hello trail").expect("file");
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        let doc = td.root.join("doc.md");
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 0, 0, &doc),
+            crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
+        );
+
+        let stage = Rect::new(0, 0, 100, 12);
+        let view = project_trail_view(stage, &trail, &snaps, &[]);
+        let panel = view.detail_panel.clone().expect("panel is open");
+
+        let app = crate::app::state::AppState::test_new();
+        let backend = TestBackend::new(100, 12);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| render_trail_view(&app, frame, &view, &snaps))
+            .expect("render trail");
+        let buffer = terminal.backend().buffer().clone();
+
+        let row_text = |rect: Rect, y: u16| -> String {
+            (rect.x..rect.right())
+                .map(|x| buffer[(x, y)].symbol().to_string())
+                .collect()
+        };
+        assert!(
+            row_text(panel.rect, panel.rect.y).contains("doc.md"),
+            "panel title carries the file name"
+        );
+        assert!(
+            row_text(panel.content_rect, panel.content_rect.y).contains("kind:"),
+            "panel body starts with the kind line"
+        );
+        let body: String = (panel.content_rect.y..panel.content_rect.bottom())
+            .map(|y| row_text(panel.content_rect, y))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            body.contains("hello trail"),
+            "panel body shows the prepared text content"
         );
     }
 

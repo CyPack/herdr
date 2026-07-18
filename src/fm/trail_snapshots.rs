@@ -11,6 +11,29 @@ use std::path::{Path, PathBuf};
 
 use super::trail::TrailState;
 use super::{read_directory_snapshot, FileEntry, FmDirectorySnapshot, FmDirectoryStatus};
+use crate::fm::entry_kind::FileEntryKind;
+use crate::fm::TextPreview;
+
+/// Prepared detail-panel content for the selected FILE (contract LAW 3):
+/// prepared at selection time, outside render, so the panel never does
+/// filesystem work while painting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TrailDetail {
+    pub path: PathBuf,
+    pub kind: FileEntryKind,
+    pub preview: TrailDetailPreview,
+}
+
+/// What the detail panel can show for one file. An unpreviewable file is an
+/// EXPLICIT state with a reason — never a silent empty panel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TrailDetailPreview {
+    Text(TextPreview),
+    /// A recognized image; pixel delivery is the Kitty-graphics track
+    /// (FIP-D4) and completes at integration.
+    Image,
+    Unpreviewable(String),
+}
 
 /// One trail column with its loaded directory listing.
 pub(crate) struct TrailColSnapshot {
@@ -48,6 +71,7 @@ pub(crate) enum TrailActivateOutcome {
 pub(crate) struct TrailSnapshots {
     cols: Vec<TrailColSnapshot>,
     show_hidden: bool,
+    detail: Option<TrailDetail>,
 }
 
 impl TrailSnapshots {
@@ -55,11 +79,18 @@ impl TrailSnapshots {
         Self {
             cols: Vec::new(),
             show_hidden,
+            detail: None,
         }
     }
 
     pub(crate) fn cols(&self) -> &[TrailColSnapshot] {
         &self.cols
+    }
+
+    /// The prepared detail panel for the currently selected FILE, when one
+    /// is selected (LAW 3). A directory selection has no detail.
+    pub(crate) fn detail(&self) -> Option<&TrailDetail> {
+        self.detail.as_ref()
     }
 
     /// Realign with the trail: keep a cached snapshot only when the same
@@ -521,6 +552,118 @@ mod tests {
             trail.cols()[0].selected.as_deref(),
             Some(td.root.join("beta.txt").as_path())
         );
+    }
+
+    // LAW 3: activating a FILE prepares the detail panel — path, kind and a
+    // loaded text preview, all outside render.
+    #[test]
+    fn file_selection_prepares_detail() {
+        let td = TempDir::new("detail");
+        let doc = td.root.join("doc.md");
+        fs::write(&doc, b"hello trail").expect("file");
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 0, 0, &doc),
+            TrailActivateOutcome::SelectedFile
+        );
+        let detail = snaps.detail().expect("file selection prepares a detail");
+        assert_eq!(detail.path, doc);
+        assert_eq!(
+            detail.kind,
+            crate::fm::entry_kind::FileEntryKind::RegularFile
+        );
+        match &detail.preview {
+            TrailDetailPreview::Text(preview) => {
+                assert_eq!(preview.content, "hello trail");
+                assert!(!preview.truncated);
+            }
+            other => panic!("expected a text preview, got {other:?}"),
+        }
+    }
+
+    // LAW 3: a later DIRECTORY selection closes the panel — the detail can
+    // never dangle across a branch.
+    #[test]
+    fn dir_selection_clears_detail() {
+        let td = TempDir::new("detail-clear");
+        let sub = td.root.join("sub");
+        fs::create_dir_all(&sub).expect("sub");
+        let doc = td.root.join("doc.md");
+        fs::write(&doc, b"x").expect("file");
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+
+        let doc_index = snaps.cols()[0]
+            .entries()
+            .iter()
+            .position(|entry| entry.path == doc)
+            .expect("doc row");
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 0, doc_index, &doc),
+            TrailActivateOutcome::SelectedFile
+        );
+        assert!(snaps.detail().is_some());
+
+        let sub_index = snaps.cols()[0]
+            .entries()
+            .iter()
+            .position(|entry| entry.path == sub)
+            .expect("sub row");
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 0, sub_index, &sub),
+            TrailActivateOutcome::Branched
+        );
+        assert!(
+            snaps.detail().is_none(),
+            "a directory selection closes the panel"
+        );
+    }
+
+    // LAW 3 honesty: a file that cannot be previewed carries an EXPLICIT
+    // reason — the panel never renders a silent blank.
+    #[test]
+    fn unreadable_file_detail_is_explicit() {
+        let td = TempDir::new("detail-bad");
+        let blob = td.root.join("blob.bin");
+        fs::write(&blob, [0u8, 159, 146, 150]).expect("binary file");
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 0, 0, &blob),
+            TrailActivateOutcome::SelectedFile
+        );
+        let detail = snaps.detail().expect("selection still prepares a detail");
+        match &detail.preview {
+            TrailDetailPreview::Unpreviewable(reason) => {
+                assert!(!reason.is_empty(), "the reason is spelled out");
+            }
+            other => panic!("expected an explicit unpreviewable state, got {other:?}"),
+        }
+    }
+
+    // Image files are recognized as the image track (Kitty delivery is the
+    // FIP-D4 integration lane) instead of being misread as text.
+    #[test]
+    fn image_file_detail_reports_image_kind() {
+        let td = TempDir::new("detail-img");
+        let photo = td.root.join("photo.png");
+        fs::write(&photo, b"not-really-png").expect("image file");
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 0, 0, &photo),
+            TrailActivateOutcome::SelectedFile
+        );
+        let detail = snaps.detail().expect("image selection prepares a detail");
+        assert_eq!(detail.preview, TrailDetailPreview::Image);
     }
 
     // Stale-hit safety: an out-of-range column index changes nothing.
