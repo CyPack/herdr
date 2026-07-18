@@ -51,7 +51,11 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
   clippy temiz. NOT: canlı sidebar tıkının bu seam'e BAĞLANMASI T7
   entegrasyonunda — FIP-D1 ürün-düzeyi kapanışı orada doğrulanır.
 - [ ] **TRAIL-T7** Eski parent/current/resident modelinin characterized sökümü
-  ("(unavailable)" grep=0) + tüm gate'ler + yayın.
+  ("(unavailable)" grep=0) + tüm gate'ler + yayın. CERRAHİ PLAN HAZIR:
+  `docs/superpowers/plans/2026-07-18-herdr-trail-t7-integration-plan.md`
+  (T7.1 characterization → T7.2 FmState köprüsü → T7.3 render swap →
+  T7.4 girdi swap + FIP-D1 canlı kapanış → T7.5 watcher+kitty/FIP-D4 →
+  T7.6 söküm+kapanış; yüzey haritası satır sayılarıyla planda).
 
 ### FIP-D — Saha Kusurları (2026-07-18 canlı ekran kanıtı, kullanıcı raporu)
 

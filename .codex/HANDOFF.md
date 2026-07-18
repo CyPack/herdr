@@ -432,7 +432,11 @@ sayar ve exact diff yapar.
 ### Source: `.codex/TASKS.md` — 11 unchecked
 
 - [ ] **TRAIL-T7** Eski parent/current/resident modelinin characterized sökümü
-  ("(unavailable)" grep=0) + tüm gate'ler + yayın.
+  ("(unavailable)" grep=0) + tüm gate'ler + yayın. CERRAHİ PLAN HAZIR:
+  `docs/superpowers/plans/2026-07-18-herdr-trail-t7-integration-plan.md`
+  (T7.1 characterization → T7.2 FmState köprüsü → T7.3 render swap →
+  T7.4 girdi swap + FIP-D1 canlı kapanış → T7.5 watcher+kitty/FIP-D4 →
+  T7.6 söküm+kapanış; yüzey haritası satır sayılarıyla planda).
 
 - [ ] **FIP-D1** Files-tab sidebar öğeleri (FAVORITES Home/Desktop/…, LOCATIONS
   Root) tıklanınca navigasyon YOK. Rota kodda mevcut: mouse.rs:621-635
