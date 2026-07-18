@@ -32,6 +32,18 @@ impl TrailColSnapshot {
     }
 }
 
+/// Outcome of one input activation against the loaded trail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TrailActivateOutcome {
+    /// A directory was selected: the trail truncated and branched.
+    Branched,
+    /// A file was selected: the selection moved, no column appeared.
+    SelectedFile,
+    /// The hit was stale, out of range, or the target was unreadable —
+    /// nothing changed.
+    Rejected,
+}
+
 /// Loaded snapshots kept index-aligned with a `TrailState`.
 pub(crate) struct TrailSnapshots {
     cols: Vec<TrailColSnapshot>,
@@ -107,6 +119,35 @@ impl TrailSnapshots {
         }
         self.sync(trail);
         FmDirectoryStatus::Available
+    }
+
+    /// Activate one entry (mouse click or keyboard Enter) against the CURRENT
+    /// loaded listing. `expected_path` is the path the input frame saw; a
+    /// mismatch with the live snapshot means the hit is stale and is
+    /// rejected without touching any state (generation-safe hits).
+    /// Directories branch the trail (fail-closed via `select_dir`); files
+    /// only mark the selection (LAW 1/3).
+    pub(crate) fn activate_entry(
+        &mut self,
+        trail: &mut TrailState,
+        col_idx: usize,
+        entry_index: usize,
+        expected_path: &Path,
+    ) -> TrailActivateOutcome {
+        let _ = (trail, col_idx, entry_index, expected_path);
+        TrailActivateOutcome::Rejected
+    }
+
+    /// Keyboard selection move inside the ACTIVE column: step the selection
+    /// by `delta` rows (clamped) and activate the landed entry with the same
+    /// semantics as a click — directories branch, files mark.
+    pub(crate) fn move_selection(
+        &mut self,
+        trail: &mut TrailState,
+        delta: isize,
+    ) -> TrailActivateOutcome {
+        let _ = (trail, delta);
+        TrailActivateOutcome::Rejected
     }
 
     /// Re-read one column from disk (watcher refresh path). Selection lives
@@ -283,6 +324,159 @@ mod tests {
                 );
             }
         }
+    }
+
+    // LAW 1 via input: activating a FOLDER row branches the trail at the
+    // hit column with click semantics.
+    #[test]
+    fn folder_activation_branches_at_hit_column() {
+        let td = TempDir::new("act-dir");
+        let sub = td.root.join("sub");
+        fs::create_dir_all(&sub).expect("sub dir");
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+
+        let entry_index = snaps.cols()[0]
+            .entries()
+            .iter()
+            .position(|entry| entry.path == sub)
+            .expect("sub row");
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 0, entry_index, &sub),
+            TrailActivateOutcome::Branched
+        );
+        assert_eq!(trail.cols().len(), 2);
+        assert_eq!(trail.cols()[1].directory, sub);
+        assert_eq!(snaps.cols().len(), 2, "the branched column is loaded");
+    }
+
+    // LAW 1 via input: activating a sibling in an ANCESTOR column discards
+    // the old branch and regrows from that point.
+    #[test]
+    fn ancestor_sibling_activation_rebranches() {
+        let td = TempDir::new("act-sibling");
+        let a = td.root.join("a");
+        let b = a.join("b");
+        let z = td.root.join("z");
+        fs::create_dir_all(&b).expect("nested");
+        fs::create_dir_all(&z).expect("sibling");
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        assert_eq!(
+            snaps.select_dir(&mut trail, 0, &a),
+            FmDirectoryStatus::Available
+        );
+        assert_eq!(
+            snaps.select_dir(&mut trail, 1, &b),
+            FmDirectoryStatus::Available
+        );
+
+        let z_index = snaps.cols()[0]
+            .entries()
+            .iter()
+            .position(|entry| entry.path == z)
+            .expect("z row");
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 0, z_index, &z),
+            TrailActivateOutcome::Branched
+        );
+        assert_eq!(trail.cols().len(), 2, "old sub-branch discarded");
+        assert_eq!(trail.cols()[1].directory, z);
+        assert_eq!(snaps.cols()[1].directory(), z.as_path());
+    }
+
+    // LAW 1/3 via input: activating a FILE marks the selection and never
+    // opens a column.
+    #[test]
+    fn file_activation_marks_selection_only() {
+        let td = TempDir::new("act-file");
+        fs::write(td.root.join("doc.md"), b"x").expect("file");
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+
+        let doc = td.root.join("doc.md");
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 0, 0, &doc),
+            TrailActivateOutcome::SelectedFile
+        );
+        assert_eq!(trail.cols().len(), 1, "a file never opens a column");
+        assert_eq!(trail.cols()[0].selected.as_deref(), Some(doc.as_path()));
+    }
+
+    // Generation-safe hits: a hit whose remembered path no longer matches
+    // the live snapshot at that index is stale and rejected outright.
+    #[test]
+    fn stale_hit_with_mismatched_path_is_rejected() {
+        let td = TempDir::new("act-stale");
+        fs::write(td.root.join("old.txt"), b"x").expect("file");
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        let before = trail.clone();
+
+        // The input frame remembered a path that is not what row 0 lists now.
+        let remembered = td.root.join("vanished.txt");
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 0, 0, &remembered),
+            TrailActivateOutcome::Rejected
+        );
+        assert_eq!(trail, before, "stale hits change nothing");
+        // Out-of-range indexes are equally inert.
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 0, 99, &remembered),
+            TrailActivateOutcome::Rejected
+        );
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 7, 0, &remembered),
+            TrailActivateOutcome::Rejected
+        );
+        assert_eq!(trail, before);
+    }
+
+    // LAW 2 keyboard: Down/Up move the selection inside the ACTIVE column
+    // with click semantics — a directory branches, a file only marks.
+    #[test]
+    fn keyboard_selection_moves_within_active_column() {
+        let td = TempDir::new("kbd");
+        let alpha = td.root.join("alpha");
+        fs::create_dir_all(&alpha).expect("alpha");
+        fs::write(td.root.join("beta.txt"), b"x").expect("beta");
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+
+        // First Down lands on row 0: the directory `alpha` → branch.
+        assert_eq!(
+            snaps.move_selection(&mut trail, 1),
+            TrailActivateOutcome::Branched
+        );
+        assert_eq!(trail.cols().len(), 2);
+        assert_eq!(trail.cols()[0].selected.as_deref(), Some(alpha.as_path()));
+
+        // Focus back on the root column, step down to the file row.
+        assert!(trail.move_active_left());
+        assert_eq!(
+            snaps.move_selection(&mut trail, 1),
+            TrailActivateOutcome::SelectedFile
+        );
+        assert_eq!(
+            trail.cols()[0].selected.as_deref(),
+            Some(td.root.join("beta.txt").as_path())
+        );
+        assert_eq!(trail.cols().len(), 1, "file selection cut the branch");
+
+        // Clamped at the listing edge: stepping past the end stays put.
+        assert_eq!(
+            snaps.move_selection(&mut trail, 5),
+            TrailActivateOutcome::SelectedFile
+        );
+        assert_eq!(
+            trail.cols()[0].selected.as_deref(),
+            Some(td.root.join("beta.txt").as_path())
+        );
     }
 
     // Stale-hit safety: an out-of-range column index changes nothing.

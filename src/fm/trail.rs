@@ -22,10 +22,12 @@ pub(crate) struct TrailCol {
 }
 
 /// The whole trail. Column 0 is the (current) root; the last column is the
-/// deepest open directory.
+/// deepest open directory. `active_col` is the SINGLE focus authority shared
+/// by keyboard and mouse (contract LAW 2) and never dangles past the trail.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TrailState {
     cols: Vec<TrailCol>,
+    active_col: usize,
 }
 
 impl TrailState {
@@ -37,7 +39,25 @@ impl TrailState {
                 directory: root.into(),
                 selected: None,
             }],
+            active_col: 0,
         }
+    }
+
+    /// The single active-column authority (LAW 2): keyboard and mouse share
+    /// this focus; every trail transition keeps it inside the trail.
+    pub(crate) fn active_col(&self) -> usize {
+        self.active_col
+    }
+
+    /// Move focus one column toward the root. Returns false at the root.
+    pub(crate) fn move_active_left(&mut self) -> bool {
+        false
+    }
+
+    /// Move focus one column deeper. Returns false when no deeper column
+    /// exists.
+    pub(crate) fn move_active_right(&mut self) -> bool {
+        false
     }
 
     pub(crate) fn cols(&self) -> &[TrailCol] {
@@ -160,6 +180,49 @@ mod tests {
                 "the newest column is always the just-entered directory"
             );
         }
+    }
+
+    // LAW 2: the active column follows every trail transition — a folder
+    // select focuses the NEW column, a file select focuses ITS column, and
+    // truncation can never leave the focus dangling.
+    #[test]
+    fn active_column_follows_trail_transitions() {
+        let mut trail = TrailState::new("/root");
+        assert_eq!(trail.active_col(), 0);
+        assert!(trail.select_dir(0, &p("/root/a")));
+        assert_eq!(
+            trail.active_col(),
+            1,
+            "folder select focuses the new column"
+        );
+        assert!(trail.select_dir(1, &p("/root/a/b")));
+        assert_eq!(trail.active_col(), 2);
+        assert!(trail.select_file(1, &p("/root/a/x.txt")));
+        assert_eq!(
+            trail.active_col(),
+            1,
+            "file select focuses its own column and truncation clamps"
+        );
+    }
+
+    // LAW 2: keyboard column moves walk the trail without changing it —
+    // left toward the root, right toward the deepest column, both clamped.
+    #[test]
+    fn active_column_moves_left_and_right_within_the_trail() {
+        let mut trail = TrailState::new("/root");
+        assert!(trail.select_dir(0, &p("/root/a")));
+        assert!(trail.select_dir(1, &p("/root/a/b")));
+        assert_eq!(trail.active_col(), 2);
+        assert!(trail.move_active_left());
+        assert_eq!(trail.active_col(), 1);
+        assert!(trail.move_active_left());
+        assert_eq!(trail.active_col(), 0);
+        assert!(!trail.move_active_left(), "root is the left boundary");
+        assert!(trail.move_active_right());
+        assert!(trail.move_active_right());
+        assert_eq!(trail.active_col(), 2);
+        assert!(!trail.move_active_right(), "deepest is the right boundary");
+        assert_eq!(trail.cols().len(), 3, "focus moves never mutate the trail");
     }
 
     // Out-of-range column indexes change nothing (stale-hit safety).

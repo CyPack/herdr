@@ -157,6 +157,14 @@ pub(crate) fn project_trail_view(
     }
 }
 
+/// Resolve one screen position against this exact projected frame. The row
+/// rects ARE the hit areas — input never recomputes geometry. Positions on
+/// dividers, empty column space, or outside the projection resolve to None.
+pub(crate) fn trail_row_at(view: &TrailViewSnapshot, x: u16, y: u16) -> Option<&TrailRowView> {
+    let _ = (view, x, y);
+    None
+}
+
 /// Paint the projected trail: rows via the shared entry-row renderer (icons,
 /// truncation, selection emphasis) and one-cell dividers between columns.
 /// The selected row stays emphasized in EVERY visible column (LAW 1).
@@ -437,6 +445,55 @@ mod tests {
                 column.trail_index
             );
         }
+    }
+
+    // Hit resolution: a position inside a row rect resolves to EXACTLY that
+    // row — the projection is the single hit authority.
+    #[test]
+    fn row_hit_resolves_exact_row() {
+        let td = TempDir::new("hit");
+        let (trail, snaps) = deep_loaded_trail(&td.root, 2, 3);
+        let stage = Rect::new(3, 2, 100, 8);
+        let view = project_trail_view(stage, &trail, &snaps, &[]);
+        for column in &view.columns {
+            for row in &column.rows {
+                let hit = trail_row_at(&view, row.rect.x, row.rect.y)
+                    .expect("a row rect position resolves");
+                assert_eq!(hit, row, "hit resolves to exactly the visible row");
+                let right_edge = row.rect.right() - 1;
+                let hit = trail_row_at(&view, right_edge, row.rect.y)
+                    .expect("the row's last cell also resolves");
+                assert_eq!(hit, row);
+            }
+        }
+    }
+
+    // Hit resolution: dividers, empty column space below the listing, and
+    // positions outside the stage resolve to nothing.
+    #[test]
+    fn hit_outside_rows_is_none() {
+        let td = TempDir::new("hit-none");
+        let (trail, snaps) = deep_loaded_trail(&td.root, 1, 1);
+        let stage = Rect::new(0, 0, 100, 10);
+        let view = project_trail_view(stage, &trail, &snaps, &[]);
+        assert!(!view.columns.is_empty());
+        for divider in &view.dividers {
+            assert!(
+                trail_row_at(&view, divider.rect.x, divider.rect.y).is_none(),
+                "divider cells never resolve to a row"
+            );
+        }
+        let column = &view.columns[0];
+        let below = column.rect.y + column.rows.len() as u16;
+        assert!(below < column.rect.bottom(), "fixture has empty space");
+        assert!(
+            trail_row_at(&view, column.rect.x, below).is_none(),
+            "empty column space resolves to nothing"
+        );
+        assert!(
+            trail_row_at(&view, stage.right().saturating_sub(1), stage.bottom() - 1).is_none(),
+            "outside every projected column resolves to nothing"
+        );
     }
 
     // Bounded sanity: even an over-deep trail projects only complete
