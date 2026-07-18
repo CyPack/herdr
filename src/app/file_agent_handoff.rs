@@ -1039,6 +1039,155 @@ mod tests {
         assert!(receiver.try_recv().is_err(), "frame retry stays silent");
     }
 
+    // TP-FIP-REF-06: a directory is a first-class reference target; its exact
+    // UTF-8 path bytes cross the boundary once with no submit byte.
+    #[tokio::test]
+    async fn directory_reference_delivers_exact_directory_path() {
+        let fixture = HandoffFixture::new("directory-ref");
+        let dir = fixture.root.join("docs");
+        std::fs::create_dir(&dir).expect("create directory fixture");
+        let (mut app, _, mut receiver) = app_with_agent_handoff(&fixture.root, 4);
+
+        assert!(app.open_file_manager_row_agent_handoff(dir.clone()));
+        assert!(app.sync_file_manager_agent_handoff_send());
+        let expected = dir
+            .to_str()
+            .expect("UTF-8 fixture path")
+            .as_bytes()
+            .to_vec();
+        let sent = receiver
+            .try_recv()
+            .expect("one directory reference payload");
+        assert_eq!(sent, Bytes::from(expected));
+        assert!(
+            !sent.contains(&b'\r') && !sent.contains(&b'\n'),
+            "the directory reference payload must contain no submit byte"
+        );
+        assert!(receiver.try_recv().is_err(), "no second payload");
+    }
+
+    // TP-FIP-REF-11: a path deleted between prepare and send fails closed at
+    // the delivery seam — zero bytes and one visible failure.
+    #[tokio::test]
+    async fn deleted_path_before_send_sends_zero_bytes() {
+        let fixture = HandoffFixture::new("deleted-before-send");
+        let path = fixture.file("volatile.txt");
+        let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 4);
+        app.state.request_file_manager_agent_handoff = Some(FileManagerAgentHandoffRequest {
+            path: path.clone(),
+            terminal_id,
+        });
+        std::fs::remove_file(&path).expect("delete between prepare and send");
+
+        assert!(app.sync_file_manager_agent_handoff_send());
+        assert!(
+            receiver.try_recv().is_err(),
+            "a vanished path must deliver zero bytes"
+        );
+        let toast = app.state.toast.as_ref().expect("visible delivery failure");
+        assert_eq!(toast.title, "send to agent failed");
+        assert_eq!(toast.context, "reference path is unavailable");
+        assert!(!app.sync_file_manager_agent_handoff_send());
+        assert!(receiver.try_recv().is_err(), "no retry on later ticks");
+    }
+
+    // TP-FIP-REF-12: a path whose kind changed to an unsupported special
+    // target between prepare and send fails closed with zero bytes.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn path_kind_change_to_special_before_send_sends_zero_bytes() {
+        let fixture = HandoffFixture::new("kind-change-before-send");
+        let path = fixture.file("mutating.txt");
+        let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 4);
+        app.state.request_file_manager_agent_handoff = Some(FileManagerAgentHandoffRequest {
+            path: path.clone(),
+            terminal_id,
+        });
+        std::fs::remove_file(&path).expect("remove before kind change");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .expect("mkfifo runs");
+        assert!(status.success(), "fifo fixture must exist");
+
+        assert!(app.sync_file_manager_agent_handoff_send());
+        assert!(
+            receiver.try_recv().is_err(),
+            "a special-kind path must deliver zero bytes"
+        );
+        assert_eq!(
+            app.state.toast.as_ref().map(|toast| toast.context.as_str()),
+            Some("reference path is unavailable")
+        );
+    }
+
+    // TP-FIP-REF-13: a control character anywhere in the path disables the
+    // reference action at prepare AND independently at the delivery seam.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn control_character_path_disables_reference_action() {
+        let fixture = HandoffFixture::new("control-char");
+        let path = fixture.file("a\nb.txt");
+        let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 4);
+
+        assert!(
+            !app.open_file_manager_row_agent_handoff(path.clone()),
+            "prepare must refuse a control-character path"
+        );
+        assert!(app.state.request_file_manager_agent_handoff.is_none());
+        assert!(app.state.request_file_manager_claude_split.is_none());
+
+        app.state.request_file_manager_agent_handoff =
+            Some(FileManagerAgentHandoffRequest { path, terminal_id });
+        assert!(app.sync_file_manager_agent_handoff_send());
+        assert!(
+            receiver.try_recv().is_err(),
+            "the send seam must independently reject control characters"
+        );
+        assert_eq!(
+            app.state.toast.as_ref().map(|toast| toast.context.as_str()),
+            Some("reference path is unavailable")
+        );
+    }
+
+    // TP-FIP-REF-13: a non-UTF-8 path never becomes a typed request.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn non_utf8_path_rejects_at_prepare() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let fixture = HandoffFixture::new("non-utf8-prepare");
+        let _ = fixture.file("decoy.txt");
+        let (mut app, _, _receiver) = app_with_agent_handoff(&fixture.root, 4);
+        let path = std::path::PathBuf::from(std::ffi::OsString::from_vec(vec![0xff]));
+
+        assert!(!app.open_file_manager_row_agent_handoff(path));
+        assert!(app.state.request_file_manager_agent_handoff.is_none());
+        assert!(app.state.request_file_manager_claude_split.is_none());
+    }
+
+    // TP-FIP-REF-18: spaces and punctuation survive prepare, revalidation,
+    // and delivery byte-for-byte — the validator must never reject them.
+    #[tokio::test]
+    async fn spaces_and_punctuation_paths_preserved_byte_for_byte() {
+        let fixture = HandoffFixture::new("punctuation-ref");
+        let path = fixture.file("notes (v2), [draft] & final; 100%.md");
+        let (mut app, _, mut receiver) = app_with_agent_handoff(&fixture.root, 4);
+
+        assert!(app.open_file_manager_row_agent_handoff(path.clone()));
+        assert!(app.sync_file_manager_agent_handoff_send());
+        let expected = path
+            .to_str()
+            .expect("UTF-8 fixture path")
+            .as_bytes()
+            .to_vec();
+        assert_eq!(
+            receiver.try_recv().expect("one punctuation payload"),
+            Bytes::from(expected)
+        );
+        assert!(receiver.try_recv().is_err(), "no second payload");
+    }
+
     // TP-C5-SEND: authority is revalidated at send time. Lost agent identity
     // consumes the stale request without writing any bytes.
     #[tokio::test]
