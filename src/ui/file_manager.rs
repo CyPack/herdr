@@ -377,7 +377,9 @@ fn prepare_file_manager_action_bar_selection(
     );
 
     let stale = ambiguous || live_entries.len() != selected_paths.len();
-    let unsupported = live_entries.iter().any(|entry| !entry.operation_supported);
+    let unsupported = live_entries
+        .iter()
+        .any(|entry| !entry.operation_supported());
     let disabled_reason = if stale {
         Some(FileManagerActionDisabledReason::StaleSelection)
     } else if unsupported {
@@ -399,7 +401,7 @@ fn prepare_file_manager_action_bar_selection(
             .unwrap_or_else(|| String::from("unavailable selection"));
         (label, FileManagerActionBarSelectionKind::Unavailable)
     } else if let Some(entry) = live_entries.first() {
-        let kind = if entry.is_dir {
+        let kind = if entry.is_dir() {
             FileManagerActionBarSelectionKind::Directory
         } else {
             FileManagerActionBarSelectionKind::File
@@ -1429,7 +1431,7 @@ fn render_entry_row(
 ) {
     let p = &app.palette;
     let styles = file_manager_visual_styles(p);
-    let suffix = if entry.is_dir { "/" } else { "" };
+    let suffix = if entry.is_dir() { "/" } else { "" };
     let icon = crate::fm::entry_kind::visual_class(entry.kind, &entry.name)
         .glyph(crate::fm::entry_kind::IconProfile::Nerd);
     let label = truncate_end(
@@ -1440,7 +1442,7 @@ fn render_entry_row(
         styles.cursor
     } else if multi_selected {
         styles.multi_selection
-    } else if entry.is_dir {
+    } else if entry.is_dir() {
         styles.directory
     } else {
         styles.file
@@ -1564,13 +1566,11 @@ mod tests {
             .map(|entry_idx| FileEntry {
                 name: format!("{entry_idx:02}.txt"),
                 path: PathBuf::from("geometry-fixture").join(format!("{entry_idx:02}.txt")),
-                is_dir: false,
                 kind: if false {
                     crate::fm::entry_kind::FileEntryKind::Directory
                 } else {
                     crate::fm::entry_kind::FileEntryKind::RegularFile
                 },
-                operation_supported: true,
             })
             .collect()
     }
@@ -1657,37 +1657,31 @@ mod tests {
         fm.entries = vec![FileEntry {
             name: "current-only".to_string(),
             path: selected.clone(),
-            is_dir: true,
             kind: if true {
                 crate::fm::entry_kind::FileEntryKind::Directory
             } else {
                 crate::fm::entry_kind::FileEntryKind::RegularFile
             },
-            operation_supported: true,
         }];
         fm.parent = Some(crate::fm::FmParent {
             entries: vec![
                 FileEntry {
                     name: "current".to_string(),
                     path: current.clone(),
-                    is_dir: true,
                     kind: if true {
                         crate::fm::entry_kind::FileEntryKind::Directory
                     } else {
                         crate::fm::entry_kind::FileEntryKind::RegularFile
                     },
-                    operation_supported: true,
                 },
                 FileEntry {
                     name: "parent-only.txt".to_string(),
                     path: parent.join("parent-only.txt"),
-                    is_dir: false,
                     kind: if false {
                         crate::fm::entry_kind::FileEntryKind::Directory
                     } else {
                         crate::fm::entry_kind::FileEntryKind::RegularFile
                     },
-                    operation_supported: true,
                 },
             ],
             cursor: Some(0),
@@ -1695,13 +1689,11 @@ mod tests {
         fm.preview = FmPreview::Directory(vec![FileEntry {
             name: "preview-only.txt".to_string(),
             path: selected.join("preview-only.txt"),
-            is_dir: false,
             kind: if false {
                 crate::fm::entry_kind::FileEntryKind::Directory
             } else {
                 crate::fm::entry_kind::FileEntryKind::RegularFile
             },
-            operation_supported: true,
         }]);
         fm.miller.visit(
             current,
@@ -1713,13 +1705,11 @@ mod tests {
                 entries: vec![FileEntry {
                     name: "resident-only.txt".to_string(),
                     path: resident.join("resident-only.txt"),
-                    is_dir: false,
                     kind: if false {
                         crate::fm::entry_kind::FileEntryKind::Directory
                     } else {
                         crate::fm::entry_kind::FileEntryKind::RegularFile
                     },
-                    operation_supported: true,
                 }],
                 status: FmDirectoryStatus::Available,
                 writable: true,
@@ -1770,13 +1760,11 @@ mod tests {
                 entries: vec![FileEntry {
                     name: "FORBIDDEN_FAR_MARKER".to_string(),
                     path: far.join("FORBIDDEN_FAR_MARKER"),
-                    is_dir: false,
                     kind: if false {
                         crate::fm::entry_kind::FileEntryKind::Directory
                     } else {
                         crate::fm::entry_kind::FileEntryKind::RegularFile
                     },
-                    operation_supported: true,
                 }],
                 status: FmDirectoryStatus::Available,
                 writable: true,
@@ -2806,7 +2794,7 @@ mod tests {
 
         fm.cwd_writable = true;
         assert!(fm.toggle_selection(1));
-        fm.entries[1].operation_supported = false;
+        fm.entries[1].kind = crate::fm::entry_kind::FileEntryKind::UnsupportedSpecial;
         let unsupported = compute_file_manager_action_bar_model(&fm, &clipboard, false);
         for action in [
             FileManagerHeaderAction::Copy,
@@ -2821,7 +2809,7 @@ mod tests {
             );
         }
 
-        fm.entries[1].operation_supported = true;
+        fm.entries[1].kind = crate::fm::entry_kind::FileEntryKind::RegularFile;
         fm.entries.clear();
         let stale = compute_file_manager_action_bar_model(&fm, &clipboard, false);
         for action in [
@@ -3435,8 +3423,6 @@ mod tests {
             let entry = crate::fm::FileEntry {
                 name: name.to_string(),
                 path: std::path::PathBuf::from("/x").join(name),
-                is_dir: kind.is_directory_target(),
-                operation_supported: kind.supports_native_operation(),
                 kind,
             };
             let backend = ratatui::backend::TestBackend::new(24, 1);

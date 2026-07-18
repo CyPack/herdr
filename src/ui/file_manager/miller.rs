@@ -785,13 +785,11 @@ mod tests {
                 .to_string_lossy()
                 .into_owned(),
             path,
-            is_dir,
             kind: if is_dir {
                 crate::fm::entry_kind::FileEntryKind::Directory
             } else {
                 crate::fm::entry_kind::FileEntryKind::RegularFile
             },
-            operation_supported: true,
         }
     }
 

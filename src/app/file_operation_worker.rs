@@ -760,7 +760,7 @@ impl crate::app::App {
             || !file_manager
                 .entries
                 .iter()
-                .any(|entry| entry.operation_supported && entry.path == request.source_path)
+                .any(|entry| entry.operation_supported() && entry.path == request.source_path)
         {
             return false;
         }
@@ -838,7 +838,7 @@ impl crate::app::App {
         if current_sources != requested_sources
             || file_manager.entries.iter().any(|entry| {
                 file_manager.multi_selection_paths().contains(&entry.path)
-                    && !entry.operation_supported
+                    && !entry.operation_supported()
             })
         {
             return false;

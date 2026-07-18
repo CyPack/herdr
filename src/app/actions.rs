@@ -490,7 +490,7 @@ impl AppState {
     pub(crate) fn agent_attachment_selected_file(&self) -> Option<std::path::PathBuf> {
         let file_manager = &self.agent_attachment_picker.as_ref()?.file_manager;
         let entry = file_manager.entries.get(file_manager.cursor)?;
-        (!entry.is_dir && entry.operation_supported && entry.path.to_str().is_some())
+        (!entry.is_dir() && entry.operation_supported() && entry.path.to_str().is_some())
             .then(|| entry.path.clone())
     }
 

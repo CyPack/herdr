@@ -117,7 +117,7 @@ impl crate::app::App {
         else {
             return false;
         };
-        if !entry.operation_supported {
+        if !entry.operation_supported() {
             return false;
         }
         let Some(name) = path
@@ -166,7 +166,7 @@ impl crate::app::App {
                     file_manager
                         .entries
                         .iter()
-                        .any(|entry| entry.operation_supported && entry.path == source_path)
+                        .any(|entry| entry.operation_supported() && entry.path == source_path)
                 });
         if !source_is_current {
             return self

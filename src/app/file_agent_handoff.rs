@@ -80,7 +80,7 @@ impl crate::app::App {
         if !file_manager
             .entries
             .iter()
-            .any(|entry| entry.operation_supported && entry.path == path)
+            .any(|entry| entry.operation_supported() && entry.path == path)
         {
             return false;
         }
@@ -392,7 +392,7 @@ impl crate::app::App {
             || !file_manager
                 .entries
                 .iter()
-                .any(|entry| entry.operation_supported && entry.path == request.path)
+                .any(|entry| entry.operation_supported() && entry.path == request.path)
         {
             return false;
         }
@@ -534,7 +534,7 @@ impl crate::app::App {
                     file_manager
                         .entries
                         .iter()
-                        .any(|entry| entry.operation_supported && entry.path == request.path)
+                        .any(|entry| entry.operation_supported() && entry.path == request.path)
                 })
         {
             return false;

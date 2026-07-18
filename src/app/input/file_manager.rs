@@ -264,7 +264,7 @@ impl App {
             let entry_idx = fm
                 .entries
                 .iter()
-                .position(|entry| entry.operation_supported && entry.path == entry_path)?;
+                .position(|entry| entry.operation_supported() && entry.path == entry_path)?;
             Some((entry_idx, fm.clone()))
         }) else {
             return false;
@@ -583,7 +583,7 @@ impl App {
                     .file_manager
                     .as_ref()
                     .and_then(|file_manager| file_manager.entries.get(area.entry_idx))?;
-                (entry.operation_supported && entry.path == area.entry_path).then(|| {
+                (entry.operation_supported() && entry.path == area.entry_path).then(|| {
                     FileManagerMouseDispatch::RowAction {
                         action: area.action,
                         entry_path: area.entry_path.clone(),
@@ -2126,7 +2126,7 @@ mod tests {
                     }
                     1 => {
                         if let Some(file_manager) = app.state.file_manager.as_mut() {
-                            if file_manager.selected().is_some_and(|entry| entry.is_dir) {
+                            if file_manager.selected().is_some_and(|entry| entry.is_dir()) {
                                 file_manager.enter();
                             } else if file_manager.cwd != root {
                                 file_manager.leave();
@@ -4521,13 +4521,11 @@ mod tests {
                     .map(|index| crate::fm::FileEntry {
                         name: format!("{index:02}.txt"),
                         path: resident.join(format!("{index:02}.txt")),
-                        is_dir: false,
                         kind: if false {
                             crate::fm::entry_kind::FileEntryKind::Directory
                         } else {
                             crate::fm::entry_kind::FileEntryKind::RegularFile
                         },
-                        operation_supported: true,
                     })
                     .collect(),
                 status: crate::fm::FmDirectoryStatus::Available,
@@ -5454,13 +5452,11 @@ mod tests {
             .map(|index| crate::fm::FileEntry {
                 name: format!("{index:05}.txt"),
                 path: PathBuf::from(format!("/virtual/{index:05}.txt")),
-                is_dir: false,
                 kind: if false {
                     crate::fm::entry_kind::FileEntryKind::Directory
                 } else {
                     crate::fm::entry_kind::FileEntryKind::RegularFile
                 },
-                operation_supported: true,
             })
             .collect();
         let mut oversized_app = app_with_fm(oversized);
@@ -5485,13 +5481,11 @@ mod tests {
             .map(|index| crate::fm::FileEntry {
                 name: format!("{index:05}.txt"),
                 path: PathBuf::from(format!("/virtual/{index:05}.txt")),
-                is_dir: false,
                 kind: if false {
                     crate::fm::entry_kind::FileEntryKind::Directory
                 } else {
                     crate::fm::entry_kind::FileEntryKind::RegularFile
                 },
-                operation_supported: true,
             })
             .collect();
         assert!(fm.replace_selection(0));
@@ -6198,7 +6192,8 @@ mod tests {
 
         let mut app = runtime_app_with_fm(FmState::new(&td.root));
         install_row_actions(&mut app, 0);
-        app.state.file_manager.as_mut().expect("open FM").entries[0].operation_supported = false;
+        app.state.file_manager.as_mut().expect("open FM").entries[0].kind =
+            crate::fm::entry_kind::FileEntryKind::UnsupportedSpecial;
         assert_eq!(
             app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 2,)),
             FileManagerMouseDispatch::Consumed,

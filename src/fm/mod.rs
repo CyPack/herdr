@@ -46,16 +46,23 @@ pub struct FileEntry {
     pub name: String,
     /// Absolute (or `dir`-relative) path to the entry.
     pub path: PathBuf,
-    /// Whether this entry resolves to a directory (symlinks are followed).
-    pub is_dir: bool,
-    /// Whether the target resolves to a regular file or directory supported by
-    /// the native operation surface. Special/broken targets fail closed.
-    pub operation_supported: bool,
     /// Canonical semantic kind prepared at snapshot time (symlink identity
     /// preserved). Visual classification and capability checks derive from
-    /// this single source; `is_dir`/`operation_supported` stay consistent
-    /// bridges until the FIP-3.4 consumer migration completes.
+    /// this single source of truth.
     pub kind: entry_kind::FileEntryKind,
+}
+
+impl FileEntry {
+    /// Whether this entry resolves to a directory (symlinks are followed).
+    pub fn is_dir(&self) -> bool {
+        self.kind.is_directory_target()
+    }
+
+    /// Whether the target resolves to a regular file or directory supported by
+    /// the native operation surface. Special/broken targets fail closed.
+    pub fn operation_supported(&self) -> bool {
+        self.kind.supports_native_operation()
+    }
 }
 
 /// Prepared availability of the exact current directory. Keeping the read
@@ -249,10 +256,7 @@ fn read_directory_snapshot(dir: &Path, show_hidden: bool) -> FmDirectorySnapshot
             if !show_hidden && name.starts_with('.') {
                 return None;
             }
-            let (is_dir, operation_supported) = entry_capabilities(&entry);
             Some(FileEntry {
-                is_dir,
-                operation_supported,
                 kind: entry_kind::classify_dir_entry(&entry),
                 path: entry.path(),
                 name,
@@ -272,27 +276,6 @@ fn classify_directory_error(kind: std::io::ErrorKind) -> FmDirectoryStatus {
         std::io::ErrorKind::NotFound => FmDirectoryStatus::Missing,
         std::io::ErrorKind::PermissionDenied => FmDirectoryStatus::PermissionDenied,
         _ => FmDirectoryStatus::Unavailable,
-    }
-}
-
-/// Decide whether a directory entry counts as a directory for the file list.
-///
-/// `file_type()` comes straight from the `readdir` result (no extra syscall for
-/// real files/dirs). Only symlinks need a follow-up `stat` to resolve their
-/// target; a broken symlink resolves to `false` (listed as a file).
-fn entry_capabilities(entry: &std::fs::DirEntry) -> (bool, bool) {
-    match entry.file_type() {
-        Ok(ft) if ft.is_symlink() => {
-            let path = entry.path();
-            let is_dir = path.is_dir();
-            (is_dir, is_dir || path.is_file())
-        }
-        Ok(ft) => (ft.is_dir(), ft.is_dir() || ft.is_file()),
-        Err(_) => {
-            let path = entry.path();
-            let is_dir = path.is_dir();
-            (is_dir, is_dir || path.is_file())
-        }
     }
 }
 
@@ -337,7 +320,7 @@ pub(crate) fn prepare_navigation_io(request: FmNavigationRequest) -> Option<FmPr
     let selected = snapshot
         .entries
         .get(cursor)
-        .map(|entry| (entry.path.clone(), entry.is_dir));
+        .map(|entry| (entry.path.clone(), entry.is_dir()));
     let parent = read_parent_context_for(&request.target_directory, request.show_hidden);
     let preview = prepare_preview(selected, request.show_hidden, preview_generation, None);
 
@@ -364,7 +347,7 @@ pub(crate) fn prepare_current_refresh_io(
     let selected = snapshot
         .entries
         .get(cursor)
-        .map(|entry| (entry.path.clone(), entry.is_dir));
+        .map(|entry| (entry.path.clone(), entry.is_dir()));
     let parent = read_parent_context_for(&request.source_directory, request.target_show_hidden);
     let preview = prepare_preview(
         selected,
@@ -390,8 +373,8 @@ pub(crate) fn prepare_current_refresh_io(
 /// with the raw name as a stable tiebreaker for deterministic rendering/tests.
 fn sort_entries(entries: &mut [FileEntry]) {
     entries.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
+        b.is_dir()
+            .cmp(&a.is_dir())
             .then_with(|| natsort::natsort(a.name.as_bytes(), b.name.as_bytes(), true))
             .then_with(|| a.name.cmp(&b.name))
     });
@@ -672,7 +655,7 @@ impl FmState {
     pub(crate) fn request_enter_navigation(&self) -> Option<FmNavigationRequest> {
         let target_directory = self
             .selected()
-            .filter(|entry| entry.is_dir)
+            .filter(|entry| entry.is_dir())
             .map(|entry| entry.path.clone())?;
         Some(self.navigation_request(FmNavigationReason::Enter, target_directory, None, 0))
     }
@@ -1208,7 +1191,7 @@ impl FmState {
         };
         let selected = self
             .selected()
-            .map(|entry| (entry.path.clone(), entry.is_dir));
+            .map(|entry| (entry.path.clone(), entry.is_dir()));
         self.preview = prepare_preview(selected, self.show_hidden, generation, previous_text);
     }
 }
@@ -1349,13 +1332,11 @@ mod tests {
             .map(|index| FileEntry {
                 name: format!("{index:05}.txt"),
                 path: PathBuf::from(format!("/virtual/{index:05}.txt")),
-                is_dir: false,
                 kind: if false {
                     crate::fm::entry_kind::FileEntryKind::Directory
                 } else {
                     crate::fm::entry_kind::FileEntryKind::RegularFile
                 },
-                operation_supported: true,
             })
             .collect();
         state
@@ -1536,8 +1517,8 @@ mod tests {
             .iter()
             .find(|e| e.name == "link")
             .expect("link entry");
-        assert!(link.is_dir);
-        assert!(link.operation_supported);
+        assert!(link.is_dir());
+        assert!(link.operation_supported());
     }
 
     // T-N3.2h: unsupported Unix special files remain visible but fail closed
@@ -1555,8 +1536,8 @@ mod tests {
             .iter()
             .find(|entry| entry.path == socket_path)
             .expect("special entry remains visible");
-        assert!(!socket.is_dir);
-        assert!(!socket.operation_supported);
+        assert!(!socket.is_dir());
+        assert!(!socket.operation_supported());
     }
 
     // T-N3.2i: cwd writability is prepared outside render and refreshed when
@@ -1595,7 +1576,7 @@ mod tests {
         let entries = read_dir_entries(&td.root, false);
         assert!(entries.iter().any(|e| e.name == "café.txt"));
         assert!(entries.iter().any(|e| e.name == "naïve.md"));
-        assert!(entries.iter().any(|e| e.name == "smile-dir" && e.is_dir));
+        assert!(entries.iter().any(|e| e.name == "smile-dir" && e.is_dir()));
     }
 
     // T-A1.3a: opening a directory puts the cursor at the top, dir first.
@@ -2143,13 +2124,11 @@ mod tests {
         state.entries = vec![FileEntry {
             name: "child".into(),
             path: child.clone(),
-            is_dir: true,
             kind: if true {
                 crate::fm::entry_kind::FileEntryKind::Directory
             } else {
                 crate::fm::entry_kind::FileEntryKind::RegularFile
             },
-            operation_supported: true,
         }];
         state.directory_generation = 17;
         state.preview_generation = 23;
@@ -2192,13 +2171,11 @@ mod tests {
         state.entries = vec![FileEntry {
             name: "child".into(),
             path: child.clone(),
-            is_dir: true,
             kind: if true {
                 crate::fm::entry_kind::FileEntryKind::Directory
             } else {
                 crate::fm::entry_kind::FileEntryKind::RegularFile
             },
-            operation_supported: true,
         }];
         let request = state
             .request_enter_navigation()
@@ -2209,13 +2186,11 @@ mod tests {
             entries: vec![FileEntry {
                 name: "inside.txt".into(),
                 path: inside.clone(),
-                is_dir: false,
                 kind: if false {
                     crate::fm::entry_kind::FileEntryKind::Directory
                 } else {
                     crate::fm::entry_kind::FileEntryKind::RegularFile
                 },
-                operation_supported: true,
             }],
             status: FmDirectoryStatus::Available,
             writable: true,
@@ -2224,13 +2199,11 @@ mod tests {
                 entries: vec![FileEntry {
                     name: "child".into(),
                     path: child.clone(),
-                    is_dir: true,
                     kind: if true {
                         crate::fm::entry_kind::FileEntryKind::Directory
                     } else {
                         crate::fm::entry_kind::FileEntryKind::RegularFile
                     },
-                    operation_supported: true,
                 }],
                 cursor: Some(0),
             }),
@@ -2271,24 +2244,20 @@ mod tests {
             FileEntry {
                 name: "a.txt".to_string(),
                 path: root.join("a.txt"),
-                is_dir: false,
                 kind: if false {
                     crate::fm::entry_kind::FileEntryKind::Directory
                 } else {
                     crate::fm::entry_kind::FileEntryKind::RegularFile
                 },
-                operation_supported: true,
             },
             FileEntry {
                 name: "b.txt".to_string(),
                 path: selected_path.clone(),
-                is_dir: false,
                 kind: if false {
                     crate::fm::entry_kind::FileEntryKind::Directory
                 } else {
                     crate::fm::entry_kind::FileEntryKind::RegularFile
                 },
-                operation_supported: true,
             },
         ];
         state.cursor = 1;
@@ -2319,24 +2288,20 @@ mod tests {
                 FileEntry {
                     name: "b.txt".to_string(),
                     path: selected_path.clone(),
-                    is_dir: false,
                     kind: if false {
                         crate::fm::entry_kind::FileEntryKind::Directory
                     } else {
                         crate::fm::entry_kind::FileEntryKind::RegularFile
                     },
-                    operation_supported: true,
                 },
                 FileEntry {
                     name: "c.txt".to_string(),
                     path: root.join("c.txt"),
-                    is_dir: false,
                     kind: if false {
                         crate::fm::entry_kind::FileEntryKind::Directory
                     } else {
                         crate::fm::entry_kind::FileEntryKind::RegularFile
                     },
-                    operation_supported: true,
                 },
             ],
             status: FmDirectoryStatus::Available,
@@ -2381,13 +2346,11 @@ mod tests {
         base.entries = vec![FileEntry {
             name: "b.txt".to_string(),
             path: selected_path.clone(),
-            is_dir: false,
             kind: if false {
                 crate::fm::entry_kind::FileEntryKind::Directory
             } else {
                 crate::fm::entry_kind::FileEntryKind::RegularFile
             },
-            operation_supported: true,
         }];
         base.directory_generation = 11;
         base.preview_generation = 17;
@@ -2399,24 +2362,20 @@ mod tests {
                 FileEntry {
                     name: "b.txt".to_string(),
                     path: selected_path,
-                    is_dir: false,
                     kind: if false {
                         crate::fm::entry_kind::FileEntryKind::Directory
                     } else {
                         crate::fm::entry_kind::FileEntryKind::RegularFile
                     },
-                    operation_supported: true,
                 },
                 FileEntry {
                     name: "c.txt".to_string(),
                     path: root.join("c.txt"),
-                    is_dir: false,
                     kind: if false {
                         crate::fm::entry_kind::FileEntryKind::Directory
                     } else {
                         crate::fm::entry_kind::FileEntryKind::RegularFile
                     },
-                    operation_supported: true,
                 },
             ],
             status: FmDirectoryStatus::Available,
@@ -2504,13 +2463,11 @@ mod tests {
         state.entries = vec![FileEntry {
             name: "child".into(),
             path: child.clone(),
-            is_dir: true,
             kind: if true {
                 crate::fm::entry_kind::FileEntryKind::Directory
             } else {
                 crate::fm::entry_kind::FileEntryKind::RegularFile
             },
-            operation_supported: true,
         }];
         let request = state
             .request_enter_navigation()
@@ -3687,14 +3644,14 @@ mod tests {
                 .find(|entry| entry.name == name)
                 .expect("entry present")
         };
-        assert!(by_name("adir").is_dir && by_name("adir").operation_supported);
-        assert!(!by_name("afile.txt").is_dir && by_name("afile.txt").operation_supported);
+        assert!(by_name("adir").is_dir() && by_name("adir").operation_supported());
+        assert!(!by_name("afile.txt").is_dir() && by_name("afile.txt").operation_supported());
         #[cfg(unix)]
         {
-            assert!(by_name("link-dir").is_dir && by_name("link-dir").operation_supported);
-            assert!(!by_name("link-file").is_dir && by_name("link-file").operation_supported);
+            assert!(by_name("link-dir").is_dir() && by_name("link-dir").operation_supported());
+            assert!(!by_name("link-file").is_dir() && by_name("link-file").operation_supported());
             assert!(
-                !by_name("broken").is_dir && !by_name("broken").operation_supported,
+                !by_name("broken").is_dir() && !by_name("broken").operation_supported(),
                 "a broken symlink lists as an unsupported file"
             );
         }
@@ -3736,9 +3693,9 @@ mod tests {
             assert_eq!(kind_of("broken"), FileEntryKind::BrokenSymlink);
         }
         for entry in &snapshot.entries {
-            assert_eq!(entry.is_dir, entry.kind.is_directory_target());
+            assert_eq!(entry.is_dir(), entry.kind.is_directory_target());
             assert_eq!(
-                entry.operation_supported,
+                entry.operation_supported(),
                 entry.kind.supports_native_operation()
             );
         }

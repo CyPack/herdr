@@ -4398,13 +4398,11 @@ mod tests {
             .map(|name| crate::fm::FileEntry {
                 name: name.to_owned(),
                 path: cwd.join(name),
-                is_dir: false,
                 kind: if false {
                     crate::fm::entry_kind::FileEntryKind::Directory
                 } else {
                     crate::fm::entry_kind::FileEntryKind::RegularFile
                 },
-                operation_supported: true,
             })
             .collect();
         server.app.state.mobile_width_threshold = 0;
