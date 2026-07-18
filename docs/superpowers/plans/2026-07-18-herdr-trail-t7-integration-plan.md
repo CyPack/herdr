@@ -119,6 +119,16 @@ fmt/diff/unwrap taramaları temizdir. Ürün kodu FIP-D4 kapanışı sağlandı;
 Ghostty'de izole headful canlı foto kabul kanıtı kullanıcıyla ayrı bir fiziksel
 terminal doğrulaması olarak açık tutulur ve T7.6 kodunu bloklamaz.
 
+## T7.6 Seçici söküm + kapanış test noktaları
+
+| ID | Korunan davranış / neden | Beklenen sonuç | RED kanıtı |
+|---|---|---|---|
+| TP-TRAIL-T7-TEARDOWN-01 | Üretim Files frame'i tek Trail geometri otoritesine sahip olmalı; render edilmeyen parent/current/resident snapshot ikinci bir kimlik ağı taşıyamaz | Eski directory-source, resident projection ve row-column türleri `src/` ağından kalkar; retained `miller_viewport_geometry` yalnız saf kolon/divider hesabıdır | `TrailT7TeardownTests.test_retired_miller_projection_symbols_are_absent` |
+| TP-TRAIL-T7-TEARDOWN-02 | T7.5 sonrası watcher ve image worker eski current/PREVIEW seam'ine geri düşmemeli | `request_current_refresh` ve `legacy_file_manager_image_target` tanım/çağrıları sıfır; aktif Trail refresh ve detail target tek üretim yolu | `TrailT7TeardownTests.test_retired_watcher_and_image_seams_are_absent` |
+| TP-TRAIL-T7-TEARDOWN-03 | Kontrat LAW 1 gereği yüklenmemiş kolon veya teardown borcu kullanıcıya render edilemez ve kodda gizli kalamaz | `src/` içinde exact `"(unavailable)"` ve `TRAIL-T7.6 teardown` grep=0 | `TrailT7TeardownTests.test_no_legacy_placeholder_or_teardown_marker_remains` |
+| TP-TRAIL-T7-TEARDOWN-04 | Kalan geometry/layout kodu gerçek üretim tüketicisine sahip olmalı; modül-geneli dead-code bastırması yeni mezarlık yaratır | `src/fm/miller.rs` ve `src/ui/file_manager/miller.rs` modül-geneli `#![allow(dead_code)]` taşımaz; clippy `-D warnings` temiz | `TrailT7TeardownTests.test_retained_geometry_modules_need_no_dead_code_allowance` |
+| TP-TRAIL-T7-TEARDOWN-05 | Söküm navigation, operations, watcher, image ve Trail render kabulünü geriletmemeli | T7.1-T7.5 characterization aileleri, full Rust, iki clippy, Chromium 18/18, Python/Bun ve source audit birlikte yeşil | full gate zinciri; RED source audit yalnız gerçek legacy kalıntılarında fail |
+
 ## Kabul (plan §4 ile aynı)
 
 Kontrat 5 yasa ≥1 Rust testi + ≥1 Chromium baseline ile kanıtlı (T1-T6'da sağlandı; T7 canlı
