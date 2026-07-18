@@ -359,7 +359,7 @@ pub(super) fn open_new_tab_dialog(state: &mut AppState) {
     state.enter_overlay_mode(Mode::RenameTab);
 }
 
-pub(super) fn leave_modal(state: &mut AppState) {
+pub(crate) fn leave_modal(state: &mut AppState) {
     // Restore the remembered pre-overlay focus owner while it is still
     // valid; otherwise fall back to the template default. The value is
     // consumed either way so it can never restore a long-dead owner.

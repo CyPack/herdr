@@ -743,9 +743,6 @@ pub struct FileManagerDeleteRequest {
     pub paths: Vec<PathBuf>,
 }
 
-/// Exact client-local authority prepared for a native-FM handoff. C5.2 only
-/// binds one current path to one focused agent terminal; sending remains an
-
 /// Exact client-local native-FM identities owned by the Rename text modal.
 /// Opening or rendering this state performs no filesystem work.
 #[derive(Debug, Clone, PartialEq, Eq)]

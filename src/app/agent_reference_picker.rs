@@ -40,15 +40,165 @@ pub(crate) struct AgentReferenceRequest {
 }
 
 impl crate::app::App {
-    /// Explicit picker activation. RED stub: the GREEN seam prepares the
-    /// typed AgentReferenceRequest from the selected live row.
-    pub(crate) fn activate_agent_reference_picker_selection(&mut self) -> bool {
-        false
+    /// Open the blocking agent picker for one supported, still-deliverable
+    /// path. Opening performs no runtime work and prepares no delivery
+    /// authority; with zero live agents the action stays a no-op.
+    pub(super) fn open_agent_reference_picker(&mut self, paths: Vec<PathBuf>) -> bool {
+        self.state.request_file_manager_agent_handoff = None;
+        let Some(path) = paths.first().filter(|_| paths.len() == 1).cloned() else {
+            return false;
+        };
+        if self.file_operation_worker.is_busy()
+            || self
+                .state
+                .file_manager_operation
+                .as_ref()
+                .is_some_and(crate::app::state::FileManagerOperationState::is_running)
+        {
+            return false;
+        }
+        let Some(file_manager) = self.state.file_manager.as_ref() else {
+            return false;
+        };
+        if !file_manager
+            .entries
+            .iter()
+            .any(|entry| entry.operation_supported() && entry.path == path)
+        {
+            return false;
+        }
+        if !crate::app::file_agent_handoff::reference_path_is_deliverable(&path) {
+            return false;
+        }
+        let rows = self.agent_reference_picker_rows();
+        if rows.is_empty() {
+            return false;
+        }
+        self.state.agent_reference_picker = Some(AgentReferencePickerState {
+            source_path: path,
+            source_files_generation: self
+                .state
+                .stage
+                .active_instance_generation()
+                .unwrap_or_default(),
+            rows,
+            selected: 0,
+        });
+        self.state
+            .enter_overlay_mode(crate::app::state::Mode::AgentReferencePicker);
+        true
     }
 
-    /// Blocking-overlay key routing owner for the picker mode. RED stub:
-    /// the popup-ownership task wires selection, activation, and close.
-    pub(crate) fn handle_agent_reference_picker_key(&mut self, _key: crossterm::event::KeyEvent) {}
+    /// Live agent targets projected from the agents panel: agent-classified
+    /// terminals only, deduped per pane, with the focused agent first and
+    /// marked current. Bounded `O(live agent panes)`.
+    fn agent_reference_picker_rows(&self) -> Vec<AgentReferencePickerRow> {
+        let focused = self.state.active.and_then(|workspace_idx| {
+            self.state
+                .workspaces
+                .get(workspace_idx)
+                .and_then(crate::workspace::Workspace::focused_pane_id)
+                .map(|pane_id| (workspace_idx, pane_id))
+        });
+        let mut rows: Vec<AgentReferencePickerRow> = crate::ui::agent_panel_entries(&self.state)
+            .into_iter()
+            .filter_map(|entry| {
+                let terminal_id = self
+                    .state
+                    .terminal_id_for_pane(entry.ws_idx, entry.pane_id)?;
+                if !self
+                    .state
+                    .terminals
+                    .get(&terminal_id)
+                    .is_some_and(crate::terminal::TerminalState::is_agent_terminal)
+                {
+                    return None;
+                }
+                let workspace_id = self.state.workspaces.get(entry.ws_idx)?.id.clone();
+                Some(AgentReferencePickerRow {
+                    label: entry
+                        .agent_label
+                        .clone()
+                        .unwrap_or_else(|| entry.primary_label.clone()),
+                    is_current: focused == Some((entry.ws_idx, entry.pane_id)),
+                    workspace_id,
+                    pane_id: entry.pane_id,
+                    terminal_id,
+                    live: true,
+                })
+            })
+            .collect();
+        rows.sort_by_key(|row| !row.is_current);
+        rows
+    }
+
+    /// Explicit picker activation: snapshot the FULL selected target
+    /// identity into the typed request and close the picker. Delivery still
+    /// happens at the App-owned send boundary on a later frame; a stale or
+    /// non-live selection prepares nothing (fail closed).
+    pub(crate) fn activate_agent_reference_picker_selection(&mut self) -> bool {
+        let Some(picker) = self.state.agent_reference_picker.as_ref() else {
+            return false;
+        };
+        let Some(row) = picker.rows.get(picker.selected).filter(|row| row.live) else {
+            return false;
+        };
+        let row = row.clone();
+        let source_path = picker.source_path.clone();
+        let source_files_generation = picker.source_files_generation;
+        let Some(workspace_idx) = self
+            .state
+            .workspaces
+            .iter()
+            .position(|workspace| workspace.id == row.workspace_id)
+        else {
+            return false;
+        };
+        if self
+            .state
+            .terminal_id_for_pane(workspace_idx, row.pane_id)
+            .as_ref()
+            != Some(&row.terminal_id)
+            || !self
+                .state
+                .terminals
+                .get(&row.terminal_id)
+                .is_some_and(crate::terminal::TerminalState::is_agent_terminal)
+            || !crate::app::file_agent_handoff::reference_path_is_deliverable(&source_path)
+        {
+            return false;
+        }
+        self.state.request_file_manager_agent_handoff = Some(AgentReferenceRequest {
+            path: source_path,
+            source_files_generation,
+            workspace_id: row.workspace_id,
+            pane_id: row.pane_id,
+            terminal_id: row.terminal_id,
+        });
+        self.close_agent_reference_picker();
+        true
+    }
+
+    /// Close the picker and restore the pre-overlay focus owner. Closing
+    /// discards only client-local presentation state.
+    pub(crate) fn close_agent_reference_picker(&mut self) {
+        if self.state.agent_reference_picker.take().is_some() {
+            crate::app::input::leave_modal(&mut self.state);
+        }
+    }
+
+    /// Blocking-overlay key routing owner for the picker mode. The
+    /// popup-ownership task wires full selection movement; Esc always
+    /// closes with zero bytes.
+    pub(crate) fn handle_agent_reference_picker_key(&mut self, key: crossterm::event::KeyEvent) {
+        match key.code {
+            crossterm::event::KeyCode::Esc => self.close_agent_reference_picker(),
+            crossterm::event::KeyCode::Enter => {
+                let _ = self.activate_agent_reference_picker_selection();
+            }
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]

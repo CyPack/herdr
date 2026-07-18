@@ -21,7 +21,7 @@ fn agent_attachment_payload(path: &std::path::Path) -> Result<Vec<u8>, &'static 
 /// control characters, and a still-live regular file or directory target
 /// (symlink identity preserved). Vanished, special, and broken targets fail
 /// closed (TP-FIP-REF-11/12/13).
-fn reference_path_is_deliverable(path: &std::path::Path) -> bool {
+pub(super) fn reference_path_is_deliverable(path: &std::path::Path) -> bool {
     let Some(text) = path.to_str() else {
         return false;
     };
@@ -55,81 +55,16 @@ impl crate::app::App {
             self.state.request_file_manager_agent_handoff = None;
             return false;
         }
-        self.prepare_file_manager_agent_handoff(vec![path])
+        self.open_agent_reference_picker(vec![path])
     }
 
     fn open_file_manager_context_agent_handoff(&mut self, paths: Vec<std::path::PathBuf>) -> bool {
         // C3 already emitted this typed path only after comparing its menu
-        // snapshot with the current action model. Revalidate live entry,
-        // operation, and agent identity below without turning cursor focus
-        // into a second authority source.
-        self.prepare_file_manager_agent_handoff(paths)
-    }
-
-    fn prepare_file_manager_agent_handoff(&mut self, paths: Vec<std::path::PathBuf>) -> bool {
-        self.state.request_file_manager_agent_handoff = None;
-        let Some(path) = paths.first().filter(|_| paths.len() == 1).cloned() else {
-            return false;
-        };
-        if path.to_str().is_none()
-            || self.file_operation_worker.is_busy()
-            || self
-                .state
-                .file_manager_operation
-                .as_ref()
-                .is_some_and(FileManagerOperationState::is_running)
-        {
-            return false;
-        }
-        let Some(file_manager) = self.state.file_manager.as_ref() else {
-            return false;
-        };
-        if !file_manager
-            .entries
-            .iter()
-            .any(|entry| entry.operation_supported() && entry.path == path)
-        {
-            return false;
-        }
-        if !reference_path_is_deliverable(&path) {
-            return false;
-        }
-
-        let Some(workspace_idx) = self.state.active else {
-            return false;
-        };
-        let Some(workspace) = self.state.workspaces.get(workspace_idx) else {
-            return false;
-        };
-        let Some(pane_id) = workspace.focused_pane_id() else {
-            return false;
-        };
-        let Some(terminal_id) = self.state.terminal_id_for_pane(workspace_idx, pane_id) else {
-            return false;
-        };
-        // TP-FIP-REF-03: a non-agent focus prepares nothing. The reference
-        // action never creates an implicit Claude split/chat; FIP-5 routes
-        // it to the explicit agent picker instead.
-        if !self
-            .state
-            .terminals
-            .get(&terminal_id)
-            .is_some_and(crate::terminal::TerminalState::is_agent_terminal)
-        {
-            return false;
-        }
-        self.state.request_file_manager_agent_handoff = Some(AgentReferenceRequest {
-            path,
-            source_files_generation: self
-                .state
-                .stage
-                .active_instance_generation()
-                .unwrap_or_default(),
-            workspace_id: workspace.id.clone(),
-            pane_id,
-            terminal_id,
-        });
-        true
+        // snapshot with the current action model. The picker opener
+        // revalidates live entry, operation, and path deliverability; an
+        // explicit row activation then snapshots the chosen agent identity
+        // (TP-FIP-REF-01/04).
+        self.open_agent_reference_picker(paths)
     }
 
     pub(super) fn sync_file_manager_agent_handoff(&mut self) -> bool {
@@ -277,20 +212,19 @@ impl crate::app::App {
             return false;
         }
 
-        let Some(workspace_idx) = self.state.active else {
-            return false;
-        };
-        let Some(pane_id) = self
+        // The picker chose an explicit target (TP-FIP-REF-04): validate the
+        // CHOSEN workspace/pane/terminal binding, not the focused pane.
+        let Some(workspace_idx) = self
             .state
             .workspaces
-            .get(workspace_idx)
-            .and_then(crate::workspace::Workspace::focused_pane_id)
+            .iter()
+            .position(|workspace| workspace.id == request.workspace_id)
         else {
             return false;
         };
         if self
             .state
-            .terminal_id_for_pane(workspace_idx, pane_id)
+            .terminal_id_for_pane(workspace_idx, request.pane_id)
             .as_ref()
             != Some(&request.terminal_id)
         {
@@ -593,6 +527,7 @@ mod tests {
         let (mut app, _, mut receiver) = app_with_agent_handoff(&fixture.root, 4);
 
         assert!(app.open_file_manager_row_agent_handoff(dir.clone()));
+        assert!(app.activate_agent_reference_picker_selection());
         assert!(app.sync_file_manager_agent_handoff_send());
         let expected = dir
             .to_str()
@@ -713,6 +648,7 @@ mod tests {
         let (mut app, _, mut receiver) = app_with_agent_handoff(&fixture.root, 4);
 
         assert!(app.open_file_manager_row_agent_handoff(path.clone()));
+        assert!(app.activate_agent_reference_picker_selection());
         assert!(app.sync_file_manager_agent_handoff_send());
         let expected = path
             .to_str()
@@ -778,27 +714,38 @@ mod tests {
         assert!(receiver.try_recv().is_err(), "no retry on later ticks");
     }
 
-    // TP-FIP-REF-09: when the focused pane's terminal identity no longer
-    // matches the prepared request, no bytes may cross to the new terminal.
+    // TP-FIP-REF-09: the request is bound to the CHOSEN pane identity.
+    // When that pane's terminal no longer matches the snapshot, no bytes may
+    // cross to the terminal that now lives there.
     #[tokio::test]
     async fn changed_terminal_identity_sends_zero_bytes() {
         let fixture = HandoffFixture::new("changed-terminal");
         let path = fixture.file("selected.txt");
-        let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 2);
-        app.state.request_file_manager_agent_handoff = Some(reference_request_for(
-            &app,
-            path.clone(),
-            terminal_id.clone(),
-        ));
-        // Focus moves to a new split pane whose terminal is NOT the prepared
-        // target; the prepared request must not follow the focus.
+        let (mut app, _, mut receiver) = app_with_agent_handoff(&fixture.root, 2);
+        let pane_a = app.state.workspaces[0]
+            .focused_pane_id()
+            .expect("focused pane");
         app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
         app.state.ensure_test_terminals();
-        let focused_terminal = app
+        let pane_b = app.state.workspaces[0].tabs[0]
+            .layout
+            .pane_ids()
+            .into_iter()
+            .find(|pane_id| *pane_id != pane_a)
+            .expect("neighbor pane");
+        let terminal_b = app
             .state
-            .terminal_id_for_pane(0, app.state.workspaces[0].focused_pane_id().expect("focus"))
-            .expect("focused terminal");
-        assert_ne!(focused_terminal, terminal_id, "fixture must move focus");
+            .terminal_id_for_pane(0, pane_b)
+            .expect("neighbor terminal");
+        // Snapshot claims pane_a delivers to terminal_b — a binding that no
+        // longer exists. Delivery must fail closed.
+        app.state.request_file_manager_agent_handoff = Some(AgentReferenceRequest {
+            path,
+            source_files_generation: 0,
+            workspace_id: app.state.workspaces[0].id.clone(),
+            pane_id: pane_a,
+            terminal_id: terminal_b,
+        });
 
         assert!(app.sync_file_manager_agent_handoff_send());
         assert!(

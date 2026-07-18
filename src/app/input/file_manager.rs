@@ -5881,11 +5881,22 @@ mod tests {
         );
         assert!(app.state.request_file_manager_agent_handoff.is_none());
         assert!(app.sync_file_manager_agent_handoff());
+        let picker = app
+            .state
+            .agent_reference_picker
+            .as_ref()
+            .expect("the reference action opens the agent picker");
+        assert_eq!(picker.source_path, entry_path);
+        assert!(
+            app.state.request_file_manager_agent_handoff.is_none(),
+            "opening the picker prepares no delivery authority"
+        );
+        assert!(app.activate_agent_reference_picker_selection());
         let request = app
             .state
             .request_file_manager_agent_handoff
             .as_ref()
-            .expect("typed current-agent request");
+            .expect("typed reference request after explicit activation");
         assert_eq!(request.path, entry_path);
         assert_eq!(request.terminal_id, terminal_id);
         assert_eq!(
@@ -5911,11 +5922,18 @@ mod tests {
 
         assert!(app.sync_file_manager_agent_handoff());
         assert!(app.state.request_file_manager_context_action.is_none());
+        let picker = app
+            .state
+            .agent_reference_picker
+            .as_ref()
+            .expect("the context intent opens the agent picker");
+        assert_eq!(picker.source_path, path);
+        assert!(app.activate_agent_reference_picker_selection());
         let request = app
             .state
             .request_file_manager_agent_handoff
             .as_ref()
-            .expect("typed current-agent request");
+            .expect("typed reference request after explicit activation");
         assert_eq!(request.path, path);
         assert_eq!(request.terminal_id, terminal_id);
         assert!(!app.sync_file_manager_agent_handoff());
