@@ -3356,6 +3356,54 @@ mod tests {
         assert!(state.request_file_manager_context_action.is_none());
     }
 
+    // TP-TRAIL-T7-CHAR-01: Stage-owned Files generation is the lifecycle
+    // authority even when workspace/tab/pane identities are deliberately
+    // adversarial. Close retires the generation; reopen must allocate a new
+    // one without disturbing any app identity invariant.
+    #[test]
+    fn files_lifecycle_advances_generation_under_adversarial_identity_state() {
+        let mut state = AppState::test_with_adversarial_identity_state();
+        state
+            .try_open_file_manager_with(|_| {
+                Some(crate::fm::FmState::test_empty(
+                    "/virtual/trail-t7-characterization",
+                ))
+            })
+            .expect("Files activation");
+        let first_generation = state
+            .stage
+            .active_instance_generation()
+            .expect("open Files has a Stage generation");
+        state.assert_invariants_for_test();
+
+        state.close_file_manager();
+        assert!(state.file_manager.is_none());
+        assert_eq!(
+            state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace,
+            "closing Files restores the terminal surface"
+        );
+        assert!(state.view.file_manager_miller.files_generation.is_none());
+        state.assert_invariants_for_test();
+
+        state
+            .try_open_file_manager_with(|_| {
+                Some(crate::fm::FmState::test_empty(
+                    "/virtual/trail-t7-characterization",
+                ))
+            })
+            .expect("Files reopen");
+        let reopened_generation = state
+            .stage
+            .active_instance_generation()
+            .expect("reopened Files has a Stage generation");
+        assert!(
+            reopened_generation > first_generation,
+            "same-cwd reopen cannot reuse stale Files authority"
+        );
+        state.assert_invariants_for_test();
+    }
+
     #[test]
     fn notification_context_formats_resolved_workspace_label() {
         let state = app_with_workspaces(&["stale"]);

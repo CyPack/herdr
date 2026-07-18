@@ -5312,9 +5312,9 @@ mod tests {
         assert_eq!(fm.multi_selection_anchor(), before_anchor.as_deref());
     }
 
-    // TP-N4.1-SELECTION-STATE: Space toggles the focused identity, Shift plus
-    // vertical navigation extends from the stable anchor, and plain movement
-    // does not rewrite the explicit set.
+    // TP-TRAIL-T7-CHAR-03 / TP-N4.1-SELECTION-STATE: Space toggles the focused
+    // identity, Shift plus vertical navigation extends from the stable anchor,
+    // and plain movement does not rewrite the explicit set.
     #[test]
     fn keyboard_toggle_range_and_cursor_only_movement_share_selection_model() {
         let td = TempDir::new("multi-selection-keyboard-gestures");
@@ -5561,8 +5561,9 @@ mod tests {
         );
     }
 
-    // TP-N4.1-SELECTION-STATE: row hit geometry snapshots stable path identity
-    // so a watcher reorder at the same valid index can be rejected on input.
+    // TP-TRAIL-T7-CHAR-03 / TP-N4.1-SELECTION-STATE: row hit geometry snapshots
+    // stable path identity so a watcher reorder at the same valid index can be
+    // rejected on input.
     #[test]
     fn row_selection_snapshot_carries_stable_path_identity() {
         let td = TempDir::new("multi-selection-row-identity");
@@ -5857,9 +5858,10 @@ mod tests {
         );
     }
 
-    // TP-C5-AUTHORITY: the row SendAgent tag must bind one exact current path
-    // to the focused agent terminal identity without sending bytes, spawning a
-    // process, mutating the filesystem, or reconstructing authority from text.
+    // TP-TRAIL-T7-CHAR-02 / TP-C5-AUTHORITY: the row SendAgent tag must bind one
+    // exact current path to the focused agent terminal identity without
+    // sending bytes, spawning a process, mutating the filesystem, or
+    // reconstructing authority from text.
     #[test]
     fn row_send_agent_prepares_exact_path_and_focused_terminal_identity() {
         let td = TempDir::new("row-send-agent-authority");
@@ -5975,8 +5977,9 @@ mod tests {
         assert_eq!(app.terminal_runtimes.len(), before_runtimes);
     }
 
-    // TP-C5-AUTHORITY: bulk row authority or an operation-in-flight snapshot
-    // cannot create either existing-agent or split-and-launch authority.
+    // TP-TRAIL-T7-CHAR-02 / TP-C5-AUTHORITY: bulk row authority or an
+    // operation-in-flight snapshot cannot create either existing-agent or
+    // split-and-launch authority.
     #[test]
     fn send_agent_authority_fails_closed_without_current_single_path() {
         let td = TempDir::new("send-agent-fail-closed");
@@ -6009,9 +6012,10 @@ mod tests {
         assert!(busy.state.request_file_manager_agent_handoff.is_none());
     }
 
-    // TP-C4.3-INTENT: the stable row Rename tag must converge on one typed
-    // exact-path file modal. Opening it is pure client-local authority: no
-    // worker generation or filesystem mutation exists yet.
+    // TP-TRAIL-T7-CHAR-03 / TP-C4.3-INTENT: the stable row Rename tag must
+    // converge on one typed exact-path file modal. Opening it is pure
+    // client-local authority: no worker generation or filesystem mutation
+    // exists yet.
     #[test]
     fn row_rename_opens_exact_file_modal_without_filesystem_work() {
         let td = TempDir::new("row-rename-intent");
@@ -6050,9 +6054,10 @@ mod tests {
         );
     }
 
-    // TP-C6.3-AUTHORITY: the row Delete tag selects its exact anchored row,
-    // emits the same typed C3 intent as context/header Delete, and reaches the
-    // existing confirmation owner only at the scheduled boundary.
+    // TP-TRAIL-T7-CHAR-03 / TP-C6.3-AUTHORITY: the row Delete tag selects its
+    // exact anchored row, emits the same typed C3 intent as context/header
+    // Delete, and reaches the existing confirmation owner only at the
+    // scheduled boundary.
     #[test]
     fn row_delete_converges_on_shared_typed_confirmation_authority() {
         let td = TempDir::new("row-delete-authority");
@@ -6087,9 +6092,9 @@ mod tests {
         );
     }
 
-    // TP-C4.3-INTENT: a row coordinate is not independent authority while a
-    // bulk selection or another operation is active. Both cases fail closed
-    // before a modal or worker request can exist.
+    // TP-TRAIL-T7-CHAR-03 / TP-C4.3-INTENT: a row coordinate is not independent
+    // authority while a bulk selection or another operation is active. Both
+    // cases fail closed before a modal or worker request can exist.
     #[test]
     fn row_rename_rejects_bulk_selection_and_inflight_operation() {
         let td = TempDir::new("row-rename-fail-closed");

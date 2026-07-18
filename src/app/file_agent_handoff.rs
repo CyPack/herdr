@@ -456,10 +456,11 @@ mod tests {
         (app, source_pane_id, source_terminal_id)
     }
 
-    // TP-FIP-REF-05/07 (supersedes TP-C5-SEND): the reference payload is
-    // EXACTLY the literal UTF-8 path bytes — no CR, LF, Enter, prefix,
-    // suffix, or implicit whitespace, and never a second attempt. Shell
-    // metacharacters stay data; this is chat text, not a command.
+    // TP-TRAIL-T7-CHAR-02 / TP-FIP-REF-05/07 (supersedes TP-C5-SEND): the
+    // reference payload is EXACTLY the literal UTF-8 path bytes — no CR, LF,
+    // Enter, prefix, suffix, or implicit whitespace, and never a second
+    // attempt. Shell metacharacters stay data; this is chat text, not a
+    // command.
     #[tokio::test]
     async fn existing_agent_receives_exact_path_bytes_with_no_submit() {
         let fixture = HandoffFixture::new("literal");

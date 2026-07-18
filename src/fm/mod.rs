@@ -2850,6 +2850,7 @@ mod tests {
         assert_eq!(state.multi_selection_anchor(), selection_anchor.as_deref());
     }
 
+    // TRAIL-T7.6 teardown: legacy parent/current/preview state preparation.
     // TP-A2.2.2/3: Miller context is loaded into pure state before render. The
     // parent cursor identifies cwd and a selected directory exposes its child
     // entries without filesystem access from the renderer.
@@ -2873,6 +2874,7 @@ mod tests {
         }
     }
 
+    // TRAIL-T7.6 teardown: legacy selected-file preview classification.
     // TP-A2.2.3: a selected file is explicitly classified; it is not confused
     // with an empty directory preview.
     #[test]
@@ -3083,6 +3085,7 @@ mod tests {
         }
     }
 
+    // TRAIL-T7.6 teardown: legacy parent-context absence at filesystem root.
     // TP-A2.2.5: filesystem root has no parent context.
     #[test]
     fn miller_context_at_root_has_no_parent() {
@@ -3090,6 +3093,7 @@ mod tests {
         assert!(st.parent.is_none());
     }
 
+    // TRAIL-T7.6 teardown: legacy parent-context hidden-directory handling.
     // No-happy-path: entering a dot-directory while hidden files are disabled
     // must not erase cwd from its own parent context.
     #[test]
@@ -3108,6 +3112,7 @@ mod tests {
             .any(|entry| entry.name == "visible-peer"));
     }
 
+    // TRAIL-T7.6 teardown: legacy preview-context refresh projection.
     // TP-A4.3: a refresh follows the selected path across re-sorting and
     // rebuilds the right Miller column from the resulting selection.
     #[test]
@@ -3516,6 +3521,7 @@ mod tests {
         assert_eq!(segment.focused_child.as_deref(), Some(beta.as_path()));
     }
 
+    // TRAIL-T7.6 teardown: legacy resident-ancestor focus cache.
     // TP-FIP-FOCUS-02: descending four levels binds every resident ancestor
     // to its exact next path segment, not just the immediate parent.
     #[test]

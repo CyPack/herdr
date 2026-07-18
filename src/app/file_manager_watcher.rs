@@ -964,8 +964,9 @@ mod tests {
         drop(watch_tx);
     }
 
-    // P5 LIFECYCLE: model generations can repeat after reopen, so the typed
-    // request must also carry the Stage-owned Files instance generation.
+    // TP-TRAIL-T7-CHAR-01 / P5 LIFECYCLE: model generations can repeat after
+    // reopen, so the typed request must also carry the Stage-owned Files
+    // instance generation.
     #[test]
     fn prepared_refresh_cannot_apply_after_files_close_reopen() {
         let td = TempDir::new("refresh-close-reopen");
@@ -1294,9 +1295,9 @@ mod tests {
         );
     }
 
-    // TP-C4.4-RECONCILE: watcher-driven rename removes the exact selected path
-    // from both cursor and multi-selection authority, then falls back to the
-    // old safe row without retaining a stale anchor.
+    // TP-TRAIL-T7-CHAR-04 / TP-C4.4-RECONCILE: watcher-driven rename removes
+    // the exact selected path from both cursor and multi-selection authority,
+    // then falls back to the old safe row without retaining a stale anchor.
     #[test]
     fn watcher_rename_prunes_selected_path_and_keeps_cursor_safe() {
         let td = TempDir::new("watcher-selection-rename");

@@ -1638,6 +1638,7 @@ mod tests {
         }
     }
 
+    // TRAIL-T7.6 teardown: legacy resident/parent/current/preview source matrix.
     #[test]
     fn windowed_render_uses_current_resident_parent_unavailable_and_preview_sources() {
         let unavailable = PathBuf::from("/virtual/unavailable");
@@ -1851,6 +1852,7 @@ mod tests {
         );
     }
 
+    // TRAIL-T7.6 teardown: legacy preview/current generation projection.
     #[test]
     fn windowed_render_rejects_stale_current_and_preview_generation() {
         let td = TempDir::new("windowed-stale");
@@ -1875,6 +1877,7 @@ mod tests {
         assert!(!rendered.contains("SECRET_PREVIEW"));
     }
 
+    // TRAIL-T7.6 teardown: legacy parent/current/preview three-column contract.
     // TP-A2.2.1/2/3: a directory selection renders parent, current, and child
     // context side by side. Both the cwd in its parent and the selected child
     // in the current directory are visibly highlighted.
@@ -2869,6 +2872,7 @@ mod tests {
         assert_ne!(enabled[(copy_x, 0)].fg, disabled[(copy_x, 0)].fg);
     }
 
+    // TRAIL-T7.6 teardown: legacy synthetic parent-column contract.
     // TP-A2.2.5: the filesystem root has no logical ancestor. The bounded
     // snapshot must not synthesize a fake parent column.
     #[test]
@@ -2886,6 +2890,7 @@ mod tests {
         );
     }
 
+    // TRAIL-T7.6 teardown: legacy right-side directory preview contract.
     // TP-A2.2.3: moving the cursor refreshes the directory preview; stale child
     // contents from the previous selection must not survive.
     #[test]
