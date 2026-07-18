@@ -100,6 +100,7 @@ struct FmDirectorySnapshot {
 struct FmDirectoryOmissions {
     hidden: usize,
     non_utf8: usize,
+    entry_errors: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -271,7 +272,8 @@ fn read_directory_snapshot(dir: &Path, show_hidden: bool) -> FmDirectorySnapshot
         }
     };
 
-    let (mut entries, omissions, _entry_errors) = collect_directory_entries(read, show_hidden);
+    let (mut entries, mut omissions, entry_errors) = collect_directory_entries(read, show_hidden);
+    omissions.entry_errors = entry_errors;
     sort_entries(&mut entries);
     FmDirectorySnapshot {
         entries,
@@ -289,8 +291,10 @@ fn collect_directory_entries(
 ) -> (Vec<FileEntry>, FmDirectoryOmissions, usize) {
     let mut entries = Vec::new();
     let mut omissions = FmDirectoryOmissions::default();
+    let mut entry_errors = 0;
     for result in read {
         let Ok(entry) = result else {
+            entry_errors += 1;
             continue;
         };
         // Non-UTF-8 names cannot be rendered as a `str`; skip them in v1.
@@ -309,7 +313,7 @@ fn collect_directory_entries(
             name: name.to_string(),
         });
     }
-    (entries, omissions, 0)
+    (entries, omissions, entry_errors)
 }
 
 fn classify_directory_error(kind: std::io::ErrorKind) -> FmDirectoryStatus {

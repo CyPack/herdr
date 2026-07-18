@@ -426,6 +426,8 @@ pub(crate) fn render_trail_view(
                 Some("hidden items omitted")
             } else if snap.non_utf8_omitted() > 0 {
                 Some("unreadable names omitted")
+            } else if snap.entry_errors() > 0 {
+                Some("some entries unreadable")
             } else {
                 None
             };
