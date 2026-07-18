@@ -86,15 +86,15 @@ then the plan's Tasks 2-29 in order.
   and unsupported special entries.
 - [x] **FIP-3.3 GREEN** Introduce `FileEntryKind` with derived capability
   methods while preserving current operational authority.
-- [ ] **FIP-3.4** Migrate every consumer without retaining dual
+- [x] **FIP-3.4** Migrate every consumer without retaining dual
   `is_dir`/`operation_supported` sources of truth.
 - [x] **FIP-3.5 RED** Pin exact-name, case-insensitive extension, semantic
   class, Nerd-glyph, and ASCII-fallback mappings.
 - [x] **FIP-3.6 GREEN** Implement a pure visual classifier and one-cell glyph
   profiles with no render-time filesystem/config/process work.
-- [ ] **FIP-3.7** Cover truncation, display width, Unicode, control escaping,
+- [x] **FIP-3.7** Cover truncation, display width, Unicode, control escaping,
   cursor/multi-select hierarchy, render purity, sorting, and operation parity.
-- [ ] **FIP-3.8** Add Playwright `TP-FIP-VIS-03` and `TP-FIP-VIS-04`
+- [x] **FIP-3.8** Add Playwright `TP-FIP-VIS-03` and `TP-FIP-VIS-04`
   snapshots for mixed kinds and narrow/tiny layouts.
 
 ### FIP-4 — Reference-Only Delivery Core
