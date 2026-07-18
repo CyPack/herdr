@@ -73,7 +73,14 @@ sidebar-tab/new-tab/new-workspace için NO-OP; klavye (C-b prefix hint)
 çalışıyor. Olası server-modu mouse regresyonu VEYA harness ortam farkı —
 taze session'da adanmış investigation gerekli (.codex/evidence/
 fip-progress.md son bölüm). zsh tuzağı: tmux send-keys -H'e ${=seq}.
-Stable socket inode/mode/mtime birebir korundu.
+Stable socket inode/mode/mtime birebir korundu. SONRAKİ BÜYÜK PROGRAM
+AKTİF: MILLER TRAIL (2026-07-18) — kullanıcı kanonik referansı circet-miller
+verdi; kontrat: docs/superpowers/specs/2026-07-18-herdr-miller-trail-ux-
+contract.md (5 yasa), plan: docs/superpowers/plans/2026-07-18-herdr-miller-
+trail-program.md (T1-T7). T1 KAPANDI (`3b0c2ed0`/`7d5edecb`, full
+3,500/3,500). Saha kusurları: FIP-D2 kapalı (agentless toast), FIP-D1
+(sidebar favorites ölü) T6'da, FIP-D3 trail kontratıyla süperseed, FIP-D4
+(Ghostty foto önizleme "Kitty graphics req.") açık. SIRADAKİ: TRAIL-T2.
 Sonrası: FIP-5 picker, kullanıcı direktifi custom-layout programı. FIP-3 TAMAMEN KAPANDI (2026-07-18): 3.4 characterized migration
 (`bcecfdc8` — FileEntry alanları kind-türevi metodlara döndü, çifte symlink
 stat kalktı, 3-kategori grep 0 kalıntı); 3.7 icon edge ailesi (`91e33f6f` RED
@@ -113,9 +120,9 @@ drag-and-drop kapsam dışı.
 - Eski SF0-SF6 + FM1-FM5 programı tamam ve yayınlıdır; yeniden uygulanmaz.
 - Yeni aktif program Files Interaction Polish’tir.
 - Açık görev envanteri (FIP-4 kapanışı sonrası, 2026-07-18):
-  - `.codex/TASKS.md`: 7
+  - `.codex/TASKS.md`: 16
   - `.codex/CHANGE-PIPELINE-TASKS.md`: 89
-  - toplam: 96
+  - toplam: 105
 - Sadece FIP-6.3 (E2E investigation) veya FIP-1.6 kapanışı in-progress yapılabilir; diğer görevler pending/paused kalır.
 - Fresh continuity gates (2026-07-18 planning-gate closure):
   - exact task copy 96/96 (FIP-6 kapanış koşusu sonrası);
@@ -397,13 +404,51 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 7 ve
-89, toplam 96’dir. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 16 ve
+89, toplam 105’dir. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 7 unchecked
+### Source: `.codex/TASKS.md` — 16 unchecked
+
+- [ ] **TRAIL-T2** Snapshot köprüsü: her kolon = yüklü read_directory_snapshot;
+  watcher path-bazlı seçim koruması; bounded.
+
+- [ ] **TRAIL-T3** Render+geometri: soldan sağa kolonlar, per-index genişlik,
+  en-derin-kolon auto-scroll; VIS-07/08 Chromium baseline'ları.
+
+- [ ] **TRAIL-T4** Girdi: klasör/ata-kardeş/dosya tık aileleri + klavye;
+  generation-safe hit'ler.
+
+- [ ] **TRAIL-T5** Resizable detay/önizleme paneli + VIS-09; FIP-D4
+  (kitty graphics Ghostty) paralel iz.
+
+- [ ] **TRAIL-T6** Sidebar favorites → trail kurma (FIP-D1 kökten kapanır) + VIS-10.
+
+- [ ] **TRAIL-T7** Eski parent/current/resident modelinin characterized sökümü
+  ("(unavailable)" grep=0) + tüm gate'ler + yayın.
+
+- [ ] **FIP-D1** Files-tab sidebar öğeleri (FAVORITES Home/Desktop/…, LOCATIONS
+  Root) tıklanınca navigasyon YOK. Rota kodda mevcut: mouse.rs:621-635
+  `file_manager_sidebar_path_at` → `request_file_manager_sidebar_navigation` →
+  `sync_file_manager_sidebar_navigation`. Kopukluk hit-area üretimi veya
+  consumer guard'ında — canlıda repro + iz sürme gerekli (E2E harness'ı
+  düzelince orada; alternatif: hit-area birim karakterizasyonu).
+
+- [ ] **FIP-D3** Miller navigasyonu TRAIL modeline yeniden kurulacak — kullanıcı
+  kanonik referansı verdi: circet-miller (`CircetMillerSection.tsx`, canlı
+  `127.0.0.1:8771/p/circet-miller`). Yasa: kolonlar kökten birikir, her görünür
+  kolon YÜKLÜ+tıklanabilir, "(unavailable)" ASLA render edilmez, ata-kardeş tık
+  trail'i keser+yeniden dallar, dosya tıkı kolon eklemez → resizable sağ
+  detay/önizleme paneli, en derin kolon auto-scroll. TAM KONTRAT:
+  `docs/superpowers/specs/2026-07-18-herdr-miller-trail-ux-contract.md` —
+  B-zinciri design spec'inin girdi YASASI.
+
+- [ ] **FIP-D4** Önizleme Ghostty'de foto GÖSTERMİYOR — "(Kitty graphics
+  req.)" basıyor; Ghostty kitty-graphics destekler. Kusur host-yetenek
+  algılamada veya server-side render graphics passthrough'unda. Canlı ekran
+  kanıtı 2026-07-18; iz: preview render + kitty_graphics modülleri.
 
 - [ ] **FIP-1.6** Add Playwright `TP-FIP-VIS-01` plus isolated real-mouse
   `TP-FIP-E2E-01` evidence without touching the stable Herdr socket.

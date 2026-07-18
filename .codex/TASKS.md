@@ -10,6 +10,26 @@ FIP-G.1/FIP-G.2 are closed; the approved code-level plan is
 (commit `dd81ef59`). The next executable task is **FIP-0.1** (baseline freeze),
 then the plan's Tasks 2-29 in order.
 
+### TRAIL — Miller Trail Programı (kanonik UX kontratı, 2026-07-18)
+
+Girdi yasası: `docs/superpowers/specs/2026-07-18-herdr-miller-trail-ux-contract.md`.
+Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 + test-noktası tablosu).
+
+- [x] **TRAIL-T1** Saf trail çekirdeği (`3b0c2ed0` RED / `7d5edecb` GREEN):
+  TrailState/TrailCol, truncate+branch, dosya-tık-kolon-eklemez, sliding depth
+  bound, stale-index no-op; aile 5/5, full 3,500/3,500.
+- [ ] **TRAIL-T2** Snapshot köprüsü: her kolon = yüklü read_directory_snapshot;
+  watcher path-bazlı seçim koruması; bounded.
+- [ ] **TRAIL-T3** Render+geometri: soldan sağa kolonlar, per-index genişlik,
+  en-derin-kolon auto-scroll; VIS-07/08 Chromium baseline'ları.
+- [ ] **TRAIL-T4** Girdi: klasör/ata-kardeş/dosya tık aileleri + klavye;
+  generation-safe hit'ler.
+- [ ] **TRAIL-T5** Resizable detay/önizleme paneli + VIS-09; FIP-D4
+  (kitty graphics Ghostty) paralel iz.
+- [ ] **TRAIL-T6** Sidebar favorites → trail kurma (FIP-D1 kökten kapanır) + VIS-10.
+- [ ] **TRAIL-T7** Eski parent/current/resident modelinin characterized sökümü
+  ("(unavailable)" grep=0) + tüm gate'ler + yayın.
+
 ### FIP-D — Saha Kusurları (2026-07-18 canlı ekran kanıtı, kullanıcı raporu)
 
 - [x] **FIP-D2** Agentless reference SESSİZ no-op → görünür hata toast'ı
