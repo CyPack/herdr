@@ -19,6 +19,27 @@ fn agent_attachment_payload(path: &std::path::Path) -> Result<Vec<u8>, &'static 
     Ok(payload)
 }
 
+/// Last-seam filesystem revalidation for one reference path: UTF-8, no
+/// control characters, and a still-live regular file or directory target
+/// (symlink identity preserved). Vanished, special, and broken targets fail
+/// closed (TP-FIP-REF-11/12/13).
+fn reference_path_is_deliverable(path: &std::path::Path) -> bool {
+    let Some(text) = path.to_str() else {
+        return false;
+    };
+    if text.chars().any(char::is_control) {
+        return false;
+    }
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => matches!(
+            std::fs::metadata(path),
+            Ok(target) if target.is_dir() || target.is_file()
+        ),
+        Ok(meta) => meta.is_dir() || meta.is_file(),
+        Err(_) => false,
+    }
+}
+
 #[derive(Debug)]
 struct OwnedFileManagerClaudeSplit {
     workspace_id: String,
@@ -82,6 +103,9 @@ impl crate::app::App {
             .iter()
             .any(|entry| entry.operation_supported() && entry.path == path)
         {
+            return false;
+        }
+        if !reference_path_is_deliverable(&path) {
             return false;
         }
         let cwd = file_manager.cwd.clone();
@@ -161,6 +185,10 @@ impl crate::app::App {
         };
         if !self.file_manager_agent_handoff_is_current(&request) {
             self.show_file_manager_agent_handoff_failure("agent handoff authority changed");
+            return true;
+        }
+        if !reference_path_is_deliverable(&request.path) {
+            self.show_file_manager_agent_handoff_failure("reference path is unavailable");
             return true;
         }
         let Some(path) = request.path.to_str() else {
