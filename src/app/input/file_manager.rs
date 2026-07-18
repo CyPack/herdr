@@ -4824,6 +4824,87 @@ mod tests {
         );
     }
 
+    // TP-TRAIL-FSCROLL-01/02/06: one horizontal event moves by one third of
+    // the leading logical column, keeps that column partially visible, and
+    // publishes only stage-contained hit geometry. This is intentionally
+    // compile-valid against the whole-column implementation so RED proves the
+    // missing behavior rather than a missing symbol.
+    #[test]
+    fn fractional_scroll_uses_each_leading_columns_own_width() {
+        let td = TempDir::new("trail-fractional-scroll");
+        let root = td.root.join("root");
+        let mut current = root.clone();
+        for level in 0..7 {
+            current.push(format!("level-{level}"));
+        }
+        fs::create_dir_all(&current).expect("create deep Trail fixture");
+
+        for width in [18_u16, 30, 48] {
+            let mut file_manager =
+                FmState::open_trail_to(&root, &current, false).expect("open deep Trail");
+            for segment in &mut file_manager.miller.chain {
+                segment.preferred_width = width;
+            }
+            let original_trail = file_manager.trail.clone();
+            let mut app = runtime_app_with_fm(file_manager);
+            install_focused_agent(&mut app);
+            app.state.mobile_width_threshold = 0;
+            app.state.sidebar_collapsed = true;
+            let frame = Rect::new(0, 0, 64, 14);
+            compute_view(&mut app.state, frame);
+            let horizontal = &mut app
+                .state
+                .file_manager
+                .as_mut()
+                .expect("open FM")
+                .miller
+                .horizontal;
+            horizontal.first_visible = 0;
+            horizontal.follow_active = false;
+            compute_view(&mut app.state, frame);
+            let stage = app.state.view.terminal_area;
+            let probe = (stage.x.saturating_add(1), stage.y.saturating_add(2));
+
+            assert_eq!(
+                app.handle_file_manager_mouse(
+                    mouse(MouseEventKind::ScrollRight, probe.0, probe.1,)
+                ),
+                FileManagerMouseDispatch::Consumed
+            );
+            compute_view(&mut app.state, frame);
+
+            let view = &app.state.view.file_manager_trail;
+            let leading = view.columns.first().expect("partially visible root column");
+            let step = width.div_ceil(3);
+            assert_eq!(
+                leading.trail_index, 0,
+                "one event must not skip the leading logical column"
+            );
+            assert_eq!(
+                leading.rect.width,
+                width - step,
+                "one event clips exactly one third of the {width}-cell column"
+            );
+            assert!(view.columns.iter().all(|column| {
+                stage.contains((column.rect.x, column.rect.y).into())
+                    && column.rect.right() <= stage.right()
+                    && column.rows.iter().all(|row| {
+                        row.rect.right() <= stage.right()
+                            && row.name_rect.right() <= stage.right()
+                            && row
+                                .actions
+                                .iter()
+                                .all(|action| action.rect.right() <= stage.right())
+                    })
+            }));
+            assert_eq!(
+                app.state.file_manager.as_ref().expect("open FM").trail,
+                original_trail,
+                "fractional scrolling changes viewport presentation only"
+            );
+        }
+    }
+
     // TP-TRAIL-HSCROLL-01: the canonical Circet Miller viewport auto-follows
     // the active end when a deep Trail opens, then lets the user scroll back
     // to still-live ancestor columns. The chosen origin must survive the next
