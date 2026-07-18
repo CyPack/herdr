@@ -768,6 +768,43 @@ mod tests {
         }
     }
 
+    // FMR-1 RED: a directory containing only filtered dotfiles is not empty.
+    // The prepared Trail column must explain why no actionable rows are shown
+    // instead of presenting the same blank surface as a genuinely empty dir.
+    #[test]
+    fn directory_visibility_hidden_only_column_explains_omitted_items() {
+        let td = TempDir::new("directory-visibility-hidden-only");
+        fs::write(td.root.join(".secret"), b"x").expect("hidden fixture");
+        let trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        assert!(
+            snaps.cols()[0].entries().is_empty(),
+            "hidden policy removes the only actionable row"
+        );
+
+        let stage = Rect::new(0, 0, 40, 8);
+        let view = project_trail_view(stage, &trail, &snaps, &[]);
+        let app = crate::app::state::AppState::test_new();
+        let backend = TestBackend::new(stage.width, stage.height);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| render_trail_view(&app, frame, &view, &snaps))
+            .expect("render trail");
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(
+            rendered.contains("hidden items omitted"),
+            "a filtered-only directory must not look genuinely empty: {rendered:?}"
+        );
+    }
+
     // Hit resolution: a position inside a row rect resolves to EXACTLY that
     // row — the projection is the single hit authority.
     #[test]
