@@ -625,10 +625,12 @@ impl AppState {
                             && mouse.row >= list.y
                             && mouse.row < list.y.saturating_add(list.height);
                         if in_files_section {
-                            if let Some(path) =
-                                self.file_manager_sidebar_path_at(mouse.column, mouse.row)
-                            {
-                                self.request_file_manager_sidebar_navigation = Some(path);
+                            if mouse.modifiers.is_empty() {
+                                if let Some(path) =
+                                    self.file_manager_sidebar_path_at(mouse.column, mouse.row)
+                                {
+                                    self.request_file_manager_sidebar_navigation = Some(path);
+                                }
                             }
                             return None;
                         }
