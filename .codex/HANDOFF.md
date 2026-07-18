@@ -36,8 +36,17 @@ payload artık TAM path bytes — `\r` kaldırıldı, eski path+Enter kontratın
 pinleyen test onaylı REF-05/07 kontratına yükseltildi; full 3,469/3,469.
 NOT: M1 attachment picker'ın kendi path+CR delivery'si (satır ~18) FIP kapsamı
 DIŞI ve bilinçli korunuyor; Claude-split gönderimi (satır ~341) FIP-4.5/4.6'da
-makinesiyle birlikte kalkacak. Kalan FIP-4: 4.3/4.4 (directory + last-seam
-kind revalidation), 4.5/4.6 (implicit split kaldırma), 4.7 fail-closed ailesi.
+makinesiyle birlikte kalkacak. FIP-4 TAMAMEN KAPANDI (2026-07-18):
+4.3/4.4 (`ec9bed86` RED / `8371b5d3` GREEN — reference_path_is_deliverable
+validator'ı prepare + delivery seam'lerinde: silinen path, FIFO'ya dönüşen
+kind ve control-char path sıfır byte + tek failure; directory referansı ve
+noktalama byte-for-byte characterize edildi); 4.5/4.6 (`b172bd74` RED /
+`05866164` GREEN — non-agent focus artık HİÇBİR şey hazırlamıyor, implicit
+Claude split makinesi TAMAMEN silindi: −594 satır, FileManagerClaudeSplitRequest
+tipi + state alanı + launch/complete/rollback/sync + eski-davranış testleri;
+M1 attachment picker ve normal pane split'leri korunuyor); 4.7 (`94a4cd96` —
+REF-08/09/10 vanished-workspace/changed-terminal/exactly-once ailesi, ürün
+değişikliği gerekmedi). Full 3,482/3,482 + 2 skip; iki Clippy hedefi temiz.
 Sonrası: FIP-5 picker, kullanıcı direktifi custom-layout programı. FIP-3 TAMAMEN KAPANDI (2026-07-18): 3.4 characterized migration
 (`bcecfdc8` — FileEntry alanları kind-türevi metodlara döndü, çifte symlink
 stat kalktı, 3-kategori grep 0 kalıntı); 3.7 icon edge ailesi (`91e33f6f` RED
@@ -76,13 +85,13 @@ drag-and-drop kapsam dışı.
 - `.superpowers/` hiçbir koşulda stage/edit/delete edilmez.
 - Eski SF0-SF6 + FM1-FM5 programı tamam ve yayınlıdır; yeniden uygulanmaz.
 - Yeni aktif program Files Interaction Polish’tir.
-- Açık görev envanteri (FIP-3 kapanışı sonrası, 2026-07-18):
-  - `.codex/TASKS.md`: 25
+- Açık görev envanteri (FIP-4 kapanışı sonrası, 2026-07-18):
+  - `.codex/TASKS.md`: 20
   - `.codex/CHANGE-PIPELINE-TASKS.md`: 89
-  - toplam: 114
-- Sadece FIP-4.3 in-progress yapılabilir; diğer 113 görev pending/paused kalır.
+  - toplam: 109
+- Sadece FIP-5.1 in-progress yapılabilir; diğer 108 görev pending/paused kalır.
 - Fresh continuity gates (2026-07-18 planning-gate closure):
-  - exact task copy 114/114 (FIP-3 kapanışı sonrası);
+  - exact task copy 109/109 (FIP-4 kapanışı sonrası);
   - 57 unique `TP-FIP-*` (fresh deterministic count; the earlier "55" excluded
     the two E2E IDs — all 57 are mapped in the implementation plan);
   - Nextest run `4da2ee18-b784-4c38-aaab-98a2e8787511`,
@@ -361,13 +370,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 25 ve
-89, toplam 114’tür. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 20 ve
+89, toplam 109’dur. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 25 unchecked
+### Source: `.codex/TASKS.md` — 20 unchecked
 
 - [ ] **FIP-1.6** Add Playwright `TP-FIP-VIS-01` plus isolated real-mouse
   `TP-FIP-E2E-01` evidence without touching the stable Herdr socket.
@@ -375,22 +384,6 @@ sayar ve exact diff yapar.
   fixtures, both stage snapshots approved, visual suite 9/9). The isolated
   real-mouse `TP-FIP-E2E-01` smoke is explicitly deferred to the FIP-6.3
   closure run on the final build; do not claim it before that run.
-
-- [ ] **FIP-4.3 RED** Pin directory acceptance and broken/special-path
-  rejection.
-
-- [ ] **FIP-4.4 GREEN** Share source-path validation and repeat the kind/path
-  metadata check at the final delivery seam.
-
-- [ ] **FIP-4.5 RED** Pin that a non-agent focus never creates a Claude
-  split/chat for this action.
-
-- [ ] **FIP-4.6 GREEN** Remove implicit split creation from the reference
-  action while leaving unrelated split workflows unchanged.
-
-- [ ] **FIP-4.7** Cover vanished path/workspace/pane, changed terminal,
-  no-longer-agent runtime, control/non-UTF-8 path, backpressure, exact-once,
-  cancellation, and zero-retry behavior.
 
 - [ ] **FIP-5.1 RED** Pin that `Add Reference to Agent...` opens a picker from
   the existing live Agents projection.

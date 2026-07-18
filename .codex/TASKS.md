@@ -103,15 +103,15 @@ then the plan's Tasks 2-29 in order.
   UTF-8 path bytes and contains no CR, LF, Enter, prefix, suffix, or whitespace.
 - [x] **FIP-4.2 GREEN** Replace the old send-and-submit payload with a
   reference-only payload.
-- [ ] **FIP-4.3 RED** Pin directory acceptance and broken/special-path
+- [x] **FIP-4.3 RED** Pin directory acceptance and broken/special-path
   rejection.
-- [ ] **FIP-4.4 GREEN** Share source-path validation and repeat the kind/path
+- [x] **FIP-4.4 GREEN** Share source-path validation and repeat the kind/path
   metadata check at the final delivery seam.
-- [ ] **FIP-4.5 RED** Pin that a non-agent focus never creates a Claude
+- [x] **FIP-4.5 RED** Pin that a non-agent focus never creates a Claude
   split/chat for this action.
-- [ ] **FIP-4.6 GREEN** Remove implicit split creation from the reference
+- [x] **FIP-4.6 GREEN** Remove implicit split creation from the reference
   action while leaving unrelated split workflows unchanged.
-- [ ] **FIP-4.7** Cover vanished path/workspace/pane, changed terminal,
+- [x] **FIP-4.7** Cover vanished path/workspace/pane, changed terminal,
   no-longer-agent runtime, control/non-UTF-8 path, backpressure, exact-once,
   cancellation, and zero-retry behavior.
 
