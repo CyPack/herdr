@@ -176,6 +176,28 @@ pub fn visual_class(kind: FileEntryKind, name: &str) -> VisualClass {
     }
 }
 
+/// Escape every control character in a file name into a printable form so a
+/// hostile name can never break row layout (TP-FIP-ICON-13). C0 controls map
+/// to their single-cell Unicode Control Picture, DEL to `␡`, and every other
+/// control (the C1 range) to the replacement character. Clean names borrow.
+pub(crate) fn escape_control_chars(name: &str) -> std::borrow::Cow<'_, str> {
+    if !name.chars().any(char::is_control) {
+        return std::borrow::Cow::Borrowed(name);
+    }
+    std::borrow::Cow::Owned(name.chars().map(escape_control_char).collect())
+}
+
+fn escape_control_char(c: char) -> char {
+    if !c.is_control() {
+        return c;
+    }
+    match u32::from(c) {
+        code @ 0x00..=0x1f => char::from_u32(0x2400 + code).unwrap_or('\u{fffd}'),
+        0x7f => '\u{2421}',
+        _ => '\u{fffd}',
+    }
+}
+
 /// Classify one directory entry from symlink-aware metadata. A symlink keeps
 /// its link identity and resolves its target kind; a broken link and every
 /// special (FIFO/socket/device) or unprovable target fail closed.
@@ -320,6 +342,31 @@ mod tests {
         let file = FileEntryKind::RegularFile;
         assert_eq!(visual_class(file, "README2"), VisualClass::Generic);
         assert_eq!(visual_class(file, "data.unknownext"), VisualClass::Generic);
+    }
+
+    // TP-FIP-ICON-13: control characters escape deterministically to
+    // printable single-cell forms; clean names borrow without allocation.
+    #[test]
+    fn escape_control_chars_maps_every_control_to_printable() {
+        use unicode_width::UnicodeWidthStr;
+        assert!(matches!(
+            escape_control_chars("clean-name.rs"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+        assert_eq!(escape_control_chars("a\nb"), "a\u{240a}b");
+        assert_eq!(escape_control_chars("t\tx"), "t\u{2409}x");
+        assert_eq!(escape_control_chars("nul\0"), "nul\u{2400}");
+        assert_eq!(escape_control_chars("del\u{7f}"), "del\u{2421}");
+        assert_eq!(escape_control_chars("c1\u{85}"), "c1\u{fffd}");
+        for code in 0u32..0x20 {
+            let raw = char::from_u32(code).expect("c0 scalar").to_string();
+            let escaped = escape_control_chars(&raw);
+            assert!(
+                !escaped.chars().any(char::is_control),
+                "{code:#x} must escape to a non-control form"
+            );
+            assert_eq!(escaped.width(), 1, "{code:#x} must stay one display cell");
+        }
     }
 
     // TP-FIP-ICON-10: every class maps to exactly one display cell in both

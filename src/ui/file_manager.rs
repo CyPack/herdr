@@ -406,7 +406,7 @@ fn prepare_file_manager_action_bar_selection(
         } else {
             FileManagerActionBarSelectionKind::File
         };
-        (entry.name.clone(), kind)
+        (entry.display_name().into_owned(), kind)
     } else {
         // Defensive fallback for a future projection change that violates the
         // live-count invariant; operation authority already fails closed.
@@ -1435,7 +1435,7 @@ fn render_entry_row(
     let icon = crate::fm::entry_kind::visual_class(entry.kind, &entry.name)
         .glyph(crate::fm::entry_kind::IconProfile::Nerd);
     let label = truncate_end(
-        &format!(" {icon} {}{}", entry.name, suffix),
+        &format!(" {icon} {}{}", entry.display_name(), suffix),
         row.width as usize,
     );
     let style = if cursor_focused {

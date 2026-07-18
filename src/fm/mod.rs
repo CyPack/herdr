@@ -63,6 +63,13 @@ impl FileEntry {
     pub fn operation_supported(&self) -> bool {
         self.kind.supports_native_operation()
     }
+
+    /// Presentation-safe name: every control character escaped to a printable
+    /// single-cell form (TP-FIP-ICON-13). Classification and path identity
+    /// keep using the raw name.
+    pub fn display_name(&self) -> std::borrow::Cow<'_, str> {
+        entry_kind::escape_control_chars(&self.name)
+    }
 }
 
 /// Prepared availability of the exact current directory. Keeping the read
