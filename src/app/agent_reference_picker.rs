@@ -408,6 +408,47 @@ mod tests {
         assert!(app.sync_file_manager_agent_handoff());
     }
 
+    // Kullanıcı kanıtı (2026-07-18 canlı ekran): hiç canlı agent yokken
+    // "Add Reference to Agent..." SESSİZ no-op idi. Fail-visible kontrat:
+    // sıfır byte + tek görünür hata, picker açılmaz.
+    #[tokio::test]
+    async fn reference_action_with_no_live_agent_shows_visible_failure() {
+        let fixture = PickerFixture::new("no-live-agent");
+        let path = fixture.file("selected.txt");
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = crate::app::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        // Workspace with a PLAIN (non-agent) terminal only.
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("no-agent")];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&fixture.root)))
+            .expect("Files activation");
+
+        app.state.request_file_manager_context_action =
+            Some(crate::app::state::FileManagerContextActionIntent {
+                action: FileManagerContextMenuAction::SendAgent,
+                paths: vec![path],
+            });
+        assert!(app.sync_file_manager_agent_handoff());
+
+        assert!(app.state.agent_reference_picker.is_none());
+        assert!(app.state.request_file_manager_agent_handoff.is_none());
+        let toast = app
+            .state
+            .toast
+            .as_ref()
+            .expect("a dead-end action must be visibly explained, never silent");
+        assert_eq!(toast.context, "no live agent to receive references");
+    }
+
     // TP-FIP-5.5: a target pane closed while the picker is open renders
     // disabled on the next recompute instead of silently disappearing.
     #[tokio::test]
