@@ -53,9 +53,16 @@ genişletilen delivery slotu; reference action artık canlı agents
 projeksiyonundan picker açıyor (focused agent ilk + preselected), explicit
 aktivasyon tam kimlik snapshot'lıyor, send seam FOCUSED değil SEÇİLEN pane
 binding'ini doğruluyor; eski focus-türevi testler yeni kontrata yeniden
-yazıldı. Full 3,485/3,485 + 2 skip; iki Clippy hedefi temiz. Kalan FIP-5:
-5.3/5.4 popup ownership (render+keyboard/mouse+outside-click), 5.5/5.6 target
-disappearance, 5.7 copy rename, 5.8 VIS-05/06.
+yazıldı. FIP-5 TAMAMEN KAPANDI (2026-07-18): 5.3/5.4 (`a9a356fe` RED /
+`507a588d` GREEN — panel-shell reuse render, Up/Down/j/k + Enter + row-click
+tek seçim otoritesi, outside-click sıfır byte kapanış, arka plan fail-closed;
+saf AppState geometri helper'ları render+hit-test'i tek kaynakta tutuyor);
+5.5/5.6 (`c89140bb` RED / `d42334e1` GREEN — frame başına liveness recompute,
+vanished-target aktivasyonu görünür failure + sıfır byte); 5.7 (`233ec07d` —
+"Send to Agent" → "Add Reference to Agent..." tüm literaller, grep 0);
+5.8 (`51d045c9` — VIS-05/06 baseline'ları: picker 120x40 + disabled-row tiny
+60x20, görsel suite 14/14). Full 3,494/3,494 + 2 skip; iki Clippy temiz.
+Kalan: FIP-6 kapanış (6.1-6.8 + devredilen E2E-01).
 Sonrası: FIP-5 picker, kullanıcı direktifi custom-layout programı. FIP-3 TAMAMEN KAPANDI (2026-07-18): 3.4 characterized migration
 (`bcecfdc8` — FileEntry alanları kind-türevi metodlara döndü, çifte symlink
 stat kalktı, 3-kategori grep 0 kalıntı); 3.7 icon edge ailesi (`91e33f6f` RED
@@ -95,12 +102,12 @@ drag-and-drop kapsam dışı.
 - Eski SF0-SF6 + FM1-FM5 programı tamam ve yayınlıdır; yeniden uygulanmaz.
 - Yeni aktif program Files Interaction Polish’tir.
 - Açık görev envanteri (FIP-4 kapanışı sonrası, 2026-07-18):
-  - `.codex/TASKS.md`: 18
+  - `.codex/TASKS.md`: 12
   - `.codex/CHANGE-PIPELINE-TASKS.md`: 89
-  - toplam: 107
-- Sadece FIP-5.3 in-progress yapılabilir; diğer 106 görev pending/paused kalır.
+  - toplam: 101
+- Sadece FIP-6.1 in-progress yapılabilir; diğer 100 görev pending/paused kalır.
 - Fresh continuity gates (2026-07-18 planning-gate closure):
-  - exact task copy 107/107 (FIP-5.1/5.2 sonrası);
+  - exact task copy 101/101 (FIP-5 kapanışı sonrası);
   - 57 unique `TP-FIP-*` (fresh deterministic count; the earlier "55" excluded
     the two E2E IDs — all 57 are mapped in the implementation plan);
   - Nextest run `4da2ee18-b784-4c38-aaab-98a2e8787511`,
@@ -379,13 +386,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 18 ve
-89, toplam 107’dur. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 12 ve
+89, toplam 101’dir. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 18 unchecked
+### Source: `.codex/TASKS.md` — 12 unchecked
 
 - [ ] **FIP-1.6** Add Playwright `TP-FIP-VIS-01` plus isolated real-mouse
   `TP-FIP-E2E-01` evidence without touching the stable Herdr socket.
@@ -393,24 +400,6 @@ sayar ve exact diff yapar.
   fixtures, both stage snapshots approved, visual suite 9/9). The isolated
   real-mouse `TP-FIP-E2E-01` smoke is explicitly deferred to the FIP-6.3
   closure run on the final build; do not claim it before that run.
-
-- [ ] **FIP-5.3 RED** Pin keyboard, mouse, overlay ownership, outside-click,
-  Escape, disabled row, and cancel paths.
-
-- [ ] **FIP-5.4 GREEN** Reuse current popup geometry, focus, close, and
-  responsive language instead of adding a popup framework.
-
-- [ ] **FIP-5.5 RED** Pin target disappearance and workspace/pane/terminal
-  identity change between picker open and activation.
-
-- [ ] **FIP-5.6 GREEN** Recompute live rows and fail closed again at the final
-  target-validation seam.
-
-- [ ] **FIP-5.7** Rename all visible action copy to
-  `Add Reference to Agent...`; support files and directories, never multi-select.
-
-- [ ] **FIP-5.8** Add Playwright `TP-FIP-VIS-05` and `TP-FIP-VIS-06`
-  snapshots for live, disabled, disappearing, and tiny-layout targets.
 
 - [ ] **FIP-6.1** Run focused nextest for every Rust `TP-FIP-*` behavior.
 

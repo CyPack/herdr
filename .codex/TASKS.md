@@ -121,17 +121,17 @@ then the plan's Tasks 2-29 in order.
   the existing live Agents projection.
 - [x] **FIP-5.2 GREEN** Project current chat first/preselected when live and
   every other live agent exactly once with stable identities.
-- [ ] **FIP-5.3 RED** Pin keyboard, mouse, overlay ownership, outside-click,
+- [x] **FIP-5.3 RED** Pin keyboard, mouse, overlay ownership, outside-click,
   Escape, disabled row, and cancel paths.
-- [ ] **FIP-5.4 GREEN** Reuse current popup geometry, focus, close, and
+- [x] **FIP-5.4 GREEN** Reuse current popup geometry, focus, close, and
   responsive language instead of adding a popup framework.
-- [ ] **FIP-5.5 RED** Pin target disappearance and workspace/pane/terminal
+- [x] **FIP-5.5 RED** Pin target disappearance and workspace/pane/terminal
   identity change between picker open and activation.
-- [ ] **FIP-5.6 GREEN** Recompute live rows and fail closed again at the final
+- [x] **FIP-5.6 GREEN** Recompute live rows and fail closed again at the final
   target-validation seam.
-- [ ] **FIP-5.7** Rename all visible action copy to
+- [x] **FIP-5.7** Rename all visible action copy to
   `Add Reference to Agent...`; support files and directories, never multi-select.
-- [ ] **FIP-5.8** Add Playwright `TP-FIP-VIS-05` and `TP-FIP-VIS-06`
+- [x] **FIP-5.8** Add Playwright `TP-FIP-VIS-05` and `TP-FIP-VIS-06`
   snapshots for live, disabled, disappearing, and tiny-layout targets.
 
 ### FIP-6 — Production Closure
