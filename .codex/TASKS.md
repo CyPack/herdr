@@ -53,6 +53,12 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
 - [ ] **TRAIL-T7** Eski parent/current/resident modelinin characterized sökümü
   ("(unavailable)" grep=0) + tüm gate'ler + yayın. CERRAHİ PLAN HAZIR:
   `docs/superpowers/plans/2026-07-18-herdr-trail-t7-integration-plan.md`
+  T7.1 characterization KAPANDI (`7d75f0e4`): test-noktası tablosu,
+  adversarial Files generation lifecycle testi, agent-reference ve
+  rename/delete/multi-select/watcher exact-path ailelerinin kanonik pinleri,
+  eski parent/current/preview/resident testlerinde `TRAIL-T7.6 teardown`
+  işaretleri; full 3,535/3,535 + 2 skip, görsel 18/18, iki clippy, Python
+  64/64, Bun 5/5 + 12/12 temiz. SIRADAKİ: T7.2 FmState trail köprüsü.
   (T7.1 characterization → T7.2 FmState köprüsü → T7.3 render swap →
   T7.4 girdi swap + FIP-D1 canlı kapanış → T7.5 watcher+kitty/FIP-D4 →
   T7.6 söküm+kapanış; yüzey haritası satır sayılarıyla planda).

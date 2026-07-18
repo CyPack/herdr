@@ -1,7 +1,11 @@
 # Herdr Native-FM Planning State
 
-- Updated: 2026-07-17
+- Updated: 2026-07-18
 - Branch: `feat/native-fm`
+- Current override: **Miller Trail T7 active**. T7.1 characterization closed
+  at `7d75f0e4`; exact next task is T7.2 FmState trail bridge. Full evidence:
+  Rust 3,535/3,535 + 2 skip, Chromium 18/18, Linux/Windows Clippy, Python
+  64/64, Bun 5/5 + 12/12. `TRAIL-T7` remains open through T7.6.
 - Active program: **Files Interaction Polish (FIP)**. The approved design is
   `docs/superpowers/specs/2026-07-17-herdr-files-interaction-polish-design.md`.
 - FIP-G.1/FIP-G.2 CLOSED 2026-07-18: the code-level TDD plan is

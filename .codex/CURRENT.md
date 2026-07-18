@@ -1,5 +1,16 @@
 # Current State — 2026-07-17
 
+> **CURRENT OVERRIDE — MILLER TRAIL T7 ACTIVE (2026-07-18).** T1-T6 remain
+> closed and published. T7.1 characterization is closed at `7d75f0e4`: the
+> protected lifecycle/exact-path/operation/watcher behaviors are pinned, the
+> legacy parent/current/preview/resident tests are marked for T7.6 teardown,
+> and fresh gates are 3,535/3,535 Rust + 2 skip, 18/18 Chromium, both Clippy
+> targets, Python 64/64, and Bun 5/5 + 12/12. Exact next task is **T7.2
+> FmState trail bridge** from
+> `docs/superpowers/plans/2026-07-18-herdr-trail-t7-integration-plan.md`.
+> `TRAIL-T7` remains open until T7.6; FIP-D1 closes at T7.4 and FIP-D4 at
+> T7.5. Stable Herdr/socket and user-owned `.superpowers/` remain untouched.
+>
 > **CURRENT OVERRIDE — FILES INTERACTION POLISH ACTIVE.** The previously
 > approved SF0-SF6 + FM1-FM5 program remains complete and published. A new,
 > bounded user-approved correction program is active:

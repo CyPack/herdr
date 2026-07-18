@@ -1,6 +1,6 @@
 # SESSION HANDOFF — Herdr Files Interaction Polish
 
-Updated: 2026-07-17 CEST
+Updated: 2026-07-18 CEST
 
 ## 0. SONRAKI ADIM — TEK AKTİF İŞ
 
@@ -98,8 +98,15 @@ RED / `c8e5dd4d` GREEN — open_trail_to deep-link kurucusu: fail-closed
 kök, ancestor zinciri, kök-dışı fallback, dürüst kısmi iniş; VIS-10
 baseline, görsel 18/18, full 3,534/3,534 + 2 skip). FIP-D1'in ÜRÜN-düzeyi
 kapanışı T7 entegrasyonunda (canlı sidebar tıkı bu seam'e bağlanınca).
-SIRADAKİ: TRAIL-T7 (eski parent/current/resident modelinin characterized
-sökümü + entegrasyon + "(unavailable)" grep=0 + gate'ler + yayın).
+TRAIL-T7.1 KAPANDI (`7d75f0e4`): 5 satırlık characterization test-noktası
+tablosu; adversarial AppState altında Files aç/kapa/yeniden-aç Stage
+generation lifecycle testi; agent-reference, rename/delete/multi-select ve
+watcher exact-path otoriteleri kanonik ID'lerle pinlendi; legacy
+parent/current/preview/resident testleri `TRAIL-T7.6 teardown` olarak
+işaretlendi ama silinmedi. Taze gate: full 3,535/3,535 + 2 skip, Chromium
+18/18, Linux+Windows clippy, Python 64/64, Bun 5/5 + 12/12, fmt temiz.
+SIRADAKİ: TRAIL-T7.2 FmState trail köprüsü; iki model geçici yan yana,
+`selected()`/operations/agent handoff exact-path otoritesi trail'den türetilir.
 Sonrası: FIP-5 picker, kullanıcı direktifi custom-layout programı. FIP-3 TAMAMEN KAPANDI (2026-07-18): 3.4 characterized migration
 (`bcecfdc8` — FileEntry alanları kind-türevi metodlara döndü, çifte symlink
 stat kalktı, 3-kategori grep 0 kalıntı); 3.7 icon edge ailesi (`91e33f6f` RED
@@ -434,6 +441,12 @@ sayar ve exact diff yapar.
 - [ ] **TRAIL-T7** Eski parent/current/resident modelinin characterized sökümü
   ("(unavailable)" grep=0) + tüm gate'ler + yayın. CERRAHİ PLAN HAZIR:
   `docs/superpowers/plans/2026-07-18-herdr-trail-t7-integration-plan.md`
+  T7.1 characterization KAPANDI (`7d75f0e4`): test-noktası tablosu,
+  adversarial Files generation lifecycle testi, agent-reference ve
+  rename/delete/multi-select/watcher exact-path ailelerinin kanonik pinleri,
+  eski parent/current/preview/resident testlerinde `TRAIL-T7.6 teardown`
+  işaretleri; full 3,535/3,535 + 2 skip, görsel 18/18, iki clippy, Python
+  64/64, Bun 5/5 + 12/12 temiz. SIRADAKİ: T7.2 FmState trail köprüsü.
   (T7.1 characterization → T7.2 FmState köprüsü → T7.3 render swap →
   T7.4 girdi swap + FIP-D1 canlı kapanış → T7.5 watcher+kitty/FIP-D4 →
   T7.6 söküm+kapanış; yüzey haritası satır sayılarıyla planda).
