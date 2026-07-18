@@ -701,6 +701,47 @@ mod tests {
         assert!(app.state.file_manager.is_none());
     }
 
+    // TP-TRAIL-T7-IMAGE-01: image decode size is owned by the committed Trail
+    // detail panel, never by the retired Miller PREVIEW column.
+    #[test]
+    fn image_worker_targets_exact_trail_detail_panel_content_rect() {
+        let temp = TempDir::new("trail-detail-target");
+        std::fs::write(temp.root.join("sample.png"), encoded_png(160, 80))
+            .expect("write PNG fixture");
+        let mut app = test_app();
+        app.image_preview_cell_size = HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        app.state
+            .try_open_file_manager_with(|_| Some(FmState::new(&temp.root)))
+            .expect("Files activation");
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 120, 30));
+        let content = app
+            .state
+            .view
+            .file_manager_trail
+            .detail_panel
+            .as_ref()
+            .expect("image selection opens Trail detail")
+            .content_rect;
+        let expected = target(
+            u32::from(content.width) * app.image_preview_cell_size.width_px,
+            u32::from(content.height) * app.image_preview_cell_size.height_px,
+        );
+
+        assert!(
+            app.sync_image_preview_worker(),
+            "Pending -> Loading dirties the committed Trail frame"
+        );
+        assert_eq!(
+            current_image_state(&app),
+            &FmImagePreviewState::Loading { target: expected }
+        );
+    }
+
     #[test]
     fn preview_error_states_render_without_retry_loop() {
         let temp = TempDir::new("stable-preview-error");

@@ -94,6 +94,17 @@ Playwright Chromium 18/18, Linux ve Windows clippy `-D warnings`, Python 64/64,
 Bun 5/5 + 12/12, fmt/diff/unwrap temiz. FIP-D1 ürün rotası fresh Trail açar ve
 missing/inaccessible/stale hedefte atomik inert kalır.
 
+## T7.5 Watcher + Kitty preview test noktaları
+
+| ID | Korunan davranış / neden | Beklenen sonuç | RED kanıtı |
+|---|---|---|---|
+| TP-TRAIL-T7-WATCH-01 | Watcher hedefi transitional `cwd` değil, klavye/mouse ile paylaşılan aktif Trail kolonudur; boş child kolonu açıldığında ebeveyni izlemek canlı listeyi bayat bırakır | Directory branch sonrası watcher exact `trail.active_col()` dizinine bağlanır; bu dizindeki olay yalnız o snapshot'ı yeniler ve ancestor kolonları/selection'ları korur | `watcher_targets_and_refreshes_active_trail_column_without_collapsing_branch` |
+| TP-TRAIL-T7-WATCH-02 | Yenileme row index değil exact path ile yakınsamaya devam etmelidir | Reorder/insert sonrası aktif kolondaki seçili path aynı kalır; silinen selection detail/descendant branch ve operation projection'dan atomik düşer; ikinci drainsiz tur generation churn üretmez | mevcut `current_watcher_refresh_reconciles_by_stable_path`, `watcher_rename_prunes_selected_path_and_keeps_cursor_safe` + GREEN focused ailesi |
+| TP-TRAIL-T7-IMAGE-01 | Decode worker render edilmeyen legacy PREVIEW kolonundan boyut alamaz; canlı resim yüzeyi Trail detail panelidir | Image selection + committed `compute_view` sonrası ilk Loading target, `file_manager_trail.detail_panel.content_rect × HostCellSize` ile birebir aynıdır; panel yok/stale path/non-image durumunda iş başlamaz | `image_worker_targets_exact_trail_detail_panel_content_rect` |
+| TP-TRAIL-T7-IMAGE-02 | Decode ve Kitty placement aynı typed geometriyi tüketmelidir; aksi halde hazır pixel yanlış hücrelere basılır | Ready image placement area exact Trail detail `content_rect`; target uyuşmazsa fail-closed; cache reuse/replacement/close cleanup sözleşmeleri korunur | `file_manager_ready_image_placement_uses_trail_detail_content_rect`; mevcut cache/cleanup aileleri |
+| TP-TRAIL-T7-IMAGE-03 | FIP-D4 hata ve non-Kitty yollarında sessiz boşluk veya retry loop kabul etmez | Loading/Ready/typed failure aynı Trail panelinde deterministik render edilir; Kitty kapalıysa açık fallback kalır; stable failure yeni worker generation üretmez | mevcut `preview_error_states_render_without_retry_loop`, `image_preview_has_explicit_non_kitty_fallback_and_ready_content_is_clear` |
+| TP-TRAIL-T7-IMAGE-04 | Görsel kabul gerçek Ratatui hücrelerinden Chromium ile kalmalıdır; Kitty byte delivery headful Ghostty kanıtına ek, onun yerine geçmez | Playwright Chromium tüm 18 baseline'ı korur; image detail panel hücre fixture'ı değişirse mutation kanıtı ve yalnız spec-scoped update; Ghostty izole reçetesiyle final canlı foto kanıtı | `cd tests/visual && npx playwright test`; T7.5 kapanışında headful kanıt durumu |
+
 ## Kabul (plan §4 ile aynı)
 
 Kontrat 5 yasa ≥1 Rust testi + ≥1 Chromium baseline ile kanıtlı (T1-T6'da sağlandı; T7 canlı

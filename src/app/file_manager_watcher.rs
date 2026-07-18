@@ -1025,6 +1025,67 @@ mod tests {
         drop(watch_tx);
     }
 
+    // TP-TRAIL-T7-WATCH-01: watcher ownership follows the single active
+    // Trail column, not the transitional operation projection's cwd. A
+    // child-column event refreshes that exact snapshot without collapsing
+    // the already loaded ancestor branch.
+    #[test]
+    fn watcher_targets_and_refreshes_active_trail_column_without_collapsing_branch() {
+        let td = TempDir::new("active-trail-column");
+        let child = td.root.join("child");
+        std::fs::create_dir(&child).expect("create child directory");
+        std::fs::write(child.join("before.txt"), b"before").expect("write child entry");
+        let file_manager =
+            crate::fm::FmState::open_trail_to(&td.root, &child, false).expect("open child trail");
+        assert_eq!(file_manager.trail.active_col(), 1);
+        assert_eq!(file_manager.cwd, td.root);
+
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+        let now = Instant::now();
+        assert!(!app.sync_file_manager_watcher_at(now));
+        assert_eq!(
+            app.file_manager_watcher.watched_dir(),
+            Some(child.as_path()),
+            "watcher must bind to the active child column"
+        );
+        let watcher_generation = app.file_manager_watcher.generation();
+
+        let inserted = child.join("after.txt");
+        std::fs::write(&inserted, b"after").expect("write inserted child entry");
+        let (watch_tx, watch_rx) = sync_channel(1);
+        watch_tx
+            .send(message(
+                watcher_generation,
+                inserted.to_str().expect("UTF-8 inserted temp path"),
+            ))
+            .expect("queue child watcher event");
+        app.file_manager_watcher.receiver = Some(watch_rx);
+
+        assert!(app.sync_file_manager_watcher_at(now));
+        let refreshed = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(refreshed.trail.cols().len(), 2);
+        assert_eq!(
+            refreshed.trail.cols()[0].selected.as_deref(),
+            Some(child.as_path()),
+            "ancestor branch identity survives the child refresh"
+        );
+        assert_eq!(refreshed.trail.cols()[1].directory, child);
+        assert!(refreshed.trail_snapshots.cols()[1]
+            .entries()
+            .iter()
+            .any(|entry| entry.path == inserted));
+        assert_eq!(
+            refreshed.cwd,
+            refreshed.trail.cols()[1].directory,
+            "operation projection follows the refreshed active column"
+        );
+        assert!(refreshed.entries.iter().any(|entry| entry.path == inserted));
+        drop(watch_tx);
+    }
+
     // TP-TRAIL-T7-CHAR-01 / P5 LIFECYCLE: model generations can repeat after
     // reopen, so the typed request must also carry the Stage-owned Files
     // instance generation.

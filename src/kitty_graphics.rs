@@ -1355,6 +1355,78 @@ mod tests {
         );
     }
 
+    // TP-TRAIL-T7-IMAGE-02: host placement and decode target share the live
+    // Trail detail content rect. A valid legacy PREVIEW rect cannot authorize
+    // pixels outside this exact panel.
+    #[test]
+    fn file_manager_ready_image_placement_uses_trail_detail_content_rect() {
+        let cells = HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        let image_path = std::path::PathBuf::from("/virtual/preview.png");
+        let mut file_manager = crate::fm::FmState::test_empty("/virtual");
+        file_manager.entries = vec![crate::fm::FileEntry {
+            name: "preview.png".into(),
+            path: image_path.clone(),
+            kind: crate::fm::entry_kind::FileEntryKind::RegularFile,
+        }];
+        file_manager.preview_generation = 1;
+        file_manager.preview = crate::fm::FmPreview::File(crate::fm::FmFilePreview::Image(
+            crate::fm::FmImagePreview {
+                source_path: image_path,
+                generation: 1,
+                state: crate::fm::FmImagePreviewState::Pending,
+            },
+        ));
+        file_manager.sync_trail_bridge_for_test();
+
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![crate::workspace::Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = crate::app::state::Mode::Terminal;
+        app.mobile_width_threshold = 0;
+        app.sidebar_collapsed = true;
+        app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
+        app.try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+        crate::ui::compute_view(&mut app, Rect::new(0, 0, 120, 30));
+        let content = app
+            .view
+            .file_manager_trail
+            .detail_panel
+            .as_ref()
+            .expect("Trail detail panel")
+            .content_rect;
+        let expected_target = ImagePreviewTarget {
+            width_px: u32::from(content.width) * cells.width_px,
+            height_px: u32::from(content.height) * cells.height_px,
+        };
+        let prepared = PreparedImagePreview {
+            width: 8,
+            height: 8,
+            data_fingerprint: 0x88,
+            rgba: vec![0x88; 8 * 8 * 4],
+        };
+        let preview = app
+            .file_manager
+            .as_mut()
+            .and_then(|fm| match &mut fm.preview {
+                FmPreview::File(FmFilePreview::Image(preview)) => Some(preview),
+                _ => None,
+            })
+            .expect("mutable image preview");
+        preview.state = FmImagePreviewState::Ready {
+            target: expected_target,
+            prepared,
+        };
+
+        let placement = collect_file_manager_image_placement(&app, cells, &HashMap::new())
+            .expect("Trail detail placement");
+        assert_eq!(placement.area, content);
+    }
+
     #[test]
     fn file_manager_image_placement_is_centered_bounded_and_client_local() {
         let cells = HostCellSize {
