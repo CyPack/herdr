@@ -1466,6 +1466,42 @@ mod tests {
         );
     }
 
+    // TP-TRAIL-T7-RENDER-01: compute_view publishes the exact Trail geometry
+    // for the live Native Files frame and retires it with the surface.
+    #[test]
+    fn compute_view_publishes_live_trail_snapshot_and_clears_it_outside_files() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("trail-render")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.mobile_width_threshold = 0;
+        app.sidebar_collapsed = true;
+        app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
+        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::test_empty("/trail-root")))
+            .expect("Files activation");
+
+        compute_view(&mut app, Rect::new(0, 0, 86, 12));
+
+        let fm = app.file_manager.as_ref().expect("open FM");
+        assert_eq!(
+            app.view.file_manager_trail.columns.len(),
+            fm.trail.cols().len()
+        );
+        assert_eq!(
+            app.view.file_manager_trail.columns[0].directory,
+            fm.trail.cols()[0].directory
+        );
+
+        app.close_file_manager();
+        compute_view(&mut app, Rect::new(0, 0, 86, 12));
+
+        assert_eq!(
+            app.view.file_manager_trail,
+            file_manager::trail_view::TrailViewSnapshot::default()
+        );
+    }
+
     #[test]
     fn windowed_projection_uses_model_first_visible() {
         let (mut app, directories) = prepared_miller_projection_app(7, 4);

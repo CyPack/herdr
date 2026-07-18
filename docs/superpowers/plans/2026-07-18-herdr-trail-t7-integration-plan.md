@@ -61,6 +61,16 @@ persisted horizontal state). CLAUDE.md gereği: characterization ÖNCE, adversar
   unwrap-scan; görsel suite tüm baseline'lar; E2E izleri (FIP-6.3 investigation ayrı task);
   continuity + FF yayın; graf reindeks.
 
+## T7.3 Render swap test noktaları
+
+| ID | Korunan davranış / neden | Beklenen sonuç | RED kanıtı |
+|---|---|---|---|
+| TP-TRAIL-T7-RENDER-01 | `compute_view` render ve sonraki input katmanına tek Trail geometri snapshot'ı yayımlar; render kendi koordinatını yeniden hesaplamamalı | Native Files açıkken `ViewState::file_manager_trail` FmState trail/snapshot'larıyla index-aligned kolonları taşır; terminal yüzeyinde veya Files kapalıyken tamamen boştur | `compute_view_publishes_live_trail_snapshot_and_clears_it_outside_files` |
+| TP-TRAIL-T7-RENDER-02 | Canlı orta panelin görsel otoritesi artık legacy parent/CURRENT/preview değildir | Üretim frame'i `file_manager_trail` satır/divider/detail rect'lerini çizer; `CURRENT`, `PREVIEW` ve `"(unavailable)"` üretmez | `production_render_consumes_exact_trail_snapshot_without_legacy_placeholders` |
+| TP-TRAIL-T7-RENDER-03 | Header/action-bar/status T7.3 kapsamı dışında ve davranış olarak sabit kalmalıdır | Aynı cwd identity, named action labels ve prepared status satırı Trail gövdesinin üstünde/altında kalır | mevcut `header_actions_render_from_shared_responsive_geometry`, `action_bar_renders_selected_name_clipboard_count_and_empty_state`, status test aileleri + full suite |
+| TP-TRAIL-T7-RENDER-04 | Render pure ve stale/misaligned Trail fail-closed kalır | Aynı state byte-identical buffer üretir; eksik/hizasız snapshot görünmez kolon veya placeholder icat etmez; state/snapshot değişmez | `production_trail_render_is_byte_identical_and_state_pure`; mevcut `misaligned_snapshots_project_nothing` |
+| TP-TRAIL-T7-RENDER-05 | Kullanıcının onayladığı gerçek Ratatui hücreleri Chromium'da görünür yeni Trail düzenini kanıtlar | VIS-01 tek canlı kök kolonu; VIS-02 kökten `beta/deep` yoluna biriken kolonları ve exact ata vurgusunu gösterir; eski baseline mutasyonda fail olur, yalnız spec-scoped update ile yenilenir | `navigation.spec.ts` VIS-01 + `focus.spec.ts` VIS-02, ham buffer/snapshot mutation kanıtı |
+
 ## Kabul (plan §4 ile aynı)
 
 Kontrat 5 yasa ≥1 Rust testi + ≥1 Chromium baseline ile kanıtlı (T1-T6'da sağlandı; T7 canlı

@@ -1638,6 +1638,78 @@ mod tests {
         }
     }
 
+    // TP-TRAIL-T7-RENDER-02: the live production-area render must consume the
+    // exact Trail snapshot published by compute_view. Legacy component
+    // characterization remains reachable only through the non-production
+    // fallback until the T7.6 teardown.
+    #[test]
+    fn production_render_consumes_exact_trail_snapshot_without_legacy_placeholders() {
+        let td = TempDir::new("production-trail-render");
+        td.dir("alpha");
+        td.file("notes.txt");
+        let mut app = app_with_fm(FmState::new(&td.root));
+        let frame = Rect::new(0, 0, 86, 8);
+        let body = file_manager_miller_viewport_area(frame);
+        app.view.terminal_area = frame;
+        let fm = app.file_manager.as_ref().expect("open FM");
+        app.view.file_manager_trail =
+            trail_view::project_trail_view(body, &fm.trail, &fm.trail_snapshots, &[]);
+
+        let rendered = render_rows(&app, frame.width, frame.height).join("\n");
+
+        assert!(rendered.contains("alpha/"));
+        assert!(rendered.contains("notes.txt"));
+        assert!(!rendered.contains("CURRENT"));
+        assert!(!rendered.contains("PREVIEW"));
+        assert!(!rendered.contains("(unavailable)"));
+    }
+
+    // TP-TRAIL-T7-RENDER-04: production Trail paint is deterministic and
+    // cannot mutate either FmState or the frame geometry it consumes.
+    #[test]
+    fn production_trail_render_is_byte_identical_and_state_pure() {
+        let td = TempDir::new("production-trail-purity");
+        td.dir("alpha");
+        td.file("notes.txt");
+        let mut app = app_with_fm(FmState::new(&td.root));
+        let frame = Rect::new(0, 0, 86, 8);
+        let body = file_manager_miller_viewport_area(frame);
+        app.view.terminal_area = frame;
+        let fm = app.file_manager.as_ref().expect("open FM");
+        app.view.file_manager_trail =
+            trail_view::project_trail_view(body, &fm.trail, &fm.trail_snapshots, &[]);
+        let before_fm = {
+            let fm = app.file_manager.as_ref().expect("open FM");
+            (
+                fm.cwd.clone(),
+                fm.entries.clone(),
+                fm.cursor,
+                fm.viewport_start,
+                fm.trail.clone(),
+                fm.trail_snapshots.clone(),
+            )
+        };
+        let before_view = app.view.file_manager_trail.clone();
+
+        let first = render_buffer(&app, frame.width, frame.height);
+        let second = render_buffer(&app, frame.width, frame.height);
+
+        assert_eq!(first, second);
+        let after_fm = {
+            let fm = app.file_manager.as_ref().expect("open FM");
+            (
+                fm.cwd.clone(),
+                fm.entries.clone(),
+                fm.cursor,
+                fm.viewport_start,
+                fm.trail.clone(),
+                fm.trail_snapshots.clone(),
+            )
+        };
+        assert_eq!(after_fm, before_fm);
+        assert_eq!(app.view.file_manager_trail, before_view);
+    }
+
     // TRAIL-T7.6 teardown: legacy resident/parent/current/preview source matrix.
     #[test]
     fn windowed_render_uses_current_resident_parent_unavailable_and_preview_sources() {
