@@ -214,6 +214,7 @@ impl crate::app::App {
             .iter()
             .position(|workspace| workspace.id == row.workspace_id)
         else {
+            self.fail_agent_reference_activation();
             return false;
         };
         if self
@@ -228,6 +229,7 @@ impl crate::app::App {
                 .is_some_and(crate::terminal::TerminalState::is_agent_terminal)
             || !crate::app::file_agent_handoff::reference_path_is_deliverable(&source_path)
         {
+            self.fail_agent_reference_activation();
             return false;
         }
         self.state.request_file_manager_agent_handoff = Some(AgentReferenceRequest {
@@ -241,11 +243,47 @@ impl crate::app::App {
         true
     }
 
-    /// Per-frame liveness recompute for open picker rows. RED stub: the
-    /// GREEN seam re-derives `live` from the current agents projection so a
-    /// vanished pane renders disabled instead of silently working.
+    /// Per-frame liveness recompute for open picker rows: `live` is
+    /// re-derived from the current workspace/pane/terminal bindings, bounded
+    /// `O(rows)`. A vanished pane renders disabled instead of silently
+    /// working; identities and ordering never change after open.
     pub(super) fn sync_agent_reference_picker(&mut self) -> bool {
-        false
+        let Some(picker) = self.state.agent_reference_picker.take() else {
+            return false;
+        };
+        let mut picker = picker;
+        let mut changed = false;
+        for row in &mut picker.rows {
+            let live = self
+                .state
+                .workspaces
+                .iter()
+                .position(|workspace| workspace.id == row.workspace_id)
+                .is_some_and(|workspace_idx| {
+                    self.state
+                        .terminal_id_for_pane(workspace_idx, row.pane_id)
+                        .as_ref()
+                        == Some(&row.terminal_id)
+                })
+                && self
+                    .state
+                    .terminals
+                    .get(&row.terminal_id)
+                    .is_some_and(crate::terminal::TerminalState::is_agent_terminal);
+            if row.live != live {
+                row.live = live;
+                changed = true;
+            }
+        }
+        self.state.agent_reference_picker = Some(picker);
+        changed
+    }
+
+    /// A stale activation is consumed loudly: the picker closes with zero
+    /// bytes prepared and the failure stays visible (TP-FIP-5.5).
+    fn fail_agent_reference_activation(&mut self) {
+        self.state.close_agent_reference_picker();
+        self.show_file_manager_agent_handoff_failure("agent handoff authority changed");
     }
 
     /// Blocking-overlay key routing owner for the picker mode. The

@@ -236,7 +236,7 @@ impl crate::app::App {
             .is_some_and(crate::terminal::TerminalState::is_agent_terminal)
     }
 
-    fn show_file_manager_agent_handoff_failure(&mut self, context: &str) {
+    pub(super) fn show_file_manager_agent_handoff_failure(&mut self, context: &str) {
         let previous_toast = self.state.toast.clone();
         self.state.toast = Some(crate::app::state::ToastNotification {
             kind: crate::app::state::ToastKind::NeedsAttention,
