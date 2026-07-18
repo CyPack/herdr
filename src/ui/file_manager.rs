@@ -11,6 +11,8 @@
 //! geometry build on the same pure client-side projection.
 
 pub(crate) mod miller;
+#[allow(dead_code)] // consumed from FIP trail program T4 (input) onward
+pub(crate) mod trail_view;
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
