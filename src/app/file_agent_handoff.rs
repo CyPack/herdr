@@ -729,6 +729,70 @@ mod tests {
         assert_eq!(toast.kind, crate::app::state::ToastKind::NeedsAttention);
         assert_eq!(toast.title, "send to agent failed");
         assert_eq!(toast.context, "agent handoff authority changed");
+        // TP-FIP-REF-10: exactly one failure — later ticks stay silent.
+        assert!(!app.sync_file_manager_agent_handoff_send());
+        assert!(receiver.try_recv().is_err(), "no retry on later ticks");
+    }
+
+    // TP-FIP-REF-08: a workspace that vanished between prepare and send
+    // fails closed with zero bytes and one visible failure.
+    #[tokio::test]
+    async fn vanished_workspace_or_pane_sends_zero_bytes() {
+        let fixture = HandoffFixture::new("vanished-workspace");
+        let path = fixture.file("selected.txt");
+        let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 2);
+        app.state.request_file_manager_agent_handoff = Some(FileManagerAgentHandoffRequest {
+            path: path.clone(),
+            terminal_id,
+        });
+        app.state.workspaces.clear();
+        app.state.active = None;
+
+        assert!(app.sync_file_manager_agent_handoff_send());
+        assert!(
+            receiver.try_recv().is_err(),
+            "a vanished workspace must deliver zero bytes"
+        );
+        assert_eq!(
+            app.state.toast.as_ref().map(|toast| toast.context.as_str()),
+            Some("agent handoff authority changed")
+        );
+        assert!(!app.sync_file_manager_agent_handoff_send());
+        assert!(receiver.try_recv().is_err(), "no retry on later ticks");
+    }
+
+    // TP-FIP-REF-09: when the focused pane's terminal identity no longer
+    // matches the prepared request, no bytes may cross to the new terminal.
+    #[tokio::test]
+    async fn changed_terminal_identity_sends_zero_bytes() {
+        let fixture = HandoffFixture::new("changed-terminal");
+        let path = fixture.file("selected.txt");
+        let (mut app, terminal_id, mut receiver) = app_with_agent_handoff(&fixture.root, 2);
+        app.state.request_file_manager_agent_handoff = Some(FileManagerAgentHandoffRequest {
+            path: path.clone(),
+            terminal_id: terminal_id.clone(),
+        });
+        // Focus moves to a new split pane whose terminal is NOT the prepared
+        // target; the prepared request must not follow the focus.
+        app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
+        app.state.ensure_test_terminals();
+        let focused_terminal = app
+            .state
+            .terminal_id_for_pane(0, app.state.workspaces[0].focused_pane_id().expect("focus"))
+            .expect("focused terminal");
+        assert_ne!(focused_terminal, terminal_id, "fixture must move focus");
+
+        assert!(app.sync_file_manager_agent_handoff_send());
+        assert!(
+            receiver.try_recv().is_err(),
+            "a changed terminal identity must deliver zero bytes"
+        );
+        assert_eq!(
+            app.state.toast.as_ref().map(|toast| toast.context.as_str()),
+            Some("agent handoff authority changed")
+        );
+        assert!(!app.sync_file_manager_agent_handoff_send());
+        assert!(receiver.try_recv().is_err(), "no retry on later ticks");
     }
 
     // TP-C5-SEND: a watcher-reconciled stale entry and a vanished runtime are
