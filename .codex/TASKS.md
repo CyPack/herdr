@@ -61,12 +61,18 @@ plugin.
     projection.
   - [x] Fresh gates: Rust 3,574/3,574 + 2 skip, Linux/Windows Clippy
     `-D warnings`, Playwright Chromium 25/25, fmt clean.
-- [ ] **FCL-4 Render and input ownership swap — ACTIVE.**
-  - `TP-FCL-INPUT-01..03`.
-  - Locations own vertical input only in their cells; Trail retains current
-    fractional horizontal behavior inside its exact rectangle.
-- [ ] **FCL-5 Compact drawer and legacy global Files-body teardown** (blocked
-  by FCL-4).
+- [x] **FCL-4 Render and input ownership swap.**
+  - [x] `TP-FCL-INPUT-01..03`: RED `8c6cfd5c`, GREEN `b98ed2ac`.
+  - [x] Favorites/Locations render only in the Files-local rail; global Files
+    body click/wheel ownership is retired while the workspace tracker stays
+    live.
+  - [x] Fresh generation/revision/path-validated primary clicks and vertical
+    rail scroll are content-owned; gaps, modifiers, inaccessible/stale rows,
+    and the separator are fail-closed. Trail keeps fractional horizontal
+    behavior only inside its exact rectangle.
+  - [x] Fresh gates: Rust 3,578/3,578 + 2 skip, Linux/Windows Clippy
+    `-D warnings`, Playwright Chromium 25/25, fmt clean.
+- [ ] **FCL-5 Compact drawer and legacy global Files-body teardown — ACTIVE.**
   - `TP-FCL-DRAWER-01`.
   - Topmost bounded drawer restores Files focus; old global row geometry,
     navigation request, render, hit-test, and cwd-derived highlight seams are

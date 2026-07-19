@@ -42,9 +42,18 @@ action ve kalan Trail rect bounded/disjoint. Miller/Trail yalnız bu Trail
 rect'ini tüketiyor; mevcut üçte-bir horizontal scroll değişmedi. Full gate
 diagnosis iki mtime-order fixture'ını explicit eşit timestamp ile stabilize
 etti ve 24+1 content chrome sonrası characterized Trail viewport genişliklerini
-korudu. Fresh gates Rust 3,574/3,574 + 2 skip, Linux+Windows Clippy
-`-D warnings`, Chromium 25/25, fmt temiz. TEK aktif iş FCL-4 render/input
-ownership swap'tir. FMR plugin adoption ayrı ve ikinci önceliktedir.
+korudu. FCL-4 `8c6cfd5c` RED / `b98ed2ac` GREEN ile kapandı.
+Favorites/Locations yalnız Files-local rail'de render oluyor; global panel
+workspace/agent tracker olarak canlı kalıyor ve Files location click/wheel
+otoritesi taşımıyor. Rail primary click ve vertical wheel input'u exact Files
+generation/model revision/accessibility/path ile revalidate ediliyor;
+gap/modifier/stale row/separator fail-closed, Trail fractional horizontal
+scroll yalnız exact Trail rect'inde çalışıyor. Pending/failure/inaccessible
+marker'ları yalnız prepared state'ten çiziliyor ve Files close projected rail
+authority'yi aynı transaction'da siliyor. Fresh gates Rust 3,578/3,578 + 2
+skip, Linux+Windows Clippy `-D warnings`, Chromium 25/25, fmt temiz. TEK aktif
+iş FCL-5 compact drawer + legacy global-body teardown'dır. FMR plugin adoption
+ayrı ve ikinci önceliktedir.
 Stable Herdr/socket, upstream, release assets ve `.superpowers/` untouched.
 
 **CURRENT OVERRIDE — MTIME PROGRAMI KAPANDI.** Kullanıcı
@@ -637,21 +646,15 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 14 ve
-89, toplam 103 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 13 ve
+89, toplam 102 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 14 unchecked
+### Source: `.codex/TASKS.md` — 13 unchecked
 
-- [ ] **FCL-4 Render and input ownership swap — ACTIVE.**
-  - `TP-FCL-INPUT-01..03`.
-  - Locations own vertical input only in their cells; Trail retains current
-    fractional horizontal behavior inside its exact rectangle.
-
-- [ ] **FCL-5 Compact drawer and legacy global Files-body teardown** (blocked
-  by FCL-4).
+- [ ] **FCL-5 Compact drawer and legacy global Files-body teardown — ACTIVE.**
   - `TP-FCL-DRAWER-01`.
   - Topmost bounded drawer restores Files focus; old global row geometry,
     navigation request, render, hit-test, and cwd-derived highlight seams are

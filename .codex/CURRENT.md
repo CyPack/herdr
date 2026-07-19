@@ -37,10 +37,19 @@
 > projection consumes only that Trail rect; one-third horizontal scroll is
 > unchanged. Full-suite diagnosis also stabilized two mtime-order fixtures
 > with explicit equal timestamps and preserved characterized Trail viewport
-> widths after the 24+1 content chrome reservation. Fresh gates: Rust
-> 3,574/3,574 + 2 skip, Linux/Windows Clippy `-D warnings`, Playwright
-> Chromium 25/25, fmt clean. FCL-4 render/input ownership is the only active
-> task. This program takes priority over FMR plugin adoption.
+> widths after the 24+1 content chrome reservation. FCL-4 is closed at
+> `8c6cfd5c` RED / `b98ed2ac` GREEN. Favorites/Locations now render only in
+> the Files-local rail; the global panel remains the live workspace/agent
+> tracker and no longer owns Files location clicks or wheel events. Rail
+> input revalidates Files generation, model revision, accessibility, and
+> exact path; gaps/modifiers/stale rows fail closed, vertical wheel is
+> rail-local, and Trail fractional horizontal scroll is bounded to the exact
+> Trail rectangle. Pending/failure/inaccessible markers are prepared-state
+> only and close immediately clears projected rail authority. Fresh gates:
+> Rust 3,578/3,578 + 2 skip, Linux/Windows Clippy `-D warnings`, Playwright
+> Chromium 25/25, fmt clean. FCL-5 compact drawer plus legacy global-body
+> teardown is the only active task. This program takes priority over FMR
+> plugin adoption.
 > Stable Herdr/socket, upstream, release assets, and user-owned
 > `.superpowers/` remain outside authority.
 >
