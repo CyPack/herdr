@@ -809,4 +809,26 @@ mod tests {
         app.file_manager_io_worker.wait_for_result_for_test();
         let _ = app.sync_file_manager_io_results();
     }
+
+    #[test]
+    fn fcl_io_watcher_adapter_has_no_synchronous_directory_refresh() {
+        let source = include_str!("file_manager_watcher.rs");
+        let start = source
+            .find("pub(super) fn sync_file_manager_watcher_at")
+            .expect("watcher scheduled adapter");
+        let end = source[start..]
+            .find("\n}\n\n#[cfg(test)]")
+            .map(|offset| start + offset)
+            .expect("watcher production impl boundary");
+        let production = &source[start..end];
+
+        assert!(
+            !production.contains(".refresh_active_trail_col("),
+            "watcher scheduled sync must not enumerate a Trail column inline"
+        );
+        assert!(
+            production.contains("FileManagerIoRequest::TrailRefresh"),
+            "watcher refresh must submit the shared bounded I/O lane"
+        );
+    }
 }
