@@ -13,11 +13,14 @@
 > Fresh graph 23,556/125,078 proves the current chain
 > `collect_directory_entries` → `read_directory_snapshot` → `sort_entries` →
 > `TrailSnapshots` → `project_trail_view_inner` → `render_trail_view` /
-> Trail hit authority. MTIME-0 research and dependency review are complete:
-> exact already-locked `time 0.3.47` adds no package or feature delta
-> (`.codex/evidence/miller-mtime-dependency-audit.md`). Next is the MTIME-1/2
-> compile-valid filesystem ordering RED. Stable Herdr/socket and user-owned
-> `.superpowers/` remain untouched.
+> Trail hit authority. MTIME-0 through MTIME-3 are closed: exact locked
+> `time 0.3.47` adds no package/feature delta (`1d400822`); optional
+> symlink-preserving mtime plus strict mixed descending order are
+> `c8a8c4e3` RED / `7f6f9575` GREEN; pure local-calendar groups are
+> `0831c855` RED / `86ac4cff` GREEN. Fresh full Rust evidence is
+> 3,534/3,534 PASS + 2 skip and Linux all-targets clippy is clean. Next is
+> MTIME-4 grouped Trail projection/render RED. Stable Herdr/socket and
+> user-owned `.superpowers/` remain untouched.
 >
 > **CURRENT OVERRIDE — TRAIL-T7.10 HIDDEN-CHILD ACTIVATION CLOSED
 > (2026-07-19).** The user confirmed Ghostty-tip horizontal input works, then

@@ -11,9 +11,13 @@
   Trail projection/render/input, and watcher dependency chain. The approved
   code-level plan is
   `docs/superpowers/plans/2026-07-19-herdr-miller-mtime-groups-implementation.md`.
-  MTIME-0 is complete: exact locked `time 0.3.47` adds no package or feature
-  growth. Next: MTIME-1/2 compile-valid filesystem ordering RED. Stable
-  Herdr/socket and `.superpowers/` are untouched.
+  MTIME-0 through MTIME-3 are complete. Dependency freeze is `1d400822`;
+  prepared symlink-preserving metadata and strict mixed mtime sorting are
+  `c8a8c4e3` RED / `7f6f9575` GREEN; local-calendar classification and compact
+  labels are `0831c855` RED / `86ac4cff` GREEN. Fresh full Rust evidence is
+  3,534/3,534 PASS + 2 skip and Linux all-targets clippy is clean. Next:
+  MTIME-4 grouped Trail projection/render RED. Stable Herdr/socket and
+  `.superpowers/` are untouched.
 - Current override: **FMR-4/FMR-5 plugin boundary active.** The reboot regression is
   partly explained by executable drift: `/home/ayaz/.local/bin/herdr` is a
   2026-07-12 build while `target/debug/herdr` is the 2026-07-18 build carrying

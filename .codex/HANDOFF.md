@@ -15,11 +15,13 @@ Onaylı code-level TDD planı:
 `docs/superpowers/plans/2026-07-19-herdr-miller-mtime-groups-implementation.md`.
 Fresh graph 23,556/125,078 current `collect_directory_entries`,
 `read_directory_snapshot`, `sort_entries`, `project_trail_view_inner`,
-`render_trail_view` gövdelerini döndürdü. MTIME-0 araştırma ve dependency
-review kapandı: exact locked `time 0.3.47` yeni paket/feature eklemiyor
-(`.codex/evidence/miller-mtime-dependency-audit.md`). Sıradaki iş MTIME-1/2
-compile-valid filesystem ordering RED. Stable Herdr/socket, upstream ve
-`.superpowers/` untouched.
+`render_trail_view` gövdelerini döndürdü. MTIME-0..3 kapandı: dependency
+freeze `1d400822`; optional symlink-preserving mtime ve strict mixed descending
+sort `c8a8c4e3` RED / `7f6f9575` GREEN; pure local-calendar groups
+`0831c855` RED / `86ac4cff` GREEN. Fresh full Rust 3,534/3,534 PASS + 2 skip,
+Linux all-targets clippy temiz. Sıradaki iş MTIME-4 grouped Trail
+projection/render RED. Stable Herdr/socket, upstream ve `.superpowers/`
+untouched.
 
 **CURRENT OVERRIDE — FMR-2A REMOTE/HEADLESS FILES SHORTCUT FIX CLOSED.**
 Kullanıcının `Home/Desktop/Downloads/.../Root` satırlarının remote app
@@ -584,27 +586,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 15 ve
-89, toplam 104 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 14 ve
+89, toplam 103 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 15 unchecked
-
-- [ ] **MTIME-1 Prepared entry metadata.**
-  - [ ] RED optional mtime, symlink, special, and metadata-failure contracts.
-  - [ ] GREEN bounded snapshot-time metadata with zero render I/O.
-
-- [ ] **MTIME-2 Strict mixed sorting.**
-  - [ ] RED newer-file/older-directory, inverse, tie, and unknown families.
-  - [ ] GREEN mtime-descending comparator with deterministic natural/raw/path
-    tie breaks and unknowns last.
-  - [ ] Replace the old directory-first characterization deliberately.
-
-- [ ] **MTIME-3 Local-calendar groups.**
-  - [ ] RED fixed-anchor midnight/DST/future/unknown boundary matrix.
-  - [ ] GREEN pure section classifier and compact timestamp formatter.
+### Source: `.codex/TASKS.md` — 14 unchecked
 
 - [ ] **MTIME-4 Grouped Trail projection and render.**
   - [ ] RED logical header rows, selected-entry visibility, omission-status,

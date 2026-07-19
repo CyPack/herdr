@@ -29,17 +29,17 @@ Playwright Chromium over deterministic Ratatui cells.
   - [x] Audit the already-locked `time 0.3.47` direct-feature/platform delta
     from local source because the documentation MCP transport was unavailable.
   - [x] Write and approve the code-level TDD implementation plan.
-- [ ] **MTIME-1 Prepared entry metadata.**
-  - [ ] RED optional mtime, symlink, special, and metadata-failure contracts.
-  - [ ] GREEN bounded snapshot-time metadata with zero render I/O.
-- [ ] **MTIME-2 Strict mixed sorting.**
-  - [ ] RED newer-file/older-directory, inverse, tie, and unknown families.
-  - [ ] GREEN mtime-descending comparator with deterministic natural/raw/path
+- [x] **MTIME-1 Prepared entry metadata** (`c8a8c4e3` RED / `7f6f9575` GREEN).
+  - [x] RED optional mtime, symlink, special, and metadata-failure contracts.
+  - [x] GREEN bounded snapshot-time metadata with zero render I/O.
+- [x] **MTIME-2 Strict mixed sorting** (`c8a8c4e3` RED / `7f6f9575` GREEN).
+  - [x] RED newer-file/older-directory, inverse, tie, and unknown families.
+  - [x] GREEN mtime-descending comparator with deterministic natural/raw/path
     tie breaks and unknowns last.
-  - [ ] Replace the old directory-first characterization deliberately.
-- [ ] **MTIME-3 Local-calendar groups.**
-  - [ ] RED fixed-anchor midnight/DST/future/unknown boundary matrix.
-  - [ ] GREEN pure section classifier and compact timestamp formatter.
+  - [x] Replace the old directory-first characterization deliberately.
+- [x] **MTIME-3 Local-calendar groups** (`0831c855` RED / `86ac4cff` GREEN).
+  - [x] RED fixed-anchor midnight/DST/future/unknown boundary matrix.
+  - [x] GREEN pure section classifier and compact timestamp formatter.
 - [ ] **MTIME-4 Grouped Trail projection and render.**
   - [ ] RED logical header rows, selected-entry visibility, omission-status,
     timestamp/name/action geometry, and tiny/partial-column behavior.
