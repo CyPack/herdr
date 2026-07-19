@@ -4744,6 +4744,174 @@ mod tests {
         assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 0);
     }
 
+    // MTIME-5 RED: date headers are typed non-row terrain. Every button and
+    // modifier is consumed without creating row, menu, selection, detail, or
+    // horizontal-scroll authority.
+    #[test]
+    fn grouped_miller_header_buttons_and_modifiers_are_inert() {
+        let td = TempDir::new("grouped-header-inert");
+        td.file("older.txt");
+        td.file("today.txt");
+        fs::File::open(td.root.join("today.txt"))
+            .expect("open recent header fixture")
+            .set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now()))
+            .expect("set recent header fixture mtime");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let header = app.state.view.file_manager_trail.columns[0].section_headers[0].clone();
+        let before = {
+            let fm = app.state.file_manager.as_ref().expect("open FM");
+            (
+                fm.cursor,
+                fm.trail.clone(),
+                fm.trail_snapshots.detail().cloned(),
+                fm.multi_selection_paths().clone(),
+                fm.miller.horizontal.offset_cells,
+            )
+        };
+
+        for event in [
+            mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                header.rect.x,
+                header.rect.y,
+            ),
+            mouse(
+                MouseEventKind::Down(MouseButton::Right),
+                header.rect.x,
+                header.rect.y,
+            ),
+            mouse(
+                MouseEventKind::Down(MouseButton::Middle),
+                header.rect.x,
+                header.rect.y,
+            ),
+            mouse_with_modifiers(
+                MouseEventKind::Down(MouseButton::Left),
+                header.rect.x,
+                header.rect.y,
+                KeyModifiers::CONTROL,
+            ),
+            mouse_with_modifiers(
+                MouseEventKind::Down(MouseButton::Left),
+                header.rect.x,
+                header.rect.y,
+                KeyModifiers::SHIFT,
+            ),
+            mouse_with_modifiers(
+                MouseEventKind::Down(MouseButton::Left),
+                header.rect.x,
+                header.rect.y,
+                KeyModifiers::ALT,
+            ),
+        ] {
+            assert_eq!(
+                app.handle_file_manager_mouse(event),
+                FileManagerMouseDispatch::Consumed
+            );
+        }
+
+        let fm = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(
+            (
+                fm.cursor,
+                fm.trail.clone(),
+                fm.trail_snapshots.detail().cloned(),
+                fm.multi_selection_paths().clone(),
+                fm.miller.horizontal.offset_cells,
+            ),
+            before
+        );
+        assert!(app.state.context_menu.is_none());
+    }
+
+    // MTIME-5 RED: a plain vertical wheel event over a date header navigates
+    // the header's owning column and cannot enter the horizontal fallback.
+    #[test]
+    fn grouped_miller_header_wheel_moves_owning_column_not_horizontal_offset() {
+        let td = TempDir::new("grouped-header-wheel");
+        td.dir("child");
+        fs::write(td.root.join("child/today.txt"), b"x").expect("write recent child fixture");
+        fs::write(td.root.join("child/older.txt"), b"x").expect("write older child fixture");
+        fs::File::open(td.root.join("child/today.txt"))
+            .expect("open recent child fixture")
+            .set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now()))
+            .expect("set recent child fixture mtime");
+        TempDir::set_modified(&td.root.join("child/older.txt"));
+        let fm = FmState::open_trail_to(&td.root, &td.root.join("child"), false)
+            .expect("grouped child Trail fixture");
+        let mut app = runtime_app_with_fm(fm);
+        let header = app
+            .state
+            .view
+            .file_manager_trail
+            .columns
+            .iter()
+            .find(|column| column.trail_index == 1)
+            .and_then(|column| column.section_headers.first())
+            .cloned()
+            .expect("visible child date header");
+        let expected_path = td.root.join("child/today.txt");
+        let before_offset = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .miller
+            .horizontal
+            .offset_cells;
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::ScrollDown,
+                header.rect.x,
+                header.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+
+        let fm = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(
+            fm.selected().map(|entry| entry.path.as_path()),
+            Some(expected_path.as_path())
+        );
+        assert_eq!(fm.trail.active_col(), header.trail_index);
+        assert_eq!(fm.miller.horizontal.offset_cells, before_offset);
+    }
+
+    // MTIME-5 RED: the prepared timestamp interval is part of the exact row
+    // hit target and therefore resolves the same stable path as the name.
+    #[test]
+    fn grouped_miller_timestamp_click_activates_exact_row_path() {
+        let td = TempDir::new("grouped-timestamp-hit");
+        td.file("target.txt");
+        fs::File::open(td.root.join("target.txt"))
+            .expect("open timestamp target")
+            .set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now()))
+            .expect("set timestamp target mtime");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let expected_path = td.root.join("target.txt");
+        let row = trail_row_by_path(&app, &expected_path);
+        let timestamp = row.timestamp.expect("complete timestamp geometry");
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                timestamp.rect.x,
+                timestamp.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .selected()
+                .map(|entry| entry.path.as_path()),
+            Some(expected_path.as_path())
+        );
+    }
+
     // TP-FM3-RESIDENT-WHEEL / TP-TRAIL-T7-INPUT-03: wheel over an ancestor
     // Trail column moves that column's selection and rebranches from it.
     #[test]
