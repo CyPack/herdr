@@ -41,12 +41,20 @@ plugin.
     authority.
   - [x] Fresh gates: Rust 3,558/3,558 + 2 skip, Linux/Windows Clippy
     `-D warnings`, Playwright Chromium 25/25, fmt clean.
-- [ ] **FCL-2 Bounded file-manager I/O lane — ACTIVE.**
-  - `TP-FCL-IO-01..06`.
-  - One executing + one latest pending root/navigation/refresh request; stale,
+- [x] **FCL-2 Bounded file-manager I/O lane.**
+  - [x] `TP-FCL-IO-01..06`: worker RED `1e5c3927`, worker GREEN
+    `c814a72b`, navigation/watcher RED `2960c053` + `c0358812`, adversarial
+    completion RED `4755fdaf`, integration GREEN `b12ef4be`, async legacy
+    harness reconciliation `5ecd0159`.
+  - [x] One executing + one latest pending root/navigation/refresh request; stale,
     closed, changed-type, missing, permission, panic, and disconnect paths
     preserve current Trail.
-- [ ] **FCL-3 Responsive content geometry** (blocked by FCL-2).
+  - [x] Root shortcut, Miller enter, operation refresh, current refresh, and
+    active Trail watcher reads run off scheduled/input threads; completion
+    apply requires exact Files/model/source/pending identity.
+  - [x] Fresh gates: Rust 3,571/3,571 + 2 skip, Linux/Windows Clippy
+    `-D warnings`, Playwright Chromium 25/25, fmt clean.
+- [ ] **FCL-3 Responsive content geometry — ACTIVE.**
   - `TP-FCL-GEO-01..03`.
   - Wide/standard persistent rail and compact complete action use one
     disjoint current-frame projection.

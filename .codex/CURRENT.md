@@ -22,11 +22,18 @@
 > `249e8315` GREEN. Files activation now preserves Spaces/Projects and the
 > global tracking body; direct/location origin is pure client-local identity,
 > survives descendant navigation, transfers only on exact activation, and
-> retires on inaccessible model or close. Fresh gates: Rust 3,558/3,558 + 2
-> skip, Linux/Windows Clippy `-D warnings`, Playwright Chromium 25/25, fmt
-> clean. FCL-2 bounded I/O is the only active task. This program takes
-> priority over FMR plugin
-> adoption and does not change the existing one-third horizontal scroll.
+> retires on inaccessible model or close. FCL-2 is closed through worker RED
+> `1e5c3927`, worker GREEN `c814a72b`, integration seam REDs `2960c053` /
+> `c0358812`, adversarial completion RED `4755fdaf`, integration GREEN
+> `b12ef4be`, and async legacy-harness reconciliation `5ecd0159`. One bounded
+> worker owns root shortcut, Miller enter, operation/current refresh, and
+> active Trail watcher directory reads; only its latest exact
+> Files/model/source/pending identity may apply. Missing/changed-type/
+> permission/panic/disconnect paths preserve the resident Trail. Fresh gates:
+> Rust 3,571/3,571 + 2 skip, Linux/Windows Clippy `-D warnings`, Playwright
+> Chromium 25/25, fmt clean. FCL-3 responsive content geometry is the only
+> active task. This program takes priority over FMR plugin adoption and does
+> not change the existing one-third horizontal scroll.
 > Stable Herdr/socket, upstream, release assets, and user-owned
 > `.superpowers/` remain outside authority.
 >
