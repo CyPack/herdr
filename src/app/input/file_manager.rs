@@ -5010,6 +5010,125 @@ mod tests {
         );
     }
 
+    // TP-TRAIL-HSCROLL-BRANCH: a manually positioned five-column viewport
+    // must not turn its rightmost visible column into a navigation boundary.
+    // Reactivating the real directory there preserves the loaded Trail branch
+    // and rearms active-end following so its child column is visible again.
+    #[test]
+    fn rightmost_visible_directory_click_reveals_the_hidden_child_column() {
+        let td = TempDir::new("trail-rightmost-visible-branch");
+        let root = td.root.join("root");
+        let mut current = root.clone();
+        for level in 0..7 {
+            current.push(format!("level-{level}"));
+        }
+        let next = current.join("next");
+        fs::create_dir_all(&next).expect("create deep Trail branch fixture");
+        fs::write(next.join("visible-child.txt"), b"x").expect("write next-column child");
+
+        let mut file_manager =
+            FmState::open_trail_to(&root, &current, false).expect("open deep Trail");
+        for segment in &mut file_manager.miller.chain {
+            segment.preferred_width = crate::fm::miller::MILLER_COLUMN_MIN_WIDTH;
+        }
+        let mut app = runtime_app_with_fm(file_manager);
+        install_focused_agent(&mut app);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        let frame = Rect::new(0, 0, 160, 18);
+        compute_view(&mut app.state, frame);
+
+        let initial_offset = app.state.view.file_manager_trail.offset_cells;
+        let probe = app
+            .state
+            .view
+            .file_manager_trail
+            .columns
+            .first()
+            .map(|column| (column.rect.x, column.rect.bottom().saturating_sub(1)))
+            .expect("visible Trail column");
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollLeft, probe.0, probe.1)),
+            FileManagerMouseDispatch::Consumed
+        );
+        compute_view(&mut app.state, frame);
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollRight, probe.0, probe.1)),
+            FileManagerMouseDispatch::Consumed
+        );
+        compute_view(&mut app.state, frame);
+
+        let before = app.state.file_manager.as_ref().expect("open FM");
+        assert!(
+            !before.miller.horizontal.follow_active,
+            "manual horizontal input must own the pre-click viewport"
+        );
+        assert_eq!(
+            before.miller.horizontal.offset_cells, initial_offset,
+            "the fixture returns to the active-end offset while remaining in manual mode"
+        );
+        let deepest = before.trail.deepest();
+        let visible = &app.state.view.file_manager_trail.columns;
+        assert_eq!(
+            visible.len(),
+            5,
+            "the regression fixture must expose exactly five live columns"
+        );
+        let rightmost = visible
+            .iter()
+            .max_by_key(|column| column.rect.right())
+            .expect("rightmost visible Trail column");
+        assert_eq!(rightmost.trail_index + 1, deepest);
+        assert_eq!(
+            current.parent(),
+            Some(rightmost.directory.as_path()),
+            "the fifth visible column owns the hidden active child's row"
+        );
+        let target = rightmost
+            .rows
+            .iter()
+            .find(|row| row.entry_path == current)
+            .cloned()
+            .expect("rightmost directory row");
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                target.name_rect.x,
+                target.name_rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        compute_view(&mut app.state, frame);
+
+        let after = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(
+            after.trail.deepest(),
+            deepest,
+            "reactivating the same open branch preserves its logical depth"
+        );
+        assert_eq!(
+            after.trail.cols().last().map(|column| &column.directory),
+            Some(&current)
+        );
+        assert!(
+            after.miller.horizontal.follow_active,
+            "same-branch directory activation must rearm active-end following"
+        );
+        let revealed = app
+            .state
+            .view
+            .file_manager_trail
+            .columns
+            .iter()
+            .find(|column| column.directory == current)
+            .expect("hidden child Trail column must become visible");
+        assert!(
+            revealed.rows.iter().any(|row| row.entry_path == next),
+            "the revealed column must render the clicked directory's contents"
+        );
+    }
+
     #[test]
     fn fractional_scroll_resize_clamps_and_navigation_rearms_auto_follow() {
         let td = TempDir::new("trail-fractional-lifecycle");
