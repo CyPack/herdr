@@ -159,6 +159,38 @@ pub(crate) fn project_trail_view_with_origin(
     )
 }
 
+#[cfg(test)]
+fn project_trail_view_at(
+    stage: Rect,
+    trail: &TrailState,
+    snaps: &TrailSnapshots,
+    preferred_widths: &[u16],
+    anchor: crate::fm::entry_time::LocalCalendarAnchor,
+) -> TrailViewSnapshot {
+    let _ = anchor;
+    project_trail_view(stage, trail, snaps, preferred_widths)
+}
+
+#[cfg(test)]
+fn project_trail_view_at_with_origin(
+    stage: Rect,
+    trail: &TrailState,
+    snaps: &TrailSnapshots,
+    preferred_widths: &[u16],
+    requested_offset_cells: u32,
+    anchor: crate::fm::entry_time::LocalCalendarAnchor,
+) -> TrailViewSnapshot {
+    let _ = anchor;
+    project_trail_view_with_origin(
+        stage,
+        trail,
+        snaps,
+        preferred_widths,
+        TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
+        requested_offset_cells,
+    )
+}
+
 fn project_trail_view_inner(
     stage: Rect,
     trail: &TrailState,
@@ -559,6 +591,7 @@ fn render_trail_detail_panel(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fm::entry_time::LocalCalendarAnchor;
     use crate::fm::trail::MAX_TRAIL_DEPTH;
     use crate::fm::FmDirectoryStatus;
     use ratatui::backend::TestBackend;
@@ -567,6 +600,8 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::SystemTime;
+    use time::{Date, Month, PrimitiveDateTime, Time, UtcOffset};
 
     fn unique() -> u64 {
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -596,6 +631,40 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
         }
+    }
+
+    fn local_system_time(year: i32, month: Month, day: u8, hour: u8, minute: u8) -> SystemTime {
+        let date = Date::from_calendar_date(year, month, day).expect("valid fixture date");
+        let time = Time::from_hms(hour, minute, 0).expect("valid fixture time");
+        PrimitiveDateTime::new(date, time)
+            .assume_offset(UtcOffset::UTC)
+            .into()
+    }
+
+    fn set_modified(path: &Path, modified: SystemTime) {
+        let file = fs::File::open(path).expect("open Trail mtime fixture");
+        file.set_times(fs::FileTimes::new().set_modified(modified))
+            .expect("set Trail fixture mtime");
+    }
+
+    fn fixed_anchor() -> LocalCalendarAnchor {
+        LocalCalendarAnchor::from_system_time(local_system_time(2026, Month::January, 10, 12, 0))
+    }
+
+    fn rendered_text(stage: Rect, view: &TrailViewSnapshot, snaps: &TrailSnapshots) -> String {
+        let app = crate::app::state::AppState::test_new();
+        let backend = TestBackend::new(stage.width, stage.height);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| render_trail_view(&app, frame, view, snaps))
+            .expect("render grouped Trail");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
     }
 
     /// Build a loaded trail `depth` directories deep under `root`; every
@@ -712,6 +781,192 @@ mod tests {
                 .any(|row| row.entry_index == 25 && row.entry_path == target),
             "the selected row is inside the visible vertical window"
         );
+    }
+
+    #[test]
+    fn mtime_sections_insert_non_actionable_logical_rows() {
+        let td = TempDir::new("mtime-section-lines");
+        let today = td.root.join("today.txt");
+        let yesterday = td.root.join("yesterday.txt");
+        fs::write(&today, b"x").expect("today fixture");
+        fs::write(&yesterday, b"x").expect("yesterday fixture");
+        set_modified(&today, local_system_time(2026, Month::January, 10, 9, 5));
+        set_modified(&yesterday, local_system_time(2026, Month::January, 9, 8, 4));
+        let trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        let stage = Rect::new(0, 0, 48, 6);
+
+        let view = project_trail_view_at(stage, &trail, &snaps, &[48], fixed_anchor());
+        let column = &view.columns[0];
+        assert_eq!(column.rows.len(), 2);
+        assert_eq!(column.rows[0].rect.y, stage.y + 1);
+        assert_eq!(column.rows[1].rect.y, stage.y + 3);
+        assert!(
+            trail_row_at(&view, column.rect.x, stage.y).is_none(),
+            "section headers never carry row action authority"
+        );
+        let rendered = rendered_text(stage, &view, &snaps);
+        assert!(rendered.contains("Today"), "{rendered:?}");
+        assert!(rendered.contains("Yesterday"), "{rendered:?}");
+    }
+
+    #[test]
+    fn selected_entry_remains_visible_after_section_headers() {
+        let td = TempDir::new("mtime-selected-viewport");
+        for (name, day) in [
+            ("today.txt", 10),
+            ("yesterday.txt", 9),
+            ("week.txt", 8),
+            ("older.txt", 1),
+        ] {
+            let path = td.root.join(name);
+            fs::write(&path, b"x").expect("selected viewport fixture");
+            set_modified(&path, local_system_time(2026, Month::January, day, 9, 0));
+        }
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        let target = td.root.join("older.txt");
+        assert!(trail.select_file(0, &target));
+        let stage = Rect::new(0, 0, 48, 2);
+
+        let view = project_trail_view_at(stage, &trail, &snaps, &[48], fixed_anchor());
+        let column = &view.columns[0];
+        assert_eq!(column.rows.len(), 1);
+        assert_eq!(column.rows[0].entry_path, target);
+        assert_eq!(column.rows[0].rect.y, stage.y + 1);
+    }
+
+    #[test]
+    fn omission_status_remains_after_grouped_rows() {
+        let td = TempDir::new("mtime-status");
+        let visible = td.root.join("visible.txt");
+        fs::write(&visible, b"x").expect("visible fixture");
+        fs::write(td.root.join(".secret"), b"x").expect("hidden fixture");
+        set_modified(&visible, local_system_time(2026, Month::January, 10, 9, 5));
+        let trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        let stage = Rect::new(0, 0, 48, 4);
+
+        let view = project_trail_view_at(stage, &trail, &snaps, &[48], fixed_anchor());
+        let column = &view.columns[0];
+        assert_eq!(column.rows[0].rect.y, stage.y + 1);
+        assert_eq!(
+            column.status_rect.expect("prepared omission status").y,
+            stage.y + 2
+        );
+        let rendered = rendered_text(stage, &view, &snaps);
+        assert!(rendered.contains("Today"), "{rendered:?}");
+        assert!(rendered.contains("hidden items omitted"), "{rendered:?}");
+    }
+
+    #[test]
+    fn zero_and_tiny_heights_do_not_orphan_mtime_headers() {
+        let td = TempDir::new("mtime-tiny");
+        let file = td.root.join("today.txt");
+        fs::write(&file, b"x").expect("tiny fixture");
+        set_modified(&file, local_system_time(2026, Month::January, 10, 9, 5));
+        let trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+
+        let one_line = Rect::new(0, 0, 40, 1);
+        let one_line_view = project_trail_view_at(one_line, &trail, &snaps, &[40], fixed_anchor());
+        assert!(one_line_view.columns[0].rows.is_empty());
+        assert!(!rendered_text(one_line, &one_line_view, &snaps).contains("Today"));
+
+        let two_lines = Rect::new(0, 0, 40, 2);
+        let two_line_view = project_trail_view_at(two_lines, &trail, &snaps, &[40], fixed_anchor());
+        assert_eq!(two_line_view.columns[0].rows.len(), 1);
+        assert_eq!(two_line_view.columns[0].rows[0].rect.y, 1);
+    }
+
+    #[test]
+    fn timestamp_rect_is_complete_or_absent() {
+        let td = TempDir::new("mtime-timestamp-responsive");
+        let file = td.root.join("report.txt");
+        fs::write(&file, b"x").expect("timestamp fixture");
+        set_modified(&file, local_system_time(2026, Month::January, 10, 9, 5));
+        let trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+
+        let wide = Rect::new(0, 0, 48, 3);
+        let wide_view = project_trail_view_at(wide, &trail, &snaps, &[48], fixed_anchor());
+        let wide_text = rendered_text(wide, &wide_view, &snaps);
+        assert!(wide_text.contains("09:05"), "{wide_text:?}");
+
+        let narrow = Rect::new(0, 0, 16, 3);
+        let narrow_view = project_trail_view_at(narrow, &trail, &snaps, &[16], fixed_anchor());
+        let narrow_text = rendered_text(narrow, &narrow_view, &snaps);
+        assert!(!narrow_text.contains("09:05"), "{narrow_text:?}");
+    }
+
+    #[test]
+    fn name_timestamp_and_actions_render_in_disjoint_order() {
+        let td = TempDir::new("mtime-disjoint");
+        let file = td.root.join("a.txt");
+        fs::write(&file, b"x").expect("disjoint fixture");
+        set_modified(&file, local_system_time(2026, Month::January, 10, 9, 5));
+        let trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        let stage = Rect::new(0, 0, 48, 3);
+        let view = project_trail_view_at(stage, &trail, &snaps, &[48], fixed_anchor());
+        let row = &view.columns[0].rows[0];
+        let rendered = rendered_text(stage, &view, &snaps);
+        let name_x = rendered.find("a.txt").expect("rendered filename") as u16;
+        let timestamp_x = rendered.find("09:05").expect("rendered timestamp") as u16;
+
+        assert!(name_x < timestamp_x);
+        if let Some(action) = row.actions.first() {
+            assert!(timestamp_x + 5 <= action.rect.x);
+            assert!(row.name_rect.right() <= action.rect.x);
+        }
+    }
+
+    #[test]
+    fn partial_column_never_exposes_partial_timestamp() {
+        let td = TempDir::new("mtime-partial-timestamp");
+        let file = td.root.join("report.txt");
+        fs::write(&file, b"x").expect("partial timestamp fixture");
+        set_modified(&file, local_system_time(2026, Month::January, 10, 9, 5));
+        let trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        let stage = Rect::new(0, 0, 16, 3);
+
+        let view =
+            project_trail_view_at_with_origin(stage, &trail, &snaps, &[48], 32, fixed_anchor());
+        assert_eq!(view.columns[0].source_x, 32);
+        let rendered = rendered_text(stage, &view, &snaps);
+        assert!(
+            !rendered.contains(':'),
+            "a clipped timestamp must be omitted as a whole: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn unicode_name_and_horizontal_source_offsets_stay_cell_correct() {
+        let td = TempDir::new("mtime-unicode-horizontal");
+        let file = td.root.join("配置报告.txt");
+        fs::write(&file, b"x").expect("Unicode timestamp fixture");
+        set_modified(&file, local_system_time(2026, Month::January, 10, 9, 5));
+        let trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        let stage = Rect::new(0, 0, 40, 3);
+
+        let view =
+            project_trail_view_at_with_origin(stage, &trail, &snaps, &[48], 8, fixed_anchor());
+        let row = &view.columns[0].rows[0];
+        assert_eq!(view.columns[0].source_x, 8);
+        assert_eq!(row.name_source_x, 8);
+        let rendered = rendered_text(stage, &view, &snaps);
+        assert!(rendered.contains("09:05"), "{rendered:?}");
+        assert!(!rendered.contains('\u{fffd}'), "{rendered:?}");
     }
 
     // Single geometric source: every row rect lives inside its column rect
