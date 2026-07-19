@@ -60,6 +60,25 @@ optional plugin adapter boundary.
   - [x] Classify the plain-click live defect as executable drift; separately
     close the discovered modifier-authority leak without inventing new
     plain-click semantics.
+- [x] **FMR-2A Remote/headless Files shortcut consumer forward-fix.** Closed
+  through `dbfa55be` RED / `72cdce83` GREEN. The
+  earlier FMR-2 test covered the monolithic scheduled loop, but the user's
+  remote app client proved the server-owned loop leaves the typed request
+  unconsumed. Spec and plan:
+  `docs/superpowers/specs/2026-07-19-herdr-files-sidebar-headless-mouse-forward-fix.md`
+  and
+  `docs/superpowers/plans/2026-07-19-herdr-files-sidebar-headless-mouse-forward-fix.md`.
+  Evidence:
+  `.codex/evidence/files-sidebar-headless-mouse-runtime-matrix.md`.
+  - [x] **FMR-2A.1 RED:** raw SGR client input prepares the exact shortcut
+    request, then the real headless scheduled tick must load its Trail.
+  - [x] **FMR-2A.2 GREEN:** connect the headless scheduled loop to the existing
+    model- and filesystem-revalidated one-shot consumer.
+  - [x] **FMR-2A.3 GATES:** preserve adversarial mouse authority; pass
+    Playwright Chromium, full Rust, Linux/Windows clippy, maintenance and
+    hygiene gates.
+  - [x] **FMR-2A.4 CLOSURE:** synchronize continuity exactly, reindex the graph
+    single-worker, and fast-forward only the two CyPack refs.
 - [x] **FMR-3 File type preview and render capability matrix.** Closed through
   `4c87a18f` RED / `ea75a269` GREEN / `b79b55f6` VIS-14 baseline; evidence:
   `.codex/evidence/files-preview-capability-test-points.md`.

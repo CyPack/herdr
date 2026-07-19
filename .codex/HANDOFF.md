@@ -4,6 +4,23 @@ Updated: 2026-07-18 CEST
 
 ## 0. SONRAKI ADIM — TEK AKTİF İŞ
 
+**CURRENT OVERRIDE — FMR-2A REMOTE/HEADLESS FILES SHORTCUT FIX CLOSED.**
+Kullanıcının `Home/Desktop/Downloads/.../Root` satırlarının remote app
+client'ta mouse ile çalışmadığı saha raporu gerçek bir ürün kusuruydu. Önceki
+FMR-2 testi monolitik `App::handle_scheduled_tasks` döngüsünü kullanıyordu;
+server-owned runtime'ın ayrı `handle_scheduled_tasks_headless` döngüsü typed
+`request_file_manager_sidebar_navigation` isteğini tüketmiyordu. Ham SGR
+client byte'ı exact Home hit/request'ini hazırlayıp scheduled assertion'da
+RED oldu (`dbfa55be`). Headless loop mevcut model+filesystem revalidation'lı
+one-shot consumer'a bağlandı (`72cdce83`); duplicate opener, hitbox, parser,
+protokol veya yeni I/O authority eklenmedi. Fresh kanıt: focused raw SGR 1/1,
+shortcut 4/4, typed/consumer 3/3, full Rust 3,528/3,528 + 2 skip, Playwright
+Chromium 22/22 baseline değişmeden, Linux+Windows clippy, Python 68/68, Bun
+5/5 + 12/12 ve fmt temiz. Codebase graf 23,556 node / 125,078 edge ve yeni
+raw-SGR test sembolünü buluyor. Kanıt:
+`.codex/evidence/files-sidebar-headless-mouse-runtime-matrix.md`. Stable
+Herdr/socket, user sessions ve `.superpowers/` untouched.
+
 **CURRENT OVERRIDE — TRAIL-T7.10 HIDDEN-CHILD ACTIVATION CLOSED.** Kullanıcı
 Ghostty-tip altında yatay mouse scroll'un düzeldiğini doğruladı; ardından
 fractional manuel scroll ile aktif child kolonu sağda gizliyken beşinci
