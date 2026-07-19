@@ -2,9 +2,9 @@
 
 Updated: 2026-07-19 CEST
 
-## 0. SONRAKI ADIM — TEK AKTİF İŞ
+## 0. SONRAKI ADIM — FMR-4/FMR-5 AYRI AKTİF LANE
 
-**CURRENT OVERRIDE — FCL FILES CONTENT LOCATIONS RAIL ACTIVE.** Kullanıcı
+**CURRENT OVERRIDE — FCL FILES CONTENT LOCATIONS RAIL CLOSED.** Kullanıcı
 Option A'yı açıkça onayladı: Native Files merkezi açıldığında global sol panel
 agent/workspace runtime takibini koruyacak; Favorites/Locations Files
 content'inin tam-yükseklik sol rail'i olacak; Miller Trail sağda mevcut
@@ -68,8 +68,17 @@ düşürdü, restore sonrası full Chromium 33/33 geçti. Fresh Rust
 ignored VIS-01..13 buffer'larını değiştirdiği keşfedildi; canonical
 `3ff174ca` generator state'i ayrı detached worktree'de yeniden üretilerek
 yalnız ignored JSON'lar restore edildi ve mevcut PNG baseline'ların hiçbiri
-güncellenmedi. TEK aktif iş FCL-7 production closure'dır. FMR plugin
-adoption ayrı ve ikinci önceliktedir.
+güncellenmedi. FCL-7 kapandı: focused FCL 29/29; full Rust
+3,577/3,577 + 3 skip; Linux+Windows Clippy temiz; Python 68/68; Bun 5/5 +
+12/12; Playwright Chromium 33/33; production unwrap ve legacy sidebar
+residue sıfır. Full gate, eski bulk-recovery fixture'ının sequential
+filesystem mtime'a bağımlılığını buldu; `3605037c` seçili kaynaklara explicit
+eşit mtime vererek exact testi 20/20 ve ardından full suite'i yeşil yaptı,
+production order validation gevşetilmedi. Fresh single-worker graph 23,854
+node / 124,093 edge; verified ilişkiler ve MCP stale-count caveat
+`.cartography/files-content-locations-rail-SYSTEM-MAP.json` içinde dondu.
+FCL-0..FCL-7 ve 25/25 `TP-FCL-*` kabul noktası kapalıdır. Sonraki ayrı aktif
+lane FMR-4/FMR-5 plugin research ve adapter-boundary işidir.
 Stable Herdr/socket, upstream, release assets ve `.superpowers/` untouched.
 
 **CURRENT OVERRIDE — MTIME PROGRAMI KAPANDI.** Kullanıcı
@@ -662,19 +671,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 11 ve
-89, toplam 100 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 10 ve
+89, toplam 99 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 11 unchecked
-
-- [ ] **FCL-7 Production closure — ACTIVE.**
-  - `TP-FCL-GATE-01`.
-  - Focused/full Rust, Linux/Windows Clippy, maintenance, Bun/Python,
-    Playwright, hygiene, exact continuity, single-worker graph refresh,
-    cartography map, and CyPack-only fast-forward publication.
+### Source: `.codex/TASKS.md` — 10 unchecked
 
 - [ ] **FMR-0 Scroll version lab and ranking.** Four reboot-safe source
   checkpoints are collected side by side under

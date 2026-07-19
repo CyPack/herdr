@@ -1,6 +1,6 @@
 # Current State — 2026-07-19
 
-> **CURRENT OVERRIDE — FCL FILES CONTENT LOCATIONS RAIL ACTIVE
+> **CURRENT OVERRIDE — FCL FILES CONTENT LOCATIONS RAIL CLOSED
 > (2026-07-19).** The user approved Option A: Native Files keeps the global
 > left panel's agent/workspace runtime tracking, while Favorites/Locations
 > move into a full-height Files-local left rail and the Miller Trail remains
@@ -63,9 +63,18 @@
 > 33/33. Fresh Rust passes 3,577/3,577 + 3 skip and both Linux/Windows Clippy
 > gates are clean. The pre-existing VIS-01..13 ignored buffers were recovered
 > from their canonical `3ff174ca` generator state after the global exporter
-> proved unsafe; no existing PNG baseline was updated. FCL-7 production
-> closure is the only active task. This program takes priority over FMR plugin
-> adoption.
+> proved unsafe; no existing PNG baseline was updated. FCL-7 is closed:
+> focused FCL 29/29; full Rust 3,577/3,577 + 3 skip; Linux/Windows Clippy
+> clean; Python 68/68; Bun 5/5 + 12/12; Playwright Chromium 33/33; production
+> unwrap and legacy sidebar residue zero. The full gate exposed one
+> pre-existing bulk-recovery fixture that depended on sequential filesystem
+> mtimes; `3605037c` gives its selected sources one explicit equal mtime,
+> passes the exact test 20/20, and preserves strict production order
+> validation. Fresh single-worker graph is 23,854 nodes / 124,093 edges;
+> `.cartography/files-content-locations-rail-SYSTEM-MAP.json` freezes the
+> verified relations and MCP stale-count caveat. FCL-0 through FCL-7 and all
+> 25/25 `TP-FCL-*` acceptance points are closed. The separate pre-existing
+> active lane is FMR-4/FMR-5 plugin research and adapter-boundary work.
 > Stable Herdr/socket, upstream, release assets, and user-owned
 > `.superpowers/` remain outside authority.
 >

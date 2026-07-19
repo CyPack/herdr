@@ -91,11 +91,15 @@ plugin.
   - [x] One-cell mutation fails only VIS-18 (7 pass, 2 pixels differ); restored
     full Chromium passes 33/33. Rust passes 3,577/3,577 + 3 skip and both
     Linux/Windows Clippy gates are clean.
-- [ ] **FCL-7 Production closure — ACTIVE.**
-  - `TP-FCL-GATE-01`.
-  - Focused/full Rust, Linux/Windows Clippy, maintenance, Bun/Python,
-    Playwright, hygiene, exact continuity, single-worker graph refresh,
-    cartography map, and CyPack-only fast-forward publication.
+- [x] **FCL-7 Production closure.**
+  - [x] `TP-FCL-GATE-01`: focused FCL 29/29; full Rust 3,577/3,577 + 3
+    skip; Linux/Windows Clippy clean; Python 68/68; Bun 5/5 + 12/12;
+    Playwright Chromium 33/33; production unwrap and legacy sidebar residue 0.
+  - [x] Full-suite discovery stabilized the pre-existing bulk recovery fixture
+    at `3605037c`; its exact test passes 20/20 before the fresh full suite.
+  - [x] Single-worker graph is 23,854 nodes / 124,093 edges; architecture and
+    evidence are frozen in
+    `.cartography/files-content-locations-rail-SYSTEM-MAP.json`.
 
 ### MTIME — Miller Modification-Time Sorting and Finder-Like Groups
 

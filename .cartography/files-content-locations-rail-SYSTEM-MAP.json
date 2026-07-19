@@ -1,0 +1,314 @@
+{
+  "goal": "Freeze the verified FCL architecture and production-closure evidence for the Files-local Locations rail, explicit origin authority, bounded directory I/O, responsive rail/drawer geometry, and preserved fractional Miller Trail scrolling.",
+  "created": "2026-07-19",
+  "project": {
+    "id": "home-ayaz-projects-herdr",
+    "branch": "feat/native-fm",
+    "indexed_head": "3605037c",
+    "index_mode": "fast",
+    "workers": 1,
+    "cli_status": "indexed",
+    "cli_nodes": 23854,
+    "cli_edges": 124093,
+    "mcp_status": "ready",
+    "mcp_reported_nodes": 23854,
+    "mcp_reported_edges": 123807,
+    "count_authority": "The fresh single-worker CLI result is authoritative. The long-lived MCP status channel retained the previous edge count, so ready alone is not treated as freshness evidence.",
+    "freshness_probe": [
+      "FileManagerIoWorker",
+      "FileManagerLocationOrigin",
+      "file_manager_content_layout",
+      "sync_file_manager_location_request",
+      "app_bulk_rename_exposes_private_recovery_path_and_reuses_lane"
+    ]
+  },
+  "ontology": {
+    "type": "client-local Files presentation and bounded-I/O dependency graph",
+    "in_scope": [
+      "global agent/workspace tracker preservation",
+      "Files-local Locations rail and compact drawer",
+      "exact explicit location origin",
+      "root, Miller navigation, operation refresh, and watcher refresh I/O",
+      "typed render and input authority",
+      "fractional horizontal Trail scrolling",
+      "deterministic Chromium fixtures"
+    ],
+    "out_of_scope": [
+      "stable Herdr process or socket mutation",
+      "upstream publication",
+      "release assets and public release docs",
+      "plugin adoption and scroll-version ranking",
+      "drag-and-drop"
+    ]
+  },
+  "nodes": {
+    "components": [
+      {
+        "id": "shell",
+        "name": "global shell tracker",
+        "source": "src/app/actions.rs and src/app/input/sidebar.rs",
+        "role": "Files activation preserves the global Spaces/Projects agent and workspace projection."
+      },
+      {
+        "id": "origin",
+        "name": "FileManagerLocationOrigin",
+        "source": "src/app/file_manager_locations.rs:12-15",
+        "role": "Carries exact Location(path) or Direct(path) identity without cwd or longest-prefix inference."
+      },
+      {
+        "id": "locations-state",
+        "name": "FileManagerLocationsState",
+        "source": "src/app/file_manager_locations.rs",
+        "role": "Owns rail focus, bounded vertical offset, explicit origin, pending/failure projection, and compact drawer state."
+      },
+      {
+        "id": "io-worker",
+        "name": "FileManagerIoWorker",
+        "source": "src/app/file_manager_io_worker.rs",
+        "role": "Runs one executing plus one latest-pending root/navigation/refresh request off input, render, and scheduled-apply threads."
+      },
+      {
+        "id": "io-identity",
+        "name": "FileManagerIoIdentity::is_current",
+        "source": "src/app/file_manager_io_worker.rs:73-103",
+        "role": "Requires exact Files generation, model revision, source identity, request generation, and target identity before apply."
+      },
+      {
+        "id": "root-request",
+        "name": "sync_file_manager_location_request",
+        "source": "src/app/file_manager_io_worker.rs:463-521",
+        "role": "Validates accessible exact location rows, reuses resident roots without I/O, or submits typed root work to the bounded worker."
+      },
+      {
+        "id": "watcher",
+        "name": "schedule_file_manager_watcher_at",
+        "source": "src/app/file_manager_watcher.rs:432-512",
+        "role": "Routes current/watcher refresh through the same prepared I/O and rejects stale completion authority."
+      },
+      {
+        "id": "layout",
+        "name": "file_manager_content_layout",
+        "source": "src/ui/file_manager/locations.rs:71-114",
+        "role": "Projects Wide, Standard, or Compact Files geometry with disjoint rail, separator, action/drawer, and Trail rectangles."
+      },
+      {
+        "id": "render",
+        "name": "render_file_manager_locations",
+        "source": "src/ui/file_manager/locations.rs:320-420",
+        "role": "Renders only prepared locations rows, exact origin, pending/failure state, and the compact drawer."
+      },
+      {
+        "id": "input",
+        "name": "App::handle_file_manager_mouse",
+        "source": "src/app/input/file_manager.rs:536-844",
+        "role": "Revalidates current typed hit identities; rail vertical input and Trail fractional horizontal input remain rectangle-local."
+      },
+      {
+        "id": "trail",
+        "name": "render_trail_view",
+        "source": "src/ui/file_manager/trail_view.rs:634-709",
+        "role": "Consumes only the remaining Trail rectangle and preserves the approved one-third horizontal movement."
+      },
+      {
+        "id": "chromium",
+        "name": "files-locations.spec.ts",
+        "source": "tests/visual/files-locations.spec.ts",
+        "role": "Verifies eight ASCII deterministic wide, origin, standard, compact, pending, and failure compositions."
+      }
+    ],
+    "dependencies": [
+      {
+        "from": "shell",
+        "to": "locations-state",
+        "type": "preserves-global-ownership-while-files-owns-content",
+        "claim_ref": "fcl-shell"
+      },
+      {
+        "from": "origin",
+        "to": "locations-state",
+        "type": "authorizes-exact-highlight",
+        "claim_ref": "fcl-origin"
+      },
+      {
+        "from": "locations-state",
+        "to": "root-request",
+        "type": "emits-typed-location-request",
+        "claim_ref": "fcl-input-io"
+      },
+      {
+        "from": "root-request",
+        "to": "io-worker",
+        "type": "submits-or-reuses-resident-root",
+        "claim_ref": "fcl-bounded-io"
+      },
+      {
+        "from": "watcher",
+        "to": "io-worker",
+        "type": "shares-worker-lane",
+        "claim_ref": "fcl-bounded-io"
+      },
+      {
+        "from": "io-worker",
+        "to": "io-identity",
+        "type": "completion-must-pass",
+        "claim_ref": "fcl-stale-rejection"
+      },
+      {
+        "from": "locations-state",
+        "to": "layout",
+        "type": "projects-current-frame-authority",
+        "claim_ref": "fcl-geometry"
+      },
+      {
+        "from": "layout",
+        "to": "render",
+        "type": "bounds-render",
+        "claim_ref": "fcl-render"
+      },
+      {
+        "from": "layout",
+        "to": "input",
+        "type": "bounds-hit-authority",
+        "claim_ref": "fcl-input"
+      },
+      {
+        "from": "layout",
+        "to": "trail",
+        "type": "reserves-disjoint-trail-rectangle",
+        "claim_ref": "fcl-scroll"
+      },
+      {
+        "from": "render",
+        "to": "chromium",
+        "type": "exports-deterministic-cell-oracle",
+        "claim_ref": "fcl-visual"
+      }
+    ],
+    "claims": [
+      {
+        "id": "fcl-shell",
+        "status": "verified",
+        "text": "Opening Files does not replace the global agent/workspace tracker; Favorites and Locations are Files-content ownership.",
+        "evidence": "FCL focused tests 29/29 and full Rust 3577/3577."
+      },
+      {
+        "id": "fcl-origin",
+        "status": "verified",
+        "text": "Highlight authority is explicit Location(path) or Direct(path), survives descendant navigation, and transfers only on explicit activation.",
+        "evidence": "Graph found FileManagerLocationOrigin; TP-FCL-AUTH tests and VIS-19/VIS-20 pass."
+      },
+      {
+        "id": "fcl-bounded-io",
+        "status": "verified",
+        "text": "Root, Miller navigation, operation refresh, and watcher/current refresh use one bounded latest-pending worker lane.",
+        "evidence": "Graph found FileManagerIoWorker, sync_file_manager_location_request, schedule_file_manager_watcher_at, and fcl_io_miller_and_current_refresh_share_worker_lane."
+      },
+      {
+        "id": "fcl-stale-rejection",
+        "status": "verified",
+        "text": "Missing, changed-type, permission, panic, disconnect, close/reopen, direct activation, and model replacement cannot replace resident Trail with stale work.",
+        "evidence": "Focused FCL worker family 29/29 and full Rust 3577/3577."
+      },
+      {
+        "id": "fcl-geometry",
+        "status": "verified",
+        "text": "Wide and Standard expose persistent rail geometry; Compact exposes one complete action and bounded top drawer; all rectangles are bounded and disjoint.",
+        "evidence": "Graph reports file_manager_content_layout in-degree 3, complexity 3; TP-FCL-GEO and drawer tests pass."
+      },
+      {
+        "id": "fcl-render",
+        "status": "verified",
+        "text": "Locations render only from prepared state; global legacy Files body render/hit-test/navigation seams are absent.",
+        "evidence": "Legacy source residue search returned no matches and Chromium VIS-18..25 pass."
+      },
+      {
+        "id": "fcl-input",
+        "status": "verified",
+        "text": "Fresh exact primary clicks route once; modifiers, gaps, separator, inaccessible paths, stale rows, and drawer background are inert.",
+        "evidence": "Focused input/drawer tests pass and headless raw mouse location navigation remains covered by full Rust."
+      },
+      {
+        "id": "fcl-scroll",
+        "status": "verified",
+        "text": "Locations vertical scroll and Miller fractional horizontal scroll have disjoint rectangle authority.",
+        "evidence": "fcl_input_trail_horizontal_scroll_never_moves_the_locations_rail and VIS-21 pass."
+      },
+      {
+        "id": "fcl-visual",
+        "status": "verified",
+        "text": "Eight new deterministic ASCII fixtures pass; a one-cell mutation fails only VIS-18 by two pixels; restored full Chromium passes 33/33.",
+        "evidence": "RED 7c743e06, GREEN 8dba99d3, baseline SHA 174f8e6e7db2b3a052d19d6f14defc15e01621ead2c0806318409f043b2508a2, mutated SHA 2a99424c096dbe4c38ed8d340593bde1133b4d268fd5485c498234f3314c08ac."
+      }
+    ],
+    "verifications": [
+      {
+        "id": "focused-rust",
+        "status": "pass",
+        "result": "29/29 FCL tests"
+      },
+      {
+        "id": "full-rust",
+        "status": "pass",
+        "result": "3577/3577 pass, 3 skipped"
+      },
+      {
+        "id": "linux-clippy",
+        "status": "pass",
+        "result": "all targets, locked, -D warnings"
+      },
+      {
+        "id": "windows-clippy",
+        "status": "pass",
+        "result": "x86_64-pc-windows-msvc, LIBGHOSTTY_VT_SIMD=false, -D warnings"
+      },
+      {
+        "id": "maintenance-python",
+        "status": "pass",
+        "result": "68/68"
+      },
+      {
+        "id": "maintenance-bun",
+        "status": "pass",
+        "result": "integration assets 5/5; plugin marketplace 12/12"
+      },
+      {
+        "id": "chromium",
+        "status": "pass",
+        "result": "33/33"
+      },
+      {
+        "id": "hygiene",
+        "status": "pass",
+        "result": "production unwrap 0; legacy sidebar seams 0"
+      },
+      {
+        "id": "fixture-stability",
+        "status": "pass",
+        "result": "bulk recovery exact test 20/20 after explicit equal mtime; full suite pass"
+      }
+    ]
+  },
+  "failure_memory": [
+    {
+      "attempt": "Treat every unwrap match in the new worker modules as production residue.",
+      "result": "Rejected because the raw search included the cfg(test) module.",
+      "prevention": "Split at the exact #[cfg(test)] mod tests boundary, not the first cfg(test) attribute."
+    },
+    {
+      "attempt": "Use the plan's scripts/tests and integrations/claude maintenance paths.",
+      "result": "Rejected because both paths are absent in the current repository.",
+      "prevention": "Read the lowercase justfile and execute its exact current direct equivalents when just is unavailable."
+    },
+    {
+      "attempt": "Assume bulk recovery fixture write order remains selection order.",
+      "result": "Rejected by strict mixed-mtime sorting; sequential writes can reorder rows before request validation.",
+      "prevention": "Assign selected fixture files one explicit equal mtime and retain strict production order validation."
+    }
+  ],
+  "variant": {
+    "V": 0,
+    "unverified_automated_claims": 0,
+    "open_production_blockers": 0,
+    "optional_manual_acceptance": "Not run in this automated closure because it requires a user-driven host input session; stable Herdr and user sessions remained untouched."
+  }
+}
