@@ -1,5 +1,23 @@
-# Current State — 2026-07-17
+# Current State — 2026-07-19
 
+> **CURRENT OVERRIDE — MTIME DESIGN APPROVED; WRITTEN REVIEW GATE ACTIVE
+> (2026-07-19).** The user approved one strict mixed ordering across
+> directories and files: modification time descending, deterministic
+> natural/raw/path ties, and unknown times last. The Finder-like section
+> contract is `Future` / `Today` / `Yesterday` / `Previous 7 Days` / `Older`
+> / `Unknown Date`, with a complete-or-omitted right-side timestamp.
+> Approved design and test/task tree:
+> `docs/superpowers/specs/2026-07-19-herdr-miller-mtime-groups-design.md`.
+> Fresh graph 23,556/125,078 proves the current chain
+> `collect_directory_entries` → `read_directory_snapshot` → `sort_entries` →
+> `TrailSnapshots` → `project_trail_view_inner` → `render_trail_view` /
+> Trail hit authority. The next permitted action is written design review,
+> then `superpowers:writing-plans`; no Rust edit is authorized before the
+> code-level TDD plan. The already-locked `time 0.3.47` API/feature/platform
+> delta remains an explicit plan gate because the documentation MCP transport
+> was unavailable. Stable Herdr/socket and user-owned `.superpowers/` remain
+> untouched.
+>
 > **CURRENT OVERRIDE — TRAIL-T7.10 HIDDEN-CHILD ACTIVATION CLOSED
 > (2026-07-19).** The user confirmed Ghostty-tip horizontal input works, then
 > reproduced a separate Trail defect: after fractional manual scroll hides

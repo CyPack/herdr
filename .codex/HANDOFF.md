@@ -1,8 +1,24 @@
 # SESSION HANDOFF — Herdr Files Interaction Polish
 
-Updated: 2026-07-18 CEST
+Updated: 2026-07-19 CEST
 
 ## 0. SONRAKI ADIM — TEK AKTİF İŞ
+
+**CURRENT OVERRIDE — MTIME YAZILI TASARIM REVIEW KAPISI AKTİF.** Kullanıcı
+klasör ve dosyaların tek listede tamamen mtime azalan sırada karışmasını
+onayladı. Finder-benzeri yerel takvim grupları `Future` / `Today` /
+`Yesterday` / `Previous 7 Days` / `Older` / `Unknown Date`; satırın sağ
+mtime etiketi complete-or-omitted olacaktır. Kanonik tasarım, dependency
+zinciri, test-noktaları ve MTIME-0..7 task ağacı:
+`docs/superpowers/specs/2026-07-19-herdr-miller-mtime-groups-design.md`.
+Fresh graph 23,556/125,078 current `collect_directory_entries`,
+`read_directory_snapshot`, `sort_entries`, `project_trail_view_inner`,
+`render_trail_view` gövdelerini döndürdü. Ürün Rust kodu değişmedi. Sonraki
+izinli hamle yazılı tasarım review'ü, ardından `superpowers:writing-plans`
+ile code-level TDD planıdır. Lockfile'daki `time 0.3.47` için direct-feature,
+local-offset, platform ve delta audit'i planın ilk kapısıdır; docs MCP
+transport kapalı olduğundan API varsayımı yapılmadı. Stable Herdr/socket,
+upstream ve `.superpowers/` untouched.
 
 **CURRENT OVERRIDE — FMR-2A REMOTE/HEADLESS FILES SHORTCUT FIX CLOSED.**
 Kullanıcının `Home/Desktop/Downloads/.../Root` satırlarının remote app
@@ -567,13 +583,65 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 10 ve
-89, toplam 99 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 18 ve
+89, toplam 107 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 10 unchecked
+### Source: `.codex/TASKS.md` — 18 unchecked
+
+- [ ] **MTIME-0 Research, design, and baseline.**
+  - [x] Graph current metadata → sort → Trail projection → render/input →
+    watcher ownership at fresh graph 23,556/125,078.
+  - [x] Select strict mixed-mtime ordering with deterministic tie and
+    unknown-time rules.
+  - [x] Define local-calendar `Future` / `Today` / `Yesterday` /
+    `Previous 7 Days` / `Older` / `Unknown Date` groups.
+  - [ ] Audit the already-locked `time 0.3.47` direct-feature/platform delta
+    from local source because the documentation MCP transport was unavailable.
+  - [ ] Write and approve the code-level TDD implementation plan.
+
+- [ ] **MTIME-1 Prepared entry metadata.**
+  - [ ] RED optional mtime, symlink, special, and metadata-failure contracts.
+  - [ ] GREEN bounded snapshot-time metadata with zero render I/O.
+
+- [ ] **MTIME-2 Strict mixed sorting.**
+  - [ ] RED newer-file/older-directory, inverse, tie, and unknown families.
+  - [ ] GREEN mtime-descending comparator with deterministic natural/raw/path
+    tie breaks and unknowns last.
+  - [ ] Replace the old directory-first characterization deliberately.
+
+- [ ] **MTIME-3 Local-calendar groups.**
+  - [ ] RED fixed-anchor midnight/DST/future/unknown boundary matrix.
+  - [ ] GREEN pure section classifier and compact timestamp formatter.
+
+- [ ] **MTIME-4 Grouped Trail projection and render.**
+  - [ ] RED logical header rows, selected-entry visibility, omission-status,
+    timestamp/name/action geometry, and tiny/partial-column behavior.
+  - [ ] GREEN non-actionable headers and complete-or-omitted right timestamps.
+  - [ ] Preserve fractional horizontal scroll, detail panel, Unicode, and
+    row-action authority.
+
+- [ ] **MTIME-5 Input and watcher reconciliation.**
+  - [ ] RED inert header clicks, vertically-owned header wheel, stale rows,
+    mtime reorder, selection, multi-selection, and Trail child identity.
+  - [ ] GREEN reuse exact-path reconciliation without a second selection
+    lifecycle.
+
+- [ ] **MTIME-6 Playwright Chromium visual oracle.**
+  - [ ] Export fixed-clock ASCII fixtures for normal, narrow/partial, and
+    reorder-selection views.
+  - [ ] Add VIS-01/02/03 baselines spec-scoped and prove a controlled cell
+    mutation fails.
+  - [ ] Run the complete Chromium suite without global snapshot rewriting.
+
+- [ ] **MTIME-7 Production closure.**
+  - [ ] Focused/full Nextest `--no-fail-fast`, separate fmt, Linux/Windows
+    Clippy, maintenance, Bun/Python, diff, unwrap, and artifact gates.
+  - [ ] Synchronize continuity exactly and reindex graph with `CBM_WORKERS=1`.
+  - [ ] Verify atomic targeted history, CyPack-only fast-forward publication,
+    and exact remote SHA equality.
 
 - [ ] **FMR-0 Scroll version lab and ranking.** Four reboot-safe source
   checkpoints are collected side by side under

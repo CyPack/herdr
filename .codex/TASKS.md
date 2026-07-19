@@ -10,6 +10,60 @@ FIP-G.1/FIP-G.2 are closed; the approved code-level plan is
 (commit `dd81ef59`). The next executable task is **FIP-0.1** (baseline freeze),
 then the plan's Tasks 2-29 in order.
 
+### MTIME — Miller Modification-Time Sorting and Finder-Like Groups
+
+Activated and explicitly approved by the user on 2026-07-19. Direct product
+contract:
+`docs/superpowers/specs/2026-07-19-herdr-miller-mtime-groups-design.md`.
+Directories and files are mixed in one strict mtime-descending order; the old
+directory-first exception does not survive. Required visual oracle is
+Playwright Chromium over deterministic Ratatui cells.
+
+- [ ] **MTIME-0 Research, design, and baseline.**
+  - [x] Graph current metadata → sort → Trail projection → render/input →
+    watcher ownership at fresh graph 23,556/125,078.
+  - [x] Select strict mixed-mtime ordering with deterministic tie and
+    unknown-time rules.
+  - [x] Define local-calendar `Future` / `Today` / `Yesterday` /
+    `Previous 7 Days` / `Older` / `Unknown Date` groups.
+  - [ ] Audit the already-locked `time 0.3.47` direct-feature/platform delta
+    from local source because the documentation MCP transport was unavailable.
+  - [ ] Write and approve the code-level TDD implementation plan.
+- [ ] **MTIME-1 Prepared entry metadata.**
+  - [ ] RED optional mtime, symlink, special, and metadata-failure contracts.
+  - [ ] GREEN bounded snapshot-time metadata with zero render I/O.
+- [ ] **MTIME-2 Strict mixed sorting.**
+  - [ ] RED newer-file/older-directory, inverse, tie, and unknown families.
+  - [ ] GREEN mtime-descending comparator with deterministic natural/raw/path
+    tie breaks and unknowns last.
+  - [ ] Replace the old directory-first characterization deliberately.
+- [ ] **MTIME-3 Local-calendar groups.**
+  - [ ] RED fixed-anchor midnight/DST/future/unknown boundary matrix.
+  - [ ] GREEN pure section classifier and compact timestamp formatter.
+- [ ] **MTIME-4 Grouped Trail projection and render.**
+  - [ ] RED logical header rows, selected-entry visibility, omission-status,
+    timestamp/name/action geometry, and tiny/partial-column behavior.
+  - [ ] GREEN non-actionable headers and complete-or-omitted right timestamps.
+  - [ ] Preserve fractional horizontal scroll, detail panel, Unicode, and
+    row-action authority.
+- [ ] **MTIME-5 Input and watcher reconciliation.**
+  - [ ] RED inert header clicks, vertically-owned header wheel, stale rows,
+    mtime reorder, selection, multi-selection, and Trail child identity.
+  - [ ] GREEN reuse exact-path reconciliation without a second selection
+    lifecycle.
+- [ ] **MTIME-6 Playwright Chromium visual oracle.**
+  - [ ] Export fixed-clock ASCII fixtures for normal, narrow/partial, and
+    reorder-selection views.
+  - [ ] Add VIS-01/02/03 baselines spec-scoped and prove a controlled cell
+    mutation fails.
+  - [ ] Run the complete Chromium suite without global snapshot rewriting.
+- [ ] **MTIME-7 Production closure.**
+  - [ ] Focused/full Nextest `--no-fail-fast`, separate fmt, Linux/Windows
+    Clippy, maintenance, Bun/Python, diff, unwrap, and artifact gates.
+  - [ ] Synchronize continuity exactly and reindex graph with `CBM_WORKERS=1`.
+  - [ ] Verify atomic targeted history, CyPack-only fast-forward publication,
+    and exact remote SHA equality.
+
 ### FMR — Files Visibility, Preview/Render, Plugin and Mouse Reliability
 
 Activated by the user's 2026-07-18 field report. Research:
