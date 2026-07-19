@@ -2048,6 +2048,84 @@ mod tests {
         assert_eq!(app.state.sidebar_tab, SidebarTab::Spaces);
     }
 
+    // TP-FCL-SHELL-01: Files is a center-stage launcher. The global Spaces
+    // projection, including its workspace/agent tracking body, stays owned by
+    // Spaces after activation.
+    #[test]
+    fn fcl_shell_files_activation_preserves_spaces_sidebar_projection() {
+        use crate::app::state::SidebarTab;
+        use crate::ui::surface_host::StageSurfaceView;
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("tracked-space")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        let frame = Rect::new(0, 0, 106, 20);
+        crate::ui::compute_view(&mut app.state, frame);
+        assert_eq!(app.state.sidebar_tab, SidebarTab::Spaces);
+
+        let files_rect = app.state.view.sidebar_tab_hit_areas[2];
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            files_rect.x,
+            files_rect.y,
+        ));
+        crate::ui::compute_view(&mut app.state, frame);
+
+        assert_eq!(
+            app.state.sidebar_tab,
+            SidebarTab::Spaces,
+            "Files activation must not replace the global tracking body"
+        );
+        assert_eq!(
+            app.state.stage.surface_view(),
+            StageSurfaceView::NativeFiles
+        );
+        assert!(
+            !app.state.view.workspace_card_areas.is_empty(),
+            "the visible global panel keeps workspace/agent tracking geometry"
+        );
+    }
+
+    // TP-FCL-SHELL-02: Projects and Files are independent presentation
+    // owners. Opening Files cannot silently switch the global body away from
+    // a user-selected Projects view.
+    #[test]
+    fn fcl_shell_files_activation_preserves_projects_sidebar_owner() {
+        use crate::app::state::SidebarTab;
+        use crate::ui::surface_host::StageSurfaceView;
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("tracked-project")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        let frame = Rect::new(0, 0, 106, 20);
+        crate::ui::compute_view(&mut app.state, frame);
+
+        let projects_rect = app.state.view.sidebar_tab_hit_areas[1];
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            projects_rect.x,
+            projects_rect.y,
+        ));
+        assert_eq!(app.state.sidebar_tab, SidebarTab::Projects);
+
+        let files_rect = app.state.view.sidebar_tab_hit_areas[2];
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            files_rect.x,
+            files_rect.y,
+        ));
+
+        assert_eq!(
+            app.state.sidebar_tab,
+            SidebarTab::Projects,
+            "Files activation must preserve the selected global body"
+        );
+        assert_eq!(
+            app.state.stage.surface_view(),
+            StageSurfaceView::NativeFiles
+        );
+    }
+
     // FCL-5 teardown: this test pins the transitional global Files-body owner.
     // FCL-1 replaces the asserted Files tab selection with stage-only
     // activation, and FCL-5 removes the legacy body.
