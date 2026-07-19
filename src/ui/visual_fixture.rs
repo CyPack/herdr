@@ -134,6 +134,412 @@ mod tests {
         )
     }
 
+    fn fcl_location_item(
+        label: &str,
+        path: std::path::PathBuf,
+        icon: crate::app::state::FileManagerLocationIcon,
+    ) -> crate::app::state::FileManagerLocationItem {
+        crate::app::state::FileManagerLocationItem {
+            label: label.to_string(),
+            path,
+            icon,
+            accessible: true,
+            ejectable: false,
+        }
+    }
+
+    fn fcl_visual_app(
+        trail_root: &std::path::Path,
+        target: &std::path::Path,
+        explicit_origin: &std::path::Path,
+        locations_model: crate::app::state::FileManagerLocationsModel,
+    ) -> crate::app::state::AppState {
+        let file_manager = crate::fm::FmState::open_trail_to(trail_root, target, false)
+            .expect("FCL visual Trail target must resolve");
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![crate::workspace::Workspace::test_new("fcl-agents")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.ensure_test_terminals();
+        let root_pane = app.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.workspaces[0].tabs[0].panes[&root_pane]
+            .attached_terminal_id
+            .clone();
+        let terminal = app
+            .terminals
+            .get_mut(&terminal_id)
+            .expect("FCL visual agent terminal");
+        terminal.detected_agent = Some(crate::detect::Agent::Claude);
+        terminal.state = crate::detect::AgentState::Working;
+        app.mode = crate::app::state::Mode::Terminal;
+        app.palette = crate::app::state::Palette::catppuccin();
+        app.sidebar_tab = crate::app::state::SidebarTab::Files;
+        app.mobile_width_threshold = 0;
+        app.file_icon_profile = crate::fm::entry_kind::IconProfile::Ascii;
+        app.file_manager_locations_model = locations_model;
+        app.try_open_file_manager_with(|_| Some(file_manager))
+            .expect("FCL visual Files activation");
+        assert!(
+            app.file_manager_locations
+                .activate_location(explicit_origin, &app.file_manager_locations_model),
+            "FCL visual explicit origin must be accessible"
+        );
+        app
+    }
+
+    fn render_fcl_visual(
+        app: &mut crate::app::state::AppState,
+        width: u16,
+        height: u16,
+        expected_mode: crate::ui::file_manager::locations::FileManagerLocationsMode,
+        expected_rail_width: Option<u16>,
+        minimum_visible_columns: usize,
+        expect_detail: bool,
+    ) -> Buffer {
+        let area = Rect::new(0, 0, width, height);
+        crate::ui::compute_view(app, area);
+        let locations = &app.view.file_manager_locations;
+        assert_eq!(locations.layout.mode, expected_mode);
+        assert_eq!(
+            locations.layout.rail.map(|rail| rail.width),
+            expected_rail_width
+        );
+        if let (Some(rail), Some(separator)) = (locations.layout.rail, locations.layout.separator) {
+            assert!(
+                rail.intersection(separator).is_empty(),
+                "FCL visual rail and separator must be disjoint"
+            );
+            assert!(
+                separator.intersection(locations.layout.trail).is_empty(),
+                "FCL visual separator and Trail must be disjoint"
+            );
+        }
+        assert!(
+            app.view.file_manager_trail.columns.len() >= minimum_visible_columns,
+            "FCL visual needs at least {minimum_visible_columns} visible Trail columns"
+        );
+        assert_eq!(
+            app.view.file_manager_trail.detail_panel.is_some(),
+            expect_detail,
+            "FCL visual detail-panel contract"
+        );
+        assert!(app.view.file_manager_trail.columns.iter().all(|column| {
+            column.rect.x >= locations.layout.trail.x
+                && column.rect.right() <= locations.layout.trail.right()
+        }));
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("FCL visual terminal");
+        terminal
+            .draw(|frame| crate::ui::render(app, frame))
+            .expect("render FCL visual frame");
+        terminal.backend().buffer().clone()
+    }
+
+    fn write_fcl_visual_fixtures(out_dir: &std::path::Path) {
+        use crate::app::state::{FileManagerLocationIcon, FileManagerLocationsModel};
+        use crate::ui::file_manager::locations::FileManagerLocationsMode;
+
+        let base = std::path::PathBuf::from("/tmp/herdr-vis18-fcl-root");
+        let _ = std::fs::remove_dir_all(&base);
+        let home = base.join("home");
+        let desktop = home.join("Desktop");
+        let downloads = home.join("Downloads");
+        let documents = home.join("Documents");
+        let pictures = home.join("Pictures");
+        let screenshots = pictures.join("Screenshots");
+        let project = home.join("projects").join("herdr");
+        let src = project.join("src");
+        let core = src.join("core");
+        let mount = base.join("data-disk");
+        for directory in [
+            &desktop,
+            &downloads,
+            &documents,
+            &screenshots,
+            &core,
+            &project.join("docs"),
+            &mount,
+        ] {
+            std::fs::create_dir_all(directory).expect("create FCL visual directory");
+        }
+        let detail_target = core.join("state.rs");
+        for (path, contents) in [
+            (home.join("readme.txt"), "home"),
+            (desktop.join("roadmap.md"), "desktop"),
+            (downloads.join("archive.zip"), "download"),
+            (documents.join("notes.md"), "documents"),
+            (screenshots.join("capture.png"), "image"),
+            (project.join("Cargo.toml"), "[package]"),
+            (project.join("docs").join("guide.md"), "guide"),
+            (src.join("lib.rs"), "pub mod core;"),
+            (core.join("engine.rs"), "pub fn run() {}"),
+            (detail_target.clone(), "pub struct FilesLocations;"),
+            (mount.join("backup.txt"), "backup"),
+        ] {
+            std::fs::write(path, contents).expect("write FCL visual file");
+        }
+        for path in [
+            home.join("readme.txt"),
+            desktop.join("roadmap.md"),
+            downloads.join("archive.zip"),
+            documents.join("notes.md"),
+            screenshots.join("capture.png"),
+            project.join("Cargo.toml"),
+            project.join("docs").join("guide.md"),
+            src.join("lib.rs"),
+            core.join("engine.rs"),
+            detail_target.clone(),
+            mount.join("backup.txt"),
+            core.clone(),
+            src.clone(),
+            project.clone(),
+            home.join("projects"),
+            desktop.clone(),
+            downloads.clone(),
+            documents.clone(),
+            screenshots.clone(),
+            pictures.clone(),
+            mount.clone(),
+            home.clone(),
+        ] {
+            set_mtime_fixture_modified(
+                &path,
+                mtime_fixture_system_time(2026, time::Month::January, 10, 10, 0),
+            );
+        }
+
+        let locations_model = FileManagerLocationsModel::from_sources(
+            vec![
+                fcl_location_item("Home", home.clone(), FileManagerLocationIcon::Home),
+                fcl_location_item("Desktop", desktop.clone(), FileManagerLocationIcon::Desktop),
+                fcl_location_item(
+                    "Downloads",
+                    downloads.clone(),
+                    FileManagerLocationIcon::Downloads,
+                ),
+                fcl_location_item(
+                    "Documents",
+                    documents.clone(),
+                    FileManagerLocationIcon::Documents,
+                ),
+                fcl_location_item(
+                    "Pictures",
+                    pictures.clone(),
+                    FileManagerLocationIcon::Pictures,
+                ),
+                fcl_location_item(
+                    "Herdr Project",
+                    project.clone(),
+                    FileManagerLocationIcon::Pin,
+                ),
+            ],
+            vec![fcl_location_item(
+                "Screenshots",
+                screenshots,
+                FileManagerLocationIcon::Pin,
+            )],
+            vec![fcl_location_item(
+                "Data Disk",
+                mount,
+                FileManagerLocationIcon::Disk,
+            )],
+        );
+
+        let mut wide = fcl_visual_app(&home, &detail_target, &home, locations_model.clone());
+        let wide_buffer = render_fcl_visual(
+            &mut wide,
+            220,
+            40,
+            FileManagerLocationsMode::Wide,
+            Some(24),
+            4,
+            true,
+        );
+        let wide_text = wide_buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(wide_text.contains("fcl-agents"));
+        assert!(wide_text.contains("claude"));
+        write_fixture(
+            out_dir,
+            export_cell_fixture("vis-18-files-locations-wide", &wide_buffer),
+        );
+
+        let mut home_origin = fcl_visual_app(&home, &detail_target, &home, locations_model.clone());
+        write_fixture(
+            out_dir,
+            export_cell_fixture(
+                "vis-19-files-locations-home-origin",
+                &render_fcl_visual(
+                    &mut home_origin,
+                    120,
+                    28,
+                    FileManagerLocationsMode::Wide,
+                    Some(24),
+                    2,
+                    true,
+                ),
+            ),
+        );
+
+        let mut nested_origin =
+            fcl_visual_app(&project, &detail_target, &project, locations_model.clone());
+        nested_origin.sidebar_collapsed = true;
+        nested_origin.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
+        write_fixture(
+            out_dir,
+            export_cell_fixture(
+                "vis-20-files-locations-nested-origin",
+                &render_fcl_visual(
+                    &mut nested_origin,
+                    44,
+                    24,
+                    FileManagerLocationsMode::Standard,
+                    Some(20),
+                    1,
+                    false,
+                ),
+            ),
+        );
+
+        let mut standard = fcl_visual_app(&home, &detail_target, &home, locations_model.clone());
+        standard.sidebar_collapsed = true;
+        standard.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
+        let standard_fm = standard.file_manager.as_mut().expect("standard FCL Files");
+        standard_fm.miller.horizontal.offset_cells = 10;
+        standard_fm.miller.horizontal.follow_active = false;
+        let standard_buffer = render_fcl_visual(
+            &mut standard,
+            44,
+            24,
+            FileManagerLocationsMode::Standard,
+            Some(20),
+            1,
+            false,
+        );
+        assert!(
+            standard.view.file_manager_trail.offset_cells > 0,
+            "standard FCL fixture must preserve a fractional Trail origin"
+        );
+        write_fixture(
+            out_dir,
+            export_cell_fixture("vis-21-files-locations-standard", &standard_buffer),
+        );
+
+        let mut compact =
+            fcl_visual_app(&project, &detail_target, &project, locations_model.clone());
+        compact.sidebar_collapsed = true;
+        compact.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
+        write_fixture(
+            out_dir,
+            export_cell_fixture(
+                "vis-22-files-locations-compact-closed",
+                &render_fcl_visual(
+                    &mut compact,
+                    30,
+                    24,
+                    FileManagerLocationsMode::Compact,
+                    None,
+                    1,
+                    false,
+                ),
+            ),
+        );
+        assert!(compact.file_manager_locations.open_drawer());
+        let compact_open = render_fcl_visual(
+            &mut compact,
+            30,
+            24,
+            FileManagerLocationsMode::Compact,
+            None,
+            1,
+            false,
+        );
+        assert!(compact.view.file_manager_locations.drawer_area.is_some());
+        write_fixture(
+            out_dir,
+            export_cell_fixture("vis-23-files-locations-compact-open", &compact_open),
+        );
+
+        let mut transition = fcl_visual_app(&home, &detail_target, &home, locations_model);
+        transition.sidebar_collapsed = true;
+        transition.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
+        let files_generation = transition
+            .stage
+            .active_instance_generation()
+            .expect("pending FCL Files generation");
+        transition.file_manager_locations.begin_load(
+            downloads.clone(),
+            files_generation,
+            transition.file_manager_locations_model.revision(),
+            91,
+        );
+        let pending = render_fcl_visual(
+            &mut transition,
+            96,
+            24,
+            FileManagerLocationsMode::Wide,
+            Some(24),
+            2,
+            true,
+        );
+        let pending_directories: Vec<_> = transition
+            .view
+            .file_manager_trail
+            .columns
+            .iter()
+            .map(|column| column.directory.clone())
+            .collect();
+        write_fixture(
+            out_dir,
+            export_cell_fixture("vis-24-files-locations-pending", &pending),
+        );
+
+        transition.file_manager_locations.fail_load(
+            downloads,
+            crate::app::FileManagerLocationLoadError::PermissionDenied,
+        );
+        let failed = render_fcl_visual(
+            &mut transition,
+            96,
+            24,
+            FileManagerLocationsMode::Wide,
+            Some(24),
+            2,
+            true,
+        );
+        assert_eq!(
+            transition
+                .view
+                .file_manager_trail
+                .columns
+                .iter()
+                .map(|column| column.directory.clone())
+                .collect::<Vec<_>>(),
+            pending_directories,
+            "pending-to-failure transition must retain the prior Trail"
+        );
+        write_fixture(
+            out_dir,
+            export_cell_fixture("vis-25-files-locations-failure", &failed),
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    #[ignore = "exports FCL visual fixtures; set HERDR_VISUAL_FIXTURE_DIR explicitly"]
+    fn write_files_locations_visual_fixtures() {
+        let out_dir = std::path::PathBuf::from(
+            std::env::var("HERDR_VISUAL_FIXTURE_DIR")
+                .expect("HERDR_VISUAL_FIXTURE_DIR must point at the fixture output directory"),
+        );
+        std::fs::create_dir_all(&out_dir).expect("create FCL fixture output dir");
+        write_fcl_visual_fixtures(&out_dir);
+    }
+
     // Exports the real UI states consumed by the Playwright Chromium specs.
     // Only an explicit run writes fixtures, and only into the caller-provided
     // directory; ordinary unit runs never touch the filesystem.
@@ -181,6 +587,17 @@ mod tests {
         }
         std::fs::create_dir_all(root.join("beta").join("deep")).expect("fixture deep dir");
         std::fs::write(root.join("beta").join("inner.txt"), b"x").expect("fixture inner file");
+        let vis01_modified = mtime_fixture_system_time(2026, time::Month::January, 10, 11, 55);
+        for path in [
+            root.join("alpha"),
+            root.join("beta"),
+            root.join("gamma.rs"),
+            root.join("notes.txt"),
+            root.join("beta").join("deep"),
+            root.join("beta").join("inner.txt"),
+        ] {
+            set_mtime_fixture_modified(&path, vis01_modified);
+        }
         // Browser fonts do not carry Nerd PUA glyphs. The visual oracle uses
         // the deterministic ASCII profile so every semantic entry icon is
         // visible in Chromium.
@@ -739,6 +1156,11 @@ mod tests {
             None,
         );
         let _ = std::fs::remove_dir_all(&mtime_base);
+
+        // VIS-18..25 (FCL-6): the full Native Files composition proves the
+        // content-owned locations rail, explicit-origin authority, responsive
+        // drawer, and fail-closed loading states in deterministic ASCII/UTC.
+        write_fcl_visual_fixtures(&out_dir);
     }
 
     #[test]
