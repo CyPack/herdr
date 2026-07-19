@@ -3344,6 +3344,9 @@ mod tests {
         state.file_manager = Some(crate::fm::FmState::new(std::path::PathBuf::from(
             "/herdr-test-missing-fm-root",
         )));
+        state
+            .file_manager_locations
+            .activate_direct(std::path::PathBuf::from("/herdr-test-missing-fm-root"));
         state.request_file_manager_context_action =
             Some(crate::app::state::FileManagerContextActionIntent {
                 action: crate::app::state::FileManagerContextMenuAction::Open,
@@ -3356,6 +3359,10 @@ mod tests {
 
         assert!(state.file_manager.is_none());
         assert!(state.request_file_manager_context_action.is_none());
+        assert!(
+            state.file_manager_locations.origin.is_none(),
+            "closing Files retires client-local location authority"
+        );
     }
 
     // TP-TRAIL-T7-CHAR-01: Stage-owned Files generation is the lifecycle
