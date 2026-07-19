@@ -736,6 +736,133 @@ mod tests {
         assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, reopened);
     }
 
+    // TP-FCL-IO-03: even when the Files instance and prepared locations model
+    // are otherwise current, clearing the exact pending root intent retires
+    // its completion authority.
+    #[test]
+    fn fcl_io_root_completion_after_direct_activation_is_rejected() {
+        let td = TempDir::new();
+        let initial = td.dir("initial");
+        let target = td.dir("target");
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
+            .unwrap();
+        app.state.file_manager_sidebar = location_model(&target);
+        app.state.request_file_manager_sidebar_navigation = Some(target);
+
+        let gate = Arc::new(Gate::default());
+        let worker_gate = gate.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                started_tx.send(()).unwrap();
+                worker_gate.wait();
+                process_request(request)
+            });
+        assert!(app.sync_file_manager_location_request());
+        started_rx.recv().unwrap();
+
+        app.state
+            .file_manager_locations
+            .activate_direct(initial.clone());
+        gate.release();
+        app.file_manager_io_worker.wait_for_result_for_test();
+
+        assert!(!app.sync_file_manager_io_results());
+        assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, initial);
+    }
+
+    // TP-FCL-IO-03: replacing the prepared locations model advances its
+    // revision. An old completion cannot borrow authority merely because the
+    // same target path also appears in the replacement.
+    #[test]
+    fn fcl_io_root_completion_after_model_replacement_is_rejected() {
+        let td = TempDir::new();
+        let initial = td.dir("initial");
+        let target = td.dir("target");
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
+            .unwrap();
+        app.state.file_manager_sidebar = location_model(&target);
+        app.state.request_file_manager_sidebar_navigation = Some(target.clone());
+
+        let gate = Arc::new(Gate::default());
+        let worker_gate = gate.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                started_tx.send(()).unwrap();
+                worker_gate.wait();
+                process_request(request)
+            });
+        assert!(app.sync_file_manager_location_request());
+        started_rx.recv().unwrap();
+
+        app.state
+            .file_manager_sidebar
+            .replace_with(location_model(&target));
+        gate.release();
+        app.file_manager_io_worker.wait_for_result_for_test();
+
+        assert!(!app.sync_file_manager_io_results());
+        assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, initial);
+    }
+
+    // TP-FCL-IO-04: a root that disappears after submission fails closed,
+    // preserves the resident Trail/origin, reports a typed error, and leaves
+    // the bounded lane reusable for a later successful request.
+    #[test]
+    fn fcl_io_missing_root_preserves_trail_and_worker_recovers() {
+        let td = TempDir::new();
+        let initial = td.dir("initial");
+        let target = td.dir("target");
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
+            .unwrap();
+        app.state.file_manager_sidebar = location_model(&target);
+        app.state
+            .file_manager_locations
+            .activate_direct(initial.clone());
+        app.state.request_file_manager_sidebar_navigation = Some(target.clone());
+
+        let gate = Arc::new(Gate::default());
+        let worker_gate = gate.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                started_tx.send(()).unwrap();
+                worker_gate.wait();
+                process_request(request)
+            });
+        assert!(app.sync_file_manager_location_request());
+        started_rx.recv().unwrap();
+        std::fs::remove_dir(&target).unwrap();
+        gate.release();
+        app.file_manager_io_worker.wait_for_result_for_test();
+
+        assert!(app.sync_file_manager_io_results());
+        assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, initial);
+        assert_eq!(
+            app.state.file_manager_locations.failure,
+            Some((
+                target.clone(),
+                crate::app::file_manager_locations::FileManagerLocationLoadError::Missing,
+            ))
+        );
+
+        std::fs::create_dir(&target).unwrap();
+        app.state.request_file_manager_sidebar_navigation = Some(target.clone());
+        assert!(app.sync_file_manager_location_request());
+        started_rx.recv().unwrap();
+        app.file_manager_io_worker.wait_for_result_for_test();
+        assert!(app.sync_file_manager_io_results());
+        assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, target);
+        assert_eq!(app.state.file_manager_locations.failure, None);
+    }
+
     // TP-FCL-IO-05: clicking the already resident Trail root resets it from
     // prepared snapshots and never invokes the directory processor.
     #[test]
