@@ -2,7 +2,41 @@
 
 Updated: 2026-07-19 CEST
 
-## 0. SONRAKI ADIM — FMR-4/FMR-5 AYRI AKTİF LANE
+## 0. SONRAKI ADIM — FMP-1 CLICK-TO-FRAME OBSERVABILITY
+
+**CURRENT OVERRIDE — FILES LAYOUT V1 LOCKED; RAPID NAVIGATION PERFORMANCE
+ACTIVE.** Kullanıcı mevcut Native Files yerleşimini `Files Layout V1` olarak
+onayladı ve kilitledi. Kanonik lock:
+`docs/superpowers/specs/2026-07-19-herdr-files-layout-v1-lock.md`, freeze
+checkpoint `d98c31c7`. Global agent/workspace tracker, Files-local
+Favorites/Locations rail veya compact drawer, exact `Location(path)` /
+`Direct(path)` origin, scrollable Miller Trail + detail, mixed mtime grupları,
+üçte-bir yatay scroll, disjoint current-frame geometri ve bounded FM I/O lane
+V1 yasalarıdır. Bu görünümü ve mevcut Chromium baseline'larını değiştirmeyen
+performans/correctness işleri V1.x; ownership/composition/responsive model,
+temel column/detail hiyerarşisi veya kasıtlı baseline değişimi açık Layout V2
+onayı gerektirir. Kullanıcı hızlı ancestor/reverse ve locations click
+burst'lerinde geç mouse algısı/geçici donma bildirdi. Fresh graph
+23,854/124,093. Kod kanıtı H1 full-frame + one-slot client render queue
+pressure'ı high; H2 synchronous resident Trail rebranch/projection'ı
+medium-high; H3 serial scheduled/result apply rekabetini medium; H4 filesystem
+backlog'u resident-only repro için low gösteriyor. Bu henüz root-cause iddiası
+değildir: mevcut `HERDR_RENDER_PROF=1` render/encode/queue'yu ölçüyor ama
+click dispatch, Trail activation, resident reset, FM submit ve result apply
+sürelerini ölçmüyor. Kanonik PRD ve dependency chain:
+`docs/superpowers/specs/2026-07-19-herdr-files-rapid-navigation-latency-prd.md`.
+Claude/Codex continuity symlink audit'i ayrıca
+`.codex/evidence/files-layout-v1-symlink-audit.md` içinde dondu:
+`claude-memory`, `shared-state` ve Herdr `CURRENT.md` pointer'ı OK;
+`rust-dev`, `mnm-laptop-mdate`, `openwa-scheduled-send` skill linkleri BROKEN.
+Global pointer'lar Files runtime hot path'inde değildir ve değiştirilmedi.
+Native Files directory symlink davranışı testlidir; FMP-2'ye real/symlink
+latency/failure karşılaştırması `TP-FMP-SYM-01` olarak eklendi. Aktif task
+FMP-1 observability RED/GREEN; sonra FMP-2 deterministic + isolated repro,
+FMP-3 measured root-cause decision, FMP-4 tek tek TDD optimization ve FMP-5
+unchanged Chromium/full closure. FMR-4/FMR-5 ayrı lane olarak açık ama FMP
+kapanana kadar öncelikli değildir. Production optimization yapılmadı; stable
+Herdr/socket ve user process'leri untouched.
 
 **CURRENT OVERRIDE — FCL FILES CONTENT LOCATIONS RAIL CLOSED.** Kullanıcı
 Option A'yı açıkça onayladı: Native Files merkezi açıldığında global sol panel
@@ -671,13 +705,51 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 10 ve
-89, toplam 99 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 15 ve
+89, toplam 104 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 10 unchecked
+### Source: `.codex/TASKS.md` — 15 unchecked
+
+- [ ] **FMP-1 Characterize and instrument the click-to-frame path.**
+  - [ ] Add `TP-FMP-OBS-01..04` RED tests for bounded, opt-in input/dispatch,
+    Trail activation, resident reset, FM submit/apply, and render outcome
+    metrics without path/user-data logging.
+  - [ ] Implement the minimum profiler metrics with zero disabled-path
+    behavior change and static bounded labels.
+  - [ ] Verify exact counters, duration p95/max output, label caps, disabled
+    behavior, and profiler self-cost.
+
+- [ ] **FMP-2 Reproduce rapid navigation under deterministic and isolated
+  workloads.**
+  - [ ] Run `TP-FMP-RES-01..02`, `TP-FMP-IO-01..02`, and
+    `TP-FMP-RENDER-01..02` with fixed geometry, warm-up, sample count, profile,
+    and fixture data.
+  - [ ] Run `TP-FMP-SYM-01`: compare resident/non-resident real directories
+    with equivalent local directory symlinks plus dangling/changed-type
+    failures; keep Claude/Codex continuity pointers outside product runtime.
+  - [ ] Run `TP-FMP-E2E-01` through the cleanup-first/cleanup-last isolated
+    profile helper; preserve raw server/client logs and the exact user gesture
+    sequence without touching stable Herdr/socket.
+
+- [ ] **FMP-3 Decide the measured root cause and optimization boundary.**
+  - [ ] Accept or reject H1 full-frame/queue pressure, H2 resident projection,
+    H3 serial scheduled competition, and H4 filesystem backlog from recorded
+    counters/durations; update the PRD before product mutation.
+
+- [ ] **FMP-4 Implement one measured TDD optimization slice at a time.**
+  - [ ] Commit one behavior-specific RED per violated stage, including final
+    exact path, stale identity, close/reopen, worker race, and slow-client
+    adversarial cases.
+  - [ ] Apply minimum GREEN and refactor only behind focused budgets and all
+    Layout V1 semantic tests.
+
+- [ ] **FMP-5 Production closure.**
+  - [ ] Pass `TP-FMP-VIS-01` unchanged in Playwright Chromium plus focused/full
+    Rust, Linux/Windows Clippy, maintenance, hygiene, graph freshness, atomic
+    Git, CyPack-only fast-forward publication, and exact remote SHA gates.
 
 - [ ] **FMR-0 Scroll version lab and ranking.** Four reboot-safe source
   checkpoints are collected side by side under

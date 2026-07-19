@@ -1,5 +1,39 @@
 # Current State — 2026-07-19
 
+> **CURRENT OVERRIDE — FILES LAYOUT V1 LOCKED; FMP PERFORMANCE
+> INVESTIGATION ACTIVE (2026-07-19).** The user approved the current Native
+> Files composition as `Files Layout V1`. The canonical immutable lock is
+> `docs/superpowers/specs/2026-07-19-herdr-files-layout-v1-lock.md` at
+> checkpoint `d98c31c7`: global agent/workspace tracker, Files-local
+> Favorites/Locations rail or compact drawer, exact `Location(path)` /
+> `Direct(path)` origin, scrollable Miller Trail, detail, mixed mtime groups,
+> one-third horizontal scrolling, disjoint current-frame geometry, and the
+> bounded FM I/O lane are the V1 laws. Performance/correctness work that keeps
+> these laws and existing Chromium baselines unchanged is V1.x; ownership,
+> composition, responsive-model, fundamental column/detail, or intentional
+> baseline changes require explicit Layout V2 approval. The user also reported
+> visible mouse delay/freezing during rapid reverse/ancestor and locations
+> clicking. Fresh graph evidence is 23,854 nodes / 124,093 edges. Current
+> evidence ranks H1 full-frame/one-slot client queue pressure high, H2
+> synchronous resident Trail projection medium-high, H3 serial scheduled/apply
+> competition medium, and H4 filesystem backlog low for resident-only
+> reproduction. This is not yet a root-cause claim: existing
+> `HERDR_RENDER_PROF=1` measures render/encode/queue but does not measure click
+> dispatch, Trail activation, resident reset, FM submit, or result apply.
+> Canonical PRD/test points/dependency chain:
+> `docs/superpowers/specs/2026-07-19-herdr-files-rapid-navigation-latency-prd.md`.
+> Symlink domains are now explicitly separated in
+> `.codex/evidence/files-layout-v1-symlink-audit.md`: Native Files directory
+> symlinks are actionable/exact-path tested and receive a dedicated latency
+> matrix, while Claude/Codex memory/state pointers are healthy except for
+> three broken skill links (`rust-dev`, `mnm-laptop-mdate`,
+> `openwa-scheduled-send`). Those global tooling pointers are outside the
+> Files runtime hot path and were not modified.
+> Active task is FMP-1 observability characterization, then FMP-2 isolated
+> reproduction, FMP-3 root-cause decision, FMP-4 measured RED/GREEN
+> optimization, and FMP-5 unchanged Chromium/full closure. No production
+> optimization has been made and no stable process/socket was touched.
+
 > **CURRENT OVERRIDE — FCL FILES CONTENT LOCATIONS RAIL CLOSED
 > (2026-07-19).** The user approved Option A: Native Files keeps the global
 > left panel's agent/workspace runtime tracking, while Favorites/Locations

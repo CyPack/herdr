@@ -10,6 +10,60 @@ FIP-G.1/FIP-G.2 are closed; the approved code-level plan is
 (commit `dd81ef59`). The next executable task is **FIP-0.1** (baseline freeze),
 then the plan's Tasks 2-29 in order.
 
+### FMP — Files Mouse and Navigation Performance
+
+Activated by the user's 2026-07-19 report that rapid reverse/ancestor and
+locations-rail clicking can temporarily freeze Files and make mouse response
+arrive visibly late. The approved current composition is now frozen as
+`Files Layout V1`:
+`docs/superpowers/specs/2026-07-19-herdr-files-layout-v1-lock.md`.
+The investigation and acceptance contract is:
+`docs/superpowers/specs/2026-07-19-herdr-files-rapid-navigation-latency-prd.md`.
+FMP has priority over the separate FMR plugin-adoption lane. No production
+optimization begins before measured root-cause evidence and an observed
+behavior-specific RED. Existing Layout V1 Playwright Chromium baselines must
+remain unchanged.
+
+- [x] **FMP-0 Freeze Files Layout V1.**
+  - [x] Name the approved FCL result `Files Layout V1` at checkpoint
+    `d98c31c7`.
+  - [x] Freeze global runtime panel, Files-local locations rail/drawer, exact
+    origin, Miller Trail/detail, one-third scroll, responsive geometry, bounded
+    I/O, visual baselines, and V1-versus-V2 rules.
+- [ ] **FMP-1 Characterize and instrument the click-to-frame path.**
+  - [ ] Add `TP-FMP-OBS-01..04` RED tests for bounded, opt-in input/dispatch,
+    Trail activation, resident reset, FM submit/apply, and render outcome
+    metrics without path/user-data logging.
+  - [ ] Implement the minimum profiler metrics with zero disabled-path
+    behavior change and static bounded labels.
+  - [ ] Verify exact counters, duration p95/max output, label caps, disabled
+    behavior, and profiler self-cost.
+- [ ] **FMP-2 Reproduce rapid navigation under deterministic and isolated
+  workloads.**
+  - [ ] Run `TP-FMP-RES-01..02`, `TP-FMP-IO-01..02`, and
+    `TP-FMP-RENDER-01..02` with fixed geometry, warm-up, sample count, profile,
+    and fixture data.
+  - [ ] Run `TP-FMP-SYM-01`: compare resident/non-resident real directories
+    with equivalent local directory symlinks plus dangling/changed-type
+    failures; keep Claude/Codex continuity pointers outside product runtime.
+  - [ ] Run `TP-FMP-E2E-01` through the cleanup-first/cleanup-last isolated
+    profile helper; preserve raw server/client logs and the exact user gesture
+    sequence without touching stable Herdr/socket.
+- [ ] **FMP-3 Decide the measured root cause and optimization boundary.**
+  - [ ] Accept or reject H1 full-frame/queue pressure, H2 resident projection,
+    H3 serial scheduled competition, and H4 filesystem backlog from recorded
+    counters/durations; update the PRD before product mutation.
+- [ ] **FMP-4 Implement one measured TDD optimization slice at a time.**
+  - [ ] Commit one behavior-specific RED per violated stage, including final
+    exact path, stale identity, close/reopen, worker race, and slow-client
+    adversarial cases.
+  - [ ] Apply minimum GREEN and refactor only behind focused budgets and all
+    Layout V1 semantic tests.
+- [ ] **FMP-5 Production closure.**
+  - [ ] Pass `TP-FMP-VIS-01` unchanged in Playwright Chromium plus focused/full
+    Rust, Linux/Windows Clippy, maintenance, hygiene, graph freshness, atomic
+    Git, CyPack-only fast-forward publication, and exact remote SHA gates.
+
 ### FCL — Files Content Locations Rail and Non-Blocking Navigation
 
 Activated by the user's explicit Option A approval on 2026-07-19. The global
