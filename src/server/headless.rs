@@ -6518,6 +6518,124 @@ next_tab = ""
         );
     }
 
+    // TP-FMR-SIDEBAR-HL-01..03: cover the real remote-client boundary that
+    // the App-level FMR-2 test cannot exercise. Raw host bytes must prepare
+    // the exact typed request, and the headless scheduled loop must consume it
+    // into the existing Files generation.
+    #[test]
+    fn headless_raw_mouse_shortcut_navigation_loads_exact_trail() {
+        use crate::app::state::{
+            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
+        };
+
+        let root = std::env::temp_dir().join(format!(
+            "headless-sidebar-mouse-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        let initial = root.join("initial");
+        let target = root.join("target");
+        fs::create_dir_all(&initial).expect("create initial directory");
+        fs::create_dir_all(&target).expect("create target directory");
+        fs::write(target.join("visible.txt"), b"visible").expect("write target entry");
+
+        let mut server = test_headless_server();
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (106, 20),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                Some(true),
+                1,
+                RenderEncoding::SemanticFrame,
+                None,
+            ),
+        );
+        server.foreground_client_id = Some(1);
+        server.sync_foreground_client_state();
+        server.app.state.mode = crate::app::Mode::Terminal;
+        server.app.state.mouse_capture = true;
+        server
+            .app
+            .state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
+            .expect("open initial Files instance");
+        let generation = server
+            .app
+            .state
+            .stage
+            .active_instance_generation()
+            .expect("active Files generation");
+        server.app.state.sidebar_tab = SidebarTab::Files;
+        server.app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+            vec![FileManagerSidebarItem {
+                label: "Home".into(),
+                path: target.clone(),
+                icon: FileManagerSidebarIcon::Home,
+                accessible: true,
+                ejectable: false,
+            }],
+            Vec::new(),
+            Vec::new(),
+        );
+        crate::ui::compute_view(
+            &mut server.app.state,
+            ratatui::layout::Rect::new(0, 0, 106, 20),
+        );
+        let row = server.app.state.view.file_manager_sidebar_row_areas[0].clone();
+        let mouse = format!(
+            "\x1b[<0;{};{}M",
+            row.rect.x.saturating_add(1),
+            row.rect.y.saturating_add(1)
+        )
+        .into_bytes();
+
+        assert!(server.handle_server_event(ServerEvent::ClientInput {
+            client_id: 1,
+            data: mouse,
+        }));
+        assert_eq!(
+            server.app.state.request_file_manager_sidebar_navigation,
+            Some(target.clone()),
+            "raw SGR input reaches the exact model-revalidated shortcut seam"
+        );
+
+        assert!(
+            server.handle_scheduled_tasks_headless(Instant::now(), false),
+            "headless scheduled tasks must consume the pending shortcut request"
+        );
+        assert!(
+            server
+                .app
+                .state
+                .request_file_manager_sidebar_navigation
+                .is_none(),
+            "the typed shortcut request is one-shot"
+        );
+        assert_eq!(
+            server.app.state.stage.active_instance_generation(),
+            Some(generation)
+        );
+        let file_manager = server
+            .app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("loaded Files state");
+        assert_eq!(file_manager.cwd, target);
+        assert_eq!(file_manager.trail.cols()[0].directory, target);
+        assert_eq!(
+            file_manager.trail_snapshots.cols()[0].directory(),
+            target.as_path()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn semantic_client_escape_closes_keybind_help() {
         let mut server = test_headless_server();
