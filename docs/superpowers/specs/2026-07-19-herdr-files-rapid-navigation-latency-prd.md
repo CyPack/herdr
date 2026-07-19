@@ -290,6 +290,25 @@ is not authorized by directory size alone: it requires a calibrated
 high-entry-count RED. No recursive file contents are ever part of listing
 delivery.
 
+## FMP-4D Scale Decision
+
+The explicit debug-profile calibration at `631f213f` passed without a separate
+scale RED:
+
+- 100,000 immediate-child entries;
+- four 256 GiB sparse files, 1 TiB logical body size in total;
+- one warm-up plus five measured complete snapshots;
+- samples `763/764/781/788/802 ms`, p95 `802 ms`;
+- retained metadata lower bound `14,800,000` bytes;
+- budgets: p95 `2,000 ms`, metadata `64 MiB`.
+
+Partial listing, viewport-first enrichment, and a directory cache are therefore
+not authorized in this slice. The worker boundary already keeps input
+responsive while the final globally mtime-sorted snapshot is prepared. Reopen
+FMP-4D only if a reproducible target filesystem exceeds a budget or a separate
+time-to-first-row RED is established. Full evidence and host conditions are in
+`.codex/evidence/files-rapid-navigation-scale-calibration.md`.
+
 ## Candidate Optimization Classes
 
 These are options to measure, not pre-approved implementations:
