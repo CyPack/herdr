@@ -245,6 +245,9 @@ fn compute_view_internal(
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
     let _profile = crate::render_prof::duration_guard("shell.compute_view");
+    let _ = app
+        .file_manager_locations
+        .reconcile_model(&app.file_manager_sidebar);
     app.cancel_miller_resize_for_terminal_area(area.width);
     if app
         .shell_resize_original_total()

@@ -594,6 +594,7 @@ impl App {
             request_file_manager_agent_handoff: None,
             agent_reference_picker: None,
             file_manager_sidebar,
+            file_manager_locations: Default::default(),
             request_file_manager_sidebar_navigation: None,
             should_quit: false,
             detach_exits: no_session,

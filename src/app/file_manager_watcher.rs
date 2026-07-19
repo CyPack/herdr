@@ -450,6 +450,10 @@ impl super::App {
             return true;
         }
         self.state.file_manager = Some(next);
+        let _ = self
+            .state
+            .file_manager_locations
+            .activate_location(&path, &self.state.file_manager_sidebar);
         true
     }
 

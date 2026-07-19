@@ -2145,6 +2145,11 @@ pub struct AppState {
     /// Prepared, bounded Files-sidebar data. Filesystem/environment discovery
     /// happens only when this projection is refreshed, never during render.
     pub file_manager_sidebar: FileManagerSidebarModel,
+    /// Explicit client-local root identity for the Native Files locations
+    /// surface. It is never inferred from cwd and never persisted or sent
+    /// through the server protocol.
+    pub(crate) file_manager_locations:
+        crate::app::file_manager_locations::FileManagerLocationsState,
     /// Exact row path prepared by input and consumed once by the App-owned
     /// scheduled navigation boundary.
     pub request_file_manager_sidebar_navigation: Option<PathBuf>,
@@ -2617,6 +2622,7 @@ impl AppState {
             request_file_manager_agent_handoff: None,
             agent_reference_picker: None,
             file_manager_sidebar: FileManagerSidebarModel::default(),
+            file_manager_locations: Default::default(),
             request_file_manager_sidebar_navigation: None,
             should_quit: false,
             detach_exits: false,

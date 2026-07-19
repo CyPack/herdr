@@ -1,3 +1,78 @@
+//! Pure client-local authority for the root selected in Native Files.
+//!
+//! The current directory is deliberately absent from this model. A location
+//! remains highlighted because the user selected that exact prepared item,
+//! not because a later path happens to share its prefix.
+
+use std::path::{Path, PathBuf};
+
+use super::state::FileManagerSidebarModel;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FileManagerLocationOrigin {
+    Location(PathBuf),
+    Direct(PathBuf),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct FileManagerLocationsState {
+    pub(crate) origin: Option<FileManagerLocationOrigin>,
+}
+
+impl FileManagerLocationsState {
+    pub(crate) fn activate_location(
+        &mut self,
+        path: &Path,
+        model: &FileManagerSidebarModel,
+    ) -> bool {
+        if !model
+            .item_for_path(path)
+            .is_some_and(|item| item.accessible)
+        {
+            return false;
+        }
+        self.origin = Some(FileManagerLocationOrigin::Location(path.to_path_buf()));
+        true
+    }
+
+    pub(crate) fn activate_direct(&mut self, path: PathBuf) {
+        self.origin = Some(FileManagerLocationOrigin::Direct(path));
+    }
+
+    pub(crate) fn highlighted_path<'a>(
+        &'a self,
+        model: &FileManagerSidebarModel,
+    ) -> Option<&'a Path> {
+        let path = match self.origin.as_ref()? {
+            FileManagerLocationOrigin::Location(path) | FileManagerLocationOrigin::Direct(path) => {
+                path
+            }
+        };
+        model
+            .item_for_path(path)
+            .is_some_and(|item| item.accessible)
+            .then_some(path.as_path())
+    }
+
+    pub(crate) fn reconcile_model(&mut self, model: &FileManagerSidebarModel) -> bool {
+        let Some(FileManagerLocationOrigin::Location(path)) = self.origin.as_ref() else {
+            return false;
+        };
+        if model
+            .item_for_path(path)
+            .is_some_and(|item| item.accessible)
+        {
+            return false;
+        }
+        self.origin = None;
+        true
+    }
+
+    pub(crate) fn retire_for_closed_files(&mut self) {
+        self.origin = None;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};

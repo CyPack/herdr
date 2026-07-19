@@ -508,11 +508,12 @@ fn file_manager_sidebar_marker(item: &FileManagerSidebarItem) -> Option<FileMana
 
 fn file_manager_sidebar_item_is_current(app: &AppState, item: &FileManagerSidebarItem) -> bool {
     app.sidebar_tab == crate::app::state::SidebarTab::Files
+        && app.file_manager.is_some()
         && item.accessible
         && app
-            .file_manager
-            .as_ref()
-            .is_some_and(|file_manager| file_manager.cwd.as_path() == item.path.as_path())
+            .file_manager_locations
+            .highlighted_path(&app.file_manager_sidebar)
+            == Some(item.path.as_path())
 }
 
 fn file_manager_sidebar_item_line(
@@ -2418,11 +2419,11 @@ mod tests {
         terminal
     }
 
-    // TP-C6.2-CURRENT/LIFECYCLE: exact prepared path identity is the only
-    // current-location authority. Cwd transitions move the pill immediately;
+    // TP-FCL-AUTH-01..04: explicit prepared origin identity is the only
+    // current-location authority. Cwd changes do not move the pill;
     // inaccessible, absent, and closed-FM states cannot retain it.
     #[test]
-    fn file_sidebar_current_pill_tracks_exact_accessible_open_cwd() {
+    fn file_sidebar_current_pill_tracks_explicit_accessible_origin() {
         use crate::app::state::{FileManagerSidebarIcon, FileManagerSidebarModel, SidebarTab};
         let mut app = crate::app::state::AppState::test_new();
         app.sidebar_tab = SidebarTab::Files;
@@ -2472,6 +2473,8 @@ mod tests {
         };
 
         app.file_manager = Some(crate::fm::FmState::new("/virtual/home"));
+        app.file_manager_locations
+            .activate_direct(std::path::PathBuf::from("/virtual/home"));
         let home = render_file_sidebar_for_test(&app, area.width, area.height);
         assert!(row_has_accent(&home, rows[0]));
         assert!(row_symbols(&home, rows[0]).contains(''));
@@ -2480,20 +2483,28 @@ mod tests {
         assert!(!row_has_accent(&home, rows[2]));
 
         app.file_manager = Some(crate::fm::FmState::new("/virtual/downloads"));
+        app.file_manager_locations
+            .activate_direct(std::path::PathBuf::from("/virtual/downloads"));
         let downloads = render_file_sidebar_for_test(&app, area.width, area.height);
         assert!(!row_has_accent(&downloads, rows[0]));
         assert!(row_has_accent(&downloads, rows[1]));
         assert!(!row_has_accent(&downloads, rows[2]));
 
         app.file_manager = Some(crate::fm::FmState::new("/virtual/missing"));
+        app.file_manager_locations
+            .activate_direct(std::path::PathBuf::from("/virtual/missing"));
         let inaccessible = render_file_sidebar_for_test(&app, area.width, area.height);
         assert!(rows.iter().all(|row| !row_has_accent(&inaccessible, *row)));
 
         app.file_manager = Some(crate::fm::FmState::new("/virtual/not-in-model"));
+        app.file_manager_locations
+            .activate_direct(std::path::PathBuf::from("/virtual/not-in-model"));
         let absent = render_file_sidebar_for_test(&app, area.width, area.height);
         assert!(rows.iter().all(|row| !row_has_accent(&absent, *row)));
 
         app.file_manager = Some(crate::fm::FmState::new("/virtual/home"));
+        app.file_manager_locations
+            .activate_direct(std::path::PathBuf::from("/virtual/home"));
         app.sidebar_tab = SidebarTab::Spaces;
         let hidden = render_file_sidebar_for_test(&app, area.width, area.height);
         assert!(rows.iter().all(|row| !row_has_accent(&hidden, *row)));
@@ -2504,6 +2515,8 @@ mod tests {
         assert!(rows.iter().all(|row| !row_has_accent(&closed, *row)));
 
         app.file_manager = Some(crate::fm::FmState::new("/virtual/home"));
+        app.file_manager_locations
+            .activate_direct(std::path::PathBuf::from("/virtual/home"));
         let reopened = render_file_sidebar_for_test(&app, area.width, area.height);
         assert!(row_has_accent(&reopened, rows[0]));
         assert!(rows[1..].iter().all(|row| !row_has_accent(&reopened, *row)));
@@ -2588,6 +2601,8 @@ mod tests {
             )],
         );
         app.file_manager = Some(crate::fm::FmState::new("/media/usb"));
+        app.file_manager_locations
+            .activate_direct(std::path::PathBuf::from("/media/usb"));
 
         let area = Rect::new(0, 0, 14, 5);
         let row = compute_file_manager_sidebar_row_areas(&app, area)[0].rect;

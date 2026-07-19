@@ -386,8 +386,15 @@ impl AppState {
                 return Err(FileManagerOpenError::PreparationFailed);
             }
         };
+        let direct_root = prepared
+            .trail
+            .cols()
+            .first()
+            .map(|column| column.directory.clone())
+            .unwrap_or_else(|| prepared.cwd.clone());
 
         self.request_file_manager_sidebar_navigation = None;
+        self.file_manager_locations.activate_direct(direct_root);
         self.file_manager = Some(prepared);
         // The hidden terminal surface loses its projected hit geometry (and
         // with it the cursor placement and agent frame actions) in the same
@@ -523,6 +530,7 @@ impl AppState {
     pub(crate) fn close_file_manager(&mut self) {
         self.request_file_manager_sidebar_navigation = None;
         self.request_file_manager_context_action = None;
+        self.file_manager_locations.retire_for_closed_files();
         if self.shell_interaction.miller_resize_active() {
             let update = self.shell_interaction.cancel_resize();
             debug_assert!(!update.marks_persistence_dirty());
