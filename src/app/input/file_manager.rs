@@ -472,6 +472,12 @@ impl App {
                 let Some(row) = trail_row_target else {
                     return;
                 };
+                if self
+                    .queue_file_manager_trail_directory_activation(row)
+                    .is_some()
+                {
+                    return;
+                }
                 if let Some((entry_idx, _entry_path, outcome)) = self.activate_trail_row(row) {
                     if let Some(file_manager) = self.state.file_manager.as_mut() {
                         match outcome {
@@ -4442,6 +4448,10 @@ mod tests {
             0,
             "a cold Trail directory click must enqueue bounded I/O, never read on input dispatch"
         );
+        assert!(
+            app.complete_file_manager_io_for_test(),
+            "the exact cold directory activation applies after bounded I/O"
+        );
         let file_manager = app.state.file_manager.as_ref().expect("open FM");
         assert_eq!(file_manager.trail.cols().len(), 2);
         assert_eq!(
@@ -4652,6 +4662,13 @@ mod tests {
         );
 
         for (target, owner_directory) in targets {
+            let target_is_directory = file_manager
+                .trail_entry_is_directory(
+                    target.trail_index,
+                    target.entry_index,
+                    &target.entry_path,
+                )
+                .expect("published target remains in the immutable fixture");
             let mut app = runtime_app_with_fm(file_manager.clone());
             install_focused_agent(&mut app);
             app.state.mobile_width_threshold = 0;
@@ -4666,6 +4683,12 @@ mod tests {
                 )),
                 FileManagerMouseDispatch::Consumed
             );
+            if target_is_directory {
+                assert!(
+                    app.complete_file_manager_io_for_test(),
+                    "the exact directory activation applies after bounded I/O"
+                );
+            }
 
             let actual = app.state.file_manager.as_ref().expect("open FM");
             assert_eq!(
@@ -4760,6 +4783,10 @@ mod tests {
             preview_target.name_rect.x,
             preview_target.name_rect.y,
         ));
+        assert!(
+            app.complete_file_manager_io_for_test(),
+            "the first directory activation applies after bounded I/O"
+        );
         assert_eq!(
             app.state.file_manager.as_ref().expect("open FM").cwd,
             preview_directory
@@ -4772,6 +4799,10 @@ mod tests {
             current_target.name_rect.x,
             current_target.name_rect.y,
         ));
+        assert!(
+            app.complete_file_manager_io_for_test(),
+            "the repeated directory activation applies after bounded I/O"
+        );
 
         let file_manager = app.state.file_manager.as_ref().expect("open FM");
         assert_eq!(
@@ -4808,6 +4839,10 @@ mod tests {
 
         app.handle_mouse(click);
         app.handle_mouse(click);
+        assert!(
+            app.complete_file_manager_io_for_test() || app.complete_file_manager_io_for_test(),
+            "the latest repeated directory activation applies"
+        );
 
         let fm = app.state.file_manager.as_ref().expect("file manager open");
         assert_eq!(fm.cwd, td.root, "operation projection keeps the row owner");
@@ -4872,6 +4907,10 @@ mod tests {
             beta.name_rect.x,
             beta.name_rect.y,
         ));
+        assert!(
+            app.complete_file_manager_io_for_test() || app.complete_file_manager_io_for_test(),
+            "only the latest rapid directory activation applies"
+        );
 
         let fm = app.state.file_manager.as_ref().expect("file manager open");
         assert_eq!(fm.cwd, td.root);
@@ -5516,6 +5555,10 @@ mod tests {
                 target.name_rect.y,
             )),
             FileManagerMouseDispatch::Consumed
+        );
+        assert!(
+            app.complete_file_manager_io_for_test(),
+            "the hidden child activation applies after bounded I/O"
         );
         compute_view(&mut app.state, frame);
 

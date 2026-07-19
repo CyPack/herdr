@@ -5,6 +5,42 @@
 //! revalidated before a width preference may change.
 
 impl crate::app::App {
+    /// Route a validated directory row through the shared bounded FM worker.
+    /// `None` means the row is a file and may use the prepared file path;
+    /// `Some` means a directory intent was consumed, whether submission
+    /// succeeded or failed closed.
+    pub(super) fn queue_file_manager_trail_directory_activation(
+        &mut self,
+        row: &crate::ui::TrailRowView,
+    ) -> Option<bool> {
+        let files_generation = self.state.stage.active_instance_generation()?;
+        let file_manager = self.state.file_manager.as_ref()?;
+        match file_manager.trail_entry_is_directory(
+            row.trail_index,
+            row.entry_index,
+            &row.entry_path,
+        ) {
+            Some(false) => return None,
+            None => return Some(false),
+            Some(true) => {}
+        }
+        let source = crate::app::file_manager_io_worker::FileManagerIoSource::from_file_manager(
+            file_manager,
+        );
+        let request = crate::app::file_manager_io_worker::FileManagerIoRequest::TrailActivate {
+            files_generation,
+            source,
+            trail_col: row.trail_index,
+            entry_index: row.entry_index,
+            expected_path: row.entry_path.clone(),
+            file_manager: Box::new(file_manager.clone()),
+        };
+        Some(matches!(
+            self.file_manager_io_worker.submit(request),
+            crate::app::file_manager_io_worker::FileManagerIoSubmit::Accepted { .. }
+        ))
+    }
+
     pub(super) fn execute_file_manager_navigation(
         &mut self,
         request: crate::fm::FmNavigationRequest,

@@ -54,6 +54,13 @@ pub(super) enum FileManagerIoIdentity {
         source: FileManagerIoSource,
         expected_directory: PathBuf,
     },
+    TrailActivate {
+        files_generation: u32,
+        source: FileManagerIoSource,
+        trail_col: usize,
+        entry_index: usize,
+        expected_path: PathBuf,
+    },
 }
 
 impl FileManagerIoIdentity {
@@ -67,6 +74,7 @@ impl FileManagerIoIdentity {
             Self::TrailRefresh {
                 expected_directory, ..
             } => Some(expected_directory),
+            Self::TrailActivate { expected_path, .. } => Some(expected_path),
         }
     }
 
@@ -98,6 +106,11 @@ impl FileManagerIoIdentity {
                 files_generation: expected_files_generation,
                 source: expected_source,
                 ..
+            }
+            | Self::TrailActivate {
+                files_generation: expected_files_generation,
+                source: expected_source,
+                ..
             } => *expected_files_generation == files_generation && source == Some(expected_source),
         }
     }
@@ -115,6 +128,14 @@ pub(super) enum FileManagerIoRequest {
         files_generation: u32,
         source: FileManagerIoSource,
         expected_directory: PathBuf,
+        file_manager: Box<crate::fm::FmState>,
+    },
+    TrailActivate {
+        files_generation: u32,
+        source: FileManagerIoSource,
+        trail_col: usize,
+        entry_index: usize,
+        expected_path: PathBuf,
         file_manager: Box<crate::fm::FmState>,
     },
 }
@@ -161,6 +182,20 @@ impl FileManagerIoRequest {
                 source: source.clone(),
                 expected_directory: expected_directory.clone(),
             },
+            Self::TrailActivate {
+                files_generation,
+                source,
+                trail_col,
+                entry_index,
+                expected_path,
+                ..
+            } => FileManagerIoIdentity::TrailActivate {
+                files_generation: *files_generation,
+                source: source.clone(),
+                trail_col: *trail_col,
+                entry_index: *entry_index,
+                expected_path: expected_path.clone(),
+            },
         }
     }
 }
@@ -178,6 +213,17 @@ pub(super) enum FileManagerIoOutcome {
         source: FileManagerIoSource,
         expected_directory: PathBuf,
         prepared: Option<(Box<crate::fm::FmState>, bool)>,
+    },
+    TrailActivate {
+        files_generation: u32,
+        source: FileManagerIoSource,
+        trail_col: usize,
+        entry_index: usize,
+        expected_path: PathBuf,
+        prepared: Option<(
+            Box<crate::fm::FmState>,
+            crate::fm::trail_snapshots::TrailActivateOutcome,
+        )>,
     },
     Panicked(FileManagerIoIdentity),
 }
@@ -424,6 +470,29 @@ fn process_request(request: FileManagerIoRequest) -> FileManagerIoOutcome {
                 prepared: changed.map(|changed| (file_manager, changed)),
             }
         }
+        FileManagerIoRequest::TrailActivate {
+            files_generation,
+            source,
+            trail_col,
+            entry_index,
+            expected_path,
+            mut file_manager,
+        } => {
+            let outcome = file_manager.activate_trail_entry(trail_col, entry_index, &expected_path);
+            let prepared = (outcome == crate::fm::trail_snapshots::TrailActivateOutcome::Branched)
+                .then(|| {
+                    file_manager.clear_multi_selection();
+                    (file_manager, outcome)
+                });
+            FileManagerIoOutcome::TrailActivate {
+                files_generation,
+                source,
+                trail_col,
+                entry_index,
+                expected_path,
+                prepared,
+            }
+        }
     }
 }
 
@@ -650,6 +719,33 @@ impl super::App {
                 self.state.file_manager = Some(*file_manager);
                 self.record_file_manager_reconcile_applied();
                 projection_changed
+            }
+            FileManagerIoOutcome::TrailActivate {
+                files_generation: prepared_files_generation,
+                source: prepared_source,
+                trail_col,
+                entry_index,
+                expected_path,
+                prepared,
+            } => {
+                let prepared_identity = FileManagerIoIdentity::TrailActivate {
+                    files_generation: prepared_files_generation,
+                    source: prepared_source,
+                    trail_col,
+                    entry_index,
+                    expected_path,
+                };
+                if prepared_identity != result.identity {
+                    return changed;
+                }
+                let Some((file_manager, outcome)) = prepared else {
+                    return changed;
+                };
+                if outcome != crate::fm::trail_snapshots::TrailActivateOutcome::Branched {
+                    return changed;
+                }
+                self.state.file_manager = Some(*file_manager);
+                true
             }
             FileManagerIoOutcome::Panicked(identity) => {
                 tracing::error!(?identity, "fm: bounded file-manager I/O processor panicked");
@@ -1030,6 +1126,77 @@ mod tests {
         app.file_manager_io_worker.wait_for_result_for_test();
         assert!(!app.sync_file_manager_io_results());
         assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, reopened);
+    }
+
+    // TP-FMP-TRAIL-03: a cold directory activation that finishes after the
+    // Files instance was closed and reopened cannot borrow authority from an
+    // identical path. Files generation and the full source identity retire it.
+    #[test]
+    fn fmp_trail_activation_completion_after_close_reopen_is_rejected() {
+        let td = TempDir::new();
+        let root = td.dir("root");
+        let alpha = root.join("alpha");
+        let deep = alpha.join("deep");
+        let zeta = root.join("zeta");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::create_dir_all(&zeta).unwrap();
+        let file_manager = crate::fm::FmState::open_trail_to(&root, &deep, false).unwrap();
+        let zeta_index = file_manager
+            .trail_entry_identity(&zeta)
+            .map(|(_, entry_index)| entry_index)
+            .unwrap();
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .unwrap();
+        let files_generation = app.state.stage.active_instance_generation().unwrap();
+        let file_manager = app.state.file_manager.as_ref().unwrap();
+        let request = FileManagerIoRequest::TrailActivate {
+            files_generation,
+            source: FileManagerIoSource::from_file_manager(file_manager),
+            trail_col: 0,
+            entry_index: zeta_index,
+            expected_path: zeta,
+            file_manager: Box::new(file_manager.clone()),
+        };
+
+        let gate = Arc::new(Gate::default());
+        let worker_gate = gate.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                started_tx.send(()).unwrap();
+                worker_gate.wait();
+                process_request(request)
+            });
+        assert!(matches!(
+            app.file_manager_io_worker.submit(request),
+            FileManagerIoSubmit::Accepted { .. }
+        ));
+        started_rx.recv().unwrap();
+
+        app.state.close_file_manager();
+        app.state
+            .try_open_file_manager_with(|_| crate::fm::FmState::open_trail_to(&root, &deep, false))
+            .unwrap();
+        let reopened_generation = app.state.stage.active_instance_generation().unwrap();
+        assert_ne!(files_generation, reopened_generation);
+
+        gate.release();
+        app.file_manager_io_worker.wait_for_result_for_test();
+        assert!(!app.sync_file_manager_io_results());
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .unwrap()
+                .trail
+                .cols()
+                .last()
+                .unwrap()
+                .directory,
+            deep
+        );
     }
 
     // TP-FCL-IO-03: even when the Files instance and prepared locations model

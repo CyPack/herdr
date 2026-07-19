@@ -1087,6 +1087,24 @@ impl FmState {
         matches.next().is_none().then_some(matched)
     }
 
+    /// Revalidate one immutable Trail row and report whether it resolves to a
+    /// directory target. This is pure prepared-state inspection: callers use
+    /// it before deciding whether activation must enter the bounded I/O lane.
+    pub(crate) fn trail_entry_is_directory(
+        &self,
+        col_idx: usize,
+        entry_index: usize,
+        expected_path: &Path,
+    ) -> Option<bool> {
+        self.trail_snapshots
+            .cols()
+            .get(col_idx)?
+            .entries()
+            .get(entry_index)
+            .filter(|entry| entry.path == expected_path)
+            .map(FileEntry::is_dir)
+    }
+
     /// Build a fresh LAW-5 trail for a sidebar/deep-link target. No first row
     /// is selected implicitly; the caller receives None when the root itself
     /// cannot be read.
