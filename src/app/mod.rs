@@ -14,6 +14,7 @@ mod config_io;
 mod creation;
 mod file_agent_handoff;
 mod file_delete_confirmation;
+mod file_manager_locations;
 mod file_manager_miller;
 mod file_manager_sidebar;
 mod file_manager_watcher;
