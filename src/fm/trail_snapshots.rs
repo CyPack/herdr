@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 use super::trail::TrailState;
 use super::{
-    read_directory_snapshot, FileEntry, FmDirectorySnapshot, FmDirectoryStatus, FmFilePreview,
-    FmPreview,
+    directory_is_writable, read_directory_snapshot, FileEntry, FmDirectorySnapshot,
+    FmDirectoryStatus, FmFilePreview, FmPreview,
 };
 use crate::fm::entry_kind::FileEntryKind;
 use crate::fm::preview_capability::{
@@ -47,9 +47,25 @@ pub(crate) enum TrailDetailPreview {
 pub(crate) struct TrailColSnapshot {
     directory: PathBuf,
     snapshot: FmDirectorySnapshot,
+    writable: bool,
 }
 
 impl TrailColSnapshot {
+    fn prepared(directory: PathBuf, snapshot: FmDirectorySnapshot, writable: bool) -> Self {
+        Self {
+            directory,
+            snapshot,
+            writable,
+        }
+    }
+
+    fn read(directory: &Path, show_hidden: bool) -> Self {
+        let snapshot = read_directory_snapshot(directory, show_hidden);
+        let writable =
+            snapshot.status == FmDirectoryStatus::Available && directory_is_writable(directory);
+        Self::prepared(directory.to_path_buf(), snapshot, writable)
+    }
+
     pub(crate) fn directory(&self) -> &Path {
         &self.directory
     }
@@ -60,6 +76,10 @@ impl TrailColSnapshot {
 
     pub(crate) fn status(&self) -> FmDirectoryStatus {
         self.snapshot.status
+    }
+
+    pub(crate) fn writable(&self) -> bool {
+        self.writable
     }
 
     pub(crate) fn omission_message(&self) -> Option<&'static str> {
@@ -157,6 +177,7 @@ impl TrailSnapshots {
         trail: &mut TrailState,
         root: &Path,
         root_snapshot: FmDirectorySnapshot,
+        root_writable: bool,
         selected: Option<&FileEntry>,
         preview: &FmPreview,
         show_hidden: bool,
@@ -183,10 +204,7 @@ impl TrailSnapshots {
             col_idx = 0;
         }
         self.cols.truncate(col_idx + 1);
-        let current = TrailColSnapshot {
-            directory: root.to_path_buf(),
-            snapshot: root_snapshot,
-        };
+        let current = TrailColSnapshot::prepared(root.to_path_buf(), root_snapshot, root_writable);
         if col_idx < self.cols.len() {
             self.cols[col_idx] = current;
         } else {
@@ -199,14 +217,15 @@ impl TrailSnapshots {
         match preview {
             FmPreview::Directory(entries) if selected.is_dir() => {
                 if trail.select_dir(col_idx, &selected.path) {
-                    self.cols.push(TrailColSnapshot {
-                        directory: selected.path.clone(),
-                        snapshot: FmDirectorySnapshot {
+                    self.cols.push(TrailColSnapshot::prepared(
+                        selected.path.clone(),
+                        FmDirectorySnapshot {
                             entries: entries.clone(),
                             status: FmDirectoryStatus::Available,
                             omissions: Default::default(),
                         },
-                    });
+                        false,
+                    ));
                 }
             }
             FmPreview::File(file_preview) if !selected.is_dir() => {
@@ -248,10 +267,7 @@ impl TrailSnapshots {
             if cached {
                 continue;
             }
-            let loaded = TrailColSnapshot {
-                snapshot: read_directory_snapshot(&col.directory, self.show_hidden),
-                directory: col.directory.clone(),
-            };
+            let loaded = TrailColSnapshot::read(&col.directory, self.show_hidden);
             if idx < self.cols.len() {
                 self.cols[idx] = loaded;
             } else {
@@ -272,9 +288,14 @@ impl TrailSnapshots {
         if col_idx >= trail.cols().len() {
             return FmDirectoryStatus::Unavailable;
         }
-        let snapshot = read_directory_snapshot(child, self.show_hidden);
-        if snapshot.status != FmDirectoryStatus::Available {
-            return snapshot.status;
+        let loaded = self
+            .cols
+            .get(col_idx + 1)
+            .filter(|snapshot| snapshot.directory == child)
+            .cloned()
+            .unwrap_or_else(|| TrailColSnapshot::read(child, self.show_hidden));
+        if loaded.status() != FmDirectoryStatus::Available {
+            return loaded.status();
         }
         if !trail.select_dir(col_idx, child) {
             return FmDirectoryStatus::Unavailable;
@@ -282,10 +303,7 @@ impl TrailSnapshots {
         // Mirror the trail transition exactly: truncate to the branch point,
         // append the pre-read column, then realign for the sliding window.
         self.cols.truncate(col_idx + 1);
-        self.cols.push(TrailColSnapshot {
-            snapshot,
-            directory: child.to_path_buf(),
-        });
+        self.cols.push(loaded);
         if self.cols.len() > trail.cols().len() {
             self.cols.remove(0);
         }
@@ -396,10 +414,12 @@ impl TrailSnapshots {
         }
         self.cols.clear();
         self.detail = None;
-        self.cols.push(TrailColSnapshot {
-            directory: root.to_path_buf(),
-            snapshot: root_snapshot,
-        });
+        let root_writable = directory_is_writable(root);
+        self.cols.push(TrailColSnapshot::prepared(
+            root.to_path_buf(),
+            root_snapshot,
+            root_writable,
+        ));
         let mut trail = TrailState::new(root);
 
         let Ok(relative) = target.strip_prefix(root) else {
@@ -432,10 +452,14 @@ impl TrailSnapshots {
     /// keeps its explicit status even when the directory disappeared —
     /// honest state, never a silent placeholder.
     pub(crate) fn refresh_col(&mut self, col_idx: usize) -> bool {
-        let Some(col) = self.cols.get_mut(col_idx) else {
+        let Some(directory) = self
+            .cols
+            .get(col_idx)
+            .map(|col| col.directory.to_path_buf())
+        else {
             return false;
         };
-        col.snapshot = read_directory_snapshot(&col.directory, self.show_hidden);
+        self.cols[col_idx] = TrailColSnapshot::read(&directory, self.show_hidden);
         true
     }
 

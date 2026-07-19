@@ -956,10 +956,20 @@ impl FmState {
             entry_index,
             expected_path,
         );
-        if outcome != trail_snapshots::TrailActivateOutcome::Rejected
-            && !self.install_trail_operation_projection(col_idx, entry_index, expected_path)
-        {
-            return trail_snapshots::TrailActivateOutcome::Rejected;
+        if outcome != trail_snapshots::TrailActivateOutcome::Rejected {
+            let projection_installed = if outcome == trail_snapshots::TrailActivateOutcome::Branched
+            {
+                self.install_resident_directory_operation_projection(
+                    col_idx,
+                    entry_index,
+                    expected_path,
+                )
+            } else {
+                self.install_trail_operation_projection(col_idx, entry_index, expected_path)
+            };
+            if !projection_installed {
+                return trail_snapshots::TrailActivateOutcome::Rejected;
+            }
         }
         if outcome == trail_snapshots::TrailActivateOutcome::Branched {
             self.miller.horizontal.follow_active = true;
@@ -1229,6 +1239,57 @@ impl FmState {
         let entries = snapshot.entries().to_vec();
         let status = snapshot.status();
         self.install_trail_projection(directory, entries, status, Some(entry_index));
+        true
+    }
+
+    fn install_resident_directory_operation_projection(
+        &mut self,
+        col_idx: usize,
+        entry_index: usize,
+        expected_path: &Path,
+    ) -> bool {
+        let Some(owner) = self.trail_snapshots.cols().get(col_idx) else {
+            return false;
+        };
+        if owner
+            .entries()
+            .get(entry_index)
+            .is_none_or(|entry| entry.path != expected_path || !entry.is_dir())
+        {
+            return false;
+        }
+        let Some(child) = self.trail_snapshots.cols().get(col_idx + 1) else {
+            return false;
+        };
+        if child.directory() != expected_path || child.status() != FmDirectoryStatus::Available {
+            return false;
+        }
+
+        let directory = owner.directory().to_path_buf();
+        let entries = owner.entries().to_vec();
+        let status = owner.status();
+        let writable = owner.writable();
+        let parent = col_idx.checked_sub(1).and_then(|parent_idx| {
+            let snapshot = self.trail_snapshots.cols().get(parent_idx)?;
+            let entries = snapshot.entries().to_vec();
+            let cursor = entries.iter().position(|entry| entry.path == directory);
+            Some(FmParent { entries, cursor })
+        });
+        let preview = FmPreview::Directory(child.entries().to_vec());
+
+        self.cwd = directory;
+        self.entries = entries;
+        self.cwd_status = status;
+        self.cwd_writable = writable;
+        self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
+        self.reconcile_multi_selection();
+        self.cursor = entry_index;
+        self.clamp_cursor();
+        self.viewport_start = 0;
+        self.parent = parent;
+        self.preview_viewport_start = 0;
+        self.preview_generation = self.preview_generation.wrapping_add(1).max(1);
+        self.preview = preview;
         true
     }
 
@@ -1555,6 +1616,7 @@ impl FmState {
             &mut self.trail,
             &self.cwd,
             root_snapshot,
+            self.cwd_writable,
             selected.as_ref(),
             &self.preview,
             self.show_hidden,
