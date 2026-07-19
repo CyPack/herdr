@@ -29,11 +29,18 @@
 > worker owns root shortcut, Miller enter, operation/current refresh, and
 > active Trail watcher directory reads; only its latest exact
 > Files/model/source/pending identity may apply. Missing/changed-type/
-> permission/panic/disconnect paths preserve the resident Trail. Fresh gates:
-> Rust 3,571/3,571 + 2 skip, Linux/Windows Clippy `-D warnings`, Playwright
-> Chromium 25/25, fmt clean. FCL-3 responsive content geometry is the only
-> active task. This program takes priority over FMR plugin adoption and does
-> not change the existing one-third horizontal scroll.
+> permission/panic/disconnect paths preserve the resident Trail. FCL-3 is
+> closed at `c052b8d4` RED / `8c75f989` GREEN. The exact Files body now
+> projects one generation-bound `Wide` / `Standard` / `Compact` locations
+> snapshot; persistent rail, separator, rows, compact complete action, and
+> remaining Trail rect are bounded and disjoint. Existing Miller/Trail
+> projection consumes only that Trail rect; one-third horizontal scroll is
+> unchanged. Full-suite diagnosis also stabilized two mtime-order fixtures
+> with explicit equal timestamps and preserved characterized Trail viewport
+> widths after the 24+1 content chrome reservation. Fresh gates: Rust
+> 3,574/3,574 + 2 skip, Linux/Windows Clippy `-D warnings`, Playwright
+> Chromium 25/25, fmt clean. FCL-4 render/input ownership is the only active
+> task. This program takes priority over FMR plugin adoption.
 > Stable Herdr/socket, upstream, release assets, and user-owned
 > `.superpowers/` remain outside authority.
 >

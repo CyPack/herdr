@@ -54,11 +54,14 @@ plugin.
     apply requires exact Files/model/source/pending identity.
   - [x] Fresh gates: Rust 3,571/3,571 + 2 skip, Linux/Windows Clippy
     `-D warnings`, Playwright Chromium 25/25, fmt clean.
-- [ ] **FCL-3 Responsive content geometry — ACTIVE.**
-  - `TP-FCL-GEO-01..03`.
-  - Wide/standard persistent rail and compact complete action use one
-    disjoint current-frame projection.
-- [ ] **FCL-4 Render and input ownership swap** (blocked by FCL-3).
+- [x] **FCL-3 Responsive content geometry.**
+  - [x] `TP-FCL-GEO-01..03`: RED `c052b8d4`, GREEN `8c75f989`.
+  - [x] Wide/standard persistent rail, separator, compact complete action,
+    exact generation-bound rows, and Trail use one disjoint current-frame
+    projection.
+  - [x] Fresh gates: Rust 3,574/3,574 + 2 skip, Linux/Windows Clippy
+    `-D warnings`, Playwright Chromium 25/25, fmt clean.
+- [ ] **FCL-4 Render and input ownership swap — ACTIVE.**
   - `TP-FCL-INPUT-01..03`.
   - Locations own vertical input only in their cells; Trail retains current
     fractional horizontal behavior inside its exact rectangle.

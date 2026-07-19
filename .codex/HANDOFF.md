@@ -35,9 +35,16 @@ thread'lerden aldı; yalnız latest exact Files/model/source/pending identity
 apply olabilir. Missing/changed-type/permission/panic/disconnect resident
 Trail'i korur. Full suite ilk turda eski same-tick varsayımı taşıyan 6 testi
 buldu; explicit wait+drain ile düzeltildi ve ikinci tam tur temiz geçti.
-Fresh gates Rust 3,571/3,571 + 2 skip, Linux+Windows Clippy `-D warnings`,
-Chromium 25/25, fmt temiz. TEK aktif iş FCL-3 responsive content
-geometry'dir. FMR plugin adoption ayrı ve ikinci önceliktedir.
+FCL-3 `c052b8d4` RED / `8c75f989` GREEN ile kapandı. Exact Files body tek
+generation-bound `Wide` / `Standard` / `Compact` locations snapshot'ına
+ayrılıyor; persistent rail, separator, exact row identities, compact complete
+action ve kalan Trail rect bounded/disjoint. Miller/Trail yalnız bu Trail
+rect'ini tüketiyor; mevcut üçte-bir horizontal scroll değişmedi. Full gate
+diagnosis iki mtime-order fixture'ını explicit eşit timestamp ile stabilize
+etti ve 24+1 content chrome sonrası characterized Trail viewport genişliklerini
+korudu. Fresh gates Rust 3,574/3,574 + 2 skip, Linux+Windows Clippy
+`-D warnings`, Chromium 25/25, fmt temiz. TEK aktif iş FCL-4 render/input
+ownership swap'tir. FMR plugin adoption ayrı ve ikinci önceliktedir.
 Stable Herdr/socket, upstream, release assets ve `.superpowers/` untouched.
 
 **CURRENT OVERRIDE — MTIME PROGRAMI KAPANDI.** Kullanıcı
@@ -630,20 +637,15 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 15 ve
-89, toplam 104 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 14 ve
+89, toplam 103 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 15 unchecked
+### Source: `.codex/TASKS.md` — 14 unchecked
 
-- [ ] **FCL-3 Responsive content geometry — ACTIVE.**
-  - `TP-FCL-GEO-01..03`.
-  - Wide/standard persistent rail and compact complete action use one
-    disjoint current-frame projection.
-
-- [ ] **FCL-4 Render and input ownership swap** (blocked by FCL-3).
+- [ ] **FCL-4 Render and input ownership swap — ACTIVE.**
   - `TP-FCL-INPUT-01..03`.
   - Locations own vertical input only in their cells; Trail retains current
     fractional horizontal behavior inside its exact rectangle.
