@@ -379,9 +379,9 @@ mod tests {
     use tokio::sync::Notify;
 
     use super::{
-        classify_root_navigation_error, prepare_root_navigation_io, FileManagerIoIdentity,
-        FileManagerIoOutcome, FileManagerIoRequest, FileManagerIoSource, FileManagerIoSubmit,
-        FileManagerIoWorker, FmRootNavigationError, FmRootNavigationRequest,
+        classify_root_navigation_error, prepare_root_navigation_io, process_request,
+        FileManagerIoIdentity, FileManagerIoOutcome, FileManagerIoRequest, FileManagerIoSource,
+        FileManagerIoSubmit, FileManagerIoWorker, FmRootNavigationError, FmRootNavigationRequest,
     };
 
     #[derive(Default)]
@@ -433,6 +433,12 @@ mod tests {
             ));
             std::fs::create_dir_all(&root).unwrap();
             Self { root }
+        }
+
+        fn dir(&self, name: &str) -> PathBuf {
+            let path = self.root.join(name);
+            std::fs::create_dir_all(&path).unwrap();
+            path
         }
     }
 
@@ -629,5 +635,178 @@ mod tests {
             classify_root_navigation_error(std::io::ErrorKind::PermissionDenied),
             FmRootNavigationError::PermissionDenied
         );
+    }
+
+    fn test_app() -> crate::app::App {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        crate::app::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        )
+    }
+
+    fn location_model(path: &Path) -> crate::app::state::FileManagerSidebarModel {
+        crate::app::state::FileManagerSidebarModel::from_sources(
+            Vec::new(),
+            vec![crate::app::state::FileManagerSidebarItem {
+                label: "Target".into(),
+                path: path.to_path_buf(),
+                icon: crate::app::state::FileManagerSidebarIcon::Pin,
+                accessible: true,
+                ejectable: false,
+            }],
+            Vec::new(),
+        )
+    }
+
+    // TP-FCL-IO-01/03: App root submission preserves the rendered Trail while
+    // blocked, then applies only to the still-current Files/model identity.
+    #[test]
+    fn fcl_io_location_request_is_async_and_generation_safe() {
+        let td = TempDir::new();
+        let initial = td.dir("initial");
+        let target = td.dir("target");
+        std::fs::write(target.join("visible.txt"), b"visible").unwrap();
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
+            .unwrap();
+        app.state.file_manager_sidebar = location_model(&target);
+        app.state.request_file_manager_sidebar_navigation = Some(target.clone());
+
+        let gate = Arc::new(Gate::default());
+        let worker_gate = gate.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                started_tx.send(()).unwrap();
+                worker_gate.wait();
+                process_request(request)
+            });
+
+        assert!(app.sync_file_manager_location_request());
+        started_rx.recv().unwrap();
+        assert_eq!(
+            app.state.file_manager.as_ref().unwrap().cwd,
+            initial,
+            "the old Trail remains available while root I/O is blocked"
+        );
+
+        gate.release();
+        app.file_manager_io_worker.wait_for_result_for_test();
+        assert!(app.sync_file_manager_io_results());
+        assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, target);
+    }
+
+    #[test]
+    fn fcl_io_root_completion_after_close_reopen_is_rejected() {
+        let td = TempDir::new();
+        let initial = td.dir("initial");
+        let target = td.dir("target");
+        let reopened = td.dir("reopened");
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
+            .unwrap();
+        app.state.file_manager_sidebar = location_model(&target);
+        app.state.request_file_manager_sidebar_navigation = Some(target);
+
+        let gate = Arc::new(Gate::default());
+        let worker_gate = gate.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                started_tx.send(()).unwrap();
+                worker_gate.wait();
+                process_request(request)
+            });
+        assert!(app.sync_file_manager_location_request());
+        started_rx.recv().unwrap();
+
+        app.state.close_file_manager();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&reopened)))
+            .unwrap();
+        gate.release();
+        app.file_manager_io_worker.wait_for_result_for_test();
+        assert!(!app.sync_file_manager_io_results());
+        assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, reopened);
+    }
+
+    // TP-FCL-IO-05: clicking the already resident Trail root resets it from
+    // prepared snapshots and never invokes the directory processor.
+    #[test]
+    fn fcl_io_resident_root_activation_performs_zero_worker_reads() {
+        let td = TempDir::new();
+        let child = td.dir("child");
+        let file_manager = crate::fm::FmState::open_trail_to(&td.root, &child, false).unwrap();
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .unwrap();
+        app.state.file_manager_sidebar = location_model(&td.root);
+        app.state.request_file_manager_sidebar_navigation = Some(td.root.clone());
+
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let worker_calls = calls.clone();
+        app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                worker_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                process_request(request)
+            });
+
+        assert!(app.sync_file_manager_location_request());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let file_manager = app.state.file_manager.as_ref().unwrap();
+        assert_eq!(file_manager.cwd, td.root);
+        assert_eq!(file_manager.trail.cols().len(), 1);
+    }
+
+    // TP-FCL-IO-06: Miller navigation and current refresh both cross the
+    // worker boundary; their processor never runs on the caller thread.
+    #[test]
+    fn fcl_io_miller_and_current_refresh_share_worker_lane() {
+        let td = TempDir::new();
+        td.dir("child");
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .unwrap();
+        let files_generation = app.state.stage.active_instance_generation().unwrap();
+        let caller = std::thread::current().id();
+        let (processor_tx, processor_rx) = std::sync::mpsc::channel();
+        app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                processor_tx.send(std::thread::current().id()).unwrap();
+                process_request(request)
+            });
+
+        let navigation = app
+            .state
+            .file_manager
+            .as_ref()
+            .and_then(crate::fm::FmState::request_enter_navigation)
+            .unwrap();
+        assert!(app.execute_file_manager_navigation(navigation));
+        assert_ne!(processor_rx.recv().unwrap(), caller);
+        app.file_manager_io_worker.wait_for_result_for_test();
+        assert!(app.sync_file_manager_io_results());
+
+        let refresh = app
+            .state
+            .file_manager
+            .as_ref()
+            .unwrap()
+            .request_operation_refresh(files_generation);
+        assert_eq!(
+            app.execute_file_manager_current_refresh(refresh),
+            Some(false)
+        );
+        assert_ne!(processor_rx.recv().unwrap(), caller);
+        app.file_manager_io_worker.wait_for_result_for_test();
+        let _ = app.sync_file_manager_io_results();
     }
 }
