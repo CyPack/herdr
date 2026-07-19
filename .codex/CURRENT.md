@@ -1,6 +1,6 @@
 # Current State — 2026-07-19
 
-> **CURRENT OVERRIDE — MTIME IMPLEMENTATION ACTIVE (2026-07-19).** The user
+> **CURRENT OVERRIDE — MTIME PROGRAM CLOSED (2026-07-19).** The user
 > approved one strict mixed ordering across
 > directories and files: modification time descending, deterministic
 > natural/raw/path ties, and unknown times last. The Finder-like section
@@ -10,19 +10,25 @@
 > `docs/superpowers/specs/2026-07-19-herdr-miller-mtime-groups-design.md`.
 > Approved code-level execution plan:
 > `docs/superpowers/plans/2026-07-19-herdr-miller-mtime-groups-implementation.md`.
-> Fresh graph 23,556/125,078 proves the current chain
+> Fresh single-worker graph 23,656/125,342 proves the current chain
 > `collect_directory_entries` → `read_directory_snapshot` → `sort_entries` →
 > `TrailSnapshots` → `project_trail_view_inner` → `render_trail_view` /
-> Trail hit authority. MTIME-0 through MTIME-5 are closed: exact locked
+> Trail hit authority. MTIME-0 through MTIME-7 are closed: exact locked
 > `time 0.3.47` adds no package/feature delta (`1d400822`); optional
 > symlink-preserving mtime plus strict mixed descending order are
 > `c8a8c4e3` RED / `7f6f9575` GREEN; pure local-calendar groups are
 > `0831c855` RED / `86ac4cff` GREEN; grouped projection/render are
 > `9c1124c9` RED / `89e60144` GREEN; typed header input and watcher path
-> preservation are `6e0460e8` RED / `9338cbbc` GREEN. Fresh full Rust
-> evidence is 3,551/3,551 PASS + 2 skip and Linux all-targets clippy is clean.
-> Next is MTIME-6 deterministic Playwright Chromium VIS-15/16/17. Stable Herdr/socket and
-> user-owned `.superpowers/` remain untouched.
+> preservation are `6e0460e8` RED / `9338cbbc` GREEN; deterministic Chromium
+> oracle is `55516f50` RED / `3ff174ca` GREEN; mtime-sensitive legacy fixture
+> stabilization is `935c634f`. Fresh gates: Rust 3,551/3,551 PASS + 2 skip,
+> Chromium 25/25, Linux/Windows Clippy, Python 68/68, Bun 5/5 + 12/12,
+> fmt/diff/lockfile/new-production-unwrap clean. Mutation proof changed the
+> raw PNG SHA and failed VIS-15 by 14 pixels before restore. Full evidence:
+> `.codex/evidence/miller-mtime-groups-closure.md`. Stable Herdr/socket,
+> upstream, and user-owned `.superpowers/` remain untouched. The next separate
+> open lane is FMR-4/FMR-5 adoption verification and optional plugin adapter
+> boundary; MTIME does not implicitly activate it.
 >
 > **CURRENT OVERRIDE — TRAIL-T7.10 HIDDEN-CHILD ACTIVATION CLOSED
 > (2026-07-19).** The user confirmed Ghostty-tip horizontal input works, then

@@ -4,7 +4,7 @@ Updated: 2026-07-19 CEST
 
 ## 0. SONRAKI ADIM — TEK AKTİF İŞ
 
-**CURRENT OVERRIDE — MTIME UYGULAMASI AKTİF.** Kullanıcı
+**CURRENT OVERRIDE — MTIME PROGRAMI KAPANDI.** Kullanıcı
 klasör ve dosyaların tek listede tamamen mtime azalan sırada karışmasını
 onayladı. Finder-benzeri yerel takvim grupları `Future` / `Today` /
 `Yesterday` / `Previous 7 Days` / `Older` / `Unknown Date`; satırın sağ
@@ -13,16 +13,22 @@ zinciri, test-noktaları ve MTIME-0..7 task ağacı:
 `docs/superpowers/specs/2026-07-19-herdr-miller-mtime-groups-design.md`.
 Onaylı code-level TDD planı:
 `docs/superpowers/plans/2026-07-19-herdr-miller-mtime-groups-implementation.md`.
-Fresh graph 23,556/125,078 current `collect_directory_entries`,
+Fresh single-worker graph 23,656/125,342 current `collect_directory_entries`,
 `read_directory_snapshot`, `sort_entries`, `project_trail_view_inner`,
-`render_trail_view` gövdelerini döndürdü. MTIME-0..3 kapandı: dependency
+`render_trail_view` gövdelerini döndürdü. MTIME-0..7 kapandı: dependency
 freeze `1d400822`; optional symlink-preserving mtime ve strict mixed descending
 sort `c8a8c4e3` RED / `7f6f9575` GREEN; pure local-calendar groups
 `0831c855` RED / `86ac4cff` GREEN; grouped projection/render `9c1124c9` RED /
 `89e60144` GREEN; typed header input ve watcher path preservation `6e0460e8`
-RED / `9338cbbc` GREEN. Fresh full Rust 3,551/3,551 PASS + 2 skip, Linux
-all-targets clippy temiz. Sıradaki iş MTIME-6 deterministic Playwright
-Chromium VIS-15/16/17. Stable Herdr/socket, upstream ve `.superpowers/`
+RED / `9338cbbc` GREEN; deterministic Chromium VIS-15/16/17 `55516f50` RED /
+`3ff174ca` GREEN; mtime-sensitive legacy fixture stabilization `935c634f`.
+Fresh gates: Rust 3,551/3,551 PASS + 2 skip, Chromium 25/25, Linux+Windows
+Clippy, Python 68/68, Bun 5/5 + 12/12, fmt/diff/lockfile/new-production-unwrap
+temiz. Mutation proof ham PNG SHA'larını değiştirdi ve restore öncesi VIS-15
+14 pixel farkla fail etti. Kanıt:
+`.codex/evidence/miller-mtime-groups-closure.md`. Sonraki AYRI açık lane
+FMR-4/FMR-5 adoption verification + optional plugin adapter sınırı; MTIME
+bunu otomatik aktive etmez. Stable Herdr/socket, upstream ve `.superpowers/`
 untouched.
 
 **CURRENT OVERRIDE — FMR-2A REMOTE/HEADLESS FILES SHORTCUT FIX CLOSED.**
@@ -588,27 +594,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 12 ve
-89, toplam 101 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 10 ve
+89, toplam 99 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 12 unchecked
-
-- [ ] **MTIME-6 Playwright Chromium visual oracle.**
-  - [ ] Export fixed-clock ASCII fixtures for normal, narrow/partial, and
-    reorder-selection views.
-  - [ ] Add VIS-15/16/17 baselines spec-scoped and prove a controlled cell
-    mutation fails.
-  - [ ] Run the complete Chromium suite without global snapshot rewriting.
-
-- [ ] **MTIME-7 Production closure.**
-  - [ ] Focused/full Nextest `--no-fail-fast`, separate fmt, Linux/Windows
-    Clippy, maintenance, Bun/Python, diff, unwrap, and artifact gates.
-  - [ ] Synchronize continuity exactly and reindex graph with `CBM_WORKERS=1`.
-  - [ ] Verify atomic targeted history, CyPack-only fast-forward publication,
-    and exact remote SHA equality.
+### Source: `.codex/TASKS.md` — 10 unchecked
 
 - [ ] **FMR-0 Scroll version lab and ranking.** Four reboot-safe source
   checkpoints are collected side by side under

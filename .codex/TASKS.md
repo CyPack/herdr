@@ -53,17 +53,19 @@ Playwright Chromium over deterministic Ratatui cells.
     mtime reorder, selection, multi-selection, and Trail child identity.
   - [x] GREEN reuse exact-path reconciliation without a second selection
     lifecycle.
-- [ ] **MTIME-6 Playwright Chromium visual oracle.**
-  - [ ] Export fixed-clock ASCII fixtures for normal, narrow/partial, and
+- [x] **MTIME-6 Playwright Chromium visual oracle** (`55516f50` RED /
+  `3ff174ca` GREEN).
+  - [x] Export fixed-clock ASCII fixtures for normal, narrow/partial, and
     reorder-selection views.
-  - [ ] Add VIS-15/16/17 baselines spec-scoped and prove a controlled cell
+  - [x] Add VIS-15/16/17 baselines spec-scoped and prove a controlled cell
     mutation fails.
-  - [ ] Run the complete Chromium suite without global snapshot rewriting.
-- [ ] **MTIME-7 Production closure.**
-  - [ ] Focused/full Nextest `--no-fail-fast`, separate fmt, Linux/Windows
+  - [x] Run the complete Chromium suite without global snapshot rewriting
+    (25/25).
+- [x] **MTIME-7 Production closure** (`935c634f` test stabilization).
+  - [x] Focused/full Nextest `--no-fail-fast`, separate fmt, Linux/Windows
     Clippy, maintenance, Bun/Python, diff, unwrap, and artifact gates.
-  - [ ] Synchronize continuity exactly and reindex graph with `CBM_WORKERS=1`.
-  - [ ] Verify atomic targeted history, CyPack-only fast-forward publication,
+  - [x] Synchronize continuity exactly and reindex graph with `CBM_WORKERS=1`.
+  - [x] Verify atomic targeted history, CyPack-only fast-forward publication,
     and exact remote SHA equality.
 
 ### FMR — Files Visibility, Preview/Render, Plugin and Mouse Reliability

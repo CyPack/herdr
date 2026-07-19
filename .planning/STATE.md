@@ -2,24 +2,28 @@
 
 - Updated: 2026-07-19
 - Branch: `feat/native-fm`
-- Current override: **MTIME implementation active.** The user
+- Current override: **MTIME program closed.** The user
   approved strict mixed directory/file ordering by modification time
   descending plus Finder-like local-calendar sections and right-side mtime
   labels. Canonical design:
   `docs/superpowers/specs/2026-07-19-herdr-miller-mtime-groups-design.md`.
-  Fresh graph 23,556/125,078 identifies the prepared snapshot, comparator,
+  Fresh single-worker graph 23,656/125,342 identifies the prepared snapshot,
   Trail projection/render/input, and watcher dependency chain. The approved
   code-level plan is
   `docs/superpowers/plans/2026-07-19-herdr-miller-mtime-groups-implementation.md`.
-  MTIME-0 through MTIME-5 are complete. Dependency freeze is `1d400822`;
+  MTIME-0 through MTIME-7 are complete. Dependency freeze is `1d400822`;
   prepared symlink-preserving metadata and strict mixed mtime sorting are
   `c8a8c4e3` RED / `7f6f9575` GREEN; local-calendar classification and compact
   labels are `0831c855` RED / `86ac4cff` GREEN; grouped projection/render are
   `9c1124c9` RED / `89e60144` GREEN; typed header input and exact-path watcher
-  preservation are `6e0460e8` RED / `9338cbbc` GREEN. Fresh full Rust evidence
-  is 3,551/3,551 PASS + 2 skip and Linux all-targets clippy is clean. Next:
-  MTIME-6 deterministic Playwright Chromium VIS-15/16/17. Stable Herdr/socket and
-  `.superpowers/` are untouched.
+  preservation are `6e0460e8` RED / `9338cbbc` GREEN; deterministic Chromium
+  oracle is `55516f50` RED / `3ff174ca` GREEN; legacy test-fixture mtime
+  stabilization is `935c634f`. Fresh gates are Rust 3,551/3,551 + 2 skip,
+  Chromium 25/25, both Clippy targets, Python 68/68, Bun 5/5 + 12/12, and
+  fmt/diff/lockfile/new-production-unwrap clean. Evidence:
+  `.codex/evidence/miller-mtime-groups-closure.md`. Next separate eligible
+  lane: FMR-4/FMR-5 adoption verification and optional plugin adapter.
+  Stable Herdr/socket and `.superpowers/` are untouched.
 - Current override: **FMR-4/FMR-5 plugin boundary active.** The reboot regression is
   partly explained by executable drift: `/home/ayaz/.local/bin/herdr` is a
   2026-07-12 build while `target/debug/herdr` is the 2026-07-18 build carrying
