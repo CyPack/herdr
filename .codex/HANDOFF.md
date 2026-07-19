@@ -51,9 +51,18 @@ gap/modifier/stale row/separator fail-closed, Trail fractional horizontal
 scroll yalnız exact Trail rect'inde çalışıyor. Pending/failure/inaccessible
 marker'ları yalnız prepared state'ten çiziliyor ve Files close projected rail
 authority'yi aynı transaction'da siliyor. Fresh gates Rust 3,578/3,578 + 2
-skip, Linux+Windows Clippy `-D warnings`, Chromium 25/25, fmt temiz. TEK aktif
-iş FCL-5 compact drawer + legacy global-body teardown'dır. FMR plugin adoption
-ayrı ve ikinci önceliktedir.
+skip, Linux+Windows Clippy `-D warnings`, Chromium 25/25, fmt temiz. FCL-5
+`47cef35c` RED / `43a5890f` GREEN ile kapandı. Compact Files tam `Locations`
+action ve bounded top drawer yayınlıyor; fresh exact row bir kez route olurken
+stale row ve arka Trail input'u inert. Outside click, Esc ve compact dışına
+resize önceki Files focus'unu restore ediyor; compact'a dönüş drawer'ı
+implicit açmıyor. Legacy global Files row geometry/render/hit-test/navigation
+seam'leri silindi; prepared model/request ailesi Locations adıyla taşındı.
+Fresh gates drawer 3/3, sidebar 169/169, headless 109/109, Rust
+3,577/3,577 + 2 skip, Linux+Windows Clippy `-D warnings`, Chromium 25/25,
+fmt ve source-residue audit temiz. TEK aktif iş FCL-6 deterministic
+Playwright Chromium oracle'dır. FMR plugin adoption ayrı ve ikinci
+önceliktedir.
 Stable Herdr/socket, upstream, release assets ve `.superpowers/` untouched.
 
 **CURRENT OVERRIDE — MTIME PROGRAMI KAPANDI.** Kullanıcı
@@ -646,21 +655,15 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 13 ve
-89, toplam 102 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 12 ve
+89, toplam 101 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 13 unchecked
+### Source: `.codex/TASKS.md` — 12 unchecked
 
-- [ ] **FCL-5 Compact drawer and legacy global Files-body teardown — ACTIVE.**
-  - `TP-FCL-DRAWER-01`.
-  - Topmost bounded drawer restores Files focus; old global row geometry,
-    navigation request, render, hit-test, and cwd-derived highlight seams are
-    removed.
-
-- [ ] **FCL-6 Playwright Chromium oracle** (blocked by FCL-5).
+- [ ] **FCL-6 Playwright Chromium oracle — ACTIVE.**
   - `TP-FCL-VIS-01..04`.
   - ASCII deterministic wide/standard/compact/origin/loading/failure fixtures,
     spec-scoped baselines, one-cell raw-PNG mutation proof, then full Chromium.

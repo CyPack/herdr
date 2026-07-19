@@ -72,12 +72,19 @@ plugin.
     behavior only inside its exact rectangle.
   - [x] Fresh gates: Rust 3,578/3,578 + 2 skip, Linux/Windows Clippy
     `-D warnings`, Playwright Chromium 25/25, fmt clean.
-- [ ] **FCL-5 Compact drawer and legacy global Files-body teardown — ACTIVE.**
-  - `TP-FCL-DRAWER-01`.
-  - Topmost bounded drawer restores Files focus; old global row geometry,
-    navigation request, render, hit-test, and cwd-derived highlight seams are
-    removed.
-- [ ] **FCL-6 Playwright Chromium oracle** (blocked by FCL-5).
+- [x] **FCL-5 Compact drawer and legacy global Files-body teardown.**
+  - [x] `TP-FCL-DRAWER-01`: RED `47cef35c`, GREEN `43a5890f`.
+  - [x] The complete compact `Locations` action opens one bounded top overlay;
+    current exact rows route once, while stale rows and background Trail input
+    are inert.
+  - [x] Outside click, Esc, and standard/wide resize close safely and restore
+    the prior Files focus; compact return never reopens implicitly.
+  - [x] Retire global Files row geometry/render/hit-test/navigation seams and
+    rename the prepared model/request family from Sidebar to Locations.
+  - [x] Fresh gates: drawer 3/3, sidebar 169/169, headless 109/109, Rust
+    3,577/3,577 + 2 skip, Linux/Windows Clippy `-D warnings`, Playwright
+    Chromium 25/25, fmt and source-residue audits clean.
+- [ ] **FCL-6 Playwright Chromium oracle — ACTIVE.**
   - `TP-FCL-VIS-01..04`.
   - ASCII deterministic wide/standard/compact/origin/loading/failure fixtures,
     spec-scoped baselines, one-cell raw-PNG mutation proof, then full Chromium.

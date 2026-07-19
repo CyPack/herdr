@@ -47,9 +47,18 @@
 > Trail rectangle. Pending/failure/inaccessible markers are prepared-state
 > only and close immediately clears projected rail authority. Fresh gates:
 > Rust 3,578/3,578 + 2 skip, Linux/Windows Clippy `-D warnings`, Playwright
-> Chromium 25/25, fmt clean. FCL-5 compact drawer plus legacy global-body
-> teardown is the only active task. This program takes priority over FMR
-> plugin adoption.
+> Chromium 25/25, fmt clean. FCL-5 is closed at `47cef35c` RED /
+> `43a5890f` GREEN. Compact Files now exposes one complete `Locations` action
+> and bounded top drawer; exact current rows route once, while stale rows and
+> background Trail cells are inert. Outside click, Esc, and resize out of
+> compact restore prior Files focus; compact return stays closed. Legacy
+> global Files row geometry/render/hit-test/navigation seams are deleted, and
+> the prepared model/request family is now Locations-named. Fresh gates:
+> drawer 3/3, sidebar 169/169, headless 109/109, Rust 3,577/3,577 + 2 skip,
+> Linux/Windows Clippy `-D warnings`, Playwright Chromium 25/25, fmt and
+> source-residue audits clean. FCL-6 deterministic Playwright Chromium oracle
+> is the only active task. This program takes priority over FMR plugin
+> adoption.
 > Stable Herdr/socket, upstream, release assets, and user-owned
 > `.superpowers/` remain outside authority.
 >
