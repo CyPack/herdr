@@ -13,13 +13,15 @@
 > Fresh graph 23,556/125,078 proves the current chain
 > `collect_directory_entries` → `read_directory_snapshot` → `sort_entries` →
 > `TrailSnapshots` → `project_trail_view_inner` → `render_trail_view` /
-> Trail hit authority. MTIME-0 through MTIME-3 are closed: exact locked
+> Trail hit authority. MTIME-0 through MTIME-5 are closed: exact locked
 > `time 0.3.47` adds no package/feature delta (`1d400822`); optional
 > symlink-preserving mtime plus strict mixed descending order are
 > `c8a8c4e3` RED / `7f6f9575` GREEN; pure local-calendar groups are
-> `0831c855` RED / `86ac4cff` GREEN. Fresh full Rust evidence is
-> 3,534/3,534 PASS + 2 skip and Linux all-targets clippy is clean. Next is
-> MTIME-4 grouped Trail projection/render RED. Stable Herdr/socket and
+> `0831c855` RED / `86ac4cff` GREEN; grouped projection/render are
+> `9c1124c9` RED / `89e60144` GREEN; typed header input and watcher path
+> preservation are `6e0460e8` RED / `9338cbbc` GREEN. Fresh full Rust
+> evidence is 3,551/3,551 PASS + 2 skip and Linux all-targets clippy is clean.
+> Next is MTIME-6 deterministic Playwright Chromium VIS-15/16/17. Stable Herdr/socket and
 > user-owned `.superpowers/` remain untouched.
 >
 > **CURRENT OVERRIDE — TRAIL-T7.10 HIDDEN-CHILD ACTIVATION CLOSED

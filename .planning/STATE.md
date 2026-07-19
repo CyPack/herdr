@@ -11,12 +11,14 @@
   Trail projection/render/input, and watcher dependency chain. The approved
   code-level plan is
   `docs/superpowers/plans/2026-07-19-herdr-miller-mtime-groups-implementation.md`.
-  MTIME-0 through MTIME-3 are complete. Dependency freeze is `1d400822`;
+  MTIME-0 through MTIME-5 are complete. Dependency freeze is `1d400822`;
   prepared symlink-preserving metadata and strict mixed mtime sorting are
   `c8a8c4e3` RED / `7f6f9575` GREEN; local-calendar classification and compact
-  labels are `0831c855` RED / `86ac4cff` GREEN. Fresh full Rust evidence is
-  3,534/3,534 PASS + 2 skip and Linux all-targets clippy is clean. Next:
-  MTIME-4 grouped Trail projection/render RED. Stable Herdr/socket and
+  labels are `0831c855` RED / `86ac4cff` GREEN; grouped projection/render are
+  `9c1124c9` RED / `89e60144` GREEN; typed header input and exact-path watcher
+  preservation are `6e0460e8` RED / `9338cbbc` GREEN. Fresh full Rust evidence
+  is 3,551/3,551 PASS + 2 skip and Linux all-targets clippy is clean. Next:
+  MTIME-6 deterministic Playwright Chromium VIS-15/16/17. Stable Herdr/socket and
   `.superpowers/` are untouched.
 - Current override: **FMR-4/FMR-5 plugin boundary active.** The reboot regression is
   partly explained by executable drift: `/home/ayaz/.local/bin/herdr` is a

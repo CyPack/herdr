@@ -40,21 +40,23 @@ Playwright Chromium over deterministic Ratatui cells.
 - [x] **MTIME-3 Local-calendar groups** (`0831c855` RED / `86ac4cff` GREEN).
   - [x] RED fixed-anchor midnight/DST/future/unknown boundary matrix.
   - [x] GREEN pure section classifier and compact timestamp formatter.
-- [ ] **MTIME-4 Grouped Trail projection and render.**
-  - [ ] RED logical header rows, selected-entry visibility, omission-status,
+- [x] **MTIME-4 Grouped Trail projection and render** (`9c1124c9` RED /
+  `89e60144` GREEN).
+  - [x] RED logical header rows, selected-entry visibility, omission-status,
     timestamp/name/action geometry, and tiny/partial-column behavior.
-  - [ ] GREEN non-actionable headers and complete-or-omitted right timestamps.
-  - [ ] Preserve fractional horizontal scroll, detail panel, Unicode, and
+  - [x] GREEN non-actionable headers and complete-or-omitted right timestamps.
+  - [x] Preserve fractional horizontal scroll, detail panel, Unicode, and
     row-action authority.
-- [ ] **MTIME-5 Input and watcher reconciliation.**
-  - [ ] RED inert header clicks, vertically-owned header wheel, stale rows,
+- [x] **MTIME-5 Input and watcher reconciliation** (`6e0460e8` RED /
+  `9338cbbc` GREEN).
+  - [x] RED inert header clicks, vertically-owned header wheel, stale rows,
     mtime reorder, selection, multi-selection, and Trail child identity.
-  - [ ] GREEN reuse exact-path reconciliation without a second selection
+  - [x] GREEN reuse exact-path reconciliation without a second selection
     lifecycle.
 - [ ] **MTIME-6 Playwright Chromium visual oracle.**
   - [ ] Export fixed-clock ASCII fixtures for normal, narrow/partial, and
     reorder-selection views.
-  - [ ] Add VIS-01/02/03 baselines spec-scoped and prove a controlled cell
+  - [ ] Add VIS-15/16/17 baselines spec-scoped and prove a controlled cell
     mutation fails.
   - [ ] Run the complete Chromium suite without global snapshot rewriting.
 - [ ] **MTIME-7 Production closure.**

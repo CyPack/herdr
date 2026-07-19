@@ -18,9 +18,11 @@ Fresh graph 23,556/125,078 current `collect_directory_entries`,
 `render_trail_view` gövdelerini döndürdü. MTIME-0..3 kapandı: dependency
 freeze `1d400822`; optional symlink-preserving mtime ve strict mixed descending
 sort `c8a8c4e3` RED / `7f6f9575` GREEN; pure local-calendar groups
-`0831c855` RED / `86ac4cff` GREEN. Fresh full Rust 3,534/3,534 PASS + 2 skip,
-Linux all-targets clippy temiz. Sıradaki iş MTIME-4 grouped Trail
-projection/render RED. Stable Herdr/socket, upstream ve `.superpowers/`
+`0831c855` RED / `86ac4cff` GREEN; grouped projection/render `9c1124c9` RED /
+`89e60144` GREEN; typed header input ve watcher path preservation `6e0460e8`
+RED / `9338cbbc` GREEN. Fresh full Rust 3,551/3,551 PASS + 2 skip, Linux
+all-targets clippy temiz. Sıradaki iş MTIME-6 deterministic Playwright
+Chromium VIS-15/16/17. Stable Herdr/socket, upstream ve `.superpowers/`
 untouched.
 
 **CURRENT OVERRIDE — FMR-2A REMOTE/HEADLESS FILES SHORTCUT FIX CLOSED.**
@@ -586,31 +588,18 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 14 ve
-89, toplam 103 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 12 ve
+89, toplam 101 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 14 unchecked
-
-- [ ] **MTIME-4 Grouped Trail projection and render.**
-  - [ ] RED logical header rows, selected-entry visibility, omission-status,
-    timestamp/name/action geometry, and tiny/partial-column behavior.
-  - [ ] GREEN non-actionable headers and complete-or-omitted right timestamps.
-  - [ ] Preserve fractional horizontal scroll, detail panel, Unicode, and
-    row-action authority.
-
-- [ ] **MTIME-5 Input and watcher reconciliation.**
-  - [ ] RED inert header clicks, vertically-owned header wheel, stale rows,
-    mtime reorder, selection, multi-selection, and Trail child identity.
-  - [ ] GREEN reuse exact-path reconciliation without a second selection
-    lifecycle.
+### Source: `.codex/TASKS.md` — 12 unchecked
 
 - [ ] **MTIME-6 Playwright Chromium visual oracle.**
   - [ ] Export fixed-clock ASCII fixtures for normal, narrow/partial, and
     reorder-selection views.
-  - [ ] Add VIS-01/02/03 baselines spec-scoped and prove a controlled cell
+  - [ ] Add VIS-15/16/17 baselines spec-scoped and prove a controlled cell
     mutation fails.
   - [ ] Run the complete Chromium suite without global snapshot rewriting.
 
