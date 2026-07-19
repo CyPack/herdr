@@ -812,6 +812,191 @@ enum ClientLoopEvent {
     Timer,
 }
 
+const CLIENT_INPUT_BURST_MAX: usize = 32;
+
+#[derive(Clone)]
+struct LatestSemanticFrameSender {
+    slot: Arc<Mutex<Option<crate::protocol::FrameData>>>,
+    ready_tx: tokio::sync::mpsc::Sender<()>,
+}
+
+struct LatestSemanticFrameReceiver {
+    slot: Arc<Mutex<Option<crate::protocol::FrameData>>>,
+    ready_rx: tokio::sync::mpsc::Receiver<()>,
+}
+
+struct ClientEventSenders {
+    input: tokio::sync::mpsc::Sender<ClientLoopEvent>,
+    ordered: tokio::sync::mpsc::Sender<ClientLoopEvent>,
+    semantic: LatestSemanticFrameSender,
+}
+
+struct ClientEventReceivers {
+    input: tokio::sync::mpsc::Receiver<ClientLoopEvent>,
+    ordered: tokio::sync::mpsc::Receiver<ClientLoopEvent>,
+    semantic: LatestSemanticFrameReceiver,
+}
+
+impl LatestSemanticFrameSender {
+    /// Publish a complete semantic snapshot without waiting behind older
+    /// presentation work. A full readiness channel already represents the
+    /// newer snapshot stored in `slot`; a closed channel retires the reader.
+    fn publish(&self, frame: crate::protocol::FrameData) -> bool {
+        let mut slot = match self.slot.lock() {
+            Ok(slot) => slot,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *slot = Some(frame);
+        drop(slot);
+
+        match self.ready_tx.try_send(()) {
+            Ok(()) | Err(tokio::sync::mpsc::error::TrySendError::Full(())) => true,
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => false,
+        }
+    }
+}
+
+impl LatestSemanticFrameReceiver {
+    fn take(&self) -> Option<crate::protocol::FrameData> {
+        let mut slot = match self.slot.lock() {
+            Ok(slot) => slot,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        slot.take()
+    }
+
+    fn try_take_ready(&mut self) -> Option<crate::protocol::FrameData> {
+        while self.ready_rx.try_recv().is_ok() {
+            if let Some(frame) = self.take() {
+                return Some(frame);
+            }
+        }
+        None
+    }
+
+    async fn recv_ready(&mut self) -> Option<crate::protocol::FrameData> {
+        while self.ready_rx.recv().await.is_some() {
+            if let Some(frame) = self.take() {
+                return Some(frame);
+            }
+        }
+        self.take()
+    }
+}
+
+fn client_event_lanes(capacity: usize) -> (ClientEventSenders, ClientEventReceivers) {
+    let (input_tx, input_rx) = tokio::sync::mpsc::channel(capacity);
+    let (ordered_tx, ordered_rx) = tokio::sync::mpsc::channel(capacity);
+    let (semantic_ready_tx, semantic_ready_rx) = tokio::sync::mpsc::channel(1);
+    let semantic_slot = Arc::new(Mutex::new(None));
+    (
+        ClientEventSenders {
+            input: input_tx,
+            ordered: ordered_tx,
+            semantic: LatestSemanticFrameSender {
+                slot: semantic_slot.clone(),
+                ready_tx: semantic_ready_tx,
+            },
+        },
+        ClientEventReceivers {
+            input: input_rx,
+            ordered: ordered_rx,
+            semantic: LatestSemanticFrameReceiver {
+                slot: semantic_slot,
+                ready_rx: semantic_ready_rx,
+            },
+        },
+    )
+}
+
+impl ClientEventReceivers {
+    fn try_next(&mut self, input_burst: &mut usize) -> Option<ClientLoopEvent> {
+        if *input_burst < CLIENT_INPUT_BURST_MAX {
+            if let Ok(event) = self.input.try_recv() {
+                *input_burst += 1;
+                return Some(event);
+            }
+        }
+
+        if let Ok(event) = self.ordered.try_recv() {
+            *input_burst = 0;
+            return Some(event);
+        }
+        if let Some(frame) = self.semantic.try_take_ready() {
+            *input_burst = 0;
+            return Some(ClientLoopEvent::ServerMessage(ServerMessage::Frame(frame)));
+        }
+        if let Ok(event) = self.input.try_recv() {
+            *input_burst = 1;
+            return Some(event);
+        }
+        None
+    }
+
+    async fn next(&mut self, input_burst: &mut usize) -> ClientLoopEvent {
+        loop {
+            if let Some(event) = self.try_next(input_burst) {
+                return event;
+            }
+
+            let input_open = !self.input.is_closed();
+            let ordered_open = !self.ordered.is_closed();
+            let semantic_open = !self.semantic.ready_rx.is_closed();
+            let event = if *input_burst < CLIENT_INPUT_BURST_MAX {
+                tokio::select! {
+                    biased;
+                    event = self.input.recv(), if input_open => {
+                        event.inspect(|_| {
+                            *input_burst += 1;
+                        })
+                    }
+                    event = self.ordered.recv(), if ordered_open => {
+                        event.inspect(|_| {
+                            *input_burst = 0;
+                        })
+                    }
+                    frame = self.semantic.recv_ready(), if semantic_open => {
+                        frame.map(|frame| {
+                            *input_burst = 0;
+                            ClientLoopEvent::ServerMessage(ServerMessage::Frame(frame))
+                        })
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                        Some(ClientLoopEvent::Timer)
+                    }
+                }
+            } else {
+                tokio::select! {
+                    biased;
+                    event = self.ordered.recv(), if ordered_open => {
+                        event.inspect(|_| {
+                            *input_burst = 0;
+                        })
+                    }
+                    frame = self.semantic.recv_ready(), if semantic_open => {
+                        frame.map(|frame| {
+                            *input_burst = 0;
+                            ClientLoopEvent::ServerMessage(ServerMessage::Frame(frame))
+                        })
+                    }
+                    event = self.input.recv(), if input_open => {
+                        event.inspect(|_| {
+                            *input_burst = 1;
+                        })
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                        Some(ClientLoopEvent::Timer)
+                    }
+                }
+            };
+
+            if let Some(event) = event {
+                return event;
+            }
+        }
+    }
+}
+
 /// Runs the thin client: connects to the server, performs the handshake,
 /// and enters the main event loop.
 ///
@@ -1300,14 +1485,16 @@ async fn run_client_loop(
     debug!(?negotiated_encoding, "client render encoding active");
     let host_mouse_capture_active = Arc::new(AtomicBool::new(state.mouse_capture_active));
 
-    // Channel for events from the stdin, resize, and server reader threads.
-    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<ClientLoopEvent>(256);
+    // Input, ordered control, and replaceable semantic presentation use
+    // separate bounded lanes. Complete semantic frames are safe to coalesce;
+    // terminal deltas and control messages remain lossless and ordered.
+    let (event_senders, mut event_receivers) = client_event_lanes(256);
 
     // Spawn the stdin reader thread.
     let will_query_host_terminal_theme =
         state.attach_escape.is_none() && should_query_host_terminal_theme();
     let stdin_quit = should_quit.clone();
-    let stdin_tx = event_tx.clone();
+    let stdin_tx = event_senders.input.clone();
     let stdin_mouse_capture_active = host_mouse_capture_active.clone();
     std::thread::spawn(move || {
         input::stdin_reader_loop(
@@ -1324,7 +1511,7 @@ async fn run_client_loop(
 
     // Spawn the resize poller thread.
     let resize_quit = should_quit.clone();
-    let resize_tx = event_tx.clone();
+    let resize_tx = event_senders.input.clone();
     let kitty_graphics_enabled = state.kitty_graphics_enabled;
     std::thread::spawn(move || {
         resize_poll_loop(resize_tx, cols, rows, kitty_graphics_enabled, &resize_quit);
@@ -1333,7 +1520,8 @@ async fn run_client_loop(
     // Spawn the server reader thread (blocking reads from the socket).
     // Clone the stream's file descriptor so we can read from a blocking stream.
     let server_read_quit = should_quit.clone();
-    let server_read_tx = event_tx.clone();
+    let server_ordered_tx = event_senders.ordered;
+    let server_semantic_tx = event_senders.semantic;
     let read_stream = stream.try_clone().map_err(ClientError::ConnectionFailed)?;
     std::thread::spawn(move || {
         let max_frame_size = if kitty_graphics_enabled {
@@ -1343,7 +1531,8 @@ async fn run_client_loop(
         };
         server_reader_thread(
             read_stream,
-            server_read_tx,
+            server_ordered_tx,
+            server_semantic_tx,
             &server_read_quit,
             max_frame_size,
         );
@@ -1361,11 +1550,9 @@ async fn run_client_loop(
     let mut prefix_input_source = crate::platform::RealPrefixInputSource::default();
 
     // Main event loop.
+    let mut input_burst = 0usize;
     while !should_quit.load(Ordering::Acquire) {
-        let event = tokio::select! {
-            ev = event_rx.recv() => ev.unwrap_or(ClientLoopEvent::Timer),
-            _ = tokio::time::sleep(Duration::from_millis(100)) => ClientLoopEvent::Timer,
-        };
+        let event = event_receivers.next(&mut input_burst).await;
 
         match event {
             #[cfg(unix)]
@@ -1618,7 +1805,8 @@ async fn run_client_loop(
 /// to the main event loop.
 fn server_reader_thread(
     mut stream: LocalStream,
-    event_tx: tokio::sync::mpsc::Sender<ClientLoopEvent>,
+    ordered_tx: tokio::sync::mpsc::Sender<ClientLoopEvent>,
+    semantic_tx: LatestSemanticFrameSender,
     should_quit: &Arc<AtomicBool>,
     max_frame_size: usize,
 ) {
@@ -1627,7 +1815,7 @@ fn server_reader_thread(
     // blocking after handshake, but we enforce it here as a safety measure.
     if stream.set_nonblocking(false).is_err() {
         // If we can't set blocking mode, the stream is likely broken.
-        let _ = event_tx.blocking_send(ClientLoopEvent::ServerDisconnected);
+        let _ = ordered_tx.blocking_send(ClientLoopEvent::ServerDisconnected);
         return;
     }
 
@@ -1637,8 +1825,13 @@ fn server_reader_thread(
         }
 
         match protocol::read_message(&mut stream, max_frame_size) {
+            Ok(ServerMessage::Frame(frame)) => {
+                if !semantic_tx.publish(frame) {
+                    break;
+                }
+            }
             Ok(msg) => {
-                if event_tx
+                if ordered_tx
                     .blocking_send(ClientLoopEvent::ServerMessage(msg))
                     .is_err()
                 {
@@ -1647,7 +1840,7 @@ fn server_reader_thread(
             }
             Err(protocol::FramingError::UnexpectedEof) => {
                 // Server closed connection.
-                let _ = event_tx.blocking_send(ClientLoopEvent::ServerDisconnected);
+                let _ = ordered_tx.blocking_send(ClientLoopEvent::ServerDisconnected);
                 break;
             }
             Err(protocol::FramingError::Io(err)) if err.kind() == io::ErrorKind::WouldBlock => {
@@ -1658,7 +1851,7 @@ fn server_reader_thread(
             }
             Err(err) => {
                 warn!(err = %err, "server read error");
-                let _ = event_tx.blocking_send(ClientLoopEvent::ServerDisconnected);
+                let _ = ordered_tx.blocking_send(ClientLoopEvent::ServerDisconnected);
                 break;
             }
         }
@@ -2974,21 +3167,43 @@ mod tests {
         }
     }
 
+    fn fmp_is_input_event(event: &ClientLoopEvent) -> bool {
+        #[cfg(unix)]
+        {
+            matches!(
+                event,
+                ClientLoopEvent::StdinInput(_) | ClientLoopEvent::Resize(_, _, _, _)
+            )
+        }
+        #[cfg(windows)]
+        {
+            matches!(
+                event,
+                ClientLoopEvent::StdinEvents(_) | ClientLoopEvent::Resize(_, _, _, _)
+            )
+        }
+    }
+
     // TP-FMP-CLIENT-01: an exact input event cannot sit behind a stale burst
     // of complete semantic presentation frames.
     #[test]
     fn fmp_client_input_precedes_semantic_frame_backlog() {
-        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let (senders, mut receivers) = client_event_lanes(64);
         for marker in 1..=32 {
-            tx.try_send(ClientLoopEvent::ServerMessage(ServerMessage::Frame(
-                fmp_semantic_frame(marker),
-            )))
-            .expect("fixture stays within the channel bound");
+            assert!(
+                senders.semantic.publish(fmp_semantic_frame(marker)),
+                "semantic reader remains live"
+            );
         }
-        tx.try_send(fmp_input_event(0x5a))
+        senders
+            .input
+            .try_send(fmp_input_event(0x5a))
             .expect("exact input fits after the frame burst");
 
-        let first = rx.try_recv().expect("one event is ready");
+        let mut input_burst = 0;
+        let first = receivers
+            .try_next(&mut input_burst)
+            .expect("one event is ready");
         match first {
             #[cfg(unix)]
             ClientLoopEvent::StdinInput(data) => assert_eq!(data, vec![0x5a]),
@@ -3003,22 +3218,93 @@ mod tests {
     // intermediate frame.
     #[test]
     fn fmp_client_semantic_frame_burst_keeps_only_newest_snapshot() {
-        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let (senders, mut receivers) = client_event_lanes(64);
         for marker in 1..=32 {
-            tx.try_send(ClientLoopEvent::ServerMessage(ServerMessage::Frame(
-                fmp_semantic_frame(marker),
-            )))
-            .expect("fixture stays within the channel bound");
+            assert!(
+                senders.semantic.publish(fmp_semantic_frame(marker)),
+                "semantic reader remains live"
+            );
         }
 
-        let first = rx.try_recv().expect("one semantic frame is ready");
+        let mut input_burst = 0;
+        let first = receivers
+            .try_next(&mut input_burst)
+            .expect("one semantic frame is ready");
         let ClientLoopEvent::ServerMessage(ServerMessage::Frame(frame)) = first else {
             panic!("expected a semantic frame");
         };
         assert_eq!(frame.width, 32, "the newest complete snapshot must win");
         assert!(
-            rx.try_recv().is_err(),
+            receivers.try_next(&mut input_burst).is_none(),
             "no stale semantic frame backlog may remain"
         );
+    }
+
+    // TP-FMP-CLIENT-03: incremental terminal frames are not complete
+    // snapshots, so they remain lossless and ordered on the control lane.
+    #[test]
+    fn fmp_client_terminal_frames_remain_lossless_and_ordered() {
+        let (senders, mut receivers) = client_event_lanes(8);
+        for seq in [41, 42] {
+            senders
+                .ordered
+                .try_send(ClientLoopEvent::ServerMessage(ServerMessage::Terminal(
+                    crate::protocol::TerminalFrame {
+                        seq,
+                        width: 80,
+                        height: 24,
+                        full: false,
+                        bytes: vec![seq as u8],
+                    },
+                )))
+                .expect("ordered fixture fits");
+        }
+
+        let mut input_burst = 0;
+        let sequences = (0..2)
+            .map(|_| {
+                let event = receivers
+                    .try_next(&mut input_burst)
+                    .expect("ordered frame is ready");
+                let ClientLoopEvent::ServerMessage(ServerMessage::Terminal(frame)) = event else {
+                    panic!("expected ordered terminal frame");
+                };
+                frame.seq
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(sequences, vec![41, 42]);
+    }
+
+    // TP-FMP-CLIENT-04: input-first does not mean control starvation. After
+    // one bounded input quantum, one ready ordered event must make progress.
+    #[test]
+    fn fmp_client_input_quantum_yields_to_ordered_control() {
+        let (senders, mut receivers) = client_event_lanes(64);
+        for marker in 0..=CLIENT_INPUT_BURST_MAX {
+            senders
+                .input
+                .try_send(fmp_input_event(marker as u8))
+                .expect("input fixture fits");
+        }
+        senders
+            .ordered
+            .try_send(ClientLoopEvent::ServerMessage(ServerMessage::WindowTitle {
+                title: Some("ready".to_owned()),
+            }))
+            .expect("ordered control fixture fits");
+
+        let mut input_burst = 0;
+        for _ in 0..CLIENT_INPUT_BURST_MAX {
+            let event = receivers
+                .try_next(&mut input_burst)
+                .expect("input quantum remains ready");
+            assert!(fmp_is_input_event(&event));
+        }
+        assert!(matches!(
+            receivers.try_next(&mut input_burst),
+            Some(ClientLoopEvent::ServerMessage(
+                ServerMessage::WindowTitle { .. }
+            ))
+        ));
     }
 }
