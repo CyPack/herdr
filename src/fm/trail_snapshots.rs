@@ -331,6 +331,18 @@ impl TrailSnapshots {
         delta: isize,
     ) -> TrailActivateOutcome {
         let col_idx = trail.active_col();
+        self.move_selection_in_column(trail, col_idx, delta)
+    }
+
+    /// Step selection inside one exact loaded column. Header-wheel input uses
+    /// this seam so typed header terrain cannot silently fall back to the
+    /// active or horizontally visible column.
+    pub(crate) fn move_selection_in_column(
+        &mut self,
+        trail: &mut TrailState,
+        col_idx: usize,
+        delta: isize,
+    ) -> TrailActivateOutcome {
         let Some(col) = self.cols.get(col_idx) else {
             return TrailActivateOutcome::Rejected;
         };

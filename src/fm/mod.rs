@@ -903,7 +903,20 @@ impl FmState {
         delta: isize,
     ) -> trail_snapshots::TrailActivateOutcome {
         let owner_col = self.trail.active_col();
-        let outcome = self.trail_snapshots.move_selection(&mut self.trail, delta);
+        self.move_trail_selection_in_column(owner_col, delta)
+    }
+
+    /// Move selection in one exact loaded Trail column. This is the typed
+    /// non-row header input seam; the accepted entry still installs the same
+    /// path-validated operation projection as ordinary row activation.
+    pub(crate) fn move_trail_selection_in_column(
+        &mut self,
+        owner_col: usize,
+        delta: isize,
+    ) -> trail_snapshots::TrailActivateOutcome {
+        let outcome =
+            self.trail_snapshots
+                .move_selection_in_column(&mut self.trail, owner_col, delta);
         if outcome == trail_snapshots::TrailActivateOutcome::Rejected {
             return outcome;
         }
@@ -930,6 +943,9 @@ impl FmState {
         };
         if !self.install_trail_operation_projection(owner_col, entry_index, &expected_path) {
             return trail_snapshots::TrailActivateOutcome::Rejected;
+        }
+        if outcome == trail_snapshots::TrailActivateOutcome::Branched {
+            self.miller.horizontal.follow_active = true;
         }
         outcome
     }

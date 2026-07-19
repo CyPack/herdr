@@ -580,6 +580,16 @@ impl App {
                 .cloned()
             })
             .flatten();
+        let trail_section_header_target = trail_frame_is_live
+            .then(|| {
+                crate::ui::trail_section_header_at(
+                    &self.state.view.file_manager_trail,
+                    mouse.column,
+                    mouse.row,
+                )
+                .cloned()
+            })
+            .flatten();
         let row_action = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
             .then_some(())
             .filter(|_| mouse.modifiers.is_empty())
@@ -597,12 +607,32 @@ impl App {
                 entry_path: area.entry_path.clone(),
             });
 
+        if let Some(header) = trail_section_header_target.as_ref() {
+            if mouse.modifiers.is_empty()
+                && matches!(
+                    mouse.kind,
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                )
+            {
+                let delta = if matches!(mouse.kind, MouseEventKind::ScrollUp) {
+                    -1
+                } else {
+                    1
+                };
+                if let Some(file_manager) = self.state.file_manager.as_mut() {
+                    let _ = file_manager.move_trail_selection_in_column(header.trail_index, delta);
+                }
+            }
+            return FileManagerMouseDispatch::Consumed;
+        }
+
         // Some terminal hosts report a horizontal trackpad/wheel gesture as
         // an unmodified vertical wheel event. Preserve visible-row vertical
         // navigation, but normalize the same event over empty live Trail
         // column body into the existing fractional horizontal reducer.
         let plain_wheel_over_empty_trail = trail_frame_is_live
             && trail_row_target.is_none()
+            && trail_section_header_target.is_none()
             && mouse.modifiers.is_empty()
             && matches!(
                 mouse.kind,

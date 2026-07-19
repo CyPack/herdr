@@ -613,6 +613,21 @@ pub(crate) fn trail_row_at(view: &TrailViewSnapshot, x: u16, y: u16) -> Option<&
         .find(|row| row.rect.contains(position))
 }
 
+/// Resolve one screen position to a prepared date header. Headers carry only
+/// their owning Trail column; they intentionally expose no entry/path
+/// authority.
+pub(crate) fn trail_section_header_at(
+    view: &TrailViewSnapshot,
+    x: u16,
+    y: u16,
+) -> Option<&TrailSectionHeaderView> {
+    let position = ratatui::layout::Position::new(x, y);
+    view.columns
+        .iter()
+        .flat_map(|column| column.section_headers.iter())
+        .find(|header| header.rect.contains(position))
+}
+
 /// Paint the projected trail: rows via the shared entry-row renderer (icons,
 /// truncation, selection emphasis) and one-cell dividers between columns.
 /// The selected row stays emphasized in EVERY visible column (LAW 1).

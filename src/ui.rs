@@ -43,7 +43,9 @@ pub(crate) use self::file_manager::miller::{
 };
 #[cfg(test)]
 pub(crate) use self::file_manager::trail_view::project_trail_view;
-pub(crate) use self::file_manager::trail_view::{trail_row_at, TrailRowView, TrailViewSnapshot};
+pub(crate) use self::file_manager::trail_view::{
+    trail_row_at, trail_section_header_at, TrailRowView, TrailViewSnapshot,
+};
 use self::file_manager::{
     agent_attachment_picker_visible_rows, compute_agent_attachment_picker_row_areas,
     compute_file_manager_header_action_areas, render_agent_attachment_picker, render_file_manager,

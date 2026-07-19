@@ -1022,6 +1022,137 @@ mod tests {
         drop(watch_tx);
     }
 
+    // MTIME-5: an mtime-only watcher refresh may move every vector index, but
+    // selected, bulk-selected, ancestor-child, and detail authority remain
+    // exact paths. The owned event advances each prepared generation once.
+    #[test]
+    fn grouped_miller_watcher_mtime_reorder_preserves_exact_paths() {
+        let td = TempDir::new("grouped-mtime-reorder");
+        let child = td.root.join("child");
+        std::fs::create_dir(&child).expect("create grouped watcher child");
+        let a = child.join("a.txt");
+        let b = child.join("b.txt");
+        let c = child.join("c.txt");
+        for path in [&a, &b, &c] {
+            std::fs::write(path, b"x").expect("write grouped watcher entry");
+        }
+        let set_modified =
+            |path: &Path, seconds| {
+                std::fs::File::open(path)
+                    .expect("open grouped watcher mtime fixture")
+                    .set_times(std::fs::FileTimes::new().set_modified(
+                        std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds),
+                    ))
+                    .expect("set grouped watcher fixture mtime");
+            };
+        set_modified(&a, 300);
+        set_modified(&b, 200);
+        set_modified(&c, 100);
+
+        let mut file_manager = crate::fm::FmState::open_trail_to(&td.root, &child, false)
+            .expect("open grouped child trail");
+        let b_index = file_manager.trail_snapshots.cols()[1]
+            .entries()
+            .iter()
+            .position(|entry| entry.path == b)
+            .expect("initial selected index");
+        assert_eq!(
+            file_manager.activate_trail_entry(1, b_index, &b),
+            crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
+        );
+        let c_index = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == c)
+            .expect("initial bulk index");
+        assert!(file_manager.replace_selection(b_index));
+        assert!(file_manager.toggle_selection(c_index));
+        let before_paths = file_manager.multi_selection_paths().clone();
+        let before_anchor = file_manager.multi_selection_anchor().map(Path::to_path_buf);
+        let before_selected = file_manager
+            .selected()
+            .map(|entry| entry.path.clone())
+            .expect("selected exact path before refresh");
+        let before_trail_selected = file_manager.trail.cols()[1]
+            .selected
+            .clone()
+            .expect("selected Trail path before refresh");
+        let before_detail = file_manager
+            .trail_snapshots
+            .detail()
+            .map(|detail| detail.path.clone())
+            .expect("detail path before refresh");
+        let before_b_index = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == b)
+            .expect("initial operation projection index");
+
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+        let now = Instant::now();
+        assert!(!app.sync_file_manager_watcher_at(now));
+        let watcher_generation = app.file_manager_watcher.generation();
+        let before_generations = app
+            .state
+            .file_manager
+            .as_ref()
+            .map(|file_manager| {
+                (
+                    file_manager.directory_generation,
+                    file_manager.preview_generation,
+                )
+            })
+            .expect("open grouped watcher FM");
+
+        set_modified(&b, 400);
+        let (watch_tx, watch_rx) = sync_channel(1);
+        watch_tx
+            .send(message(
+                watcher_generation,
+                b.to_str().expect("UTF-8 grouped watcher path"),
+            ))
+            .expect("queue grouped mtime watcher event");
+        app.file_manager_watcher.receiver = Some(watch_rx);
+
+        assert!(app.sync_file_manager_watcher_at(now));
+        let refreshed = app.state.file_manager.as_ref().expect("refreshed FM");
+        let after_b_index = refreshed
+            .entries
+            .iter()
+            .position(|entry| entry.path == b)
+            .expect("reordered selected path");
+        assert_ne!(after_b_index, before_b_index);
+        assert_eq!(after_b_index, 0);
+        assert_eq!(
+            refreshed.selected().map(|entry| entry.path.as_path()),
+            Some(before_selected.as_path())
+        );
+        assert_eq!(refreshed.multi_selection_paths(), &before_paths);
+        assert_eq!(refreshed.multi_selection_anchor(), before_anchor.as_deref());
+        assert_eq!(
+            refreshed.trail.cols()[0].selected.as_deref(),
+            Some(child.as_path())
+        );
+        assert_eq!(
+            refreshed.trail.cols()[1].selected.as_deref(),
+            Some(before_trail_selected.as_path())
+        );
+        assert_eq!(
+            refreshed
+                .trail_snapshots
+                .detail()
+                .map(|detail| detail.path.as_path()),
+            Some(before_detail.as_path())
+        );
+        assert_eq!(refreshed.directory_generation, before_generations.0 + 1);
+        assert_eq!(refreshed.preview_generation, before_generations.1 + 1);
+        assert!(!app.sync_file_manager_watcher_at(now));
+        drop(watch_tx);
+    }
+
     // TP-TRAIL-T7-WATCH-01: watcher ownership follows the single active
     // Trail column, not the transitional operation projection's cwd. A
     // child-column event refreshes that exact snapshot without collapsing
