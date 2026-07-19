@@ -7534,4 +7534,299 @@ command = ["inspect"]
         assert!(app.state.context_menu.is_none());
         assert_ne!(app.state.mode, Mode::ContextMenu);
     }
+
+    fn fcl_location_item(
+        label: impl Into<String>,
+        path: PathBuf,
+    ) -> crate::app::state::FileManagerSidebarItem {
+        crate::app::state::FileManagerSidebarItem {
+            label: label.into(),
+            path,
+            icon: crate::app::state::FileManagerSidebarIcon::Pin,
+            accessible: true,
+            ejectable: false,
+        }
+    }
+
+    fn install_fcl_location_model(app: &mut crate::app::App, paths: &[PathBuf]) {
+        let favorites = paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| fcl_location_item(format!("Location {index:02}"), path.clone()))
+            .collect();
+        app.state.file_manager_sidebar = crate::app::state::FileManagerSidebarModel::from_sources(
+            favorites,
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+
+    // TP-FCL-INPUT-01: one fresh content-local row owns one exact navigation
+    // intent. Vertical wheel input over the rail changes only its visible
+    // window, leaving Trail presentation and filesystem state untouched.
+    #[test]
+    fn fcl_input_fresh_row_click_and_vertical_rail_scroll_are_content_owned() {
+        let td = TempDir::new("fcl-rail-input");
+        let paths = (0..12)
+            .map(|index| {
+                let name = format!("location-{index:02}");
+                td.dir(&name);
+                td.root.join(name)
+            })
+            .collect::<Vec<_>>();
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        install_fcl_location_model(&mut app, &paths);
+        let frame = Rect::new(0, 0, 80, 8);
+        compute_view(&mut app.state, frame);
+
+        let target = app
+            .state
+            .view
+            .file_manager_locations
+            .rows
+            .get(1)
+            .cloned()
+            .expect("second complete rail row");
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                target.rect.x,
+                target.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.state.request_file_manager_sidebar_navigation,
+            Some(target.path.clone()),
+            "the fresh row must emit its exact prepared path once"
+        );
+        app.state.request_file_manager_sidebar_navigation = None;
+
+        let first_before = app.state.view.file_manager_locations.rows[0].path.clone();
+        let trail_before = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open Files")
+            .miller
+            .horizontal;
+        let rail = app
+            .state
+            .view
+            .file_manager_locations
+            .layout
+            .rail
+            .expect("persistent rail");
+        for _ in 0..2 {
+            assert_eq!(
+                app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollDown, rail.x, rail.y,)),
+                FileManagerMouseDispatch::Consumed
+            );
+        }
+        compute_view(&mut app.state, frame);
+
+        assert_ne!(
+            app.state.view.file_manager_locations.rows[0].path, first_before,
+            "rail scrolling must advance the visible prepared rows"
+        );
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open Files")
+                .miller
+                .horizontal,
+            trail_before,
+            "vertical rail input must not mutate Trail horizontal authority"
+        );
+        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+    }
+
+    // TP-FCL-INPUT-02: horizontal ownership is rectangle-local. The rail
+    // rejects native horizontal gestures, while the same gesture in Trail
+    // preserves the existing fractional one-third reducer. Existing
+    // TP-TRAIL-HSCROLL and TP-TRAIL-WHEEL-FALLBACK tests continue to cover
+    // Shift-wheel and plain-wheel host normalization byte-for-byte.
+    #[test]
+    fn fcl_input_trail_horizontal_scroll_never_moves_the_locations_rail() {
+        let td = TempDir::new("fcl-horizontal-ownership");
+        let root = td.root.join("root");
+        let mut current = root.clone();
+        for level in 0..9 {
+            current.push(format!("level-{level}"));
+        }
+        fs::create_dir_all(&current).expect("create deep Trail");
+        let locations = (0..10)
+            .map(|index| {
+                let path = td.root.join(format!("favorite-{index:02}"));
+                fs::create_dir_all(&path).expect("create favorite");
+                path
+            })
+            .collect::<Vec<_>>();
+        let mut file_manager =
+            FmState::open_trail_to(&root, &current, false).expect("open deep Trail");
+        for segment in &mut file_manager.miller.chain {
+            segment.preferred_width = 24;
+        }
+        let mut app = runtime_app_with_fm(file_manager);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        install_fcl_location_model(&mut app, &locations);
+        let frame = Rect::new(0, 0, 82, 12);
+        compute_view(&mut app.state, frame);
+
+        let rail_rows_before = app
+            .state
+            .view
+            .file_manager_locations
+            .rows
+            .iter()
+            .map(|row| row.path.clone())
+            .collect::<Vec<_>>();
+        let offset_before = app.state.view.file_manager_trail.offset_cells;
+        assert!(offset_before > 0, "fixture needs hidden ancestor columns");
+        let rail = app
+            .state
+            .view
+            .file_manager_locations
+            .layout
+            .rail
+            .expect("persistent rail");
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollLeft, rail.x, rail.y,)),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open Files")
+                .miller
+                .horizontal
+                .offset_cells,
+            offset_before,
+            "a rail cell cannot authorize Trail horizontal movement"
+        );
+
+        let trail_probe = app
+            .state
+            .view
+            .file_manager_trail
+            .columns
+            .first()
+            .map(|column| (column.rect.x, column.rect.bottom().saturating_sub(1)))
+            .expect("visible Trail column");
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::ScrollLeft,
+                trail_probe.0,
+                trail_probe.1,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        let offset_after = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open Files")
+            .miller
+            .horizontal
+            .offset_cells;
+        assert!(
+            offset_after < offset_before,
+            "Trail keeps its fractional left-scroll reducer"
+        );
+        compute_view(&mut app.state, frame);
+        assert_eq!(
+            app.state
+                .view
+                .file_manager_locations
+                .rows
+                .iter()
+                .map(|row| row.path.clone())
+                .collect::<Vec<_>>(),
+            rail_rows_before,
+            "Trail horizontal input must not move the rail window"
+        );
+    }
+
+    // TP-FCL-INPUT-03: non-row cells and stale identities are fail-closed.
+    // A current row is revalidated against both Files generation and prepared
+    // model revision before any exact path intent can be emitted.
+    #[test]
+    fn fcl_input_gaps_modifiers_compact_and_stale_rows_are_inert() {
+        let td = TempDir::new("fcl-inert-input");
+        td.dir("home");
+        td.dir("downloads");
+        let paths = vec![td.root.join("home"), td.root.join("downloads")];
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        install_fcl_location_model(&mut app, &paths);
+        let frame = Rect::new(0, 0, 80, 8);
+        compute_view(&mut app.state, frame);
+        let stale_row = app.state.view.file_manager_locations.rows[0].clone();
+
+        app.state.file_manager_sidebar.replace_with(
+            crate::app::state::FileManagerSidebarModel::from_sources(
+                vec![fcl_location_item("Replacement", paths[1].clone())],
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            stale_row.rect.x,
+            stale_row.rect.y,
+        ));
+        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+
+        compute_view(&mut app.state, frame);
+        let fresh_row = app.state.view.file_manager_locations.rows[0].clone();
+        let separator = app
+            .state
+            .view
+            .file_manager_locations
+            .layout
+            .separator
+            .expect("separator");
+        for event in [
+            mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                separator.x,
+                separator.y,
+            ),
+            mouse(MouseEventKind::ScrollDown, separator.x, separator.y),
+            mouse(MouseEventKind::Down(MouseButton::Left), 0, 0),
+            mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                0,
+                frame.bottom().saturating_sub(1),
+            ),
+            mouse_with_modifiers(
+                MouseEventKind::Down(MouseButton::Left),
+                fresh_row.rect.x,
+                fresh_row.rect.y,
+                KeyModifiers::CONTROL,
+            ),
+        ] {
+            app.handle_file_manager_mouse(event);
+            assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+        }
+
+        compute_view(&mut app.state, Rect::new(0, 0, 10, 8));
+        assert!(
+            app.state.view.file_manager_locations.rows.is_empty(),
+            "compact mode publishes no hidden rail rows"
+        );
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            fresh_row.rect.x,
+            fresh_row.rect.y,
+        ));
+        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+    }
 }

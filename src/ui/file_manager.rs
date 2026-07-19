@@ -3000,4 +3000,117 @@ mod tests {
             "render output must not depend on filesystem state"
         );
     }
+
+    fn fcl_render_item(
+        label: &str,
+        path: PathBuf,
+        icon: crate::app::state::FileManagerSidebarIcon,
+    ) -> crate::app::state::FileManagerSidebarItem {
+        crate::app::state::FileManagerSidebarItem {
+            label: label.to_string(),
+            path,
+            icon,
+            accessible: true,
+            ejectable: false,
+        }
+    }
+
+    // TP-FCL-RENDER-01/02: Native Files renders the prepared Favorites and
+    // Locations model inside its content-local rail. Explicit origin,
+    // in-flight root, and typed failure are visible presentation states and
+    // never require render-time filesystem access.
+    #[test]
+    fn fcl_render_prepared_locations_with_origin_pending_and_failure_states() {
+        let td = TempDir::new("fcl-locations-render");
+        let home = td.root.join("home");
+        let downloads = td.root.join("downloads");
+        let root = td.root.join("root");
+        for path in [&home, &downloads, &root] {
+            fs::create_dir_all(path).expect("create rendered location");
+        }
+        let mut app = crate::app::state::AppState::test_new();
+        app.try_open_file_manager_with(|_| Some(FmState::new(&td.root)))
+            .expect("Files activation");
+        app.mobile_width_threshold = 0;
+        app.sidebar_collapsed = true;
+        app.file_manager_sidebar = crate::app::state::FileManagerSidebarModel::from_sources(
+            vec![
+                fcl_render_item(
+                    "Home",
+                    home.clone(),
+                    crate::app::state::FileManagerSidebarIcon::Home,
+                ),
+                fcl_render_item(
+                    "Downloads",
+                    downloads.clone(),
+                    crate::app::state::FileManagerSidebarIcon::Downloads,
+                ),
+            ],
+            Vec::new(),
+            vec![fcl_render_item(
+                "Root",
+                root.clone(),
+                crate::app::state::FileManagerSidebarIcon::Disk,
+            )],
+        );
+        assert!(app
+            .file_manager_locations
+            .activate_location(&home, &app.file_manager_sidebar));
+        let files_generation = app
+            .stage
+            .active_instance_generation()
+            .expect("active Files generation");
+        app.file_manager_locations.begin_load(
+            downloads.clone(),
+            files_generation,
+            app.file_manager_sidebar.revision(),
+            41,
+        );
+        let frame = Rect::new(0, 0, 90, 10);
+        crate::ui::compute_view(&mut app, frame);
+
+        let pending = render_buffer(&app, frame.width, frame.height);
+        let pending_text = (0..frame.height)
+            .map(|y| {
+                (0..frame.width)
+                    .map(|x| pending[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(pending_text.contains("FAVORITES"));
+        assert!(pending_text.contains("LOCATIONS"));
+        assert!(pending_text.contains("Home"));
+        assert!(pending_text.contains("Downloads"));
+        assert!(pending_text.contains("Root"));
+        assert!(
+            pending_text.contains("…"),
+            "the exact pending root needs a visible marker"
+        );
+        let home_pos = find_rendered_text(&pending, frame.width, frame.height, "Home");
+        assert_eq!(
+            pending[home_pos].bg, app.palette.accent,
+            "the explicit location origin owns the sole highlighted row"
+        );
+
+        app.file_manager_locations.fail_load(
+            root,
+            crate::app::FileManagerLocationLoadError::PermissionDenied,
+        );
+        crate::ui::compute_view(&mut app, frame);
+        let failed = render_buffer(&app, frame.width, frame.height);
+        let failed_text = (0..frame.height)
+            .map(|y| {
+                (0..frame.width)
+                    .map(|x| failed[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            failed_text.contains('!'),
+            "the exact failed root needs a visible marker"
+        );
+        assert!(!failed_text.contains('…'));
+    }
 }

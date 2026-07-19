@@ -16,6 +16,8 @@ mod file_agent_handoff;
 mod file_delete_confirmation;
 mod file_manager_io_worker;
 mod file_manager_locations;
+#[cfg(test)]
+pub(crate) use file_manager_locations::FileManagerLocationLoadError;
 mod file_manager_miller;
 mod file_manager_sidebar;
 mod file_manager_watcher;
