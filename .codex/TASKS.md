@@ -19,16 +19,16 @@ Directories and files are mixed in one strict mtime-descending order; the old
 directory-first exception does not survive. Required visual oracle is
 Playwright Chromium over deterministic Ratatui cells.
 
-- [ ] **MTIME-0 Research, design, and baseline.**
+- [x] **MTIME-0 Research, design, and baseline.**
   - [x] Graph current metadata → sort → Trail projection → render/input →
     watcher ownership at fresh graph 23,556/125,078.
   - [x] Select strict mixed-mtime ordering with deterministic tie and
     unknown-time rules.
   - [x] Define local-calendar `Future` / `Today` / `Yesterday` /
     `Previous 7 Days` / `Older` / `Unknown Date` groups.
-  - [ ] Audit the already-locked `time 0.3.47` direct-feature/platform delta
+  - [x] Audit the already-locked `time 0.3.47` direct-feature/platform delta
     from local source because the documentation MCP transport was unavailable.
-  - [ ] Write and approve the code-level TDD implementation plan.
+  - [x] Write and approve the code-level TDD implementation plan.
 - [ ] **MTIME-1 Prepared entry metadata.**
   - [ ] RED optional mtime, symlink, special, and metadata-failure contracts.
   - [ ] GREEN bounded snapshot-time metadata with zero render I/O.

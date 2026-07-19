@@ -2,17 +2,18 @@
 
 - Updated: 2026-07-19
 - Branch: `feat/native-fm`
-- Current override: **MTIME written-design review gate active.** The user
+- Current override: **MTIME implementation active.** The user
   approved strict mixed directory/file ordering by modification time
   descending plus Finder-like local-calendar sections and right-side mtime
   labels. Canonical design:
   `docs/superpowers/specs/2026-07-19-herdr-miller-mtime-groups-design.md`.
   Fresh graph 23,556/125,078 identifies the prepared snapshot, comparator,
-  Trail projection/render/input, and watcher dependency chain. No Rust code
-  has changed. Next: review the written design, then produce the code-level
-  RED/GREEN plan. The `time 0.3.47` direct feature/platform audit is still
-  open because the external documentation MCP transport was unavailable.
-  Stable Herdr/socket and `.superpowers/` are untouched.
+  Trail projection/render/input, and watcher dependency chain. The approved
+  code-level plan is
+  `docs/superpowers/plans/2026-07-19-herdr-miller-mtime-groups-implementation.md`.
+  MTIME-0 is complete: exact locked `time 0.3.47` adds no package or feature
+  growth. Next: MTIME-1/2 compile-valid filesystem ordering RED. Stable
+  Herdr/socket and `.superpowers/` are untouched.
 - Current override: **FMR-4/FMR-5 plugin boundary active.** The reboot regression is
   partly explained by executable drift: `/home/ayaz/.local/bin/herdr` is a
   2026-07-12 build while `target/debug/herdr` is the 2026-07-18 build carrying

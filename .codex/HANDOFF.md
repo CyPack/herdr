@@ -4,21 +4,22 @@ Updated: 2026-07-19 CEST
 
 ## 0. SONRAKI ADIM — TEK AKTİF İŞ
 
-**CURRENT OVERRIDE — MTIME YAZILI TASARIM REVIEW KAPISI AKTİF.** Kullanıcı
+**CURRENT OVERRIDE — MTIME UYGULAMASI AKTİF.** Kullanıcı
 klasör ve dosyaların tek listede tamamen mtime azalan sırada karışmasını
 onayladı. Finder-benzeri yerel takvim grupları `Future` / `Today` /
 `Yesterday` / `Previous 7 Days` / `Older` / `Unknown Date`; satırın sağ
 mtime etiketi complete-or-omitted olacaktır. Kanonik tasarım, dependency
 zinciri, test-noktaları ve MTIME-0..7 task ağacı:
 `docs/superpowers/specs/2026-07-19-herdr-miller-mtime-groups-design.md`.
+Onaylı code-level TDD planı:
+`docs/superpowers/plans/2026-07-19-herdr-miller-mtime-groups-implementation.md`.
 Fresh graph 23,556/125,078 current `collect_directory_entries`,
 `read_directory_snapshot`, `sort_entries`, `project_trail_view_inner`,
-`render_trail_view` gövdelerini döndürdü. Ürün Rust kodu değişmedi. Sonraki
-izinli hamle yazılı tasarım review'ü, ardından `superpowers:writing-plans`
-ile code-level TDD planıdır. Lockfile'daki `time 0.3.47` için direct-feature,
-local-offset, platform ve delta audit'i planın ilk kapısıdır; docs MCP
-transport kapalı olduğundan API varsayımı yapılmadı. Stable Herdr/socket,
-upstream ve `.superpowers/` untouched.
+`render_trail_view` gövdelerini döndürdü. MTIME-0 araştırma ve dependency
+review kapandı: exact locked `time 0.3.47` yeni paket/feature eklemiyor
+(`.codex/evidence/miller-mtime-dependency-audit.md`). Sıradaki iş MTIME-1/2
+compile-valid filesystem ordering RED. Stable Herdr/socket, upstream ve
+`.superpowers/` untouched.
 
 **CURRENT OVERRIDE — FMR-2A REMOTE/HEADLESS FILES SHORTCUT FIX CLOSED.**
 Kullanıcının `Home/Desktop/Downloads/.../Root` satırlarının remote app
@@ -583,24 +584,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 18 ve
-89, toplam 107 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 15 ve
+89, toplam 104 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 18 unchecked
-
-- [ ] **MTIME-0 Research, design, and baseline.**
-  - [x] Graph current metadata → sort → Trail projection → render/input →
-    watcher ownership at fresh graph 23,556/125,078.
-  - [x] Select strict mixed-mtime ordering with deterministic tie and
-    unknown-time rules.
-  - [x] Define local-calendar `Future` / `Today` / `Yesterday` /
-    `Previous 7 Days` / `Older` / `Unknown Date` groups.
-  - [ ] Audit the already-locked `time 0.3.47` direct-feature/platform delta
-    from local source because the documentation MCP transport was unavailable.
-  - [ ] Write and approve the code-level TDD implementation plan.
+### Source: `.codex/TASKS.md` — 15 unchecked
 
 - [ ] **MTIME-1 Prepared entry metadata.**
   - [ ] RED optional mtime, symlink, special, and metadata-failure contracts.

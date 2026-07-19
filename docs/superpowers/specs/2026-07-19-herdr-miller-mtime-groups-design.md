@@ -34,7 +34,9 @@ The approved section vocabulary is:
 - `Yesterday`;
 - `Previous 7 Days`;
 - `Older`;
-- `Unknown Date` only for entries whose modification time cannot be read.
+- `Unknown Date` only when no trustworthy local calendar date can be
+  prepared: either the modification time cannot be read or the operating
+  system cannot resolve its local offset.
 
 Ordinary users normally see the middle four groups. Exceptional timestamps
 remain truthful instead of being silently mislabeled.
@@ -66,7 +68,9 @@ Groups use local calendar dates, not rolling 24-hour durations:
 - `Previous 7 Days`: two through seven local dates earlier;
 - `Older`: every earlier known date;
 - `Future`: a local date after the clock anchor;
-- `Unknown Date`: no trustworthy modification time.
+- `Unknown Date`: no trustworthy local-calendar projection. A known raw
+  modification time still participates in strict mtime sorting even if local
+  offset conversion fails.
 
 This keeps midnight and daylight-saving transitions truthful. Tests inject an
 explicit clock/timezone anchor; production obtains one anchor before view
