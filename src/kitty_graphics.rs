@@ -1285,6 +1285,7 @@ mod tests {
             name: "preview.png".into(),
             path: image_path.clone(),
             kind: crate::fm::entry_kind::FileEntryKind::RegularFile,
+            modified: None,
         }];
         file_manager.preview_generation = 1;
         file_manager.preview = crate::fm::FmPreview::File(crate::fm::FmFilePreview::Image(
@@ -1441,6 +1442,7 @@ mod tests {
             name: "preview.png".into(),
             path: image_path.clone(),
             kind: crate::fm::entry_kind::FileEntryKind::RegularFile,
+            modified: None,
         }];
         file_manager.preview = FmPreview::File(FmFilePreview::Image(FmImagePreview {
             source_path: image_path,

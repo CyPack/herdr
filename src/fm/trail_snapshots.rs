@@ -563,6 +563,15 @@ mod tests {
         let b = a.join("b");
         fs::create_dir_all(&b).expect("create nested dirs");
         fs::write(a.join("x.txt"), b"x").expect("write file");
+        for path in [&b, &a.join("x.txt")] {
+            fs::File::open(path)
+                .expect("open loaded-column mtime fixture")
+                .set_times(
+                    fs::FileTimes::new()
+                        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(10)),
+                )
+                .expect("set loaded-column fixture mtime");
+        }
 
         let mut trail = TrailState::new(&td.root);
         let mut snaps = TrailSnapshots::new(false);
@@ -621,6 +630,13 @@ mod tests {
     fn watcher_refresh_keeps_selection_by_path() {
         let td = TempDir::new("refresh");
         fs::write(td.root.join("keep.txt"), b"x").expect("write file");
+        fs::File::open(td.root.join("keep.txt"))
+            .expect("open keep mtime fixture")
+            .set_times(
+                fs::FileTimes::new()
+                    .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(10)),
+            )
+            .expect("set keep mtime");
 
         let mut trail = TrailState::new(&td.root);
         let mut snaps = TrailSnapshots::new(false);
@@ -630,6 +646,13 @@ mod tests {
         assert!(trail.select_file(0, &keep));
 
         fs::write(td.root.join("new.txt"), b"x").expect("write new file");
+        fs::File::open(td.root.join("new.txt"))
+            .expect("open new mtime fixture")
+            .set_times(
+                fs::FileTimes::new()
+                    .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(20)),
+            )
+            .expect("set new mtime");
         assert!(snaps.refresh_col(0), "refresh reloads the column");
 
         assert_eq!(
@@ -637,7 +660,7 @@ mod tests {
             Some(keep.as_path()),
             "selection is exact-path and survives the refresh"
         );
-        assert_eq!(entry_names(&snaps.cols()[0]), vec!["keep.txt", "new.txt"]);
+        assert_eq!(entry_names(&snaps.cols()[0]), vec!["new.txt", "keep.txt"]);
     }
 
     // Bounded: past MAX_TRAIL_DEPTH the trail slides and the snapshots stay

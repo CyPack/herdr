@@ -3218,6 +3218,12 @@ mod tests {
         let beta = td.root.join("beta.txt");
         fs::write(&alpha, b"alpha").expect("write App bulk alpha");
         fs::write(&beta, b"beta").expect("write App bulk beta");
+        let modified = std::time::UNIX_EPOCH + Duration::from_secs(10);
+        for path in [&alpha, &beta] {
+            let file = fs::File::open(path).expect("open App bulk fixture");
+            file.set_times(fs::FileTimes::new().set_modified(modified))
+                .expect("set App bulk fixture mtime");
+        }
         let mut file_manager = crate::fm::FmState::new(&td.root);
         let alpha_index = file_manager
             .entries

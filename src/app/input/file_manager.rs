@@ -723,10 +723,26 @@ mod tests {
             Self { root }
         }
         fn file(&self, name: &str) {
-            fs::write(self.root.join(name), b"x").expect("write temp file");
+            let path = self.root.join(name);
+            fs::write(&path, b"x").expect("write temp file");
+            Self::set_modified(&path);
         }
         fn dir(&self, name: &str) {
-            fs::create_dir_all(self.root.join(name)).expect("create temp dir");
+            let path = self.root.join(name);
+            fs::create_dir_all(&path).expect("create temp dir");
+            Self::set_modified(&path);
+        }
+        fn set_modified(path: &std::path::Path) {
+            let modified = std::time::UNIX_EPOCH + Duration::from_secs(10);
+            let entry = fs::File::open(path).expect("open temp entry");
+            entry
+                .set_times(fs::FileTimes::new().set_modified(modified))
+                .expect("set temp entry mtime");
+        }
+        fn set_equal_modified(&self, names: &[&str]) {
+            for name in names {
+                Self::set_modified(&self.root.join(name));
+            }
         }
     }
 
@@ -4703,6 +4719,7 @@ mod tests {
         for name in ["00-alpha", "01-bravo", "02-current"] {
             td.dir(name);
         }
+        td.set_equal_modified(&["00-alpha", "01-bravo", "02-current"]);
         let current = td.root.join("02-current");
         let file_manager =
             FmState::open_trail_to(&td.root, &current, false).expect("ancestor Trail fixture");
@@ -4750,6 +4767,14 @@ mod tests {
             fs::write(preview_directory.join(format!("{index:02}.txt")), b"x")
                 .expect("write preview entry");
         }
+        let modified = std::time::UNIX_EPOCH + Duration::from_secs(10);
+        for index in 0..12 {
+            let path = preview_directory.join(format!("{index:02}.txt"));
+            let entry = fs::File::open(path).expect("open preview entry");
+            entry
+                .set_times(fs::FileTimes::new().set_modified(modified))
+                .expect("set preview entry mtime");
+        }
         let file_manager = FmState::open_trail_to(&td.root, &preview_directory, false)
             .expect("child Trail fixture");
         let mut app = runtime_app_with_fm(file_manager);
@@ -4790,6 +4815,12 @@ mod tests {
         }
         let current = td.root.join("zz-current");
         fs::create_dir(&current).expect("create current directory");
+        let mut names = (0..10)
+            .map(|index| format!("{index:02}-sibling"))
+            .collect::<Vec<_>>();
+        names.push("zz-current".to_string());
+        let name_refs = names.iter().map(String::as_str).collect::<Vec<_>>();
+        td.set_equal_modified(&name_refs);
         let file_manager =
             FmState::open_trail_to(&td.root, &current, false).expect("parent Trail fixture");
         let mut app = runtime_app_with_fm(file_manager);
@@ -5740,6 +5771,7 @@ mod tests {
         for index in 0..4 {
             td.file(&format!("{index:02}.txt"));
         }
+        td.set_equal_modified(&["00.txt", "01.txt", "02.txt", "03.txt"]);
         let mut app = app_with_fm(FmState::new(&td.root));
         let path = |index| td.root.join(format!("{index:02}.txt"));
 
@@ -5876,6 +5908,7 @@ mod tests {
                 } else {
                     crate::fm::entry_kind::FileEntryKind::RegularFile
                 },
+                modified: None,
             })
             .collect();
         let mut oversized_app = app_with_fm(oversized);
@@ -5905,6 +5938,7 @@ mod tests {
                 } else {
                     crate::fm::entry_kind::FileEntryKind::RegularFile
                 },
+                modified: None,
             })
             .collect();
         assert!(fm.replace_selection(0));
@@ -6700,6 +6734,15 @@ mod tests {
         td.file("00.txt");
         td.file("01.txt");
         td.file("02.txt");
+        for name in ["00.txt", "01.txt", "02.txt"] {
+            fs::File::open(td.root.join(name))
+                .expect("open context-menu mtime fixture")
+                .set_times(
+                    fs::FileTimes::new()
+                        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(10)),
+                )
+                .expect("set context-menu fixture mtime");
+        }
         let mut app = runtime_app_with_fm(FmState::new(&td.root));
         let fm = app.state.file_manager.as_mut().expect("open FM");
         assert!(fm.replace_selection(0));

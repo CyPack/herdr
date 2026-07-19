@@ -4404,6 +4404,7 @@ mod tests {
                 } else {
                     crate::fm::entry_kind::FileEntryKind::RegularFile
                 },
+                modified: None,
             })
             .collect();
         file_manager.sync_trail_bridge_for_test();

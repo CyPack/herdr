@@ -1351,10 +1351,21 @@ mod tests {
             Self { root }
         }
         fn file(&self, name: &str) {
-            fs::write(self.root.join(name), b"x").expect("write temp file");
+            let path = self.root.join(name);
+            fs::write(&path, b"x").expect("write temp file");
+            Self::set_modified(&path);
         }
         fn dir(&self, name: &str) {
-            fs::create_dir_all(self.root.join(name)).expect("create temp dir");
+            let path = self.root.join(name);
+            fs::create_dir_all(&path).expect("create temp dir");
+            Self::set_modified(&path);
+        }
+        fn set_modified(path: &std::path::Path) {
+            let modified = std::time::UNIX_EPOCH + std::time::Duration::from_secs(10);
+            let entry = fs::File::open(path).expect("open temp entry");
+            entry
+                .set_times(fs::FileTimes::new().set_modified(modified))
+                .expect("set temp entry mtime");
         }
     }
 
@@ -1414,6 +1425,7 @@ mod tests {
                 } else {
                     crate::fm::entry_kind::FileEntryKind::RegularFile
                 },
+                modified: None,
             })
             .collect()
     }
@@ -2671,6 +2683,7 @@ mod tests {
                 name: name.to_string(),
                 path: std::path::PathBuf::from("/x").join(name),
                 kind,
+                modified: None,
             };
             let backend = ratatui::backend::TestBackend::new(24, 1);
             let mut terminal = ratatui::Terminal::new(backend).expect("test terminal");
@@ -2705,6 +2718,7 @@ mod tests {
             name: "main.rs".to_string(),
             path: std::path::PathBuf::from("/x/main.rs"),
             kind: FileEntryKind::RegularFile,
+            modified: None,
         };
         let backend = TestBackend::new(24, 1);
         let mut terminal = Terminal::new(backend).expect("test terminal");
@@ -2730,6 +2744,7 @@ mod tests {
             name: "main.rs".to_string(),
             path: std::path::PathBuf::from("/x/main.rs"),
             kind: FileEntryKind::RegularFile,
+            modified: None,
         };
         let backend = TestBackend::new(6, 1);
         let mut terminal = Terminal::new(backend).expect("test terminal");
@@ -2764,6 +2779,7 @@ mod tests {
             name: "配置文件清单.toml".to_string(),
             path: std::path::PathBuf::from("/x/config-list.toml"),
             kind: FileEntryKind::RegularFile,
+            modified: None,
         };
         let width = 10u16;
         let backend = TestBackend::new(width, 1);
@@ -2800,6 +2816,7 @@ mod tests {
                 name: format!("very-long-entry-name-that-overflows-{i}.rs"),
                 path: std::path::PathBuf::from(format!("/x/very-long-{i}.rs")),
                 kind: crate::fm::entry_kind::FileEntryKind::RegularFile,
+                modified: None,
             })
             .collect();
         let list = Rect::new(0, 0, 30, 3);
@@ -2863,6 +2880,7 @@ mod tests {
             name: "main.rs".to_string(),
             path: std::path::PathBuf::from("/x/main.rs"),
             kind: crate::fm::entry_kind::FileEntryKind::RegularFile,
+            modified: None,
         };
         let render = |cursor_focused: bool, multi_selected: bool| {
             let backend = TestBackend::new(24, 1);
@@ -2907,11 +2925,13 @@ mod tests {
             name: "a\nb.rs".to_string(),
             path: std::path::PathBuf::from("/x/hostile"),
             kind: crate::fm::entry_kind::FileEntryKind::RegularFile,
+            modified: None,
         };
         let below = crate::fm::FileEntry {
             name: "z.txt".to_string(),
             path: std::path::PathBuf::from("/x/z.txt"),
             kind: crate::fm::entry_kind::FileEntryKind::RegularFile,
+            modified: None,
         };
         let backend = TestBackend::new(24, 2);
         let mut terminal = Terminal::new(backend).expect("test terminal");
@@ -2952,11 +2972,13 @@ mod tests {
             name: "report.md".to_string(),
             path: live_path,
             kind: crate::fm::entry_kind::FileEntryKind::RegularFile,
+            modified: None,
         };
         let gone = crate::fm::FileEntry {
             name: "report.md".to_string(),
             path: td.root.join("deleted-under-us").join("report.md"),
             kind: crate::fm::entry_kind::FileEntryKind::RegularFile,
+            modified: None,
         };
         let render = |entry: &crate::fm::FileEntry| {
             let backend = TestBackend::new(24, 1);

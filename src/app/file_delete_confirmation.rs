@@ -147,6 +147,15 @@ mod tests {
             fs::write(&path, content).expect("write delete confirmation fixture");
             path
         }
+
+        fn set_equal_modified(&self, paths: &[&std::path::Path]) {
+            let modified = std::time::UNIX_EPOCH + std::time::Duration::from_secs(10);
+            for path in paths {
+                let file = fs::File::open(path).expect("open delete confirmation fixture");
+                file.set_times(fs::FileTimes::new().set_modified(modified))
+                    .expect("set delete confirmation fixture mtime");
+            }
+        }
     }
 
     impl Drop for TempDir {
@@ -205,6 +214,7 @@ mod tests {
         let td = TempDir::new("header-exact");
         let alpha = td.file("alpha.txt", b"alpha");
         let beta = td.file("beta.txt", b"beta");
+        td.set_equal_modified(&[&alpha, &beta]);
         let mut app = test_app(&td.root);
         let paths = select_all(&mut app);
 

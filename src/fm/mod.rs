@@ -55,6 +55,10 @@ pub struct FileEntry {
     /// preserved). Visual classification and capability checks derive from
     /// this single source of truth.
     pub kind: entry_kind::FileEntryKind,
+    /// Modification time of the listed path itself, prepared once with
+    /// symlink-preserving metadata. Failure remains explicit as `None`; it
+    /// never hides the entry or triggers render-time filesystem work.
+    pub modified: Option<std::time::SystemTime>,
 }
 
 impl FileEntry {
@@ -241,9 +245,9 @@ pub enum FmImagePreviewState {
     },
 }
 
-/// Read the immediate children of `dir`: directories first, then files, each
-/// group in natural (human) order. When `show_hidden` is false, dot-prefixed
-/// names are dropped.
+/// Read the immediate children of `dir` in strict mixed modification-time
+/// descending order. When `show_hidden` is false, dot-prefixed names are
+/// dropped.
 ///
 /// Never panics. A missing or unreadable directory yields an empty `Vec`, and
 /// individually unreadable entries (or non-UTF-8 names) are skipped.
@@ -308,10 +312,15 @@ fn collect_directory_entries(
             omissions.hidden += 1;
             continue;
         }
+        let path = entry.path();
+        let modified = std::fs::symlink_metadata(&path)
+            .and_then(|metadata| metadata.modified())
+            .ok();
         entries.push(FileEntry {
             kind: entry_kind::classify_dir_entry(&entry),
-            path: entry.path(),
+            path,
             name: name.to_string(),
+            modified,
         });
     }
     (entries, omissions, entry_errors)
@@ -417,14 +426,16 @@ pub(crate) fn prepare_current_refresh_io(
     }
 }
 
-/// Order entries directories-first, then by natural (case-insensitive) name,
-/// with the raw name as a stable tiebreaker for deterministic rendering/tests.
+/// Order every entry kind by known modification time descending. Unknown
+/// times sort last; natural, raw-name, and exact-path ties keep refreshes and
+/// visual fixtures deterministic.
 fn sort_entries(entries: &mut [FileEntry]) {
     entries.sort_by(|a, b| {
-        b.is_dir()
-            .cmp(&a.is_dir())
+        b.modified
+            .cmp(&a.modified)
             .then_with(|| natsort::natsort(a.name.as_bytes(), b.name.as_bytes(), true))
             .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.path.cmp(&b.path))
     });
 }
 
@@ -1552,6 +1563,12 @@ mod tests {
             .expect("set fixture mtime");
     }
 
+    fn set_equal_modified(td: &TempDir, names: &[&str]) {
+        for name in names {
+            set_modified(&td.root.join(name), fixed_time(10));
+        }
+    }
+
     fn synthetic_state(entry_count: usize) -> FmState {
         let mut state = FmState::test_empty("/virtual");
         state.cwd_writable = true;
@@ -1564,6 +1581,7 @@ mod tests {
                 } else {
                     crate::fm::entry_kind::FileEntryKind::RegularFile
                 },
+                modified: None,
             })
             .collect();
         state
@@ -1752,20 +1770,23 @@ mod tests {
         );
     }
 
-    // T-A1.2a: directories first, each group in natural order. Cross-check
-    // reference: `ls --group-directories-first -v` yields the same order.
+    // TP-MTIME-03: equal modification times use one natural order across
+    // kinds; a directory receives no tie-breaking priority.
     #[test]
-    fn dirs_first_then_natural_order() {
+    fn equal_mtime_entries_use_natural_order_across_kinds() {
         let td = TempDir::new("order");
         td.file("file10.txt");
         td.file("file2.txt");
-        td.dir("beta");
+        td.dir("zeta");
         td.dir("alpha10");
         td.dir("alpha2");
+        for name in ["file10.txt", "file2.txt", "zeta", "alpha10", "alpha2"] {
+            set_modified(&td.root.join(name), fixed_time(10));
+        }
         let entries = read_dir_entries(&td.root, false);
         assert_eq!(
             names(&entries),
-            vec!["alpha2", "alpha10", "beta", "file2.txt", "file10.txt"]
+            vec!["alpha2", "alpha10", "file2.txt", "file10.txt", "zeta"]
         );
     }
 
@@ -1777,13 +1798,16 @@ mod tests {
         td.file(".secret");
         td.dir(".git");
         td.dir("src");
+        for name in ["visible.txt", ".secret", ".git", "src"] {
+            set_modified(&td.root.join(name), fixed_time(10));
+        }
         assert_eq!(
             names(&read_dir_entries(&td.root, false)),
             vec!["src", "visible.txt"]
         );
         assert_eq!(
             names(&read_dir_entries(&td.root, true)),
-            vec![".git", "src", ".secret", "visible.txt"]
+            vec![".git", ".secret", "src", "visible.txt"]
         );
     }
 
@@ -1943,16 +1967,19 @@ mod tests {
         assert!(entries.iter().any(|e| e.name == "smile-dir" && e.is_dir()));
     }
 
-    // T-A1.3a: opening a directory puts the cursor at the top, dir first.
+    // T-A1.3a / TP-MTIME-03: opening a directory puts the cursor at the top
+    // of the canonical mixed order.
     #[test]
     fn fmstate_opens_with_cursor_at_top() {
         let td = TempDir::new("state-open");
         td.file("a.txt");
         td.dir("d");
+        set_modified(&td.root.join("a.txt"), fixed_time(10));
+        set_modified(&td.root.join("d"), fixed_time(10));
         let st = FmState::new(&td.root);
         assert_eq!(st.cursor, 0);
         assert_eq!(st.entries.len(), 2);
-        assert_eq!(st.selected().map(|e| e.name.as_str()), Some("d"));
+        assert_eq!(st.selected().map(|e| e.name.as_str()), Some("a.txt"));
     }
 
     // TP-TRAIL-T7-BRIDGE-03: FmState owns one index-aligned trail/snapshot
@@ -1990,6 +2017,8 @@ mod tests {
         let td = TempDir::new("trail-bridge-cursor");
         td.file("00.txt");
         td.file("01.txt");
+        set_modified(&td.root.join("00.txt"), fixed_time(10));
+        set_modified(&td.root.join("01.txt"), fixed_time(10));
         let mut state = FmState::new(&td.root);
         assert!(state.multi_selection_paths().is_empty());
 
@@ -2017,6 +2046,7 @@ mod tests {
         let td = TempDir::new("multi-selection-cursor-independent");
         td.file("00.txt");
         td.file("01.txt");
+        set_equal_modified(&td, &["00.txt", "01.txt"]);
         let mut state = FmState::new(&td.root);
 
         assert!(state.multi_selection_paths().is_empty());
@@ -2037,6 +2067,7 @@ mod tests {
         td.file("00.txt");
         td.file("01.txt");
         td.file("02.txt");
+        set_equal_modified(&td, &["00.txt", "01.txt", "02.txt"]);
         let mut state = FmState::new(&td.root);
         let first = td.root.join("00.txt");
         let last = td.root.join("02.txt");
@@ -2061,6 +2092,7 @@ mod tests {
         let td = TempDir::new("multi-selection-toggle");
         td.file("00.txt");
         td.file("01.txt");
+        set_equal_modified(&td, &["00.txt", "01.txt"]);
         let mut state = FmState::new(&td.root);
         let first = td.root.join("00.txt");
         let second = td.root.join("01.txt");
@@ -2087,6 +2119,7 @@ mod tests {
         for index in 0..5 {
             td.file(&format!("{index:02}.txt"));
         }
+        set_equal_modified(&td, &["00.txt", "01.txt", "02.txt", "03.txt", "04.txt"]);
         let mut state = FmState::new(&td.root);
         let expected = ["01.txt", "02.txt", "03.txt"]
             .into_iter()
@@ -2121,6 +2154,7 @@ mod tests {
         td.file("00.txt");
         td.file("01.txt");
         td.file("02.txt");
+        set_equal_modified(&td, &["00.txt", "01.txt", "02.txt"]);
         let mut state = FmState::new(&td.root);
         let first = td.root.join("00.txt");
         let second = td.root.join("01.txt");
@@ -2237,6 +2271,7 @@ mod tests {
         td.file("b.txt");
         td.file("c.txt");
         td.file("d.txt");
+        set_equal_modified(&td, &["b.txt", "c.txt", "d.txt"]);
         let mut state = FmState::new(&td.root);
         let b = td.root.join("b.txt");
         let d = td.root.join("d.txt");
@@ -2478,17 +2513,28 @@ mod tests {
         }
         let mut st = FmState::new(&td.root);
         st.viewport_start = usize::MAX;
+        let sub = td.root.join("sub");
+        let sub_index = st
+            .entries
+            .iter()
+            .position(|entry| entry.path == sub)
+            .expect("sub directory row");
+        assert!(st.select(sub_index));
 
         st.enter();
         st.sync_viewport(2);
-        assert_eq!(st.cwd, td.root.join("sub"));
+        assert_eq!(st.cwd, sub);
         assert_eq!((st.cursor, st.viewport_start), (0, 0));
 
         st.viewport_start = usize::MAX;
         st.leave();
         st.sync_viewport(2);
         assert_eq!(st.cwd, td.root);
-        assert_eq!((st.cursor, st.viewport_start), (0, 0));
+        assert_eq!(
+            st.selected().map(|entry| entry.path.as_path()),
+            Some(sub.as_path())
+        );
+        assert_eq!(st.viewport_start, 0);
     }
 
     // T-A1.3c: toggling hidden re-reads and changes what is visible.
@@ -2637,6 +2683,7 @@ mod tests {
             } else {
                 crate::fm::entry_kind::FileEntryKind::RegularFile
             },
+            modified: None,
         }];
         state.rebuild_trail_bridge();
         state.directory_generation = 17;
@@ -2685,6 +2732,7 @@ mod tests {
             } else {
                 crate::fm::entry_kind::FileEntryKind::RegularFile
             },
+            modified: None,
         }];
         state.rebuild_trail_bridge();
         let request = state
@@ -2701,6 +2749,7 @@ mod tests {
                 } else {
                     crate::fm::entry_kind::FileEntryKind::RegularFile
                 },
+                modified: None,
             }],
             status: FmDirectoryStatus::Available,
             omissions: FmDirectoryOmissions::default(),
@@ -2715,6 +2764,7 @@ mod tests {
                     } else {
                         crate::fm::entry_kind::FileEntryKind::RegularFile
                     },
+                    modified: None,
                 }],
                 cursor: Some(0),
             }),
@@ -2760,6 +2810,7 @@ mod tests {
                 } else {
                     crate::fm::entry_kind::FileEntryKind::RegularFile
                 },
+                modified: None,
             },
             FileEntry {
                 name: "b.txt".to_string(),
@@ -2769,6 +2820,7 @@ mod tests {
                 } else {
                     crate::fm::entry_kind::FileEntryKind::RegularFile
                 },
+                modified: None,
             },
         ];
         state.cursor = 1;
@@ -2805,6 +2857,7 @@ mod tests {
                     } else {
                         crate::fm::entry_kind::FileEntryKind::RegularFile
                     },
+                    modified: None,
                 },
                 FileEntry {
                     name: "c.txt".to_string(),
@@ -2814,6 +2867,7 @@ mod tests {
                     } else {
                         crate::fm::entry_kind::FileEntryKind::RegularFile
                     },
+                    modified: None,
                 },
             ],
             status: FmDirectoryStatus::Available,
@@ -2864,6 +2918,7 @@ mod tests {
             } else {
                 crate::fm::entry_kind::FileEntryKind::RegularFile
             },
+            modified: None,
         }];
         base.directory_generation = 11;
         base.preview_generation = 17;
@@ -2880,6 +2935,7 @@ mod tests {
                     } else {
                         crate::fm::entry_kind::FileEntryKind::RegularFile
                     },
+                    modified: None,
                 },
                 FileEntry {
                     name: "c.txt".to_string(),
@@ -2889,6 +2945,7 @@ mod tests {
                     } else {
                         crate::fm::entry_kind::FileEntryKind::RegularFile
                     },
+                    modified: None,
                 },
             ],
             status: FmDirectoryStatus::Available,
@@ -2982,6 +3039,7 @@ mod tests {
             } else {
                 crate::fm::entry_kind::FileEntryKind::RegularFile
             },
+            modified: None,
         }];
         state.rebuild_trail_bridge();
         let request = state
@@ -4121,11 +4179,11 @@ mod tests {
         );
     }
 
-    // FIP-3.1 CHARACTERIZATION (passes before the kind migration): freezes
-    // sort order and symlink/special classification so FIP-3.3/3.4 must keep
-    // operational behavior byte-for-byte (TP-FIP-ICON-12).
+    // FIP-3.1 / TP-MTIME-01: kind identity is independent from chronological
+    // position. Look up exact names instead of coupling this characterization
+    // to the retired directory-first order or filesystem creation timing.
     #[test]
-    fn snapshot_sort_and_symlink_classification_baseline() {
+    fn snapshot_symlink_classification_is_independent_of_mtime_sort() {
         let td = TempDir::new("icon-baseline");
         fs::create_dir_all(td.root.join("bdir")).expect("dir");
         fs::create_dir_all(td.root.join("adir")).expect("dir");
@@ -4141,25 +4199,8 @@ mod tests {
                 .expect("broken");
         }
         let snapshot = read_directory_snapshot(&td.root, false);
-        let names: Vec<&str> = snapshot
-            .entries
-            .iter()
-            .map(|entry| entry.name.as_str())
-            .collect();
         #[cfg(unix)]
-        assert_eq!(
-            names,
-            vec![
-                "adir",
-                "bdir",
-                "link-dir",
-                "afile.txt",
-                "broken",
-                "link-file",
-                "zfile.txt"
-            ],
-            "directories (symlink-dir included) first, then names"
-        );
+        assert_eq!(snapshot.entries.len(), 7);
         let by_name = |name: &str| {
             snapshot
                 .entries

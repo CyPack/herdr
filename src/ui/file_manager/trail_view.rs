@@ -685,7 +685,15 @@ mod tests {
     fn selection_scrolls_vertically_into_view() {
         let td = TempDir::new("vscroll");
         for file in 0..30 {
-            fs::write(td.root.join(format!("f{file:02}.txt")), b"x").expect("file");
+            let path = td.root.join(format!("f{file:02}.txt"));
+            fs::write(&path, b"x").expect("file");
+            fs::File::open(path)
+                .expect("open vscroll mtime fixture")
+                .set_times(
+                    fs::FileTimes::new()
+                        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(10)),
+                )
+                .expect("set vscroll fixture mtime");
         }
         let mut trail = TrailState::new(&td.root);
         let mut snaps = TrailSnapshots::new(false);
