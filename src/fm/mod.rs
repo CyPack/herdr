@@ -3852,6 +3852,7 @@ mod tests {
         td.file("a.txt");
         td.file("b.txt");
         td.file("c.txt");
+        set_equal_modified(&td, &["a.txt", "b.txt", "c.txt"]);
         let mut state = FmState::new(&td.root);
         assert!(state.select(1));
 
@@ -4130,6 +4131,7 @@ mod tests {
             .expect("write first image candidate");
         fs::write(td.root.join("beta.webp"), b"second generation")
             .expect("write second image candidate");
+        set_equal_modified(&td, &["alpha.PNG", "beta.webp"]);
 
         let mut state = FmState::new(&td.root);
         let first_generation = match &state.preview {

@@ -658,7 +658,9 @@ mod tests {
         std::fs::write(temp.root.join("sample.png"), encoded_png(160, 80))
             .expect("write PNG fixture");
         let mut app = test_app();
-        let frame = Rect::new(0, 0, 90, 16);
+        // Preserve the original 64-cell Trail viewport after FCL-3 reserves
+        // the 24-cell content rail and one-cell separator.
+        let frame = Rect::new(0, 0, 115, 16);
         app.image_preview_cell_size = HostCellSize {
             width_px: 8,
             height_px: 16,

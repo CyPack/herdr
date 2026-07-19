@@ -36,6 +36,8 @@ use self::dialogs::{
 pub(crate) use self::file_manager::compute_file_manager_action_bar_model;
 #[cfg(test)]
 pub(crate) use self::file_manager::file_manager_preview_content_area;
+use self::file_manager::locations::project_file_manager_locations_view;
+pub(crate) use self::file_manager::locations::FileManagerLocationsView;
 #[cfg(test)]
 pub(crate) use self::file_manager::miller::project_miller_view;
 pub(crate) use self::file_manager::miller::{
@@ -315,8 +317,9 @@ fn compute_view_internal(
     } else {
         (Rect::default(), main_area)
     };
-    let file_manager_miller = sync_miller_view(app, terminal_area);
-    let file_manager_trail = sync_trail_view(app, terminal_area);
+    let file_manager_locations = project_file_manager_locations_view(app, terminal_area);
+    let file_manager_miller = sync_miller_view(app, file_manager_locations.layout.trail);
+    let file_manager_trail = sync_trail_view(app, file_manager_locations.layout.trail);
     let FileManagerRowGeometry {
         rows: file_manager_row_areas,
         actions: file_manager_row_action_areas,
@@ -469,6 +472,7 @@ fn compute_view_internal(
         project_row_areas,
         file_manager_sidebar_row_areas,
         app_dock_entry_areas,
+        file_manager_locations,
         file_manager_miller,
         file_manager_trail,
         file_manager_row_areas,
@@ -512,8 +516,9 @@ fn compute_mobile_view(
     } else {
         (area, Rect::default())
     };
-    let file_manager_miller = sync_miller_view(app, terminal_area);
-    let file_manager_trail = sync_trail_view(app, terminal_area);
+    let file_manager_locations = project_file_manager_locations_view(app, terminal_area);
+    let file_manager_miller = sync_miller_view(app, file_manager_locations.layout.trail);
+    let file_manager_trail = sync_trail_view(app, file_manager_locations.layout.trail);
     let FileManagerRowGeometry {
         rows: file_manager_row_areas,
         actions: file_manager_row_action_areas,
@@ -596,6 +601,7 @@ fn compute_mobile_view(
         project_row_areas: Vec::new(),
         file_manager_sidebar_row_areas: Vec::new(),
         app_dock_entry_areas: Vec::new(),
+        file_manager_locations,
         file_manager_miller,
         file_manager_trail,
         file_manager_row_areas,
@@ -649,14 +655,13 @@ fn sync_file_manager_view(app: &AppState, snapshot: &TrailViewSnapshot) -> FileM
     }
 }
 
-fn sync_miller_view(app: &mut AppState, area: Rect) -> MillerViewSnapshot {
+fn sync_miller_view(app: &mut AppState, viewport_area: Rect) -> MillerViewSnapshot {
     if app.stage.surface_view() != surface_host::StageSurfaceView::NativeFiles {
         return MillerViewSnapshot::default();
     }
     let Some(files_generation) = app.stage.active_instance_generation() else {
         return MillerViewSnapshot::default();
     };
-    let viewport_area = file_manager::file_manager_miller_viewport_area(area);
     let resize_preview = app.shell_interaction.miller_resize_preview();
     let Some(file_manager) = app.file_manager.as_mut() else {
         return MillerViewSnapshot::default();
@@ -697,7 +702,7 @@ fn sync_miller_view(app: &mut AppState, area: Rect) -> MillerViewSnapshot {
     snapshot
 }
 
-fn sync_trail_view(app: &mut AppState, area: Rect) -> TrailViewSnapshot {
+fn sync_trail_view(app: &mut AppState, viewport_area: Rect) -> TrailViewSnapshot {
     if app.stage.surface_view() != surface_host::StageSurfaceView::NativeFiles {
         return TrailViewSnapshot::default();
     }
@@ -714,7 +719,6 @@ fn sync_trail_view(app: &mut AppState, area: Rect) -> TrailViewSnapshot {
             .iter()
             .map(|column| column.directory.clone()),
     );
-    let viewport_area = file_manager::file_manager_miller_viewport_area(area);
     let detail_preferred_width = file_manager.miller.preview_preferred_width;
     let horizontal = file_manager.miller.horizontal;
     let mut snapshot = if horizontal.follow_active {
@@ -1213,7 +1217,9 @@ mod tests {
             .expect("Files activation");
         app.file_manager.as_mut().expect("open fm").cursor = 4;
 
-        compute_view(&mut app, Rect::new(0, 0, 100, 6));
+        // Preserve the characterized Trail viewport after FCL-3 adds the
+        // 24-cell content rail and one-cell separator inside CenterContent.
+        compute_view(&mut app, Rect::new(0, 0, 125, 6));
         assert_eq!(
             app.view
                 .file_manager_row_areas
@@ -1271,7 +1277,7 @@ mod tests {
                 && app.view.file_manager_miller.files_generation.is_none(),
             "close must retire the Miller projection in the same transaction"
         );
-        compute_view(&mut app, Rect::new(0, 0, 100, 6));
+        compute_view(&mut app, Rect::new(0, 0, 125, 6));
         assert!(app.view.file_manager_row_areas.is_empty());
         assert!(app.view.file_manager_row_action_areas.is_empty());
         assert!(app.view.file_manager_header_action_areas.is_empty());

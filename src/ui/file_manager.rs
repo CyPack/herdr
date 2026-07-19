@@ -190,6 +190,7 @@ fn file_manager_frame_areas(area: Rect) -> Option<[Rect; 3]> {
 /// Complete body reserved for Miller columns between the one-row header and
 /// one-row status line. Production viewport projection, compatibility render,
 /// hit geometry, and preview placement derive from this same frame split.
+#[cfg(test)]
 pub(crate) fn file_manager_miller_viewport_area(area: Rect) -> Rect {
     file_manager_frame_areas(area)
         .map(|[_, body, _]| body)

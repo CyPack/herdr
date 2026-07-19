@@ -1379,6 +1379,10 @@ pub struct ViewState {
     /// Complete AppDock entry targets for the current frame. Empty whenever
     /// the live shell projects no dock region.
     pub app_dock_entry_areas: Vec<crate::ui::app_dock::AppDockEntryArea>,
+    /// One current-frame projection for the Files-local locations rail,
+    /// compact action, exact row identities, and remaining Trail viewport.
+    #[allow(dead_code)] // FCL-3 publishes authority; FCL-4 render/input consumes it.
+    pub(crate) file_manager_locations: crate::ui::FileManagerLocationsView,
     /// Bounded logical Miller columns and dividers projected for the current
     /// Files frame. Empty while Files is closed or its body cannot fit one
     /// complete minimum-width column.
@@ -2685,6 +2689,7 @@ impl AppState {
                 project_row_areas: Vec::new(),
                 file_manager_sidebar_row_areas: Vec::new(),
                 app_dock_entry_areas: Vec::new(),
+                file_manager_locations: Default::default(),
                 file_manager_miller: Default::default(),
                 file_manager_trail: Default::default(),
                 file_manager_row_areas: Vec::new(),

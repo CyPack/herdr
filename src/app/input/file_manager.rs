@@ -5296,7 +5296,9 @@ mod tests {
         install_focused_agent(&mut app);
         app.state.mobile_width_threshold = 0;
         app.state.sidebar_collapsed = true;
-        let frame = Rect::new(0, 0, 130, 18);
+        // Preserve the original 130-cell Trail viewport after FCL-3 reserves
+        // the wide 24-cell locations rail and its one-cell separator.
+        let frame = Rect::new(0, 0, 155, 18);
         compute_view(&mut app.state, frame);
 
         let initial_offset = app.state.view.file_manager_trail.offset_cells;

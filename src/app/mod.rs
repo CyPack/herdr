@@ -665,6 +665,7 @@ impl App {
                 project_row_areas: Vec::new(),
                 file_manager_sidebar_row_areas: Vec::new(),
                 app_dock_entry_areas: Vec::new(),
+                file_manager_locations: Default::default(),
                 file_manager_miller: Default::default(),
                 file_manager_trail: Default::default(),
                 file_manager_row_areas: Vec::new(),
