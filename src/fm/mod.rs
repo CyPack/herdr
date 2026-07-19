@@ -188,6 +188,36 @@ pub(crate) struct FmPreparedCurrentRefresh {
     pub preview_generation: u64,
 }
 
+/// Pure identity for loading a new Native Files root outside the UI thread.
+///
+/// The Files instance and prepared locations-model revision are captured
+/// before the request crosses the worker boundary. Applying a result must
+/// revalidate both.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FmRootNavigationRequest {
+    pub files_generation: u32,
+    pub location_model_revision: u64,
+    pub target_root: PathBuf,
+    pub show_hidden: bool,
+}
+
+/// Stable root-loading failures. Platform-specific error strings never enter
+/// client presentation state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FmRootNavigationError {
+    Missing,
+    PermissionDenied,
+    ChangedType,
+    Unavailable,
+}
+
+/// Complete root projection prepared away from the UI/scheduled thread.
+#[derive(Debug, Clone)]
+pub(crate) struct FmPreparedRootNavigation {
+    pub request: FmRootNavigationRequest,
+    pub file_manager: FmState,
+}
+
 /// Parent-directory context for the left Miller column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FmParent {
@@ -425,6 +455,47 @@ pub(crate) fn prepare_current_refresh_io(
         preview,
         preview_generation,
     }
+}
+
+pub(crate) fn classify_root_navigation_error(kind: std::io::ErrorKind) -> FmRootNavigationError {
+    match kind {
+        std::io::ErrorKind::NotFound => FmRootNavigationError::Missing,
+        std::io::ErrorKind::PermissionDenied => FmRootNavigationError::PermissionDenied,
+        _ => FmRootNavigationError::Unavailable,
+    }
+}
+
+/// Prepare a complete Trail root without touching App state. The target is
+/// checked before and after enumeration so a missing or changed-type race
+/// fails closed instead of installing a partial projection.
+pub(crate) fn prepare_root_navigation_io(
+    request: FmRootNavigationRequest,
+) -> Result<FmPreparedRootNavigation, FmRootNavigationError> {
+    let metadata = std::fs::metadata(&request.target_root)
+        .map_err(|error| classify_root_navigation_error(error.kind()))?;
+    if !metadata.is_dir() {
+        return Err(FmRootNavigationError::ChangedType);
+    }
+    std::fs::read_dir(&request.target_root)
+        .map_err(|error| classify_root_navigation_error(error.kind()))?;
+
+    let file_manager = FmState::open_trail_to(
+        &request.target_root,
+        &request.target_root,
+        request.show_hidden,
+    )
+    .ok_or(FmRootNavigationError::Unavailable)?;
+
+    let metadata = std::fs::metadata(&request.target_root)
+        .map_err(|error| classify_root_navigation_error(error.kind()))?;
+    if !metadata.is_dir() {
+        return Err(FmRootNavigationError::ChangedType);
+    }
+
+    Ok(FmPreparedRootNavigation {
+        request,
+        file_manager,
+    })
 }
 
 /// Order every entry kind by known modification time descending. Unknown

@@ -1,3 +1,376 @@
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::thread::JoinHandle;
+
+use tokio::sync::Notify;
+
+pub(super) use crate::fm::{
+    classify_root_navigation_error, prepare_root_navigation_io, FmPreparedRootNavigation,
+    FmRootNavigationError, FmRootNavigationRequest,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct FileManagerIoSource {
+    pub(super) directory: PathBuf,
+    pub(super) directory_generation: u64,
+    pub(super) preview_generation: u64,
+    pub(super) miller_revision: u64,
+    pub(super) show_hidden: bool,
+}
+
+impl FileManagerIoSource {
+    pub(super) fn from_file_manager(file_manager: &crate::fm::FmState) -> Self {
+        Self {
+            directory: file_manager.cwd.clone(),
+            directory_generation: file_manager.directory_generation,
+            preview_generation: file_manager.preview_generation,
+            miller_revision: file_manager.miller.revision,
+            show_hidden: file_manager.show_hidden,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum FileManagerIoIdentity {
+    Root {
+        files_generation: u32,
+        location_model_revision: u64,
+        target_root: PathBuf,
+    },
+    Navigation {
+        files_generation: u32,
+        source: FileManagerIoSource,
+        target_directory: PathBuf,
+    },
+    Refresh {
+        files_generation: u32,
+        source: FileManagerIoSource,
+    },
+}
+
+impl FileManagerIoIdentity {
+    pub(super) fn target_path(&self) -> Option<&Path> {
+        match self {
+            Self::Root { target_root, .. } => Some(target_root),
+            Self::Navigation {
+                target_directory, ..
+            } => Some(target_directory),
+            Self::Refresh { source, .. } => Some(&source.directory),
+        }
+    }
+
+    pub(super) fn is_current(
+        &self,
+        files_generation: u32,
+        location_model_revision: u64,
+        source: Option<&FileManagerIoSource>,
+    ) -> bool {
+        match self {
+            Self::Root {
+                files_generation: expected_files_generation,
+                location_model_revision: expected_model_revision,
+                ..
+            } => {
+                *expected_files_generation == files_generation
+                    && *expected_model_revision == location_model_revision
+            }
+            Self::Navigation {
+                files_generation: expected_files_generation,
+                source: expected_source,
+                ..
+            }
+            | Self::Refresh {
+                files_generation: expected_files_generation,
+                source: expected_source,
+            } => *expected_files_generation == files_generation && source == Some(expected_source),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) enum FileManagerIoRequest {
+    Root(FmRootNavigationRequest),
+    Navigate {
+        files_generation: u32,
+        request: crate::fm::FmNavigationRequest,
+    },
+    Refresh(crate::fm::FmCurrentRefreshRequest),
+}
+
+impl FileManagerIoRequest {
+    pub(super) fn identity(&self) -> FileManagerIoIdentity {
+        match self {
+            Self::Root(request) => FileManagerIoIdentity::Root {
+                files_generation: request.files_generation,
+                location_model_revision: request.location_model_revision,
+                target_root: request.target_root.clone(),
+            },
+            Self::Navigate {
+                files_generation,
+                request,
+            } => FileManagerIoIdentity::Navigation {
+                files_generation: *files_generation,
+                source: FileManagerIoSource {
+                    directory: request.source_directory.clone(),
+                    directory_generation: request.source_directory_generation,
+                    preview_generation: request.source_preview_generation,
+                    miller_revision: request.source_miller_revision,
+                    show_hidden: request.show_hidden,
+                },
+                target_directory: request.target_directory.clone(),
+            },
+            Self::Refresh(request) => FileManagerIoIdentity::Refresh {
+                files_generation: request.files_generation,
+                source: FileManagerIoSource {
+                    directory: request.source_directory.clone(),
+                    directory_generation: request.source_directory_generation,
+                    preview_generation: request.source_preview_generation,
+                    miller_revision: request.source_miller_revision,
+                    show_hidden: request.source_show_hidden,
+                },
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) enum FileManagerIoOutcome {
+    Root(Result<FmPreparedRootNavigation, FmRootNavigationError>),
+    Navigate {
+        files_generation: u32,
+        prepared: Option<crate::fm::FmPreparedNavigation>,
+    },
+    Refresh(crate::fm::FmPreparedCurrentRefresh),
+    Panicked(FileManagerIoIdentity),
+}
+
+impl FileManagerIoOutcome {
+    #[cfg(test)]
+    fn for_request(self, _request: &FileManagerIoRequest) -> Self {
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct FileManagerIoResult {
+    pub(super) generation: u64,
+    pub(super) identity: FileManagerIoIdentity,
+    pub(super) outcome: FileManagerIoOutcome,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FileManagerIoSubmit {
+    Accepted {
+        generation: u64,
+        replaced_pending: bool,
+    },
+    Disconnected,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct FileManagerIoDrain {
+    pub(super) current: Option<FileManagerIoResult>,
+    pub(super) disconnected: bool,
+}
+
+#[derive(Debug)]
+struct FileManagerIoWork {
+    generation: u64,
+    request: FileManagerIoRequest,
+}
+
+#[derive(Debug)]
+struct FileManagerIoWorkerState {
+    pending: Option<FileManagerIoWork>,
+    result: Option<FileManagerIoResult>,
+    alive: bool,
+    closed: bool,
+}
+
+impl Default for FileManagerIoWorkerState {
+    fn default() -> Self {
+        Self {
+            pending: None,
+            result: None,
+            alive: true,
+            closed: false,
+        }
+    }
+}
+
+type SharedWorkerState = Arc<(Mutex<FileManagerIoWorkerState>, Condvar)>;
+
+struct WorkerAliveGuard {
+    shared: SharedWorkerState,
+    wake: Arc<Notify>,
+}
+
+impl Drop for WorkerAliveGuard {
+    fn drop(&mut self) {
+        let (state, changed) = &*self.shared;
+        lock_state(state).alive = false;
+        changed.notify_all();
+        self.wake.notify_one();
+    }
+}
+
+pub(super) struct FileManagerIoWorker {
+    shared: SharedWorkerState,
+    handle: Option<JoinHandle<()>>,
+    latest_generation: u64,
+    disconnect_reported: bool,
+}
+
+impl FileManagerIoWorker {
+    pub(super) fn new(wake: Arc<Notify>) -> Self {
+        Self::with_processor(wake, process_request)
+    }
+
+    fn with_processor<F>(wake: Arc<Notify>, processor: F) -> Self
+    where
+        F: Fn(FileManagerIoRequest) -> FileManagerIoOutcome + Send + 'static,
+    {
+        let shared = Arc::new((
+            Mutex::new(FileManagerIoWorkerState::default()),
+            Condvar::new(),
+        ));
+        let worker_shared = shared.clone();
+        let handle = std::thread::spawn(move || {
+            let _alive_guard = WorkerAliveGuard {
+                shared: worker_shared.clone(),
+                wake: wake.clone(),
+            };
+            while let Some(work) = take_next_request(&worker_shared) {
+                let identity = work.request.identity();
+                let outcome = catch_unwind(AssertUnwindSafe(|| processor(work.request)))
+                    .unwrap_or_else(|_| FileManagerIoOutcome::Panicked(identity.clone()));
+                let result = FileManagerIoResult {
+                    generation: work.generation,
+                    identity,
+                    outcome,
+                };
+                let (state, changed) = &*worker_shared;
+                let mut state = lock_state(state);
+                if state.closed {
+                    break;
+                }
+                state.result = Some(result);
+                drop(state);
+                changed.notify_all();
+                wake.notify_one();
+            }
+        });
+
+        Self {
+            shared,
+            handle: Some(handle),
+            latest_generation: 0,
+            disconnect_reported: false,
+        }
+    }
+
+    pub(super) fn submit(&mut self, request: FileManagerIoRequest) -> FileManagerIoSubmit {
+        let (state, changed) = &*self.shared;
+        let mut state = lock_state(state);
+        if state.closed || !state.alive {
+            return FileManagerIoSubmit::Disconnected;
+        }
+        self.latest_generation = self.latest_generation.wrapping_add(1).max(1);
+        let replaced_pending = state.pending.replace(FileManagerIoWork {
+            generation: self.latest_generation,
+            request,
+        });
+        changed.notify_one();
+        FileManagerIoSubmit::Accepted {
+            generation: self.latest_generation,
+            replaced_pending: replaced_pending.is_some(),
+        }
+    }
+
+    pub(super) fn drain(&mut self) -> FileManagerIoDrain {
+        let (state, _) = &*self.shared;
+        let mut state = lock_state(state);
+        let result = state.result.take();
+        let disconnected = !state.alive && !state.closed && !self.disconnect_reported;
+        self.disconnect_reported |= disconnected;
+        drop(state);
+
+        FileManagerIoDrain {
+            current: result.filter(|result| result.generation == self.latest_generation),
+            disconnected,
+        }
+    }
+
+    #[cfg(test)]
+    fn wait_for_result_for_test(&self) {
+        let (state, changed) = &*self.shared;
+        let mut state = lock_state(state);
+        while state.result.is_none() && state.alive && !state.closed {
+            state = match changed.wait(state) {
+                Ok(state) => state,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+        }
+    }
+}
+
+impl Drop for FileManagerIoWorker {
+    fn drop(&mut self) {
+        let (state, changed) = &*self.shared;
+        let mut state = lock_state(state);
+        state.closed = true;
+        state.pending = None;
+        state.result = None;
+        drop(state);
+        changed.notify_all();
+
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn take_next_request(shared: &SharedWorkerState) -> Option<FileManagerIoWork> {
+    let (state, changed) = &**shared;
+    let mut state = lock_state(state);
+    while state.pending.is_none() && !state.closed {
+        state = match changed.wait(state) {
+            Ok(state) => state,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+    }
+    if state.closed {
+        return None;
+    }
+    state.pending.take()
+}
+
+fn lock_state(state: &Mutex<FileManagerIoWorkerState>) -> MutexGuard<'_, FileManagerIoWorkerState> {
+    match state.lock() {
+        Ok(state) => state,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn process_request(request: FileManagerIoRequest) -> FileManagerIoOutcome {
+    match request {
+        FileManagerIoRequest::Root(request) => {
+            FileManagerIoOutcome::Root(prepare_root_navigation_io(request))
+        }
+        FileManagerIoRequest::Navigate {
+            files_generation,
+            request,
+        } => FileManagerIoOutcome::Navigate {
+            files_generation,
+            prepared: crate::fm::prepare_navigation_io(request),
+        },
+        FileManagerIoRequest::Refresh(request) => {
+            FileManagerIoOutcome::Refresh(crate::fm::prepare_current_refresh_io(request))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
