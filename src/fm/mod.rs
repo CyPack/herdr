@@ -1542,6 +1542,16 @@ mod tests {
         entries.iter().map(|e| e.name.as_str()).collect()
     }
 
+    fn fixed_time(seconds: u64) -> std::time::SystemTime {
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds)
+    }
+
+    fn set_modified(path: &Path, modified: std::time::SystemTime) {
+        let file = std::fs::File::open(path).expect("open fixture for mtime");
+        file.set_times(std::fs::FileTimes::new().set_modified(modified))
+            .expect("set fixture mtime");
+    }
+
     fn synthetic_state(entry_count: usize) -> FmState {
         let mut state = FmState::test_empty("/virtual");
         state.cwd_writable = true;
@@ -1557,6 +1567,126 @@ mod tests {
             })
             .collect();
         state
+    }
+
+    // TP-MTIME-01/02: file kind must not outrank fresher filesystem evidence.
+    // Compile-valid RED against the current directory-first comparator.
+    #[test]
+    fn newer_file_sorts_before_older_directory() {
+        let td = TempDir::new("mtime-newer-file");
+        let directory = td.root.join("aaa-directory");
+        let file = td.root.join("zzz-file.txt");
+        fs::create_dir(&directory).expect("create directory");
+        fs::write(&file, b"x").expect("write file");
+        set_modified(&directory, fixed_time(10));
+        set_modified(&file, fixed_time(20));
+
+        assert_eq!(
+            names(&read_dir_entries(&td.root, false)),
+            vec!["zzz-file.txt", "aaa-directory"]
+        );
+    }
+
+    // TP-MTIME-02: the inverse ordering is equally strict and must not depend
+    // on a directory-first exception.
+    #[test]
+    fn newer_directory_sorts_before_older_file() {
+        let td = TempDir::new("mtime-newer-directory");
+        let file = td.root.join("aaa-file.txt");
+        let directory = td.root.join("zzz-directory");
+        fs::write(&file, b"x").expect("write file");
+        fs::create_dir(&directory).expect("create directory");
+        set_modified(&file, fixed_time(10));
+        set_modified(&directory, fixed_time(20));
+
+        assert_eq!(
+            names(&read_dir_entries(&td.root, false)),
+            vec!["zzz-directory", "aaa-file.txt"]
+        );
+    }
+
+    // TP-MTIME-01/03: an entry can disappear after read_dir yielded it but
+    // before metadata preparation. It remains visible and unknown sorts last.
+    #[test]
+    fn deleted_dir_entry_stays_visible_and_sorts_as_unknown() {
+        let td = TempDir::new("mtime-deleted-dir-entry");
+        let gone = td.root.join("aaa-gone.txt");
+        let live = td.root.join("zzz-live.txt");
+        fs::write(&gone, b"x").expect("write disappearing file");
+        fs::write(&live, b"x").expect("write live file");
+        set_modified(&live, fixed_time(20));
+        let dir_entries = fs::read_dir(&td.root)
+            .expect("read fixture directory")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect fixture dir entries");
+        fs::remove_file(&gone).expect("remove entry after iterator yielded it");
+
+        let (mut entries, omissions, entry_errors) =
+            collect_directory_entries(dir_entries.into_iter().map(Ok), false);
+        sort_entries(&mut entries);
+
+        assert_eq!(names(&entries), vec!["zzz-live.txt", "aaa-gone.txt"]);
+        assert_eq!(omissions, FmDirectoryOmissions::default());
+        assert_eq!(entry_errors, 0);
+    }
+
+    // TP-MTIME-01: link identity owns the displayed entry timestamp. Following
+    // the old target mtime would put the freshly-created link after middle.
+    #[cfg(unix)]
+    #[test]
+    fn symlink_uses_its_own_modification_time() {
+        let td = TempDir::new("mtime-symlink");
+        let target = td.root.join("aaa-target.txt");
+        let middle = td.root.join("middle.txt");
+        let link = td.root.join("zzz-link.txt");
+        fs::write(&target, b"x").expect("write symlink target");
+        fs::write(&middle, b"x").expect("write middle file");
+        set_modified(&target, fixed_time(10));
+        set_modified(&middle, fixed_time(20));
+        std::os::unix::fs::symlink(&target, &link).expect("create symlink");
+
+        assert_eq!(
+            names(&read_dir_entries(&td.root, false)),
+            vec!["zzz-link.txt", "middle.txt", "aaa-target.txt"]
+        );
+    }
+
+    // TP-MTIME-01: special filesystem entries are not hidden by metadata
+    // preparation and participate in the same chronological ordering.
+    #[cfg(unix)]
+    #[test]
+    fn special_entry_participates_in_mtime_ordering() {
+        let td = TempDir::new("mtime-special");
+        let old = td.root.join("aaa-old.txt");
+        let fifo = td.root.join("zzz-fifo");
+        fs::write(&old, b"x").expect("write old file");
+        set_modified(&old, fixed_time(10));
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo runs");
+        assert!(status.success(), "fifo fixture must exist");
+
+        assert_eq!(
+            names(&read_dir_entries(&td.root, false)),
+            vec!["zzz-fifo", "aaa-old.txt"]
+        );
+    }
+
+    // TP-MTIME-03: equal mtimes retain deterministic natural/case/raw order.
+    #[test]
+    fn equal_mtimes_use_natural_then_raw_name_order() {
+        let td = TempDir::new("mtime-ties");
+        for name in ["file10.txt", "file2.txt", "a2.txt", "A2.txt"] {
+            let path = td.root.join(name);
+            fs::write(&path, b"x").expect("write tie fixture");
+            set_modified(&path, fixed_time(10));
+        }
+
+        assert_eq!(
+            names(&read_dir_entries(&td.root, false)),
+            vec!["A2.txt", "a2.txt", "file2.txt", "file10.txt"]
+        );
     }
 
     #[test]
