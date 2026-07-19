@@ -2037,7 +2037,11 @@ mod tests {
             files_rect.x,
             files_rect.y,
         ));
-        assert_eq!(app.state.sidebar_tab, SidebarTab::Files);
+        assert_eq!(
+            app.state.sidebar_tab,
+            SidebarTab::Projects,
+            "Files opens the center without replacing the global body"
+        );
 
         let spaces_rect = app.state.view.sidebar_tab_hit_areas[0];
         app.handle_mouse(mouse(
@@ -2126,9 +2130,8 @@ mod tests {
         );
     }
 
-    // FCL-5 teardown: this test pins the transitional global Files-body owner.
-    // FCL-1 replaces the asserted Files tab selection with stage-only
-    // activation, and FCL-5 removes the legacy body.
+    // FCL shell contract: the Files launcher remains visible after FCL-5,
+    // but it never becomes the global sidebar body owner.
     // TP-FIP-NAV-01: a primary click on the visible default-sidebar Files tab
     // must open the Native Files Stage, not only switch the visual tab.
     #[test]
@@ -2153,7 +2156,7 @@ mod tests {
             files_rect.y,
         ));
 
-        assert_eq!(app.state.sidebar_tab, SidebarTab::Files);
+        assert_eq!(app.state.sidebar_tab, SidebarTab::Spaces);
         assert_eq!(
             app.state.stage.surface_view(),
             StageSurfaceView::NativeFiles
@@ -2161,8 +2164,8 @@ mod tests {
         assert!(app.state.file_manager.is_some());
     }
 
-    // FCL-5 teardown: reactivation remains protected, but Files no longer
-    // becomes the global sidebar content owner after FCL-1.
+    // FCL shell contract: reactivation remains protected without transferring
+    // global sidebar ownership.
     // TP-FIP-NAV-02: reactivating Files from the visible tab keeps the open
     // singleton surface without resetting file-manager state.
     #[test]
@@ -2190,7 +2193,7 @@ mod tests {
             files_rect.y,
         ));
 
-        assert_eq!(app.state.sidebar_tab, SidebarTab::Files);
+        assert_eq!(app.state.sidebar_tab, SidebarTab::Spaces);
         assert_eq!(
             app.state.stage.surface_view(),
             StageSurfaceView::NativeFiles

@@ -596,13 +596,15 @@ impl AppState {
                         // fingerprint check) refreshes it moments later.
                         // Synchronously re-reading sessions here blocked the
                         // click for the whole store read (~70MB observed).
-                        self.sidebar_tab = tab;
                         if tab == crate::app::state::SidebarTab::Files {
                             // Converge on the shared dock authority so the
-                            // visible tab, dock click, and popover all open or
-                            // reuse the same singleton Files Stage.
+                            // launcher, dock click, and popover all open or
+                            // reuse the same singleton Files Stage. Files owns
+                            // the center only; the selected Spaces/Projects
+                            // body remains the global runtime tracker.
                             self.activate_dock_app(crate::ui::surface_host::BuiltInAppId::Files);
                         } else {
+                            self.sidebar_tab = tab;
                             self.request_file_manager_sidebar_navigation = None;
                             if self.stage.surface_view()
                                 == crate::ui::surface_host::StageSurfaceView::NativeFiles
