@@ -2140,6 +2140,13 @@ mod tests {
         std::fs::write(root.join("child").join("preview.txt"), b"preview")
             .expect("write visual preview");
         std::fs::write(root.join("peer.txt"), b"peer").expect("write visual peer");
+        let equal_modified = std::time::UNIX_EPOCH + std::time::Duration::from_secs(10);
+        for path in [root.join("child"), root.join("peer.txt")] {
+            std::fs::File::open(path)
+                .expect("open visual composition mtime fixture")
+                .set_times(std::fs::FileTimes::new().set_modified(equal_modified))
+                .expect("set visual composition fixture mtime");
+        }
         let mut app = native_fm_visual_composition_app(&root);
 
         let desktop = Rect::new(0, 0, 120, 24);

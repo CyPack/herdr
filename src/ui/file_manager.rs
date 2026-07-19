@@ -2346,6 +2346,8 @@ mod tests {
         td.dir("beta");
         fs::write(td.root.join("alpha").join("alpha-only.txt"), b"x").expect("write alpha preview");
         fs::write(td.root.join("beta").join("beta-only.txt"), b"x").expect("write beta preview");
+        TempDir::set_modified(&td.root.join("alpha"));
+        TempDir::set_modified(&td.root.join("beta"));
         let mut fm = FmState::new(&td.root);
 
         let alpha = render_rows(&app_with_fm(fm.clone()), 80, 6).join("\n");

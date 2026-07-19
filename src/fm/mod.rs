@@ -2581,6 +2581,8 @@ mod tests {
         fs::create_dir_all(&nested).expect("create nested fixture");
         fs::write(nested.join(".secret"), b"x").expect("write hidden fixture");
         fs::write(nested.join("visible"), b"x").expect("write visible fixture");
+        set_modified(&nested.join(".secret"), fixed_time(10));
+        set_modified(&nested.join("visible"), fixed_time(10));
         let mut state = FmState::new(&td.root);
 
         state.toggle_hidden();
@@ -3702,6 +3704,7 @@ mod tests {
         fs::write(td.root.join("selected").join("inside.txt"), b"x")
             .expect("write selected directory child");
         td.file("z.txt");
+        set_equal_modified(&td, &["selected", "z.txt"]);
         let mut state = FmState::new(&td.root);
         let selected_path = td.root.join("selected");
         assert_eq!(
@@ -3732,6 +3735,7 @@ mod tests {
         td.file("a.txt");
         td.file("b.txt");
         td.file("c.txt");
+        set_equal_modified(&td, &["a.txt", "b.txt", "c.txt"]);
         let mut state = FmState::new(&td.root);
         assert!(state.select(1));
         assert_eq!(
