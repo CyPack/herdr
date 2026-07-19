@@ -80,8 +80,8 @@ remain unchanged.
     produces a separate RED.
   - [x] Commit one behavior-specific RED and minimum GREEN per violated stage;
     refactor only behind focused budgets and all Layout V1 semantic tests.
-- [ ] **FMP-5 Production closure.**
-  - [ ] Pass `TP-FMP-VIS-01` unchanged in Playwright Chromium plus focused/full
+- [x] **FMP-5 Production closure** (`80119b5d` CyPack checkpoint).
+  - [x] Pass `TP-FMP-VIS-01` unchanged in Playwright Chromium plus focused/full
     Rust, Linux/Windows Clippy, maintenance, hygiene, graph freshness, atomic
     Git, CyPack-only fast-forward publication, and exact remote SHA gates.
 

@@ -2,7 +2,7 @@
 
 Updated: 2026-07-19 CEST
 
-## 0. SONRAKI ADIM — FMP-5 CONTINUITY VE CYPACK FF YAYINI
+## 0. SONRAKI ADIM — FMR SCROLL RANKING / PLUGIN ADOPTION LANE
 
 **CURRENT OVERRIDE — FILES LAYOUT V1 KORUNARAK RAPID NAVIGATION FIX
 IMPLEMENTED.** Ölçülen ana tetikleyici server input loop'unda senkron Trail
@@ -41,9 +41,11 @@ yok. Fresh single-worker graph `23.919 node / 124.186 edge`, MCP status ready
 ve yeni `client_event_lanes`, resident `TrailSnapshots::select_dir`,
 `queue_file_manager_trail_directory_activation` gövdeleri doğrulandı. Stable
 Herdr/socket, upstream, release assets ve user-owned `.superpowers/`
-untouched. Sıradaki tek FMP işi: task/OPEN_TASKS/cartography exact continuity
-commit'i, CyPack `feat/native-fm` + `master` FF push ve remote SHA equality;
-ondan sonra FMP-5 kapanır.
+untouched. FMP-0..FMP-5 kapalıdır. CyPack checkpoint `80119b5d` için
+`feat/native-fm` = `master` remote SHA equality doğrulandı. Sonraki ayrı lane,
+FMR-0 scroll version lab'in aynı fixture matrix'iyle ranking'i ve FMR-4/FMR-5
+plugin provenance/adoption sınırıdır; yeni ürün mutasyonu bu closure'ın parçası
+değildir.
 
 **CURRENT OVERRIDE — FCL FILES CONTENT LOCATIONS RAIL CLOSED.** Kullanıcı
 Option A'yı açıkça onayladı: Native Files merkezi açıldığında global sol panel
@@ -712,18 +714,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 11 ve
-89, toplam 100 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 10 ve
+89, toplam 99 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 11 unchecked
-
-- [ ] **FMP-5 Production closure.**
-  - [ ] Pass `TP-FMP-VIS-01` unchanged in Playwright Chromium plus focused/full
-    Rust, Linux/Windows Clippy, maintenance, hygiene, graph freshness, atomic
-    Git, CyPack-only fast-forward publication, and exact remote SHA gates.
+### Source: `.codex/TASKS.md` — 10 unchecked
 
 - [ ] **FMR-0 Scroll version lab and ranking.** Four reboot-safe source
   checkpoints are collected side by side under

@@ -4,10 +4,10 @@
   "project": {
     "id": "home-ayaz-projects-herdr",
     "branch": "feat/native-fm",
-    "indexed_head": "e5dcbb20",
+    "indexed_head": "80119b5d",
     "mcp_status": "ready",
     "mcp_nodes": 23919,
-    "mcp_edges": 124186,
+    "mcp_edges": 124201,
     "freshness_probe": [
       "run_client_loop",
       "ClientLoopEvent",
