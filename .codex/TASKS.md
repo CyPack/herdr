@@ -50,15 +50,32 @@ remain unchanged.
     profile helper; preserve raw server/client logs and the exact user gesture
     sequence without touching stable Herdr/socket.
 - [ ] **FMP-3 Decide the measured root cause and optimization boundary.**
-  - [ ] Accept or reject H1 full-frame/queue pressure, H2 resident projection,
+  - [x] Accept or reject H1 full-frame/queue pressure, H2 resident projection,
     H3 serial scheduled competition, and H4 filesystem backlog from recorded
-    counters/durations; update the PRD before product mutation.
+    counters/durations; update the PRD before product mutation. Decision:
+    synchronous Trail child/parent/preview I/O is primary; client FIFO/blocking
+    presentation is an independent amplifier; projection-only and generic
+    scheduled-work explanations are rejected as primary.
 - [ ] **FMP-4 Implement one measured TDD optimization slice at a time.**
-  - [ ] Commit one behavior-specific RED per violated stage, including final
-    exact path, stale identity, close/reopen, worker race, and slow-client
-    adversarial cases.
-  - [ ] Apply minimum GREEN and refactor only behind focused budgets and all
-    Layout V1 semantic tests.
+  - [ ] **FMP-4A Resident Trail fast path:** RED proves exact ancestor
+    activation currently reads child/parent/preview; GREEN reuses resident
+    snapshots and builds the transitional operation projection with zero
+    filesystem or file-body reads.
+  - [ ] **FMP-4B Bounded cold Trail activation:** RED blocks a nonresident
+    reader; GREEN routes typed column/index/path activation through the
+    one-executing/one-latest-pending worker and rejects stale, failed,
+    panicked, disconnected, watcher-raced, and close/reopen completion.
+  - [ ] **FMP-4C Client arbitration:** RED reproduces exact click starvation
+    behind semantic frames; GREEN splits lossless input, ordered control, and
+    latest-only semantic-frame lanes with bounded fairness. Terminal ANSI,
+    graphics, clipboard, title, mouse-capture, input-source, shutdown, and
+    disconnect stay lossless and ordered.
+  - [ ] **FMP-4D Measured scale policy:** prove listing never opens file
+    bodies; calibrate a 100k-entry fixture. Add bounded partial listing,
+    cancellation, viewport-first enrichment, or cache only if that fixture
+    produces a separate RED.
+  - [ ] Commit one behavior-specific RED and minimum GREEN per violated stage;
+    refactor only behind focused budgets and all Layout V1 semantic tests.
 - [ ] **FMP-5 Production closure.**
   - [ ] Pass `TP-FMP-VIS-01` unchanged in Playwright Chromium plus focused/full
     Rust, Linux/Windows Clippy, maintenance, hygiene, graph freshness, atomic

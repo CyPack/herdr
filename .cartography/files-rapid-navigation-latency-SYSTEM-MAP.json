@@ -1,0 +1,206 @@
+{
+  "goal": "Remove multi-second Files ancestor-click stalls while preserving locked Layout V1, exact Trail authority, bounded I/O, and lossless client controls.",
+  "created": "2026-07-19",
+  "project": {
+    "id": "home-ayaz-projects-herdr",
+    "branch": "feat/native-fm",
+    "indexed_head": "5378d2b0",
+    "mcp_status": "ready",
+    "mcp_nodes": 23863,
+    "mcp_edges": 124101,
+    "freshness_probe": [
+      "run_client_loop",
+      "ClientLoopEvent",
+      "TrailSnapshots::select_dir",
+      "FileManagerIoWorker::submit",
+      "HeadlessServer::handle_client_input_events"
+    ]
+  },
+  "ontology": {
+    "type": "cross-client-server input latency and file-manager I/O dependency graph",
+    "in_scope": [
+      "plain-left Trail directory activation",
+      "resident snapshot reuse",
+      "bounded nonresident activation",
+      "client input and presentation arbitration",
+      "Layout V1 unchanged Chromium verification"
+    ],
+    "out_of_scope": [
+      "recursive file-content transfer",
+      "unmeasured directory pagination",
+      "Layout V2",
+      "stable Herdr process or socket",
+      "upstream publication",
+      "user-owned .superpowers"
+    ]
+  },
+  "nodes": {
+    "components": [
+      {
+        "id": "stdin",
+        "name": "unix_stdin_reader_loop",
+        "source": "src/client/input.rs:60-128",
+        "role": "Frames raw terminal bytes and blocking-sends them to the shared client FIFO."
+      },
+      {
+        "id": "client-fifo",
+        "name": "ClientLoopEvent mpsc(256)",
+        "source": "src/client/mod.rs:798-812,1303-1305",
+        "role": "Mixes lossless input, resize, all server messages, disconnect, and timer coordination."
+      },
+      {
+        "id": "client-loop",
+        "name": "run_client_loop",
+        "source": "src/client/mod.rs:1271-1611",
+        "role": "Serially performs blocking socket input forwarding and blocking frame encode/stdout flush."
+      },
+      {
+        "id": "server-loop",
+        "name": "HeadlessServer event loop",
+        "source": "src/server/headless.rs:381-597",
+        "role": "Consumes the bounded server event channel and serially dispatches input, scheduled work, and render."
+      },
+      {
+        "id": "trail-input",
+        "name": "handle_file_manager_row_mouse",
+        "source": "src/app/input/file_manager.rs:447-531",
+        "role": "Plain left-down currently enters synchronous Trail activation."
+      },
+      {
+        "id": "trail-read",
+        "name": "TrailSnapshots::select_dir",
+        "source": "src/fm/trail_snapshots.rs:266-295",
+        "role": "Unconditionally reads a selected directory even when its exact next-column snapshot is resident."
+      },
+      {
+        "id": "legacy-projection",
+        "name": "install_trail_operation_projection",
+        "source": "src/fm/mod.rs:1212-1271",
+        "role": "Clones resident rows but then synchronously rehydrates writability, parent, and preview state."
+      },
+      {
+        "id": "fm-worker",
+        "name": "FileManagerIoWorker",
+        "source": "src/app/file_manager_io_worker.rs:223-365",
+        "role": "Already provides one executing plus one latest pending request and generation-bound result delivery."
+      },
+      {
+        "id": "server-writer",
+        "name": "ClientWriterQueue",
+        "source": "src/server/client_transport.rs:183-265",
+        "role": "Keeps reliable controls plus at most one replaceable render before socket writing."
+      },
+      {
+        "id": "chromium",
+        "name": "Files Layout V1 visual suite",
+        "source": "tests/visual",
+        "role": "Must remain unchanged after performance-only V1.x work."
+      }
+    ],
+    "dependencies": [
+      {
+        "from": "stdin",
+        "to": "client-fifo",
+        "type": "lossless-input-enqueue"
+      },
+      {
+        "from": "client-fifo",
+        "to": "client-loop",
+        "type": "shared-fifo-consumption"
+      },
+      {
+        "from": "client-loop",
+        "to": "server-loop",
+        "type": "blocking-socket-write"
+      },
+      {
+        "from": "server-loop",
+        "to": "trail-input",
+        "type": "serial-mouse-dispatch"
+      },
+      {
+        "from": "trail-input",
+        "to": "trail-read",
+        "type": "synchronous-child-read"
+      },
+      {
+        "from": "trail-read",
+        "to": "legacy-projection",
+        "type": "accepted-activation-rehydrates-legacy-state"
+      },
+      {
+        "from": "legacy-projection",
+        "to": "server-loop",
+        "type": "blocks-input-loop"
+      },
+      {
+        "from": "server-loop",
+        "to": "server-writer",
+        "type": "latest-render-submit"
+      },
+      {
+        "from": "server-writer",
+        "to": "client-fifo",
+        "type": "every-message-refanned-into-shared-fifo"
+      },
+      {
+        "from": "trail-input",
+        "to": "fm-worker",
+        "type": "target-nonresident-activation-route"
+      },
+      {
+        "from": "client-loop",
+        "to": "chromium",
+        "type": "presentation-must-remain-layout-equivalent"
+      }
+    ],
+    "claims": [
+      {
+        "id": "input-integrity",
+        "status": "verified",
+        "text": "Client and server captured 7411 identical ordered raw input events; the defect is delay, not byte loss."
+      },
+      {
+        "id": "primary-root-cause",
+        "status": "verified",
+        "text": "Multi-second server silences begin after left-down and align with synchronous Trail child, parent, and preview filesystem work."
+      },
+      {
+        "id": "render-not-primary",
+        "status": "verified",
+        "text": "Server render queue_full is zero and measured render work is tens of milliseconds, not the observed 7-10 seconds."
+      },
+      {
+        "id": "client-hol",
+        "status": "verified",
+        "text": "Input and complete semantic frames share one client FIFO and one blocking consumer, amplifying server backpressure."
+      },
+      {
+        "id": "content-volume",
+        "status": "verified",
+        "text": "Directory listing prepares entry metadata and names, not recursive file bodies; preview content is separately bounded."
+      },
+      {
+        "id": "target",
+        "status": "approved",
+        "text": "Resident activation is disk-free, nonresident activation uses the bounded worker, and semantic frames become latest-only without dropping ordered controls."
+      }
+    ]
+  },
+  "profile": {
+    "archive": ".local/perf/files-layout-v1/20260719-165338-run",
+    "events_client": 7411,
+    "events_server": 7411,
+    "sequence_exact": true,
+    "client_to_server_ms": {
+      "p50": 9.872,
+      "p95": 7587.645,
+      "p99": 9303.526,
+      "max": 9867.817
+    },
+    "filesystem_reads": 1699,
+    "full_frames_sent": 4158,
+    "full_frame_bytes": 500967844,
+    "full_render_queue_full": 0
+  }
+}
