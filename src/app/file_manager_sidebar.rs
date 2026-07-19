@@ -77,6 +77,7 @@ pub struct FileManagerSidebarSection {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FileManagerSidebarModel {
+    revision: u64,
     pub sections: Vec<FileManagerSidebarSection>,
 }
 
@@ -109,7 +110,10 @@ impl FileManagerSidebarModel {
             }
         }
 
-        Self { sections }
+        Self {
+            revision: 1,
+            sections,
+        }
     }
 
     /// Prepare the startup Files-sidebar projection. This is an explicit
@@ -212,6 +216,18 @@ impl FileManagerSidebarModel {
             .iter()
             .flat_map(|section| &section.items)
             .find(|item| item.path == path)
+    }
+
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Replace a published test projection and advance its identity so stale
+    /// asynchronous completions can be exercised without filesystem timing.
+    #[cfg(test)]
+    pub(crate) fn replace_with(&mut self, mut replacement: Self) {
+        replacement.revision = self.revision.wrapping_add(1).max(1);
+        *self = replacement;
     }
 }
 

@@ -117,6 +117,7 @@ pub struct App {
     pub(crate) no_session: bool,
     pub(crate) input_rx: Option<mpsc::Receiver<crate::raw_input::RawInputEvent>>,
     file_manager_watcher: file_manager_watcher::NativeFileManagerWatcher,
+    file_manager_io_worker: file_manager_io_worker::FileManagerIoWorker,
     file_operation_worker: file_operation_worker::FileOperationWorker,
     file_operation_reconcile_baseline:
         Option<file_operation_worker::FileOperationReconcileBaseline>,
@@ -865,6 +866,9 @@ impl App {
             no_session,
             input_rx: None,
             file_manager_watcher: file_manager_watcher::NativeFileManagerWatcher::new(
+                render_notify.clone(),
+            ),
+            file_manager_io_worker: file_manager_io_worker::FileManagerIoWorker::new(
                 render_notify.clone(),
             ),
             file_operation_worker: file_operation_worker::FileOperationWorker::new(

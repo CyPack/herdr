@@ -3610,7 +3610,8 @@ impl HeadlessServer {
     fn handle_scheduled_tasks_headless(&mut self, now: Instant, geometry_dirty: bool) -> bool {
         let mut changed = false;
 
-        changed |= self.app.sync_file_manager_sidebar_navigation();
+        changed |= self.app.sync_file_manager_io_results();
+        changed |= self.app.sync_file_manager_location_request();
         self.app.sync_headless_animation_timer(now);
         changed |= self.app.refresh_projects_if_due(now);
         changed |= self.app.refresh_tab_branches_if_due(now);
@@ -6609,6 +6610,11 @@ next_tab = ""
         assert!(
             server.handle_scheduled_tasks_headless(Instant::now(), false),
             "headless scheduled tasks must consume the pending shortcut request"
+        );
+        server.app.wait_file_manager_io_for_test();
+        assert!(
+            server.handle_scheduled_tasks_headless(Instant::now(), false),
+            "headless scheduled tasks must observe the prepared root"
         );
         assert!(
             server

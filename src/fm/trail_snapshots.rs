@@ -96,6 +96,23 @@ pub(crate) struct TrailSnapshots {
 }
 
 impl TrailSnapshots {
+    /// Reset to an already loaded root without touching the filesystem.
+    pub(crate) fn reset_to_resident_root(
+        &mut self,
+        trail: &mut TrailState,
+        expected_root: &Path,
+    ) -> bool {
+        if trail.cols().first().map(|col| col.directory.as_path()) != Some(expected_root)
+            || self.cols.first().map(|col| col.directory.as_path()) != Some(expected_root)
+            || !trail.clear_selection_at(0)
+        {
+            return false;
+        }
+        self.cols.truncate(1);
+        self.detail = None;
+        true
+    }
+
     pub(crate) fn new(show_hidden: bool) -> Self {
         Self {
             cols: Vec::new(),

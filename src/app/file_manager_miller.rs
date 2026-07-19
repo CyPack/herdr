@@ -9,13 +9,18 @@ impl crate::app::App {
         &mut self,
         request: crate::fm::FmNavigationRequest,
     ) -> bool {
-        let Some(prepared) = crate::fm::prepare_navigation_io(request) else {
+        let Some(files_generation) = self.state.stage.active_instance_generation() else {
             return false;
         };
-        self.state
-            .file_manager
-            .as_mut()
-            .is_some_and(|file_manager| file_manager.apply_prepared_navigation(prepared))
+        matches!(
+            self.file_manager_io_worker.submit(
+                crate::app::file_manager_io_worker::FileManagerIoRequest::Navigate {
+                    files_generation,
+                    request,
+                },
+            ),
+            crate::app::file_manager_io_worker::FileManagerIoSubmit::Accepted { .. }
+        )
     }
 
     pub(super) fn begin_miller_resize_capture(&mut self, column: u16, row: u16) -> bool {

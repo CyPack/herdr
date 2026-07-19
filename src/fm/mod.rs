@@ -1110,6 +1110,19 @@ impl FmState {
         Some(state)
     }
 
+    /// Re-focus the existing root from resident snapshots. This is the
+    /// zero-filesystem fast path for activating an already loaded location.
+    pub(crate) fn reset_to_resident_trail_root(&mut self, expected_root: &Path) -> bool {
+        if !self
+            .trail_snapshots
+            .reset_to_resident_root(&mut self.trail, expected_root)
+        {
+            return false;
+        }
+        self.clear_multi_selection();
+        self.install_trail_projection_without_selection(0).is_some()
+    }
+
     /// Exact directory owned by the single Trail focus authority.
     pub(crate) fn active_trail_directory(&self) -> Option<&Path> {
         self.trail

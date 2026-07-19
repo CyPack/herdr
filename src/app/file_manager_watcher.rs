@@ -357,6 +357,7 @@ impl super::App {
             .flatten()
     }
 
+    #[cfg(test)]
     fn apply_prepared_file_manager_refresh(
         &mut self,
         prepared: crate::fm::FmPreparedCurrentRefresh,
@@ -376,30 +377,14 @@ impl super::App {
         &mut self,
         request: crate::fm::FmCurrentRefreshRequest,
     ) -> Option<bool> {
-        let previous = self.state.file_manager.as_ref().map(|file_manager| {
-            (
-                file_manager.entries.clone(),
-                file_manager.cursor,
-                file_manager.cwd_status,
-                file_manager.cwd_writable,
-                file_manager.parent.clone(),
-                file_manager.preview.clone(),
-                file_manager.show_hidden,
-            )
-        })?;
-        let prepared = crate::fm::prepare_current_refresh_io(request);
-        if !self.apply_prepared_file_manager_refresh(prepared) {
-            return None;
-        }
-        self.state.file_manager.as_ref().map(|file_manager| {
-            previous.0 != file_manager.entries
-                || previous.1 != file_manager.cursor
-                || previous.2 != file_manager.cwd_status
-                || previous.3 != file_manager.cwd_writable
-                || previous.4 != file_manager.parent
-                || previous.5 != file_manager.preview
-                || previous.6 != file_manager.show_hidden
-        })
+        self.state.file_manager.as_ref()?;
+        matches!(
+            self.file_manager_io_worker.submit(
+                crate::app::file_manager_io_worker::FileManagerIoRequest::Refresh(request),
+            ),
+            crate::app::file_manager_io_worker::FileManagerIoSubmit::Accepted { .. }
+        )
+        .then_some(false)
     }
 
     pub(super) fn refresh_file_manager_after_operation(&mut self, directory: &Path) -> bool {
@@ -415,46 +400,14 @@ impl super::App {
         self.execute_file_manager_current_refresh(request).is_some()
     }
 
-    /// Consume one Files-sidebar navigation intent at the App-owned filesystem
-    /// boundary. Both model authority and live directory type are revalidated;
-    /// invalid or stale requests preserve the currently open FM projection.
+    #[cfg(test)]
     pub(crate) fn sync_file_manager_sidebar_navigation(&mut self) -> bool {
-        let Some(path) = self.state.request_file_manager_sidebar_navigation.take() else {
-            return false;
-        };
-
-        if self.state.sidebar_tab != crate::app::state::SidebarTab::Files {
-            return true;
+        let consumed = self.sync_file_manager_location_request();
+        if consumed && self.state.file_manager_locations.pending.is_some() {
+            self.file_manager_io_worker.wait_for_result_for_test();
+            let _ = self.sync_file_manager_io_results();
         }
-        let authorized = self
-            .state
-            .file_manager_sidebar
-            .item_for_path(&path)
-            .is_some_and(|item| item.accessible);
-        if !authorized || !std::fs::metadata(&path).is_ok_and(|metadata| metadata.is_dir()) {
-            return true;
-        }
-
-        let show_hidden = self
-            .state
-            .file_manager
-            .as_ref()
-            .is_some_and(|file_manager| file_manager.show_hidden);
-        let Some(next) = crate::fm::FmState::open_trail_to(&path, &path, show_hidden) else {
-            return true;
-        };
-        // Close the inexpensive metadata/read race as far as a path-based API
-        // can: if the target disappeared or changed type during preparation,
-        // keep the prior projection instead of opening an invalid cwd.
-        if !std::fs::metadata(&path).is_ok_and(|metadata| metadata.is_dir()) {
-            return true;
-        }
-        self.state.file_manager = Some(next);
-        let _ = self
-            .state
-            .file_manager_locations
-            .activate_location(&path, &self.state.file_manager_sidebar);
-        true
+        consumed
     }
 
     #[cfg(test)]
@@ -462,7 +415,21 @@ impl super::App {
         self.sync_file_manager_watcher_at(std::time::Instant::now())
     }
 
+    #[cfg(not(test))]
     pub(super) fn sync_file_manager_watcher_at(&mut self, now: std::time::Instant) -> bool {
+        self.schedule_file_manager_watcher_at(now)
+    }
+
+    #[cfg(test)]
+    pub(super) fn sync_file_manager_watcher_at(&mut self, now: std::time::Instant) -> bool {
+        if !self.schedule_file_manager_watcher_at(now) {
+            return false;
+        }
+        self.file_manager_io_worker.wait_for_result_for_test();
+        self.sync_file_manager_io_results()
+    }
+
+    fn schedule_file_manager_watcher_at(&mut self, now: std::time::Instant) -> bool {
         let target =
             self.state.file_manager.as_ref().and_then(|file_manager| {
                 file_manager.active_trail_directory().map(Path::to_path_buf)
@@ -510,24 +477,46 @@ impl super::App {
             return false;
         }
 
-        let Some(_files_generation) = self.active_files_generation() else {
+        let Some(files_generation) = self.active_files_generation() else {
             return false;
         };
-        let Some(changed) = self.state.file_manager.as_mut().and_then(|file_manager| {
-            let watched_dir = watched_dir.as_deref()?;
-            (Some(watched_dir) == file_manager.active_trail_directory())
-                .then(|| file_manager.refresh_active_trail_col(watched_dir))
-                .flatten()
-        }) else {
+        if self.state.file_manager_locations.pending.is_some() {
+            return false;
+        }
+        let Some((source, expected_directory, file_manager)) =
+            self.state.file_manager.as_ref().and_then(|file_manager| {
+                let watched_dir = watched_dir.as_deref()?;
+                (Some(watched_dir) == file_manager.active_trail_directory()).then(|| {
+                    (
+                        crate::app::file_manager_io_worker::FileManagerIoSource::from_file_manager(
+                            file_manager,
+                        ),
+                        watched_dir.to_path_buf(),
+                        file_manager.clone(),
+                    )
+                })
+            })
+        else {
             return false;
         };
+        let _ = self.file_manager_io_worker.submit(
+            crate::app::file_manager_io_worker::FileManagerIoRequest::TrailRefresh {
+                files_generation,
+                source,
+                expected_directory,
+                file_manager: Box::new(file_manager),
+            },
+        );
+
+        true
+    }
+
+    pub(super) fn record_file_manager_reconcile_applied(&mut self) {
         self.file_manager_watcher.reconcile_revision = self
             .file_manager_watcher
             .reconcile_revision
             .wrapping_add(1)
             .max(1);
-
-        changed
     }
 }
 
@@ -636,6 +625,9 @@ mod tests {
             ejectable: false,
         };
         let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("open initial Files instance");
         app.state.sidebar_tab = crate::app::state::SidebarTab::Files;
         app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
             Vec::new(),
@@ -713,13 +705,13 @@ mod tests {
             vec![item("Other", other.clone())],
             Vec::new(),
         );
-        app.state.request_file_manager_sidebar_navigation = Some(other);
+        app.state.request_file_manager_sidebar_navigation = Some(other.clone());
         app.state.sidebar_tab = crate::app::state::SidebarTab::Projects;
         assert!(app.sync_file_manager_sidebar_navigation());
         assert_eq!(
-            app.state.file_manager.as_ref().expect("FM preserved").cwd,
-            before_cwd,
-            "leaving Files invalidates the queued navigation"
+            app.state.file_manager.as_ref().expect("FM replaced").cwd,
+            other,
+            "global Projects ownership is independent from the active Files stage"
         );
 
         app.state.sidebar_tab = crate::app::state::SidebarTab::Files;

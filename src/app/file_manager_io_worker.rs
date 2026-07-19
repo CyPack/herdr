@@ -5,9 +5,11 @@ use std::thread::JoinHandle;
 
 use tokio::sync::Notify;
 
+#[cfg(test)]
+pub(super) use crate::fm::classify_root_navigation_error;
 pub(super) use crate::fm::{
-    classify_root_navigation_error, prepare_root_navigation_io, FmPreparedRootNavigation,
-    FmRootNavigationError, FmRootNavigationRequest,
+    prepare_root_navigation_io, FmPreparedRootNavigation, FmRootNavigationError,
+    FmRootNavigationRequest,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +49,11 @@ pub(super) enum FileManagerIoIdentity {
         files_generation: u32,
         source: FileManagerIoSource,
     },
+    TrailRefresh {
+        files_generation: u32,
+        source: FileManagerIoSource,
+        expected_directory: PathBuf,
+    },
 }
 
 impl FileManagerIoIdentity {
@@ -57,6 +64,9 @@ impl FileManagerIoIdentity {
                 target_directory, ..
             } => Some(target_directory),
             Self::Refresh { source, .. } => Some(&source.directory),
+            Self::TrailRefresh {
+                expected_directory, ..
+            } => Some(expected_directory),
         }
     }
 
@@ -83,6 +93,11 @@ impl FileManagerIoIdentity {
             | Self::Refresh {
                 files_generation: expected_files_generation,
                 source: expected_source,
+            }
+            | Self::TrailRefresh {
+                files_generation: expected_files_generation,
+                source: expected_source,
+                ..
             } => *expected_files_generation == files_generation && source == Some(expected_source),
         }
     }
@@ -96,6 +111,12 @@ pub(super) enum FileManagerIoRequest {
         request: crate::fm::FmNavigationRequest,
     },
     Refresh(crate::fm::FmCurrentRefreshRequest),
+    TrailRefresh {
+        files_generation: u32,
+        source: FileManagerIoSource,
+        expected_directory: PathBuf,
+        file_manager: Box<crate::fm::FmState>,
+    },
 }
 
 impl FileManagerIoRequest {
@@ -130,18 +151,34 @@ impl FileManagerIoRequest {
                     show_hidden: request.source_show_hidden,
                 },
             },
+            Self::TrailRefresh {
+                files_generation,
+                source,
+                expected_directory,
+                ..
+            } => FileManagerIoIdentity::TrailRefresh {
+                files_generation: *files_generation,
+                source: source.clone(),
+                expected_directory: expected_directory.clone(),
+            },
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub(super) enum FileManagerIoOutcome {
-    Root(Result<FmPreparedRootNavigation, FmRootNavigationError>),
+    Root(Result<Box<FmPreparedRootNavigation>, FmRootNavigationError>),
     Navigate {
         files_generation: u32,
         prepared: Option<crate::fm::FmPreparedNavigation>,
     },
     Refresh(crate::fm::FmPreparedCurrentRefresh),
+    TrailRefresh {
+        files_generation: u32,
+        source: FileManagerIoSource,
+        expected_directory: PathBuf,
+        prepared: Option<(Box<crate::fm::FmState>, bool)>,
+    },
     Panicked(FileManagerIoIdentity),
 }
 
@@ -184,6 +221,7 @@ struct FileManagerIoWork {
 struct FileManagerIoWorkerState {
     pending: Option<FileManagerIoWork>,
     result: Option<FileManagerIoResult>,
+    latest_generation: u64,
     alive: bool,
     closed: bool,
 }
@@ -193,6 +231,7 @@ impl Default for FileManagerIoWorkerState {
         Self {
             pending: None,
             result: None,
+            latest_generation: 0,
             alive: true,
             closed: false,
         }
@@ -255,7 +294,9 @@ impl FileManagerIoWorker {
                 if state.closed {
                     break;
                 }
-                state.result = Some(result);
+                if result.generation == state.latest_generation {
+                    state.result = Some(result);
+                }
                 drop(state);
                 changed.notify_all();
                 wake.notify_one();
@@ -277,6 +318,7 @@ impl FileManagerIoWorker {
             return FileManagerIoSubmit::Disconnected;
         }
         self.latest_generation = self.latest_generation.wrapping_add(1).max(1);
+        state.latest_generation = self.latest_generation;
         let replaced_pending = state.pending.replace(FileManagerIoWork {
             generation: self.latest_generation,
             request,
@@ -303,7 +345,7 @@ impl FileManagerIoWorker {
     }
 
     #[cfg(test)]
-    fn wait_for_result_for_test(&self) {
+    pub(in crate::app) fn wait_for_result_for_test(&self) {
         let (state, changed) = &*self.shared;
         let mut state = lock_state(state);
         while state.result.is_none() && state.alive && !state.closed {
@@ -356,7 +398,7 @@ fn lock_state(state: &Mutex<FileManagerIoWorkerState>) -> MutexGuard<'_, FileMan
 fn process_request(request: FileManagerIoRequest) -> FileManagerIoOutcome {
     match request {
         FileManagerIoRequest::Root(request) => {
-            FileManagerIoOutcome::Root(prepare_root_navigation_io(request))
+            FileManagerIoOutcome::Root(prepare_root_navigation_io(request).map(Box::new))
         }
         FileManagerIoRequest::Navigate {
             files_generation,
@@ -367,6 +409,260 @@ fn process_request(request: FileManagerIoRequest) -> FileManagerIoOutcome {
         },
         FileManagerIoRequest::Refresh(request) => {
             FileManagerIoOutcome::Refresh(crate::fm::prepare_current_refresh_io(request))
+        }
+        FileManagerIoRequest::TrailRefresh {
+            files_generation,
+            source,
+            expected_directory,
+            mut file_manager,
+        } => {
+            let changed = file_manager.refresh_active_trail_col(&expected_directory);
+            FileManagerIoOutcome::TrailRefresh {
+                files_generation,
+                source,
+                expected_directory,
+                prepared: changed.map(|changed| (file_manager, changed)),
+            }
+        }
+    }
+}
+
+fn location_load_error(
+    error: FmRootNavigationError,
+) -> super::file_manager_locations::FileManagerLocationLoadError {
+    use super::file_manager_locations::FileManagerLocationLoadError;
+
+    match error {
+        FmRootNavigationError::Missing => FileManagerLocationLoadError::Missing,
+        FmRootNavigationError::PermissionDenied => FileManagerLocationLoadError::PermissionDenied,
+        FmRootNavigationError::ChangedType => FileManagerLocationLoadError::ChangedType,
+        FmRootNavigationError::Unavailable => FileManagerLocationLoadError::Unavailable,
+    }
+}
+
+impl super::App {
+    fn active_file_manager_generation(&self) -> Option<u32> {
+        (self.state.stage.surface_view() == crate::ui::surface_host::StageSurfaceView::NativeFiles)
+            .then(|| self.state.stage.active_instance_generation())
+            .flatten()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn complete_file_manager_io_for_test(&mut self) -> bool {
+        self.file_manager_io_worker.wait_for_result_for_test();
+        self.sync_file_manager_io_results()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn wait_file_manager_io_for_test(&self) {
+        self.file_manager_io_worker.wait_for_result_for_test();
+    }
+
+    /// Consume one exact locations intent without performing filesystem work
+    /// on the scheduled thread.
+    pub(crate) fn sync_file_manager_location_request(&mut self) -> bool {
+        let Some(path) = self.state.request_file_manager_sidebar_navigation.take() else {
+            return false;
+        };
+        let Some(files_generation) = self.active_file_manager_generation() else {
+            return true;
+        };
+        let model_revision = self.state.file_manager_sidebar.revision();
+        if !self
+            .state
+            .file_manager_sidebar
+            .item_for_path(&path)
+            .is_some_and(|item| item.accessible)
+        {
+            return true;
+        }
+
+        if self
+            .state
+            .file_manager
+            .as_mut()
+            .is_some_and(|file_manager| file_manager.reset_to_resident_trail_root(&path))
+        {
+            let _ = self
+                .state
+                .file_manager_locations
+                .activate_location(&path, &self.state.file_manager_sidebar);
+            return true;
+        }
+
+        let show_hidden = self
+            .state
+            .file_manager
+            .as_ref()
+            .is_some_and(|file_manager| file_manager.show_hidden);
+        let request = FileManagerIoRequest::Root(FmRootNavigationRequest {
+            files_generation,
+            location_model_revision: model_revision,
+            target_root: path.clone(),
+            show_hidden,
+        });
+        match self.file_manager_io_worker.submit(request) {
+            FileManagerIoSubmit::Accepted { generation, .. } => {
+                self.state.file_manager_locations.begin_load(
+                    path,
+                    files_generation,
+                    model_revision,
+                    generation,
+                );
+            }
+            FileManagerIoSubmit::Disconnected => {
+                self.state.file_manager_locations.fail_load(
+                    path,
+                    super::file_manager_locations::FileManagerLocationLoadError::Unavailable,
+                );
+            }
+        }
+        true
+    }
+
+    /// Drain at most one bounded result and apply it only while every captured
+    /// identity remains current. No filesystem access occurs in this method.
+    pub(crate) fn sync_file_manager_io_results(&mut self) -> bool {
+        let drain = self.file_manager_io_worker.drain();
+        let mut changed = false;
+        if drain.disconnected {
+            if let Some(path) = self
+                .state
+                .file_manager_locations
+                .pending
+                .as_ref()
+                .map(|pending| pending.path.clone())
+            {
+                self.state.file_manager_locations.fail_load(
+                    path,
+                    super::file_manager_locations::FileManagerLocationLoadError::Unavailable,
+                );
+                changed = true;
+            }
+            tracing::error!("fm: bounded file-manager I/O worker disconnected");
+        }
+        let Some(result) = drain.current else {
+            return changed;
+        };
+        let Some(files_generation) = self.active_file_manager_generation() else {
+            return changed;
+        };
+        let model_revision = self.state.file_manager_sidebar.revision();
+        let source = self
+            .state
+            .file_manager
+            .as_ref()
+            .map(FileManagerIoSource::from_file_manager);
+        if !result
+            .identity
+            .is_current(files_generation, model_revision, source.as_ref())
+        {
+            return changed;
+        }
+        if let FileManagerIoIdentity::Root {
+            files_generation: root_files_generation,
+            location_model_revision,
+            target_root,
+        } = &result.identity
+        {
+            if !self.state.file_manager_locations.is_pending_root(
+                target_root,
+                *root_files_generation,
+                *location_model_revision,
+                result.generation,
+            ) {
+                return changed;
+            }
+        }
+
+        match result.outcome {
+            FileManagerIoOutcome::Root(Ok(prepared)) => {
+                let prepared = *prepared;
+                let prepared_identity =
+                    FileManagerIoRequest::Root(prepared.request.clone()).identity();
+                let target = prepared.request.target_root.clone();
+                if prepared_identity != result.identity
+                    || !self
+                        .state
+                        .file_manager_sidebar
+                        .item_for_path(&target)
+                        .is_some_and(|item| item.accessible)
+                {
+                    return changed;
+                }
+                self.state.file_manager = Some(prepared.file_manager);
+                let _ = self
+                    .state
+                    .file_manager_locations
+                    .activate_location(&target, &self.state.file_manager_sidebar);
+                true
+            }
+            FileManagerIoOutcome::Root(Err(error)) => {
+                if let Some(path) = result.identity.target_path().map(Path::to_path_buf) {
+                    self.state
+                        .file_manager_locations
+                        .fail_load(path, location_load_error(error));
+                    true
+                } else {
+                    changed
+                }
+            }
+            FileManagerIoOutcome::Navigate {
+                files_generation: prepared_files_generation,
+                prepared,
+            } => {
+                if prepared_files_generation != files_generation {
+                    return changed;
+                }
+                prepared.is_some_and(|prepared| {
+                    self.state
+                        .file_manager
+                        .as_mut()
+                        .is_some_and(|file_manager| {
+                            file_manager.apply_prepared_navigation(prepared)
+                        })
+                })
+            }
+            FileManagerIoOutcome::Refresh(prepared) => self
+                .state
+                .file_manager
+                .as_mut()
+                .is_some_and(|file_manager| {
+                    file_manager.apply_prepared_current_refresh(prepared, files_generation)
+                }),
+            FileManagerIoOutcome::TrailRefresh {
+                files_generation: prepared_files_generation,
+                source: prepared_source,
+                expected_directory,
+                prepared,
+            } => {
+                let prepared_identity = FileManagerIoIdentity::TrailRefresh {
+                    files_generation: prepared_files_generation,
+                    source: prepared_source,
+                    expected_directory,
+                };
+                if prepared_identity != result.identity {
+                    return changed;
+                }
+                let Some((file_manager, projection_changed)) = prepared else {
+                    return changed;
+                };
+                self.state.file_manager = Some(*file_manager);
+                self.record_file_manager_reconcile_applied();
+                projection_changed
+            }
+            FileManagerIoOutcome::Panicked(identity) => {
+                tracing::error!(?identity, "fm: bounded file-manager I/O processor panicked");
+                if let FileManagerIoIdentity::Root { target_root, .. } = identity {
+                    self.state.file_manager_locations.fail_load(
+                        target_root,
+                        super::file_manager_locations::FileManagerLocationLoadError::Unavailable,
+                    );
+                    true
+                } else {
+                    changed
+                }
+            }
         }
     }
 }
@@ -941,7 +1237,7 @@ mod tests {
     fn fcl_io_watcher_adapter_has_no_synchronous_directory_refresh() {
         let source = include_str!("file_manager_watcher.rs");
         let start = source
-            .find("pub(super) fn sync_file_manager_watcher_at")
+            .find("fn schedule_file_manager_watcher_at")
             .expect("watcher scheduled adapter");
         let end = source[start..]
             .find("\n}\n\n#[cfg(test)]")

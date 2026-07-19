@@ -3954,8 +3954,9 @@ mod tests {
 
         assert_eq!(
             app.execute_file_manager_current_refresh(*request),
-            Some(true)
+            Some(false)
         );
+        assert!(app.complete_file_manager_io_for_test());
         let toggled = app.state.file_manager.as_ref().expect("open FM");
         assert!(toggled.show_hidden);
         assert_eq!(toggled.entries.len(), 2);
@@ -3968,9 +3969,10 @@ mod tests {
 
         assert_eq!(
             app.execute_file_manager_current_refresh(*stale_replay),
-            None,
-            "the first request cannot replay after its generations retire"
+            Some(false),
+            "submission itself is non-blocking; stale apply is rejected later"
         );
+        assert!(!app.complete_file_manager_io_for_test());
         let after_replay = app.state.file_manager.as_ref().expect("open FM");
         assert_eq!(after_replay.entries, once.entries);
         assert_eq!(after_replay.show_hidden, once.show_hidden);
@@ -3989,8 +3991,9 @@ mod tests {
         assert!(!request.target_show_hidden);
         assert_eq!(
             app.execute_file_manager_current_refresh(*request),
-            Some(true)
+            Some(false)
         );
+        assert!(app.complete_file_manager_io_for_test());
         let restored = app.state.file_manager.as_ref().expect("open FM");
         assert!(!restored.show_hidden);
         assert_eq!(restored.entries.len(), 1);

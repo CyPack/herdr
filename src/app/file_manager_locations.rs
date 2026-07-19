@@ -14,9 +14,27 @@ pub(crate) enum FileManagerLocationOrigin {
     Direct(PathBuf),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FileManagerLocationLoadError {
+    Missing,
+    PermissionDenied,
+    ChangedType,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FileManagerLocationPending {
+    pub(crate) path: PathBuf,
+    pub(crate) files_generation: u32,
+    pub(crate) model_revision: u64,
+    pub(crate) io_generation: u64,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct FileManagerLocationsState {
     pub(crate) origin: Option<FileManagerLocationOrigin>,
+    pub(crate) pending: Option<FileManagerLocationPending>,
+    pub(crate) failure: Option<(PathBuf, FileManagerLocationLoadError)>,
 }
 
 impl FileManagerLocationsState {
@@ -32,11 +50,15 @@ impl FileManagerLocationsState {
             return false;
         }
         self.origin = Some(FileManagerLocationOrigin::Location(path.to_path_buf()));
+        self.pending = None;
+        self.failure = None;
         true
     }
 
     pub(crate) fn activate_direct(&mut self, path: PathBuf) {
         self.origin = Some(FileManagerLocationOrigin::Direct(path));
+        self.pending = None;
+        self.failure = None;
     }
 
     pub(crate) fn highlighted_path<'a>(
@@ -70,6 +92,44 @@ impl FileManagerLocationsState {
 
     pub(crate) fn retire_for_closed_files(&mut self) {
         self.origin = None;
+        self.pending = None;
+        self.failure = None;
+    }
+
+    pub(crate) fn begin_load(
+        &mut self,
+        path: PathBuf,
+        files_generation: u32,
+        model_revision: u64,
+        io_generation: u64,
+    ) {
+        self.pending = Some(FileManagerLocationPending {
+            path,
+            files_generation,
+            model_revision,
+            io_generation,
+        });
+        self.failure = None;
+    }
+
+    pub(crate) fn fail_load(&mut self, path: PathBuf, error: FileManagerLocationLoadError) {
+        self.pending = None;
+        self.failure = Some((path, error));
+    }
+
+    pub(crate) fn is_pending_root(
+        &self,
+        path: &Path,
+        files_generation: u32,
+        model_revision: u64,
+        io_generation: u64,
+    ) -> bool {
+        self.pending.as_ref().is_some_and(|pending| {
+            pending.path == path
+                && pending.files_generation == files_generation
+                && pending.model_revision == model_revision
+                && pending.io_generation == io_generation
+        })
     }
 }
 
