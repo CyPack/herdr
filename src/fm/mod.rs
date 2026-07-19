@@ -2684,6 +2684,47 @@ mod tests {
         );
     }
 
+    // TP-FMP-RES-01 / TP-FMP-TRAIL-01: re-activating the exact child whose
+    // loaded snapshot is already the next Trail column must be a disk-free
+    // state transition. This covers both the child listing and the temporary
+    // legacy operation projection (parent/preview included).
+    #[test]
+    fn resident_ancestor_activation_rebranches_without_filesystem_reads() {
+        let td = TempDir::new("fmp-resident-ancestor");
+        let alpha = td.root.join("alpha");
+        let beta = alpha.join("beta");
+        fs::create_dir_all(&beta).expect("create resident ancestor fixture");
+        fs::write(beta.join("leaf.txt"), b"leaf").expect("write resident leaf");
+        let mut state =
+            FmState::open_trail_to(&td.root, &beta, false).expect("open resident deep Trail");
+        let alpha_index = state.trail_snapshots.cols()[0]
+            .entries()
+            .iter()
+            .position(|entry| entry.path == alpha)
+            .expect("alpha row in root snapshot");
+
+        let (outcome, profile) = crate::render_prof::observe_for_test(|| {
+            state.activate_trail_entry(0, alpha_index, &alpha)
+        });
+
+        assert_eq!(outcome, trail_snapshots::TrailActivateOutcome::Branched);
+        assert_eq!(
+            state
+                .trail
+                .cols()
+                .iter()
+                .map(|col| col.directory.as_path())
+                .collect::<Vec<_>>(),
+            vec![td.root.as_path(), alpha.as_path()]
+        );
+        assert_eq!(state.trail.active_col(), 1);
+        assert_eq!(
+            profile.counter("fm.filesystem.read"),
+            0,
+            "resident child, parent, and preview projections must reuse prepared snapshots"
+        );
+    }
+
     // TP-A3.1: entering a selected directory reads its contents, cursor at top.
     #[test]
     fn enter_directory_appends_segment_and_focuses_child() {
