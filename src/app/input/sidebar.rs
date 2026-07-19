@@ -2509,6 +2509,11 @@ mod tests {
             app.handle_scheduled_tasks(std::time::Instant::now(), false),
             "scheduled production consumer observes the one-shot request"
         );
+        app.wait_file_manager_io_for_test();
+        assert!(
+            app.handle_scheduled_tasks(std::time::Instant::now(), false),
+            "the next scheduled tick applies the prepared root"
+        );
         assert!(app.state.request_file_manager_sidebar_navigation.is_none());
         assert_eq!(
             app.state.stage.active_instance_generation(),
@@ -2648,6 +2653,8 @@ mod tests {
             row.rect.x,
             row.rect.y,
         ));
+        assert!(app.handle_scheduled_tasks(std::time::Instant::now(), false));
+        app.wait_file_manager_io_for_test();
         assert!(app.handle_scheduled_tasks(std::time::Instant::now(), false));
 
         let file_manager = app.state.file_manager.as_ref().expect("loaded Files state");

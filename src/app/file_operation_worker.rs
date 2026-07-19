@@ -1989,6 +1989,7 @@ mod tests {
         });
 
         assert!(app.sync_file_operation_worker());
+        assert!(app.complete_file_manager_io_for_test());
         assert!(app.state.request_file_manager_context_action.is_none());
         assert_eq!(
             app.state.file_manager.as_ref().expect("open FM").cwd,
@@ -2092,6 +2093,7 @@ mod tests {
             assert!(Instant::now() < deadline, "paste completion timed out");
             std::thread::sleep(Duration::from_millis(5));
         }
+        assert!(app.complete_file_manager_io_for_test());
 
         let operation = app
             .state
@@ -2461,6 +2463,7 @@ mod tests {
             assert!(Instant::now() < deadline, "permanent delete timed out");
             std::thread::sleep(Duration::from_millis(5));
         }
+        assert!(app.complete_file_manager_io_for_test());
 
         let operation = app
             .state
@@ -2995,6 +2998,7 @@ mod tests {
             assert!(Instant::now() < deadline, "rename completion timed out");
             std::thread::sleep(Duration::from_millis(5));
         }
+        assert!(app.complete_file_manager_io_for_test());
 
         let operation = app
             .state
