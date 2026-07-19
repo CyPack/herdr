@@ -239,6 +239,20 @@ Plan: `docs/superpowers/plans/2026-07-18-herdr-miller-trail-program.md` (T1-T7 +
     horizontal/Shift yönlerini, stale/outside/tek-kolon sınırlarını doğrula.
   - [x] **T7.9.4 GATES** Full Rust, iki Clippy, Playwright Chromium,
     maintenance, fmt/diff/source audit ve graph refresh kapıları temiz.
+- [x] **TRAIL-T7.10** Manuel scroll sonrası gizlenen aktif child kolonu
+  yeniden-gösterme forward-fix'i (`a7f37fe5` RED / `05591d84` GREEN):
+  beşinci görünür kolondaki aynı açık klasörü plain-click ile yeniden
+  etkinleştirmek path derinliğini değiştirmeden `follow_active` otoritesini
+  yeniden kurar. Trail auto-follow ofseti detail paneli ayrıldıktan sonraki
+  gerçek kolon alanında hesaplanır; manuel ofset korunur. Fractional
+  viewport artık soldaki kısmi kolonu beş-kolon kotasına sayıp fiziksel
+  viewport içindeki aktif sağ ucu atmaz; render/hit-test tüm canlı kesişen
+  Trail kolonlarını bounded 32-seviye zincirden üretir. Taze kapılar: focused
+  1/1, Trail 84/84, Miller 33/33, fractional 2/2, full Rust 3,527/3,527 + 2
+  skip, Playwright Chromium 22/22 baseline değişmeden, Linux+Windows clippy
+  `-D warnings`, Python 68/68, Bun 5/5 + 12/12 ve fmt/diff/production-unwrap
+  temiz. `just check` wrapper'ı hostta kurulu değil; aynı recipe kapıları
+  doğrudan çalıştırıldı.
 
 ### FIP-D — Saha Kusurları (2026-07-18 canlı ekran kanıtı, kullanıcı raporu)
 

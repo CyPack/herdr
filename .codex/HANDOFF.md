@@ -4,6 +4,26 @@ Updated: 2026-07-18 CEST
 
 ## 0. SONRAKI ADIM — TEK AKTİF İŞ
 
+**CURRENT OVERRIDE — TRAIL-T7.10 HIDDEN-CHILD ACTIVATION CLOSED.** Kullanıcı
+Ghostty-tip altında yatay mouse scroll'un düzeldiğini doğruladı; ardından
+fractional manuel scroll ile aktif child kolonu sağda gizliyken beşinci
+görünür kolondaki gerçek klasör satırına tıklamanın içeriği yeniden
+göstermediğini canlı olarak üretti. Client logu exact modifier'sız
+`Down(Left)`/`Up(Left)` olaylarının Herdr'a ulaştığını kanıtladı. Kök neden:
+aynı path zincirini yeniden dallandıran klasör aktivasyonu
+`follow_active=false` durumunu yeniden kurmuyordu; ayrıca fractional geometri
+soldaki kırpılmış kolonu legacy beş-kolon kotasına sayıp viewport içindeki
+aktif sağ ucu düşürüyordu. RED `a7f37fe5`, GREEN `05591d84`. Aynı branch
+aktivasyonu artık path derinliği değişmese de follow'u yeniden açıyor;
+auto-follow detail paneli ayrıldıktan sonraki gerçek Trail genişliğini
+kullanıyor; manuel ofset aynen korunuyor; bounded 32-seviyelik Trail'in
+viewport ile kesişen bütün canlı kolonları aynı render/hit-test snapshot'ına
+giriyor. Taze kapılar: focused 1/1, Trail 84/84, Miller 33/33, fractional
+2/2, full Rust 3,527/3,527 + 2 skip, Chromium 22/22 baseline değişmeden,
+Linux+Windows clippy, Python 68/68, Bun 5/5 + 12/12, fmt/diff/production
+unwrap temiz. `just` bu hostta kurulu değil; recipe eşdeğeri kapılar doğrudan
+çalıştırıldı. Stable Herdr/socket ve `.superpowers/` untouched.
+
 **CURRENT OVERRIDE — FMR-4/FMR-5 ACTIVE.** Kullanıcının reboot sonrası kaybolmuş
 görünen scroll/sidebar davranışı için Git ve runtime provenance doğrulandı:
 HEAD ve iki CyPack ref'i `6a972703`; commitler kalıcı. Ancak normal

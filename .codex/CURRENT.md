@@ -1,5 +1,25 @@
 # Current State — 2026-07-17
 
+> **CURRENT OVERRIDE — TRAIL-T7.10 HIDDEN-CHILD ACTIVATION CLOSED
+> (2026-07-19).** The user confirmed Ghostty-tip horizontal input works, then
+> reproduced a separate Trail defect: after fractional manual scroll hides
+> the active child column, clicking its real directory row in the fifth
+> visible column did not reveal the child contents. Raw client logs proved
+> exact unmodified left-button down/up events reached Herdr. Root cause was
+> twofold: same-path `Branched` activation left `follow_active=false`, and
+> fractional geometry counted a clipped leading column against the legacy
+> five-column projection cap, dropping the live right edge. RED
+> `a7f37fe5`; GREEN `05591d84`. Directory activation now rearms follow even
+> when the logical path chain is unchanged; auto-follow uses the real
+> detail-adjusted Trail width; manual offsets remain exact; every live column
+> intersecting the bounded 32-level viewport is rendered and hit-tested.
+> Fresh gates: focused 1/1, Trail 84/84, Miller 33/33, fractional 2/2, full
+> Rust 3,527/3,527 + 2 skip, Chromium 22/22 with no baseline rewrite, both
+> clippy targets, Python 68/68, Bun 5/5 + 12/12, and fmt/diff/production
+> unwrap clean. `just` is not installed on this host, so its current recipe
+> gates were run directly. Stable Herdr/socket and user-owned
+> `.superpowers/` were untouched.
+>
 > **CURRENT OVERRIDE — FMR-4/FMR-5 PLUGIN BOUNDARY ACTIVE (2026-07-18).** The user
 > reported invisible directory contents and inert Files-sidebar shortcuts,
 > requested a file preview/render and plugin-reference program, and asked that
