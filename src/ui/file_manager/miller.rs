@@ -13,7 +13,6 @@ use crate::fm::miller::{MILLER_COLUMN_MAX_WIDTH, MILLER_COLUMN_MIN_WIDTH};
 use crate::fm::FmState;
 
 pub(crate) const MILLER_DIVIDER_WIDTH: u16 = 1;
-const MAX_VISIBLE_TRAIL_COLUMNS: usize = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct MillerColumnRect {
@@ -440,7 +439,7 @@ pub(crate) fn miller_viewport_geometry_at_offset(
         let column_end = column_start.saturating_add(u32::from(width));
         let visible_start = column_start.max(offset_cells);
         let visible_end = column_end.min(viewport_end);
-        if visible_start < visible_end && columns.len() < MAX_VISIBLE_TRAIL_COLUMNS {
+        if visible_start < visible_end {
             let destination_x = stage
                 .x
                 .saturating_add((visible_start - offset_cells) as u16);
@@ -544,11 +543,12 @@ pub(crate) fn miller_auto_follow_offset(
 
 #[cfg(test)]
 pub(crate) fn first_visible_floor(stage_width: u16, widths: &[u16], focused_index: usize) -> usize {
+    const MAX_COMPLETE_COLUMNS: usize = 5;
     let mut remaining = stage_width;
     let mut start = focused_index;
     let mut count = 0usize;
     let mut index = focused_index as isize;
-    while index >= 0 && count < MAX_VISIBLE_TRAIL_COLUMNS {
+    while index >= 0 && count < MAX_COMPLETE_COLUMNS {
         let preferred =
             widths[index as usize].clamp(MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_MAX_WIDTH);
         let cost = preferred + u16::from(count > 0) * MILLER_DIVIDER_WIDTH;

@@ -692,14 +692,14 @@ fn sync_miller_view(app: &mut AppState, area: Rect) -> MillerViewSnapshot {
     snapshot
 }
 
-fn sync_trail_view(app: &AppState, area: Rect) -> TrailViewSnapshot {
+fn sync_trail_view(app: &mut AppState, area: Rect) -> TrailViewSnapshot {
     if app.stage.surface_view() != surface_host::StageSurfaceView::NativeFiles {
         return TrailViewSnapshot::default();
     }
     let Some(files_generation) = app.stage.active_instance_generation() else {
         return TrailViewSnapshot::default();
     };
-    let Some(file_manager) = app.file_manager.as_ref() else {
+    let Some(file_manager) = app.file_manager.as_mut() else {
         return TrailViewSnapshot::default();
     };
     let preferred_widths = file_manager.miller.preferred_widths_for(
@@ -709,14 +709,30 @@ fn sync_trail_view(app: &AppState, area: Rect) -> TrailViewSnapshot {
             .iter()
             .map(|column| column.directory.clone()),
     );
-    let mut snapshot = file_manager::trail_view::project_trail_view_with_origin(
-        file_manager::file_manager_miller_viewport_area(area),
-        &file_manager.trail,
-        &file_manager.trail_snapshots,
-        &preferred_widths,
-        file_manager.miller.preview_preferred_width,
-        file_manager.miller.horizontal.offset_cells,
-    );
+    let viewport_area = file_manager::file_manager_miller_viewport_area(area);
+    let detail_preferred_width = file_manager.miller.preview_preferred_width;
+    let horizontal = file_manager.miller.horizontal;
+    let mut snapshot = if horizontal.follow_active {
+        file_manager::trail_view::project_trail_view_with_detail_width(
+            viewport_area,
+            &file_manager.trail,
+            &file_manager.trail_snapshots,
+            &preferred_widths,
+            detail_preferred_width,
+        )
+    } else {
+        file_manager::trail_view::project_trail_view_with_origin(
+            viewport_area,
+            &file_manager.trail,
+            &file_manager.trail_snapshots,
+            &preferred_widths,
+            detail_preferred_width,
+            horizontal.offset_cells,
+        )
+    };
+    if !snapshot.columns.is_empty() {
+        file_manager.miller.horizontal.offset_cells = snapshot.offset_cells;
+    }
     snapshot.files_generation = Some(files_generation);
     snapshot.model_revision = file_manager.miller.revision;
     snapshot

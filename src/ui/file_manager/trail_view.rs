@@ -124,6 +124,23 @@ pub(crate) fn project_trail_view(
     )
 }
 
+pub(crate) fn project_trail_view_with_detail_width(
+    stage: Rect,
+    trail: &TrailState,
+    snaps: &TrailSnapshots,
+    preferred_widths: &[u16],
+    detail_preferred_width: u16,
+) -> TrailViewSnapshot {
+    project_trail_view_inner(
+        stage,
+        trail,
+        snaps,
+        preferred_widths,
+        detail_preferred_width,
+        None,
+    )
+}
+
 pub(crate) fn project_trail_view_with_origin(
     stage: Rect,
     trail: &TrailState,

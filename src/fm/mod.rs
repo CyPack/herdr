@@ -878,6 +878,9 @@ impl FmState {
         {
             return trail_snapshots::TrailActivateOutcome::Rejected;
         }
+        if outcome == trail_snapshots::TrailActivateOutcome::Branched {
+            self.miller.horizontal.follow_active = true;
+        }
         outcome
     }
 

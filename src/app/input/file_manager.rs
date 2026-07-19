@@ -5026,16 +5026,12 @@ mod tests {
         fs::create_dir_all(&next).expect("create deep Trail branch fixture");
         fs::write(next.join("visible-child.txt"), b"x").expect("write next-column child");
 
-        let mut file_manager =
-            FmState::open_trail_to(&root, &current, false).expect("open deep Trail");
-        for segment in &mut file_manager.miller.chain {
-            segment.preferred_width = crate::fm::miller::MILLER_COLUMN_MIN_WIDTH;
-        }
+        let file_manager = FmState::open_trail_to(&root, &current, false).expect("open deep Trail");
         let mut app = runtime_app_with_fm(file_manager);
         install_focused_agent(&mut app);
         app.state.mobile_width_threshold = 0;
         app.state.sidebar_collapsed = true;
-        let frame = Rect::new(0, 0, 160, 18);
+        let frame = Rect::new(0, 0, 130, 18);
         compute_view(&mut app.state, frame);
 
         let initial_offset = app.state.view.file_manager_trail.offset_cells;
@@ -5047,25 +5043,32 @@ mod tests {
             .first()
             .map(|column| (column.rect.x, column.rect.bottom().saturating_sub(1)))
             .expect("visible Trail column");
-        assert_eq!(
-            app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollLeft, probe.0, probe.1)),
-            FileManagerMouseDispatch::Consumed
-        );
-        compute_view(&mut app.state, frame);
-        assert_eq!(
-            app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollRight, probe.0, probe.1)),
-            FileManagerMouseDispatch::Consumed
-        );
-        compute_view(&mut app.state, frame);
+        for _ in 0..32 {
+            let active_is_visible = app
+                .state
+                .view
+                .file_manager_trail
+                .columns
+                .iter()
+                .any(|column| column.directory == current);
+            if !active_is_visible {
+                break;
+            }
+            assert_eq!(
+                app.handle_file_manager_mouse(mouse(MouseEventKind::ScrollLeft, probe.0, probe.1,)),
+                FileManagerMouseDispatch::Consumed
+            );
+            compute_view(&mut app.state, frame);
+        }
 
         let before = app.state.file_manager.as_ref().expect("open FM");
         assert!(
             !before.miller.horizontal.follow_active,
             "manual horizontal input must own the pre-click viewport"
         );
-        assert_eq!(
-            before.miller.horizontal.offset_cells, initial_offset,
-            "the fixture returns to the active-end offset while remaining in manual mode"
+        assert!(
+            before.miller.horizontal.offset_cells < initial_offset,
+            "fractional input must expose the fifth column while hiding its active child"
         );
         let deepest = before.trail.deepest();
         let visible = &app.state.view.file_manager_trail.columns;
@@ -5114,6 +5117,25 @@ mod tests {
         assert!(
             after.miller.horizontal.follow_active,
             "same-branch directory activation must rearm active-end following"
+        );
+        assert!(
+            app.state
+                .view
+                .file_manager_trail
+                .columns
+                .iter()
+                .any(|column| column.directory == current),
+            "visible indices={:?}, offset={}, max={}, detail={:?}",
+            app.state
+                .view
+                .file_manager_trail
+                .columns
+                .iter()
+                .map(|column| column.trail_index)
+                .collect::<Vec<_>>(),
+            app.state.view.file_manager_trail.offset_cells,
+            app.state.view.file_manager_trail.max_offset_cells,
+            app.state.view.file_manager_trail.detail_panel,
         );
         let revealed = app
             .state
