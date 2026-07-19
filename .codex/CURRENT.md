@@ -17,7 +17,15 @@
 > summary incorrectly said 24). Dependency chain is FCL-0 characterization →
 > FCL-1 shell/origin → FCL-2 bounded I/O → FCL-3 geometry → FCL-4
 > render/input → FCL-5 drawer/teardown → FCL-6 Chromium → FCL-7 closure.
-> FCL-0 is the only active task. This program takes priority over FMR plugin
+> FCL-0 is closed at `fbc2c78d`. FCL-1 shell independence is `96958b86` RED /
+> `ce56e6ef` GREEN; explicit origin is `0753999d` + `4e5ee9b0` RED /
+> `249e8315` GREEN. Files activation now preserves Spaces/Projects and the
+> global tracking body; direct/location origin is pure client-local identity,
+> survives descendant navigation, transfers only on exact activation, and
+> retires on inaccessible model or close. Fresh gates: Rust 3,558/3,558 + 2
+> skip, Linux/Windows Clippy `-D warnings`, Playwright Chromium 25/25, fmt
+> clean. FCL-2 bounded I/O is the only active task. This program takes
+> priority over FMR plugin
 > adoption and does not change the existing one-third horizontal scroll.
 > Stable Herdr/socket, upstream, release assets, and user-owned
 > `.superpowers/` remain outside authority.

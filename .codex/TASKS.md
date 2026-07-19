@@ -26,19 +26,22 @@ The plan maps 25/25 `TP-FCL-*` IDs. This program has priority over the separate
 FMR plugin-adoption lane; it does not rank scroll checkpoints or adopt a
 plugin.
 
-- [ ] **FCL-0 Characterization and baseline — ACTIVE.**
-  - Pin singleton Files stage, terminal restoration, active Trail selection,
+- [x] **FCL-0 Characterization and baseline** (`fbc2c78d`).
+  - [x] Pin singleton Files stage, terminal restoration, active Trail selection,
     watcher/operation/handoff identity, and existing one-third horizontal
     scroll.
-  - Mark legacy global Files-body tests for FCL-5 teardown without deleting
+  - [x] Mark legacy global Files-body tests for FCL-5 teardown without deleting
     them early.
-- [ ] **FCL-1 Shell ownership and explicit location origin** (blocked by
-  FCL-0).
-  - `TP-FCL-AUTH-01..04`, `TP-FCL-SHELL-01..03`.
-  - Files activation preserves Spaces/Projects and global agent/workspace
+- [x] **FCL-1 Shell ownership and explicit location origin.**
+  - [x] `TP-FCL-SHELL-01..03`: RED `96958b86`, GREEN `ce56e6ef`.
+  - [x] `TP-FCL-AUTH-01..04`: RED `0753999d` + `4e5ee9b0`, GREEN
+    `249e8315`.
+  - [x] Files activation preserves Spaces/Projects and global agent/workspace
     projection; `Location(path)` / `Direct(path)` is exact client-local
     authority.
-- [ ] **FCL-2 Bounded file-manager I/O lane** (blocked by FCL-1).
+  - [x] Fresh gates: Rust 3,558/3,558 + 2 skip, Linux/Windows Clippy
+    `-D warnings`, Playwright Chromium 25/25, fmt clean.
+- [ ] **FCL-2 Bounded file-manager I/O lane — ACTIVE.**
   - `TP-FCL-IO-01..06`.
   - One executing + one latest pending root/navigation/refresh request; stale,
     closed, changed-type, missing, permission, panic, and disconnect paths

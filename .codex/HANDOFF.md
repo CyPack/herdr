@@ -21,7 +21,14 @@ Gerçek tasarım tablosu 25/25 benzersiz `TP-FCL-*` içerir; önceki 24 sayımı
 aritmetik hataydı, kapsam kaybı yoktur. Dependency chain FCL-0
 characterization → FCL-1 shell/origin → FCL-2 bounded I/O → FCL-3 geometry →
 FCL-4 render/input → FCL-5 drawer/teardown → FCL-6 Chromium → FCL-7 closure.
-TEK aktif iş FCL-0'dır. FMR plugin adoption ayrı ve ikinci önceliktedir.
+FCL-0 `fbc2c78d` ile kapandı. FCL-1 shell `96958b86` RED / `ce56e6ef`
+GREEN; explicit origin `0753999d` + `4e5ee9b0` RED / `249e8315` GREEN.
+Files activation Spaces/Projects global tracking body'yi koruyor; exact
+Direct/Location origin descendant path'ten bağımsız, yalnız explicit
+activation ile transfer oluyor ve invalid model/close'ta emekli ediliyor.
+Fresh gates Rust 3,558/3,558 + 2 skip, Linux+Windows Clippy `-D warnings`,
+Chromium 25/25, fmt temiz. TEK aktif iş FCL-2 bounded I/O lane'dir. FMR
+plugin adoption ayrı ve ikinci önceliktedir.
 Stable Herdr/socket, upstream, release assets ve `.superpowers/` untouched.
 
 **CURRENT OVERRIDE — MTIME PROGRAMI KAPANDI.** Kullanıcı
@@ -614,29 +621,15 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 18 ve
-89, toplam 107 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 16 ve
+89, toplam 105 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 18 unchecked
+### Source: `.codex/TASKS.md` — 16 unchecked
 
-- [ ] **FCL-0 Characterization and baseline — ACTIVE.**
-  - Pin singleton Files stage, terminal restoration, active Trail selection,
-    watcher/operation/handoff identity, and existing one-third horizontal
-    scroll.
-  - Mark legacy global Files-body tests for FCL-5 teardown without deleting
-    them early.
-
-- [ ] **FCL-1 Shell ownership and explicit location origin** (blocked by
-  FCL-0).
-  - `TP-FCL-AUTH-01..04`, `TP-FCL-SHELL-01..03`.
-  - Files activation preserves Spaces/Projects and global agent/workspace
-    projection; `Location(path)` / `Direct(path)` is exact client-local
-    authority.
-
-- [ ] **FCL-2 Bounded file-manager I/O lane** (blocked by FCL-1).
+- [ ] **FCL-2 Bounded file-manager I/O lane — ACTIVE.**
   - `TP-FCL-IO-01..06`.
   - One executing + one latest pending root/navigation/refresh request; stale,
     closed, changed-type, missing, permission, panic, and disconnect paths
