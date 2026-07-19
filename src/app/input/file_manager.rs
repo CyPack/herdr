@@ -4428,12 +4428,20 @@ mod tests {
             .cloned()
             .expect("zeta ancestor row");
 
-        let _ = app.handle_file_manager_mouse(mouse(
-            MouseEventKind::Down(MouseButton::Left),
-            target.rect.x,
-            target.rect.y,
-        ));
+        let (dispatch, profile) = crate::render_prof::observe_for_test(|| {
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                target.rect.x,
+                target.rect.y,
+            ))
+        });
 
+        assert_eq!(dispatch, FileManagerMouseDispatch::Consumed);
+        assert_eq!(
+            profile.counter("fm.filesystem.read"),
+            0,
+            "a cold Trail directory click must enqueue bounded I/O, never read on input dispatch"
+        );
         let file_manager = app.state.file_manager.as_ref().expect("open FM");
         assert_eq!(file_manager.trail.cols().len(), 2);
         assert_eq!(
