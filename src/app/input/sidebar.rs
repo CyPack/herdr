@@ -294,32 +294,6 @@ impl AppState {
             .map(|area| area.kind)
     }
 
-    /// Exact prepared Files-sidebar path under `(col, row)`. Geometry alone is
-    /// insufficient authority: revalidate it against the current model so a
-    /// refresh cannot leave a stale clickable path behind.
-    pub(super) fn file_manager_sidebar_path_at(
-        &self,
-        col: u16,
-        row: u16,
-    ) -> Option<std::path::PathBuf> {
-        let path = self
-            .view
-            .file_manager_sidebar_row_areas
-            .iter()
-            .find(|area| {
-                row >= area.rect.y
-                    && row < area.rect.y.saturating_add(area.rect.height)
-                    && col >= area.rect.x
-                    && col < area.rect.x.saturating_add(area.rect.width)
-            })?
-            .path
-            .clone();
-        self.file_manager_sidebar
-            .item_for_path(&path)
-            .filter(|item| item.accessible)
-            .map(|_| path)
-    }
-
     /// The workspace whose identity cwd matches the project's directory —
     /// worktree actions launched from the Projects tab act on that workspace,
     /// mirroring the Spaces context menu.
@@ -2396,15 +2370,17 @@ mod tests {
         assert_eq!(terminals_before, terminals_after);
     }
 
-    // TP-C6.1-NAV: the Files row hit area carries exact path identity. Mouse
+    // TP-C6.1-NAV / TP-FCL-INPUT-01: the content rail row carries exact path identity. Mouse
     // input prepares one request only; it performs no directory read itself.
     #[test]
-    fn clicking_file_sidebar_item_prepares_exact_typed_navigation_request() {
+    fn clicking_file_locations_rail_item_prepares_exact_typed_navigation_request() {
         use crate::app::state::{
             FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
         };
         let mut app = app_for_mouse_test();
         app.state.sidebar_tab = SidebarTab::Files;
+        app.state
+            .activate_dock_app(crate::ui::surface_host::BuiltInAppId::Files);
         app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
             vec![
                 FileManagerSidebarItem {
@@ -2426,7 +2402,7 @@ mod tests {
             Vec::new(),
         );
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
-        let row = app.state.view.file_manager_sidebar_row_areas[0].clone();
+        let row = app.state.view.file_manager_locations.rows[0].clone();
         let before_file_manager = app.state.file_manager.is_some();
 
         app.handle_mouse(mouse(
@@ -2441,7 +2417,7 @@ mod tests {
         );
         assert_eq!(app.state.file_manager.is_some(), before_file_manager);
 
-        let replacement = app.state.view.file_manager_sidebar_row_areas[1].clone();
+        let replacement = app.state.view.file_manager_locations.rows[1].clone();
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             replacement.rect.x,
@@ -2458,7 +2434,7 @@ mod tests {
     // manually invoked sidebar consumer. This drives the real scheduled-task
     // chain and asserts the final loaded Trail projection.
     #[test]
-    fn sidebar_shortcut_mouse_click_consumes_to_loaded_trail() {
+    fn locations_rail_mouse_click_consumes_to_loaded_trail() {
         use crate::app::state::{
             FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
         };
@@ -2492,7 +2468,7 @@ mod tests {
             Vec::new(),
         );
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
-        let row = app.state.view.file_manager_sidebar_row_areas[0].clone();
+        let row = app.state.view.file_manager_locations.rows[0].clone();
 
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -2534,13 +2510,15 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_shortcut_mouse_modified_click_is_inert() {
+    fn locations_rail_mouse_modified_click_is_inert() {
         use crate::app::state::{
             FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
         };
 
         let mut app = app_for_mouse_test();
         app.state.sidebar_tab = SidebarTab::Files;
+        app.state
+            .activate_dock_app(crate::ui::surface_host::BuiltInAppId::Files);
         app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
             vec![FileManagerSidebarItem {
                 label: "Home".into(),
@@ -2553,7 +2531,7 @@ mod tests {
             Vec::new(),
         );
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
-        let row = app.state.view.file_manager_sidebar_row_areas[0].clone();
+        let row = app.state.view.file_manager_locations.rows[0].clone();
 
         app.handle_mouse(crossterm::event::MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
@@ -2569,7 +2547,7 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_shortcut_mouse_non_primary_and_inaccessible_rows_are_inert() {
+    fn locations_rail_mouse_non_primary_and_inaccessible_rows_are_inert() {
         use crate::app::state::{
             FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
         };
@@ -2584,10 +2562,14 @@ mod tests {
         };
         let mut app = app_for_mouse_test();
         app.state.sidebar_tab = SidebarTab::Files;
+        app.state
+            .activate_dock_app(crate::ui::surface_host::BuiltInAppId::Files);
+        app.state.file_manager_sidebar =
+            FileManagerSidebarModel::from_sources(vec![item(true)], Vec::new(), Vec::new());
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let row = app.state.view.file_manager_locations.rows[0].clone();
         app.state.file_manager_sidebar =
             FileManagerSidebarModel::from_sources(vec![item(false)], Vec::new(), Vec::new());
-        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
-        let row = app.state.view.file_manager_sidebar_row_areas[0].clone();
 
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -2601,6 +2583,8 @@ mod tests {
 
         app.state.file_manager_sidebar =
             FileManagerSidebarModel::from_sources(vec![item(true)], Vec::new(), Vec::new());
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let row = app.state.view.file_manager_locations.rows[0].clone();
         for kind in [
             MouseEventKind::Down(MouseButton::Middle),
             MouseEventKind::Up(MouseButton::Left),
@@ -2615,7 +2599,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn sidebar_shortcut_mouse_symlink_directory_loads_exact_trail() {
+    fn locations_rail_mouse_symlink_directory_loads_exact_trail() {
         use crate::app::state::{
             FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
         };
@@ -2646,7 +2630,7 @@ mod tests {
             Vec::new(),
         );
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
-        let row = app.state.view.file_manager_sidebar_row_areas[0].clone();
+        let row = app.state.view.file_manager_locations.rows[0].clone();
 
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -2671,12 +2655,14 @@ mod tests {
     // TP-C6.1-GEOMETRY/NAV: cached geometry cannot authorize a path after the
     // prepared model changes underneath it.
     #[test]
-    fn stale_file_sidebar_hit_area_is_inert_after_model_refresh() {
+    fn stale_file_locations_rail_hit_area_is_inert_after_model_refresh() {
         use crate::app::state::{
             FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
         };
         let mut app = app_for_mouse_test();
         app.state.sidebar_tab = SidebarTab::Files;
+        app.state
+            .activate_dock_app(crate::ui::surface_host::BuiltInAppId::Files);
         app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
             vec![FileManagerSidebarItem {
                 label: "Home".into(),
@@ -2689,7 +2675,7 @@ mod tests {
             Vec::new(),
         );
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
-        let stale_row = app.state.view.file_manager_sidebar_row_areas[0].clone();
+        let stale_row = app.state.view.file_manager_locations.rows[0].clone();
         app.state.file_manager_sidebar = FileManagerSidebarModel::default();
 
         app.handle_mouse(mouse(
@@ -2701,10 +2687,11 @@ mod tests {
         assert!(app.state.request_file_manager_sidebar_navigation.is_none());
     }
 
-    // TP-C6.1-LIFECYCLE: the Files top section owns its wheel events even
-    // before scrolling lands; hidden Spaces state must stay untouched.
+    // TP-FCL-SHELL-01: a legacy Files tab value cannot hide or disable the
+    // global Spaces tracker. Its wheel remains owned by the visible workspace
+    // list while location scrolling stays inside CenterContent.
     #[test]
-    fn file_sidebar_wheel_does_not_move_hidden_spaces_state() {
+    fn legacy_files_tab_value_keeps_visible_spaces_wheel_interaction() {
         use crate::app::state::SidebarTab;
         let mut app = app_for_mouse_test();
         app.state.workspaces = vec![
@@ -2725,7 +2712,10 @@ mod tests {
         ));
 
         assert_eq!(app.state.workspace_scroll, 0);
-        assert_eq!(app.state.selected, 0);
+        assert_eq!(
+            app.state.selected, 1,
+            "the visible Spaces tracker keeps its normal wheel selection"
+        );
     }
 
     #[test]

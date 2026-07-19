@@ -4170,6 +4170,7 @@ mod tests {
         for name in ["alpha", "beta", "gamma"] {
             fs::create_dir_all(td.root.join(name)).expect("fixture dir");
         }
+        set_equal_modified(&td, &["alpha", "beta", "gamma"]);
         let mut state = FmState::new(&td.root);
         let beta = td.root.join("beta");
         let beta_index = state

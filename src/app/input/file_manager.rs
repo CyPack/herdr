@@ -555,6 +555,71 @@ impl App {
             return FileManagerMouseDispatch::NotHandled;
         }
 
+        let active_files_generation = self.state.stage.active_instance_generation();
+        let locations = &self.state.view.file_manager_locations;
+        let locations_frame_is_live = locations.files_generation == active_files_generation
+            && locations.model_revision == self.state.file_manager_sidebar.revision();
+        let in_locations_rail = locations
+            .layout
+            .rail
+            .is_some_and(|rail| rect_contains(rail, mouse.column, mouse.row));
+        if in_locations_rail {
+            if locations_frame_is_live {
+                match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left) if mouse.modifiers.is_empty() => {
+                        let target = locations
+                            .rows
+                            .iter()
+                            .find(|row| rect_contains(row.rect, mouse.column, mouse.row))
+                            .filter(|row| {
+                                Some(row.files_generation) == active_files_generation
+                                    && row.model_revision == locations.model_revision
+                            })
+                            .and_then(|row| {
+                                self.state
+                                    .file_manager_sidebar
+                                    .item_for_path(&row.path)
+                                    .filter(|item| item.accessible)
+                                    .map(|_| row.path.clone())
+                            });
+                        if let Some(path) = target {
+                            self.state.request_file_manager_sidebar_navigation = Some(path);
+                            self.state.file_manager_locations.focus =
+                                crate::app::FileManagerLocationsFocus::Rail;
+                        }
+                    }
+                    MouseEventKind::ScrollUp if mouse.modifiers.is_empty() => {
+                        if let Some(rail) = locations.layout.rail {
+                            let _ = self.state.file_manager_locations.scroll_rail(
+                                -1,
+                                locations.content_line_count,
+                                rail.height,
+                            );
+                        }
+                    }
+                    MouseEventKind::ScrollDown if mouse.modifiers.is_empty() => {
+                        if let Some(rail) = locations.layout.rail {
+                            let _ = self.state.file_manager_locations.scroll_rail(
+                                1,
+                                locations.content_line_count,
+                                rail.height,
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            return FileManagerMouseDispatch::Consumed;
+        }
+        if locations
+            .layout
+            .separator
+            .is_some_and(|separator| rect_contains(separator, mouse.column, mouse.row))
+        {
+            return FileManagerMouseDispatch::Consumed;
+        }
+        let in_trail = rect_contains(locations.layout.trail, mouse.column, mouse.row);
+
         let header_action = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
             .then_some(())
             .filter(|_| mouse.modifiers.is_empty())
@@ -567,7 +632,6 @@ impl App {
                     .map(|area| area.action)
             });
 
-        let active_files_generation = self.state.stage.active_instance_generation();
         let trail_frame_is_live =
             self.state.view.file_manager_trail.files_generation == active_files_generation;
         let trail_row_target = trail_frame_is_live
@@ -653,7 +717,8 @@ impl App {
 
         // Horizontal preference and divider transactions never override a
         // live Trail row identity.
-        if self.handle_miller_horizontal_scroll(horizontal_kind, mouse.modifiers) {
+        if in_trail && self.handle_miller_horizontal_scroll(horizontal_kind, mouse.modifiers) {
+            self.state.file_manager_locations.focus_trail();
             return FileManagerMouseDispatch::Consumed;
         }
         if trail_row_target.is_none()
@@ -5172,7 +5237,8 @@ mod tests {
             horizontal.follow_active = false;
             compute_view(&mut app.state, frame);
             let stage = app.state.view.terminal_area;
-            let probe = (stage.x.saturating_add(1), stage.y.saturating_add(2));
+            let trail = app.state.view.file_manager_locations.layout.trail;
+            let probe = (trail.x.saturating_add(1), trail.y.saturating_add(1));
 
             assert_eq!(
                 app.handle_file_manager_mouse(
@@ -5528,8 +5594,8 @@ mod tests {
             "a deep Trail must initially auto-follow its active end"
         );
         let step_left = app.state.view.file_manager_trail.scroll_step_left;
-        let center = app.state.view.terminal_area;
-        let probe = (center.x.saturating_add(1), center.y.saturating_add(2));
+        let trail = app.state.view.file_manager_locations.layout.trail;
+        let probe = (trail.x.saturating_add(1), trail.y.saturating_add(1));
 
         assert_eq!(
             app.handle_file_manager_mouse(mouse_with_modifiers(

@@ -1305,12 +1305,13 @@ impl SidebarTab {
     }
 }
 
+pub use super::file_manager_sidebar::{
+    FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel,
+    FileManagerSidebarRowArea,
+};
 #[cfg(test)]
 pub use super::file_manager_sidebar::{
-    FileManagerSidebarIcon, FileManagerSidebarSectionKind, FILE_MANAGER_SIDEBAR_MAX_ITEMS,
-};
-pub use super::file_manager_sidebar::{
-    FileManagerSidebarItem, FileManagerSidebarModel, FileManagerSidebarRowArea,
+    FileManagerSidebarSectionKind, FILE_MANAGER_SIDEBAR_MAX_ITEMS,
 };
 
 /// Client-local, computed hit geometry for the focused agent's attachment
@@ -1375,13 +1376,14 @@ pub struct ViewState {
     pub project_row_areas: Vec<ProjectRowArea>,
     /// Exact clickable item rows for the prepared Files sidebar. Empty on
     /// every non-Files tab and when the sidebar is collapsed.
+    #[allow(dead_code)]
+    // FCL-4 removes production ownership; FCL-5 deletes compatibility tests.
     pub file_manager_sidebar_row_areas: Vec<FileManagerSidebarRowArea>,
     /// Complete AppDock entry targets for the current frame. Empty whenever
     /// the live shell projects no dock region.
     pub app_dock_entry_areas: Vec<crate::ui::app_dock::AppDockEntryArea>,
     /// One current-frame projection for the Files-local locations rail,
     /// compact action, exact row identities, and remaining Trail viewport.
-    #[allow(dead_code)] // FCL-3 publishes authority; FCL-4 render/input consumes it.
     pub(crate) file_manager_locations: crate::ui::FileManagerLocationsView,
     /// Bounded logical Miller columns and dividers projected for the current
     /// Files frame. Empty while Files is closed or its body cannot fit one

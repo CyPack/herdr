@@ -6521,12 +6521,12 @@ next_tab = ""
         );
     }
 
-    // TP-FMR-SIDEBAR-HL-01..03: cover the real remote-client boundary that
+    // TP-FCL-INPUT-01 / TP-FMR-SIDEBAR-HL-01..03: cover the real remote-client boundary that
     // the App-level FMR-2 test cannot exercise. Raw host bytes must prepare
     // the exact typed request, and the headless scheduled loop must consume it
     // into the existing Files generation.
     #[test]
-    fn headless_raw_mouse_shortcut_navigation_loads_exact_trail() {
+    fn headless_raw_mouse_locations_navigation_loads_exact_trail() {
         use crate::app::state::{
             FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
         };
@@ -6589,7 +6589,7 @@ next_tab = ""
             &mut server.app.state,
             ratatui::layout::Rect::new(0, 0, 106, 20),
         );
-        let row = server.app.state.view.file_manager_sidebar_row_areas[0].clone();
+        let row = server.app.state.view.file_manager_locations.rows[0].clone();
         let mouse = format!(
             "\x1b[<0;{};{}M",
             row.rect.x.saturating_add(1),
@@ -6604,12 +6604,12 @@ next_tab = ""
         assert_eq!(
             server.app.state.request_file_manager_sidebar_navigation,
             Some(target.clone()),
-            "raw SGR input reaches the exact model-revalidated shortcut seam"
+            "raw SGR input reaches the exact model-revalidated locations rail seam"
         );
 
         assert!(
             server.handle_scheduled_tasks_headless(Instant::now(), false),
-            "headless scheduled tasks must consume the pending shortcut request"
+            "headless scheduled tasks must consume the pending location request"
         );
         server.app.wait_file_manager_io_for_test();
         assert!(
@@ -6622,7 +6622,7 @@ next_tab = ""
                 .state
                 .request_file_manager_sidebar_navigation
                 .is_none(),
-            "the typed shortcut request is one-shot"
+            "the typed location request is one-shot"
         );
         assert_eq!(
             server.app.state.stage.active_instance_generation(),

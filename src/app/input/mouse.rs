@@ -620,24 +620,6 @@ impl AppState {
                         return None;
                     }
 
-                    if self.sidebar_tab == crate::app::state::SidebarTab::Files {
-                        let list = self.workspace_list_rect();
-                        let in_files_section = mouse.column >= list.x
-                            && mouse.column < list.x.saturating_add(list.width)
-                            && mouse.row >= list.y
-                            && mouse.row < list.y.saturating_add(list.height);
-                        if in_files_section {
-                            if mouse.modifiers.is_empty() {
-                                if let Some(path) =
-                                    self.file_manager_sidebar_path_at(mouse.column, mouse.row)
-                                {
-                                    self.request_file_manager_sidebar_navigation = Some(path);
-                                }
-                            }
-                            return None;
-                        }
-                    }
-
                     // The Projects tab owns only the workspace-list BODY rows.
                     // Footer and agent-panel clicks must keep flowing to the
                     // shared handlers below (menu launcher, agent focus) —
@@ -1124,9 +1106,6 @@ impl AppState {
                     )) {
                         self.scroll_agent_panel(-1);
                     }
-                } else if self.sidebar_tab == crate::app::state::SidebarTab::Files {
-                    // C6.1 is a bounded, non-scrolling section model. Own the
-                    // wheel event so hidden Spaces state never moves.
                 } else if self.sidebar_tab == crate::app::state::SidebarTab::Projects {
                     // The Projects tab owns the top section: the wheel scrolls
                     // its rows and must never move the hidden Spaces selection.
@@ -1155,9 +1134,6 @@ impl AppState {
                     )) {
                         self.scroll_agent_panel(1);
                     }
-                } else if self.sidebar_tab == crate::app::state::SidebarTab::Files {
-                    // See ScrollUp: Files owns this event even when no row
-                    // scrolling is needed.
                 } else if self.sidebar_tab == crate::app::state::SidebarTab::Projects {
                     if crate::ui::should_show_scrollbar(crate::ui::projects_scroll_metrics(
                         self,

@@ -666,14 +666,20 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
         );
     }
 
+    let live_files_view = area == app.view.terminal_area
+        && app.stage.surface_view() == crate::ui::surface_host::StageSurfaceView::NativeFiles;
+    let locations = live_files_view.then_some(&app.view.file_manager_locations);
+    if let Some(locations) = locations {
+        locations::render_file_manager_locations(app, frame, locations);
+    }
+
     let fallback_trail;
-    let trail = if area == app.view.terminal_area
-        && app.stage.surface_view() == crate::ui::surface_host::StageSurfaceView::NativeFiles
-    {
+    let trail = if live_files_view {
         &app.view.file_manager_trail
     } else {
+        let trail_area = locations.map_or(body_area, |locations| locations.layout.trail);
         fallback_trail =
-            trail_view::project_trail_view(body_area, &fm.trail, &fm.trail_snapshots, &[]);
+            trail_view::project_trail_view(trail_area, &fm.trail, &fm.trail_snapshots, &[]);
         &fallback_trail
     };
     trail_view::render_trail_view(app, frame, trail, &fm.trail_snapshots);
@@ -3033,6 +3039,7 @@ mod tests {
             .expect("Files activation");
         app.mobile_width_threshold = 0;
         app.sidebar_collapsed = true;
+        app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
         app.file_manager_sidebar = crate::app::state::FileManagerSidebarModel::from_sources(
             vec![
                 fcl_render_item(
@@ -3083,9 +3090,21 @@ mod tests {
         assert!(pending_text.contains("Home"));
         assert!(pending_text.contains("Downloads"));
         assert!(pending_text.contains("Root"));
-        assert!(
-            pending_text.contains("…"),
-            "the exact pending root needs a visible marker"
+        let pending_row = app
+            .view
+            .file_manager_locations
+            .rows
+            .iter()
+            .find(|row| row.path == downloads)
+            .expect("pending row geometry");
+        assert_eq!(
+            pending[(
+                pending_row.rect.right().saturating_sub(1),
+                pending_row.rect.y
+            )]
+                .symbol(),
+            "…",
+            "the exact pending root needs a visible row marker"
         );
         let home_pos = find_rendered_text(&pending, frame.width, frame.height, "Home");
         assert_eq!(
@@ -3094,23 +3113,38 @@ mod tests {
         );
 
         app.file_manager_locations.fail_load(
-            root,
+            root.clone(),
             crate::app::FileManagerLocationLoadError::PermissionDenied,
         );
         crate::ui::compute_view(&mut app, frame);
         let failed = render_buffer(&app, frame.width, frame.height);
-        let failed_text = (0..frame.height)
-            .map(|y| {
-                (0..frame.width)
-                    .map(|x| failed[(x, y)].symbol())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(
-            failed_text.contains('!'),
-            "the exact failed root needs a visible marker"
+        let failed_row = app
+            .view
+            .file_manager_locations
+            .rows
+            .iter()
+            .find(|row| row.path == root)
+            .expect("failed row geometry");
+        assert_eq!(
+            failed[(failed_row.rect.right().saturating_sub(1), failed_row.rect.y)].symbol(),
+            "!",
+            "the exact failed root needs a visible row marker"
         );
-        assert!(!failed_text.contains('…'));
+        let downloads_row = app
+            .view
+            .file_manager_locations
+            .rows
+            .iter()
+            .find(|row| row.path == downloads)
+            .expect("former pending row geometry");
+        assert_ne!(
+            failed[(
+                downloads_row.rect.right().saturating_sub(1),
+                downloads_row.rect.y
+            )]
+                .symbol(),
+            "…",
+            "failure transition retires the prior pending marker"
+        );
     }
 }

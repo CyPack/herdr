@@ -22,6 +22,13 @@ pub(crate) enum FileManagerLocationLoadError {
     Unavailable,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum FileManagerLocationsFocus {
+    #[default]
+    Trail,
+    Rail,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FileManagerLocationPending {
     pub(crate) path: PathBuf,
@@ -35,6 +42,8 @@ pub(crate) struct FileManagerLocationsState {
     pub(crate) origin: Option<FileManagerLocationOrigin>,
     pub(crate) pending: Option<FileManagerLocationPending>,
     pub(crate) failure: Option<(PathBuf, FileManagerLocationLoadError)>,
+    pub(crate) scroll: usize,
+    pub(crate) focus: FileManagerLocationsFocus,
 }
 
 impl FileManagerLocationsState {
@@ -52,6 +61,7 @@ impl FileManagerLocationsState {
         self.origin = Some(FileManagerLocationOrigin::Location(path.to_path_buf()));
         self.pending = None;
         self.failure = None;
+        self.focus = FileManagerLocationsFocus::Rail;
         true
     }
 
@@ -59,6 +69,7 @@ impl FileManagerLocationsState {
         self.origin = Some(FileManagerLocationOrigin::Direct(path));
         self.pending = None;
         self.failure = None;
+        self.focus = FileManagerLocationsFocus::Trail;
     }
 
     pub(crate) fn highlighted_path<'a>(
@@ -94,6 +105,8 @@ impl FileManagerLocationsState {
         self.origin = None;
         self.pending = None;
         self.failure = None;
+        self.scroll = 0;
+        self.focus = FileManagerLocationsFocus::Trail;
     }
 
     pub(crate) fn begin_load(
@@ -130,6 +143,29 @@ impl FileManagerLocationsState {
                 && pending.model_revision == model_revision
                 && pending.io_generation == io_generation
         })
+    }
+
+    pub(crate) fn scroll_rail(
+        &mut self,
+        delta: isize,
+        content_line_count: usize,
+        viewport_height: u16,
+    ) -> bool {
+        let maximum = content_line_count.saturating_sub(usize::from(viewport_height));
+        let next = if delta < 0 {
+            self.scroll.saturating_sub(delta.unsigned_abs())
+        } else {
+            self.scroll.saturating_add(delta as usize).min(maximum)
+        }
+        .min(maximum);
+        let changed = next != self.scroll;
+        self.scroll = next;
+        self.focus = FileManagerLocationsFocus::Rail;
+        changed
+    }
+
+    pub(crate) fn focus_trail(&mut self) {
+        self.focus = FileManagerLocationsFocus::Trail;
     }
 }
 

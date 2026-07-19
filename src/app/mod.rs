@@ -18,6 +18,7 @@ mod file_manager_io_worker;
 mod file_manager_locations;
 #[cfg(test)]
 pub(crate) use file_manager_locations::FileManagerLocationLoadError;
+pub(crate) use file_manager_locations::FileManagerLocationsFocus;
 mod file_manager_miller;
 mod file_manager_sidebar;
 mod file_manager_watcher;

@@ -1,8 +1,16 @@
 use std::path::PathBuf;
 
-use ratatui::layout::Rect;
+use ratatui::{
+    layout::Rect,
+    style::{Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Paragraph},
+    Frame,
+};
 
-use crate::app::state::AppState;
+use crate::app::state::{
+    AppState, FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel,
+};
 use crate::fm::miller::MILLER_COLUMN_MIN_WIDTH;
 use crate::ui::surface_host::StageSurfaceView;
 
@@ -48,6 +56,8 @@ pub(crate) struct FileManagerLocationRowArea {
 pub(crate) struct FileManagerLocationsView {
     pub(crate) files_generation: Option<u32>,
     pub(crate) model_revision: u64,
+    pub(crate) scroll: usize,
+    pub(crate) content_line_count: usize,
     pub(crate) layout: FileManagerContentLayout,
     pub(crate) rows: Vec<FileManagerLocationRowArea>,
     pub(crate) locations_action_area: Option<Rect>,
@@ -102,35 +112,62 @@ pub(crate) fn file_manager_content_layout(body: Rect) -> FileManagerContentLayou
     }
 }
 
+enum FileManagerLocationLine<'a> {
+    Header(&'a str),
+    Blank,
+    Item(&'a FileManagerSidebarItem),
+}
+
+fn location_lines(model: &FileManagerSidebarModel) -> Vec<FileManagerLocationLine<'_>> {
+    let mut lines = Vec::new();
+    for (section_index, section) in model.sections.iter().enumerate() {
+        if section_index > 0 {
+            lines.push(FileManagerLocationLine::Blank);
+        }
+        lines.push(FileManagerLocationLine::Header(section.kind.label()));
+        lines.extend(section.items.iter().map(FileManagerLocationLine::Item));
+    }
+    lines
+}
+
+pub(crate) fn file_manager_location_line_count(model: &FileManagerSidebarModel) -> usize {
+    location_lines(model).len()
+}
+
 fn project_location_rows(
     app: &AppState,
     rail: Rect,
     files_generation: u32,
     model_revision: u64,
+    scroll: usize,
 ) -> Vec<FileManagerLocationRowArea> {
     if rail.width == 0 || rail.height == 0 {
         return Vec::new();
     }
 
     let mut rows = Vec::new();
-    let mut line_index = 0_u16;
-    for (section_index, section) in app.file_manager_sidebar.sections.iter().enumerate() {
-        if section_index > 0 {
-            line_index = line_index.saturating_add(1);
-        }
-        line_index = line_index.saturating_add(1);
-
-        for item in &section.items {
-            if line_index >= rail.height {
-                return rows;
+    for (line_index, line) in location_lines(&app.file_manager_sidebar)
+        .into_iter()
+        .skip(scroll)
+        .take(usize::from(rail.height))
+        .enumerate()
+    {
+        if let FileManagerLocationLine::Item(item) = line {
+            if !item.accessible {
+                continue;
             }
             rows.push(FileManagerLocationRowArea {
-                rect: Rect::new(rail.x, rail.y.saturating_add(line_index), rail.width, 1),
+                rect: Rect::new(
+                    rail.x,
+                    rail.y
+                        .saturating_add(u16::try_from(line_index).unwrap_or(u16::MAX)),
+                    rail.width,
+                    1,
+                ),
                 path: item.path.clone(),
                 files_generation,
                 model_revision,
             });
-            line_index = line_index.saturating_add(1);
         }
     }
     rows
@@ -172,18 +209,154 @@ pub(crate) fn project_file_manager_locations_view(
 
     let layout = file_manager_content_layout(body);
     let model_revision = app.file_manager_sidebar.revision();
+    let content_line_count = file_manager_location_line_count(&app.file_manager_sidebar);
+    let scroll = layout.rail.map_or(0, |rail| {
+        app.file_manager_locations
+            .scroll
+            .min(content_line_count.saturating_sub(usize::from(rail.height)))
+    });
     let rows = layout
         .rail
-        .map(|rail| project_location_rows(app, rail, files_generation, model_revision))
+        .map(|rail| project_location_rows(app, rail, files_generation, model_revision, scroll))
         .unwrap_or_default();
 
     FileManagerLocationsView {
         files_generation: Some(files_generation),
         model_revision,
+        scroll,
+        content_line_count,
         layout,
         rows,
         locations_action_area: locations_action_area(header, layout.mode),
         drawer_area: None,
+    }
+}
+
+fn location_icon(icon: FileManagerSidebarIcon, ascii: bool) -> &'static str {
+    if !ascii {
+        return icon.glyph();
+    }
+    match icon {
+        FileManagerSidebarIcon::Home => "~",
+        FileManagerSidebarIcon::Desktop => "D",
+        FileManagerSidebarIcon::Downloads => "v",
+        FileManagerSidebarIcon::Documents => "d",
+        FileManagerSidebarIcon::Pictures => "p",
+        FileManagerSidebarIcon::Videos => "V",
+        FileManagerSidebarIcon::Music => "m",
+        FileManagerSidebarIcon::Trash => "x",
+        FileManagerSidebarIcon::Pin => "*",
+        FileManagerSidebarIcon::Disk => "/",
+    }
+}
+
+fn location_row_line(app: &AppState, item: &FileManagerSidebarItem, width: u16) -> Line<'static> {
+    let width = usize::from(width);
+    if width == 0 {
+        return Line::default();
+    }
+    let pending = app
+        .file_manager_locations
+        .pending
+        .as_ref()
+        .is_some_and(|pending| pending.path == item.path);
+    let failed = app
+        .file_manager_locations
+        .failure
+        .as_ref()
+        .is_some_and(|(path, _)| path == &item.path);
+    let marker = if pending {
+        Some(("…", app.palette.yellow))
+    } else if failed || !item.accessible {
+        Some(("!", app.palette.red))
+    } else if item.ejectable {
+        Some(("^", app.palette.blue))
+    } else {
+        None
+    };
+    let marker_width = usize::from(marker.is_some());
+    let content_limit = width.saturating_sub(marker_width);
+    let ascii = app.file_icon_profile == crate::fm::entry_kind::IconProfile::Ascii;
+    let content = crate::ui::text::truncate_end(
+        &format!(" {} {}", location_icon(item.icon, ascii), item.label),
+        content_limit,
+    );
+    let padding = content_limit.saturating_sub(crate::ui::text::display_width(content.as_str()));
+    let mut spans = vec![Span::raw(content), Span::raw(" ".repeat(padding))];
+    if let Some((symbol, color)) = marker {
+        spans.push(Span::styled(symbol, Style::default().fg(color)));
+    }
+    Line::from(spans)
+}
+
+pub(crate) fn render_file_manager_locations(
+    app: &AppState,
+    frame: &mut Frame,
+    view: &FileManagerLocationsView,
+) {
+    let active_generation = app.stage.active_instance_generation();
+    if view.files_generation != active_generation
+        || view.model_revision != app.file_manager_sidebar.revision()
+    {
+        return;
+    }
+    let Some(rail) = view.layout.rail else {
+        return;
+    };
+
+    frame.render_widget(
+        Block::default().style(Style::default().bg(app.palette.panel_bg)),
+        rail,
+    );
+    if let Some(separator) = view.layout.separator {
+        frame.render_widget(
+            Block::default().style(Style::default().bg(app.palette.surface_dim)),
+            separator,
+        );
+    }
+
+    let highlighted = app
+        .file_manager_locations
+        .highlighted_path(&app.file_manager_sidebar);
+    for (line_index, line) in location_lines(&app.file_manager_sidebar)
+        .into_iter()
+        .skip(view.scroll)
+        .take(usize::from(rail.height))
+        .enumerate()
+    {
+        let row = Rect::new(
+            rail.x,
+            rail.y
+                .saturating_add(u16::try_from(line_index).unwrap_or(u16::MAX)),
+            rail.width,
+            1,
+        );
+        match line {
+            FileManagerLocationLine::Header(label) => frame.render_widget(
+                Paragraph::new(format!(" {label}")).style(
+                    Style::default()
+                        .fg(app.palette.overlay0)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                row,
+            ),
+            FileManagerLocationLine::Blank => {}
+            FileManagerLocationLine::Item(item) => {
+                let style = if highlighted == Some(item.path.as_path()) {
+                    Style::default()
+                        .fg(app.palette.panel_bg)
+                        .bg(app.palette.accent)
+                } else if item.accessible {
+                    Style::default().fg(app.palette.subtext0)
+                } else {
+                    Style::default().fg(app.palette.overlay0)
+                };
+                frame.render_widget(
+                    Paragraph::new(location_row_line(app, item, row.width)).style(style),
+                    row,
+                );
+            }
+        }
     }
 }
 

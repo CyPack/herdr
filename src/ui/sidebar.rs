@@ -10,10 +10,9 @@ use super::scrollbar::{render_scrollbar, should_show_scrollbar};
 use super::status::{agent_icon, state_dot, state_label, state_label_color};
 use super::text::{display_width, display_width_u16, truncate_end};
 use super::widgets::panel_contrast_fg;
-use crate::app::state::{
-    AgentPanelSort, FileManagerSidebarItem, FileManagerSidebarRowArea, Palette, ProjectRowArea,
-    ProjectRowKind,
-};
+use crate::app::state::{AgentPanelSort, Palette, ProjectRowArea, ProjectRowKind};
+#[cfg(test)]
+use crate::app::state::{FileManagerSidebarItem, FileManagerSidebarRowArea};
 use crate::app::{AppState, Mode};
 use crate::detect::AgentState;
 use crate::terminal::TerminalRuntimeRegistry;
@@ -484,18 +483,21 @@ pub(crate) fn workspace_list_body_rect(area: Rect, has_scrollbar: bool) -> Rect 
     Rect::new(area.x, body_y, body_width, body_height)
 }
 
+#[cfg(test)]
 enum FileManagerSidebarLine<'a> {
     Header(&'a str),
     Blank,
     Item(&'a FileManagerSidebarItem),
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FileManagerSidebarMarker {
     Warning,
     Eject,
 }
 
+#[cfg(test)]
 fn file_manager_sidebar_marker(item: &FileManagerSidebarItem) -> Option<FileManagerSidebarMarker> {
     if !item.accessible {
         Some(FileManagerSidebarMarker::Warning)
@@ -506,6 +508,7 @@ fn file_manager_sidebar_marker(item: &FileManagerSidebarItem) -> Option<FileMana
     }
 }
 
+#[cfg(test)]
 fn file_manager_sidebar_item_is_current(app: &AppState, item: &FileManagerSidebarItem) -> bool {
     app.sidebar_tab == crate::app::state::SidebarTab::Files
         && app.file_manager.is_some()
@@ -516,6 +519,7 @@ fn file_manager_sidebar_item_is_current(app: &AppState, item: &FileManagerSideba
             == Some(item.path.as_path())
 }
 
+#[cfg(test)]
 fn file_manager_sidebar_item_line(
     app: &AppState,
     item: &FileManagerSidebarItem,
@@ -604,6 +608,7 @@ fn file_manager_sidebar_item_line(
     Line::from(spans)
 }
 
+#[cfg(test)]
 fn file_manager_sidebar_lines(app: &AppState) -> Vec<FileManagerSidebarLine<'_>> {
     let mut lines = Vec::new();
     for (section_idx, section) in app.file_manager_sidebar.sections.iter().enumerate() {
@@ -616,6 +621,7 @@ fn file_manager_sidebar_lines(app: &AppState) -> Vec<FileManagerSidebarLine<'_>>
     lines
 }
 
+#[cfg(test)]
 /// Lay out only complete, clickable Files-sidebar item rows. Headers and blank
 /// separators consume vertical space but intentionally carry no path identity.
 pub(crate) fn compute_file_manager_sidebar_row_areas(
@@ -648,6 +654,7 @@ pub(crate) fn compute_file_manager_sidebar_row_areas(
     rows
 }
 
+#[cfg(test)]
 fn render_file_manager_sidebar(app: &AppState, frame: &mut Frame, area: Rect) {
     let body = workspace_list_body_rect(area, false);
     if body.width == 0 || body.height == 0 {
@@ -1120,15 +1127,12 @@ fn render_workspace_list(
     let list_bottom = area.y + area.height.saturating_sub(1);
     render_sidebar_tabs(app, frame, area);
 
-    // Projects/Files own their content; the workspace list is the Spaces tab.
+    // Projects alone owns an alternate global-sidebar body. Files is hosted in
+    // CenterContent, so a legacy Files tab value keeps the Spaces tracker.
     match app.sidebar_tab {
-        crate::app::state::SidebarTab::Spaces => {}
+        crate::app::state::SidebarTab::Spaces | crate::app::state::SidebarTab::Files => {}
         crate::app::state::SidebarTab::Projects => {
             render_projects_list(app, frame, area);
-            return;
-        }
-        crate::app::state::SidebarTab::Files => {
-            render_file_manager_sidebar(app, frame, area);
             return;
         }
     }
@@ -2346,44 +2350,20 @@ mod tests {
         assert!(app.view.file_manager_sidebar_row_areas.is_empty());
     }
 
-    // FCL-5 teardown: this global-body renderer is replaced by the
-    // content-local locations rail.
-    // TP-C6.1-RENDER: Files renders the prepared section model and removes the
-    // placeholder. Rendering consumes no filesystem or environment source.
+    // TP-FCL-SHELL-01: even a legacy Files tab value renders the global
+    // workspace tracker; Favorites/Locations belong exclusively to the
+    // Native Files content rail.
     #[test]
-    fn render_workspace_list_shows_native_file_sidebar_sections() {
-        use crate::app::state::{FileManagerSidebarIcon, FileManagerSidebarModel};
+    fn legacy_files_tab_value_renders_spaces_tracker_not_locations() {
         let mut app = crate::app::state::AppState::test_new();
         app.sidebar_tab = crate::app::state::SidebarTab::Files;
         app.mouse_capture = false; // skip new/menu chrome for a focused test
-        app.file_manager_sidebar = FileManagerSidebarModel::from_sources(
-            vec![file_sidebar_item(
-                "Home",
-                "/home/a",
-                FileManagerSidebarIcon::Home,
-                true,
-                false,
-            )],
-            vec![file_sidebar_item(
-                "Herdr",
-                "/work/herdr",
-                FileManagerSidebarIcon::Pin,
-                true,
-                false,
-            )],
-            vec![file_sidebar_item(
-                "Root",
-                "/",
-                FileManagerSidebarIcon::Disk,
-                true,
-                false,
-            )],
-        );
+        app.workspaces = vec![crate::workspace::Workspace::test_new("Tracked Space")];
+        app.active = Some(0);
+        app.selected = 0;
         let area = Rect::new(0, 0, 24, 14);
         app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
-        app.view.file_manager_sidebar_row_areas =
-            compute_file_manager_sidebar_row_areas(&app, area);
-        app.view.workspace_card_areas = Vec::new();
+        app.view.workspace_card_areas = compute_workspace_card_areas(&app, area);
 
         let runtimes = TerminalRuntimeRegistry::new();
         let mut terminal = Terminal::new(TestBackend::new(24, 14)).unwrap();
@@ -2395,13 +2375,9 @@ mod tests {
             .flat_map(|y| (0..24).map(move |x| (x, y)))
             .map(|(x, y)| terminal.backend().buffer()[(x, y)].symbol())
             .collect();
-        for expected in ["FAVORITES", "Home", "PINNED", "Herdr", "LOCATIONS", "Root"] {
-            assert!(text.contains(expected), "missing {expected:?}: {text:?}");
-        }
-        assert!(
-            !text.contains("soon"),
-            "placeholder must be removed: {text:?}"
-        );
+        assert!(text.contains("Tracked Space"), "missing tracker: {text:?}");
+        assert!(!text.contains("FAVORITES"), "locations leaked: {text:?}");
+        assert!(!text.contains("LOCATIONS"), "locations leaked: {text:?}");
     }
 
     fn render_file_sidebar_for_test(

@@ -541,6 +541,7 @@ impl AppState {
         // The hidden Files surface loses its projected stage geometry in the
         // same transaction, so no stale row/header rectangle can act between
         // this close and the next compute.
+        self.view.file_manager_locations = Default::default();
         self.view.file_manager_miller = Default::default();
         self.view.file_manager_trail = Default::default();
         self.view.file_manager_row_areas = Vec::new();

@@ -351,9 +351,11 @@ fn compute_view_internal(
         app.agent_panel_scroll = 0;
     }
 
-    // The workspace list belongs to the Spaces tab. Projects/Files render their
-    // own content, so no workspace cards are laid out for them.
-    let show_spaces_content = app.sidebar_tab == crate::app::state::SidebarTab::Spaces;
+    // Files is a center-stage app, not a global-sidebar content owner. A
+    // legacy Files tab value therefore falls back to the Spaces projection;
+    // current Files activation preserves whichever Spaces/Projects owner was
+    // already selected.
+    let show_spaces_content = app.sidebar_tab != crate::app::state::SidebarTab::Projects;
     let workspace_card_areas = if app.sidebar_collapsed || !show_spaces_content {
         Vec::new()
     } else {
@@ -381,15 +383,7 @@ fn compute_view_internal(
                 sidebar::normalized_projects_scroll(app, list_rect, app.projects_scroll);
             sidebar::compute_project_row_areas(app, list_rect)
         };
-    let file_manager_sidebar_row_areas =
-        if app.sidebar_collapsed || app.sidebar_tab != crate::app::state::SidebarTab::Files {
-            Vec::new()
-        } else {
-            sidebar::compute_file_manager_sidebar_row_areas(
-                app,
-                sidebar::workspace_list_rect(sidebar_area, app.sidebar_section_split),
-            )
-        };
+    let file_manager_sidebar_row_areas = Vec::new();
 
     let tab_bar_view = app
         .active
@@ -2207,9 +2201,10 @@ mod tests {
         }
         let current_row = app
             .view
-            .file_manager_sidebar_row_areas
+            .file_manager_locations
+            .rows
             .first()
-            .expect("expanded Files sidebar row")
+            .expect("expanded Files content-rail row")
             .rect;
         assert!((current_row.x..current_row.right())
             .any(|x| { expanded[(x, current_row.y)].bg == app.palette.accent }));
@@ -2223,7 +2218,7 @@ mod tests {
         compute_view(&mut app, desktop);
         assert_eq!(app.view.layout, ViewLayout::Desktop);
         assert!(app.view.sidebar_rect.width < expanded_sidebar_width);
-        assert!(app.view.file_manager_sidebar_row_areas.is_empty());
+        assert!(!app.view.file_manager_locations.rows.is_empty());
         let collapsed = render_full_frame_for_test(&app, desktop);
         assert!(buffer_rect_text(&collapsed, app.view.terminal_area).contains("copy 0/1"));
 
@@ -2231,7 +2226,7 @@ mod tests {
         let mobile_two = Rect::new(0, 0, 33, 15);
         compute_view(&mut app, mobile_two);
         assert_eq!(app.view.layout, ViewLayout::Mobile);
-        assert!(app.view.file_manager_sidebar_row_areas.is_empty());
+        assert!(!app.view.file_manager_locations.rows.is_empty());
         let two = buffer_rect_text(
             &render_full_frame_for_test(&app, mobile_two),
             app.view.terminal_area,
