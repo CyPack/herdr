@@ -56,13 +56,100 @@ pub(crate) fn present_file_time(
 }
 
 fn present_file_time_with_resolver(
-    _modified: Option<SystemTime>,
-    _anchor: LocalCalendarAnchor,
-    _resolve_offset: impl Fn(OffsetDateTime) -> Option<UtcOffset>,
+    modified: Option<SystemTime>,
+    anchor: LocalCalendarAnchor,
+    resolve_offset: impl Fn(OffsetDateTime) -> Option<UtcOffset>,
 ) -> FileTimePresentation {
+    let Some(modified) = modified else {
+        return unknown_date();
+    };
+    let Some(anchor_local) = resolve_local(anchor.now, &resolve_offset) else {
+        return unknown_date();
+    };
+    let Some(modified_local) = resolve_local(modified, &resolve_offset) else {
+        return unknown_date();
+    };
+
+    let day_delta =
+        i64::from(anchor_local.to_julian_day()) - i64::from(modified_local.to_julian_day());
+    let section = match day_delta {
+        ..=-1 => FileTimeSection::Future,
+        0 => FileTimeSection::Today,
+        1 => FileTimeSection::Yesterday,
+        2..=7 => FileTimeSection::Previous7Days,
+        _ => FileTimeSection::Older,
+    };
+    let label = match section {
+        FileTimeSection::Future | FileTimeSection::Today | FileTimeSection::Yesterday => {
+            clock_label(modified_local)
+        }
+        FileTimeSection::Previous7Days => format!(
+            "{} {}",
+            weekday_abbreviation(modified_local),
+            clock_label(modified_local)
+        ),
+        FileTimeSection::Older if modified_local.year() == anchor_local.year() => format!(
+            "{:02} {}",
+            modified_local.day(),
+            month_abbreviation(modified_local)
+        ),
+        FileTimeSection::Older => format!(
+            "{:02} {} {}",
+            modified_local.day(),
+            month_abbreviation(modified_local),
+            modified_local.year()
+        ),
+        FileTimeSection::UnknownDate => "—".to_string(),
+    };
+
+    FileTimePresentation { section, label }
+}
+
+fn resolve_local(
+    system_time: SystemTime,
+    resolve_offset: &impl Fn(OffsetDateTime) -> Option<UtcOffset>,
+) -> Option<OffsetDateTime> {
+    let utc = OffsetDateTime::from(system_time);
+    resolve_offset(utc).map(|offset| utc.to_offset(offset))
+}
+
+fn unknown_date() -> FileTimePresentation {
     FileTimePresentation {
         section: FileTimeSection::UnknownDate,
         label: "—".to_string(),
+    }
+}
+
+fn clock_label(datetime: OffsetDateTime) -> String {
+    format!("{:02}:{:02}", datetime.hour(), datetime.minute())
+}
+
+fn month_abbreviation(datetime: OffsetDateTime) -> &'static str {
+    match datetime.month() {
+        time::Month::January => "Jan",
+        time::Month::February => "Feb",
+        time::Month::March => "Mar",
+        time::Month::April => "Apr",
+        time::Month::May => "May",
+        time::Month::June => "Jun",
+        time::Month::July => "Jul",
+        time::Month::August => "Aug",
+        time::Month::September => "Sep",
+        time::Month::October => "Oct",
+        time::Month::November => "Nov",
+        time::Month::December => "Dec",
+    }
+}
+
+fn weekday_abbreviation(datetime: OffsetDateTime) -> &'static str {
+    match datetime.weekday() {
+        time::Weekday::Monday => "Mon",
+        time::Weekday::Tuesday => "Tue",
+        time::Weekday::Wednesday => "Wed",
+        time::Weekday::Thursday => "Thu",
+        time::Weekday::Friday => "Fri",
+        time::Weekday::Saturday => "Sat",
+        time::Weekday::Sunday => "Sun",
     }
 }
 
