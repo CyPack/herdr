@@ -2949,4 +2949,76 @@ mod tests {
         );
         assert_eq!(window_title_osc(None), b"\x1b]0;herdr\x07");
     }
+
+    fn fmp_semantic_frame(marker: u16) -> crate::protocol::FrameData {
+        crate::protocol::FrameData {
+            cells: Vec::new(),
+            width: marker,
+            height: 0,
+            cursor: None,
+            hyperlinks: Vec::new(),
+            graphics: Vec::new(),
+        }
+    }
+
+    fn fmp_input_event(marker: u8) -> ClientLoopEvent {
+        #[cfg(unix)]
+        {
+            ClientLoopEvent::StdinInput(vec![marker])
+        }
+        #[cfg(windows)]
+        {
+            ClientLoopEvent::StdinEvents(vec![crate::protocol::ClientInputEvent::Paste {
+                text: char::from(marker).to_string(),
+            }])
+        }
+    }
+
+    // TP-FMP-CLIENT-01: an exact input event cannot sit behind a stale burst
+    // of complete semantic presentation frames.
+    #[test]
+    fn fmp_client_input_precedes_semantic_frame_backlog() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        for marker in 1..=32 {
+            tx.try_send(ClientLoopEvent::ServerMessage(ServerMessage::Frame(
+                fmp_semantic_frame(marker),
+            )))
+            .expect("fixture stays within the channel bound");
+        }
+        tx.try_send(fmp_input_event(0x5a))
+            .expect("exact input fits after the frame burst");
+
+        let first = rx.try_recv().expect("one event is ready");
+        match first {
+            #[cfg(unix)]
+            ClientLoopEvent::StdinInput(data) => assert_eq!(data, vec![0x5a]),
+            #[cfg(windows)]
+            ClientLoopEvent::StdinEvents(_) => {}
+            _ => panic!("exact input must be serviced before stale semantic frames"),
+        }
+    }
+
+    // TP-FMP-CLIENT-02: complete semantic frames are replaceable snapshots;
+    // the client must retain the newest one instead of replaying every stale
+    // intermediate frame.
+    #[test]
+    fn fmp_client_semantic_frame_burst_keeps_only_newest_snapshot() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        for marker in 1..=32 {
+            tx.try_send(ClientLoopEvent::ServerMessage(ServerMessage::Frame(
+                fmp_semantic_frame(marker),
+            )))
+            .expect("fixture stays within the channel bound");
+        }
+
+        let first = rx.try_recv().expect("one semantic frame is ready");
+        let ClientLoopEvent::ServerMessage(ServerMessage::Frame(frame)) = first else {
+            panic!("expected a semantic frame");
+        };
+        assert_eq!(frame.width, 32, "the newest complete snapshot must win");
+        assert!(
+            rx.try_recv().is_err(),
+            "no stale semantic frame backlog may remain"
+        );
+    }
 }
