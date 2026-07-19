@@ -4,10 +4,10 @@
   "project": {
     "id": "home-ayaz-projects-herdr",
     "branch": "feat/native-fm",
-    "indexed_head": "5378d2b0",
+    "indexed_head": "e5dcbb20",
     "mcp_status": "ready",
-    "mcp_nodes": 23863,
-    "mcp_edges": 124101,
+    "mcp_nodes": 23919,
+    "mcp_edges": 124186,
     "freshness_probe": [
       "run_client_loop",
       "ClientLoopEvent",
@@ -40,19 +40,19 @@
         "id": "stdin",
         "name": "unix_stdin_reader_loop",
         "source": "src/client/input.rs:60-128",
-        "role": "Frames raw terminal bytes and blocking-sends them to the shared client FIFO."
+        "role": "Frames raw terminal bytes and blocking-sends them to the dedicated bounded input lane."
       },
       {
         "id": "client-fifo",
-        "name": "ClientLoopEvent mpsc(256)",
-        "source": "src/client/mod.rs:798-812,1303-1305",
-        "role": "Mixes lossless input, resize, all server messages, disconnect, and timer coordination."
+        "name": "ClientEventReceivers input/ordered/semantic lanes",
+        "source": "src/client/mod.rs:798-1004",
+        "role": "Separates input-first bounded events, ordered lossless server control, and a capacity-one latest semantic FrameData mailbox."
       },
       {
         "id": "client-loop",
         "name": "run_client_loop",
-        "source": "src/client/mod.rs:1271-1611",
-        "role": "Serially performs blocking socket input forwarding and blocking frame encode/stdout flush."
+        "source": "src/client/mod.rs:1458-1798",
+        "role": "Uses a 32-input fairness quantum, forwards exact input, and presents only the newest pending complete semantic frame."
       },
       {
         "id": "server-loop",
@@ -64,19 +64,19 @@
         "id": "trail-input",
         "name": "handle_file_manager_row_mouse",
         "source": "src/app/input/file_manager.rs:447-531",
-        "role": "Plain left-down currently enters synchronous Trail activation."
+        "role": "Plain left-down revalidates exact directory identity and submits a cloned state to the bounded FM worker without filesystem reads."
       },
       {
         "id": "trail-read",
         "name": "TrailSnapshots::select_dir",
-        "source": "src/fm/trail_snapshots.rs:266-295",
-        "role": "Unconditionally reads a selected directory even when its exact next-column snapshot is resident."
+        "source": "src/fm/trail_snapshots.rs:282-312",
+        "role": "Clones an exact resident col+1 snapshot; only a nonresident branch reads, and plain-left dispatch executes that branch on the worker."
       },
       {
         "id": "legacy-projection",
         "name": "install_trail_operation_projection",
-        "source": "src/fm/mod.rs:1212-1271",
-        "role": "Clones resident rows but then synchronously rehydrates writability, parent, and preview state."
+        "source": "src/fm/mod.rs",
+        "role": "Installs operation compatibility state from prepared resident Trail snapshots without re-reading child, parent, preview, or writability."
       },
       {
         "id": "fm-worker",
@@ -106,7 +106,7 @@
       {
         "from": "client-fifo",
         "to": "client-loop",
-        "type": "shared-fifo-consumption"
+        "type": "input-first-fair-consumption"
       },
       {
         "from": "client-loop",
@@ -120,18 +120,18 @@
       },
       {
         "from": "trail-input",
+        "to": "fm-worker",
+        "type": "bounded-exact-directory-intent"
+      },
+      {
+        "from": "fm-worker",
         "to": "trail-read",
-        "type": "synchronous-child-read"
+        "type": "nonresident-worker-read-or-resident-clone"
       },
       {
         "from": "trail-read",
         "to": "legacy-projection",
-        "type": "accepted-activation-rehydrates-legacy-state"
-      },
-      {
-        "from": "legacy-projection",
-        "to": "server-loop",
-        "type": "blocks-input-loop"
+        "type": "prepared-snapshot-projection"
       },
       {
         "from": "server-loop",
@@ -141,12 +141,7 @@
       {
         "from": "server-writer",
         "to": "client-fifo",
-        "type": "every-message-refanned-into-shared-fifo"
-      },
-      {
-        "from": "trail-input",
-        "to": "fm-worker",
-        "type": "target-nonresident-activation-route"
+        "type": "semantic-latest-or-ordered-control-classification"
       },
       {
         "from": "client-loop",
@@ -172,8 +167,8 @@
       },
       {
         "id": "client-hol",
-        "status": "verified",
-        "text": "Input and complete semantic frames share one client FIFO and one blocking consumer, amplifying server backpressure."
+        "status": "mitigated",
+        "text": "Input, ordered control, and complete semantic frames now use separate lanes; only semantic FrameData coalesces and a 32-input quantum preserves fairness."
       },
       {
         "id": "content-volume",
@@ -182,7 +177,7 @@
       },
       {
         "id": "target",
-        "status": "approved",
+        "status": "implemented",
         "text": "Resident activation is disk-free, nonresident activation uses the bounded worker, and semantic frames become latest-only without dropping ordered controls."
       }
     ]
@@ -201,6 +196,14 @@
     "filesystem_reads": 1699,
     "full_frames_sent": 4158,
     "full_frame_bytes": 500967844,
-    "full_render_queue_full": 0
+    "full_render_queue_full": 0,
+    "scale_calibration": {
+      "entries": 100000,
+      "logical_large_file_bytes": 1099511627776,
+      "samples_ms": [763, 764, 781, 788, 802],
+      "p95_ms": 802,
+      "retained_metadata_lower_bound_bytes": 14800000,
+      "partial_listing_authorized": false
+    }
   }
 }

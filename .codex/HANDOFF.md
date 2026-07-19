@@ -2,41 +2,48 @@
 
 Updated: 2026-07-19 CEST
 
-## 0. SONRAKI ADIM — FMP-1 CLICK-TO-FRAME OBSERVABILITY
+## 0. SONRAKI ADIM — FMP-5 CONTINUITY VE CYPACK FF YAYINI
 
-**CURRENT OVERRIDE — FILES LAYOUT V1 LOCKED; RAPID NAVIGATION PERFORMANCE
-ACTIVE.** Kullanıcı mevcut Native Files yerleşimini `Files Layout V1` olarak
-onayladı ve kilitledi. Kanonik lock:
-`docs/superpowers/specs/2026-07-19-herdr-files-layout-v1-lock.md`, freeze
-checkpoint `d98c31c7`. Global agent/workspace tracker, Files-local
-Favorites/Locations rail veya compact drawer, exact `Location(path)` /
-`Direct(path)` origin, scrollable Miller Trail + detail, mixed mtime grupları,
-üçte-bir yatay scroll, disjoint current-frame geometri ve bounded FM I/O lane
-V1 yasalarıdır. Bu görünümü ve mevcut Chromium baseline'larını değiştirmeyen
-performans/correctness işleri V1.x; ownership/composition/responsive model,
-temel column/detail hiyerarşisi veya kasıtlı baseline değişimi açık Layout V2
-onayı gerektirir. Kullanıcı hızlı ancestor/reverse ve locations click
-burst'lerinde geç mouse algısı/geçici donma bildirdi. Fresh graph
-23,854/124,093. Kod kanıtı H1 full-frame + one-slot client render queue
-pressure'ı high; H2 synchronous resident Trail rebranch/projection'ı
-medium-high; H3 serial scheduled/result apply rekabetini medium; H4 filesystem
-backlog'u resident-only repro için low gösteriyor. Bu henüz root-cause iddiası
-değildir: mevcut `HERDR_RENDER_PROF=1` render/encode/queue'yu ölçüyor ama
-click dispatch, Trail activation, resident reset, FM submit ve result apply
-sürelerini ölçmüyor. Kanonik PRD ve dependency chain:
-`docs/superpowers/specs/2026-07-19-herdr-files-rapid-navigation-latency-prd.md`.
-Claude/Codex continuity symlink audit'i ayrıca
-`.codex/evidence/files-layout-v1-symlink-audit.md` içinde dondu:
-`claude-memory`, `shared-state` ve Herdr `CURRENT.md` pointer'ı OK;
-`rust-dev`, `mnm-laptop-mdate`, `openwa-scheduled-send` skill linkleri BROKEN.
-Global pointer'lar Files runtime hot path'inde değildir ve değiştirilmedi.
-Native Files directory symlink davranışı testlidir; FMP-2'ye real/symlink
-latency/failure karşılaştırması `TP-FMP-SYM-01` olarak eklendi. Aktif task
-FMP-1 observability RED/GREEN; sonra FMP-2 deterministic + isolated repro,
-FMP-3 measured root-cause decision, FMP-4 tek tek TDD optimization ve FMP-5
-unchanged Chromium/full closure. FMR-4/FMR-5 ayrı lane olarak açık ama FMP
-kapanana kadar öncelikli değildir. Production optimization yapılmadı; stable
-Herdr/socket ve user process'leri untouched.
+**CURRENT OVERRIDE — FILES LAYOUT V1 KORUNARAK RAPID NAVIGATION FIX
+IMPLEMENTED.** Ölçülen ana tetikleyici server input loop'unda senkron Trail
+child/parent/preview filesystem I/O; bağımsız amplifikatör client input ile
+tam semantic frame'lerin aynı FIFO ve blocking consumer'ı paylaşmasıydı.
+Projection-only, input-byte-loss, recursive file-body transfer ve generic
+scheduled-work açıklamaları primary root cause olarak reddedildi. Kanonik PRD:
+`docs/superpowers/specs/2026-07-19-herdr-files-rapid-navigation-latency-prd.md`;
+root-cause kanıtı:
+`.codex/evidence/files-rapid-navigation-root-cause.md`.
+
+FMP-4 atomic zinciri kapalıdır: resident snapshot RED `c1ced923` / GREEN
+`a030fa76`; bounded cold Trail activation RED `8dfe03c2` / GREEN `abbaef91`;
+client lane starvation RED `f0b3964e` / GREEN `0b94447b`; 100k scale probe
+`631f213f` ve karar `e5dcbb20`. Resident ancestor aktivasyonu disk-free;
+nonresident plain-left directory aktivasyonu one-executing /
+one-latest-pending FM worker'da hazırlanır ve Files generation, source,
+column, index, exact path otoritesiyle stale completion reddedilir. Client
+input ve ordered control ayrı bounded lane'lerdir; tam semantic `FrameData`
+kapasite-1 latest snapshot mailbox'ında coalesce edilir; incremental Terminal
+ANSI, graphics, clipboard, title, mouse capture, input-source, shutdown ve
+disconnect lossless/ordered kalır. Otuz iki input'luk fairness quantum control
+ve frame starvation'ını engeller.
+
+FMP-4D ayrı scale RED üretmedi: debug/test profilinde 100.000 entry, toplam
+1 TiB mantıksal sparse file body, bir warm-up + beş sample
+`763/764/781/788/802 ms`, p95 `802 ms`, metadata alt sınırı `14.800.000`
+byte. Partial listing/cache yetkilendirilmedi; tekrar açılma koşulu kanıt
+dosyasında:
+`.codex/evidence/files-rapid-navigation-scale-calibration.md`.
+
+Fresh kapılar: full Rust `3.583/3.583 PASS + 4 skip`; Linux ve Windows Clippy
+`-D warnings`; fmt temiz; Python maintenance `68/68`; Bun integration `5/5`;
+Bun marketplace `12/12`; Playwright Chromium `33/33`, baseline değişikliği
+yok. Fresh single-worker graph `23.919 node / 124.186 edge`, MCP status ready
+ve yeni `client_event_lanes`, resident `TrailSnapshots::select_dir`,
+`queue_file_manager_trail_directory_activation` gövdeleri doğrulandı. Stable
+Herdr/socket, upstream, release assets ve user-owned `.superpowers/`
+untouched. Sıradaki tek FMP işi: task/OPEN_TASKS/cartography exact continuity
+commit'i, CyPack `feat/native-fm` + `master` FF push ve remote SHA equality;
+ondan sonra FMP-5 kapanır.
 
 **CURRENT OVERRIDE — FCL FILES CONTENT LOCATIONS RAIL CLOSED.** Kullanıcı
 Option A'yı açıkça onayladı: Native Files merkezi açıldığında global sol panel
@@ -705,63 +712,13 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 15 ve
-89, toplam 104 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 11 ve
+89, toplam 100 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 15 unchecked
-
-- [ ] **FMP-1 Characterize and instrument the click-to-frame path.**
-  - [ ] Add `TP-FMP-OBS-01..04` RED tests for bounded, opt-in input/dispatch,
-    Trail activation, resident reset, FM submit/apply, and render outcome
-    metrics without path/user-data logging.
-  - [ ] Implement the minimum profiler metrics with zero disabled-path
-    behavior change and static bounded labels.
-  - [ ] Verify exact counters, duration p95/max output, label caps, disabled
-    behavior, and profiler self-cost.
-
-- [ ] **FMP-2 Reproduce rapid navigation under deterministic and isolated
-  workloads.**
-  - [ ] Run `TP-FMP-RES-01..02`, `TP-FMP-IO-01..02`, and
-    `TP-FMP-RENDER-01..02` with fixed geometry, warm-up, sample count, profile,
-    and fixture data.
-  - [ ] Run `TP-FMP-SYM-01`: compare resident/non-resident real directories
-    with equivalent local directory symlinks plus dangling/changed-type
-    failures; keep Claude/Codex continuity pointers outside product runtime.
-  - [ ] Run `TP-FMP-E2E-01` through the cleanup-first/cleanup-last isolated
-    profile helper; preserve raw server/client logs and the exact user gesture
-    sequence without touching stable Herdr/socket.
-
-- [ ] **FMP-3 Decide the measured root cause and optimization boundary.**
-  - [x] Accept or reject H1 full-frame/queue pressure, H2 resident projection,
-    H3 serial scheduled competition, and H4 filesystem backlog from recorded
-    counters/durations; update the PRD before product mutation. Decision:
-    synchronous Trail child/parent/preview I/O is primary; client FIFO/blocking
-    presentation is an independent amplifier; projection-only and generic
-    scheduled-work explanations are rejected as primary.
-
-- [ ] **FMP-4 Implement one measured TDD optimization slice at a time.**
-  - [ ] **FMP-4A Resident Trail fast path:** RED proves exact ancestor
-    activation currently reads child/parent/preview; GREEN reuses resident
-    snapshots and builds the transitional operation projection with zero
-    filesystem or file-body reads.
-  - [ ] **FMP-4B Bounded cold Trail activation:** RED blocks a nonresident
-    reader; GREEN routes typed column/index/path activation through the
-    one-executing/one-latest-pending worker and rejects stale, failed,
-    panicked, disconnected, watcher-raced, and close/reopen completion.
-  - [ ] **FMP-4C Client arbitration:** RED reproduces exact click starvation
-    behind semantic frames; GREEN splits lossless input, ordered control, and
-    latest-only semantic-frame lanes with bounded fairness. Terminal ANSI,
-    graphics, clipboard, title, mouse-capture, input-source, shutdown, and
-    disconnect stay lossless and ordered.
-  - [ ] **FMP-4D Measured scale policy:** prove listing never opens file
-    bodies; calibrate a 100k-entry fixture. Add bounded partial listing,
-    cancellation, viewport-first enrichment, or cache only if that fixture
-    produces a separate RED.
-  - [ ] Commit one behavior-specific RED and minimum GREEN per violated stage;
-    refactor only behind focused budgets and all Layout V1 semantic tests.
+### Source: `.codex/TASKS.md` — 11 unchecked
 
 - [ ] **FMP-5 Production closure.**
   - [ ] Pass `TP-FMP-VIS-01` unchanged in Playwright Chromium plus focused/full

@@ -30,51 +30,55 @@ remain unchanged.
   - [x] Freeze global runtime panel, Files-local locations rail/drawer, exact
     origin, Miller Trail/detail, one-third scroll, responsive geometry, bounded
     I/O, visual baselines, and V1-versus-V2 rules.
-- [ ] **FMP-1 Characterize and instrument the click-to-frame path.**
-  - [ ] Add `TP-FMP-OBS-01..04` RED tests for bounded, opt-in input/dispatch,
+- [x] **FMP-1 Characterize and instrument the click-to-frame path.**
+  - [x] Add `TP-FMP-OBS-01..04` RED tests for bounded, opt-in input/dispatch,
     Trail activation, resident reset, FM submit/apply, and render outcome
     metrics without path/user-data logging.
-  - [ ] Implement the minimum profiler metrics with zero disabled-path
+  - [x] Implement the minimum profiler metrics with zero disabled-path
     behavior change and static bounded labels.
-  - [ ] Verify exact counters, duration p95/max output, label caps, disabled
+  - [x] Verify exact counters, duration p95/max output, label caps, disabled
     behavior, and profiler self-cost.
-- [ ] **FMP-2 Reproduce rapid navigation under deterministic and isolated
+- [x] **FMP-2 Reproduce rapid navigation under deterministic and isolated
   workloads.**
-  - [ ] Run `TP-FMP-RES-01..02`, `TP-FMP-IO-01..02`, and
+  - [x] Run `TP-FMP-RES-01..02`, `TP-FMP-IO-01..02`, and
     `TP-FMP-RENDER-01..02` with fixed geometry, warm-up, sample count, profile,
     and fixture data.
-  - [ ] Run `TP-FMP-SYM-01`: compare resident/non-resident real directories
+  - [x] Run `TP-FMP-SYM-01`: compare resident/non-resident real directories
     with equivalent local directory symlinks plus dangling/changed-type
     failures; keep Claude/Codex continuity pointers outside product runtime.
-  - [ ] Run `TP-FMP-E2E-01` through the cleanup-first/cleanup-last isolated
+  - [x] Run `TP-FMP-E2E-01` through the cleanup-first/cleanup-last isolated
     profile helper; preserve raw server/client logs and the exact user gesture
     sequence without touching stable Herdr/socket.
-- [ ] **FMP-3 Decide the measured root cause and optimization boundary.**
+- [x] **FMP-3 Decide the measured root cause and optimization boundary.**
   - [x] Accept or reject H1 full-frame/queue pressure, H2 resident projection,
     H3 serial scheduled competition, and H4 filesystem backlog from recorded
     counters/durations; update the PRD before product mutation. Decision:
     synchronous Trail child/parent/preview I/O is primary; client FIFO/blocking
     presentation is an independent amplifier; projection-only and generic
     scheduled-work explanations are rejected as primary.
-- [ ] **FMP-4 Implement one measured TDD optimization slice at a time.**
-  - [ ] **FMP-4A Resident Trail fast path:** RED proves exact ancestor
+- [x] **FMP-4 Implement one measured TDD optimization slice at a time.**
+  - [x] **FMP-4A Resident Trail fast path:** RED `c1ced923`, GREEN
+    `a030fa76`; exact ancestor
     activation currently reads child/parent/preview; GREEN reuses resident
     snapshots and builds the transitional operation projection with zero
     filesystem or file-body reads.
-  - [ ] **FMP-4B Bounded cold Trail activation:** RED blocks a nonresident
+  - [x] **FMP-4B Bounded cold Trail activation:** RED `8dfe03c2`, GREEN
+    `abbaef91`; RED blocks a nonresident
     reader; GREEN routes typed column/index/path activation through the
     one-executing/one-latest-pending worker and rejects stale, failed,
     panicked, disconnected, watcher-raced, and close/reopen completion.
-  - [ ] **FMP-4C Client arbitration:** RED reproduces exact click starvation
+  - [x] **FMP-4C Client arbitration:** RED `f0b3964e`, GREEN `0b94447b`;
+    RED reproduces exact click starvation
     behind semantic frames; GREEN splits lossless input, ordered control, and
     latest-only semantic-frame lanes with bounded fairness. Terminal ANSI,
     graphics, clipboard, title, mouse-capture, input-source, shutdown, and
     disconnect stay lossless and ordered.
-  - [ ] **FMP-4D Measured scale policy:** prove listing never opens file
+  - [x] **FMP-4D Measured scale policy:** probe `631f213f`, decision
+    `e5dcbb20`; prove listing never opens file
     bodies; calibrate a 100k-entry fixture. Add bounded partial listing,
     cancellation, viewport-first enrichment, or cache only if that fixture
     produces a separate RED.
-  - [ ] Commit one behavior-specific RED and minimum GREEN per violated stage;
+  - [x] Commit one behavior-specific RED and minimum GREEN per violated stage;
     refactor only behind focused budgets and all Layout V1 semantic tests.
 - [ ] **FMP-5 Production closure.**
   - [ ] Pass `TP-FMP-VIS-01` unchanged in Playwright Chromium plus focused/full
