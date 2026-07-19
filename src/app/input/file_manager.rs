@@ -3674,6 +3674,26 @@ mod tests {
             .expect("exact Trail row action")
     }
 
+    fn reproject_runtime_trail(app: &mut crate::app::App, width: u16, height: u16) {
+        let files_generation = app
+            .state
+            .stage
+            .active_instance_generation()
+            .expect("active Files generation");
+        let mut trail = crate::ui::project_trail_view(
+            Rect::new(26, 2, width, height),
+            &app.state.file_manager.as_ref().expect("open FM").trail,
+            &app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .trail_snapshots,
+            &[20],
+        );
+        trail.files_generation = Some(files_generation);
+        app.state.view.file_manager_trail = trail;
+    }
+
     fn install_row_actions(app: &mut crate::app::App, entry_idx: usize) -> PathBuf {
         let entry_path = app
             .state
@@ -4693,12 +4713,21 @@ mod tests {
             td.file(&format!("{index:02}.txt"));
         }
         let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let row = trail_row_by_index(&app, 0);
 
-        app.handle_mouse(mouse(MouseEventKind::ScrollUp, 27, 2));
+        app.handle_mouse(mouse(
+            MouseEventKind::ScrollUp,
+            row.name_rect.x,
+            row.name_rect.y,
+        ));
         assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 0);
 
         for _ in 0..20 {
-            app.handle_mouse(mouse(MouseEventKind::ScrollDown, 27, 3));
+            app.handle_mouse(mouse(
+                MouseEventKind::ScrollDown,
+                row.name_rect.x,
+                row.name_rect.y,
+            ));
         }
         assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 5);
 
@@ -4706,7 +4735,11 @@ mod tests {
         assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 5);
 
         for _ in 0..20 {
-            app.handle_mouse(mouse(MouseEventKind::ScrollUp, 27, 2));
+            app.handle_mouse(mouse(
+                MouseEventKind::ScrollUp,
+                row.name_rect.x,
+                row.name_rect.y,
+            ));
         }
         assert_eq!(app.state.file_manager.as_ref().expect("open fm").cursor, 0);
     }
@@ -5676,8 +5709,13 @@ mod tests {
         }
         let mut app = runtime_app_with_fm(FmState::new(&td.root));
         let selected_path = td.root.join("02.txt");
+        let selected_row = trail_row_by_path(&app, &selected_path);
 
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 27, 4));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            selected_row.name_rect.x,
+            selected_row.name_rect.y,
+        ));
         let fm = app.state.file_manager.as_ref().expect("open fm");
         assert_eq!(fm.cursor, 2);
         assert_eq!(
@@ -5715,16 +5753,26 @@ mod tests {
         }
         let mut app = runtime_app_with_fm(FmState::new(&td.root));
         let path = |index| td.root.join(format!("{index:02}.txt"));
+        app.state.view.terminal_area = Rect::new(26, 0, 45, 7);
+        reproject_runtime_trail(&mut app, 45, 5);
+        let row = |app: &crate::app::App, index| trail_row_by_path(app, &path(index));
 
-        app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 27, 3));
+        let target = row(&app, 1);
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            target.name_rect.x,
+            target.name_rect.y,
+        ));
         let fm = app.state.file_manager.as_ref().expect("open fm");
         assert_eq!(fm.multi_selection_paths().len(), 1);
         assert!(fm.multi_selection_paths().contains(&path(1)));
 
+        reproject_runtime_trail(&mut app, 45, 5);
+        let target = row(&app, 3);
         app.handle_file_manager_mouse(mouse_with_modifiers(
             MouseEventKind::Down(MouseButton::Left),
-            27,
-            5,
+            target.name_rect.x,
+            target.name_rect.y,
             KeyModifiers::CONTROL,
         ));
         let fm = app.state.file_manager.as_ref().expect("open fm");
@@ -5734,10 +5782,12 @@ mod tests {
         assert!(fm.multi_selection_paths().contains(&path(3)));
         assert_eq!(fm.multi_selection_anchor(), Some(path(3).as_path()));
 
+        reproject_runtime_trail(&mut app, 45, 5);
+        let target = row(&app, 2);
         app.handle_file_manager_mouse(mouse_with_modifiers(
             MouseEventKind::Down(MouseButton::Left),
-            27,
-            4,
+            target.name_rect.x,
+            target.name_rect.y,
             KeyModifiers::SHIFT,
         ));
         let fm = app.state.file_manager.as_ref().expect("open fm");
@@ -5750,10 +5800,12 @@ mod tests {
 
         let before_paths = fm.multi_selection_paths().clone();
         let before_anchor = fm.multi_selection_anchor().map(PathBuf::from);
+        reproject_runtime_trail(&mut app, 45, 5);
+        let target = row(&app, 0);
         app.handle_file_manager_mouse(mouse_with_modifiers(
             MouseEventKind::Down(MouseButton::Left),
-            27,
-            2,
+            target.name_rect.x,
+            target.name_rect.y,
             KeyModifiers::CONTROL | KeyModifiers::SHIFT,
         ));
         let fm = app.state.file_manager.as_ref().expect("open fm");
@@ -6287,16 +6339,13 @@ mod tests {
             .map(|entry| entry.expect("fixture entry").file_name())
             .collect::<Vec<_>>();
 
-        for (column, action) in [
-            (43, FileManagerRowAction::SendAgent),
-            (44, FileManagerRowAction::Rename),
-            (45, FileManagerRowAction::Delete),
-        ] {
+        for action in FileManagerRowAction::ALL {
+            let area = trail_action(&app, 1, action);
             assert_eq!(
                 app.handle_file_manager_mouse(mouse(
                     MouseEventKind::Down(MouseButton::Left),
-                    column,
-                    3,
+                    area.rect.x,
+                    area.rect.y,
                 )),
                 FileManagerMouseDispatch::RowAction {
                     action,
@@ -6331,8 +6380,13 @@ mod tests {
         let terminal_id = install_focused_agent(&mut app);
         let entry_path = install_row_actions(&mut app, 1);
         let before = fs::read(&entry_path).expect("read send-agent source before intent");
+        let action = trail_action(&app, 1, FileManagerRowAction::SendAgent);
 
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 43, 3));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            action.rect.x,
+            action.rect.y,
+        ));
 
         assert_eq!(
             app.state.request_file_manager_context_action,
@@ -6484,8 +6538,13 @@ mod tests {
         let mut app = runtime_app_with_fm(FmState::new(&td.root));
         let entry_path = install_row_actions(&mut app, 1);
         let before = fs::read(&entry_path).expect("read row rename fixture");
+        let action = trail_action(&app, 1, FileManagerRowAction::Rename);
 
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 44, 3));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            action.rect.x,
+            action.rect.y,
+        ));
 
         assert_eq!(
             app.state.request_file_manager_context_action,
@@ -6526,8 +6585,13 @@ mod tests {
         let mut app = runtime_app_with_fm(FmState::new(&td.root));
         let entry_path = install_row_actions(&mut app, 1);
         let before = fs::read(&entry_path).expect("read row delete fixture");
+        let action = trail_action(&app, 1, FileManagerRowAction::Delete);
 
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 45, 3));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            action.rect.x,
+            action.rect.y,
+        ));
 
         assert_eq!(
             app.state.request_file_manager_context_action,
@@ -6752,9 +6816,14 @@ mod tests {
             .expect("read context-menu fixture before clicks")
             .map(|entry| entry.expect("fixture entry").file_name())
             .collect::<Vec<_>>();
+        let selected_member = trail_row_by_path(&app, &td.root.join("01.txt"));
 
         assert_eq!(
-            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 3,)),
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Right),
+                selected_member.name_rect.x,
+                selected_member.name_rect.y,
+            )),
             FileManagerMouseDispatch::Consumed
         );
         assert_eq!(app.state.mode, Mode::ContextMenu);
@@ -6762,7 +6831,10 @@ mod tests {
         assert_eq!(fm.cursor, 1, "right-click focuses the exact live row");
         assert_eq!(fm.multi_selection_paths(), &bulk_paths);
         let menu = app.state.context_menu.as_ref().expect("file context menu");
-        assert_eq!((menu.x, menu.y), (27, 3));
+        assert_eq!(
+            (menu.x, menu.y),
+            (selected_member.name_rect.x, selected_member.name_rect.y)
+        );
         let ContextMenuKind::File { model } = &menu.kind else {
             panic!("expected file context menu")
         };
@@ -6774,8 +6846,13 @@ mod tests {
 
         app.state.context_menu = None;
         app.state.mode = Mode::Terminal;
+        let replacement = trail_row_by_path(&app, &td.root.join("02.txt"));
         assert_eq!(
-            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 4,)),
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Right),
+                replacement.name_rect.x,
+                replacement.name_rect.y,
+            )),
             FileManagerMouseDispatch::Consumed
         );
         let fm = app.state.file_manager.as_ref().expect("open FM");
@@ -6932,9 +7009,14 @@ mod tests {
         td.file("01.txt");
         let mut app = runtime_app_with_fm(FmState::new(&td.root));
         let expected = install_row_actions(&mut app, 1);
+        let action = trail_action(&app, 1, FileManagerRowAction::Rename);
 
         assert_eq!(
-            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 44, 3,)),
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Right),
+                action.rect.x,
+                action.rect.y,
+            )),
             FileManagerMouseDispatch::Consumed
         );
         let menu = app
@@ -6960,8 +7042,13 @@ mod tests {
         let before_entries = fs::read_dir(&td.root)
             .expect("read keyboard fixture before")
             .count();
+        let row = trail_row_by_path(&app, &td.root.join("00.txt"));
 
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 2));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            row.name_rect.x,
+            row.name_rect.y,
+        ));
         assert_eq!(app.state.mode, Mode::ContextMenu);
         let cursor = app.state.file_manager.as_ref().expect("open FM").cursor;
 
@@ -7033,7 +7120,12 @@ command = ["inspect"]
         app.state
             .installed_plugins
             .insert(plugin.plugin_id.clone(), plugin);
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 2));
+        let row = trail_row_by_path(&app, &td.root.join("00.txt"));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            row.name_rect.x,
+            row.name_rect.y,
+        ));
         let menu = app.state.context_menu.as_ref().expect("plugin file menu");
         let ContextMenuKind::File { model } = &menu.kind else {
             panic!("expected file menu")
@@ -7069,7 +7161,11 @@ command = ["inspect"]
         assert!(app.state.plugin_command_logs.is_empty());
 
         app.state.request_file_manager_context_action = None;
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 2));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            row.name_rect.x,
+            row.name_rect.y,
+        ));
         app.state
             .installed_plugins
             .get_mut("example.files")
@@ -7095,8 +7191,13 @@ command = ["inspect"]
         let fm = app.state.file_manager.as_mut().expect("open FM");
         assert!(fm.replace_selection(0));
         assert!(fm.toggle_selection(1));
+        let row = trail_row_by_path(&app, &td.root.join("00.txt"));
 
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 2));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            row.name_rect.x,
+            row.name_rect.y,
+        ));
         app.route_client_input(b"\r".to_vec());
         assert!(app.state.context_menu.is_some(), "disabled Open stays open");
         assert!(app.state.request_file_manager_context_action.is_none());
@@ -7113,7 +7214,12 @@ command = ["inspect"]
         assert!(app.state.request_file_manager_context_action.is_none());
 
         let mut app = runtime_app_with_fm(FmState::new(&td.root));
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 2));
+        let row = trail_row_by_path(&app, &td.root.join("00.txt"));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            row.name_rect.x,
+            row.name_rect.y,
+        ));
         app.state.file_manager_operation = Some(crate::app::state::FileManagerOperationState {
             generation: 1,
             kind: crate::app::state::FileManagerOperationKind::Copy,
@@ -7128,7 +7234,12 @@ command = ["inspect"]
         assert!(app.state.request_file_manager_context_action.is_none());
 
         let mut app = runtime_app_with_fm(FmState::new(&td.root));
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 2));
+        let row = trail_row_by_path(&app, &td.root.join("00.txt"));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            row.name_rect.x,
+            row.name_rect.y,
+        ));
         fs::remove_file(td.root.join("00.txt")).expect("delete selected fixture path");
         app.state.file_manager.as_mut().expect("open FM").reload();
         app.route_client_input(b"\r".to_vec());
@@ -7148,7 +7259,12 @@ command = ["inspect"]
         let fm = app.state.file_manager.as_mut().expect("open FM");
         assert!(fm.replace_selection(0));
         assert!(fm.toggle_selection(1));
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 2));
+        let row = trail_row_by_path(&app, &td.root.join("00.txt"));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            row.name_rect.x,
+            row.name_rect.y,
+        ));
         let popup = app.state.context_menu_rect().expect("popup");
         let item_x = popup.x + 1;
         let open_y = popup.y + 1;
@@ -7189,7 +7305,11 @@ command = ["inspect"]
         assert_eq!(intent.paths.len(), 2);
 
         app.state.mode = Mode::Terminal;
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 2));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            row.name_rect.x,
+            row.name_rect.y,
+        ));
         let popup = app.state.context_menu_rect().expect("reopened popup");
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -7199,7 +7319,11 @@ command = ["inspect"]
         assert!(app.state.context_menu.is_none(), "outside click closes");
 
         app.state.mode = Mode::Terminal;
-        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 27, 2));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            row.name_rect.x,
+            row.name_rect.y,
+        ));
         assert!(app.state.context_menu.is_some());
         app.state.close_file_manager();
         assert!(app.state.context_menu.is_none());

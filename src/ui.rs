@@ -1215,8 +1215,13 @@ mod tests {
                 .iter()
                 .map(|row| row.entry_idx)
                 .collect::<Vec<_>>(),
-            vec![0, 1, 2, 3],
-            "the active Trail column owns all four visible rows below Files chrome"
+            vec![0, 1, 2],
+            "one date header plus three entries fill the four visible Trail lines"
+        );
+        assert_eq!(
+            app.view.file_manager_trail.columns[0].section_headers.len(),
+            1,
+            "the grouped projection publishes the date header as non-row geometry"
         );
         assert!(app
             .view
@@ -1229,7 +1234,7 @@ mod tests {
                 .iter()
                 .map(|area| (area.entry_idx, area.action))
                 .collect::<Vec<_>>(),
-            [0, 1, 2, 3]
+            [0, 1, 2]
                 .into_iter()
                 .flat_map(|entry_idx| {
                     crate::app::state::FileManagerRowAction::ALL.map(|action| (entry_idx, action))

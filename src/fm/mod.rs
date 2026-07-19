@@ -15,7 +15,6 @@ pub(crate) mod delete;
 // `read_directory_snapshot` and migrate consumers onto `FileEntryKind`.
 #[allow(dead_code)]
 pub(crate) mod entry_kind;
-#[allow(dead_code)] // consumed by grouped Trail projection in MTIME-4
 pub(crate) mod entry_time;
 pub(crate) mod image_preview;
 pub(crate) mod miller;

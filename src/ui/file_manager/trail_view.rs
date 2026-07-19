@@ -14,6 +14,9 @@ use ratatui::Frame;
 
 use super::miller::{miller_auto_follow_offset, miller_viewport_geometry_at_offset};
 use crate::app::state::AppState;
+use crate::fm::entry_time::{
+    present_file_time, FileTimePresentation, FileTimeSection, LocalCalendarAnchor,
+};
 use crate::fm::miller::{
     MILLER_COLUMN_MAX_WIDTH, MILLER_COLUMN_MIN_WIDTH, MILLER_COLUMN_PREFERRED_WIDTH,
     MILLER_DETAIL_MIN_WIDTH,
@@ -32,8 +35,24 @@ pub(crate) struct TrailRowView {
     pub rect: Rect,
     /// Name/icon target left of the operation affordances.
     pub name_rect: Rect,
+    pub name_logical_width: u16,
     pub name_source_x: u16,
+    pub timestamp: Option<TrailTimestampView>,
     pub actions: Vec<crate::app::state::FileManagerRowActionArea>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TrailTimestampView {
+    pub rect: Rect,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TrailSectionHeaderView {
+    pub trail_index: usize,
+    pub section: FileTimeSection,
+    pub label: &'static str,
+    pub rect: Rect,
 }
 
 /// One visible trail column with its bounded row window.
@@ -48,6 +67,8 @@ pub(crate) struct TrailColumnView {
     /// in the loaded listing.
     pub selected_entry: Option<usize>,
     pub viewport_start: usize,
+    pub line_start: usize,
+    pub section_headers: Vec<TrailSectionHeaderView>,
     pub rows: Vec<TrailRowView>,
     /// Prepared non-actionable explanation for omitted entries.
     pub status_rect: Option<Rect>,
@@ -121,6 +142,7 @@ pub(crate) fn project_trail_view(
         preferred_widths,
         TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
         None,
+        LocalCalendarAnchor::now(),
     )
 }
 
@@ -138,6 +160,7 @@ pub(crate) fn project_trail_view_with_detail_width(
         preferred_widths,
         detail_preferred_width,
         None,
+        LocalCalendarAnchor::now(),
     )
 }
 
@@ -156,6 +179,7 @@ pub(crate) fn project_trail_view_with_origin(
         preferred_widths,
         detail_preferred_width,
         Some(requested_offset_cells),
+        LocalCalendarAnchor::now(),
     )
 }
 
@@ -167,8 +191,15 @@ fn project_trail_view_at(
     preferred_widths: &[u16],
     anchor: crate::fm::entry_time::LocalCalendarAnchor,
 ) -> TrailViewSnapshot {
-    let _ = anchor;
-    project_trail_view(stage, trail, snaps, preferred_widths)
+    project_trail_view_inner(
+        stage,
+        trail,
+        snaps,
+        preferred_widths,
+        TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
+        None,
+        anchor,
+    )
 }
 
 #[cfg(test)]
@@ -180,15 +211,77 @@ fn project_trail_view_at_with_origin(
     requested_offset_cells: u32,
     anchor: crate::fm::entry_time::LocalCalendarAnchor,
 ) -> TrailViewSnapshot {
-    let _ = anchor;
-    project_trail_view_with_origin(
+    project_trail_view_inner(
         stage,
         trail,
         snaps,
         preferred_widths,
         TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
-        requested_offset_cells,
+        Some(requested_offset_cells),
+        anchor,
     )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TrailLogicalLine {
+    Header {
+        section: FileTimeSection,
+        label: &'static str,
+    },
+    Entry {
+        entry_index: usize,
+        presentation: FileTimePresentation,
+    },
+}
+
+fn trail_logical_lines(
+    entries: &[crate::fm::FileEntry],
+    anchor: LocalCalendarAnchor,
+) -> Vec<TrailLogicalLine> {
+    let mut lines = Vec::with_capacity(entries.len().saturating_mul(2));
+    let mut previous_section = None;
+    for (entry_index, entry) in entries.iter().enumerate() {
+        let presentation = present_file_time(entry.modified, anchor);
+        if previous_section != Some(presentation.section) {
+            lines.push(TrailLogicalLine::Header {
+                section: presentation.section,
+                label: presentation.section.label(),
+            });
+            previous_section = Some(presentation.section);
+        }
+        lines.push(TrailLogicalLine::Entry {
+            entry_index,
+            presentation,
+        });
+    }
+    lines
+}
+
+fn visible_logical_range(
+    lines: &[TrailLogicalLine],
+    selected_entry: Option<usize>,
+    height: usize,
+) -> (usize, usize) {
+    if height == 0 || lines.is_empty() {
+        return (0, 0);
+    }
+    let selected_line = selected_entry.and_then(|selected| {
+        lines.iter().position(|line| {
+            matches!(
+                line,
+                TrailLogicalLine::Entry { entry_index, .. } if *entry_index == selected
+            )
+        })
+    });
+    let start = selected_line
+        .filter(|selected| *selected >= height)
+        .map(|selected| selected + 1 - height)
+        .unwrap_or(0);
+    let mut end = start.saturating_add(height).min(lines.len());
+    if end > start && matches!(lines[end - 1], TrailLogicalLine::Header { .. }) {
+        end -= 1;
+    }
+    (start, end)
 }
 
 fn project_trail_view_inner(
@@ -198,6 +291,7 @@ fn project_trail_view_inner(
     preferred_widths: &[u16],
     detail_preferred_width: u16,
     requested_offset_cells: Option<u32>,
+    anchor: LocalCalendarAnchor,
 ) -> TrailViewSnapshot {
     let trail_cols = trail.cols();
     let snap_cols = snaps.cols();
@@ -268,19 +362,50 @@ fn project_trail_view_inner(
                 .and_then(|selected| entries.iter().position(|entry| entry.path == selected));
             let has_status = snap_cols[trail_index].omission_message().is_some();
             let height = usize::from(column.rect.height.saturating_sub(u16::from(has_status)));
-            let viewport_start = selected_entry
-                .filter(|&selected| height > 0 && selected >= height)
-                .map(|selected| selected + 1 - height)
+            let logical_lines = trail_logical_lines(entries, anchor);
+            let (line_start, line_end) =
+                visible_logical_range(&logical_lines, selected_entry, height);
+            let visible_lines = &logical_lines[line_start..line_end];
+            let viewport_start = visible_lines
+                .iter()
+                .find_map(|line| match line {
+                    TrailLogicalLine::Header { .. } => None,
+                    TrailLogicalLine::Entry { entry_index, .. } => Some(*entry_index),
+                })
                 .unwrap_or(0);
-            let rows: Vec<TrailRowView> = entries
+            let section_headers = visible_lines
                 .iter()
                 .enumerate()
-                .skip(viewport_start)
-                .take(height)
-                .map(|(entry_index, entry)| {
+                .filter_map(|(visible_index, line)| match line {
+                    TrailLogicalLine::Header { section, label } => Some(TrailSectionHeaderView {
+                        trail_index,
+                        section: *section,
+                        label,
+                        rect: Rect::new(
+                            column.rect.x,
+                            column.rect.y.saturating_add(visible_index as u16),
+                            column.rect.width,
+                            1,
+                        ),
+                    }),
+                    TrailLogicalLine::Entry { .. } => None,
+                })
+                .collect();
+            let rows: Vec<TrailRowView> = visible_lines
+                .iter()
+                .enumerate()
+                .filter_map(|(visible_index, line)| {
+                    let TrailLogicalLine::Entry {
+                        entry_index,
+                        presentation,
+                    } = line
+                    else {
+                        return None;
+                    };
+                    let entry = entries.get(*entry_index)?;
                     let rect = Rect::new(
                         column.rect.x,
-                        column.rect.y + (entry_index - viewport_start) as u16,
+                        column.rect.y.saturating_add(visible_index as u16),
                         column.rect.width,
                         1,
                     );
@@ -289,7 +414,15 @@ fn project_trail_view_inner(
                     )
                     .min(crate::app::state::FileManagerRowAction::ALL.len());
                     let actions_width = action_count as u16 * super::ROW_ACTION_WIDTH;
-                    let logical_name_width = column.logical_width.saturating_sub(actions_width);
+                    let logical_content_width = column.logical_width.saturating_sub(actions_width);
+                    let timestamp_width = u16::try_from(presentation.label.len()).ok();
+                    let timestamp_logical_start = timestamp_width.and_then(|width| {
+                        (logical_content_width >= width.saturating_add(9))
+                            .then(|| logical_content_width - width)
+                    });
+                    let logical_name_width = timestamp_logical_start
+                        .map(|start| start.saturating_sub(1))
+                        .unwrap_or(logical_content_width);
                     let visible_start = column.source_x;
                     let visible_end = visible_start.saturating_add(column.rect.width);
                     let name_visible_start = visible_start.min(logical_name_width);
@@ -302,13 +435,29 @@ fn project_trail_view_inner(
                         name_width,
                         1,
                     );
+                    let timestamp = timestamp_logical_start.zip(timestamp_width).and_then(
+                        |(logical_start, width)| {
+                            let logical_end = logical_start.saturating_add(width);
+                            (logical_start >= visible_start && logical_end <= visible_end).then(
+                                || TrailTimestampView {
+                                    rect: Rect::new(
+                                        rect.x.saturating_add(logical_start - visible_start),
+                                        rect.y,
+                                        width,
+                                        1,
+                                    ),
+                                    text: presentation.label.clone(),
+                                },
+                            )
+                        },
+                    );
                     let actions = crate::app::state::FileManagerRowAction::ALL
                         .iter()
                         .copied()
                         .take(action_count)
                         .enumerate()
                         .filter_map(|(action_idx, action)| {
-                            let logical_start = logical_name_width
+                            let logical_start = logical_content_width
                                 .saturating_add(action_idx as u16 * super::ROW_ACTION_WIDTH);
                             let logical_end = logical_start.saturating_add(super::ROW_ACTION_WIDTH);
                             (logical_start >= visible_start && logical_end <= visible_end).then(
@@ -319,28 +468,30 @@ fn project_trail_view_inner(
                                         super::ROW_ACTION_WIDTH,
                                         1,
                                     ),
-                                    entry_idx: entry_index,
+                                    entry_idx: *entry_index,
                                     entry_path: entry.path.clone(),
                                     action,
                                 },
                             )
                         })
                         .collect();
-                    TrailRowView {
+                    Some(TrailRowView {
                         trail_index,
-                        entry_index,
+                        entry_index: *entry_index,
                         entry_path: entry.path.clone(),
                         rect,
                         name_rect,
+                        name_logical_width: logical_name_width,
                         name_source_x: name_visible_start,
+                        timestamp,
                         actions,
-                    }
+                    })
                 })
                 .collect();
             let status_rect = has_status.then(|| {
                 Rect::new(
                     column.rect.x,
-                    column.rect.y.saturating_add(rows.len() as u16),
+                    column.rect.y.saturating_add((line_end - line_start) as u16),
                     column.rect.width,
                     1,
                 )
@@ -353,6 +504,8 @@ fn project_trail_view_inner(
                 source_x: column.source_x,
                 selected_entry,
                 viewport_start,
+                line_start,
+                section_headers,
                 rows,
                 status_rect,
             }
@@ -482,6 +635,15 @@ pub(crate) fn render_trail_view(
         let Some(snap) = snaps.cols().get(column.trail_index) else {
             continue;
         };
+        for header in &column.section_headers {
+            let logical_label = format!(" {} ", header.label);
+            let visible_label =
+                super::display_cell_slice(&logical_label, column.source_x, header.rect.width);
+            frame.render_widget(
+                ratatui::widgets::Paragraph::new(visible_label).style(styles.panel_title),
+                header.rect,
+            );
+        }
         if let (Some(rect), Some(message)) = (column.status_rect, snap.omission_message()) {
             frame.render_widget(ratatui::widgets::Paragraph::new(message), rect);
         }
@@ -494,16 +656,33 @@ pub(crate) fn render_trail_view(
                 .file_manager
                 .as_ref()
                 .is_some_and(|fm| fm.multi_selection_paths().contains(&entry.path));
+            let row_style = if selected {
+                styles.cursor
+            } else if multi_selected {
+                styles.multi_selection
+            } else {
+                styles.empty
+            };
+            frame.render_widget(
+                ratatui::widgets::Paragraph::new("").style(row_style),
+                row.rect,
+            );
             super::render_entry_row_clipped(
                 app,
                 frame,
                 row.name_rect,
-                column.logical_width,
+                row.name_logical_width,
                 row.name_source_x,
                 entry,
                 selected,
                 multi_selected,
             );
+            if let Some(timestamp) = &row.timestamp {
+                frame.render_widget(
+                    ratatui::widgets::Paragraph::new(timestamp.text.clone()).style(row_style),
+                    timestamp.rect,
+                );
+            }
             for action in &row.actions {
                 super::render_row_action(app, frame, action, selected, multi_selected);
             }
@@ -648,7 +827,10 @@ mod tests {
     }
 
     fn fixed_anchor() -> LocalCalendarAnchor {
-        LocalCalendarAnchor::from_system_time(local_system_time(2026, Month::January, 10, 12, 0))
+        LocalCalendarAnchor::from_system_time_at_offset(
+            local_system_time(2026, Month::January, 10, 12, 0),
+            UtcOffset::UTC,
+        )
     }
 
     fn rendered_text(stage: Rect, view: &TrailViewSnapshot, snaps: &TrailSnapshots) -> String {
@@ -917,12 +1099,13 @@ mod tests {
         let view = project_trail_view_at(stage, &trail, &snaps, &[48], fixed_anchor());
         let row = &view.columns[0].rows[0];
         let rendered = rendered_text(stage, &view, &snaps);
-        let name_x = rendered.find("a.txt").expect("rendered filename") as u16;
-        let timestamp_x = rendered.find("09:05").expect("rendered timestamp") as u16;
-
-        assert!(name_x < timestamp_x);
+        assert!(rendered.contains("a.txt"), "{rendered:?}");
+        assert!(rendered.contains("09:05"), "{rendered:?}");
+        let timestamp = row.timestamp.as_ref().expect("projected timestamp");
+        assert!(row.name_rect.intersection(timestamp.rect).is_empty());
         if let Some(action) = row.actions.first() {
-            assert!(timestamp_x + 5 <= action.rect.x);
+            assert!(timestamp.rect.intersection(action.rect).is_empty());
+            assert!(timestamp.rect.right() <= action.rect.x);
             assert!(row.name_rect.right() <= action.rect.x);
         }
     }
@@ -931,16 +1114,33 @@ mod tests {
     fn partial_column_never_exposes_partial_timestamp() {
         let td = TempDir::new("mtime-partial-timestamp");
         let file = td.root.join("report.txt");
+        let child = td.root.join("child");
+        fs::create_dir(&child).expect("partial timestamp child");
+        let inside = child.join("inside.txt");
+        fs::write(&inside, b"x").expect("partial timestamp child entry");
         fs::write(&file, b"x").expect("partial timestamp fixture");
-        set_modified(&file, local_system_time(2026, Month::January, 10, 9, 5));
-        let trail = TrailState::new(&td.root);
+        let modified = local_system_time(2026, Month::January, 10, 9, 5);
+        set_modified(&inside, modified);
+        set_modified(&child, modified);
+        set_modified(&file, modified);
+        let mut trail = TrailState::new(&td.root);
         let mut snaps = TrailSnapshots::new(false);
         snaps.sync(&trail);
+        assert_eq!(
+            snaps.select_dir(&mut trail, 0, &child),
+            FmDirectoryStatus::Available
+        );
         let stage = Rect::new(0, 0, 16, 3);
 
         let view =
-            project_trail_view_at_with_origin(stage, &trail, &snaps, &[48], 32, fixed_anchor());
-        assert_eq!(view.columns[0].source_x, 32);
+            project_trail_view_at_with_origin(stage, &trail, &snaps, &[48], 42, fixed_anchor());
+        let partial = view
+            .columns
+            .iter()
+            .find(|column| column.trail_index == 0)
+            .expect("partial leading column");
+        assert_eq!(partial.source_x, 42);
+        assert!(partial.rows.iter().all(|row| row.timestamp.is_none()));
         let rendered = rendered_text(stage, &view, &snaps);
         assert!(
             !rendered.contains(':'),
@@ -1219,7 +1419,19 @@ mod tests {
             );
         }
         let column = &view.columns[0];
-        let below = column.rect.y + column.rows.len() as u16;
+        let below = column
+            .rows
+            .iter()
+            .map(|row| row.rect.bottom())
+            .chain(
+                column
+                    .section_headers
+                    .iter()
+                    .map(|header| header.rect.bottom()),
+            )
+            .chain(column.status_rect.map(|rect| rect.bottom()))
+            .max()
+            .unwrap_or(column.rect.y);
         assert!(below < column.rect.bottom(), "fixture has empty space");
         assert!(
             trail_row_at(&view, column.rect.x, below).is_none(),

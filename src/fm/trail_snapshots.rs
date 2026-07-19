@@ -815,7 +815,17 @@ mod tests {
         let td = TempDir::new("kbd");
         let alpha = td.root.join("alpha");
         fs::create_dir_all(&alpha).expect("alpha");
-        fs::write(td.root.join("beta.txt"), b"x").expect("beta");
+        let beta = td.root.join("beta.txt");
+        fs::write(&beta, b"x").expect("beta");
+        for path in [&alpha, &beta] {
+            fs::File::open(path)
+                .expect("open keyboard-selection mtime fixture")
+                .set_times(
+                    fs::FileTimes::new()
+                        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(10)),
+                )
+                .expect("set keyboard-selection fixture mtime");
+        }
         let mut trail = TrailState::new(&td.root);
         let mut snaps = TrailSnapshots::new(false);
         snaps.sync(&trail);

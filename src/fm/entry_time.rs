@@ -34,17 +34,34 @@ pub(crate) struct FileTimePresentation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct LocalCalendarAnchor {
     now: SystemTime,
+    fixed_offset: Option<UtcOffset>,
 }
 
 impl LocalCalendarAnchor {
     pub(crate) fn now() -> Self {
         Self {
             now: SystemTime::now(),
+            fixed_offset: None,
         }
     }
 
+    #[cfg(test)]
     pub(crate) const fn from_system_time(now: SystemTime) -> Self {
-        Self { now }
+        Self {
+            now,
+            fixed_offset: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn from_system_time_at_offset(
+        now: SystemTime,
+        fixed_offset: UtcOffset,
+    ) -> Self {
+        Self {
+            now,
+            fixed_offset: Some(fixed_offset),
+        }
     }
 }
 
@@ -52,6 +69,9 @@ pub(crate) fn present_file_time(
     modified: Option<SystemTime>,
     anchor: LocalCalendarAnchor,
 ) -> FileTimePresentation {
+    if let Some(fixed_offset) = anchor.fixed_offset {
+        return present_file_time_with_resolver(modified, anchor, |_| Some(fixed_offset));
+    }
     present_file_time_with_resolver(modified, anchor, |utc| UtcOffset::local_offset_at(utc).ok())
 }
 
