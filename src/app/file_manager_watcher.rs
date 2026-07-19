@@ -418,7 +418,7 @@ impl super::App {
     /// Consume one Files-sidebar navigation intent at the App-owned filesystem
     /// boundary. Both model authority and live directory type are revalidated;
     /// invalid or stale requests preserve the currently open FM projection.
-    pub(super) fn sync_file_manager_sidebar_navigation(&mut self) -> bool {
+    pub(crate) fn sync_file_manager_sidebar_navigation(&mut self) -> bool {
         let Some(path) = self.state.request_file_manager_sidebar_navigation.take() else {
             return false;
         };

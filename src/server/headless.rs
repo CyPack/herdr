@@ -3610,6 +3610,7 @@ impl HeadlessServer {
     fn handle_scheduled_tasks_headless(&mut self, now: Instant, geometry_dirty: bool) -> bool {
         let mut changed = false;
 
+        changed |= self.app.sync_file_manager_sidebar_navigation();
         self.app.sync_headless_animation_timer(now);
         changed |= self.app.refresh_projects_if_due(now);
         changed |= self.app.refresh_tab_branches_if_due(now);
