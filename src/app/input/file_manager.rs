@@ -5488,6 +5488,8 @@ mod tests {
         );
     }
 
+    // FCL-0 characterization: the content rail program must preserve this
+    // existing fractional Trail viewport authority byte-for-byte.
     // TP-TRAIL-HSCROLL-01: the canonical Circet Miller viewport auto-follows
     // the active end when a deep Trail opens, then lets the user scroll back
     // to still-live ancestor columns. The chosen origin must survive the next

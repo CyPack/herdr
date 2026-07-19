@@ -2293,6 +2293,8 @@ mod tests {
             .all(|section| section.kind != FileManagerSidebarSectionKind::Pinned));
     }
 
+    // FCL-5 teardown: global Files row geometry moves into the Native Files
+    // content projection.
     // TP-C6.1-GEOMETRY: only complete visible item rows receive exact path
     // rectangles; headers/blanks are inert and height clipping is atomic.
     #[test]
@@ -2343,6 +2345,8 @@ mod tests {
         assert!(app.view.file_manager_sidebar_row_areas.is_empty());
     }
 
+    // FCL-5 teardown: this global-body renderer is replaced by the
+    // content-local locations rail.
     // TP-C6.1-RENDER: Files renders the prepared section model and removes the
     // placeholder. Rendering consumes no filesystem or environment source.
     #[test]

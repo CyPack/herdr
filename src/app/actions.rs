@@ -3406,6 +3406,68 @@ mod tests {
         state.assert_invariants_for_test();
     }
 
+    // FCL-0 characterization: the Files singleton and terminal restoration
+    // already belong to StageState. Reactivating that singleton must not
+    // mutate the independent global sidebar selection or workspace identity.
+    #[test]
+    fn fcl_characterization_files_stage_preserves_sidebar_and_workspace_identity() {
+        let mut state = AppState::test_with_adversarial_identity_state();
+        state.sidebar_tab = crate::app::state::SidebarTab::Projects;
+        let workspace_ids: Vec<_> = state
+            .workspaces
+            .iter()
+            .map(|workspace| workspace.id.clone())
+            .collect();
+
+        state
+            .try_open_file_manager_with(|_| {
+                Some(crate::fm::FmState::test_empty(
+                    "/virtual/fcl-characterization",
+                ))
+            })
+            .expect("Files activation");
+        let generation = state
+            .stage
+            .active_instance_generation()
+            .expect("active Files generation");
+
+        state.activate_dock_app(crate::ui::surface_host::BuiltInAppId::Files);
+
+        assert_eq!(
+            state.stage.active_instance_generation(),
+            Some(generation),
+            "reactivation keeps the singleton Files generation"
+        );
+        assert_eq!(
+            state.sidebar_tab,
+            crate::app::state::SidebarTab::Projects,
+            "stage activation does not own the global sidebar selection"
+        );
+        assert_eq!(
+            state
+                .workspaces
+                .iter()
+                .map(|workspace| workspace.id.clone())
+                .collect::<Vec<_>>(),
+            workspace_ids,
+            "Files activation cannot rewrite workspace identity"
+        );
+        state.assert_invariants_for_test();
+
+        state.activate_dock_app(crate::ui::surface_host::BuiltInAppId::Terminal);
+        assert_eq!(
+            state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace
+        );
+        assert!(state.file_manager.is_none());
+        assert_eq!(
+            state.sidebar_tab,
+            crate::app::state::SidebarTab::Projects,
+            "terminal restoration keeps the global sidebar selection"
+        );
+        state.assert_invariants_for_test();
+    }
+
     #[test]
     fn notification_context_formats_resolved_workspace_label() {
         let state = app_with_workspaces(&["stale"]);
