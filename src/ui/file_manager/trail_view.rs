@@ -184,7 +184,7 @@ pub(crate) fn project_trail_view_with_origin(
 }
 
 #[cfg(test)]
-fn project_trail_view_at(
+pub(crate) fn project_trail_view_at(
     stage: Rect,
     trail: &TrailState,
     snaps: &TrailSnapshots,
@@ -203,7 +203,7 @@ fn project_trail_view_at(
 }
 
 #[cfg(test)]
-fn project_trail_view_at_with_origin(
+pub(crate) fn project_trail_view_at_with_origin(
     stage: Rect,
     trail: &TrailState,
     snaps: &TrailSnapshots,

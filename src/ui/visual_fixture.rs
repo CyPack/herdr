@@ -106,6 +106,34 @@ mod tests {
         std::fs::write(path, json).expect("write fixture");
     }
 
+    fn mtime_fixture_system_time(
+        year: i32,
+        month: time::Month,
+        day: u8,
+        hour: u8,
+        minute: u8,
+    ) -> std::time::SystemTime {
+        let date =
+            time::Date::from_calendar_date(year, month, day).expect("valid mtime fixture date");
+        let time = time::Time::from_hms(hour, minute, 0).expect("valid mtime fixture time");
+        time::PrimitiveDateTime::new(date, time)
+            .assume_offset(time::UtcOffset::UTC)
+            .into()
+    }
+
+    fn set_mtime_fixture_modified(path: &std::path::Path, modified: std::time::SystemTime) {
+        let file = std::fs::File::open(path).expect("open mtime visual fixture");
+        file.set_times(std::fs::FileTimes::new().set_modified(modified))
+            .expect("set mtime visual fixture time");
+    }
+
+    fn mtime_fixture_anchor() -> crate::fm::entry_time::LocalCalendarAnchor {
+        crate::fm::entry_time::LocalCalendarAnchor::from_system_time_at_offset(
+            mtime_fixture_system_time(2026, time::Month::January, 10, 12, 0),
+            time::UtcOffset::UTC,
+        )
+    }
+
     // Exports the real UI states consumed by the Playwright Chromium specs.
     // Only an explicit run writes fixtures, and only into the caller-provided
     // directory; ordinary unit runs never touch the filesystem.
@@ -553,6 +581,164 @@ mod tests {
             ),
         );
         let _ = std::fs::remove_dir_all(&trail_base);
+
+        // VIS-15..17 (MTIME-1..5): a deterministic UTC calendar tree proves
+        // mixed directory/file ordering, responsive timestamp omission, and
+        // exact-path selection after an mtime-driven reorder. Build every
+        // node first, then set FileTimes last so directory creation cannot
+        // perturb the approved order.
+        let mtime_base = std::path::PathBuf::from("/tmp/herdr-vis15-mtime-root");
+        let _ = std::fs::remove_dir_all(&mtime_base);
+        let mtime_root = mtime_base.join("inner");
+        let active_dir = mtime_root.join("active-project");
+        let yesterday_dir = mtime_root.join("yesterday-folder");
+        let archive_dir = mtime_root.join("archive");
+        std::fs::create_dir_all(&active_dir).expect("active project fixture");
+        std::fs::create_dir_all(&yesterday_dir).expect("yesterday fixture");
+        std::fs::create_dir_all(&archive_dir).expect("archive fixture");
+        for path in [
+            mtime_root.join("today-notes.txt"),
+            mtime_root.join("week-report.md"),
+            mtime_root.join("promoted.txt"),
+            active_dir.join("latest.rs"),
+            active_dir.join("yesterday.log"),
+            active_dir.join("week-plan.md"),
+            active_dir.join("legacy.txt"),
+        ] {
+            std::fs::write(path, b"mtime visual fixture").expect("mtime fixture file");
+        }
+
+        for (path, day, hour, minute) in [
+            (active_dir.clone(), 10, 11, 45),
+            (mtime_root.join("today-notes.txt"), 10, 10, 15),
+            (yesterday_dir.clone(), 9, 16, 30),
+            (mtime_root.join("week-report.md"), 7, 14, 5),
+            (archive_dir, 1, 8, 0),
+            (mtime_root.join("promoted.txt"), 1, 7, 30),
+            (active_dir.join("latest.rs"), 10, 11, 20),
+            (active_dir.join("yesterday.log"), 9, 9, 10),
+            (active_dir.join("week-plan.md"), 6, 13, 40),
+            (active_dir.join("legacy.txt"), 1, 6, 5),
+        ] {
+            set_mtime_fixture_modified(
+                &path,
+                mtime_fixture_system_time(2026, time::Month::January, day, hour, minute),
+            );
+        }
+
+        let mut mtime_trail = crate::fm::trail::TrailState::new(&mtime_root);
+        let mut mtime_snaps = crate::fm::trail_snapshots::TrailSnapshots::new(false);
+        mtime_snaps.sync(&mtime_trail);
+        assert_eq!(
+            mtime_snaps.select_dir(&mut mtime_trail, 0, &active_dir),
+            crate::fm::FmDirectoryStatus::Available,
+            "mtime fixture descent must load"
+        );
+        let render_mtime_trail = |name: &str,
+                                  trail: &crate::fm::trail::TrailState,
+                                  snaps: &crate::fm::trail_snapshots::TrailSnapshots,
+                                  width: u16,
+                                  height: u16,
+                                  offset_cells: Option<u32>| {
+            let backend = TestBackend::new(width, height);
+            let mut terminal = Terminal::new(backend).expect("mtime fixture terminal");
+            let stage = Rect::new(0, 0, width, height);
+            let view = match offset_cells {
+                Some(offset) => {
+                    crate::ui::file_manager::trail_view::project_trail_view_at_with_origin(
+                        stage,
+                        trail,
+                        snaps,
+                        &[48, 48],
+                        offset,
+                        mtime_fixture_anchor(),
+                    )
+                }
+                None => crate::ui::file_manager::trail_view::project_trail_view_at(
+                    stage,
+                    trail,
+                    snaps,
+                    &[48, 48],
+                    mtime_fixture_anchor(),
+                ),
+            };
+            assert!(!view.columns.is_empty(), "mtime fixture must project");
+            if name == "vis-16-mtime-groups-narrow" {
+                assert!(
+                    view.columns.iter().any(|column| {
+                        column.source_x > 0 && column.rows.iter().all(|row| row.timestamp.is_none())
+                    }),
+                    "narrow fixture must include a clipped timestamp-free column"
+                );
+                assert!(
+                    view.columns
+                        .iter()
+                        .flat_map(|column| &column.rows)
+                        .all(|row| {
+                            row.actions
+                                .iter()
+                                .all(|action| action.rect.intersection(row.rect) == action.rect)
+                        }),
+                    "narrow fixture actions must remain complete"
+                );
+            }
+            terminal
+                .draw(|frame| {
+                    crate::ui::file_manager::trail_view::render_trail_view(
+                        &trail_app, frame, &view, snaps,
+                    );
+                })
+                .expect("render mtime fixture");
+            write_fixture(
+                &out_dir,
+                export_cell_fixture(name, terminal.backend().buffer()),
+            );
+        };
+        render_mtime_trail(
+            "vis-15-mtime-groups",
+            &mtime_trail,
+            &mtime_snaps,
+            96,
+            24,
+            None,
+        );
+        render_mtime_trail(
+            "vis-16-mtime-groups-narrow",
+            &mtime_trail,
+            &mtime_snaps,
+            44,
+            16,
+            Some(42),
+        );
+
+        let promoted = mtime_root.join("promoted.txt");
+        assert!(mtime_trail.select_file(0, &promoted));
+        set_mtime_fixture_modified(
+            &promoted,
+            mtime_fixture_system_time(2026, time::Month::January, 10, 11, 55),
+        );
+        assert!(
+            mtime_snaps.refresh_col(0),
+            "mtime reorder fixture must refresh the owning column"
+        );
+        assert!(
+            mtime_snaps.reconcile_refreshed_col(&mut mtime_trail, 0),
+            "mtime reorder fixture must reconcile exact-path Trail authority"
+        );
+        let selected_path = mtime_trail.cols()[0]
+            .selected
+            .as_deref()
+            .expect("mtime reorder selection");
+        assert_eq!(selected_path, promoted);
+        render_mtime_trail(
+            "vis-17-mtime-reorder-selection",
+            &mtime_trail,
+            &mtime_snaps,
+            72,
+            18,
+            None,
+        );
+        let _ = std::fs::remove_dir_all(&mtime_base);
     }
 
     #[test]
