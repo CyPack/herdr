@@ -1910,6 +1910,75 @@ mod tests {
         assert_eq!(profile.counter("fm.filesystem.read_failure"), 1);
     }
 
+    // TP-FMP-SCALE-01/02: host-specific calibration for an extreme flat
+    // directory. This stays ignored in routine suites because fixture
+    // creation consumes 100k inodes. Run explicitly and record the filesystem,
+    // build profile, sample count, and host conditions with the result.
+    #[test]
+    #[ignore = "explicit 100k-entry file-manager scale calibration"]
+    fn fmp_scale_100k_directory_snapshot_meets_reference_budget() {
+        const ENTRY_COUNT: usize = 100_000;
+        const SAMPLE_COUNT: usize = 5;
+        const FINAL_P95_BUDGET_MS: u128 = 2_000;
+        const RETAINED_METADATA_BUDGET_BYTES: usize = 64 * 1024 * 1024;
+        const LARGE_FILE_COUNT: usize = 4;
+        const LARGE_FILE_BYTES: u64 = 256 * 1024 * 1024 * 1024;
+
+        let td = TempDir::new("fmp-scale-100k");
+        let fixture_started = std::time::Instant::now();
+        for index in 0..ENTRY_COUNT {
+            let path = td.root.join(format!("entry-{index:06}.dat"));
+            let file = std::fs::File::create(&path).expect("create scale fixture entry");
+            if index < LARGE_FILE_COUNT {
+                file.set_len(LARGE_FILE_BYTES)
+                    .expect("create sparse large-file fixture");
+            }
+        }
+        let fixture_ms = fixture_started.elapsed().as_millis();
+
+        let warmup = read_directory_snapshot(&td.root, false);
+        assert_eq!(warmup.entries.len(), ENTRY_COUNT);
+        drop(warmup);
+
+        let mut samples_ms = Vec::with_capacity(SAMPLE_COUNT);
+        let mut final_snapshot = None;
+        for _ in 0..SAMPLE_COUNT {
+            let started = std::time::Instant::now();
+            let snapshot = read_directory_snapshot(&td.root, false);
+            samples_ms.push(started.elapsed().as_millis());
+            final_snapshot = Some(snapshot);
+        }
+        samples_ms.sort_unstable();
+        let p95_ms = samples_ms[SAMPLE_COUNT - 1];
+        let snapshot = final_snapshot.expect("at least one calibrated sample");
+        assert_eq!(snapshot.entries.len(), ENTRY_COUNT);
+
+        let retained_metadata_bytes = std::mem::size_of_val(snapshot.entries.as_slice())
+            + snapshot
+                .entries
+                .iter()
+                .map(|entry| entry.name.len() + entry.path.as_os_str().len())
+                .sum::<usize>();
+        eprintln!(
+            "FMP_SCALE_100K fixture_ms={fixture_ms} samples_ms={samples_ms:?} \
+             p95_ms={p95_ms} entries={} logical_large_file_bytes={} \
+             retained_metadata_lower_bound_bytes={retained_metadata_bytes}",
+            snapshot.entries.len(),
+            LARGE_FILE_COUNT as u64 * LARGE_FILE_BYTES,
+        );
+
+        assert!(
+            p95_ms <= FINAL_P95_BUDGET_MS,
+            "100k-entry final sorted snapshot p95 {p95_ms}ms exceeds \
+             {FINAL_P95_BUDGET_MS}ms and authorizes partial listing work"
+        );
+        assert!(
+            retained_metadata_bytes <= RETAINED_METADATA_BUDGET_BYTES,
+            "100k-entry retained metadata lower bound {retained_metadata_bytes} exceeds \
+             {RETAINED_METADATA_BUDGET_BYTES} bytes and authorizes cache/paging work"
+        );
+    }
+
     #[test]
     fn directory_visibility_counts_iterator_entry_errors() {
         let read = std::iter::once(Err::<std::fs::DirEntry, _>(std::io::Error::new(
