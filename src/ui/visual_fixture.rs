@@ -293,6 +293,7 @@ mod tests {
             mount.join("backup.txt"),
             core.clone(),
             src.clone(),
+            project.join("docs"),
             project.clone(),
             home.join("projects"),
             desktop.clone(),
