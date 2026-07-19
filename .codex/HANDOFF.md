@@ -4,6 +4,26 @@ Updated: 2026-07-19 CEST
 
 ## 0. SONRAKI ADIM — TEK AKTİF İŞ
 
+**CURRENT OVERRIDE — FCL FILES CONTENT LOCATIONS RAIL ACTIVE.** Kullanıcı
+Option A'yı açıkça onayladı: Native Files merkezi açıldığında global sol panel
+agent/workspace runtime takibini koruyacak; Favorites/Locations Files
+content'inin tam-yükseklik sol rail'i olacak; Miller Trail sağda mevcut
+kesirli üçte-bir yatay scroll davranışını koruyacak. Compact genişlik bounded
+locations drawer kullanacak. Highlight otoritesi cwd/prefix tahmini değil
+exact `Location(path)` / `Direct(path)` origin kimliğidir. Root switch, Miller
+enter ve watcher/current refresh directory enumeration + per-entry mtime
+okumaları tek bounded latest-pending worker lane'ine taşınacaktır; render,
+input ve scheduled apply filesystem beklemeyecektir. Onaylı tasarım:
+`docs/superpowers/specs/2026-07-19-herdr-files-content-locations-rail-design.md`.
+Onaylı code-level TDD plan:
+`docs/superpowers/plans/2026-07-19-herdr-files-content-locations-rail-implementation.md`.
+Gerçek tasarım tablosu 25/25 benzersiz `TP-FCL-*` içerir; önceki 24 sayımı
+aritmetik hataydı, kapsam kaybı yoktur. Dependency chain FCL-0
+characterization → FCL-1 shell/origin → FCL-2 bounded I/O → FCL-3 geometry →
+FCL-4 render/input → FCL-5 drawer/teardown → FCL-6 Chromium → FCL-7 closure.
+TEK aktif iş FCL-0'dır. FMR plugin adoption ayrı ve ikinci önceliktedir.
+Stable Herdr/socket, upstream, release assets ve `.superpowers/` untouched.
+
 **CURRENT OVERRIDE — MTIME PROGRAMI KAPANDI.** Kullanıcı
 klasör ve dosyaların tek listede tamamen mtime azalan sırada karışmasını
 onayladı. Finder-benzeri yerel takvim grupları `Future` / `Today` /
@@ -594,13 +614,61 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 10 ve
-89, toplam 99 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 18 ve
+89, toplam 107 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 10 unchecked
+### Source: `.codex/TASKS.md` — 18 unchecked
+
+- [ ] **FCL-0 Characterization and baseline — ACTIVE.**
+  - Pin singleton Files stage, terminal restoration, active Trail selection,
+    watcher/operation/handoff identity, and existing one-third horizontal
+    scroll.
+  - Mark legacy global Files-body tests for FCL-5 teardown without deleting
+    them early.
+
+- [ ] **FCL-1 Shell ownership and explicit location origin** (blocked by
+  FCL-0).
+  - `TP-FCL-AUTH-01..04`, `TP-FCL-SHELL-01..03`.
+  - Files activation preserves Spaces/Projects and global agent/workspace
+    projection; `Location(path)` / `Direct(path)` is exact client-local
+    authority.
+
+- [ ] **FCL-2 Bounded file-manager I/O lane** (blocked by FCL-1).
+  - `TP-FCL-IO-01..06`.
+  - One executing + one latest pending root/navigation/refresh request; stale,
+    closed, changed-type, missing, permission, panic, and disconnect paths
+    preserve current Trail.
+
+- [ ] **FCL-3 Responsive content geometry** (blocked by FCL-2).
+  - `TP-FCL-GEO-01..03`.
+  - Wide/standard persistent rail and compact complete action use one
+    disjoint current-frame projection.
+
+- [ ] **FCL-4 Render and input ownership swap** (blocked by FCL-3).
+  - `TP-FCL-INPUT-01..03`.
+  - Locations own vertical input only in their cells; Trail retains current
+    fractional horizontal behavior inside its exact rectangle.
+
+- [ ] **FCL-5 Compact drawer and legacy global Files-body teardown** (blocked
+  by FCL-4).
+  - `TP-FCL-DRAWER-01`.
+  - Topmost bounded drawer restores Files focus; old global row geometry,
+    navigation request, render, hit-test, and cwd-derived highlight seams are
+    removed.
+
+- [ ] **FCL-6 Playwright Chromium oracle** (blocked by FCL-5).
+  - `TP-FCL-VIS-01..04`.
+  - ASCII deterministic wide/standard/compact/origin/loading/failure fixtures,
+    spec-scoped baselines, one-cell raw-PNG mutation proof, then full Chromium.
+
+- [ ] **FCL-7 Production closure** (blocked by FCL-6).
+  - `TP-FCL-GATE-01`.
+  - Focused/full Rust, Linux/Windows Clippy, maintenance, Bun/Python,
+    Playwright, hygiene, exact continuity, single-worker graph refresh,
+    cartography map, and CyPack-only fast-forward publication.
 
 - [ ] **FMR-0 Scroll version lab and ranking.** Four reboot-safe source
   checkpoints are collected side by side under

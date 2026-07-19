@@ -1,5 +1,27 @@
 # Current State — 2026-07-19
 
+> **CURRENT OVERRIDE — FCL FILES CONTENT LOCATIONS RAIL ACTIVE
+> (2026-07-19).** The user approved Option A: Native Files keeps the global
+> left panel's agent/workspace runtime tracking, while Favorites/Locations
+> move into a full-height Files-local left rail and the Miller Trail remains
+> horizontally scrollable to its right. Compact widths use a bounded
+> locations drawer. Exact `Location(path)` / `Direct(path)` origin replaces
+> cwd/prefix-derived highlighting. Root switching, Miller enter, and
+> watcher/current refresh must use one bounded latest-pending read worker so
+> directory enumeration and per-entry mtime reads never block render, input,
+> or scheduled apply. Approved design:
+> `docs/superpowers/specs/2026-07-19-herdr-files-content-locations-rail-design.md`.
+> Approved code-level plan:
+> `docs/superpowers/plans/2026-07-19-herdr-files-content-locations-rail-implementation.md`.
+> The actual design table contains 25/25 unique `TP-FCL-*` IDs (an earlier
+> summary incorrectly said 24). Dependency chain is FCL-0 characterization →
+> FCL-1 shell/origin → FCL-2 bounded I/O → FCL-3 geometry → FCL-4
+> render/input → FCL-5 drawer/teardown → FCL-6 Chromium → FCL-7 closure.
+> FCL-0 is the only active task. This program takes priority over FMR plugin
+> adoption and does not change the existing one-third horizontal scroll.
+> Stable Herdr/socket, upstream, release assets, and user-owned
+> `.superpowers/` remain outside authority.
+>
 > **CURRENT OVERRIDE — MTIME PROGRAM CLOSED (2026-07-19).** The user
 > approved one strict mixed ordering across
 > directories and files: modification time descending, deterministic

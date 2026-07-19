@@ -10,6 +10,63 @@ FIP-G.1/FIP-G.2 are closed; the approved code-level plan is
 (commit `dd81ef59`). The next executable task is **FIP-0.1** (baseline freeze),
 then the plan's Tasks 2-29 in order.
 
+### FCL — Files Content Locations Rail and Non-Blocking Navigation
+
+Activated by the user's explicit Option A approval on 2026-07-19. The global
+left panel remains the agent/workspace tracker while Native Files owns the
+center. Favorites/Locations move into a full-height Files-local rail; compact
+widths use a bounded drawer. The active root is explicit identity, never a
+cwd/longest-prefix guess. Root, Miller-enter, and watcher/current-refresh
+directory reads share one bounded latest-pending worker lane. Canonical
+design:
+`docs/superpowers/specs/2026-07-19-herdr-files-content-locations-rail-design.md`.
+Code-level TDD plan:
+`docs/superpowers/plans/2026-07-19-herdr-files-content-locations-rail-implementation.md`.
+The plan maps 25/25 `TP-FCL-*` IDs. This program has priority over the separate
+FMR plugin-adoption lane; it does not rank scroll checkpoints or adopt a
+plugin.
+
+- [ ] **FCL-0 Characterization and baseline — ACTIVE.**
+  - Pin singleton Files stage, terminal restoration, active Trail selection,
+    watcher/operation/handoff identity, and existing one-third horizontal
+    scroll.
+  - Mark legacy global Files-body tests for FCL-5 teardown without deleting
+    them early.
+- [ ] **FCL-1 Shell ownership and explicit location origin** (blocked by
+  FCL-0).
+  - `TP-FCL-AUTH-01..04`, `TP-FCL-SHELL-01..03`.
+  - Files activation preserves Spaces/Projects and global agent/workspace
+    projection; `Location(path)` / `Direct(path)` is exact client-local
+    authority.
+- [ ] **FCL-2 Bounded file-manager I/O lane** (blocked by FCL-1).
+  - `TP-FCL-IO-01..06`.
+  - One executing + one latest pending root/navigation/refresh request; stale,
+    closed, changed-type, missing, permission, panic, and disconnect paths
+    preserve current Trail.
+- [ ] **FCL-3 Responsive content geometry** (blocked by FCL-2).
+  - `TP-FCL-GEO-01..03`.
+  - Wide/standard persistent rail and compact complete action use one
+    disjoint current-frame projection.
+- [ ] **FCL-4 Render and input ownership swap** (blocked by FCL-3).
+  - `TP-FCL-INPUT-01..03`.
+  - Locations own vertical input only in their cells; Trail retains current
+    fractional horizontal behavior inside its exact rectangle.
+- [ ] **FCL-5 Compact drawer and legacy global Files-body teardown** (blocked
+  by FCL-4).
+  - `TP-FCL-DRAWER-01`.
+  - Topmost bounded drawer restores Files focus; old global row geometry,
+    navigation request, render, hit-test, and cwd-derived highlight seams are
+    removed.
+- [ ] **FCL-6 Playwright Chromium oracle** (blocked by FCL-5).
+  - `TP-FCL-VIS-01..04`.
+  - ASCII deterministic wide/standard/compact/origin/loading/failure fixtures,
+    spec-scoped baselines, one-cell raw-PNG mutation proof, then full Chromium.
+- [ ] **FCL-7 Production closure** (blocked by FCL-6).
+  - `TP-FCL-GATE-01`.
+  - Focused/full Rust, Linux/Windows Clippy, maintenance, Bun/Python,
+    Playwright, hygiene, exact continuity, single-worker graph refresh,
+    cartography map, and CyPack-only fast-forward publication.
+
 ### MTIME — Miller Modification-Time Sorting and Finder-Like Groups
 
 Activated and explicitly approved by the user on 2026-07-19. Direct product
