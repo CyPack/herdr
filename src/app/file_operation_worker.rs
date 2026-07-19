@@ -3342,6 +3342,12 @@ mod tests {
         fs::write(&alpha, b"alpha").expect("write private recovery alpha");
         fs::write(&beta, b"beta").expect("write private recovery beta");
         fs::write(&next, b"next").expect("write recovery lane source");
+        let modified = std::time::UNIX_EPOCH + Duration::from_secs(10);
+        for path in [&alpha, &beta] {
+            let file = fs::File::open(path).expect("open private recovery fixture");
+            file.set_times(fs::FileTimes::new().set_modified(modified))
+                .expect("set private recovery fixture mtime");
+        }
         let worker = FileOperationWorker::with_task_executor(
             Arc::new(Notify::new()),
             move |task, cancellation| match task {
