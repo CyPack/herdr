@@ -461,16 +461,16 @@ impl super::App {
     /// Consume one exact locations intent without performing filesystem work
     /// on the scheduled thread.
     pub(crate) fn sync_file_manager_location_request(&mut self) -> bool {
-        let Some(path) = self.state.request_file_manager_sidebar_navigation.take() else {
+        let Some(path) = self.state.request_file_manager_location_navigation.take() else {
             return false;
         };
         let Some(files_generation) = self.active_file_manager_generation() else {
             return true;
         };
-        let model_revision = self.state.file_manager_sidebar.revision();
+        let model_revision = self.state.file_manager_locations_model.revision();
         if !self
             .state
-            .file_manager_sidebar
+            .file_manager_locations_model
             .item_for_path(&path)
             .is_some_and(|item| item.accessible)
         {
@@ -486,7 +486,7 @@ impl super::App {
             let _ = self
                 .state
                 .file_manager_locations
-                .activate_location(&path, &self.state.file_manager_sidebar);
+                .activate_location(&path, &self.state.file_manager_locations_model);
             return true;
         }
 
@@ -547,7 +547,7 @@ impl super::App {
         let Some(files_generation) = self.active_file_manager_generation() else {
             return changed;
         };
-        let model_revision = self.state.file_manager_sidebar.revision();
+        let model_revision = self.state.file_manager_locations_model.revision();
         let source = self
             .state
             .file_manager
@@ -584,7 +584,7 @@ impl super::App {
                 if prepared_identity != result.identity
                     || !self
                         .state
-                        .file_manager_sidebar
+                        .file_manager_locations_model
                         .item_for_path(&target)
                         .is_some_and(|item| item.accessible)
                 {
@@ -594,7 +594,7 @@ impl super::App {
                 let _ = self
                     .state
                     .file_manager_locations
-                    .activate_location(&target, &self.state.file_manager_sidebar);
+                    .activate_location(&target, &self.state.file_manager_locations_model);
                 true
             }
             FileManagerIoOutcome::Root(Err(error)) => {
@@ -944,13 +944,13 @@ mod tests {
         )
     }
 
-    fn location_model(path: &Path) -> crate::app::state::FileManagerSidebarModel {
-        crate::app::state::FileManagerSidebarModel::from_sources(
+    fn location_model(path: &Path) -> crate::app::state::FileManagerLocationsModel {
+        crate::app::state::FileManagerLocationsModel::from_sources(
             Vec::new(),
-            vec![crate::app::state::FileManagerSidebarItem {
+            vec![crate::app::state::FileManagerLocationItem {
                 label: "Target".into(),
                 path: path.to_path_buf(),
-                icon: crate::app::state::FileManagerSidebarIcon::Pin,
+                icon: crate::app::state::FileManagerLocationIcon::Pin,
                 accessible: true,
                 ejectable: false,
             }],
@@ -970,8 +970,8 @@ mod tests {
         app.state
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
             .unwrap();
-        app.state.file_manager_sidebar = location_model(&target);
-        app.state.request_file_manager_sidebar_navigation = Some(target.clone());
+        app.state.file_manager_locations_model = location_model(&target);
+        app.state.request_file_manager_location_navigation = Some(target.clone());
 
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
@@ -1007,8 +1007,8 @@ mod tests {
         app.state
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
             .unwrap();
-        app.state.file_manager_sidebar = location_model(&target);
-        app.state.request_file_manager_sidebar_navigation = Some(target);
+        app.state.file_manager_locations_model = location_model(&target);
+        app.state.request_file_manager_location_navigation = Some(target);
 
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
@@ -1044,8 +1044,8 @@ mod tests {
         app.state
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
             .unwrap();
-        app.state.file_manager_sidebar = location_model(&target);
-        app.state.request_file_manager_sidebar_navigation = Some(target);
+        app.state.file_manager_locations_model = location_model(&target);
+        app.state.request_file_manager_location_navigation = Some(target);
 
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
@@ -1081,8 +1081,8 @@ mod tests {
         app.state
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
             .unwrap();
-        app.state.file_manager_sidebar = location_model(&target);
-        app.state.request_file_manager_sidebar_navigation = Some(target.clone());
+        app.state.file_manager_locations_model = location_model(&target);
+        app.state.request_file_manager_location_navigation = Some(target.clone());
 
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
@@ -1097,7 +1097,7 @@ mod tests {
         started_rx.recv().unwrap();
 
         app.state
-            .file_manager_sidebar
+            .file_manager_locations_model
             .replace_with(location_model(&target));
         gate.release();
         app.file_manager_io_worker.wait_for_result_for_test();
@@ -1118,11 +1118,11 @@ mod tests {
         app.state
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
             .unwrap();
-        app.state.file_manager_sidebar = location_model(&target);
+        app.state.file_manager_locations_model = location_model(&target);
         app.state
             .file_manager_locations
             .activate_direct(initial.clone());
-        app.state.request_file_manager_sidebar_navigation = Some(target.clone());
+        app.state.request_file_manager_location_navigation = Some(target.clone());
 
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
@@ -1150,7 +1150,7 @@ mod tests {
         );
 
         std::fs::create_dir(&target).unwrap();
-        app.state.request_file_manager_sidebar_navigation = Some(target.clone());
+        app.state.request_file_manager_location_navigation = Some(target.clone());
         assert!(app.sync_file_manager_location_request());
         started_rx.recv().unwrap();
         app.file_manager_io_worker.wait_for_result_for_test();
@@ -1170,8 +1170,8 @@ mod tests {
         app.state
             .try_open_file_manager_with(|_| Some(file_manager))
             .unwrap();
-        app.state.file_manager_sidebar = location_model(&td.root);
-        app.state.request_file_manager_sidebar_navigation = Some(td.root.clone());
+        app.state.file_manager_locations_model = location_model(&td.root);
+        app.state.request_file_manager_location_navigation = Some(td.root.clone());
 
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let worker_calls = calls.clone();

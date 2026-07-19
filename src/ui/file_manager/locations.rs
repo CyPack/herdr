@@ -1,15 +1,15 @@
 use std::path::PathBuf;
 
 use ratatui::{
-    layout::Rect,
+    layout::{Margin, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Paragraph},
+    widgets::{Block, Clear, Paragraph},
     Frame,
 };
 
 use crate::app::state::{
-    AppState, FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel,
+    AppState, FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel,
 };
 use crate::fm::miller::MILLER_COLUMN_MIN_WIDTH;
 use crate::ui::surface_host::StageSurfaceView;
@@ -21,6 +21,7 @@ pub(crate) const STANDARD_RAIL_MIN: u16 = 16;
 pub(crate) const STANDARD_RAIL_MAX: u16 = 20;
 pub(crate) const LOCATIONS_SEPARATOR_WIDTH: u16 = 1;
 pub(crate) const LOCATIONS_ACTION_WIDTH: u16 = 9;
+const LOCATIONS_DRAWER_MAX_WIDTH: u16 = 28;
 const LOCATIONS_ACTION_GAP: u16 = 1;
 const HEADER_IDENTITY_MIN_WIDTH: u16 = 12;
 pub(crate) const COMPACT_CONTENT_THRESHOLD: u16 =
@@ -115,10 +116,10 @@ pub(crate) fn file_manager_content_layout(body: Rect) -> FileManagerContentLayou
 enum FileManagerLocationLine<'a> {
     Header(&'a str),
     Blank,
-    Item(&'a FileManagerSidebarItem),
+    Item(&'a FileManagerLocationItem),
 }
 
-fn location_lines(model: &FileManagerSidebarModel) -> Vec<FileManagerLocationLine<'_>> {
+fn location_lines(model: &FileManagerLocationsModel) -> Vec<FileManagerLocationLine<'_>> {
     let mut lines = Vec::new();
     for (section_index, section) in model.sections.iter().enumerate() {
         if section_index > 0 {
@@ -130,7 +131,7 @@ fn location_lines(model: &FileManagerSidebarModel) -> Vec<FileManagerLocationLin
     lines
 }
 
-pub(crate) fn file_manager_location_line_count(model: &FileManagerSidebarModel) -> usize {
+pub(crate) fn file_manager_location_line_count(model: &FileManagerLocationsModel) -> usize {
     location_lines(model).len()
 }
 
@@ -146,7 +147,7 @@ fn project_location_rows(
     }
 
     let mut rows = Vec::new();
-    for (line_index, line) in location_lines(&app.file_manager_sidebar)
+    for (line_index, line) in location_lines(&app.file_manager_locations_model)
         .into_iter()
         .skip(scroll)
         .take(usize::from(rail.height))
@@ -190,6 +191,27 @@ fn locations_action_area(header: Rect, mode: FileManagerLocationsMode) -> Option
     })
 }
 
+fn locations_drawer_area(body: Rect, content_line_count: usize) -> Option<Rect> {
+    if body.width < 3 || body.height < 3 {
+        return None;
+    }
+    let content_height = u16::try_from(content_line_count).unwrap_or(u16::MAX);
+    let height = content_height.saturating_add(2).min(body.height);
+    Some(Rect::new(
+        body.x,
+        body.y,
+        body.width.min(LOCATIONS_DRAWER_MAX_WIDTH),
+        height,
+    ))
+}
+
+pub(crate) fn locations_drawer_content_area(drawer: Rect) -> Rect {
+    drawer.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    })
+}
+
 /// Publish every Files-local navigation target from one current-frame
 /// projection. Hidden/closed Files surfaces return the default snapshot so
 /// prior-frame identities cannot remain actionable.
@@ -208,16 +230,22 @@ pub(crate) fn project_file_manager_locations_view(
     };
 
     let layout = file_manager_content_layout(body);
-    let model_revision = app.file_manager_sidebar.revision();
-    let content_line_count = file_manager_location_line_count(&app.file_manager_sidebar);
-    let scroll = layout.rail.map_or(0, |rail| {
+    let model_revision = app.file_manager_locations_model.revision();
+    let content_line_count = file_manager_location_line_count(&app.file_manager_locations_model);
+    let drawer_area = (layout.mode == FileManagerLocationsMode::Compact
+        && app.file_manager_locations.drawer_is_open())
+    .then(|| locations_drawer_area(body, content_line_count))
+    .flatten();
+    let list_area = layout
+        .rail
+        .or_else(|| drawer_area.map(locations_drawer_content_area));
+    let scroll = list_area.map_or(0, |list| {
         app.file_manager_locations
             .scroll
-            .min(content_line_count.saturating_sub(usize::from(rail.height)))
+            .min(content_line_count.saturating_sub(usize::from(list.height)))
     });
-    let rows = layout
-        .rail
-        .map(|rail| project_location_rows(app, rail, files_generation, model_revision, scroll))
+    let rows = list_area
+        .map(|list| project_location_rows(app, list, files_generation, model_revision, scroll))
         .unwrap_or_default();
 
     FileManagerLocationsView {
@@ -228,29 +256,29 @@ pub(crate) fn project_file_manager_locations_view(
         layout,
         rows,
         locations_action_area: locations_action_area(header, layout.mode),
-        drawer_area: None,
+        drawer_area,
     }
 }
 
-fn location_icon(icon: FileManagerSidebarIcon, ascii: bool) -> &'static str {
+fn location_icon(icon: FileManagerLocationIcon, ascii: bool) -> &'static str {
     if !ascii {
         return icon.glyph();
     }
     match icon {
-        FileManagerSidebarIcon::Home => "~",
-        FileManagerSidebarIcon::Desktop => "D",
-        FileManagerSidebarIcon::Downloads => "v",
-        FileManagerSidebarIcon::Documents => "d",
-        FileManagerSidebarIcon::Pictures => "p",
-        FileManagerSidebarIcon::Videos => "V",
-        FileManagerSidebarIcon::Music => "m",
-        FileManagerSidebarIcon::Trash => "x",
-        FileManagerSidebarIcon::Pin => "*",
-        FileManagerSidebarIcon::Disk => "/",
+        FileManagerLocationIcon::Home => "~",
+        FileManagerLocationIcon::Desktop => "D",
+        FileManagerLocationIcon::Downloads => "v",
+        FileManagerLocationIcon::Documents => "d",
+        FileManagerLocationIcon::Pictures => "p",
+        FileManagerLocationIcon::Videos => "V",
+        FileManagerLocationIcon::Music => "m",
+        FileManagerLocationIcon::Trash => "x",
+        FileManagerLocationIcon::Pin => "*",
+        FileManagerLocationIcon::Disk => "/",
     }
 }
 
-fn location_row_line(app: &AppState, item: &FileManagerSidebarItem, width: u16) -> Line<'static> {
+fn location_row_line(app: &AppState, item: &FileManagerLocationItem, width: u16) -> Line<'static> {
     let width = usize::from(width);
     if width == 0 {
         return Line::default();
@@ -296,39 +324,70 @@ pub(crate) fn render_file_manager_locations(
 ) {
     let active_generation = app.stage.active_instance_generation();
     if view.files_generation != active_generation
-        || view.model_revision != app.file_manager_sidebar.revision()
+        || view.model_revision != app.file_manager_locations_model.revision()
     {
         return;
     }
-    let Some(rail) = view.layout.rail else {
-        return;
-    };
 
-    frame.render_widget(
-        Block::default().style(Style::default().bg(app.palette.panel_bg)),
-        rail,
-    );
-    if let Some(separator) = view.layout.separator {
+    if let Some(action) = view.locations_action_area {
+        let style = if view.drawer_area.is_some() {
+            Style::default()
+                .fg(app.palette.panel_bg)
+                .bg(app.palette.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+                .fg(app.palette.blue)
+                .add_modifier(Modifier::BOLD)
+        };
+        frame.render_widget(Paragraph::new("Locations").style(style), action);
+    }
+
+    if let Some(rail) = view.layout.rail {
         frame.render_widget(
-            Block::default().style(Style::default().bg(app.palette.surface_dim)),
-            separator,
+            Block::default().style(Style::default().bg(app.palette.panel_bg)),
+            rail,
+        );
+        if let Some(separator) = view.layout.separator {
+            frame.render_widget(
+                Block::default().style(Style::default().bg(app.palette.surface_dim)),
+                separator,
+            );
+        }
+    }
+
+    if let Some(drawer) = view.drawer_area {
+        frame.render_widget(Clear, drawer);
+        frame.render_widget(
+            Block::bordered()
+                .title("Locations")
+                .style(Style::default().bg(app.palette.panel_bg)),
+            drawer,
         );
     }
 
+    let Some(list_area) = view
+        .layout
+        .rail
+        .or_else(|| view.drawer_area.map(locations_drawer_content_area))
+    else {
+        return;
+    };
     let highlighted = app
         .file_manager_locations
-        .highlighted_path(&app.file_manager_sidebar);
-    for (line_index, line) in location_lines(&app.file_manager_sidebar)
+        .highlighted_path(&app.file_manager_locations_model);
+    for (line_index, line) in location_lines(&app.file_manager_locations_model)
         .into_iter()
         .skip(view.scroll)
-        .take(usize::from(rail.height))
+        .take(usize::from(list_area.height))
         .enumerate()
     {
         let row = Rect::new(
-            rail.x,
-            rail.y
+            list_area.x,
+            list_area
+                .y
                 .saturating_add(u16::try_from(line_index).unwrap_or(u16::MAX)),
-            rail.width,
+            list_area.width,
             1,
         );
         match line {
@@ -371,25 +430,25 @@ mod tests {
         COMPACT_CONTENT_THRESHOLD, LOCATIONS_ACTION_WIDTH,
     };
     use crate::app::state::{
-        AppState, FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel,
+        AppState, FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel,
     };
 
-    fn item(label: &str, path: &str) -> FileManagerSidebarItem {
-        FileManagerSidebarItem {
+    fn item(label: &str, path: &str) -> FileManagerLocationItem {
+        FileManagerLocationItem {
             label: label.to_string(),
             path: PathBuf::from(path),
-            icon: FileManagerSidebarIcon::Pin,
+            icon: FileManagerLocationIcon::Pin,
             accessible: true,
             ejectable: false,
         }
     }
 
-    fn prepared_files_app(items: Vec<FileManagerSidebarItem>) -> AppState {
+    fn prepared_files_app(items: Vec<FileManagerLocationItem>) -> AppState {
         let mut app = AppState::test_new();
         app.stage.activate_files().expect("Files activation");
         app.file_manager = Some(crate::fm::FmState::new(PathBuf::from("/")));
-        app.file_manager_sidebar =
-            FileManagerSidebarModel::from_sources(items, Vec::new(), Vec::new());
+        app.file_manager_locations_model =
+            FileManagerLocationsModel::from_sources(items, Vec::new(), Vec::new());
         app
     }
 

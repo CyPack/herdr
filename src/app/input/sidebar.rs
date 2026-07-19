@@ -2375,25 +2375,25 @@ mod tests {
     #[test]
     fn clicking_file_locations_rail_item_prepares_exact_typed_navigation_request() {
         use crate::app::state::{
-            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
+            FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel, SidebarTab,
         };
         let mut app = app_for_mouse_test();
         app.state.sidebar_tab = SidebarTab::Files;
         app.state
             .activate_dock_app(crate::ui::surface_host::BuiltInAppId::Files);
-        app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+        app.state.file_manager_locations_model = FileManagerLocationsModel::from_sources(
             vec![
-                FileManagerSidebarItem {
+                FileManagerLocationItem {
                     label: "Home".into(),
                     path: std::path::PathBuf::from("/home/a"),
-                    icon: FileManagerSidebarIcon::Home,
+                    icon: FileManagerLocationIcon::Home,
                     accessible: true,
                     ejectable: false,
                 },
-                FileManagerSidebarItem {
+                FileManagerLocationItem {
                     label: "Downloads".into(),
                     path: std::path::PathBuf::from("/home/a/Downloads"),
-                    icon: FileManagerSidebarIcon::Downloads,
+                    icon: FileManagerLocationIcon::Downloads,
                     accessible: true,
                     ejectable: false,
                 },
@@ -2412,7 +2412,7 @@ mod tests {
         ));
 
         assert_eq!(
-            app.state.request_file_manager_sidebar_navigation,
+            app.state.request_file_manager_location_navigation,
             Some(std::path::PathBuf::from("/home/a"))
         );
         assert_eq!(app.state.file_manager.is_some(), before_file_manager);
@@ -2424,7 +2424,7 @@ mod tests {
             replacement.rect.y,
         ));
         assert_eq!(
-            app.state.request_file_manager_sidebar_navigation,
+            app.state.request_file_manager_location_navigation,
             Some(std::path::PathBuf::from("/home/a/Downloads")),
             "latest exact click replaces the prior unconsumed intent"
         );
@@ -2436,7 +2436,7 @@ mod tests {
     #[test]
     fn locations_rail_mouse_click_consumes_to_loaded_trail() {
         use crate::app::state::{
-            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
+            FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel, SidebarTab,
         };
 
         let root = unique_temp_path("sidebar-shortcut-mouse-e2e");
@@ -2456,11 +2456,11 @@ mod tests {
             .active_instance_generation()
             .expect("active Files generation");
         app.state.sidebar_tab = SidebarTab::Files;
-        app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
-            vec![FileManagerSidebarItem {
+        app.state.file_manager_locations_model = FileManagerLocationsModel::from_sources(
+            vec![FileManagerLocationItem {
                 label: "Home".into(),
                 path: target.clone(),
-                icon: FileManagerSidebarIcon::Home,
+                icon: FileManagerLocationIcon::Home,
                 accessible: true,
                 ejectable: false,
             }],
@@ -2476,7 +2476,7 @@ mod tests {
             row.rect.y,
         ));
         assert_eq!(
-            app.state.request_file_manager_sidebar_navigation,
+            app.state.request_file_manager_location_navigation,
             Some(target.clone()),
             "primary click prepares the exact current-model path"
         );
@@ -2490,7 +2490,7 @@ mod tests {
             app.handle_scheduled_tasks(std::time::Instant::now(), false),
             "the next scheduled tick applies the prepared root"
         );
-        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+        assert!(app.state.request_file_manager_location_navigation.is_none());
         assert_eq!(
             app.state.stage.active_instance_generation(),
             Some(generation),
@@ -2512,18 +2512,18 @@ mod tests {
     #[test]
     fn locations_rail_mouse_modified_click_is_inert() {
         use crate::app::state::{
-            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
+            FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel, SidebarTab,
         };
 
         let mut app = app_for_mouse_test();
         app.state.sidebar_tab = SidebarTab::Files;
         app.state
             .activate_dock_app(crate::ui::surface_host::BuiltInAppId::Files);
-        app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
-            vec![FileManagerSidebarItem {
+        app.state.file_manager_locations_model = FileManagerLocationsModel::from_sources(
+            vec![FileManagerLocationItem {
                 label: "Home".into(),
                 path: std::path::PathBuf::from("/home/a"),
-                icon: FileManagerSidebarIcon::Home,
+                icon: FileManagerLocationIcon::Home,
                 accessible: true,
                 ejectable: false,
             }],
@@ -2541,7 +2541,7 @@ mod tests {
         });
 
         assert!(
-            app.state.request_file_manager_sidebar_navigation.is_none(),
+            app.state.request_file_manager_location_navigation.is_none(),
             "modified shortcut clicks cannot authorize directory navigation"
         );
     }
@@ -2549,14 +2549,14 @@ mod tests {
     #[test]
     fn locations_rail_mouse_non_primary_and_inaccessible_rows_are_inert() {
         use crate::app::state::{
-            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
+            FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel, SidebarTab,
         };
 
         let path = std::path::PathBuf::from("/home/a");
-        let item = |accessible| FileManagerSidebarItem {
+        let item = |accessible| FileManagerLocationItem {
             label: "Home".into(),
             path: path.clone(),
-            icon: FileManagerSidebarIcon::Home,
+            icon: FileManagerLocationIcon::Home,
             accessible,
             ejectable: false,
         };
@@ -2564,12 +2564,12 @@ mod tests {
         app.state.sidebar_tab = SidebarTab::Files;
         app.state
             .activate_dock_app(crate::ui::surface_host::BuiltInAppId::Files);
-        app.state.file_manager_sidebar =
-            FileManagerSidebarModel::from_sources(vec![item(true)], Vec::new(), Vec::new());
+        app.state.file_manager_locations_model =
+            FileManagerLocationsModel::from_sources(vec![item(true)], Vec::new(), Vec::new());
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
         let row = app.state.view.file_manager_locations.rows[0].clone();
-        app.state.file_manager_sidebar =
-            FileManagerSidebarModel::from_sources(vec![item(false)], Vec::new(), Vec::new());
+        app.state.file_manager_locations_model =
+            FileManagerLocationsModel::from_sources(vec![item(false)], Vec::new(), Vec::new());
 
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -2577,12 +2577,12 @@ mod tests {
             row.rect.y,
         ));
         assert!(
-            app.state.request_file_manager_sidebar_navigation.is_none(),
+            app.state.request_file_manager_location_navigation.is_none(),
             "inaccessible current-model rows fail closed"
         );
 
-        app.state.file_manager_sidebar =
-            FileManagerSidebarModel::from_sources(vec![item(true)], Vec::new(), Vec::new());
+        app.state.file_manager_locations_model =
+            FileManagerLocationsModel::from_sources(vec![item(true)], Vec::new(), Vec::new());
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
         let row = app.state.view.file_manager_locations.rows[0].clone();
         for kind in [
@@ -2591,7 +2591,7 @@ mod tests {
         ] {
             app.handle_mouse(mouse(kind, row.rect.x, row.rect.y));
             assert!(
-                app.state.request_file_manager_sidebar_navigation.is_none(),
+                app.state.request_file_manager_location_navigation.is_none(),
                 "{kind:?} cannot authorize shortcut navigation"
             );
         }
@@ -2601,7 +2601,7 @@ mod tests {
     #[test]
     fn locations_rail_mouse_symlink_directory_loads_exact_trail() {
         use crate::app::state::{
-            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
+            FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel, SidebarTab,
         };
 
         let root = unique_temp_path("sidebar-shortcut-symlink-e2e");
@@ -2618,12 +2618,12 @@ mod tests {
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
             .expect("open initial Files instance");
         app.state.sidebar_tab = SidebarTab::Files;
-        app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+        app.state.file_manager_locations_model = FileManagerLocationsModel::from_sources(
             Vec::new(),
-            vec![FileManagerSidebarItem {
+            vec![FileManagerLocationItem {
                 label: "Linked".into(),
                 path: link.clone(),
-                icon: FileManagerSidebarIcon::Pin,
+                icon: FileManagerLocationIcon::Pin,
                 accessible: true,
                 ejectable: false,
             }],
@@ -2657,17 +2657,17 @@ mod tests {
     #[test]
     fn stale_file_locations_rail_hit_area_is_inert_after_model_refresh() {
         use crate::app::state::{
-            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
+            FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel, SidebarTab,
         };
         let mut app = app_for_mouse_test();
         app.state.sidebar_tab = SidebarTab::Files;
         app.state
             .activate_dock_app(crate::ui::surface_host::BuiltInAppId::Files);
-        app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
-            vec![FileManagerSidebarItem {
+        app.state.file_manager_locations_model = FileManagerLocationsModel::from_sources(
+            vec![FileManagerLocationItem {
                 label: "Home".into(),
                 path: std::path::PathBuf::from("/home/a"),
-                icon: FileManagerSidebarIcon::Home,
+                icon: FileManagerLocationIcon::Home,
                 accessible: true,
                 ejectable: false,
             }],
@@ -2676,7 +2676,7 @@ mod tests {
         );
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
         let stale_row = app.state.view.file_manager_locations.rows[0].clone();
-        app.state.file_manager_sidebar = FileManagerSidebarModel::default();
+        app.state.file_manager_locations_model = FileManagerLocationsModel::default();
 
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -2684,7 +2684,7 @@ mod tests {
             stale_row.rect.y,
         ));
 
-        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+        assert!(app.state.request_file_manager_location_navigation.is_none());
     }
 
     // TP-FCL-SHELL-01: a legacy Files tab value cannot hide or disable the

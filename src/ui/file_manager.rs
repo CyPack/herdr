@@ -3010,9 +3010,9 @@ mod tests {
     fn fcl_render_item(
         label: &str,
         path: PathBuf,
-        icon: crate::app::state::FileManagerSidebarIcon,
-    ) -> crate::app::state::FileManagerSidebarItem {
-        crate::app::state::FileManagerSidebarItem {
+        icon: crate::app::state::FileManagerLocationIcon,
+    ) -> crate::app::state::FileManagerLocationItem {
+        crate::app::state::FileManagerLocationItem {
             label: label.to_string(),
             path,
             icon,
@@ -3040,29 +3040,30 @@ mod tests {
         app.mobile_width_threshold = 0;
         app.sidebar_collapsed = true;
         app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
-        app.file_manager_sidebar = crate::app::state::FileManagerSidebarModel::from_sources(
-            vec![
-                fcl_render_item(
-                    "Home",
-                    home.clone(),
-                    crate::app::state::FileManagerSidebarIcon::Home,
-                ),
-                fcl_render_item(
-                    "Downloads",
-                    downloads.clone(),
-                    crate::app::state::FileManagerSidebarIcon::Downloads,
-                ),
-            ],
-            Vec::new(),
-            vec![fcl_render_item(
-                "Root",
-                root.clone(),
-                crate::app::state::FileManagerSidebarIcon::Disk,
-            )],
-        );
+        app.file_manager_locations_model =
+            crate::app::state::FileManagerLocationsModel::from_sources(
+                vec![
+                    fcl_render_item(
+                        "Home",
+                        home.clone(),
+                        crate::app::state::FileManagerLocationIcon::Home,
+                    ),
+                    fcl_render_item(
+                        "Downloads",
+                        downloads.clone(),
+                        crate::app::state::FileManagerLocationIcon::Downloads,
+                    ),
+                ],
+                Vec::new(),
+                vec![fcl_render_item(
+                    "Root",
+                    root.clone(),
+                    crate::app::state::FileManagerLocationIcon::Disk,
+                )],
+            );
         assert!(app
             .file_manager_locations
-            .activate_location(&home, &app.file_manager_sidebar));
+            .activate_location(&home, &app.file_manager_locations_model));
         let files_generation = app
             .stage
             .active_instance_generation()
@@ -3070,7 +3071,7 @@ mod tests {
         app.file_manager_locations.begin_load(
             downloads.clone(),
             files_generation,
-            app.file_manager_sidebar.revision(),
+            app.file_manager_locations_model.revision(),
             41,
         );
         let frame = Rect::new(0, 0, 90, 10);

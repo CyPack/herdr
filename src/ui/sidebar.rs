@@ -11,8 +11,6 @@ use super::status::{agent_icon, state_dot, state_label, state_label_color};
 use super::text::{display_width, display_width_u16, truncate_end};
 use super::widgets::panel_contrast_fg;
 use crate::app::state::{AgentPanelSort, Palette, ProjectRowArea, ProjectRowKind};
-#[cfg(test)]
-use crate::app::state::{FileManagerSidebarItem, FileManagerSidebarRowArea};
 use crate::app::{AppState, Mode};
 use crate::detect::AgentState;
 use crate::terminal::TerminalRuntimeRegistry;
@@ -481,211 +479,6 @@ pub(crate) fn workspace_list_body_rect(area: Rect, has_scrollbar: bool) -> Rect 
     let body_height = footer_y.saturating_sub(body_y);
     let body_width = area.width.saturating_sub(u16::from(has_scrollbar));
     Rect::new(area.x, body_y, body_width, body_height)
-}
-
-#[cfg(test)]
-enum FileManagerSidebarLine<'a> {
-    Header(&'a str),
-    Blank,
-    Item(&'a FileManagerSidebarItem),
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FileManagerSidebarMarker {
-    Warning,
-    Eject,
-}
-
-#[cfg(test)]
-fn file_manager_sidebar_marker(item: &FileManagerSidebarItem) -> Option<FileManagerSidebarMarker> {
-    if !item.accessible {
-        Some(FileManagerSidebarMarker::Warning)
-    } else if item.ejectable {
-        Some(FileManagerSidebarMarker::Eject)
-    } else {
-        None
-    }
-}
-
-#[cfg(test)]
-fn file_manager_sidebar_item_is_current(app: &AppState, item: &FileManagerSidebarItem) -> bool {
-    app.sidebar_tab == crate::app::state::SidebarTab::Files
-        && app.file_manager.is_some()
-        && item.accessible
-        && app
-            .file_manager_locations
-            .highlighted_path(&app.file_manager_sidebar)
-            == Some(item.path.as_path())
-}
-
-#[cfg(test)]
-fn file_manager_sidebar_item_line(
-    app: &AppState,
-    item: &FileManagerSidebarItem,
-    width: u16,
-) -> Line<'static> {
-    let width = usize::from(width);
-    if width == 0 {
-        return Line::default();
-    }
-
-    let marker = file_manager_sidebar_marker(item);
-    let marker_width = usize::from(marker.is_some());
-    let available_left = width.saturating_sub(marker_width);
-    // Keep a blank cell between row content and a trailing affordance whenever
-    // the row is wide enough to show both.
-    let content_limit =
-        available_left.saturating_sub(usize::from(marker.is_some() && available_left > 0));
-    let mut spans = Vec::new();
-    let mut content_width = 0;
-
-    if file_manager_sidebar_item_is_current(app, item) && content_limit >= 4 {
-        let body_width = content_limit.saturating_sub(3);
-        let full_body = format!("{} {}", item.icon.glyph(), item.label);
-        let body = if body_width == 1 {
-            truncate_end(item.icon.glyph(), body_width)
-        } else {
-            truncate_end(&full_body, body_width)
-        };
-        content_width = 1 + 1 + display_width(&body) + 1;
-        spans.extend([
-            Span::raw(" "),
-            Span::styled("", Style::default().fg(app.palette.accent)),
-            Span::styled(
-                body,
-                Style::default()
-                    .fg(panel_contrast_fg(&app.palette))
-                    .bg(app.palette.accent),
-            ),
-            Span::styled("", Style::default().fg(app.palette.accent)),
-        ]);
-    } else if content_limit > 0 {
-        let prefix_width = content_limit.min(2);
-        spans.push(Span::raw(" ".repeat(prefix_width)));
-        content_width = prefix_width;
-
-        let icon_limit = content_limit.saturating_sub(content_width);
-        if icon_limit > 0 {
-            let icon = truncate_end(item.icon.glyph(), icon_limit);
-            content_width += display_width(&icon);
-            spans.push(Span::styled(
-                icon,
-                Style::default().fg(app.palette.overlay1),
-            ));
-        }
-
-        if content_width < content_limit {
-            spans.push(Span::raw(" "));
-            content_width += 1;
-        }
-
-        let label_limit = content_limit.saturating_sub(content_width);
-        if label_limit > 0 {
-            let label = truncate_end(&item.label, label_limit);
-            content_width += display_width(&label);
-            let style = if item.accessible {
-                Style::default().fg(app.palette.subtext0)
-            } else {
-                Style::default().fg(app.palette.overlay0)
-            };
-            spans.push(Span::styled(label, style));
-        }
-    }
-
-    let padding = available_left.saturating_sub(content_width);
-    if padding > 0 {
-        spans.push(Span::raw(" ".repeat(padding)));
-    }
-    if let Some(marker) = marker {
-        let (symbol, color) = match marker {
-            FileManagerSidebarMarker::Warning => ("⚠", app.palette.yellow),
-            FileManagerSidebarMarker::Eject => ("⏏", app.palette.blue),
-        };
-        spans.push(Span::styled(symbol, Style::default().fg(color)));
-    }
-
-    Line::from(spans)
-}
-
-#[cfg(test)]
-fn file_manager_sidebar_lines(app: &AppState) -> Vec<FileManagerSidebarLine<'_>> {
-    let mut lines = Vec::new();
-    for (section_idx, section) in app.file_manager_sidebar.sections.iter().enumerate() {
-        if section_idx > 0 {
-            lines.push(FileManagerSidebarLine::Blank);
-        }
-        lines.push(FileManagerSidebarLine::Header(section.kind.label()));
-        lines.extend(section.items.iter().map(FileManagerSidebarLine::Item));
-    }
-    lines
-}
-
-#[cfg(test)]
-/// Lay out only complete, clickable Files-sidebar item rows. Headers and blank
-/// separators consume vertical space but intentionally carry no path identity.
-pub(crate) fn compute_file_manager_sidebar_row_areas(
-    app: &AppState,
-    area: Rect,
-) -> Vec<FileManagerSidebarRowArea> {
-    if app.sidebar_tab != crate::app::state::SidebarTab::Files {
-        return Vec::new();
-    }
-    let body = workspace_list_body_rect(area, false);
-    if body.width == 0 || body.height == 0 {
-        return Vec::new();
-    }
-    let bottom = body.y.saturating_add(body.height);
-    let mut rows = Vec::new();
-    for (line_idx, line) in file_manager_sidebar_lines(app).into_iter().enumerate() {
-        let y = body
-            .y
-            .saturating_add(u16::try_from(line_idx).unwrap_or(u16::MAX));
-        if y >= bottom {
-            break;
-        }
-        if let FileManagerSidebarLine::Item(item) = line {
-            rows.push(FileManagerSidebarRowArea {
-                rect: Rect::new(body.x, y, body.width, 1),
-                path: item.path.clone(),
-            });
-        }
-    }
-    rows
-}
-
-#[cfg(test)]
-fn render_file_manager_sidebar(app: &AppState, frame: &mut Frame, area: Rect) {
-    let body = workspace_list_body_rect(area, false);
-    if body.width == 0 || body.height == 0 {
-        return;
-    }
-    let bottom = body.y.saturating_add(body.height);
-    for (line_idx, line) in file_manager_sidebar_lines(app).into_iter().enumerate() {
-        let y = body
-            .y
-            .saturating_add(u16::try_from(line_idx).unwrap_or(u16::MAX));
-        if y >= bottom {
-            break;
-        }
-        let row = Rect::new(body.x, y, body.width, 1);
-        match line {
-            FileManagerSidebarLine::Header(label) => frame.render_widget(
-                Paragraph::new(Span::styled(
-                    format!(" {label}"),
-                    Style::default()
-                        .fg(app.palette.overlay0)
-                        .add_modifier(Modifier::BOLD),
-                )),
-                row,
-            ),
-            FileManagerSidebarLine::Blank => {}
-            FileManagerSidebarLine::Item(item) => frame.render_widget(
-                Paragraph::new(file_manager_sidebar_item_line(app, item, row.width)),
-                row,
-            ),
-        }
-    }
 }
 
 fn workspace_list_visible_count(app: &AppState, area: Rect, scroll: usize) -> usize {
@@ -2191,11 +1984,11 @@ mod tests {
     fn file_sidebar_item(
         label: &str,
         path: &str,
-        icon: crate::app::state::FileManagerSidebarIcon,
+        icon: crate::app::state::FileManagerLocationIcon,
         accessible: bool,
         ejectable: bool,
-    ) -> crate::app::state::FileManagerSidebarItem {
-        crate::app::state::FileManagerSidebarItem {
+    ) -> crate::app::state::FileManagerLocationItem {
+        crate::app::state::FileManagerLocationItem {
             label: label.to_string(),
             path: std::path::PathBuf::from(path),
             icon,
@@ -2207,17 +2000,23 @@ mod tests {
     // TP-C6.1-MODEL: source order is stable, optional PINNED disappears when
     // empty, and a path repeated across sections grants only the first row.
     #[test]
-    fn file_sidebar_model_orders_sections_and_deduplicates_path_authority() {
+    fn file_locations_model_orders_sections_and_deduplicates_path_authority() {
         use crate::app::state::{
-            FileManagerSidebarIcon, FileManagerSidebarModel, FileManagerSidebarSectionKind,
+            FileManagerLocationIcon, FileManagerLocationSectionKind, FileManagerLocationsModel,
         };
-        let model = FileManagerSidebarModel::from_sources(
+        let model = FileManagerLocationsModel::from_sources(
             vec![
-                file_sidebar_item("Home", "/home/a", FileManagerSidebarIcon::Home, true, false),
+                file_sidebar_item(
+                    "Home",
+                    "/home/a",
+                    FileManagerLocationIcon::Home,
+                    true,
+                    false,
+                ),
                 file_sidebar_item(
                     "Downloads",
                     "/home/a/Downloads",
-                    FileManagerSidebarIcon::Downloads,
+                    FileManagerLocationIcon::Downloads,
                     true,
                     false,
                 ),
@@ -2226,24 +2025,24 @@ mod tests {
                 file_sidebar_item(
                     "duplicate",
                     "/home/a",
-                    FileManagerSidebarIcon::Pin,
+                    FileManagerLocationIcon::Pin,
                     true,
                     false,
                 ),
                 file_sidebar_item(
                     "Missing",
                     "/missing",
-                    FileManagerSidebarIcon::Pin,
+                    FileManagerLocationIcon::Pin,
                     false,
                     false,
                 ),
             ],
             vec![
-                file_sidebar_item("Root", "/", FileManagerSidebarIcon::Disk, true, false),
+                file_sidebar_item("Root", "/", FileManagerLocationIcon::Disk, true, false),
                 file_sidebar_item(
                     "USB",
                     "/media/usb",
-                    FileManagerSidebarIcon::Disk,
+                    FileManagerLocationIcon::Disk,
                     true,
                     true,
                 ),
@@ -2257,9 +2056,9 @@ mod tests {
                 .map(|section| section.kind)
                 .collect::<Vec<_>>(),
             [
-                FileManagerSidebarSectionKind::Favorites,
-                FileManagerSidebarSectionKind::Pinned,
-                FileManagerSidebarSectionKind::Locations,
+                FileManagerLocationSectionKind::Favorites,
+                FileManagerLocationSectionKind::Pinned,
+                FileManagerLocationSectionKind::Locations,
             ]
         );
         assert_eq!(model.sections[0].items.len(), 2);
@@ -2274,11 +2073,11 @@ mod tests {
         assert!(!model.sections[1].items[0].accessible);
         assert!(model.sections[2].items[1].ejectable);
 
-        let without_pins = FileManagerSidebarModel::from_sources(
+        let without_pins = FileManagerLocationsModel::from_sources(
             vec![file_sidebar_item(
                 "Home",
                 "/home/a",
-                FileManagerSidebarIcon::Home,
+                FileManagerLocationIcon::Home,
                 true,
                 false,
             )],
@@ -2286,7 +2085,7 @@ mod tests {
             vec![file_sidebar_item(
                 "Root",
                 "/",
-                FileManagerSidebarIcon::Disk,
+                FileManagerLocationIcon::Disk,
                 true,
                 false,
             )],
@@ -2295,59 +2094,7 @@ mod tests {
         assert!(without_pins
             .sections
             .iter()
-            .all(|section| section.kind != FileManagerSidebarSectionKind::Pinned));
-    }
-
-    // FCL-5 teardown: global Files row geometry moves into the Native Files
-    // content projection.
-    // TP-C6.1-GEOMETRY: only complete visible item rows receive exact path
-    // rectangles; headers/blanks are inert and height clipping is atomic.
-    #[test]
-    fn file_sidebar_geometry_addresses_items_only_and_clips_complete_rows() {
-        use crate::app::state::{FileManagerSidebarIcon, FileManagerSidebarModel, SidebarTab};
-        let mut app = crate::app::state::AppState::test_new();
-        app.sidebar_tab = SidebarTab::Files;
-        app.file_manager_sidebar = FileManagerSidebarModel::from_sources(
-            vec![file_sidebar_item(
-                "Home",
-                "/home/a",
-                FileManagerSidebarIcon::Home,
-                true,
-                false,
-            )],
-            vec![file_sidebar_item(
-                "Pinned",
-                "/work",
-                FileManagerSidebarIcon::Pin,
-                true,
-                false,
-            )],
-            vec![file_sidebar_item(
-                "Root",
-                "/",
-                FileManagerSidebarIcon::Disk,
-                true,
-                false,
-            )],
-        );
-        let area = Rect::new(3, 4, 20, 9);
-        let rows = compute_file_manager_sidebar_row_areas(&app, area);
-
-        assert_eq!(rows.len(), 2, "third section item is clipped as one row");
-        assert_eq!(rows[0].path, std::path::PathBuf::from("/home/a"));
-        assert_eq!(rows[1].path, std::path::PathBuf::from("/work"));
-        assert!(rows.iter().all(|row| row.rect.width == area.width));
-        assert!(rows[0].rect.y > area.y, "section header has no hit area");
-        assert!(rows[0].rect.y < rows[1].rect.y, "section gap stays inert");
-
-        app.sidebar_tab = SidebarTab::Projects;
-        assert!(compute_file_manager_sidebar_row_areas(&app, area).is_empty());
-
-        app.sidebar_tab = SidebarTab::Files;
-        assert!(compute_file_manager_sidebar_row_areas(&app, Rect::new(0, 0, 0, 2)).is_empty());
-        app.sidebar_collapsed = true;
-        crate::ui::compute_view(&mut app, Rect::new(0, 0, 106, 20));
-        assert!(app.view.file_manager_sidebar_row_areas.is_empty());
+            .all(|section| section.kind != FileManagerLocationSectionKind::Pinned));
     }
 
     // TP-FCL-SHELL-01: even a legacy Files tab value renders the global
@@ -2378,259 +2125,6 @@ mod tests {
         assert!(text.contains("Tracked Space"), "missing tracker: {text:?}");
         assert!(!text.contains("FAVORITES"), "locations leaked: {text:?}");
         assert!(!text.contains("LOCATIONS"), "locations leaked: {text:?}");
-    }
-
-    fn render_file_sidebar_for_test(
-        app: &crate::app::state::AppState,
-        width: u16,
-        height: u16,
-    ) -> Terminal<TestBackend> {
-        let mut terminal = Terminal::new(TestBackend::new(width.max(1), height.max(1)))
-            .expect("file sidebar test terminal should initialize");
-        terminal
-            .draw(|frame| {
-                render_file_manager_sidebar(app, frame, Rect::new(0, 0, width, height));
-            })
-            .expect("file sidebar should render");
-        terminal
-    }
-
-    // TP-FCL-AUTH-01..04: explicit prepared origin identity is the only
-    // current-location authority. Cwd changes do not move the pill;
-    // inaccessible, absent, and closed-FM states cannot retain it.
-    #[test]
-    fn file_sidebar_current_pill_tracks_explicit_accessible_origin() {
-        use crate::app::state::{FileManagerSidebarIcon, FileManagerSidebarModel, SidebarTab};
-        let mut app = crate::app::state::AppState::test_new();
-        app.sidebar_tab = SidebarTab::Files;
-        app.file_manager_sidebar = FileManagerSidebarModel::from_sources(
-            vec![
-                file_sidebar_item(
-                    "Home",
-                    "/virtual/home",
-                    FileManagerSidebarIcon::Home,
-                    true,
-                    false,
-                ),
-                file_sidebar_item(
-                    "Downloads",
-                    "/virtual/downloads",
-                    FileManagerSidebarIcon::Downloads,
-                    true,
-                    false,
-                ),
-                file_sidebar_item(
-                    "Missing",
-                    "/virtual/missing",
-                    FileManagerSidebarIcon::Pin,
-                    false,
-                    false,
-                ),
-            ],
-            Vec::new(),
-            Vec::new(),
-        );
-        let area = Rect::new(0, 0, 24, 8);
-        let rows: Vec<_> = compute_file_manager_sidebar_row_areas(&app, area)
-            .into_iter()
-            .map(|row| row.rect)
-            .collect();
-        assert_eq!(rows.len(), 3);
-
-        let row_has_accent = |terminal: &Terminal<TestBackend>, rect: Rect| {
-            (rect.x..rect.x.saturating_add(rect.width)).any(|x| {
-                terminal.backend().buffer()[(x, rect.y)].style().bg == Some(app.palette.accent)
-            })
-        };
-        let row_symbols = |terminal: &Terminal<TestBackend>, rect: Rect| -> String {
-            (rect.x..rect.x.saturating_add(rect.width))
-                .map(|x| terminal.backend().buffer()[(x, rect.y)].symbol())
-                .collect()
-        };
-
-        app.file_manager = Some(crate::fm::FmState::new("/virtual/home"));
-        app.file_manager_locations
-            .activate_direct(std::path::PathBuf::from("/virtual/home"));
-        let home = render_file_sidebar_for_test(&app, area.width, area.height);
-        assert!(row_has_accent(&home, rows[0]));
-        assert!(row_symbols(&home, rows[0]).contains(''));
-        assert!(row_symbols(&home, rows[0]).contains(''));
-        assert!(!row_has_accent(&home, rows[1]));
-        assert!(!row_has_accent(&home, rows[2]));
-
-        app.file_manager = Some(crate::fm::FmState::new("/virtual/downloads"));
-        app.file_manager_locations
-            .activate_direct(std::path::PathBuf::from("/virtual/downloads"));
-        let downloads = render_file_sidebar_for_test(&app, area.width, area.height);
-        assert!(!row_has_accent(&downloads, rows[0]));
-        assert!(row_has_accent(&downloads, rows[1]));
-        assert!(!row_has_accent(&downloads, rows[2]));
-
-        app.file_manager = Some(crate::fm::FmState::new("/virtual/missing"));
-        app.file_manager_locations
-            .activate_direct(std::path::PathBuf::from("/virtual/missing"));
-        let inaccessible = render_file_sidebar_for_test(&app, area.width, area.height);
-        assert!(rows.iter().all(|row| !row_has_accent(&inaccessible, *row)));
-
-        app.file_manager = Some(crate::fm::FmState::new("/virtual/not-in-model"));
-        app.file_manager_locations
-            .activate_direct(std::path::PathBuf::from("/virtual/not-in-model"));
-        let absent = render_file_sidebar_for_test(&app, area.width, area.height);
-        assert!(rows.iter().all(|row| !row_has_accent(&absent, *row)));
-
-        app.file_manager = Some(crate::fm::FmState::new("/virtual/home"));
-        app.file_manager_locations
-            .activate_direct(std::path::PathBuf::from("/virtual/home"));
-        app.sidebar_tab = SidebarTab::Spaces;
-        let hidden = render_file_sidebar_for_test(&app, area.width, area.height);
-        assert!(rows.iter().all(|row| !row_has_accent(&hidden, *row)));
-
-        app.sidebar_tab = SidebarTab::Files;
-        app.file_manager = None;
-        let closed = render_file_sidebar_for_test(&app, area.width, area.height);
-        assert!(rows.iter().all(|row| !row_has_accent(&closed, *row)));
-
-        app.file_manager = Some(crate::fm::FmState::new("/virtual/home"));
-        app.file_manager_locations
-            .activate_direct(std::path::PathBuf::from("/virtual/home"));
-        let reopened = render_file_sidebar_for_test(&app, area.width, area.height);
-        assert!(row_has_accent(&reopened, rows[0]));
-        assert!(rows[1..].iter().all(|row| !row_has_accent(&reopened, *row)));
-    }
-
-    // TP-C6.2-MARKER: warning is stronger than eject, markers are pinned to
-    // the final drawable cell, and a plain item cannot invent an affordance.
-    #[test]
-    fn file_sidebar_markers_are_right_aligned_and_warning_precedes_eject() {
-        use crate::app::state::{FileManagerSidebarIcon, FileManagerSidebarModel, SidebarTab};
-        let mut app = crate::app::state::AppState::test_new();
-        app.sidebar_tab = SidebarTab::Files;
-        app.file_manager_sidebar = FileManagerSidebarModel::from_sources(
-            Vec::new(),
-            Vec::new(),
-            vec![
-                file_sidebar_item(
-                    "Unavailable disk",
-                    "/media/broken",
-                    FileManagerSidebarIcon::Disk,
-                    false,
-                    true,
-                ),
-                file_sidebar_item(
-                    "USB",
-                    "/media/usb",
-                    FileManagerSidebarIcon::Disk,
-                    true,
-                    true,
-                ),
-                file_sidebar_item("Root", "/", FileManagerSidebarIcon::Disk, true, false),
-            ],
-        );
-        let area = Rect::new(0, 0, 20, 8);
-        let rows: Vec<_> = compute_file_manager_sidebar_row_areas(&app, area)
-            .into_iter()
-            .map(|row| row.rect)
-            .collect();
-        assert_eq!(rows.len(), 3);
-        let terminal = render_file_sidebar_for_test(&app, area.width, area.height);
-        let buffer = terminal.backend().buffer();
-
-        let last_cell =
-            |rect: Rect| &buffer[(rect.x.saturating_add(rect.width).saturating_sub(1), rect.y)];
-        assert_eq!(last_cell(rows[0]).symbol(), "⚠");
-        assert_eq!(last_cell(rows[0]).style().fg, Some(app.palette.yellow));
-        assert_eq!(last_cell(rows[1]).symbol(), "⏏");
-        assert_eq!(last_cell(rows[1]).style().fg, Some(app.palette.blue));
-        assert_eq!(last_cell(rows[2]).symbol(), " ");
-
-        let narrow = render_file_sidebar_for_test(&app, 1, area.height);
-        let narrow_rows = compute_file_manager_sidebar_row_areas(&app, Rect::new(0, 0, 1, 8));
-        assert_eq!(
-            narrow.backend().buffer()[(0, narrow_rows[0].rect.y)].symbol(),
-            "⚠"
-        );
-        assert_eq!(
-            narrow.backend().buffer()[(0, narrow_rows[1].rect.y)].symbol(),
-            "⏏"
-        );
-
-        let _zero = render_file_sidebar_for_test(&app, 0, area.height);
-    }
-
-    // TP-C6.2-PILL: Unicode labels use cell-width truncation, a reserved
-    // trailing marker never overlaps the current pill, and narrow rows omit
-    // both caps together instead of exposing a clipped current indicator.
-    #[test]
-    fn file_sidebar_current_pill_is_complete_unicode_and_width_safe() {
-        use crate::app::state::{FileManagerSidebarIcon, FileManagerSidebarModel, SidebarTab};
-        let mut app = crate::app::state::AppState::test_new();
-        app.sidebar_tab = SidebarTab::Files;
-        app.file_manager_sidebar = FileManagerSidebarModel::from_sources(
-            Vec::new(),
-            Vec::new(),
-            vec![file_sidebar_item(
-                "資料Downloads",
-                "/media/usb",
-                FileManagerSidebarIcon::Disk,
-                true,
-                true,
-            )],
-        );
-        app.file_manager = Some(crate::fm::FmState::new("/media/usb"));
-        app.file_manager_locations
-            .activate_direct(std::path::PathBuf::from("/media/usb"));
-
-        let area = Rect::new(0, 0, 14, 5);
-        let row = compute_file_manager_sidebar_row_areas(&app, area)[0].rect;
-        let terminal = render_file_sidebar_for_test(&app, area.width, area.height);
-        let symbols: Vec<_> = (row.x..row.x.saturating_add(row.width))
-            .map(|x| terminal.backend().buffer()[(x, row.y)].symbol())
-            .collect();
-        let left_cap = symbols
-            .iter()
-            .position(|symbol| *symbol == "")
-            .expect("left cap");
-        let right_cap = symbols
-            .iter()
-            .position(|symbol| *symbol == "")
-            .expect("right cap");
-        let marker = symbols
-            .iter()
-            .position(|symbol| *symbol == "⏏")
-            .expect("eject marker");
-        assert!(
-            left_cap < right_cap && right_cap < marker,
-            "symbols: {symbols:?}"
-        );
-        assert_eq!(marker, usize::from(row.width) - 1);
-        let mut continuation_cells = 0;
-        for index in left_cap + 1..right_cap {
-            if continuation_cells > 0 {
-                continuation_cells -= 1;
-                continue;
-            }
-            let cell = &terminal.backend().buffer()[(row.x + index as u16, row.y)];
-            assert_eq!(
-                cell.style().bg,
-                Some(app.palette.accent),
-                "pill glyph start at cell {index} must retain the accent background"
-            );
-            // TestBackend represents hidden cells covered by a wide glyph as
-            // reset blanks. The glyph-start style is the terminal-visible
-            // style, so do not mistake those internal continuation cells for
-            // holes in the pill background.
-            continuation_cells = display_width(cell.symbol()).saturating_sub(1);
-        }
-
-        let narrow = render_file_sidebar_for_test(&app, 3, area.height);
-        let narrow_row =
-            compute_file_manager_sidebar_row_areas(&app, Rect::new(0, 0, 3, 5))[0].rect;
-        let narrow_symbols: Vec<_> = (narrow_row.x..narrow_row.x.saturating_add(narrow_row.width))
-            .map(|x| narrow.backend().buffer()[(x, narrow_row.y)].symbol())
-            .collect();
-        assert!(!narrow_symbols.contains(&""));
-        assert!(!narrow_symbols.contains(&""));
-        assert_eq!(narrow_symbols.last(), Some(&"⏏"));
     }
 
     // ---- Projects tab render + layout helpers --------------------------------

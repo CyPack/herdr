@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::state::FileManagerSidebarModel;
+use super::state::FileManagerLocationsModel;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FileManagerLocationOrigin {
@@ -44,13 +44,15 @@ pub(crate) struct FileManagerLocationsState {
     pub(crate) failure: Option<(PathBuf, FileManagerLocationLoadError)>,
     pub(crate) scroll: usize,
     pub(crate) focus: FileManagerLocationsFocus,
+    drawer_open: bool,
+    drawer_restore_focus: FileManagerLocationsFocus,
 }
 
 impl FileManagerLocationsState {
     pub(crate) fn activate_location(
         &mut self,
         path: &Path,
-        model: &FileManagerSidebarModel,
+        model: &FileManagerLocationsModel,
     ) -> bool {
         if !model
             .item_for_path(path)
@@ -74,7 +76,7 @@ impl FileManagerLocationsState {
 
     pub(crate) fn highlighted_path<'a>(
         &'a self,
-        model: &FileManagerSidebarModel,
+        model: &FileManagerLocationsModel,
     ) -> Option<&'a Path> {
         let path = match self.origin.as_ref()? {
             FileManagerLocationOrigin::Location(path) | FileManagerLocationOrigin::Direct(path) => {
@@ -87,7 +89,7 @@ impl FileManagerLocationsState {
             .then_some(path.as_path())
     }
 
-    pub(crate) fn reconcile_model(&mut self, model: &FileManagerSidebarModel) -> bool {
+    pub(crate) fn reconcile_model(&mut self, model: &FileManagerLocationsModel) -> bool {
         let Some(FileManagerLocationOrigin::Location(path)) = self.origin.as_ref() else {
             return false;
         };
@@ -107,6 +109,8 @@ impl FileManagerLocationsState {
         self.failure = None;
         self.scroll = 0;
         self.focus = FileManagerLocationsFocus::Trail;
+        self.drawer_open = false;
+        self.drawer_restore_focus = FileManagerLocationsFocus::Trail;
     }
 
     pub(crate) fn begin_load(
@@ -167,6 +171,29 @@ impl FileManagerLocationsState {
     pub(crate) fn focus_trail(&mut self) {
         self.focus = FileManagerLocationsFocus::Trail;
     }
+
+    pub(crate) fn drawer_is_open(&self) -> bool {
+        self.drawer_open
+    }
+
+    pub(crate) fn open_drawer(&mut self) -> bool {
+        if self.drawer_open {
+            return false;
+        }
+        self.drawer_restore_focus = self.focus;
+        self.drawer_open = true;
+        self.focus = FileManagerLocationsFocus::Rail;
+        true
+    }
+
+    pub(crate) fn close_drawer(&mut self) -> bool {
+        if !self.drawer_open {
+            return false;
+        }
+        self.drawer_open = false;
+        self.focus = self.drawer_restore_focus;
+        true
+    }
 }
 
 #[cfg(test)]
@@ -175,29 +202,29 @@ mod tests {
 
     use super::{FileManagerLocationOrigin, FileManagerLocationsState};
     use crate::app::state::{
-        FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel,
+        FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel,
     };
 
-    fn item(path: &str, accessible: bool) -> FileManagerSidebarItem {
-        FileManagerSidebarItem {
+    fn item(path: &str, accessible: bool) -> FileManagerLocationItem {
+        FileManagerLocationItem {
             label: Path::new(path)
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or(path)
                 .to_string(),
             path: PathBuf::from(path),
-            icon: FileManagerSidebarIcon::Pin,
+            icon: FileManagerLocationIcon::Pin,
             accessible,
             ejectable: false,
         }
     }
 
-    fn model(home_accessible: bool, include_nested: bool) -> FileManagerSidebarModel {
+    fn model(home_accessible: bool, include_nested: bool) -> FileManagerLocationsModel {
         let mut favorites = vec![item("/home/ayaz", home_accessible)];
         if include_nested {
             favorites.push(item("/home/ayaz/projects/herdr", true));
         }
-        FileManagerSidebarModel::from_sources(favorites, Vec::new(), Vec::new())
+        FileManagerLocationsModel::from_sources(favorites, Vec::new(), Vec::new())
     }
 
     // TP-FCL-AUTH-01: current-directory descent is not highlight authority;

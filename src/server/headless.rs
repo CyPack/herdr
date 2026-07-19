@@ -6528,7 +6528,7 @@ next_tab = ""
     #[test]
     fn headless_raw_mouse_locations_navigation_loads_exact_trail() {
         use crate::app::state::{
-            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
+            FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel, SidebarTab,
         };
 
         let root = std::env::temp_dir().join(format!(
@@ -6574,11 +6574,11 @@ next_tab = ""
             .active_instance_generation()
             .expect("active Files generation");
         server.app.state.sidebar_tab = SidebarTab::Files;
-        server.app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
-            vec![FileManagerSidebarItem {
+        server.app.state.file_manager_locations_model = FileManagerLocationsModel::from_sources(
+            vec![FileManagerLocationItem {
                 label: "Home".into(),
                 path: target.clone(),
-                icon: FileManagerSidebarIcon::Home,
+                icon: FileManagerLocationIcon::Home,
                 accessible: true,
                 ejectable: false,
             }],
@@ -6602,7 +6602,7 @@ next_tab = ""
             data: mouse,
         }));
         assert_eq!(
-            server.app.state.request_file_manager_sidebar_navigation,
+            server.app.state.request_file_manager_location_navigation,
             Some(target.clone()),
             "raw SGR input reaches the exact model-revalidated locations rail seam"
         );
@@ -6620,7 +6620,7 @@ next_tab = ""
             server
                 .app
                 .state
-                .request_file_manager_sidebar_navigation
+                .request_file_manager_location_navigation
                 .is_none(),
             "the typed location request is one-shot"
         );

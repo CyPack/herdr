@@ -19,8 +19,8 @@ mod file_manager_locations;
 #[cfg(test)]
 pub(crate) use file_manager_locations::FileManagerLocationLoadError;
 pub(crate) use file_manager_locations::FileManagerLocationsFocus;
+mod file_manager_locations_model;
 mod file_manager_miller;
-mod file_manager_sidebar;
 mod file_manager_watcher;
 mod file_operation_worker;
 mod file_preview_worker;
@@ -532,7 +532,7 @@ impl App {
             .iter()
             .map(|entry| crate::worktree::expand_tilde_absolute_path(entry))
             .collect();
-        let file_manager_sidebar = state::FileManagerSidebarModel::from_home_and_pins(
+        let file_manager_locations_model = state::FileManagerLocationsModel::from_home_and_pins(
             &crate::worktree::expand_tilde_absolute_path("~"),
             &projects_pinned,
         );
@@ -598,9 +598,9 @@ impl App {
             request_file_manager_context_action: None,
             request_file_manager_agent_handoff: None,
             agent_reference_picker: None,
-            file_manager_sidebar,
+            file_manager_locations_model,
             file_manager_locations: Default::default(),
-            request_file_manager_sidebar_navigation: None,
+            request_file_manager_location_navigation: None,
             should_quit: false,
             detach_exits: no_session,
             detach_requested: false,
@@ -666,7 +666,6 @@ impl App {
                 workspace_card_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
-                file_manager_sidebar_row_areas: Vec::new(),
                 app_dock_entry_areas: Vec::new(),
                 file_manager_locations: Default::default(),
                 file_manager_miller: Default::default(),

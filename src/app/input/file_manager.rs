@@ -47,6 +47,12 @@ pub(super) fn handle_file_manager_key(
     state: &mut AppState,
     key: KeyEvent,
 ) -> FileManagerKeyDispatch {
+    if key.code == KeyCode::Esc && state.file_manager_locations.close_drawer() {
+        return FileManagerKeyDispatch::Consumed;
+    }
+    if state.file_manager_locations.drawer_is_open() {
+        return FileManagerKeyDispatch::Consumed;
+    }
     if key.code == KeyCode::Esc
         && state
             .file_manager_operation
@@ -556,9 +562,77 @@ impl App {
         }
 
         let active_files_generation = self.state.stage.active_instance_generation();
-        let locations = &self.state.view.file_manager_locations;
+        let locations = self.state.view.file_manager_locations.clone();
         let locations_frame_is_live = locations.files_generation == active_files_generation
-            && locations.model_revision == self.state.file_manager_sidebar.revision();
+            && locations.model_revision == self.state.file_manager_locations_model.revision();
+        let in_locations_action = locations
+            .locations_action_area
+            .is_some_and(|action| rect_contains(action, mouse.column, mouse.row));
+        if in_locations_action {
+            if locations_frame_is_live
+                && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                && mouse.modifiers.is_empty()
+            {
+                if self.state.file_manager_locations.drawer_is_open() {
+                    let _ = self.state.file_manager_locations.close_drawer();
+                } else {
+                    let _ = self.state.file_manager_locations.open_drawer();
+                }
+            }
+            return FileManagerMouseDispatch::Consumed;
+        }
+        if let Some(drawer) = locations.drawer_area {
+            if locations_frame_is_live && rect_contains(drawer, mouse.column, mouse.row) {
+                match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left) if mouse.modifiers.is_empty() => {
+                        let target = locations
+                            .rows
+                            .iter()
+                            .find(|row| rect_contains(row.rect, mouse.column, mouse.row))
+                            .filter(|row| {
+                                Some(row.files_generation) == active_files_generation
+                                    && row.model_revision == locations.model_revision
+                            })
+                            .and_then(|row| {
+                                self.state
+                                    .file_manager_locations_model
+                                    .item_for_path(&row.path)
+                                    .filter(|item| item.accessible)
+                                    .map(|_| row.path.clone())
+                            });
+                        if let Some(path) = target {
+                            self.state.request_file_manager_location_navigation = Some(path);
+                            let _ = self.state.file_manager_locations.close_drawer();
+                        }
+                    }
+                    MouseEventKind::ScrollUp if mouse.modifiers.is_empty() => {
+                        let content = crate::ui::locations_drawer_content_area(drawer);
+                        let _ = self.state.file_manager_locations.scroll_rail(
+                            -1,
+                            locations.content_line_count,
+                            content.height,
+                        );
+                    }
+                    MouseEventKind::ScrollDown if mouse.modifiers.is_empty() => {
+                        let content = crate::ui::locations_drawer_content_area(drawer);
+                        let _ = self.state.file_manager_locations.scroll_rail(
+                            1,
+                            locations.content_line_count,
+                            content.height,
+                        );
+                    }
+                    _ => {}
+                }
+                return FileManagerMouseDispatch::Consumed;
+            }
+            if locations_frame_is_live
+                && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                && mouse.modifiers.is_empty()
+            {
+                let _ = self.state.file_manager_locations.close_drawer();
+            }
+            return FileManagerMouseDispatch::Consumed;
+        }
         let in_locations_rail = locations
             .layout
             .rail
@@ -577,13 +651,13 @@ impl App {
                             })
                             .and_then(|row| {
                                 self.state
-                                    .file_manager_sidebar
+                                    .file_manager_locations_model
                                     .item_for_path(&row.path)
                                     .filter(|item| item.accessible)
                                     .map(|_| row.path.clone())
                             });
                         if let Some(path) = target {
-                            self.state.request_file_manager_sidebar_navigation = Some(path);
+                            self.state.request_file_manager_location_navigation = Some(path);
                             self.state.file_manager_locations.focus =
                                 crate::app::FileManagerLocationsFocus::Rail;
                         }
@@ -7604,11 +7678,11 @@ command = ["inspect"]
     fn fcl_location_item(
         label: impl Into<String>,
         path: PathBuf,
-    ) -> crate::app::state::FileManagerSidebarItem {
-        crate::app::state::FileManagerSidebarItem {
+    ) -> crate::app::state::FileManagerLocationItem {
+        crate::app::state::FileManagerLocationItem {
             label: label.into(),
             path,
-            icon: crate::app::state::FileManagerSidebarIcon::Pin,
+            icon: crate::app::state::FileManagerLocationIcon::Pin,
             accessible: true,
             ejectable: false,
         }
@@ -7620,11 +7694,12 @@ command = ["inspect"]
             .enumerate()
             .map(|(index, path)| fcl_location_item(format!("Location {index:02}"), path.clone()))
             .collect();
-        app.state.file_manager_sidebar = crate::app::state::FileManagerSidebarModel::from_sources(
-            favorites,
-            Vec::new(),
-            Vec::new(),
-        );
+        app.state.file_manager_locations_model =
+            crate::app::state::FileManagerLocationsModel::from_sources(
+                favorites,
+                Vec::new(),
+                Vec::new(),
+            );
     }
 
     // TP-FCL-INPUT-01: one fresh content-local row owns one exact navigation
@@ -7664,11 +7739,11 @@ command = ["inspect"]
             FileManagerMouseDispatch::Consumed
         );
         assert_eq!(
-            app.state.request_file_manager_sidebar_navigation,
+            app.state.request_file_manager_location_navigation,
             Some(target.path.clone()),
             "the fresh row must emit its exact prepared path once"
         );
-        app.state.request_file_manager_sidebar_navigation = None;
+        app.state.request_file_manager_location_navigation = None;
 
         let first_before = app.state.view.file_manager_locations.rows[0].path.clone();
         let trail_before = app
@@ -7707,7 +7782,7 @@ command = ["inspect"]
             trail_before,
             "vertical rail input must not mutate Trail horizontal authority"
         );
-        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+        assert!(app.state.request_file_manager_location_navigation.is_none());
     }
 
     // TP-FCL-INPUT-02: horizontal ownership is rectangle-local. The rail
@@ -7836,8 +7911,8 @@ command = ["inspect"]
         compute_view(&mut app.state, frame);
         let stale_row = app.state.view.file_manager_locations.rows[0].clone();
 
-        app.state.file_manager_sidebar.replace_with(
-            crate::app::state::FileManagerSidebarModel::from_sources(
+        app.state.file_manager_locations_model.replace_with(
+            crate::app::state::FileManagerLocationsModel::from_sources(
                 vec![fcl_location_item("Replacement", paths[1].clone())],
                 Vec::new(),
                 Vec::new(),
@@ -7848,7 +7923,7 @@ command = ["inspect"]
             stale_row.rect.x,
             stale_row.rect.y,
         ));
-        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+        assert!(app.state.request_file_manager_location_navigation.is_none());
 
         compute_view(&mut app.state, frame);
         let fresh_row = app.state.view.file_manager_locations.rows[0].clone();
@@ -7880,7 +7955,7 @@ command = ["inspect"]
             ),
         ] {
             app.handle_file_manager_mouse(event);
-            assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+            assert!(app.state.request_file_manager_location_navigation.is_none());
         }
 
         compute_view(&mut app.state, Rect::new(0, 0, 10, 8));
@@ -7893,7 +7968,7 @@ command = ["inspect"]
             fresh_row.rect.x,
             fresh_row.rect.y,
         ));
-        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+        assert!(app.state.request_file_manager_location_navigation.is_none());
     }
 
     fn compact_fcl_app(tag: &str) -> (TempDir, crate::app::App, Rect, Vec<PathBuf>) {
@@ -7971,7 +8046,7 @@ command = ["inspect"]
             target.rect.y,
         ));
         assert_eq!(
-            app.state.request_file_manager_sidebar_navigation,
+            app.state.request_file_manager_location_navigation,
             Some(target.path)
         );
     }
@@ -8042,8 +8117,8 @@ command = ["inspect"]
         let (_td, mut app, frame, paths) = compact_fcl_app("fcl-drawer-authority");
         let drawer = open_fcl_drawer(&mut app, frame);
         let stale = app.state.view.file_manager_locations.rows[0].clone();
-        app.state.file_manager_sidebar.replace_with(
-            crate::app::state::FileManagerSidebarModel::from_sources(
+        app.state.file_manager_locations_model.replace_with(
+            crate::app::state::FileManagerLocationsModel::from_sources(
                 vec![fcl_location_item("Replacement", paths[1].clone())],
                 Vec::new(),
                 Vec::new(),
@@ -8054,7 +8129,7 @@ command = ["inspect"]
             stale.rect.x,
             stale.rect.y,
         ));
-        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+        assert!(app.state.request_file_manager_location_navigation.is_none());
 
         compute_view(&mut app.state, frame);
         let trail_before = app
@@ -8097,6 +8172,6 @@ command = ["inspect"]
             })
             .expect("Files stays open");
         assert_eq!(trail_after, trail_before);
-        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+        assert!(app.state.request_file_manager_location_navigation.is_none());
     }
 }

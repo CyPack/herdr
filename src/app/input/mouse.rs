@@ -605,7 +605,7 @@ impl AppState {
                             self.activate_dock_app(crate::ui::surface_host::BuiltInAppId::Files);
                         } else {
                             self.sidebar_tab = tab;
-                            self.request_file_manager_sidebar_navigation = None;
+                            self.request_file_manager_location_navigation = None;
                             if self.stage.surface_view()
                                 == crate::ui::surface_host::StageSurfaceView::NativeFiles
                             {

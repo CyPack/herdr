@@ -401,7 +401,7 @@ impl super::App {
     }
 
     #[cfg(test)]
-    pub(crate) fn sync_file_manager_sidebar_navigation(&mut self) -> bool {
+    pub(crate) fn sync_file_manager_location_navigation(&mut self) -> bool {
         let consumed = self.sync_file_manager_location_request();
         if consumed && self.state.file_manager_locations.pending.is_some() {
             self.file_manager_io_worker.wait_for_result_for_test();
@@ -607,9 +607,9 @@ mod tests {
     // model authority and directory type, consumes once, and never replaces a
     // live FM projection for stale/missing/file targets.
     #[test]
-    fn sidebar_navigation_opens_exact_directory_and_rejects_stale_targets() {
+    fn location_navigation_opens_exact_directory_and_rejects_stale_targets() {
         use crate::app::state::{
-            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel,
+            FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel,
         };
         let td = TempDir::new("sidebar-navigation");
         let target = td.root.join("target");
@@ -617,10 +617,10 @@ mod tests {
         std::fs::write(target.join("visible.txt"), b"visible").expect("write target entry");
         let regular_file = td.root.join("not-a-directory.txt");
         std::fs::write(&regular_file, b"file").expect("write non-directory target");
-        let item = |label: &str, path: PathBuf| FileManagerSidebarItem {
+        let item = |label: &str, path: PathBuf| FileManagerLocationItem {
             label: label.to_string(),
             path,
-            icon: FileManagerSidebarIcon::Pin,
+            icon: FileManagerLocationIcon::Pin,
             accessible: true,
             ejectable: false,
         };
@@ -629,7 +629,7 @@ mod tests {
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
             .expect("open initial Files instance");
         app.state.sidebar_tab = crate::app::state::SidebarTab::Files;
-        app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+        app.state.file_manager_locations_model = FileManagerLocationsModel::from_sources(
             Vec::new(),
             vec![
                 item("Target", target.clone()),
@@ -637,9 +637,9 @@ mod tests {
             ],
             Vec::new(),
         );
-        app.state.request_file_manager_sidebar_navigation = Some(target.clone());
+        app.state.request_file_manager_location_navigation = Some(target.clone());
 
-        assert!(app.sync_file_manager_sidebar_navigation());
+        assert!(app.sync_file_manager_location_navigation());
         let file_manager = app
             .state
             .file_manager
@@ -650,9 +650,9 @@ mod tests {
             .entries
             .iter()
             .any(|entry| entry.name == "visible.txt"));
-        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+        assert!(app.state.request_file_manager_location_navigation.is_none());
         assert!(
-            !app.sync_file_manager_sidebar_navigation(),
+            !app.sync_file_manager_location_navigation(),
             "one-shot request"
         );
         let _ = app.sync_file_manager_watcher();
@@ -675,24 +675,24 @@ mod tests {
             .expect("open FM")
             .cwd
             .clone();
-        app.state.request_file_manager_sidebar_navigation = Some(regular_file);
-        assert!(app.sync_file_manager_sidebar_navigation());
+        app.state.request_file_manager_location_navigation = Some(regular_file);
+        assert!(app.sync_file_manager_location_navigation());
         assert_eq!(
             app.state.file_manager.as_ref().expect("FM preserved").cwd,
             before_cwd
         );
 
         let missing = td.root.join("missing");
-        app.state.request_file_manager_sidebar_navigation = Some(missing);
-        assert!(app.sync_file_manager_sidebar_navigation());
+        app.state.request_file_manager_location_navigation = Some(missing);
+        assert!(app.sync_file_manager_location_navigation());
         assert_eq!(
             app.state.file_manager.as_ref().expect("FM preserved").cwd,
             before_cwd
         );
 
-        app.state.request_file_manager_sidebar_navigation = Some(target.clone());
-        app.state.file_manager_sidebar = FileManagerSidebarModel::default();
-        assert!(app.sync_file_manager_sidebar_navigation());
+        app.state.request_file_manager_location_navigation = Some(target.clone());
+        app.state.file_manager_locations_model = FileManagerLocationsModel::default();
+        assert!(app.sync_file_manager_location_navigation());
         assert_eq!(
             app.state.file_manager.as_ref().expect("FM preserved").cwd,
             before_cwd
@@ -700,14 +700,14 @@ mod tests {
 
         let other = td.root.join("other");
         std::fs::create_dir_all(&other).expect("create alternate sidebar target");
-        app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+        app.state.file_manager_locations_model = FileManagerLocationsModel::from_sources(
             Vec::new(),
             vec![item("Other", other.clone())],
             Vec::new(),
         );
-        app.state.request_file_manager_sidebar_navigation = Some(other.clone());
+        app.state.request_file_manager_location_navigation = Some(other.clone());
         app.state.sidebar_tab = crate::app::state::SidebarTab::Projects;
-        assert!(app.sync_file_manager_sidebar_navigation());
+        assert!(app.sync_file_manager_location_navigation());
         assert_eq!(
             app.state.file_manager.as_ref().expect("FM replaced").cwd,
             other,
@@ -715,12 +715,12 @@ mod tests {
         );
 
         app.state.sidebar_tab = crate::app::state::SidebarTab::Files;
-        app.state.request_file_manager_sidebar_navigation = Some(target.clone());
+        app.state.request_file_manager_location_navigation = Some(target.clone());
         app.state.close_file_manager();
-        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
-        app.state.request_file_manager_sidebar_navigation = Some(target);
+        assert!(app.state.request_file_manager_location_navigation.is_none());
+        app.state.request_file_manager_location_navigation = Some(target);
         app.state.open_file_manager();
-        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+        assert!(app.state.request_file_manager_location_navigation.is_none());
     }
 
     // TP-TRAIL-T7-INPUT-05: an accessible Files sidebar target replaces the
@@ -728,9 +728,9 @@ mod tests {
     // Files instance is preserved, while the new trail starts at the exact
     // target with no implicit first-row selection.
     #[test]
-    fn sidebar_navigation_opens_fresh_trail_root_and_preserves_generation() {
+    fn location_navigation_opens_fresh_trail_root_and_preserves_generation() {
         use crate::app::state::{
-            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel,
+            FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel,
         };
         let td = TempDir::new("sidebar-trail-root");
         let initial = td.root.join("initial");
@@ -749,20 +749,20 @@ mod tests {
             .active_instance_generation()
             .expect("active Files generation");
         app.state.sidebar_tab = crate::app::state::SidebarTab::Files;
-        app.state.file_manager_sidebar = FileManagerSidebarModel::from_sources(
+        app.state.file_manager_locations_model = FileManagerLocationsModel::from_sources(
             Vec::new(),
-            vec![FileManagerSidebarItem {
+            vec![FileManagerLocationItem {
                 label: "Target".into(),
                 path: target.clone(),
-                icon: FileManagerSidebarIcon::Pin,
+                icon: FileManagerLocationIcon::Pin,
                 accessible: true,
                 ejectable: false,
             }],
             Vec::new(),
         );
-        app.state.request_file_manager_sidebar_navigation = Some(target.clone());
+        app.state.request_file_manager_location_navigation = Some(target.clone());
 
-        assert!(app.sync_file_manager_sidebar_navigation());
+        assert!(app.sync_file_manager_location_navigation());
 
         let file_manager = app.state.file_manager.as_ref().expect("open FM");
         assert_eq!(

@@ -36,8 +36,11 @@ use self::dialogs::{
 pub(crate) use self::file_manager::compute_file_manager_action_bar_model;
 #[cfg(test)]
 pub(crate) use self::file_manager::file_manager_preview_content_area;
-use self::file_manager::locations::project_file_manager_locations_view;
+pub(crate) use self::file_manager::locations::locations_drawer_content_area;
 pub(crate) use self::file_manager::locations::FileManagerLocationsView;
+use self::file_manager::locations::{
+    project_file_manager_locations_view, FileManagerLocationsMode,
+};
 #[cfg(test)]
 pub(crate) use self::file_manager::miller::project_miller_view;
 pub(crate) use self::file_manager::miller::{
@@ -239,6 +242,19 @@ fn desktop_tab_bar_and_terminal_area(
     }
 }
 
+fn sync_file_manager_locations_view(app: &mut AppState, area: Rect) -> FileManagerLocationsView {
+    let mut view = project_file_manager_locations_view(app, area);
+    let drawer_is_invalid = app.file_manager_locations.drawer_is_open()
+        && (view.layout.mode != FileManagerLocationsMode::Compact
+            || view.locations_action_area.is_none()
+            || view.drawer_area.is_none());
+    if drawer_is_invalid {
+        let _ = app.file_manager_locations.close_drawer();
+        view = project_file_manager_locations_view(app, area);
+    }
+    view
+}
+
 fn compute_view_internal(
     app: &mut AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
@@ -249,7 +265,7 @@ fn compute_view_internal(
     let _profile = crate::render_prof::duration_guard("shell.compute_view");
     let _ = app
         .file_manager_locations
-        .reconcile_model(&app.file_manager_sidebar);
+        .reconcile_model(&app.file_manager_locations_model);
     app.cancel_miller_resize_for_terminal_area(area.width);
     if app
         .shell_resize_original_total()
@@ -317,7 +333,7 @@ fn compute_view_internal(
     } else {
         (Rect::default(), main_area)
     };
-    let file_manager_locations = project_file_manager_locations_view(app, terminal_area);
+    let file_manager_locations = sync_file_manager_locations_view(app, terminal_area);
     let file_manager_miller = sync_miller_view(app, file_manager_locations.layout.trail);
     let file_manager_trail = sync_trail_view(app, file_manager_locations.layout.trail);
     let FileManagerRowGeometry {
@@ -383,7 +399,6 @@ fn compute_view_internal(
                 sidebar::normalized_projects_scroll(app, list_rect, app.projects_scroll);
             sidebar::compute_project_row_areas(app, list_rect)
         };
-    let file_manager_sidebar_row_areas = Vec::new();
 
     let tab_bar_view = app
         .active
@@ -464,7 +479,6 @@ fn compute_view_internal(
         workspace_card_areas,
         sidebar_tab_hit_areas,
         project_row_areas,
-        file_manager_sidebar_row_areas,
         app_dock_entry_areas,
         file_manager_locations,
         file_manager_miller,
@@ -510,7 +524,7 @@ fn compute_mobile_view(
     } else {
         (area, Rect::default())
     };
-    let file_manager_locations = project_file_manager_locations_view(app, terminal_area);
+    let file_manager_locations = sync_file_manager_locations_view(app, terminal_area);
     let file_manager_miller = sync_miller_view(app, file_manager_locations.layout.trail);
     let file_manager_trail = sync_trail_view(app, file_manager_locations.layout.trail);
     let FileManagerRowGeometry {
@@ -593,7 +607,6 @@ fn compute_mobile_view(
         workspace_card_areas: Vec::new(),
         sidebar_tab_hit_areas: Vec::new(),
         project_row_areas: Vec::new(),
-        file_manager_sidebar_row_areas: Vec::new(),
         app_dock_entry_areas: Vec::new(),
         file_manager_locations,
         file_manager_miller,
@@ -2092,8 +2105,9 @@ mod tests {
 
     fn native_fm_visual_composition_app(root: &std::path::Path) -> AppState {
         use crate::app::state::{
+            FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel,
             FileManagerOperationKind, FileManagerOperationState, FileManagerOperationStatus,
-            FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel, SidebarTab,
+            SidebarTab,
         };
 
         let mut file_manager = crate::fm::FmState::new(root);
@@ -2105,11 +2119,11 @@ mod tests {
         app.mode = Mode::Terminal;
         app.palette = crate::app::state::Palette::catppuccin_latte();
         app.sidebar_tab = SidebarTab::Files;
-        app.file_manager_sidebar = FileManagerSidebarModel::from_sources(
-            vec![FileManagerSidebarItem {
+        app.file_manager_locations_model = FileManagerLocationsModel::from_sources(
+            vec![FileManagerLocationItem {
                 label: "Visual fixture".into(),
                 path: root.to_path_buf(),
-                icon: FileManagerSidebarIcon::Home,
+                icon: FileManagerLocationIcon::Home,
                 accessible: true,
                 ejectable: false,
             }],

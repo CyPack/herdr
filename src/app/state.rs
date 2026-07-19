@@ -1305,13 +1305,12 @@ impl SidebarTab {
     }
 }
 
-pub use super::file_manager_sidebar::{
-    FileManagerSidebarIcon, FileManagerSidebarItem, FileManagerSidebarModel,
-    FileManagerSidebarRowArea,
+pub use super::file_manager_locations_model::{
+    FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel,
 };
 #[cfg(test)]
-pub use super::file_manager_sidebar::{
-    FileManagerSidebarSectionKind, FILE_MANAGER_SIDEBAR_MAX_ITEMS,
+pub use super::file_manager_locations_model::{
+    FileManagerLocationSectionKind, FILE_MANAGER_LOCATIONS_MAX_ITEMS,
 };
 
 /// Client-local, computed hit geometry for the focused agent's attachment
@@ -1374,11 +1373,6 @@ pub struct ViewState {
     /// Laid-out rows for the Projects tab (project headers + chat sessions).
     /// Empty on every non-Projects tab and when the sidebar is collapsed.
     pub project_row_areas: Vec<ProjectRowArea>,
-    /// Exact clickable item rows for the prepared Files sidebar. Empty on
-    /// every non-Files tab and when the sidebar is collapsed.
-    #[allow(dead_code)]
-    // FCL-4 removes production ownership; FCL-5 deletes compatibility tests.
-    pub file_manager_sidebar_row_areas: Vec<FileManagerSidebarRowArea>,
     /// Complete AppDock entry targets for the current frame. Empty whenever
     /// the live shell projects no dock region.
     pub app_dock_entry_areas: Vec<crate::ui::app_dock::AppDockEntryArea>,
@@ -2148,9 +2142,9 @@ pub struct AppState {
     /// It owns no watcher, worker, process, pane, or server state.
     pub agent_reference_picker:
         Option<crate::app::agent_reference_picker::AgentReferencePickerState>,
-    /// Prepared, bounded Files-sidebar data. Filesystem/environment discovery
+    /// Prepared, bounded Files-locations data. Filesystem/environment discovery
     /// happens only when this projection is refreshed, never during render.
-    pub file_manager_sidebar: FileManagerSidebarModel,
+    pub file_manager_locations_model: FileManagerLocationsModel,
     /// Explicit client-local root identity for the Native Files locations
     /// surface. It is never inferred from cwd and never persisted or sent
     /// through the server protocol.
@@ -2158,7 +2152,7 @@ pub struct AppState {
         crate::app::file_manager_locations::FileManagerLocationsState,
     /// Exact row path prepared by input and consumed once by the App-owned
     /// scheduled navigation boundary.
-    pub request_file_manager_sidebar_navigation: Option<PathBuf>,
+    pub request_file_manager_location_navigation: Option<PathBuf>,
     pub should_quit: bool,
     /// In monolithic --no-session mode, detach exits the app because there is no server to detach from.
     pub detach_exits: bool,
@@ -2627,9 +2621,9 @@ impl AppState {
             request_file_manager_context_action: None,
             request_file_manager_agent_handoff: None,
             agent_reference_picker: None,
-            file_manager_sidebar: FileManagerSidebarModel::default(),
+            file_manager_locations_model: FileManagerLocationsModel::default(),
             file_manager_locations: Default::default(),
-            request_file_manager_sidebar_navigation: None,
+            request_file_manager_location_navigation: None,
             should_quit: false,
             detach_exits: false,
             detach_requested: false,
@@ -2689,7 +2683,6 @@ impl AppState {
                 workspace_card_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
-                file_manager_sidebar_row_areas: Vec::new(),
                 app_dock_entry_areas: Vec::new(),
                 file_manager_locations: Default::default(),
                 file_manager_miller: Default::default(),
@@ -3335,7 +3328,7 @@ mod tests {
     // favorites are omitted, configured pins remain visible but marked
     // inaccessible, and duplicate path authority stays with the first section.
     #[test]
-    fn file_sidebar_preparation_uses_live_home_and_pin_state() {
+    fn file_locations_preparation_uses_live_home_and_pin_state() {
         use std::sync::atomic::{AtomicU64, Ordering};
 
         struct TempHome(PathBuf);
@@ -3356,13 +3349,13 @@ mod tests {
         std::fs::write(home.0.join("Desktop"), b"not a directory").expect("create non-dir Desktop");
         let missing_pin = home.0.join("missing-pin");
 
-        let model = FileManagerSidebarModel::from_home_and_pins(
+        let model = FileManagerLocationsModel::from_home_and_pins(
             &home.0,
             &[home.0.clone(), missing_pin.clone()],
         );
 
         let favorites = model
-            .section(FileManagerSidebarSectionKind::Favorites)
+            .section(FileManagerLocationSectionKind::Favorites)
             .expect("favorites section");
         assert_eq!(
             favorites
@@ -3375,14 +3368,14 @@ mod tests {
         assert!(favorites.items.iter().all(|item| item.accessible));
 
         let pinned = model
-            .section(FileManagerSidebarSectionKind::Pinned)
+            .section(FileManagerLocationSectionKind::Pinned)
             .expect("inaccessible configured pin remains visible");
         assert_eq!(pinned.items.len(), 1, "Home duplicate is removed");
         assert_eq!(pinned.items[0].path, missing_pin);
         assert!(!pinned.items[0].accessible);
 
         let locations = model
-            .section(FileManagerSidebarSectionKind::Locations)
+            .section(FileManagerLocationSectionKind::Locations)
             .expect("root location");
         assert_eq!(locations.items[0].label, "Root");
         assert!(locations.items[0].path.is_absolute());
@@ -3391,19 +3384,19 @@ mod tests {
     // TP-C6.1-MODEL: adversarial configuration cannot create an unbounded
     // client-side sidebar model or move later duplicates ahead of first use.
     #[test]
-    fn file_sidebar_model_is_bounded_across_all_sections() {
-        let items = (0..FILE_MANAGER_SIDEBAR_MAX_ITEMS + 32)
-            .map(|index| FileManagerSidebarItem {
+    fn file_locations_model_is_bounded_across_all_sections() {
+        let items = (0..FILE_MANAGER_LOCATIONS_MAX_ITEMS + 32)
+            .map(|index| FileManagerLocationItem {
                 label: format!("item-{index}"),
                 path: PathBuf::from(format!("/virtual/{index}")),
-                icon: FileManagerSidebarIcon::Pin,
+                icon: FileManagerLocationIcon::Pin,
                 accessible: true,
                 ejectable: false,
             })
             .collect();
-        let model = FileManagerSidebarModel::from_sources(Vec::new(), items, Vec::new());
+        let model = FileManagerLocationsModel::from_sources(Vec::new(), items, Vec::new());
 
-        assert_eq!(model.item_count(), FILE_MANAGER_SIDEBAR_MAX_ITEMS);
+        assert_eq!(model.item_count(), FILE_MANAGER_LOCATIONS_MAX_ITEMS);
         assert_eq!(model.sections[0].items[0].path, PathBuf::from("/virtual/0"));
     }
 

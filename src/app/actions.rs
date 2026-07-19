@@ -393,7 +393,7 @@ impl AppState {
             .map(|column| column.directory.clone())
             .unwrap_or_else(|| prepared.cwd.clone());
 
-        self.request_file_manager_sidebar_navigation = None;
+        self.request_file_manager_location_navigation = None;
         self.file_manager_locations.activate_direct(direct_root);
         self.file_manager = Some(prepared);
         // The hidden terminal surface loses its projected hit geometry (and
@@ -528,7 +528,7 @@ impl AppState {
 
     /// Close the native file manager, returning the center to the terminal panes.
     pub(crate) fn close_file_manager(&mut self) {
-        self.request_file_manager_sidebar_navigation = None;
+        self.request_file_manager_location_navigation = None;
         self.request_file_manager_context_action = None;
         self.file_manager_locations.retire_for_closed_files();
         if self.shell_interaction.miller_resize_active() {
