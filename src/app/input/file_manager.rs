@@ -7895,4 +7895,208 @@ command = ["inspect"]
         ));
         assert!(app.state.request_file_manager_sidebar_navigation.is_none());
     }
+
+    fn compact_fcl_app(tag: &str) -> (TempDir, crate::app::App, Rect, Vec<PathBuf>) {
+        let td = TempDir::new(tag);
+        let paths = (0..6)
+            .map(|index| {
+                let name = format!("location-{index:02}");
+                td.dir(&name);
+                td.root.join(name)
+            })
+            .collect::<Vec<_>>();
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        app.state.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
+        install_fcl_location_model(&mut app, &paths);
+        (td, app, Rect::new(0, 0, 30, 12), paths)
+    }
+
+    fn open_fcl_drawer(app: &mut crate::app::App, frame: Rect) -> Rect {
+        compute_view(&mut app.state, frame);
+        let action = app
+            .state
+            .view
+            .file_manager_locations
+            .locations_action_area
+            .unwrap_or_else(|| {
+                panic!(
+                    "complete compact Locations action: terminal={:?} locations={:?}",
+                    app.state.view.terminal_area, app.state.view.file_manager_locations
+                )
+            });
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                action.x,
+                action.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        compute_view(&mut app.state, frame);
+        app.state
+            .view
+            .file_manager_locations
+            .drawer_area
+            .expect("open compact Locations drawer")
+    }
+
+    // TP-FCL-DRAWER-01: the complete compact action opens a bounded top
+    // overlay, and one fresh prepared row emits its exact typed navigation
+    // request without authorizing any path from coordinates alone.
+    #[test]
+    fn fcl_drawer_compact_action_opens_and_exact_row_routes_once() {
+        let (_td, mut app, frame, _paths) = compact_fcl_app("fcl-drawer-select");
+        let drawer = open_fcl_drawer(&mut app, frame);
+        assert!(!drawer.is_empty());
+        assert!(drawer.right() <= app.state.view.terminal_area.right());
+        assert!(drawer.bottom() <= app.state.view.terminal_area.bottom());
+        assert_eq!(
+            app.state.file_manager_locations.focus,
+            crate::app::FileManagerLocationsFocus::Rail
+        );
+
+        let target = app
+            .state
+            .view
+            .file_manager_locations
+            .rows
+            .get(1)
+            .cloned()
+            .expect("second complete drawer row");
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            target.rect.x,
+            target.rect.y,
+        ));
+        assert_eq!(
+            app.state.request_file_manager_sidebar_navigation,
+            Some(target.path)
+        );
+    }
+
+    // TP-FCL-DRAWER-01: outside click and Esc close only the overlay and
+    // restore its prior Files focus. A resize out of compact mode retires the
+    // drawer, and returning to compact never reopens it implicitly.
+    #[test]
+    fn fcl_drawer_outside_escape_resize_and_reopen_restore_focus() {
+        let (_td, mut app, compact, _paths) = compact_fcl_app("fcl-drawer-lifecycle");
+        let drawer = open_fcl_drawer(&mut app, compact);
+        let trail = app.state.view.file_manager_locations.layout.trail;
+        let outside = (
+            trail.right().saturating_sub(1),
+            trail.bottom().saturating_sub(1),
+        );
+        assert!(!rect_contains(drawer, outside.0, outside.1));
+
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            outside.0,
+            outside.1,
+        ));
+        compute_view(&mut app.state, compact);
+        assert!(app.state.view.file_manager_locations.drawer_area.is_none());
+        assert!(
+            app.state.file_manager.is_some(),
+            "outside click keeps Files open"
+        );
+        assert_eq!(
+            app.state.file_manager_locations.focus,
+            crate::app::FileManagerLocationsFocus::Trail
+        );
+
+        let _ = open_fcl_drawer(&mut app, compact);
+        assert_eq!(
+            handle_file_manager_key(&mut app.state, key(KeyCode::Esc)),
+            FileManagerKeyDispatch::Consumed
+        );
+        compute_view(&mut app.state, compact);
+        assert!(
+            app.state.file_manager.is_some(),
+            "Esc closes only the drawer"
+        );
+        assert!(app.state.view.file_manager_locations.drawer_area.is_none());
+
+        let _ = open_fcl_drawer(&mut app, compact);
+        let wide = Rect::new(0, 0, 90, 12);
+        compute_view(&mut app.state, wide);
+        assert!(app.state.view.file_manager_locations.drawer_area.is_none());
+        assert_eq!(
+            app.state.file_manager_locations.focus,
+            crate::app::FileManagerLocationsFocus::Trail
+        );
+        compute_view(&mut app.state, compact);
+        assert!(
+            app.state.view.file_manager_locations.drawer_area.is_none(),
+            "compact return must not reopen a retired drawer"
+        );
+        let _ = open_fcl_drawer(&mut app, compact);
+    }
+
+    // TP-FCL-DRAWER-01: the open drawer is the top input owner. A stale
+    // projected row and a click in the Trail behind/outside the overlay can
+    // close or be consumed, but neither may mutate navigation or Trail state.
+    #[test]
+    fn fcl_drawer_stale_rows_and_background_trail_are_inert() {
+        let (_td, mut app, frame, paths) = compact_fcl_app("fcl-drawer-authority");
+        let drawer = open_fcl_drawer(&mut app, frame);
+        let stale = app.state.view.file_manager_locations.rows[0].clone();
+        app.state.file_manager_sidebar.replace_with(
+            crate::app::state::FileManagerSidebarModel::from_sources(
+                vec![fcl_location_item("Replacement", paths[1].clone())],
+                Vec::new(),
+                Vec::new(),
+            ),
+        );
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            stale.rect.x,
+            stale.rect.y,
+        ));
+        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+
+        compute_view(&mut app.state, frame);
+        let trail_before = app
+            .state
+            .file_manager
+            .as_ref()
+            .map(|file_manager| {
+                (
+                    file_manager.cwd.clone(),
+                    file_manager.cursor,
+                    file_manager.viewport_start,
+                    file_manager.miller.horizontal.offset_cells,
+                    file_manager.miller.horizontal.follow_active,
+                )
+            })
+            .expect("open Files");
+        let trail = app.state.view.file_manager_locations.layout.trail;
+        let outside = (
+            trail.right().saturating_sub(1),
+            trail.bottom().saturating_sub(1),
+        );
+        assert!(!rect_contains(drawer, outside.0, outside.1));
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            outside.0,
+            outside.1,
+        ));
+        let trail_after = app
+            .state
+            .file_manager
+            .as_ref()
+            .map(|file_manager| {
+                (
+                    file_manager.cwd.clone(),
+                    file_manager.cursor,
+                    file_manager.viewport_start,
+                    file_manager.miller.horizontal.offset_cells,
+                    file_manager.miller.horizontal.follow_active,
+                )
+            })
+            .expect("Files stays open");
+        assert_eq!(trail_after, trail_before);
+        assert!(app.state.request_file_manager_sidebar_navigation.is_none());
+    }
 }
