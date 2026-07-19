@@ -56,8 +56,15 @@
 > the prepared model/request family is now Locations-named. Fresh gates:
 > drawer 3/3, sidebar 169/169, headless 109/109, Rust 3,577/3,577 + 2 skip,
 > Linux/Windows Clippy `-D warnings`, Playwright Chromium 25/25, fmt and
-> source-residue audits clean. FCL-6 deterministic Playwright Chromium oracle
-> is the only active task. This program takes priority over FMR plugin
+> source-residue audits clean. FCL-6 is closed at `7c743e06` RED /
+> `8dba99d3` GREEN. Eight deterministic ASCII wide/standard/compact/origin/
+> pending/failure fixtures pass 8/8; a one-cell mutation failed only VIS-18
+> with two pixels different, and the restored full Chromium suite passes
+> 33/33. Fresh Rust passes 3,577/3,577 + 3 skip and both Linux/Windows Clippy
+> gates are clean. The pre-existing VIS-01..13 ignored buffers were recovered
+> from their canonical `3ff174ca` generator state after the global exporter
+> proved unsafe; no existing PNG baseline was updated. FCL-7 production
+> closure is the only active task. This program takes priority over FMR plugin
 > adoption.
 > Stable Herdr/socket, upstream, release assets, and user-owned
 > `.superpowers/` remain outside authority.

@@ -84,11 +84,14 @@ plugin.
   - [x] Fresh gates: drawer 3/3, sidebar 169/169, headless 109/109, Rust
     3,577/3,577 + 2 skip, Linux/Windows Clippy `-D warnings`, Playwright
     Chromium 25/25, fmt and source-residue audits clean.
-- [ ] **FCL-6 Playwright Chromium oracle — ACTIVE.**
-  - `TP-FCL-VIS-01..04`.
-  - ASCII deterministic wide/standard/compact/origin/loading/failure fixtures,
-    spec-scoped baselines, one-cell raw-PNG mutation proof, then full Chromium.
-- [ ] **FCL-7 Production closure** (blocked by FCL-6).
+- [x] **FCL-6 Playwright Chromium oracle.**
+  - [x] `TP-FCL-VIS-01..04`: RED `7c743e06`, GREEN `8dba99d3`.
+  - [x] Eight deterministic ASCII wide/standard/compact/origin/pending/failure
+    fixtures and spec-scoped baselines pass 8/8.
+  - [x] One-cell mutation fails only VIS-18 (7 pass, 2 pixels differ); restored
+    full Chromium passes 33/33. Rust passes 3,577/3,577 + 3 skip and both
+    Linux/Windows Clippy gates are clean.
+- [ ] **FCL-7 Production closure — ACTIVE.**
   - `TP-FCL-GATE-01`.
   - Focused/full Rust, Linux/Windows Clippy, maintenance, Bun/Python,
     Playwright, hygiene, exact continuity, single-worker graph refresh,

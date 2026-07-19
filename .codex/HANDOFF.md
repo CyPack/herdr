@@ -60,9 +60,16 @@ implicit açmıyor. Legacy global Files row geometry/render/hit-test/navigation
 seam'leri silindi; prepared model/request ailesi Locations adıyla taşındı.
 Fresh gates drawer 3/3, sidebar 169/169, headless 109/109, Rust
 3,577/3,577 + 2 skip, Linux+Windows Clippy `-D warnings`, Chromium 25/25,
-fmt ve source-residue audit temiz. TEK aktif iş FCL-6 deterministic
-Playwright Chromium oracle'dır. FMR plugin adoption ayrı ve ikinci
-önceliktedir.
+fmt ve source-residue audit temiz. FCL-6 `7c743e06` RED / `8dba99d3` GREEN
+ile kapandı. Sekiz deterministic ASCII wide/standard/compact/origin/pending/
+failure fixture 8/8 geçti; tek-cell mutation yalnız VIS-18'i iki pixel farkla
+düşürdü, restore sonrası full Chromium 33/33 geçti. Fresh Rust
+3,577/3,577 + 3 skip ve Linux+Windows Clippy temiz. Global exporter'ın
+ignored VIS-01..13 buffer'larını değiştirdiği keşfedildi; canonical
+`3ff174ca` generator state'i ayrı detached worktree'de yeniden üretilerek
+yalnız ignored JSON'lar restore edildi ve mevcut PNG baseline'ların hiçbiri
+güncellenmedi. TEK aktif iş FCL-7 production closure'dır. FMR plugin
+adoption ayrı ve ikinci önceliktedir.
 Stable Herdr/socket, upstream, release assets ve `.superpowers/` untouched.
 
 **CURRENT OVERRIDE — MTIME PROGRAMI KAPANDI.** Kullanıcı
@@ -655,20 +662,15 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 12 ve
-89, toplam 101 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 11 ve
+89, toplam 100 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
 sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 12 unchecked
+### Source: `.codex/TASKS.md` — 11 unchecked
 
-- [ ] **FCL-6 Playwright Chromium oracle — ACTIVE.**
-  - `TP-FCL-VIS-01..04`.
-  - ASCII deterministic wide/standard/compact/origin/loading/failure fixtures,
-    spec-scoped baselines, one-cell raw-PNG mutation proof, then full Chromium.
-
-- [ ] **FCL-7 Production closure** (blocked by FCL-6).
+- [ ] **FCL-7 Production closure — ACTIVE.**
   - `TP-FCL-GATE-01`.
   - Focused/full Rust, Linux/Windows Clippy, maintenance, Bun/Python,
     Playwright, hygiene, exact continuity, single-worker graph refresh,
