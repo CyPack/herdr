@@ -1306,6 +1306,18 @@ mod tests {
         compute_view(&mut app, Rect::new(0, 0, 86, 12));
 
         let fm = app.file_manager.as_ref().expect("open FM");
+        let files_generation = app
+            .stage
+            .active_instance_generation()
+            .expect("active Files generation");
+        assert_eq!(
+            app.view.file_manager_locations.files_generation,
+            Some(files_generation)
+        );
+        assert_ne!(
+            app.view.file_manager_locations.layout.mode,
+            file_manager::locations::FileManagerLocationsMode::Compact
+        );
         assert_eq!(
             app.view.file_manager_trail.columns.len(),
             fm.trail.cols().len()
@@ -1314,6 +1326,10 @@ mod tests {
             app.view.file_manager_trail.columns[0].directory,
             fm.trail.cols()[0].directory
         );
+        assert!(app.view.file_manager_trail.columns.iter().all(|column| {
+            column.rect.x >= app.view.file_manager_locations.layout.trail.x
+                && column.rect.right() <= app.view.file_manager_locations.layout.trail.right()
+        }));
 
         app.close_file_manager();
         compute_view(&mut app, Rect::new(0, 0, 86, 12));
@@ -1321,6 +1337,10 @@ mod tests {
         assert_eq!(
             app.view.file_manager_trail,
             file_manager::trail_view::TrailViewSnapshot::default()
+        );
+        assert_eq!(
+            app.view.file_manager_locations,
+            file_manager::locations::FileManagerLocationsView::default()
         );
     }
 

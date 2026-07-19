@@ -11,6 +11,7 @@
 //! here instead of the terminal panes. Text/image previews and row-action
 //! geometry build on the same pure client-side projection.
 
+pub(crate) mod locations;
 pub(crate) mod miller;
 pub(crate) mod trail_view;
 
