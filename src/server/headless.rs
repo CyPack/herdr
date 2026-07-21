@@ -2438,7 +2438,8 @@ impl HeadlessServer {
             self.resize_shared_runtime_to_effective_size_before_input();
         }
         let theme_changed = self.update_client_host_theme_from_events(client_id, &events);
-        self.app
+        let render_requested = self
+            .app
             .route_client_events(events, self.foreground_client_id == Some(client_id));
         if self.app.take_config_reloaded_from_disk() {
             self.reload_server_config(false);
@@ -2464,7 +2465,7 @@ impl HeadlessServer {
 
             false
         } else {
-            foreground_changed || theme_changed || interaction
+            foreground_changed || theme_changed || render_requested
         }
     }
 

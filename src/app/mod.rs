@@ -1710,11 +1710,17 @@ impl App {
         &mut self,
         events: Vec<crate::raw_input::RawInputEvent>,
         apply_host_terminal_theme: bool,
-    ) {
+    ) -> bool {
+        // Whether any routed event changed something worth repainting. The
+        // serial render loop maps this to `needs_render`, so an event that
+        // leaves the frame identical (an inert hover move) can decline a
+        // render instead of forcing a full virtual frame per pointer step.
+        let mut render_needed = false;
         for event in events {
             let previous_mode = self.state.mode;
             match event {
                 crate::raw_input::RawInputEvent::Key(key) => {
+                    render_needed = true;
                     let key_id = repeat_key_identity(&key);
                     match key.kind {
                         crossterm::event::KeyEventKind::Press => {
@@ -1740,14 +1746,26 @@ impl App {
                     }
                 }
                 crate::raw_input::RawInputEvent::Mouse(mouse) => {
+                    let is_move = matches!(mouse.kind, crossterm::event::MouseEventKind::Moved);
                     if self.state.mouse_capture {
                         self.handle_mouse_event_headless(mouse);
                     } else {
                         self.state
                             .handle_pane_mouse_only(&self.terminal_runtimes, mouse);
                     }
+                    // A hover move (no button held) only repaints chrome when a
+                    // hover-sensitive overlay owns the pointer: a context menu
+                    // or settings pane tracks its highlight. Inert file-manager,
+                    // shell, and pane moves change nothing herdr draws — a
+                    // motion-tracking pane repaints from its own output through
+                    // `render_dirty`, not from this input event — so gating them
+                    // keeps rapid pointer motion from saturating the loop with
+                    // full virtual frames. Every non-move mouse kind still
+                    // repaints unconditionally.
+                    render_needed |= !is_move || self.state.blocking_overlay_active();
                 }
                 crate::raw_input::RawInputEvent::Paste(text) => {
+                    render_needed = true;
                     if self.state.mode != Mode::Terminal {
                         self.paste_into_active_text_input(&text);
                     } else if self.visible_terminal_owns_paste() {
@@ -1776,8 +1794,10 @@ impl App {
                         }
                     }
                 }
-                crate::raw_input::RawInputEvent::OuterFocusGained
-                | crate::raw_input::RawInputEvent::OuterFocusLost => {}
+                crate::raw_input::RawInputEvent::OuterFocusGained => {
+                    render_needed = true;
+                }
+                crate::raw_input::RawInputEvent::OuterFocusLost => {}
                 crate::raw_input::RawInputEvent::HostDefaultColor { kind, color } => {
                     if apply_host_terminal_theme {
                         self.update_host_terminal_theme(kind, color);
@@ -1792,6 +1812,7 @@ impl App {
             }
             self.sync_prefix_input_source(previous_mode);
         }
+        render_needed
     }
 
     /// Handles a key event in non-terminal mode for the headless server.

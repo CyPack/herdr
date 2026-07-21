@@ -2746,6 +2746,104 @@ mod tests {
         assert_eq!(app.state.context_menu.unwrap().list.highlighted, 1);
     }
 
+    // Fix #2 — mouse-move render change-gate. The serial render loop repaints
+    // whenever `route_client_events` reports a change, so an inert hover move
+    // must report `false`; otherwise rapid pointer motion saturates the loop
+    // with full virtual frames (the freeze felt while clicking fast between
+    // Miller columns). These characterization tests pin the gate: inert moves
+    // decline a render, every other input still repaints.
+
+    #[test]
+    fn inert_mouse_move_declines_render() {
+        // TP-2B: a hover move with no blocking overlay (plain terminal / native
+        // file-manager surface) changes nothing herdr draws, so the router must
+        // not request a render for it.
+        let mut app = app_for_mouse_test();
+        assert!(
+            !app.state.blocking_overlay_active(),
+            "fixture must start with no blocking overlay"
+        );
+        let rendered = app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Mouse(mouse(
+                MouseEventKind::Moved,
+                40,
+                5,
+            ))],
+            true,
+        );
+        assert!(
+            !rendered,
+            "an inert hover move must not request a render (loop-saturation guard)"
+        );
+    }
+
+    #[test]
+    fn mouse_move_over_blocking_overlay_requests_render() {
+        // TP-2D: while a hover-sensitive overlay owns the pointer a move can
+        // change its highlight, so the router must keep requesting a render.
+        let mut app = app_for_mouse_test();
+        app.state.context_menu = Some(ContextMenuState {
+            kind: ContextMenuKind::Workspace { ws_idx: 0 },
+            x: 2,
+            y: 2,
+            list: MenuListState::new(0),
+        });
+        app.state.mode = Mode::ContextMenu;
+        assert!(
+            app.state.blocking_overlay_active(),
+            "fixture must have a blocking overlay up"
+        );
+        let menu = app.state.context_menu_rect().unwrap();
+        let rendered = app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Mouse(mouse(
+                MouseEventKind::Moved,
+                menu.x + 2,
+                menu.y + 2,
+            ))],
+            true,
+        );
+        assert!(
+            rendered,
+            "a move over a blocking overlay must still request a render"
+        );
+    }
+
+    #[test]
+    fn non_move_mouse_events_always_request_render() {
+        // TP-2C / TP-2F: press, release, drag, and wheel are never gated — only
+        // an inert Moved is. Each still repaints exactly as before the gate.
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::ScrollUp,
+            MouseEventKind::ScrollDown,
+        ] {
+            let mut app = app_for_mouse_test();
+            let rendered = app.route_client_events(
+                vec![crate::raw_input::RawInputEvent::Mouse(mouse(kind, 40, 5))],
+                true,
+            );
+            assert!(rendered, "mouse {kind:?} must request a render");
+        }
+    }
+
+    #[test]
+    fn keyboard_and_paste_always_request_render() {
+        // TP-2E: non-mouse interaction (keys, paste) is low-frequency and always
+        // repaints, unchanged by the move gate.
+        let mut app = app_for_mouse_test();
+        let key_rendered =
+            app.route_client_events(crate::raw_input::parse_raw_input_bytes_sync(b"a"), true);
+        assert!(key_rendered, "a key press must request a render");
+
+        let paste_rendered = app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Paste("x".to_string())],
+            true,
+        );
+        assert!(paste_rendered, "a paste must request a render");
+    }
+
     // SF4.2-02: a topmost blocking overlay owns every mouse event. Background
     // routes (sidebar wheel selection, divider double-click gestures) must not
     // act while the overlay is open, and the outside click that closes the

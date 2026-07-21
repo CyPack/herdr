@@ -120,7 +120,7 @@ impl AppState {
     /// Every mode whose surface is a topmost blocking overlay for mouse and
     /// keyboard routing. The match is exhaustive so a new mode must choose a
     /// side explicitly instead of silently leaking background input.
-    fn blocking_overlay_active(&self) -> bool {
+    pub(crate) fn blocking_overlay_active(&self) -> bool {
         match self.mode {
             Mode::Terminal | Mode::Prefix | Mode::Navigate | Mode::Copy | Mode::Resize => false,
             Mode::Onboarding
