@@ -1,6 +1,45 @@
-# Current State — 2026-07-19
+# Current State — 2026-07-21
 
-> **CURRENT OVERRIDE — FILES LAYOUT V1 LOCKED; FMP PERFORMANCE
+> **CURRENT OVERRIDE — MAIN FILES STUTTER CLOSED; FMN INPUT CORRECTIONS
+> NEXT (2026-07-21).** The human-accepted product behavior head is
+> `d8583d3ab564d42f880e94e0462f9d12ab61d391`. Closure publication then adds
+> `8f4b2acc` (test-only path-identity fixture) and `d52b4417` (closure evidence,
+> Yazi transfer reference, and lessons). The published branch tip is the commit
+> containing this continuity override; every resume must verify local HEAD
+> equals `origin/feat/native-fm` instead of treating `d8583d3a` as the tip. The
+> final production residual sequence is
+> `b2accbb4` resident file projection, `8851b5e0` inert mouse-move render gate,
+> `ed329058` background text preview, and `d8583d3a` deterministic
+> filesystem-time fixtures. The user completed the isolated live trial and
+> reported that the original freezing/stutter appears completely gone and
+> interaction works very well. Canonical closure and lessons:
+> `.codex/evidence/files-performance-fix-closure-and-navigation-followups.md`.
+> Pinned Yazi source diff:
+> `.codex/references/yazi-file-manager-performance-transfer.md`.
+> Fresh publication gates: exact fixture 20/20, related highlight/path 5/5,
+> full Nextest 3,599/3,599 + 4 skip, fmt, Linux/Windows Clippy, Bun 5/5 +
+> 12/12, and Python maintenance 68/68. The first full attempt's single
+> mtime-order fixture failure and correction are preserved in the evidence;
+> production sorting was not changed.
+>
+> The next separate program is **FMN — Files Movement Semantics and Wheel
+> Normalization**. Two user-confirmed bugs are open: a physical vertical wheel
+> gesture can appear to skip 3-5 entries; and holding Up/Down can land on a
+> directory and implicitly continue in its right-side child without
+> Right/Enter. Current source confirms the semantic coupling:
+> `move_selection_in_column` immediately calls `activate_entry`, so directory
+> landings branch and later repeat events can target the child. The frozen law
+> is cursor-only Up/Down/`j/k`/Shift/wheel in the exact owner column; only
+> Right/`l`, Enter, or explicit primary click activates a directory. First
+> measure physical wheel -> decoded event -> dispatch -> mutation counts, then
+> RED/GREEN the cursor/activation split; authorize wheel coalescing only if a
+> separate multiplicity remains. Home/Desktop/Downloads pre-warm stays a later
+> measurement-first, per-directory entry/byte-capped, mtime-invalidated lane;
+> Yazi's unbounded history map is explicitly rejected. Fresh built-in graph is
+> 23,925 nodes / 124,127 edges and resolves all final-fix plus FMN seam symbols.
+> Stable Herdr/socket and `.superpowers/` remain untouched.
+
+> **HISTORICAL OVERRIDE — FILES LAYOUT V1 LOCKED; FMP PERFORMANCE
 > INVESTIGATION ACTIVE (2026-07-19).** The user approved the current Native
 > Files composition as `Files Layout V1`. The canonical immutable lock is
 > `docs/superpowers/specs/2026-07-19-herdr-files-layout-v1-lock.md` at

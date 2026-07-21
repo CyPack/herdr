@@ -1,8 +1,48 @@
 # NEXT SESSION TRIGGER — Herdr Files Interaction Polish
 
-Updated: 2026-07-18 CEST
+Updated: 2026-07-21 CEST
 
-## Current Override — Miller Trail Closed
+## Current Override — Main Stutter Closed; FMN Next
+
+Continue `feat/native-fm` from the exact published
+`origin/feat/native-fm` tip. Required ancestry is the human-accepted product
+head `d8583d3a`, test-only fixture `8f4b2acc`, closure/Yazi/lessons
+`d52b4417`, then the continuity commit containing this trigger. Verify local
+HEAD equals the remote ref before work. The user has live-accepted the main
+rapid-click/mouse-motion stutter fix. Do not restart FMP or reimplement commits
+`b2accbb4`, `8851b5e0`, `ed329058`, or `d8583d3a`.
+
+The exact next task is **FMN-1** from `.codex/TASKS.md`:
+
+1. in an isolated Ghostty/dev runtime, correlate one physical wheel gesture
+   with raw decoded-event, dispatch, and cursor-mutation counts;
+2. then add FMN-2 RED tests proving Up/Down/`j/k`/Shift/wheel are cursor-only in
+   the exact owner column;
+3. require Right/`l`, Enter, or explicit primary click for directory
+   activation;
+4. allow right-side directory preview only through bounded stale-safe async
+   work without active-column transfer;
+5. consider wheel burst normalization only after the cursor/activation GREEN
+   and only if FMN-1 still proves a separate multiplicity;
+6. leave Home/Desktop/Downloads pre-warm for FMN-6 measurement-first work; no
+   general/unbounded LRU.
+
+Read these current authorities before code:
+
+- `.codex/evidence/files-performance-fix-closure-and-navigation-followups.md`;
+- `.codex/references/yazi-file-manager-performance-transfer.md`;
+- `.codex/TASKS.md` FMN section;
+- `.local/ISOLATED-DEV-TEST.md`.
+
+Fresh built-in graph at handoff: 23,925 nodes / 124,127 edges. Prove freshness
+again with `move_trail_selection_in_column` and
+`queue_file_manager_trail_directory_activation`. Lower FIP task counts and
+“exact first work” paragraphs in this historical file are superseded by this
+override; recount the canonical task files rather than using old totals.
+Never touch stable Herdr/socket or `.superpowers/`; never regenerate PNGs
+blindly; use exact-path staging and align commit messages before commit.
+
+## Historical Override — Miller Trail Closed
 
 Miller Trail T1-T7 and FIP-D1/D3/D4 product code are closed through
 `e8abc7b0` RED / `3c36f104` GREEN. Do not restart T7 or restore the retired
@@ -63,8 +103,10 @@ out of scope.
    - `.codex/MEMORY.md`
    - `.planning/STATE.md`
    - `.codex/NEXT-SESSION-PROMPT.md`
-6. Read the approved design completely:
-   - `docs/superpowers/specs/2026-07-17-herdr-files-interaction-polish-design.md`
+6. Read the current FMN authorities completely:
+   - `.codex/evidence/files-performance-fix-closure-and-navigation-followups.md`
+   - `.codex/references/yazi-file-manager-performance-transfer.md`
+   - `docs/superpowers/specs/2026-07-19-herdr-files-rapid-navigation-latency-prd.md`
 7. Audit Git and remotes before edits:
 
    ```bash
@@ -83,40 +125,34 @@ out of scope.
 
 ## Mandatory Task-List Trigger
 
-Expected canonical inventory (after the 2026-07-18 planning-gate closure):
+Expected canonical inventory at the 2026-07-21 handoff:
 
-- `.codex/TASKS.md`: 46 unchecked product/deferred tasks;
+- `.codex/TASKS.md`: 16 unchecked product/deferred tasks;
 - `.codex/CHANGE-PIPELINE-TASKS.md`: 89 unchecked paused tooling tasks;
-- total: 135;
-- `.codex/HANDOFF.md` section 8: exact 135-block copy.
+- total: 105;
+- `.codex/HANDOFF.md` section 8: exact 105-block copy.
 
 Recount all three and compare exact task blocks. If count or text differs,
 stop before code and reconcile CURRENT/TASKS/HANDOFF.
 
 Status assignment:
 
-- set only **FIP-1.1** to `in_progress`;
-- keep the rest of FIP-1 through FIP-6 pending (FIP-0 is closed);
+- set only **FMN-1** to `in_progress`;
+- keep FMN-2 through FMN-6 pending (FMN-0 is closed);
 - keep S5/S7 trigger-gated;
 - keep change-pipeline T3.1-T10.9 paused;
 - never choose an easier lower-priority task.
 
 ## Exact First Work
 
-FIP-G.1/FIP-G.2 are CLOSED. The approved code-level TDD plan is
-`docs/superpowers/plans/2026-07-18-herdr-files-interaction-polish-implementation.md`
-(commit `dd81ef59`; 29 bite-sized tasks; all 57 unique `TP-FIP-*` IDs mapped —
-the earlier "55" figure excluded the two E2E IDs, nothing was dropped).
-
-1. Read that plan completely; it is the execution contract.
-2. FIP-0 (plan Tasks 1-5) is closed; start at plan Task 6 (FIP-1.1 RED) and execute tasks in order
-   with separate RED/GREEN/refactor commits.
-3. Before any Rust production edit, restore the broken global `rust-dev`
-   skill (`~/.codex/skills/rust-dev` is a symlink to the missing
-   `~/.claude/skills/rust-dev`) or explicitly record that only the
-   herdr-local HP1-HP10 catalog is available.
-4. Follow the plan's verified-owner map; re-verify any symbol the plan marks
-   as graph-verified if the graph has been refreshed since `dd81ef59`.
+1. Complete FMN-1 observability without production behavior mutation.
+2. Decide whether wheel multiplicity starts at terminal decode, Herdr dispatch,
+   reducer mutation, or automatic branch amplification.
+3. Load `rust-dev` and its lessons before FMN-2 Rust work; then write the
+   behavior-specific cursor-only RED before production code.
+4. Execute FMN-2 -> FMN-3 in order with separate RED/GREEN commits. Execute
+   FMN-4 only if the post-GREEN trace still proves a separate wheel defect.
+5. Re-verify every graph-qualified owner immediately before editing.
 
 ## Codebase Memory Protocol
 
@@ -138,33 +174,32 @@ Required discovery order:
 
 Final handoff graph evidence:
 
-- 21,064 nodes / 98,009 edges;
-- major packages: app 2,615; ui 968; pane 715; fm 457; server 407;
-- single-worker CLI and built-in MCP agree;
-- FIP-G.1 is found in six canonical continuity modules;
-- `focused_child` and current handoff send/fail-closed seams are present;
-- freshness was verified from current symbols, not `ready` alone.
+- 23,925 nodes / 124,127 edges;
+- built-in MCP status `ready`, cross-checked with current final-fix and FMN
+  symbols rather than accepted alone;
+- `route_client_events` and `handle_client_input_events` expose the inert-move
+  render decision chain;
+- `install_trail_operation_projection` exposes resident file projection;
+- `queue_file_manager_trail_directory_activation` exposes the bounded explicit
+  click path;
+- `move_trail_selection_in_column` exposes the remaining movement/activation
+  coupling.
 
-Root-cause hypotheses already supported by graph/source evidence and requiring
-fresh-plan confirmation:
+Current root-cause hypotheses requiring FMN-1 executable discrimination:
 
-- default ShellLayout has no AppDock; sidebar tab route changes visual tab but
-  does not invoke existing Files Stage activation;
-- `MillerPathSegment.focused_child` is not populated; resident projection falls
-  back to a cursor initialized at zero;
-- directory snapshot capability reduction discards symlink identity and row
-  render has no semantic icon classification;
-- current handoff delivery appends carriage return and can prepare an implicit
-  Claude split for a non-agent target;
-- existing `agent_panel_entries`, target identity lookup, and bounded terminal
-  input seam can be reused instead of adding runtime ownership.
+- H1: one physical high-resolution/momentum gesture decodes into multiple
+  terminal wheel events;
+- H2: one decoded event is dispatched more than once;
+- H3: directory landing branches and the remaining repeat/burst events mutate
+  the child column. H3 is source-confirmed as possible and must be removed
+  before wheel cadence is tuned.
 
 After committed changes, refresh the graph with the safe single-worker route if
 the long-lived channel is stale:
 
 ```bash
 CBM_WORKERS=1 codebase-memory-mcp cli index_repository \
-  '{"repo_path":"/home/ayaz/projects/herdr","mode":"fast","persistence":false}'
+  '{"repo_path":"/home/ayaz/projects/herdr","project":"home-ayaz-projects-herdr","incremental":true}'
 ```
 
 Do not restart/kill the MCP proxy or any user process. Re-query changed recent

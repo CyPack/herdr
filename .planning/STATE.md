@@ -1,7 +1,26 @@
 # Herdr Native-FM Planning State
 
-- Updated: 2026-07-19
+- Updated: 2026-07-21
 - Branch: `feat/native-fm`
+- Current override: **Main Native Files stutter closed; FMN input corrections
+  next.** The human-accepted product head is `d8583d3a`; closure publication
+  adds `8f4b2acc` test-only path-identity fixture and `d52b4417` closure/Yazi/
+  lessons. The published branch tip is the commit containing this state record
+  and must be revalidated against `origin/feat/native-fm` on resume. The user
+  completed the isolated live test and reported that the original freeze and
+  stutter appear completely gone. Final production commits: `b2accbb4` resident file
+  projection, `8851b5e0` inert-move render gate, `ed329058` off-loop text
+  preview, `d8583d3a` deterministic filesystem-time fixtures. Canonical
+  closure:
+  `.codex/evidence/files-performance-fix-closure-and-navigation-followups.md`.
+  The next task is FMN-1: measure physical wheel gesture -> decoded event ->
+  dispatch -> cursor mutation, then FMN-2 RED cursor-only Up/Down/wheel versus
+  explicit Right/Enter/click activation. Do not add wheel debounce before the
+  trace and do not add a general cache. Pinned Yazi reference:
+  `.codex/references/yazi-file-manager-performance-transfer.md`. Stable
+  Herdr/socket and `.superpowers/` remain untouched. Fresh gates: exact fixture
+  20/20, related family 5/5, full Nextest 3,599/3,599 + 4 skip, fmt,
+  Linux/Windows Clippy, Bun 5/5 + 12/12, and Python 68/68.
 - Current override: **MTIME program closed.** The user
   approved strict mixed directory/file ordering by modification time
   descending plus Finder-like local-calendar sections and right-side mtime

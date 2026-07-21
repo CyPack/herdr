@@ -1,14 +1,78 @@
 # Durable Tasks — Herdr Native FM
 
-## P0 ACTIVE — Files Interaction Polish (FIP)
+## P0 ACTIVE — FMN Files Movement Semantics and Wheel Normalization
+
+Activated by the user's 2026-07-21 live acceptance of the closed stutter fix
+and two new correctness reports. Canonical evidence and frozen interaction
+contract:
+`.codex/evidence/files-performance-fix-closure-and-navigation-followups.md`.
+Pinned Yazi architecture comparison:
+`.codex/references/yazi-file-manager-performance-transfer.md`.
+
+- [x] **FMN-0 Capture the reports, source-confirmed coupling, reference diff,
+  failure memory, and acceptance contract.**
+  - [x] Record the main stutter as human-accepted at `d8583d3a` without
+    converting a qualitative report into an invented metric.
+  - [x] Freeze cursor-only vertical movement and explicit-only directory
+    activation as separate intents.
+  - [x] Reject Yazi's unbounded History cache as a Herdr cache model.
+  - [x] Package the deterministic path-identity fixture as `8f4b2acc` and the
+    closure/Yazi/lesson record as `d52b4417`; keep product behavior anchored at
+    the human-accepted `d8583d3a`.
+- [ ] **FMN-1 Observe wheel multiplicity before product mutation.**
+  - [ ] `TP-FMN-OBS-01`: in an isolated Ghostty/dev runtime, correlate one
+    physical wheel gesture with raw decoded events, dispatcher calls, and
+    cursor mutations using bounded non-sensitive counters.
+  - [ ] `TP-FMN-OBS-02`: trace held Up/Down across file-directory-file rows and
+    record exact owner column/cursor path without logging unrelated user data.
+  - [ ] Decide H1 terminal burst/momentum, H2 duplicate dispatch, and H3
+    auto-branch amplification from evidence; do not add debounce speculatively.
+- [ ] **FMN-2 RED cursor-only movement and explicit activation.**
+  - [ ] `TP-FMN-NAV-01..06`: Up/Down, `j/k`, Shift movement, explicit
+    Right/`l`/Enter/click, kind/edge/failure matrix.
+  - [ ] `TP-FMN-WHEEL-01..03`: one decoded event = one owner-column step;
+    directory rows never transfer focus; row/header/empty/detail/rail/outside
+    geometry stays disjoint.
+  - [ ] `TP-FMN-IO-01..03` and `TP-FMN-RENDER-01`: blocked/stale/failure
+    preview and inert-versus-visible render authority.
+- [ ] **FMN-3 GREEN decouple movement from activation.**
+  - [ ] Add the smallest cursor-only reducer that preserves exact path,
+    viewport, multi-selection, watcher, and Layout V1 invariants.
+  - [ ] Keep optional right-side directory preview asynchronous,
+    bounded/latest, generation/source/column/path validated, and unable to
+    steal active-column focus.
+  - [ ] Keep explicit directory activation on Right/`l`, Enter, or primary
+    click and keep cold I/O off the input loop.
+- [ ] **FMN-4 Normalize physical wheel bursts only if FMN-1 still proves a
+  separate defect after FMN-3.**
+  - [ ] `TP-FMN-WHEEL-04`: distinguish one high-resolution gesture from
+    deliberate continuous scroll and immediate direction reversal.
+  - [ ] Bound time/state/memory; no sleep-throttle, hot retry, unbounded
+    accumulator, dropped ordered control, or sticky scrolling.
+- [ ] **FMN-5 Production closure.**
+  - [ ] `TP-FMN-VIS-01`: unchanged Layout V1 Chromium baselines plus scoped
+    cursor/preview semantic cells; no blind PNG regeneration.
+  - [ ] `TP-FMN-E2E-01`: isolated real wheel and held-arrow acceptance; no
+    accidental 3-5 jump, no child focus transfer, zero residue.
+  - [ ] `TP-FMN-GATE-01`: focused/full Nextest, fmt, Linux/Windows Clippy,
+    maintenance, Chromium, graph, Git ancestry, exact CyPack SHA.
+- [ ] **FMN-6 Measure pinned Home/Desktop/Downloads first-entry latency as a
+  separate follow-up.**
+  - [ ] Do not implement pre-warm without a reproducible first-entry RED.
+  - [ ] If authorized, use an explicit allowlist, background bounded worker,
+    per-directory entry/byte caps, mtime invalidation, stale-result rejection,
+    permission/missing/changed-type handling, and teardown/memory tests.
+  - [ ] Never add a general or unbounded LRU.
+
+## HISTORICAL — Files Interaction Polish (FIP)
 
 Activated by explicit user approval on 2026-07-17. Drag-and-drop is excluded.
 The approved product contract is
 `docs/superpowers/specs/2026-07-17-herdr-files-interaction-polish-design.md`.
-FIP-G.1/FIP-G.2 are closed; the approved code-level plan is
+FIP-G.1/FIP-G.2 and the executed product work are closed; the approved
+code-level plan is
 `docs/superpowers/plans/2026-07-18-herdr-files-interaction-polish-implementation.md`
-(commit `dd81ef59`). The next executable task is **FIP-0.1** (baseline freeze),
-then the plan's Tasks 2-29 in order.
+(commit `dd81ef59`). Do not restart historical FIP work from this paragraph.
 
 ### FMP — Files Mouse and Navigation Performance
 
@@ -84,6 +148,9 @@ remain unchanged.
   - [x] Pass `TP-FMP-VIS-01` unchanged in Playwright Chromium plus focused/full
     Rust, Linux/Windows Clippy, maintenance, hygiene, graph freshness, atomic
     Git, CyPack-only fast-forward publication, and exact remote SHA gates.
+  - [x] Final residual addendum: `b2accbb4`, `8851b5e0`, `ed329058`, and
+    `d8583d3a`; isolated human acceptance recorded 2026-07-21. Follow-up wheel
+    and cursor/activation semantics moved to FMN rather than reopening FMP.
 
 ### FCL — Files Content Locations Rail and Non-Blocking Navigation
 

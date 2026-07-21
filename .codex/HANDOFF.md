@@ -1,10 +1,62 @@
-# SESSION HANDOFF — Herdr Files Interaction Polish
+# SESSION HANDOFF — Herdr Native Files Performance
 
-Updated: 2026-07-19 CEST
+Updated: 2026-07-21 CEST
 
-## 0. SONRAKI ADIM — FMR SCROLL RANKING / PLUGIN ADOPTION LANE
+## 0. SONRAKI ADIM — FMN-1 WHEEL TRACE, THEN CURSOR/ACTIVATION RED
 
-**CURRENT OVERRIDE — FILES LAYOUT V1 KORUNARAK RAPID NAVIGATION FIX
+**CURRENT OVERRIDE — ANA STUTTER KAPANDI VE KULLANICI CANLIDA KABUL ETTI.**
+Kullanıcının kabul ettiği product behavior head'i
+`d8583d3ab564d42f880e94e0462f9d12ab61d391`'dir. Closure publication buna
+`8f4b2acc` test-only path-identity fixture ve `d52b4417` closure/Yazi/lessons
+commit'lerini ekler. Published branch tip bu continuity kaydını içeren
+commit'tir; resume sırasında local HEAD ile `origin/feat/native-fm` exact
+eşitliği yeniden kanıtlanır. Son production residual zincir `b2accbb4`
+resident file projection, `8851b5e0` inert mouse-move render gate, `ed329058`
+off-loop text preview ve `d8583d3a` deterministic filesystem-time fixture
+fix'idir. Kullanıcı 2026-07-21 canlı denemesinde ana
+freeze/stutter'ın tamamen kalkmış göründüğünü ve çok iyi çalıştığını bildirdi.
+Bu qualitative symptom acceptance'tır; sayısal profiler ve executable gate
+kanıtlarından ayrı tutulur. Kanonik kayıt:
+`.codex/evidence/files-performance-fix-closure-and-navigation-followups.md`.
+
+Sıradaki ayrı program **FMN — Files Movement Semantics and Wheel
+Normalization**. İki bug açık:
+
+1. tek fiziksel wheel gesture görünürde 3-5 entry atlayabiliyor;
+2. Up/Down basılıyken cursor directory'ye gelince Right/Enter olmadan child
+   kolona geçip orada devam ediyor.
+
+İkinci kök neden source-confirmed: `move_selection_in_column` landed row'u
+bulup doğrudan `activate_entry` çağırıyor; directory branch active column'u
+değiştiriyor ve burst'ün kalan event'leri child'a uygulanabiliyor. Frozen UX
+law: Up/Down/`j/k`/Shift/wheel yalnız exact owner column cursor hareketidir;
+Right/`l`, Enter veya explicit primary click directory activation sahibidir.
+Directory preview sağda async güncellenebilir ama active-column authority'yi
+çalamaz.
+
+İlk executable iş FMN-1'dir: izole Ghostty/dev runtime'da bir fiziksel gesture
+→ raw decoded event → dispatch → cursor mutation sayılarını ölç. Sonra FMN-2
+RED ile cursor/activation ayrımını dondur. FMN-3 minimum GREEN'den sonra hâlâ
+ayrı burst varsa FMN-4 normalization tasarla; debounce/coalescing'i önceden
+varsayma. Pinned Home/Desktop/Downloads pre-warm FMN-6'dır ve ayrı first-entry
+latency RED olmadan uygulanmaz. Genel/unbounded LRU yasaktır. Pinned Yazi
+source ve transfer kararı:
+`.codex/references/yazi-file-manager-performance-transfer.md`.
+
+Fresh publication gate: exact escaped mtime fixture 20/20, highlight/path
+family 5/5, full Nextest 3,599/3,599 + 4 skip (run
+`4dd813f9-9d36-42c0-9ba3-d50dfbd33904`), fmt, Linux/Windows Clippy, Bun 5/5 +
+12/12 ve Python maintenance 68/68 temiz. İlk full run'daki tek fixture fail'i
+ve root cause evidence'ta saklıdır; production sort değişmedi.
+
+Fresh built-in Codebase Memory: 23,925 node / 124,127 edge; final fix sembolleri
+ile `move_trail_selection_in_column` ve bounded click-worker seam'i bulunuyor.
+Stable Herdr/socket ve `.superpowers/` kesinlikle kapsam dışıdır. Commit/push
+yalnız exact-path staging ve önceden hizalanmış commit mesajıyla yapılır.
+
+## Historical FMP closure context
+
+**HISTORICAL OVERRIDE — FILES LAYOUT V1 KORUNARAK RAPID NAVIGATION FIX
 IMPLEMENTED.** Ölçülen ana tetikleyici server input loop'unda senkron Trail
 child/parent/preview filesystem I/O; bağımsız amplifikatör client input ile
 tam semantic frame'lerin aynı FIFO ve blocking consumer'ı paylaşmasıydı.
@@ -500,8 +552,10 @@ Fresh agent aşağıdaki sırayı atlamadan uygular:
    - `.codex/MEMORY.md`
    - `.planning/STATE.md`
    - `.codex/NEXT-SESSION-PROMPT.md`
-5. Tasarım kaynağını tamamen oku:
-   - `docs/superpowers/specs/2026-07-17-herdr-files-interaction-polish-design.md`
+5. Güncel FMN kaynaklarını tamamen oku:
+   - `.codex/evidence/files-performance-fix-closure-and-navigation-followups.md`
+   - `.codex/references/yazi-file-manager-performance-transfer.md`
+   - `docs/superpowers/specs/2026-07-19-herdr-files-rapid-navigation-latency-prd.md`
 6. Git/remote gerçeğini doğrula:
    - `git status --short --branch`
    - `git log --oneline --decorate -12`
@@ -517,10 +571,11 @@ Fresh agent aşağıdaki sırayı atlamadan uygular:
    - code discovery için grep ancak graph yetersizse
 8. `.codex/TASKS.md` ve `.codex/CHANGE-PIPELINE-TASKS.md` içindeki her
    unchecked maddeyi continuation satırlarıyla yeniden say ve session task
-   listesine eksiksiz aktar. Beklenen 54 + 89 = 143’tür. Sayı farklıysa kod
+   listesine eksiksiz aktar. Beklenen 16 + 89 = 105’tir. Sayı farklıysa kod
    yazmadan CURRENT/TASKS/HANDOFF drift’ini uzlaştır.
-9. FIP-G.1 için `superpowers:writing-plans` ve lessons dosyalarını yükle.
-10. Rust işi başlayacağı zaman ayrıca `rust-dev` ve lessons dosyalarını yükle;
+9. Yalnız FMN-1’i `in_progress` yap; raw-event/dispatch/mutation ölçümü olmadan
+   wheel normalization veya production mutation başlatma.
+10. FMN-2 Rust işi başlayacağı zaman ayrıca `rust-dev` ve lessons dosyalarını yükle;
     skill erişilemiyorsa erişilmiş gibi davranma.
 11. Her bug/feature için production kodundan önce behavior-specific failing
     test; RED çıktısını oku; ayrı commit. Sonra minimum GREEN; ayrı commit.
@@ -533,44 +588,30 @@ Fresh agent aşağıdaki sırayı atlamadan uygular:
 Kanonik Codebase Memory project ID:
 `home-ayaz-projects-herdr`.
 
-Final handoff refresh; single-worker CLI ve built-in MCP aynı store’u doğrular:
+2026-07-21 built-in MCP refresh status:
 
-- nodes: 21,064
-- edges: 98,009
-- ana paketler: `app` 2,615; `ui` 968; `pane` 715; `fm` 457;
-  `server` 407; `cli` 406; `terminal` 298; `workspace` 236.
+- nodes: 23,925
+- edges: 124,127
+- status: `ready`, ayrıca current-symbol proof ile doğrulandı.
 
-Graph-first denetimle kanıtlanan mevcut kusur zincirleri:
+Fresh graph ve exact snippet kanıtı:
 
-- Default `ShellLayout::default` yalnız LeftPanel + WorkspaceStage üretir;
-  default görünür shell’de AppDock yoktur. Sidebar tab click route yalnız
-  `sidebar_tab` değiştirir; Stage activation yapmaz. Buna karşılık mevcut
-  `activate_dock_app(Files)` seam’i bounded Files Stage’i açar. FIP-1 bu
-  davranışları tek authority’de yakınsar.
-- `MillerPathSegment.focused_child` tanımlanır fakat üretim akışında
-  doldurulmaz. Resident projection `segment.cursor` kullanır; yeni segment
-  cursor default 0 olduğu için nonzero child’dan sonra yanlış ilk satır
-  highlight edilir. FIP-2 path identity’yi transfer öncesi bağlar.
-- `read_directory_snapshot` / entry capability hazırlığı symlink kimliğini
-  `(is_dir, operation_supported)` ikilisine indirger. `render_entry_row`
-  semantik icon üretmez. FIP-3 tek canonical `FileEntryKind` ve derived
-  capability modeline geçer.
-- Mevcut agent handoff final payload’a `b'\r'` ekler; non-agent hedef hazırlığı
-  implicit Claude split oluşturabilir. Existing `agent_panel_entries`,
-  terminal identity lookup ve bounded `try_send_terminal_input` target
-  projection/delivery için yeniden kullanılabilir. FIP-4/FIP-5 submit ve
-  implicit split davranışını bu action’dan çıkarır.
+- `App::route_client_events` inert plain mouse motion için render need'i false
+  bırakabilir; overlay owner ve non-move input render ister.
+- `HeadlessServer::handle_client_input_events` yalnız foreground/theme veya
+  `route_client_events` render request'ini server render kararına taşır.
+- `FmState::install_trail_operation_projection` resident owner snapshot'tan
+  file projection kurar.
+- `App::queue_file_manager_trail_directory_activation` explicit directory
+  click'i bounded FM worker'a yollar.
+- `FmState::move_trail_selection_in_column` ve
+  `TrailSnapshots::move_selection_in_column` vertical movement'i hâlâ
+  `activate_entry` ile birleştirir; directory landing branch olabilir.
+- `src/app/input/file_manager.rs` Up/Down/`j/k`, visible row wheel ve header
+  wheel'i bu coupled reducer'a route eder.
 
-Bu maddeler chat özeti değil, tasarım dosyasındaki symbol/call-path evidence’ın
-özetidir. Planlama sırasında exact qualified names ve snippets tekrar okunur;
-stale `ready` çıktısı freshness kanıtı sayılmaz.
-
-Post-refresh MCP proof ayrıca FIP-G.1’i `.codex/BOOTSTRAP.md`,
-`.codex/CURRENT.md`, `.codex/HANDOFF.md`, `.codex/MEMORY.md`,
-`.codex/NEXT-SESSION-PROMPT.md` ve `.codex/TASKS.md` içinde buldu;
-`focused_child` yalnız field/constructor sonuçlarında, mevcut
-`sync_file_manager_agent_handoff_send` ise çağıranı ve fail-closed test
-ailesiyle birlikte güncel graph’ta bulundu.
+Fresh agent `ready` çıktısına tek başına güvenmez; önce FMN production edit'i
+öncesi aynı current sembolleri ve exact snippets'i tekrar doğrular.
 
 ## 5. KATMANLAR VE OTORİTE SINIRLARI
 
@@ -714,13 +755,63 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 10 ve
-89, toplam 99 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan yeniden
-sayar ve exact diff yapar.
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 16 ve
+89, toplam 105 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan
+yeniden sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 10 unchecked
+### Source: `.codex/TASKS.md` — 16 unchecked
+
+- [ ] **FMN-1 Observe wheel multiplicity before product mutation.**
+  - [ ] `TP-FMN-OBS-01`: in an isolated Ghostty/dev runtime, correlate one
+    physical wheel gesture with raw decoded events, dispatcher calls, and
+    cursor mutations using bounded non-sensitive counters.
+  - [ ] `TP-FMN-OBS-02`: trace held Up/Down across file-directory-file rows and
+    record exact owner column/cursor path without logging unrelated user data.
+  - [ ] Decide H1 terminal burst/momentum, H2 duplicate dispatch, and H3
+    auto-branch amplification from evidence; do not add debounce speculatively.
+
+- [ ] **FMN-2 RED cursor-only movement and explicit activation.**
+  - [ ] `TP-FMN-NAV-01..06`: Up/Down, `j/k`, Shift movement, explicit
+    Right/`l`/Enter/click, kind/edge/failure matrix.
+  - [ ] `TP-FMN-WHEEL-01..03`: one decoded event = one owner-column step;
+    directory rows never transfer focus; row/header/empty/detail/rail/outside
+    geometry stays disjoint.
+  - [ ] `TP-FMN-IO-01..03` and `TP-FMN-RENDER-01`: blocked/stale/failure
+    preview and inert-versus-visible render authority.
+
+- [ ] **FMN-3 GREEN decouple movement from activation.**
+  - [ ] Add the smallest cursor-only reducer that preserves exact path,
+    viewport, multi-selection, watcher, and Layout V1 invariants.
+  - [ ] Keep optional right-side directory preview asynchronous,
+    bounded/latest, generation/source/column/path validated, and unable to
+    steal active-column focus.
+  - [ ] Keep explicit directory activation on Right/`l`, Enter, or primary
+    click and keep cold I/O off the input loop.
+
+- [ ] **FMN-4 Normalize physical wheel bursts only if FMN-1 still proves a
+  separate defect after FMN-3.**
+  - [ ] `TP-FMN-WHEEL-04`: distinguish one high-resolution gesture from
+    deliberate continuous scroll and immediate direction reversal.
+  - [ ] Bound time/state/memory; no sleep-throttle, hot retry, unbounded
+    accumulator, dropped ordered control, or sticky scrolling.
+
+- [ ] **FMN-5 Production closure.**
+  - [ ] `TP-FMN-VIS-01`: unchanged Layout V1 Chromium baselines plus scoped
+    cursor/preview semantic cells; no blind PNG regeneration.
+  - [ ] `TP-FMN-E2E-01`: isolated real wheel and held-arrow acceptance; no
+    accidental 3-5 jump, no child focus transfer, zero residue.
+  - [ ] `TP-FMN-GATE-01`: focused/full Nextest, fmt, Linux/Windows Clippy,
+    maintenance, Chromium, graph, Git ancestry, exact CyPack SHA.
+
+- [ ] **FMN-6 Measure pinned Home/Desktop/Downloads first-entry latency as a
+  separate follow-up.**
+  - [ ] Do not implement pre-warm without a reproducible first-entry RED.
+  - [ ] If authorized, use an explicit allowlist, background bounded worker,
+    per-directory entry/byte caps, mtime invalidation, stale-result rejection,
+    permission/missing/changed-type handling, and teardown/memory tests.
+  - [ ] Never add a general or unbounded LRU.
 
 - [ ] **FMR-0 Scroll version lab and ranking.** Four reboot-safe source
   checkpoints are collected side by side under

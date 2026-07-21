@@ -13,11 +13,37 @@
   presentation persistence. Do not add an arbitrary ComponentRegistry before
   its separate S5 trigger is proven.
 - The native-FM activation key is `prefix+f`; navigation uses arrows/hjkl, Enter, Backspace, `.`, Esc/q.
+- Vertical cursor movement and directory activation are separate product
+  intents. Up/Down, `j/k`, Shift+Up/Down, and row wheel must remain in the exact
+  owner column; Right/`l`, Enter, or explicit primary click owns directory
+  entry/rebranch.
 - Stable installed Herdr and development Herdr must remain isolated. Use `.local/ISOLATED-DEV-TEST.md` for runtime checks.
 - The acting GitHub account is `CyPack`; this is external-contributor/fork work. Never push upstream or open upstream issues/PRs for the user.
 
 ## Current Decision Ledger
 
+- The main Native Files rapid-click and inert-mouse stutter is closed and
+  human-accepted at `d8583d3a`. The final residual commits are `b2accbb4`
+  (resident file projection), `8851b5e0` (inert-move render gate), `ed329058`
+  (background text preview), and `d8583d3a` (deterministic filesystem-time
+  fixtures). Closure publication adds `8f4b2acc` (test-only path-identity
+  fixture) and `d52b4417` (evidence, Yazi transfer reference, and lessons).
+  Canonical evidence:
+  `.codex/evidence/files-performance-fix-closure-and-navigation-followups.md`.
+- The next program is `FMN — Files Movement Semantics and Wheel Normalization`.
+  First observe physical wheel -> decoded event -> dispatch -> mutation counts;
+  then RED/GREEN cursor-only vertical navigation. Do not tune wheel cadence
+  before automatic directory branching is removed.
+- Yazi source commit `6d84921e7004eb8d49ba13a4acc97c6cfeb094b4`
+  proves cursor/activation separation, discardable async folder preview,
+  ticketed stale-result rejection, change-gated rendering, and an unbounded
+  directory history. Transfer the first four laws; reject the unbounded cache.
+  Canonical reference:
+  `.codex/references/yazi-file-manager-performance-transfer.md`.
+- Home/Desktop/Downloads pre-warm is not authorized without a separate
+  first-entry latency RED. Any future implementation is allowlisted,
+  background, mtime-invalidated, and capped per directory by entries and bytes;
+  no general LRU.
 - The user approved the bounded Files Interaction Polish program on
   2026-07-17. Its canonical design is
   `docs/superpowers/specs/2026-07-17-herdr-files-interaction-polish-design.md`.
@@ -63,6 +89,10 @@
 - Current CLI handoff: `.codex/HANDOFF.md`.
 - Canonical next-session trigger: `.codex/NEXT-SESSION-PROMPT.md`.
 - Current code/task truth: `.codex/CURRENT.md` and `.codex/TASKS.md`.
+- Native Files performance closure and next input contract:
+  `.codex/evidence/files-performance-fix-closure-and-navigation-followups.md`.
+- Pinned Yazi performance transfer reference:
+  `.codex/references/yazi-file-manager-performance-transfer.md`.
 - Current SF4.1 evidence:
   `.codex/evidence/shell-foundation-sf4-stage-progress.md`.
 - Research vault: `~/.cartography/native-fm-research-INDEX.md`.
@@ -79,6 +109,11 @@
 - `just` may be absent. Read `justfile` and run the entire recipe directly rather than claiming a partial gate.
 - `RIPGREP_CONFIG_PATH` may reference a missing file; use `env -u RIPGREP_CONFIG_PATH rg ...`.
 - Never bulk-stage with `git add -A`; local cartography and continuity artifacts may be present.
+- A human “stutter is gone” report is qualitative symptom acceptance. Keep it
+  distinct from profiler counts, structural tests, and fresh publication gates.
+- Under `set -euo pipefail`, guards inside `if`, `!`, traps, or conditional
+  function calls still need explicit `|| return 1` or an explicit failure
+  return before destructive cleanup can continue.
 - An MCP proxy with 26 serially initialized servers takes about 54 seconds on
   this machine. Keep the readiness probe bounded at 120 seconds and the
   systemd start budget at 150 seconds; require exact server-set equality plus a
