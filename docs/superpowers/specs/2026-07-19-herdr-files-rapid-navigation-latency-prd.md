@@ -7,10 +7,42 @@
 - Product baseline: locked `Files Layout V1`
 - Trigger: user-observed delayed mouse response and temporary freezing during
   rapid reverse/ancestor and locations-rail clicking
-- Current phase: measured root cause and TDD optimization
+- Current phase: closed at `d8583d3a`; human live acceptance recorded
 - Product optimization authorization: approved for the two measured slices
   below, each behind a behavior-specific RED and preserved Layout V1 oracles
 - Required visual verifier: Playwright Chromium
+
+## 2026-07-21 Closure Addendum
+
+The original rapid-click freeze and inert-motion stutter are closed. The final
+residual chain after the FMP foundation is:
+
+- `b2accbb4` — resident file selection reuses its owning parent snapshot;
+- `8851b5e0` — inert file-manager mouse moves can decline render;
+- `ed329058` — file text preview preparation leaves the input loop;
+- `d8583d3a` — filesystem-time-sensitive fixtures use deterministic time
+  authority.
+
+Local HEAD and `origin/feat/native-fm` were both
+`d8583d3ab564d42f880e94e0462f9d12ab61d391` when this addendum was prepared.
+The user then completed the isolated live trial and reported that the original
+freezing/stutter appears completely gone and interaction works very well.
+
+Two newly reported behaviors are separate follow-ups and do not reopen this
+latency program:
+
+1. one physical wheel gesture can appear to skip three to five entries;
+2. Up/Down or wheel landing on a directory can implicitly move navigation into
+   its child column without Right/Enter.
+
+The second behavior is source-confirmed: vertical movement currently calls the
+same activation reducer as an explicit action. The next program must first
+separate cursor movement from directory activation, then measure physical wheel
+events before choosing any burst-normalization policy. Canonical closure and
+follow-up evidence:
+
+- `.codex/evidence/files-performance-fix-closure-and-navigation-followups.md`;
+- `.codex/references/yazi-file-manager-performance-transfer.md`.
 
 ## Problem
 

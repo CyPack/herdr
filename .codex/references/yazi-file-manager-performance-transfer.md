@@ -1,0 +1,249 @@
+# Yazi File-Manager Performance Transfer Reference
+
+## Record
+
+| Field | Value |
+|---|---|
+| Verified | 2026-07-21 |
+| Reference checkout | `/home/ayaz/.cartography/refpool/yazi-src` |
+| Pinned commit | `6d84921e7004eb8d49ba13a4acc97c6cfeb094b4` |
+| Commit date | `2026-07-13T02:01:37+08:00` |
+| Checkout state | clean `main...origin/main` at verification time |
+| Evidence tier | `source_code` |
+| Overall confidence | high (`0.95`) for cited Yazi behavior; medium (`0.75`) for Herdr transfer decisions until their RED/GREEN cycle closes |
+
+This record answers a narrow question: which Yazi architectural properties
+explain responsive cursor navigation and directory preview, and which of those
+properties are safe to transfer into Herdr Native Files? It is not a claim that
+Yazi and Herdr have the same state model, rendering protocol, or cache budget.
+
+## Executive decision
+
+The useful Yazi pattern is not “cache everything.” It is the separation of
+three intents:
+
+```text
+vertical cursor movement
+  -> update the cursor in the current directory
+  -> schedule hover/preview/watch work
+  -> render the resulting state once
+
+explicit activation
+  -> enter/open the selected directory or file
+
+directory preview
+  -> abort superseded work
+  -> read asynchronously
+  -> apply only matching ticket/revision results
+```
+
+Herdr already has the right bounded worker and generation-validation
+primitives. Its remaining navigation defect is semantic: Up/Down and row wheel
+currently call the same Trail activation reducer as a click. Landing on a
+directory can therefore branch into the child column without an explicit
+Right/Enter/click. The next change must separate cursor movement from
+activation before considering wheel-rate normalization or a new cache.
+
+## Primary-source chain
+
+### 1. Wheel input becomes cursor movement
+
+`yazi-plugin/preset/components/current.lua:61-75` routes current-pane wheel
+input to the `arrow` action:
+
+```lua
+function Current:scroll(event, step) ya.emit("arrow", { step }) end
+```
+
+`yazi-actor/src/mgr/arrow.rs:15-35` changes `tab.current.cursor`, then invokes
+hover, peek, and watch. It does not enter the hovered directory. This is the
+critical interaction distinction for Herdr.
+
+Confidence: `0.99`, direct source.
+
+### 2. A hovered directory is previewed asynchronously
+
+`yazi-actor/src/mgr/peek.rs:15-54` resolves the hovered item. A directory calls
+`Preview::go_folder`; a file calls `Preview::go`.
+
+`yazi-core/src/tab/preview.rs:50-77` implements folder preview as discardable
+work:
+
+- identical `folder_lock` targets can reuse the current preview;
+- a previous folder loader is aborted;
+- the directory metadata is checked for staleness;
+- `Entries::from_dir` runs asynchronously;
+- results are emitted in chunks of at most 50,000 entries or 500 ms;
+- every `Part` and `Done` carries the same ticket.
+
+The concrete chunk size and timeout are Yazi policy, not Herdr requirements.
+The transferable law is cancellation plus stale-result rejection.
+
+Confidence: `0.99`, direct source.
+
+### 3. Directory enumeration stays off the UI path
+
+`yazi-vfs/src/entries.rs:17-37` obtains an asynchronous directory iterator,
+spawns the metadata loop, and sends entries through a channel. Lines 69-77
+compare fresh directory characteristics with the prior value and skip a reload
+when the directory is unchanged and the partition is not timeless.
+
+Confidence: `0.99`, direct source.
+
+### 4. Partial results are ticketed and revisions represent real changes
+
+`yazi-fs/src/entries.rs:37-70` rejects a partial update whose ticket no longer
+matches. Its `revision` advances only when the visible item set actually
+changes. This makes “state changed” a stronger repaint signal than “an input
+event occurred.”
+
+Confidence: `0.99`, direct source.
+
+### 5. Plain mouse motion is inert and render work is coalesced
+
+`yazi-plugin/preset/components/root.lua:79` defines plain `Root:move` as a
+no-op. `yazi-fm/src/app/app.rs:34-93` drains the currently queued events before
+rendering and enforces a 10 ms next-render interval. No mutation means no
+render request; a burst of valid mutations is collapsed into bounded frame
+work.
+
+Herdr's `8851b5e0` applies the first law to inert file-manager motion while
+preserving overlay hover, drag, resize, and non-move input behavior.
+
+Confidence: `0.99` for Yazi; `0.95` for the verified Herdr mapping.
+
+### 6. Yazi's directory history is unbounded
+
+`yazi-core/src/tab/history.rs:8-25` is a plain
+`HashMap<UrlBuf, Folder>`. The cited implementation has no entry cap, byte cap,
+LRU eviction, or pinned-location budget.
+
+This is explicitly not a safe cache model for Herdr. Herdr's calibrated 100k
+snapshot retained a 14.8 MB metadata lower bound, so an unbounded directory
+history can turn responsive navigation into unbounded process growth.
+
+Confidence: `0.99`, direct source and Herdr executable calibration.
+
+## Herdr source comparison at `d8583d3a`
+
+### Correct primitives already present
+
+- `FileManagerIoWorker` is bounded to one executing request and one latest
+  pending request.
+- Files/model/source/generation/column/index/path identities reject stale
+  completions.
+- Direct directory clicks use
+  `App::queue_file_manager_trail_directory_activation`
+  (`src/app/file_manager_miller.rs:12-42`) and therefore do not block the input
+  loop on a cold listing.
+- Complete semantic frames are latest-wins while input and ordered controls
+  remain lossless.
+- File preview work is discardable and leaves the serial input loop after
+  `ed329058`.
+- Inert pointer motion can decline a render after `8851b5e0`.
+
+### Remaining semantic mismatch
+
+`src/app/input/file_manager.rs:111-119` routes plain Up/Down and `j/k` to
+`FmState::move_trail_selection`. Visible-row wheel input does the same at
+`src/app/input/file_manager.rs:495-510`; section-header wheel uses
+`move_trail_selection_in_column` at lines 754-768.
+
+`src/fm/trail_snapshots.rs:388-429` computes the landed row and immediately
+calls `activate_entry`. Its own comment freezes the current behavior:
+directories branch and files mark. `src/fm/mod.rs:1015-1066` then installs the
+operation projection and rearms active-column follow after a branch.
+
+Consequences:
+
+1. Up/Down is not cursor-only.
+2. A directory under the cursor can change the active column without
+   Right/Enter.
+3. Remaining key-repeat or wheel events can then operate on the child column,
+   making one gesture look like a multi-row or cross-column jump.
+4. Keyboard/header-wheel directory movement still bypasses the click-specific
+   bounded activation request and can retain synchronous projection work.
+
+Confidence: `0.99`, current Herdr source plus user reproduction.
+
+## Transfer laws for the next Herdr slice
+
+### YT-1 — Movement and activation are different commands
+
+Up, Down, `j`, `k`, Shift+Up/Down, and vertical row wheel move the cursor only
+inside the exact owning Trail column. They must not change `active_col`, truncate
+or extend the branch, rearm horizontal follow for a different column, or
+transfer selection authority to a child.
+
+Right, Enter, `l`, or an explicit primary row click owns directory activation.
+No implicit activation is inferred from the selected entry kind.
+
+### YT-2 — Preview may follow the cursor without focus transfer
+
+Landing on a directory may schedule a right-side child preview, but the owner
+column remains active. The preview request must use the existing bounded
+latest-pending lane or an equivalently bounded discardable lane and must reject
+stale Files generation, model revision, source, owner column, and exact path.
+
+### YT-3 — A decoded event and a physical gesture are measured separately
+
+A deterministic reducer must prove that one accepted vertical movement unit
+changes the cursor by exactly one row. A live isolated trace must separately
+record how many terminal wheel events one physical gesture produces. Do not
+invent a debounce until that trace distinguishes terminal burst/momentum from
+duplicate Herdr dispatch.
+
+### YT-4 — Render only for visible state change
+
+An inert move or clamped cursor action must not force a full frame. A real
+cursor/preview/loading/error transition may request a render. Ordered input is
+never dropped merely to reduce render work.
+
+### YT-5 — Cache authorization remains measurement-first
+
+Resident Trail snapshots are the first cache. Home/Desktop/Downloads pre-warm
+is a separate optimization and requires a first-entry latency RED. If
+authorized, it must have:
+
+- an explicit directory allowlist;
+- per-directory entry and byte caps;
+- mtime/change invalidation;
+- bounded startup/background concurrency;
+- generation/ticket validation;
+- permission/missing/changed-type handling;
+- deterministic teardown and memory-budget tests.
+
+No general or unbounded LRU is authorized by Yazi.
+
+## Non-transfer decisions
+
+| Yazi mechanism | Herdr decision | Reason |
+|---|---|---|
+| Unbounded `History(HashMap<UrlBuf, Folder>)` | Reject | Herdr has explicit memory budgets and large-directory calibration |
+| 50,000 entry / 500 ms preview chunks | Do not copy literally | Needs a Herdr time-to-first-row RED and profile-specific calibration |
+| Tokio task per folder preview | Reuse bounded Herdr worker semantics first | Existing worker already has stronger source/generation/path authority |
+| Global 10 ms render cadence | Do not replace Herdr's 16 ms policy in this bug | The proven defect was unnecessary render requests, not the constant alone |
+| Plain mouse move always inert | Transfer only with owner-aware exceptions | Menus, drag, resize, tooltip, and motion-reporting panes can mutate visible state |
+
+## Reverification checklist
+
+Before relying on this reference after either repository moves:
+
+1. require the exact Yazi commit above or update every cited line;
+2. verify the checkout is clean before treating file:line as source evidence;
+3. run Codebase Memory `index_status`, then prove a current Herdr symbol such as
+   `move_trail_selection_in_column` or
+   `queue_file_manager_trail_directory_activation`;
+4. inspect the exact current Herdr reducer before editing;
+5. preserve the user contract in
+   `.codex/evidence/files-performance-fix-closure-and-navigation-followups.md`.
+
+## Related records
+
+- `docs/superpowers/specs/2026-07-19-herdr-files-rapid-navigation-latency-prd.md`
+- `.codex/evidence/files-rapid-navigation-root-cause.md`
+- `.codex/evidence/files-rapid-navigation-scale-calibration.md`
+- `.codex/evidence/files-performance-fix-closure-and-navigation-followups.md`
+- `.codex/skills/herdr-native-fm/lessons/errors.md`
+- `.codex/skills/herdr-native-fm/lessons/golden-paths.md`
+- `.codex/skills/herdr-native-fm/lessons/edge-cases.md`
