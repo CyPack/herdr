@@ -1243,20 +1243,52 @@ impl FmState {
         entry_index: usize,
         expected_path: &Path,
     ) -> bool {
-        let Some(snapshot) = self.trail_snapshots.cols().get(col_idx) else {
+        let Some(owner) = self.trail_snapshots.cols().get(col_idx) else {
             return false;
         };
-        if snapshot
+        if owner
             .entries()
             .get(entry_index)
             .is_none_or(|entry| entry.path != expected_path)
         {
             return false;
         }
-        let directory = snapshot.directory().to_path_buf();
-        let entries = snapshot.entries().to_vec();
-        let status = snapshot.status();
-        self.install_trail_projection(directory, entries, status, Some(entry_index));
+        // Selecting an already-loaded file must not enumerate the parent
+        // directory on the serial server input loop. The owning column and its
+        // resident parent already carry the exact entries, status, writability,
+        // and parent cursor, so reuse them instead of read_parent_context /
+        // directory_is_writable, mirroring the resident directory fast path.
+        let directory = owner.directory().to_path_buf();
+        let entries = owner.entries().to_vec();
+        let status = owner.status();
+        let writable = owner.writable();
+        let parent = col_idx.checked_sub(1).and_then(|parent_idx| {
+            let snapshot = self.trail_snapshots.cols().get(parent_idx)?;
+            let entries = snapshot.entries().to_vec();
+            let cursor = entries.iter().position(|entry| entry.path == directory);
+            Some(FmParent { entries, cursor })
+        });
+
+        self.cwd = directory;
+        self.entries = entries;
+        self.cwd_status = status;
+        self.cwd_writable = writable;
+        self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
+        self.reconcile_multi_selection();
+        self.cursor = entry_index;
+        self.clamp_cursor();
+        self.viewport_start = 0;
+        self.parent = parent;
+        self.preview_viewport_start = 0;
+        self.preview_generation = self.preview_generation.wrapping_add(1).max(1);
+        let generation = self.preview_generation;
+        self.preview = self
+            .entries
+            .get(entry_index)
+            .map(|entry| (entry.path.clone(), entry.is_dir()))
+            .map_or(FmPreview::None, |selected| {
+                prepare_preview(Some(selected), self.show_hidden, generation, None)
+            });
         true
     }
 
@@ -2871,6 +2903,94 @@ mod tests {
             profile.counter("fm.filesystem.read"),
             0,
             "resident child, parent, and preview projections must reuse prepared snapshots"
+        );
+    }
+
+    // TP-FMP-FILE-01: selecting a resident file whose parent column is already
+    // loaded must be a disk-free state transition. Parent context and
+    // writability come from the resident Trail snapshots, never a fresh
+    // read_parent_context / directory_is_writable on the serial input loop.
+    #[test]
+    fn resident_file_selection_projects_without_filesystem_reads() {
+        let td = TempDir::new("fmp-resident-file");
+        let alpha = td.root.join("alpha");
+        fs::create_dir_all(&alpha).expect("create resident file fixture");
+        fs::write(alpha.join("leaf.txt"), b"leaf").expect("write resident leaf");
+        let mut state =
+            FmState::open_trail_to(&td.root, &alpha, false).expect("open resident file Trail");
+        let alpha_col = state
+            .trail_snapshots
+            .cols()
+            .iter()
+            .position(|col| col.directory() == alpha)
+            .expect("alpha column resident");
+        let leaf = alpha.join("leaf.txt");
+        let leaf_index = state.trail_snapshots.cols()[alpha_col]
+            .entries()
+            .iter()
+            .position(|entry| entry.path == leaf)
+            .expect("leaf row in alpha snapshot");
+
+        let (outcome, profile) = crate::render_prof::observe_for_test(|| {
+            state.activate_trail_entry(alpha_col, leaf_index, &leaf)
+        });
+
+        assert_eq!(outcome, trail_snapshots::TrailActivateOutcome::SelectedFile);
+        assert_eq!(
+            profile.counter("fm.filesystem.read"),
+            0,
+            "resident file selection must reuse the resident parent snapshot instead of \
+             reading the parent directory on the serial input loop"
+        );
+        // TP-FMP-FILE-01b: the reused parent context is exact, not empty or
+        // defaulted — the cursor binds the selected file's own directory.
+        let parent = state
+            .parent
+            .as_ref()
+            .expect("resident parent context present for a deep file selection");
+        let cursor = parent
+            .cursor
+            .expect("parent cursor bound to the owning directory");
+        assert_eq!(
+            parent.entries[cursor].path, alpha,
+            "resident parent cursor must bind the selected file's directory"
+        );
+    }
+
+    // TP-FMP-FILE-02: selecting a file in the root column (no resident parent
+    // column) must be disk-free and leave no parent context, mirroring the
+    // resident directory fast path's root behavior — never a fresh parent read.
+    #[test]
+    fn root_file_selection_is_disk_free_and_has_no_parent() {
+        let td = TempDir::new("fmp-root-file");
+        fs::write(td.root.join("leaf.txt"), b"leaf").expect("write root leaf");
+        let mut state = FmState::open_trail_to(&td.root, &td.root, false).expect("open root Trail");
+        let root_col = state
+            .trail_snapshots
+            .cols()
+            .iter()
+            .position(|col| col.directory() == td.root)
+            .expect("root column resident");
+        let leaf = td.root.join("leaf.txt");
+        let leaf_index = state.trail_snapshots.cols()[root_col]
+            .entries()
+            .iter()
+            .position(|entry| entry.path == leaf)
+            .expect("leaf row in root snapshot");
+
+        let (outcome, profile) = crate::render_prof::observe_for_test(|| {
+            state.activate_trail_entry(root_col, leaf_index, &leaf)
+        });
+
+        assert_eq!(outcome, trail_snapshots::TrailActivateOutcome::SelectedFile);
+        assert_eq!(
+            profile.counter("fm.filesystem.read"),
+            0,
+            "root file selection must not enumerate any directory on the input loop"
+        );
+        assert!(
+            state.parent.is_none(),
+            "the root column has no resident parent, so parent context stays empty"
         );
     }
 
