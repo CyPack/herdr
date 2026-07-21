@@ -243,6 +243,12 @@ pub enum FmPreview {
 /// Prepared selected-file state for the right Miller column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FmFilePreview {
+    /// Exact text target awaiting the bounded preview worker. Installing this
+    /// state is pure and keeps file bytes off input and render threads.
+    PendingText {
+        source_path: PathBuf,
+        generation: u64,
+    },
     /// Valid bounded UTF-8 content, prepared outside render.
     Text(TextPreview),
     /// Common image format prepared asynchronously outside render.
@@ -569,6 +575,31 @@ fn prepare_preview(
     }
 }
 
+/// Install a selected-file preview without touching the filesystem. The
+/// dedicated preview worker resolves text bytes; image decoding keeps its
+/// existing asynchronous path.
+fn prepare_deferred_file_preview(path: PathBuf, generation: u64) -> FmPreview {
+    if is_image_preview_path(&path) {
+        FmPreview::File(FmFilePreview::Image(FmImagePreview {
+            source_path: path,
+            generation,
+            state: FmImagePreviewState::Pending,
+        }))
+    } else {
+        FmPreview::File(FmFilePreview::PendingText {
+            source_path: path,
+            generation,
+        })
+    }
+}
+
+/// Bounded text preparation entry point for the dedicated preview worker.
+/// Keeping the limits here prevents runtime adapters from selecting an
+/// unbounded read policy.
+pub(crate) fn prepare_default_text_preview(path: &Path) -> Result<TextPreview, TextPreviewError> {
+    read_text_preview(path, TextPreviewLimits::default())
+}
+
 #[derive(Debug, Clone, Default)]
 struct FmMultiSelection {
     paths: BTreeSet<PathBuf>,
@@ -660,7 +691,11 @@ impl FmState {
             FmPreview::File(FmFilePreview::Text(preview)) => Some(preview.clone()),
             FmPreview::None
             | FmPreview::Directory(_)
-            | FmPreview::File(FmFilePreview::Image(_) | FmFilePreview::Unavailable(_)) => None,
+            | FmPreview::File(
+                FmFilePreview::PendingText { .. }
+                | FmFilePreview::Image(_)
+                | FmFilePreview::Unavailable(_),
+            ) => None,
         };
         FmCurrentRefreshRequest {
             reason,
@@ -1285,10 +1320,42 @@ impl FmState {
         self.preview = self
             .entries
             .get(entry_index)
-            .map(|entry| (entry.path.clone(), entry.is_dir()))
-            .map_or(FmPreview::None, |selected| {
-                prepare_preview(Some(selected), self.show_hidden, generation, None)
-            });
+            .map(|entry| prepare_deferred_file_preview(entry.path.clone(), generation))
+            .unwrap_or(FmPreview::None);
+        true
+    }
+
+    /// Apply one bounded text-preview result only to the exact pending
+    /// selection that scheduled it. Files close/reopen, a newer selection,
+    /// watcher refresh, or path mismatch rejects the result atomically.
+    pub(crate) fn apply_prepared_text_preview(
+        &mut self,
+        expected_path: &Path,
+        expected_generation: u64,
+        prepared: Result<TextPreview, TextPreviewError>,
+    ) -> bool {
+        if self.preview_generation != expected_generation
+            || self.selected().map(|entry| entry.path.as_path()) != Some(expected_path)
+            || !matches!(
+                &self.preview,
+                FmPreview::File(FmFilePreview::PendingText {
+                    source_path,
+                    generation,
+                }) if source_path == expected_path && *generation == expected_generation
+            )
+            || prepared
+                .as_ref()
+                .is_ok_and(|preview| preview.source_path != expected_path)
+        {
+            return false;
+        }
+
+        self.trail_snapshots
+            .apply_prepared_text_detail(expected_path, &prepared);
+        self.preview = FmPreview::File(match prepared {
+            Ok(preview) => FmFilePreview::Text(preview),
+            Err(error) => FmFilePreview::Unavailable(error),
+        });
         true
     }
 
@@ -4681,5 +4748,37 @@ mod tests {
                 entry.kind.supports_native_operation()
             );
         }
+    }
+
+    // FM-PERF-TEXT-01: selecting a resident file is an input-loop state
+    // transition. File bytes must be prepared by the bounded preview worker,
+    // never by either of the two selection projection seams.
+    #[test]
+    fn file_selection_projection_has_no_inline_text_preview_read() {
+        let fm_source = include_str!("mod.rs");
+        let preview_start = fm_source
+            .find("fn install_trail_operation_projection(")
+            .expect("Trail operation projection seam");
+        let preview_end = fm_source[preview_start..]
+            .find("\n    fn install_resident_directory_operation_projection(")
+            .map(|offset| preview_start + offset)
+            .expect("Trail operation projection boundary");
+        assert!(
+            !fm_source[preview_start..preview_end].contains("prepare_preview("),
+            "resident file selection must install a deferred preview, not the synchronous legacy projection"
+        );
+
+        let trail_source = include_str!("trail_snapshots.rs");
+        let detail_start = trail_source
+            .find("fn prepare_trail_detail(")
+            .expect("Trail detail projection seam");
+        let detail_end = trail_source[detail_start..]
+            .find("\n#[cfg(test)]")
+            .map(|offset| detail_start + offset)
+            .expect("Trail detail production boundary");
+        assert!(
+            !trail_source[detail_start..detail_end].contains("read_text_preview("),
+            "Trail detail projection must not read file bytes on the caller thread"
+        );
     }
 }

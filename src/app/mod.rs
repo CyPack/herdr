@@ -124,7 +124,7 @@ pub struct App {
     file_operation_worker: file_operation_worker::FileOperationWorker,
     file_operation_reconcile_baseline:
         Option<file_operation_worker::FileOperationReconcileBaseline>,
-    file_preview_worker: file_preview_worker::FilePreviewHighlightWorker,
+    file_preview_worker: file_preview_worker::FilePreviewWorker,
     image_preview_worker: image_preview_worker::ImagePreviewWorker,
     image_preview_cell_size: crate::kitty_graphics::HostCellSize,
     pub(crate) last_terminal_size: Option<(u16, u16)>,
@@ -878,9 +878,7 @@ impl App {
                 render_notify.clone(),
             ),
             file_operation_reconcile_baseline: None,
-            file_preview_worker: file_preview_worker::FilePreviewHighlightWorker::new(
-                render_notify.clone(),
-            ),
+            file_preview_worker: file_preview_worker::FilePreviewWorker::new(render_notify.clone()),
             image_preview_worker: image_preview_worker::ImagePreviewWorker::new(
                 render_notify.clone(),
             ),

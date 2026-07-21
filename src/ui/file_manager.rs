@@ -936,6 +936,10 @@ fn render_file_preview(app: &AppState, frame: &mut Frame, area: Rect, preview: &
     }
 
     match preview {
+        FmFilePreview::PendingText { .. } => {
+            let label = truncate_end("  loading preview...", content_area.width as usize);
+            frame.render_widget(Paragraph::new(label).style(styles.empty), content_area);
+        }
         FmFilePreview::Unavailable(error) => {
             let label = truncate_end(
                 &format!("  {}", text_preview_error_label(*error)),

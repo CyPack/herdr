@@ -5,86 +5,154 @@ use std::thread::JoinHandle;
 use sha2::{Digest, Sha256};
 use tokio::sync::Notify;
 
-use crate::fm::{highlight_text_preview, HighlightedTextPreview, TextPreview};
+use crate::fm::{highlight_text_preview, TextPreview, TextPreviewError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct FilePreviewHighlightKey {
+struct FilePreviewKey {
+    files_generation: u32,
     path: PathBuf,
-    content_sha256: [u8; 32],
+    preview_generation: u64,
+    content_sha256: Option<[u8; 32]>,
     truncated: bool,
 }
 
-impl FilePreviewHighlightKey {
+impl FilePreviewKey {
+    #[cfg(test)]
     fn new(path: &Path, preview: &TextPreview) -> Self {
+        Self::prepared(1, path, 1, preview)
+    }
+
+    fn pending(files_generation: u32, path: PathBuf, preview_generation: u64) -> Self {
+        Self {
+            files_generation,
+            path,
+            preview_generation,
+            content_sha256: None,
+            truncated: false,
+        }
+    }
+
+    fn prepared(
+        files_generation: u32,
+        path: &Path,
+        preview_generation: u64,
+        preview: &TextPreview,
+    ) -> Self {
         let digest = Sha256::digest(preview.content.as_bytes());
         Self {
+            files_generation,
             path: path.to_path_buf(),
-            content_sha256: digest.into(),
+            preview_generation,
+            content_sha256: Some(digest.into()),
             truncated: preview.truncated,
         }
+    }
+
+    fn is_pending(&self) -> bool {
+        self.content_sha256.is_none()
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FilePreviewHighlightSync {
+enum FilePreviewSync {
     Unchanged,
     Started { generation: u64 },
     Stopped,
 }
 
 #[derive(Debug, Default)]
-struct FilePreviewHighlightSlot {
+struct FilePreviewSlot {
     generation: u64,
-    active: Option<FilePreviewHighlightKey>,
+    active: Option<FilePreviewKey>,
 }
 
-impl FilePreviewHighlightSlot {
-    fn sync(&mut self, target: Option<FilePreviewHighlightKey>) -> FilePreviewHighlightSync {
+impl FilePreviewSlot {
+    fn sync(&mut self, target: Option<FilePreviewKey>) -> FilePreviewSync {
         if self.active == target {
-            return FilePreviewHighlightSync::Unchanged;
+            return FilePreviewSync::Unchanged;
         }
 
         self.generation = self.generation.wrapping_add(1).max(1);
         self.active = target;
         if self.active.is_some() {
-            FilePreviewHighlightSync::Started {
+            FilePreviewSync::Started {
                 generation: self.generation,
             }
         } else {
-            FilePreviewHighlightSync::Stopped
+            FilePreviewSync::Stopped
         }
     }
 
-    fn accepts(&self, generation: u64, key: &FilePreviewHighlightKey) -> bool {
+    fn accepts(&self, generation: u64, key: &FilePreviewKey) -> bool {
         self.generation == generation && self.active.as_ref() == Some(key)
     }
 }
 
 #[derive(Debug)]
-struct FilePreviewHighlightRequest {
-    generation: u64,
-    key: FilePreviewHighlightKey,
-    path: PathBuf,
-    preview: TextPreview,
+enum FilePreviewSource {
+    Pending,
+    Prepared(TextPreview),
 }
 
 #[derive(Debug)]
-struct FilePreviewHighlightResult {
+struct FilePreviewTarget {
+    key: FilePreviewKey,
+    source: FilePreviewSource,
+}
+
+impl FilePreviewTarget {
+    fn pending(files_generation: u32, path: PathBuf, preview_generation: u64) -> Self {
+        Self {
+            key: FilePreviewKey::pending(files_generation, path, preview_generation),
+            source: FilePreviewSource::Pending,
+        }
+    }
+
+    fn prepared(
+        files_generation: u32,
+        path: PathBuf,
+        preview_generation: u64,
+        preview: TextPreview,
+    ) -> Self {
+        Self {
+            key: FilePreviewKey::prepared(files_generation, &path, preview_generation, &preview),
+            source: FilePreviewSource::Prepared(preview),
+        }
+    }
+}
+
+#[cfg(test)]
+impl From<(PathBuf, TextPreview)> for FilePreviewTarget {
+    fn from((path, preview): (PathBuf, TextPreview)) -> Self {
+        Self::prepared(1, path, 1, preview)
+    }
+}
+
+#[derive(Debug)]
+struct FilePreviewRequest {
     generation: u64,
-    key: FilePreviewHighlightKey,
-    highlighted: HighlightedTextPreview,
+    key: FilePreviewKey,
+    source: FilePreviewSource,
+}
+
+#[derive(Debug)]
+struct FilePreviewResult {
+    generation: u64,
+    key: FilePreviewKey,
+    prepared: Result<TextPreview, TextPreviewError>,
 }
 
 #[derive(Debug, Default)]
-struct FilePreviewHighlightDrain {
-    current: Option<FilePreviewHighlightResult>,
+struct FilePreviewDrain {
+    current: Option<FilePreviewResult>,
     disconnected: bool,
+    report_disconnect: bool,
 }
 
 #[derive(Debug)]
 struct FilePreviewWorkerState {
-    pending: Option<FilePreviewHighlightRequest>,
-    result: Option<FilePreviewHighlightResult>,
+    pending: Option<FilePreviewRequest>,
+    result: Option<FilePreviewResult>,
     alive: bool,
     closed: bool,
 }
@@ -115,21 +183,21 @@ impl Drop for WorkerAliveGuard {
     }
 }
 
-pub(super) struct FilePreviewHighlightWorker {
-    slot: FilePreviewHighlightSlot,
+pub(super) struct FilePreviewWorker {
+    slot: FilePreviewSlot,
     shared: SharedWorkerState,
     handle: Option<JoinHandle<()>>,
     disconnect_reported: bool,
 }
 
-impl FilePreviewHighlightWorker {
+impl FilePreviewWorker {
     pub(super) fn new(wake: Arc<Notify>) -> Self {
-        Self::with_processor(wake, highlight_text_preview)
+        Self::with_preview_processor(wake, process_preview)
     }
 
-    fn with_processor<F>(wake: Arc<Notify>, processor: F) -> Self
+    fn with_preview_processor<F>(wake: Arc<Notify>, processor: F) -> Self
     where
-        F: Fn(&Path, &TextPreview) -> HighlightedTextPreview + Send + 'static,
+        F: Fn(&Path, FilePreviewSource) -> Result<TextPreview, TextPreviewError> + Send + 'static,
     {
         let shared = Arc::new((
             Mutex::new(FilePreviewWorkerState::default()),
@@ -142,11 +210,11 @@ impl FilePreviewHighlightWorker {
                 wake: wake.clone(),
             };
             while let Some(request) = take_next_request(&worker_shared) {
-                let highlighted = processor(&request.path, &request.preview);
-                let result = FilePreviewHighlightResult {
+                let prepared = processor(&request.key.path, request.source);
+                let result = FilePreviewResult {
                     generation: request.generation,
                     key: request.key,
-                    highlighted,
+                    prepared,
                 };
                 let (state, _) = &*worker_shared;
                 let mut state = lock_state(state);
@@ -160,48 +228,65 @@ impl FilePreviewHighlightWorker {
         });
 
         Self {
-            slot: FilePreviewHighlightSlot::default(),
+            slot: FilePreviewSlot::default(),
             shared,
             handle: Some(handle),
             disconnect_reported: false,
         }
     }
 
-    fn sync_target(&mut self, target: Option<(PathBuf, TextPreview)>) -> FilePreviewHighlightSync {
-        let target_key = target
-            .as_ref()
-            .map(|(path, preview)| FilePreviewHighlightKey::new(path, preview));
+    #[cfg(test)]
+    fn with_processor<F>(wake: Arc<Notify>, processor: F) -> Self
+    where
+        F: Fn(&Path, &TextPreview) -> crate::fm::HighlightedTextPreview + Send + 'static,
+    {
+        Self::with_preview_processor(wake, move |path, source| {
+            let mut preview = match source {
+                FilePreviewSource::Pending => crate::fm::prepare_default_text_preview(path)?,
+                FilePreviewSource::Prepared(preview) => preview,
+            };
+            preview.highlighted = Some(processor(path, &preview));
+            Ok(preview)
+        })
+    }
+
+    fn sync_target<T>(&mut self, target: Option<T>) -> FilePreviewSync
+    where
+        T: Into<FilePreviewTarget>,
+    {
+        let target = target.map(Into::into);
+        let target_key = target.as_ref().map(|target| target.key.clone());
         let sync = self.slot.sync(target_key.clone());
         let (state, pending) = &*self.shared;
         let mut state = lock_state(state);
         match sync {
-            FilePreviewHighlightSync::Started { generation } => {
-                if let (Some(key), Some((path, preview))) = (target_key, target) {
-                    state.pending = Some(FilePreviewHighlightRequest {
+            FilePreviewSync::Started { generation } => {
+                if let (Some(key), Some(target)) = (target_key, target) {
+                    state.pending = Some(FilePreviewRequest {
                         generation,
                         key,
-                        path,
-                        preview,
+                        source: target.source,
                     });
                     crate::render_prof::event("fm.text_worker.submitted");
                     pending.notify_one();
                 }
             }
-            FilePreviewHighlightSync::Stopped => {
+            FilePreviewSync::Stopped => {
                 state.pending = None;
                 state.result = None;
             }
-            FilePreviewHighlightSync::Unchanged => {}
+            FilePreviewSync::Unchanged => {}
         }
         sync
     }
 
-    fn drain(&mut self) -> FilePreviewHighlightDrain {
+    fn drain(&mut self) -> FilePreviewDrain {
         let (state, _) = &*self.shared;
         let mut state = lock_state(state);
         let result = state.result.take();
-        let disconnected = !state.alive && !state.closed && !self.disconnect_reported;
-        self.disconnect_reported |= disconnected;
+        let disconnected = !state.alive && !state.closed;
+        let report_disconnect = disconnected && !self.disconnect_reported;
+        self.disconnect_reported |= report_disconnect;
         drop(state);
 
         let current = result.and_then(|result| {
@@ -213,14 +298,26 @@ impl FilePreviewHighlightWorker {
                 None
             }
         });
-        FilePreviewHighlightDrain {
+        FilePreviewDrain {
             current,
             disconnected,
+            report_disconnect,
         }
     }
 }
 
-impl Drop for FilePreviewHighlightWorker {
+#[cfg(test)]
+type FilePreviewHighlightKey = FilePreviewKey;
+#[cfg(test)]
+type FilePreviewHighlightSync = FilePreviewSync;
+#[cfg(test)]
+type FilePreviewHighlightSlot = FilePreviewSlot;
+#[cfg(test)]
+type FilePreviewHighlightResult = FilePreviewResult;
+#[cfg(test)]
+type FilePreviewHighlightWorker = FilePreviewWorker;
+
+impl Drop for FilePreviewWorker {
     fn drop(&mut self) {
         let (state, pending) = &*self.shared;
         let mut state = lock_state(state);
@@ -231,12 +328,18 @@ impl Drop for FilePreviewHighlightWorker {
         pending.notify_one();
 
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            // Preview preparation includes filesystem I/O. A stalled mount
+            // must not turn App/server teardown into an unbounded join. The
+            // closed flag prevents any late result from escaping this private
+            // shared state; dropping an unfinished handle safely detaches it.
+            if handle.is_finished() {
+                let _ = handle.join();
+            }
         }
     }
 }
 
-fn take_next_request(shared: &SharedWorkerState) -> Option<FilePreviewHighlightRequest> {
+fn take_next_request(shared: &SharedWorkerState) -> Option<FilePreviewRequest> {
     let (state, pending) = &**shared;
     let mut state = lock_state(state);
     while state.pending.is_none() && !state.closed {
@@ -249,6 +352,18 @@ fn take_next_request(shared: &SharedWorkerState) -> Option<FilePreviewHighlightR
         return None;
     }
     state.pending.take()
+}
+
+fn process_preview(
+    path: &Path,
+    source: FilePreviewSource,
+) -> Result<TextPreview, TextPreviewError> {
+    let mut preview = match source {
+        FilePreviewSource::Pending => crate::fm::prepare_default_text_preview(path)?,
+        FilePreviewSource::Prepared(preview) => preview,
+    };
+    preview.highlighted = Some(highlight_text_preview(path, &preview));
+    Ok(preview)
 }
 
 fn lock_state(state: &Mutex<FilePreviewWorkerState>) -> MutexGuard<'_, FilePreviewWorkerState> {
@@ -264,45 +379,116 @@ impl super::App {
         self.file_preview_worker.slot.generation
     }
 
-    pub(super) fn sync_file_preview_worker(&mut self) -> bool {
-        let target = self.state.file_manager.as_ref().and_then(|file_manager| {
-            let selected_path = file_manager.selected()?.path.clone();
-            let crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(preview)) =
-                &file_manager.preview
-            else {
-                return None;
-            };
-            let mut source = preview.clone();
-            source.highlighted = None;
-            Some((selected_path, source))
+    pub(crate) fn sync_file_preview_worker(&mut self) -> bool {
+        let files_generation = (self.state.stage.surface_view()
+            == crate::ui::surface_host::StageSurfaceView::NativeFiles)
+            .then(|| self.state.stage.active_instance_generation())
+            .flatten();
+        let target = files_generation.and_then(|files_generation| {
+            self.state.file_manager.as_ref().and_then(|file_manager| {
+                let selected_path = file_manager.selected()?.path.clone();
+                match &file_manager.preview {
+                    crate::fm::FmPreview::File(crate::fm::FmFilePreview::PendingText {
+                        source_path,
+                        generation,
+                    }) if source_path == &selected_path
+                        && *generation == file_manager.preview_generation =>
+                    {
+                        Some(FilePreviewTarget::pending(
+                            files_generation,
+                            selected_path,
+                            *generation,
+                        ))
+                    }
+                    crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(preview))
+                        if preview.source_path == selected_path
+                            && preview.highlighted.is_none() =>
+                    {
+                        let mut source = preview.clone();
+                        source.highlighted = None;
+                        Some(FilePreviewTarget::prepared(
+                            files_generation,
+                            selected_path,
+                            file_manager.preview_generation,
+                            source,
+                        ))
+                    }
+                    crate::fm::FmPreview::None
+                    | crate::fm::FmPreview::Directory(_)
+                    | crate::fm::FmPreview::File(_) => None,
+                }
+            })
         });
 
         let _ = self.file_preview_worker.sync_target(target);
         let drained = self.file_preview_worker.drain();
+        let mut changed = false;
+        if drained.report_disconnect {
+            tracing::warn!("fm: text preview worker stopped; pending preview is unavailable");
+        }
         if drained.disconnected {
-            tracing::warn!("fm: text preview highlight worker stopped; using plain-text fallback");
+            let pending = self.state.file_manager.as_ref().and_then(|file_manager| {
+                match &file_manager.preview {
+                    crate::fm::FmPreview::File(crate::fm::FmFilePreview::PendingText {
+                        source_path,
+                        generation,
+                    }) => Some((source_path.clone(), *generation)),
+                    crate::fm::FmPreview::None
+                    | crate::fm::FmPreview::Directory(_)
+                    | crate::fm::FmPreview::File(_) => None,
+                }
+            });
+            if let Some((path, generation)) = pending {
+                changed |= self
+                    .state
+                    .file_manager
+                    .as_mut()
+                    .is_some_and(|file_manager| {
+                        file_manager.apply_prepared_text_preview(
+                            &path,
+                            generation,
+                            Err(TextPreviewError::Io(std::io::ErrorKind::BrokenPipe)),
+                        )
+                    });
+            }
         }
         let Some(result) = drained.current else {
-            return false;
+            return changed;
         };
+        if files_generation != Some(result.key.files_generation) {
+            return changed;
+        }
         let Some(file_manager) = self.state.file_manager.as_mut() else {
-            return false;
+            return changed;
         };
-        let Some(selected_path) = file_manager.selected().map(|entry| entry.path.clone()) else {
-            return false;
+        if result.key.is_pending() {
+            return file_manager.apply_prepared_text_preview(
+                &result.key.path,
+                result.key.preview_generation,
+                result.prepared,
+            ) || changed;
+        }
+        let Ok(prepared) = result.prepared else {
+            return changed;
         };
         let crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(preview)) =
             &mut file_manager.preview
         else {
-            return false;
+            return changed;
         };
-        if FilePreviewHighlightKey::new(&selected_path, preview) != result.key {
-            return false;
+        if FilePreviewKey::prepared(
+            result.key.files_generation,
+            &result.key.path,
+            file_manager.preview_generation,
+            preview,
+        ) != result.key
+            || prepared.source_path != result.key.path
+            || prepared.highlighted.is_none()
+            || *preview == prepared
+        {
+            return changed;
         }
-        if preview.highlighted.as_ref() == Some(&result.highlighted) {
-            return false;
-        }
-        preview.highlighted = Some(result.highlighted);
+        *preview = prepared;
         true
     }
 }
@@ -355,6 +541,15 @@ mod tests {
     fn preview(content: &str) -> TextPreview {
         TextPreview {
             source_path: PathBuf::from("sample.rs"),
+            content: content.to_owned(),
+            truncated: false,
+            highlighted: None,
+        }
+    }
+
+    fn preview_for(path: &Path, content: &str) -> TextPreview {
+        TextPreview {
+            source_path: path.to_path_buf(),
             content: content.to_owned(),
             truncated: false,
             highlighted: None,
@@ -431,6 +626,26 @@ mod tests {
         assert_eq!(slot.sync(None), FilePreviewHighlightSync::Unchanged);
     }
 
+    #[test]
+    fn pending_slot_rejects_same_path_and_preview_generation_after_files_reopen() {
+        let path = PathBuf::from("same.rs");
+        let first = FilePreviewKey::pending(41, path.clone(), 9);
+        let reopened = FilePreviewKey::pending(42, path, 9);
+        let mut slot = FilePreviewSlot::default();
+        let first_generation = match slot.sync(Some(first.clone())) {
+            FilePreviewSync::Started { generation } => generation,
+            other => panic!("first pending target must start, got {other:?}"),
+        };
+        let reopened_generation = match slot.sync(Some(reopened.clone())) {
+            FilePreviewSync::Started { generation } => generation,
+            other => panic!("reopened pending target must restart, got {other:?}"),
+        };
+
+        assert_ne!(first_generation, reopened_generation);
+        assert!(!slot.accepts(first_generation, &first));
+        assert!(slot.accepts(reopened_generation, &reopened));
+    }
+
     // TP-B1.4-LIFECYCLE: one active job plus one replaceable pending slot is
     // the complete work queue. Rapid navigation never builds an unbounded
     // backlog, and only the latest generation can be applied.
@@ -471,6 +686,59 @@ mod tests {
         assert_eq!(
             *processed.lock().expect("processed lock"),
             vec!["first".to_owned(), "third".to_owned()]
+        );
+    }
+
+    // FM-PERF-TEXT-03: pending file reads share the same hard queue bound as
+    // highlighting: one executing request plus one replaceable latest slot.
+    #[test]
+    fn pending_preview_worker_executes_first_and_latest_only() {
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let processed = Arc::new(Mutex::new(Vec::new()));
+        let processed_by_worker = processed.clone();
+        let mut worker = FilePreviewWorker::with_preview_processor(
+            Arc::new(Notify::new()),
+            move |path, source| {
+                assert!(matches!(source, FilePreviewSource::Pending));
+                let name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .expect("test path name")
+                    .to_owned();
+                if name == "first.rs" {
+                    started_tx.send(()).expect("signal first read started");
+                    release_rx.recv().expect("release first read");
+                }
+                processed_by_worker
+                    .lock()
+                    .expect("processed lock")
+                    .push(name.clone());
+                let mut preview = preview_for(path, &name);
+                preview.highlighted = Some(highlighted(&name));
+                Ok(preview)
+            },
+        );
+        let first = PathBuf::from("first.rs");
+        let second = PathBuf::from("second.rs");
+        let third = PathBuf::from("third.rs");
+
+        worker.sync_target(Some(FilePreviewTarget::pending(7, first, 1)));
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first pending read started");
+        worker.sync_target(Some(FilePreviewTarget::pending(7, second, 2)));
+        let third_target = FilePreviewTarget::pending(7, third.clone(), 3);
+        let third_key = third_target.key.clone();
+        worker.sync_target(Some(third_target));
+        release_tx.send(()).expect("release first read");
+
+        let current = wait_for_current(&mut worker);
+        assert_eq!(current.key, third_key);
+        assert_eq!(current.prepared.expect("latest preview").source_path, third);
+        assert_eq!(
+            *processed.lock().expect("processed lock"),
+            vec!["first.rs".to_owned(), "third.rs".to_owned()]
         );
     }
 
@@ -522,7 +790,10 @@ mod tests {
 
             release_tx.send(()).expect("release current text request");
             let current = wait_for_current(&mut worker);
-            assert_eq!(current.highlighted, highlighted("second"));
+            assert_eq!(
+                current.prepared.expect("prepared preview").highlighted,
+                Some(highlighted("second"))
+            );
         });
 
         assert_eq!(profile.counter("fm.text_worker.submitted"), 2);
@@ -555,6 +826,45 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    // FM-PERF-TEXT-09: text preparation now includes filesystem I/O, which
+    // may block indefinitely on a stalled mount. Dropping App authority must
+    // close the queue without joining a still-running filesystem call.
+    #[test]
+    fn dropping_preview_worker_does_not_wait_for_blocked_processor() {
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let mut worker = FilePreviewWorker::with_preview_processor(
+            Arc::new(Notify::new()),
+            move |_path, _source| {
+                started_tx.send(()).expect("signal blocked processor");
+                release_rx.recv().expect("release blocked processor");
+                Ok(preview("released"))
+            },
+        );
+        worker.sync_target(Some(FilePreviewTarget::pending(
+            1,
+            PathBuf::from("blocked.rs"),
+            1,
+        )));
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("processor started");
+
+        let (dropped_tx, dropped_rx) = mpsc::channel();
+        let drop_thread = std::thread::spawn(move || {
+            drop(worker);
+            dropped_tx.send(()).expect("signal worker dropped");
+        });
+        let dropped_without_waiting = dropped_rx.recv_timeout(Duration::from_millis(250)).is_ok();
+        release_tx.send(()).expect("release blocked processor");
+        drop_thread.join().expect("join drop observer");
+
+        assert!(
+            dropped_without_waiting,
+            "worker drop must detach a blocked filesystem processor"
+        );
     }
 
     // TP-B1.4-LIFECYCLE: App owns the worker and applies one current result to
@@ -595,6 +905,279 @@ mod tests {
             !app.sync_file_preview_worker(),
             "unchanged highlighted state must not dirty the frame"
         );
+    }
+
+    // FM-PERF-TEXT-04: a resident file click performs only pure selection
+    // projection. The worker later installs one exact path/generation result
+    // into both legacy preview and Trail detail authorities.
+    #[test]
+    fn app_resolves_pending_file_selection_off_thread_once() {
+        let td = TempDir::new("pending-selection");
+        let path = td.root.join("clicked.rs");
+        std::fs::write(&path, "fn clicked() {}\n").expect("write click preview fixture");
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files activation");
+
+        let file_manager = app.state.file_manager.as_mut().expect("open Files");
+        let entry_index = file_manager
+            .trail_snapshots
+            .cols()
+            .first()
+            .and_then(|snapshot| {
+                snapshot
+                    .entries()
+                    .iter()
+                    .position(|entry| entry.path == path)
+            })
+            .expect("click row identity");
+        assert_eq!(
+            file_manager.activate_trail_entry(0, entry_index, &path),
+            crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
+        );
+        let generation = file_manager.preview_generation;
+        assert!(matches!(
+            &file_manager.preview,
+            crate::fm::FmPreview::File(crate::fm::FmFilePreview::PendingText {
+                source_path,
+                generation: pending_generation,
+            }) if source_path == &path && *pending_generation == generation
+        ));
+        assert_eq!(
+            file_manager
+                .trail_snapshots
+                .detail()
+                .map(|detail| &detail.preview),
+            Some(&crate::fm::trail_snapshots::TrailDetailPreview::PendingText)
+        );
+        assert!(
+            !file_manager.apply_prepared_text_preview(
+                &path,
+                generation.wrapping_add(1),
+                Ok(preview_for(&path, "stale")),
+            ),
+            "a stale generation cannot replace pending state"
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if app.sync_file_preview_worker() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "timed out loading clicked file");
+            std::thread::yield_now();
+        }
+
+        let file_manager = app.state.file_manager.as_ref().expect("open Files");
+        match &file_manager.preview {
+            crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(preview)) => {
+                assert_eq!(preview.source_path, path);
+                assert_eq!(preview.content, "fn clicked() {}\n");
+                assert!(preview.highlighted.is_some());
+            }
+            other => panic!("expected resolved text preview, got {other:?}"),
+        }
+        match file_manager
+            .trail_snapshots
+            .detail()
+            .map(|detail| &detail.preview)
+        {
+            Some(crate::fm::trail_snapshots::TrailDetailPreview::Text(preview)) => {
+                assert_eq!(preview.source_path, path);
+                assert!(preview.highlighted.is_some());
+            }
+            other => panic!("expected resolved Trail detail, got {other:?}"),
+        }
+        let generation_after_apply = app.file_preview_worker_generation_for_test();
+        assert!(!app.sync_file_preview_worker());
+        assert!(!app.sync_file_preview_worker());
+        assert_eq!(
+            app.file_preview_worker_generation_for_test(),
+            generation_after_apply.wrapping_add(1).max(1),
+            "resolved content stops the worker target once without resubmitting"
+        );
+    }
+
+    // FM-PERF-TEXT-05: TOCTOU deletion is an explicit bounded failure, not a
+    // retry loop or a permanently loading detail panel.
+    #[test]
+    fn missing_pending_file_becomes_explicit_unavailable_state() {
+        let td = TempDir::new("pending-missing");
+        let path = td.root.join("vanished.txt");
+        std::fs::write(&path, "gone\n").expect("write disappearing fixture");
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files activation");
+        let file_manager = app.state.file_manager.as_mut().expect("open Files");
+        let entry_index = file_manager.trail_snapshots.cols()[0]
+            .entries()
+            .iter()
+            .position(|entry| entry.path == path)
+            .expect("row identity");
+        assert_eq!(
+            file_manager.activate_trail_entry(0, entry_index, &path),
+            crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
+        );
+        std::fs::remove_file(&path).expect("delete before worker read");
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if app.sync_file_preview_worker() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out applying missing result"
+            );
+            std::thread::yield_now();
+        }
+        let file_manager = app.state.file_manager.as_ref().expect("open Files");
+        assert!(matches!(
+            file_manager.preview,
+            crate::fm::FmPreview::File(crate::fm::FmFilePreview::Unavailable(
+                TextPreviewError::Io(std::io::ErrorKind::NotFound)
+            ))
+        ));
+        assert!(matches!(
+            file_manager
+                .trail_snapshots
+                .detail()
+                .map(|detail| &detail.preview),
+            Some(crate::fm::trail_snapshots::TrailDetailPreview::Unpreviewable(reason))
+                if reason.contains("NotFound")
+        ));
+    }
+
+    // FM-PERF-TEXT-07: byte-classification failures cross the same async seam
+    // and terminate in a stable explicit state.
+    #[test]
+    fn invalid_utf8_pending_file_becomes_explicit_unavailable_state() {
+        let td = TempDir::new("pending-invalid-utf8");
+        let path = td.root.join("invalid.dat");
+        std::fs::write(&path, [159, 146, 150]).expect("write invalid UTF-8 fixture");
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files activation");
+        let file_manager = app.state.file_manager.as_mut().expect("open Files");
+        let entry_index = file_manager.trail_snapshots.cols()[0]
+            .entries()
+            .iter()
+            .position(|entry| entry.path == path)
+            .expect("row identity");
+        assert_eq!(
+            file_manager.activate_trail_entry(0, entry_index, &path),
+            crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if app.sync_file_preview_worker() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out applying invalid UTF-8 result"
+            );
+            std::thread::yield_now();
+        }
+        let file_manager = app.state.file_manager.as_ref().expect("open Files");
+        assert!(matches!(
+            file_manager.preview,
+            crate::fm::FmPreview::File(crate::fm::FmFilePreview::Unavailable(
+                TextPreviewError::InvalidUtf8 { valid_up_to: 0 }
+            ))
+        ));
+        assert!(matches!(
+            file_manager
+                .trail_snapshots
+                .detail()
+                .map(|detail| &detail.preview),
+            Some(crate::fm::trail_snapshots::TrailDetailPreview::Unpreviewable(reason))
+                if reason.contains("not UTF-8")
+        ));
+    }
+
+    // FM-PERF-TEXT-08: a dead preview processor cannot leave the UI in an
+    // eternal loading state. Disconnect is converted once to a typed failure.
+    #[test]
+    fn pending_preview_worker_disconnect_clears_loading_state() {
+        let td = TempDir::new("pending-disconnect");
+        let path = td.root.join("panic.rs");
+        let retry_path = td.root.join("retry.rs");
+        std::fs::write(&path, "fn panic_fixture() {}\n").expect("write panic fixture");
+        std::fs::write(&retry_path, "fn retry_fixture() {}\n").expect("write retry fixture");
+        let mut app = test_app();
+        app.file_preview_worker = FilePreviewWorker::with_preview_processor(
+            Arc::new(Notify::new()),
+            |_path, _source| -> Result<TextPreview, TextPreviewError> {
+                panic!("intentional pending preview processor failure")
+            },
+        );
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files activation");
+        let file_manager = app.state.file_manager.as_mut().expect("open Files");
+        let entry_index = file_manager.trail_snapshots.cols()[0]
+            .entries()
+            .iter()
+            .position(|entry| entry.path == path)
+            .expect("row identity");
+        assert_eq!(
+            file_manager.activate_trail_entry(0, entry_index, &path),
+            crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if app.sync_file_preview_worker() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out observing preview worker disconnect"
+            );
+            std::thread::yield_now();
+        }
+        assert!(matches!(
+            app.state
+                .file_manager
+                .as_ref()
+                .map(|file_manager| &file_manager.preview),
+            Some(crate::fm::FmPreview::File(
+                crate::fm::FmFilePreview::Unavailable(TextPreviewError::Io(
+                    std::io::ErrorKind::BrokenPipe
+                ))
+            ))
+        ));
+
+        let file_manager = app.state.file_manager.as_mut().expect("open Files");
+        let retry_index = file_manager.trail_snapshots.cols()[0]
+            .entries()
+            .iter()
+            .position(|entry| entry.path == retry_path)
+            .expect("retry row identity");
+        assert_eq!(
+            file_manager.activate_trail_entry(0, retry_index, &retry_path),
+            crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
+        );
+        assert!(
+            app.sync_file_preview_worker(),
+            "every new pending selection after disconnect must terminate instead of loading forever"
+        );
+        assert!(matches!(
+            app.state
+                .file_manager
+                .as_ref()
+                .map(|file_manager| &file_manager.preview),
+            Some(crate::fm::FmPreview::File(
+                crate::fm::FmFilePreview::Unavailable(TextPreviewError::Io(
+                    std::io::ErrorKind::BrokenPipe
+                ))
+            ))
+        ));
     }
 
     // P5 BRANCH/WORKER RACE: a highlight result from a branch retired by

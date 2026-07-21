@@ -34,6 +34,8 @@ pub(crate) struct TrailDetail {
 /// EXPLICIT state with a reason — never a silent empty panel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TrailDetailPreview {
+    /// Exact text target is queued in the bounded preview worker.
+    PendingText,
     Text(TextPreview),
     /// A recognized image; pixel delivery is the Kitty-graphics track
     /// (FIP-D4) and completes at integration.
@@ -151,6 +153,31 @@ impl TrailSnapshots {
         self.detail.as_ref()
     }
 
+    /// Resolve one exact pending text detail from prepared worker output.
+    /// A newer selection or non-text detail remains untouched.
+    pub(crate) fn apply_prepared_text_detail(
+        &mut self,
+        expected_path: &Path,
+        prepared: &Result<TextPreview, super::TextPreviewError>,
+    ) -> bool {
+        let Some(detail) = self.detail.as_mut() else {
+            return false;
+        };
+        if detail.path != expected_path
+            || detail.preview != TrailDetailPreview::PendingText
+            || prepared
+                .as_ref()
+                .is_ok_and(|preview| preview.source_path != expected_path)
+        {
+            return false;
+        }
+        detail.preview = match prepared {
+            Ok(preview) => TrailDetailPreview::Text(preview.clone()),
+            Err(error) => TrailDetailPreview::Unpreviewable(error.to_string()),
+        };
+        true
+    }
+
     /// Resolve the trail's single exact-path selection through the
     /// index-aligned loaded snapshots. The deepest marked column wins, while
     /// the unselected child column after a directory branch is skipped.
@@ -234,6 +261,7 @@ impl TrailSnapshots {
                         path: selected.path.clone(),
                         kind: selected.kind,
                         preview: match file_preview {
+                            FmFilePreview::PendingText { .. } => TrailDetailPreview::PendingText,
                             FmFilePreview::Text(preview) => {
                                 TrailDetailPreview::Text(preview.clone())
                             }
@@ -534,12 +562,12 @@ impl TrailSnapshots {
 fn prepare_trail_detail(path: &Path, kind: FileEntryKind) -> TrailDetail {
     let preview = match preview_capability(path, kind, &PreviewProviderSet::default()) {
         PreviewCapability::NativeImage => TrailDetailPreview::Image,
-        PreviewCapability::NativeText => prepare_native_text_detail(path),
+        PreviewCapability::NativeText => TrailDetailPreview::PendingText,
         PreviewCapability::MetadataOnly { reason } => {
             TrailDetailPreview::MetadataOnly(reason.label().to_owned())
         }
         PreviewCapability::OptionalPlugin { fallback, .. } => match fallback {
-            PreviewFallback::NativeText => prepare_native_text_detail(path),
+            PreviewFallback::NativeText => TrailDetailPreview::PendingText,
             PreviewFallback::MetadataOnly(reason) => {
                 TrailDetailPreview::MetadataOnly(reason.label().to_owned())
             }
@@ -552,16 +580,6 @@ fn prepare_trail_detail(path: &Path, kind: FileEntryKind) -> TrailDetail {
         path: path.to_path_buf(),
         kind,
         preview,
-    }
-}
-
-fn prepare_native_text_detail(path: &Path) -> TrailDetailPreview {
-    match super::text_preview::read_text_preview(
-        path,
-        super::text_preview::TextPreviewLimits::default(),
-    ) {
-        Ok(preview) => TrailDetailPreview::Text(preview),
-        Err(error) => TrailDetailPreview::Unpreviewable(error.to_string()),
     }
 }
 
@@ -914,8 +932,8 @@ mod tests {
         );
     }
 
-    // LAW 3: activating a FILE prepares the detail panel — path, kind and a
-    // loaded text preview, all outside render.
+    // LAW 3 / FM-PERF-TEXT-02: activating a FILE prepares exact path and kind
+    // immediately, but byte loading remains an explicit worker-owned state.
     #[test]
     fn file_selection_prepares_detail() {
         let td = TempDir::new("detail");
@@ -935,13 +953,7 @@ mod tests {
             detail.kind,
             crate::fm::entry_kind::FileEntryKind::RegularFile
         );
-        match &detail.preview {
-            TrailDetailPreview::Text(preview) => {
-                assert_eq!(preview.content, "hello trail");
-                assert!(!preview.truncated);
-            }
-            other => panic!("expected a text preview, got {other:?}"),
-        }
+        assert_eq!(detail.preview, TrailDetailPreview::PendingText);
     }
 
     // LAW 3: a later DIRECTORY selection closes the panel — the detail can
@@ -1007,10 +1019,10 @@ mod tests {
         }
     }
 
-    // LAW 3 honesty: an unknown text-like file that fails bounded UTF-8
-    // preparation still carries an EXPLICIT reason.
+    // FM-PERF-TEXT-06: even invalid text-like bytes are not inspected during
+    // selection. The worker-owned apply seam publishes the explicit failure.
     #[test]
-    fn unreadable_text_file_detail_is_explicit() {
+    fn unreadable_text_file_detail_defers_byte_inspection() {
         let td = TempDir::new("detail-invalid-text");
         let blob = td.root.join("blob.dat");
         fs::write(&blob, [159, 146, 150]).expect("invalid UTF-8 file");
@@ -1023,12 +1035,7 @@ mod tests {
             TrailActivateOutcome::SelectedFile
         );
         let detail = snaps.detail().expect("selection still prepares a detail");
-        match &detail.preview {
-            TrailDetailPreview::Unpreviewable(reason) => {
-                assert!(!reason.is_empty(), "the reason is spelled out");
-            }
-            other => panic!("expected an explicit unpreviewable state, got {other:?}"),
-        }
+        assert_eq!(detail.preview, TrailDetailPreview::PendingText);
     }
 
     // Image files are recognized as the image track (Kitty delivery is the

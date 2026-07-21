@@ -739,6 +739,11 @@ fn render_trail_detail_panel(
     let mut lines = Vec::new();
     let mut live_image_preview = None;
     match &detail.preview {
+        crate::fm::trail_snapshots::TrailDetailPreview::PendingText => {
+            lines.push(Line::from(format!("kind: {:?}", detail.kind)));
+            lines.push(Line::from(""));
+            lines.push(Line::from("(loading preview...)"));
+        }
         crate::fm::trail_snapshots::TrailDetailPreview::Text(preview) => {
             lines.push(Line::from(format!("kind: {:?}", detail.kind)));
             lines.push(Line::from(""));
@@ -1527,8 +1532,8 @@ mod tests {
         assert!(view.detail_panel.is_none());
     }
 
-    // LAW 3 rendering: the panel shows the file NAME in its title, the kind
-    // line, and the prepared text content — never a silent blank.
+    // LAW 3 / FM-PERF-TEXT-07: after the worker-owned preparation is applied,
+    // the panel shows the file NAME, kind, and text — never a silent blank.
     #[test]
     fn panel_render_shows_name_kind_and_content() {
         let td = TempDir::new("panel-render");
@@ -1540,6 +1545,11 @@ mod tests {
         assert_eq!(
             snaps.activate_entry(&mut trail, 0, 0, &doc),
             crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
+        );
+        let prepared = crate::fm::prepare_default_text_preview(&doc);
+        assert!(
+            snaps.apply_prepared_text_detail(&doc, &prepared),
+            "the exact worker result resolves the pending detail"
         );
 
         let stage = Rect::new(0, 0, 100, 12);
@@ -1574,6 +1584,40 @@ mod tests {
         assert!(
             body.contains("hello trail"),
             "panel body shows the prepared text content"
+        );
+    }
+
+    #[test]
+    fn panel_render_shows_loading_while_text_preview_is_pending() {
+        let td = TempDir::new("panel-pending");
+        fs::write(td.root.join("doc.md"), b"hello trail").expect("file");
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        let doc = td.root.join("doc.md");
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 0, 0, &doc),
+            crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
+        );
+
+        let view = project_trail_view(Rect::new(0, 0, 100, 12), &trail, &snaps, &[]);
+        let panel = view.detail_panel.clone().expect("panel is open");
+        let app = crate::app::state::AppState::test_new();
+        let backend = TestBackend::new(100, 12);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| render_trail_view(&app, frame, &view, &snaps))
+            .expect("render pending trail");
+        let buffer = terminal.backend().buffer();
+        let body = (panel.content_rect.y..panel.content_rect.bottom())
+            .flat_map(|y| {
+                (panel.content_rect.x..panel.content_rect.right())
+                    .map(move |x| buffer[(x, y)].symbol())
+            })
+            .collect::<String>();
+        assert!(
+            body.contains("loading preview"),
+            "pending worker state must be explicit rather than a blank panel"
         );
     }
 

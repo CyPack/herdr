@@ -3613,6 +3613,7 @@ impl HeadlessServer {
 
         changed |= self.app.sync_file_manager_io_results();
         changed |= self.app.sync_file_manager_location_request();
+        changed |= self.app.sync_file_preview_worker();
         self.app.sync_headless_animation_timer(now);
         changed |= self.app.refresh_projects_if_due(now);
         changed |= self.app.refresh_tab_branches_if_due(now);
@@ -5549,6 +5550,94 @@ next_tab = ""
                         } if custom_status.is_none()
                     )
             }));
+    }
+
+    // FM-PERF-TEXT-11: the server-owned runtime must pump the same bounded
+    // text-preview worker as monolithic App::run. A file click is intentionally
+    // disk-free, so omitting this adapter would leave headless Files stuck in
+    // PendingText forever.
+    #[test]
+    fn headless_scheduled_tasks_pump_pending_text_preview_worker() {
+        struct RemoveOnDrop(PathBuf);
+
+        impl Drop for RemoveOnDrop {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let root = std::env::temp_dir().join(format!(
+            "headless-text-preview-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _cleanup = RemoveOnDrop(root.clone());
+        fs::create_dir_all(&root).expect("create headless preview fixture");
+        let path = root.join("clicked.rs");
+        fs::write(&path, "fn headless_preview() {}\n").expect("write preview fixture");
+
+        let mut server = test_headless_server();
+        server
+            .app
+            .state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .expect("open Files instance");
+        let file_manager = server.app.state.file_manager.as_mut().expect("open Files");
+        let entry_index = file_manager.trail_snapshots.cols()[0]
+            .entries()
+            .iter()
+            .position(|entry| entry.path == path)
+            .expect("resident file row");
+        assert_eq!(
+            file_manager.activate_trail_entry(0, entry_index, &path),
+            crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
+        );
+        assert!(matches!(
+            &file_manager.preview,
+            crate::fm::FmPreview::File(crate::fm::FmFilePreview::PendingText {
+                source_path,
+                ..
+            }) if source_path == &path
+        ));
+
+        let (_, profile) = crate::render_prof::observe_for_test(|| {
+            let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
+        });
+        assert_eq!(
+            profile.counter("fm.text_worker.submitted"),
+            1,
+            "headless scheduling must submit the pending exact-path preview"
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
+            let resolved = server
+                .app
+                .state
+                .file_manager
+                .as_ref()
+                .is_some_and(|file_manager| {
+                    matches!(
+                        &file_manager.preview,
+                        crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(preview))
+                            if preview.source_path == path
+                                && preview.content == "fn headless_preview() {}\n"
+                                && preview.highlighted.is_some()
+                    )
+                });
+            if resolved {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out applying headless text preview"
+            );
+            std::thread::yield_now();
+        }
     }
 
     #[test]
