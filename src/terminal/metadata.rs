@@ -947,7 +947,10 @@ mod tests {
             clear_display_agent: false,
             clear_custom_status: false,
             clear_state_labels: false,
-            ttl: Some(Duration::from_millis(1)),
+            // Expiry is driven explicitly at `old_deadline` below. Keep the
+            // wall-clock deadline comfortably beyond scheduler stalls so this
+            // test measures clear-only TTL preservation, not suite load.
+            ttl: Some(Duration::from_secs(60)),
             seq: None,
         });
         let old_deadline = terminal.next_agent_metadata_expiry().unwrap();

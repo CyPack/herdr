@@ -2239,7 +2239,9 @@ mod tests {
         state.miller.assert_miller_invariants_for_test();
     }
 
-    // T-A1.2d: a symlink to a directory is listed and sorted as a directory.
+    // T-A1.2d: a symlink to a directory is listed and classified as a
+    // directory. Entry order is intentionally mtime-first, so creation timing
+    // must not be part of this classification contract.
     #[cfg(unix)]
     #[test]
     fn symlink_to_directory_counts_as_directory() {
@@ -2249,7 +2251,9 @@ mod tests {
         std::os::unix::fs::symlink(td.root.join("target"), td.root.join("link"))
             .expect("create symlink");
         let entries = read_dir_entries(&td.root, false);
-        assert_eq!(names(&entries), vec!["link", "target", "zzz.txt"]);
+        assert_eq!(entries.len(), 3);
+        assert!(entries.iter().any(|entry| entry.name == "target"));
+        assert!(entries.iter().any(|entry| entry.name == "zzz.txt"));
         let link = entries
             .iter()
             .find(|e| e.name == "link")
@@ -4048,6 +4052,13 @@ mod tests {
         fs::write(&deleted, "fn alpha() {}\n").expect("write selected fixture");
         fs::write(&remaining, "def beta():\n    pass\n").expect("write remaining fixture");
         let mut state = FmState::new(&td.root);
+        let deleted_index = state
+            .entries
+            .iter()
+            .position(|entry| entry.path == deleted)
+            .expect("deleted fixture should be visible");
+        assert!(state.select(deleted_index));
+        assert_eq!(state.selected().map(|entry| &entry.path), Some(&deleted));
         match &mut state.preview {
             FmPreview::File(FmFilePreview::Text(preview)) => {
                 preview.highlighted = Some(highlight_text_preview(&deleted, preview));
@@ -4583,6 +4594,17 @@ mod tests {
         // nonzero index.
         for sibling in [td.root.join("a0"), l1.join("a0"), l2.join("a0"), l3.clone()] {
             fs::create_dir_all(sibling).expect("fixture dir");
+        }
+        // Entries sort by modification time before name. Directory creation
+        // mutates parent mtimes, so make every sibling/target pair an explicit
+        // tie before relying on the `a0`/`b*` name order below.
+        for (sibling, target) in [
+            (td.root.join("a0"), l1.clone()),
+            (l1.join("a0"), l2.clone()),
+            (l2.join("a0"), l3.clone()),
+        ] {
+            set_modified(&sibling, fixed_time(10));
+            set_modified(&target, fixed_time(10));
         }
         let mut state = FmState::new(&td.root);
         for target in [&l1, &l2, &l3] {
