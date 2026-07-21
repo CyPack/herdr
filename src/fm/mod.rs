@@ -3993,6 +3993,10 @@ mod tests {
         let second = td.root.join("beta.py");
         fs::write(&first, "same bytes\n").expect("write first preview fixture");
         fs::write(&second, "same bytes\n").expect("write second preview fixture");
+        // This test exercises path-bound highlight identity, not mtime-first
+        // ordering. Tie both files so the natural alpha -> beta order is the
+        // deterministic movement authority under full-suite load.
+        set_equal_modified(&td, &["alpha.rs", "beta.py"]);
         let mut state = FmState::new(&td.root);
         match &mut state.preview {
             FmPreview::File(FmFilePreview::Text(preview)) => {
