@@ -1,7 +1,50 @@
 # Current State — 2026-07-22
 
-> **CURRENT OVERRIDE — FMN NAVIGATION IMPLEMENTED; HUMAN E2E AND PUBLICATION
-> REMAIN (2026-07-22).** The human-accepted main-stutter behavior head is
+> **CURRENT OVERRIDE — FMH HORIZONTAL FOCUS FIX FULLY GATED LOCALLY; PHYSICAL
+> E2E AND PUBLICATION REMAIN (2026-07-22).** Local HEAD and
+> `origin/feat/native-fm` are both `787bb96b91148a50352d4162acbc9b745729d1b7`;
+> tracked state was clean before FMH and `.superpowers/` was the only untracked
+> path. Checkpoint
+> `refs/checkpoints/herdr-fm-horizontal-pre-fix-20260722` preserves that exact
+> head. The user physically accepted the prior FMN build as working perfectly,
+> so FMN-5 is closed and must not be reopened.
+>
+> The active FMH contract is directional, not a generic activation alias:
+> Left crosses exactly one resident parent edge whenever one exists and is
+> inert at root. Right/`l` crosses or activates exactly one child only when the
+> exact cursor entry is a directory; on a file/non-entry/stale identity it is
+> model-, worker-, focus-, and render-inert. Enter and explicit click retain
+> their file/directory activation behavior. Graph-first tracing proved the key
+> mapping already existed and isolated the defect to Right's fallback from
+> `active_directory_dispatch` into `activate_selected_trail_entry`.
+>
+> TDD RED run `0ddfe67c-72fc-4f0f-baa5-715f83a1f1c6` showed Right over a file
+> replacing the two-column resident Trail with a one-column `SelectedFile`
+> projection. The minimum GREEN removes that fallback and returns `Inert` for
+> a non-directory cursor; directory worker paths and Left are unchanged. Fresh
+> evidence so far: horizontal matrix 3/3
+> (`d0aed4e5-82e1-47ec-b92c-9df94b87e2ec`), cross-layer matrix 10/10
+> (`6250e842-3ad1-47c8-ac60-d85773436c02`), broad input/Trail/snapshot/
+> worker/watcher matrix 190/190
+> (`9295437e-82d2-43e6-ab09-087ac8745cee`); full Nextest 3,622/3,622 + 4 skip
+> (`cb2b0920-1783-452d-99c1-d0b34232d1bb`); rustfmt; Linux all-target and
+> Windows MSVC Clippy; Python 68/68; Bun 5/5 + 12/12; deterministic exporter
+> 1/1 (`5cabc949-a769-4524-ad91-db87f5adb8c6`); Chromium 33/33; generated
+> JSON/PNG delta zero; dependency/vendor/source/diff audits clean. `just` is
+> unavailable, so every exact `just check` child recipe was run directly.
+>
+> Single-worker graph refresh completed with 12 changed files, zero extraction
+> errors, 24,078 nodes / 129,027 edges. CLI `search_graph` and
+> `get_code_snippet` resolve all three FMH tests and the live Right branch's
+> non-directory `return Inert`. The long-lived built-in channel still reports
+> its older 24,072 / 129,520 snapshot; no proxy/user process was restarted and
+> `ready` alone is not counted as freshness. Only cleanup-first isolated
+> physical Left/Right acceptance remains before message alignment and
+> publication. Commit/push remain alignment-gated; exact-path staging only,
+> CyPack fork only. Stable Herdr/socket and `.superpowers/` remain untouched.
+
+> **HISTORICAL FMN PRE-PUBLICATION SNAPSHOT — SUPERSEDED BY THE FMH OVERRIDE
+> ABOVE (2026-07-22).** The human-accepted main-stutter behavior head is
 > `d8583d3ab564d42f880e94e0462f9d12ab61d391`. Closure publication then adds
 > `8f4b2acc` (test-only path-identity fixture) and `d52b4417` (closure evidence,
 > Yazi transfer reference, and lessons), with prior published continuity at
@@ -49,16 +92,17 @@
 > all-target and Windows MSVC Clippy; Python 68/68; Bun 5/5 + 12/12;
 > deterministic exporter 1/1; full Chromium 33/33. Exactly six legacy
 > VIS-01..06 PNGs were inspected and updated; generated JSON and VIS-07..25
-> stayed clean. FMN-5 remains open only for the user's isolated physical
-> wheel/held-arrow acceptance plus publication-time graph/Git/remote-SHA gates.
+> stayed clean. FMN-5 was subsequently accepted by the user and published;
+> current work is the separate FMH horizontal-focus lane above.
 > Home/Desktop/Downloads pre-warm stays a later
 > measurement-first, per-directory entry/byte-capped, mtime-invalidated lane;
-> Yazi's unbounded history map is explicitly rejected. Fresh working-tree
-> graph is 24,072 nodes / 129,692 edges and resolves
+> Yazi's unbounded history map is explicitly rejected. The FMN working-tree
+> graph at that stage was 24,072 nodes / 129,692 edges and resolved
 > `move_trail_cursor_in_column`, `FileManagerVerticalWheelBurstGate`,
 > `queue_file_manager_trail_directory_preview_identity`, the active-owner
-> resize projection, and its regression tests. Post-commit SHA recheck remains
-> a publication gate.
+> resize projection, and its regression tests. FMN's post-commit SHA gate later
+> closed at `787bb96b`; current FMH graph/publication state is authoritative in
+> the override above.
 > Stable Herdr/socket and `.superpowers/` remain untouched.
 
 > **HISTORICAL OVERRIDE — FILES LAYOUT V1 LOCKED; FMP PERFORMANCE

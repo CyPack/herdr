@@ -10,7 +10,7 @@
 | Commit date | `2026-07-13T02:01:37+08:00` |
 | Checkout state | clean `main...origin/main` at verification time |
 | Evidence tier | `source_code` |
-| Overall confidence | high (`0.95`) for cited Yazi behavior and high (`0.95`) for the completed Herdr FMN transfer; isolated human E2E remains separate |
+| Overall confidence | high (`0.95`) for cited Yazi behavior and high (`0.95`) for the completed Herdr FMN transfer; physical human acceptance was recorded separately on 2026-07-22 |
 
 This record answers a narrow question: which Yazi architectural properties
 explain responsive cursor navigation and directory preview, and which of those
@@ -39,8 +39,9 @@ directory preview
 
 Herdr already had the right bounded worker and generation-validation
 primitives. FMN now applies the separation directly: Up/Down and row/header
-wheel mutate a cursor-only exact-path identity, while Right/Enter/`l`/click own
-activation. A directory cursor landing schedules a bounded discardable
+wheel mutate a cursor-only exact-path identity; Right/`l` owns directory-only
+traversal, while Enter/click retains explicit file/directory activation. A
+directory cursor landing schedules a bounded discardable
 preview and cannot transfer focus. A separate isolated Ghostty trace also
 proved identical-coordinate host packet triplets below 2 ms, so a narrow
 owner/direction/coordinate-aware gate was authorized after the semantic split.
@@ -170,15 +171,15 @@ Confidence: `0.99`, historical Herdr source plus user reproduction.
 
 ## Applied Herdr transfer after FMN
 
-The uncommitted FMN diff based on published continuity `616e7278` implements
-the reference laws with Herdr-native bounds:
+The published FMN line through continuity head `787bb96b` implements the
+reference laws with Herdr-native bounds:
 
 - `TrailState::cursor` is separate from the activated `TrailCol::selected`
   chain. `TrailSnapshots::move_cursor[_in_column]` changes one exact row and
   never calls `activate_entry`.
 - Up/Down/`j/k`, Shift+vertical, visible-row wheel, and header wheel retain the
-  exact owner column. Right/`l`, Enter, and primary click are explicit
-  activation commands.
+  exact owner column. Right/`l` is directory-only traversal; Enter and primary
+  click are explicit file/directory activation commands.
 - `FileManagerIoRequest::TrailPreview` reuses the one-running/one-latest
   worker. Apply validates Files generation, source, owner column, entry index,
   exact path, directory kind, and the active cursor. Horizontal focus change,
@@ -205,10 +206,12 @@ one deterministic exporter pass, and full Chromium 33/33. The exporter uses a
 fixed calendar anchor, exact async-preview settlement, equal order-insensitive
 mtimes, and no-follow symlink/FIFO timestamp handling. Exactly six legacy
 VIS-01..06 PNGs were inspected and updated; generated JSON and VIS-07..25 did
-not drift. Isolated human wheel/held-arrow acceptance remains FMN-5, not an
-automated claim.
+not drift. The user then physically accepted the isolated wheel/held-arrow
+build on 2026-07-22; that qualitative signal remains separate from the
+automated gate counts.
 
-Confidence: `0.95` for the source/TDD transfer; live UX acceptance pending.
+Confidence: `0.95` for the source/TDD transfer and high qualitative confidence
+for the reported live UX acceptance.
 
 ## Transfer laws applied by the Herdr FMN slice
 
@@ -219,8 +222,31 @@ inside the exact owning Trail column. They must not change `active_col`, truncat
 or extend the branch, rearm horizontal follow for a different column, or
 transfer selection authority to a child.
 
-Right, Enter, `l`, or an explicit primary row click owns directory activation.
-No implicit activation is inferred from the selected entry kind.
+Right/`l` owns directory-only child traversal. Enter or an explicit primary row
+click retains explicit file/directory activation. No implicit activation is
+inferred from the selected entry kind, and Right/`l` on a file is inert.
+
+### FMH clarification — directional traversal is not file activation
+
+The Yazi comparison supports separating cursor movement from activation, but
+it does not require every horizontal key to activate every entry kind. Herdr's
+2026-07-22 FMH RED proved that treating Right/`l` as a generic activation alias
+was observably wrong: over a file it converted the ephemeral cursor into a
+`SelectedFile` Trail selection, retired the resident child, and rendered.
+
+Herdr therefore narrows the transferred law:
+
+- Left is one resident parent-column focus step;
+- Right/`l` is one directory-only child traversal/activation step;
+- Right/`l` on files/non-entries is inert;
+- Enter/click remains the explicit activation surface for files and
+  directories.
+
+This is a Herdr product-contract refinement, not a claim about Yazi's keymap.
+It preserves Yazi's deeper architectural lesson—movement, preview, and
+activation must have distinct authority—without copying an unrelated binding
+policy. Confidence: `0.98` for the Herdr RED/GREEN distinction and `0.90` for
+the reference-fit inference.
 
 ### YT-2 — Preview may follow the cursor without focus transfer
 

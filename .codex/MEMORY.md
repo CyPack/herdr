@@ -15,8 +15,9 @@
 - The native-FM activation key is `prefix+f`; navigation uses arrows/hjkl, Enter, Backspace, `.`, Esc/q.
 - Vertical cursor movement and directory activation are separate product
   intents. Up/Down, `j/k`, Shift+Up/Down, and row wheel must remain in the exact
-  owner column; Right/`l`, Enter, or explicit primary click owns directory
-  entry/rebranch.
+  owner column. Left moves one resident parent edge. Right/`l` owns
+  directory-only child traversal and is inert on files/non-entries; Enter or
+  explicit primary click retains file/directory activation.
 - Stable installed Herdr and development Herdr must remain isolated. Use `.local/ISOLATED-DEV-TEST.md` for runtime checks.
 - The acting GitHub account is `CyPack`; this is external-contributor/fork work. Never push upstream or open upstream issues/PRs for the user.
 
@@ -30,15 +31,28 @@
   fixture) and `d52b4417` (evidence, Yazi transfer reference, and lessons).
   Canonical evidence:
   `.codex/evidence/files-performance-fix-closure-and-navigation-followups.md`.
-- `FMN — Files Movement Semantics and Wheel Normalization` is implemented
-  locally through FMN-4. Raw isolated Ghostty evidence captured 333 vertical
+- `FMN — Files Movement Semantics and Wheel Normalization` is closed and
+  physically accepted by the user at published continuity head `787bb96b`.
+  Raw isolated Ghostty evidence captured 333 vertical
   packets and 226 same-direction deltas below 2 ms in identical-coordinate
   triplets/occasional sextuplets; one-to-one routing rejected duplicate Herdr
   dispatch. Vertical keys/wheel now move an exact owner-column cursor without
-  branching; Right/Enter/`l`/click owns activation; directory preview reuses
+  branching; Right/`l` owns directory traversal and Enter/click owns explicit
+  activation; directory preview reuses
   the bounded latest worker with current cursor authority; a narrow `<2 ms`
   owner/direction/coordinate gate coalesces only the measured host burst.
-  FMN-5 human E2E and publication gates remain open.
+  FMN-5 E2E/publication gates are complete.
+- `FMH — Horizontal Miller Focus Navigation` is the active local lane. Its
+  behavioral RED proved Right on a file fell through to `SelectedFile`,
+  truncating the resident Trail and rendering. The minimum GREEN returns
+  `Inert` for a non-directory cursor while preserving directory worker,
+  Enter/click, Left, vertical, and wheel semantics. Automated closure is green:
+  FMH 3/3, cross-layer 10/10, broad FM 190/190, full 3,622/3,622 + 4 skip,
+  both Clippy targets, Python 68/68, Bun 5/5 + 12/12, exporter 1/1, Chromium
+  33/33, zero JSON/PNG delta, and clean source/dependency/vendor/diff audits.
+  Graph CLI is current at 24,078 / 129,027 with exact FMH snippets; the
+  long-lived built-in channel remains a documented stale 24,072 / 129,520.
+  Only isolated physical E2E and publication remain.
 - Resident Trail depth and focus are distinct: `deepest()` is prepared-data
   extent; initialization, auto-follow, render/hit geometry, resize projection,
   and watcher binding use `active_col()`. Explicit Right/Left changes the

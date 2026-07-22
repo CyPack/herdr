@@ -1,6 +1,52 @@
 # Durable Tasks — Herdr Native FM
 
-## P0 ACTIVE — FMN Files Movement Semantics and Wheel Normalization
+## P0 ACTIVE — FMH Horizontal Miller Focus Navigation
+
+Activated by the user's 2026-07-22 physical acceptance of FMN and the next
+explicit interaction contract: Left must always focus one resident parent
+column when one exists; Right must focus/enter one child column only when the
+exact cursor entry is a directory. Right on a file or non-entry is inert.
+
+- [x] **FMH-0 Freeze the directional contract before Rust.**
+  - [x] `TP-FMH-LEFT-01`: one Left event crosses exactly one resident edge.
+  - [x] `TP-FMH-LEFT-02`: Left at root is model-, worker-, and render-inert.
+  - [x] `TP-FMH-RIGHT-01`: one Right event over the resident directory chain
+    crosses exactly one edge, even when multiple descendants are prepared.
+  - [x] `TP-FMH-RIGHT-02`: an exact nonresident directory emits one bounded
+    activation request and focuses only its matching completion.
+  - [x] `TP-FMH-RIGHT-03`: Right/`l` on a file, special entry, stale identity,
+    or boundary is inert and cannot change selection/detail/focus.
+  - [x] `TP-FMH-STEP-01`: no horizontal event may skip a column.
+- [x] **FMH-1 RED the production route, not only `TrailState`.**
+  - [x] The new route-level file test failed behaviorally: Right converted the
+    exact file cursor into `SelectedFile`, truncated the resident child, and
+    requested a render. This was not a key-mapping or render-only defect.
+  - [x] Preserve existing directory activation, stale completion, watcher,
+    close/reopen, and exact-path characterizations.
+- [x] **FMH-2 GREEN with the smallest semantic gate.**
+  - [x] Remove Right/`l`'s fallback to file activation when the exact cursor
+    is not a directory; return `Inert` and let the App decline the render.
+  - [x] Keep Enter/click file activation and every directory bounded-worker
+    path unchanged.
+- [x] **FMH-3 Automated closure.**
+  - [x] New horizontal matrix 3/3; focused cross-layer matrix 10/10; broad
+    input/Trail/snapshot/worker/watcher matrix 190/190; rustfmt clean.
+  - [x] Full Nextest, Linux/Windows Clippy, maintenance, deterministic
+    exporter/Chromium, source audit, graph freshness, and Git diff gates.
+    Fresh results: 3,622/3,622 + 4 skip; both Clippy targets clean; Python
+    68/68; Bun 5/5 + 12/12; exporter 1/1; Chromium 33/33; JSON/PNG delta zero;
+    graph CLI 24,078 nodes / 129,027 edges with current FMH symbols; source,
+    dependency, vendor, formatting, and diff audits clean.
+  - [x] Record the completed law in evidence, Yazi transfer, engineering
+    patterns, project lessons, and every canonical continuity file.
+- [ ] **FMH-4 Isolated physical acceptance and publication.**
+  - [ ] Build and launch only through the cleanup-first throwaway XDG helper;
+    verify Left at every resident depth, Right on directory, Right on file,
+    held vertical movement, wheel movement, semantic exit, and zero residue.
+  - [ ] Propose and align the commit message; exact-path stage only; commit,
+    push only to the CyPack fork, then prove local/origin SHA equality.
+
+## P0 CLOSED — FMN Files Movement Semantics and Wheel Normalization
 
 Activated by the user's 2026-07-21 live acceptance of the closed stutter fix
 and two new correctness reports. Canonical evidence and frozen interaction
@@ -59,21 +105,22 @@ Pinned Yazi architecture comparison:
     boundary, and the observed 5 ms next-detent interval.
   - [x] Bound time/state/memory; no sleep-throttle, hot retry, unbounded
     accumulator, dropped ordered control, or sticky scrolling.
-- [ ] **FMN-5 Production closure.**
+- [x] **FMN-5 Production closure.**
   - [x] `TP-FMN-VIS-01`: scope-locked Layout V1 Chromium baselines plus scoped
     cursor/preview semantic cells; no blind PNG regeneration.
     Exporter 1/1 and full Chromium 33/33 are green. Exactly six legacy
     VIS-01..06 PNGs were inspected and updated after deterministic clock,
     mtime, no-follow, and async-settlement fixes; generated JSON and
     VIS-07..25 stayed clean.
-  - [ ] `TP-FMN-E2E-01`: isolated real wheel and held-arrow acceptance; no
-    accidental 3-5 jump, no child focus transfer, zero residue.
-  - [ ] `TP-FMN-GATE-01`: focused/full Nextest, fmt, Linux/Windows Clippy,
+  - [x] `TP-FMN-E2E-01`: isolated real wheel and held-arrow acceptance; no
+    accidental 3-5 jump, no child focus transfer, zero residue. The user
+    reported on 2026-07-22 that the tested build works perfectly.
+  - [x] `TP-FMN-GATE-01`: focused/full Nextest, fmt, Linux/Windows Clippy,
     maintenance, Chromium, graph, Git ancestry, exact CyPack SHA.
-    Local pre-publication gates are green: focused 302/302, active-owner trio
+    Publication gates are green: focused 302/302, active-owner trio
     3/3, full 3,619/3,619 + 4 skip, fmt, both Clippy targets, Python 68/68,
-    Bun 5/5 + 12/12, exporter 1/1, and Chromium 33/33. Graph/Git/remote SHA
-    remain the publication-time sub-gates.
+    Bun 5/5 + 12/12, exporter 1/1, Chromium 33/33, graph freshness, exact Git
+    ancestry, and local/origin equality at published head `787bb96b`.
 - [ ] **FMN-6 Measure pinned Home/Desktop/Downloads first-entry latency as a
   separate follow-up.**
   - [ ] Do not implement pre-warm without a reproducible first-entry RED.

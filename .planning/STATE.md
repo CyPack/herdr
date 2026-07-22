@@ -2,8 +2,26 @@
 
 - Updated: 2026-07-22
 - Branch: `feat/native-fm`
-- Current override: **Main Native Files stutter closed; FMN navigation
-  implemented locally, human E2E/publication pending.** The human-accepted
+- Current override: **FMH horizontal focus fix fully gated locally; isolated
+  acceptance and publication pending.** Local/origin started equal at
+  `787bb96b`; checkpoint
+  `refs/checkpoints/herdr-fm-horizontal-pre-fix-20260722` preserves it. The user
+  physically accepted the prior vertical/wheel build as working perfectly, so
+  FMN-5 is closed. FMH freezes Left as one resident parent edge and Right/`l`
+  as one directory-only child edge. The RED proved Right on a file fell through
+  to `SelectedFile`, truncated the resident Trail, and rendered. The minimum
+  GREEN returns `Inert` for a non-directory cursor and leaves directory worker,
+  Enter/click, Left, vertical, and wheel paths unchanged. Fresh gates: FMH
+  3/3, cross-layer 10/10, broad FM 190/190, full 3,622/3,622 + 4 skip, both
+  Clippy targets, Python 68/68, Bun 5/5 + 12/12, exporter 1/1, Chromium 33/33,
+  zero JSON/PNG delta, clean source/dependency/vendor/diff audits, and current
+  CLI graph 24,078 / 129,027 with exact FMH snippets. The long-lived built-in
+  graph channel remains stale at 24,072 / 129,520 and is not treated as fresh.
+  Isolated E2E, commit-message alignment, exact staging, and CyPack publication
+  remain.
+  Stable Herdr/socket and `.superpowers/` are untouched.
+- Historical override: **Main Native Files stutter closed; this snapshot was
+  captured while FMN human E2E/publication were still pending.** The human-accepted
   main-stutter product head is `d8583d3a`; closure publication
   adds `8f4b2acc` test-only path-identity fixture and `d52b4417` closure/Yazi/
   lessons, with prior published continuity at `616e7278`. The FMN diff remains
@@ -22,9 +40,10 @@
   dispatch. Vertical keys/wheel now move an exact-path cursor only, explicit
   Right/Enter/click owns activation, directory preview is bounded/latest and
   stale-safe, and the wheel gate coalesces only identical
-  generation/owner/direction/coordinate packets below 2 ms. FMN-5 next action
-  is the user's isolated physical wheel plus held-arrow acceptance, followed
-  by graph/Git/remote publication gates. Do not add a general cache. Pinned
+  generation/owner/direction/coordinate packets below 2 ms. At that snapshot,
+  FMN-5's next action was the user's isolated physical wheel plus held-arrow
+  acceptance and publication; it subsequently closed at `787bb96b`. Do not add
+  a general cache. Pinned
   Yazi reference:
   `.codex/references/yazi-file-manager-performance-transfer.md`. Stable
   Herdr/socket and `.superpowers/` remain untouched. Resident depth is not
@@ -34,9 +53,10 @@
   skip (run `d42e9919-f7dd-4f43-b855-a0ed4fd6922e`); fmt; Linux/Windows
   Clippy; Bun 5/5 + 12/12; Python 68/68; exporter 1/1; Chromium 33/33. Exactly
   six reviewed VIS-01..06 PNGs changed; generated JSON and VIS-07..25 stayed
-  clean. Fresh working-tree graph is 24,072 nodes / 129,692 edges and resolves
+  clean. That FMN working-tree graph was 24,072 nodes / 129,692 edges and resolved
   the cursor reducer, wheel gate, preview identity, active-owner projection,
-  and regression tests; post-commit SHA recheck remains open.
+  and regression tests; its post-commit SHA gate later closed at `787bb96b`.
+  Current FMH graph/publication state is authoritative above.
 - Current override: **MTIME program closed.** The user
   approved strict mixed directory/file ordering by modification time
   descending plus Finder-like local-calendar sections and right-side mtime

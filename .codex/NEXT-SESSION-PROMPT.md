@@ -2,25 +2,46 @@
 
 Updated: 2026-07-22 CEST
 
-## Current Override — FMN Implemented; Human E2E and Publication Next
+## Current Override — FMH Fully Gated Locally; Isolated E2E Next
 
 Continue `feat/native-fm` from the exact published
-`origin/feat/native-fm` tip. Required ancestry is the human-accepted product
-head `d8583d3a`, test-only fixture `8f4b2acc`, closure/Yazi/lessons
-`d52b4417`, then published continuity `616e7278`. The current FMN source/docs
-diff is uncommitted until its message is aligned. Verify local HEAD and the
-remote ref before work. The user has live-accepted the main
-rapid-click/mouse-motion stutter fix. Do not restart FMP or reimplement commits
-`b2accbb4`, `8851b5e0`, `ed329058`, or `d8583d3a`.
+`origin/feat/native-fm` tip `787bb96b`. Verify local HEAD and the remote ref
+before work. Checkpoint
+`refs/checkpoints/herdr-fm-horizontal-pre-fix-20260722` preserves that
+pre-FMH head. The user has physically accepted both the main stutter fix and
+the FMN vertical/wheel build as working perfectly. Do not restart FMP/FMN or
+reimplement their published commits.
 
-FMN-1 through FMN-4 are implemented and automated gates are green:
+The current uncommitted FMH source/docs lane has one production semantic
+change: Right/`l` over a non-directory exact cursor returns `Inert` instead of
+falling through to file activation. The required interaction law is:
+
+1. Left moves exactly one resident column left whenever one exists; root is
+   inert.
+2. Right/`l` moves/activates exactly one child only over a directory.
+3. Right/`l` over a file/non-entry/stale identity is model-, worker-, focus-,
+   and render-inert.
+4. Enter/click retain explicit file/directory activation.
+
+TDD evidence: behavioral RED `0ddfe67c-72fc-4f0f-baa5-715f83a1f1c6`, FMH
+3/3, cross-layer 10/10, broad FM 190/190, full 3,622/3,622 + 4 skip, both
+Clippy targets, Python 68/68, Bun 5/5 + 12/12, exporter 1/1, Chromium 33/33,
+zero generated JSON/PNG delta, and clean source/dependency/vendor/diff audits.
+Graph CLI store is current at 24,078 / 129,027 and resolves every FMH symbol;
+the built-in long-lived channel is stale at 24,072 / 129,520 and `ready` must
+not be mistaken for freshness. Continue with the cleanup-first isolated E2E.
+Do not commit until the message is proposed and aligned; exact-path staging
+only.
+
+FMN-1 through FMN-5 are closed and published:
 
 1. raw Ghostty trace: 333 vertical packets, 226 same-direction deltas below
    2 ms in identical-coordinate triplets/occasional sextuplets;
 2. one-to-one routing rejected duplicate Herdr dispatch; host micro-burst and
    old automatic branch amplification were confirmed;
-3. Up/Down/`j/k`/Shift/wheel now move one exact owner-column cursor row;
-   Right/`l`, Enter, or primary click alone activates;
+3. Up/Down/`j/k`/Shift/wheel move one exact owner-column cursor row;
+   Right/`l` owns directory traversal while Enter/click remain explicit
+   activation commands;
 4. directory cursor preview uses the bounded latest worker and rejects stale
    generation/source/owner/index/path/current-cursor results;
 5. wheel normalization coalesces only identical owner/direction/coordinates
@@ -32,10 +53,11 @@ FMN-1 through FMN-4 are implemented and automated gates are green:
    Chromium 33/33 are green. Six reviewed VIS-01..06 PNGs changed; generated
    JSON and VIS-07..25 stayed clean.
 
-The exact next task is **FMN-5**: give the user the existing cleanup-first
-isolated helper, collect physical slow-wheel and held-arrow acceptance, then
-finish graph/Git/CyPack publication gates. Leave Home/Desktop/Downloads
-pre-warm for FMN-6 measurement-first work; no general/unbounded LRU.
+The exact next task is **FMH-4**: hand the user one cleanup-first isolated
+command, collect Left/Right physical acceptance, then align/commit/push only
+to CyPack. Leave
+Home/Desktop/Downloads pre-warm for FMN-6 measurement-first work; no
+general/unbounded LRU.
 
 Read these current authorities before code:
 
@@ -44,10 +66,12 @@ Read these current authorities before code:
 - `.codex/TASKS.md` FMN section;
 - `.local/ISOLATED-DEV-TEST.md`.
 
-Fresh working-tree graph: 24,072 nodes / 129,692 edges. After commit, recheck
-SHA-bound freshness with `move_trail_cursor_in_column`,
-`FileManagerVerticalWheelBurstGate`, and
-`queue_file_manager_trail_directory_preview_identity`. Lower FIP task counts and
+The pre-edit graph resolved the current horizontal reducer and key route;
+FMH-3 post-edit freshness is closed in the current CLI store at 24,078 nodes /
+129,027 edges with all new tests and the production `return Inert`. After commit,
+recheck SHA-bound freshness with `handle_file_manager_key`,
+`move_active_left`, `move_active_right`, and the new FMH regression symbols.
+Lower FIP task counts and
 “exact first work” paragraphs in this historical file are superseded by this
 override; recount the canonical task files rather than using old totals.
 Never touch stable Herdr/socket or `.superpowers/`; never regenerate PNGs
@@ -136,7 +160,7 @@ out of scope.
 
 ## Mandatory Task-List Trigger
 
-Expected canonical inventory at the 2026-07-21 handoff:
+Expected canonical inventory after FMH-3 closure:
 
 - `.codex/TASKS.md`: 12 unchecked product/deferred tasks;
 - `.codex/CHANGE-PIPELINE-TASKS.md`: 89 unchecked paused tooling tasks;
@@ -148,23 +172,24 @@ stop before code and reconcile CURRENT/TASKS/HANDOFF.
 
 Status assignment:
 
-- keep **FMN-5** `in_progress` until human E2E and publication gates close;
-- keep FMN-6 pending (FMN-0 through FMN-4 are closed);
+- keep **FMH-4** `in_progress` until physical E2E and publication close;
+- keep FMN-6 pending (FMN-0 through FMN-5 are closed);
 - keep S5/S7 trigger-gated;
 - keep change-pipeline T3.1-T10.9 paused;
 - never choose an easier lower-priority task.
 
 ## Exact First Work
 
-1. Revalidate the uncommitted FMN diff, checkpoint, stable-runtime exclusion,
-   focused/full gates, and exact task-copy parity.
-2. Align the proposed product and documentation commit messages before any
-   staging; use exact paths only and never stage `.superpowers/`.
-3. Run the cleanup-first isolated helper and collect the user's slow physical
-   wheel, held Up/Down, explicit Right/Enter, semantic exit, and zero-residue
-   acceptance without touching stable Herdr.
-4. Reindex Codebase Memory after the commit, prove current FMN symbols, then
-   push only `origin/feat/native-fm` and verify exact remote SHA equality.
+1. Revalidate the uncommitted FMH diff, checkpoint, stable-runtime exclusion,
+   completed automated gates, and exact task-copy parity.
+2. Run the cleanup-first isolated helper and collect exact one-edge Left,
+   directory-only Right, inert file-Right, vertical/wheel regression, semantic
+   exit, and zero-residue acceptance without touching stable Herdr.
+3. After physical acceptance, align the proposed product and documentation
+   commit messages before any staging; use exact paths only and never stage
+   `.superpowers/`.
+4. Run final delta gates, exact-path stage, commit, refresh the graph, push only
+   `origin/feat/native-fm`, and verify exact local/remote SHA equality.
 5. Keep FMN-6 cache/pre-warm work separate and measurement-first.
 
 ## Codebase Memory Protocol
@@ -185,7 +210,16 @@ Required discovery order:
 6. graph-augmented `search_code`
 7. grep only for strings/config/non-code or when graph evidence is insufficient
 
-Final handoff graph evidence:
+Current FMH graph evidence takes precedence over the historical bullets below:
+
+- single-worker CLI store: 24,078 nodes / 129,027 edges;
+- 12 changed files / 0 extraction errors;
+- all three FMH tests and the live Right branch's non-directory `return Inert`
+  resolve from current source;
+- the long-lived built-in channel is stale at 24,072 / 129,520 and `ready`
+  alone is not freshness evidence.
+
+Historical FMN handoff graph evidence:
 
 - 23,925 nodes / 124,127 edges;
 - built-in MCP status `ready`, cross-checked with current final-fix and FMN

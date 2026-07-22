@@ -220,8 +220,9 @@ product behavior under the user's clarified contract.
    directory.
 4. Landing on a directory may update a right-side preview asynchronously, but
    the cursor and active-column authority stay in the owner column.
-5. Right/`l`, Enter, or an explicit primary directory click is required to
-   enter/rebranch.
+5. Right/`l` enters/rebranches only when the exact cursor entry is a directory;
+   it is inert on files/non-entries. Enter or an explicit primary click keeps
+   its existing explicit file/directory activation semantics.
 6. Left/Backspace remains the explicit parent/previous-column action.
 7. Clamped movement is inert and should not force unnecessary full renders.
 8. A stale row/header geometry identity is consumed without mutation.
@@ -305,8 +306,8 @@ unbounded accumulator.
   entry index/kind without calling activation, truncating the chain, or moving
   the active column.
 - Up/Down/`j/k`, Shift+vertical, row wheel, and header wheel use that
-  cursor-only reducer. Right/`l`, Enter, and primary click remain the only
-  directory activation commands.
+  cursor-only reducer. Right/`l` is directory-only traversal; Enter and
+  primary click retain explicit file/directory activation.
 - A directory cursor landing schedules `TrailPreview` through the existing
   one-running/one-latest `FileManagerIoWorker`. The serial input loop performs
   no cold directory read.
@@ -389,19 +390,72 @@ exact identity/generation, and uses no-follow timestamp handling for symlink/
 FIFO fixtures. The six VIS-01..06 pixel updates were reviewed individually;
 VIS-07..25 and every generated JSON remained unchanged.
 
-`TP-FMN-E2E-01` remains intentionally open for the user's new isolated build:
-slow physical wheel, held Up/Down across file-directory-file rows, explicit
-Right/Enter activation, semantic exit, and zero throwaway residue. Graph
-refresh, exact-path staging, commit, CyPack push, and remote SHA equality also
-remain publication-time gates; none is represented as complete here.
+`TP-FMN-E2E-01` subsequently closed on 2026-07-22: after exercising the
+cleanup-first isolated build, the user reported that the stutter, wheel, and
+vertical-navigation behavior works perfectly. This is qualitative physical UX
+acceptance, kept separate from the automated counts. FMN publication and
+continuity then closed at local/origin head `787bb96b`.
 
 Working-tree graph refresh completed at 24,072 nodes / 129,692 edges. Current
 symbol queries resolve `move_trail_cursor_in_column`,
 `FileManagerVerticalWheelBurstGate`,
 `queue_file_manager_trail_directory_preview_identity`,
 `project_miller_view_with_resize_preview`, and the active-owner regression
-tests at their live source paths. A post-commit SHA-bound recheck is still
-required before publication closure.
+tests at their live source paths. The later FMN publication gate rechecked the
+published ancestry and local/origin equality at `787bb96b`; FMH requires its
+own post-edit graph and publication proof.
+
+## FMH horizontal direction closure — 2026-07-22
+
+The next user contract exposed a narrower semantic bug: Left/Right were mapped,
+but Right shared an activation fallback that was too broad. When
+`active_directory_dispatch` found that the exact cursor entry was not a
+directory, the Right branch called `activate_selected_trail_entry`. Over a
+file, that returned `SelectedFile`, retired the resident child column, cleared
+the ephemeral cursor, and requested a render. The key therefore behaved as a
+file activation command instead of a directory-only horizontal command.
+
+The frozen FMH law is:
+
+1. one Left event crosses one resident parent edge; root is inert;
+2. one Right event crosses at most one resident child edge even if deeper data
+   is already prepared;
+3. Right/`l` over an exact directory may use the existing bounded activation
+   path;
+4. Right/`l` over a file, non-entry, stale identity, or boundary is fully inert;
+5. Enter/click file activation and all vertical/wheel semantics are unchanged.
+
+The first route-level RED, run
+`0ddfe67c-72fc-4f0f-baa5-715f83a1f1c6`, failed on the Trail mutation itself:
+the expected two-column parent/child model became one column with the file as
+`TrailCol::selected`. The minimum GREEN removes only the Right/`l` file
+activation fallback and returns `FileManagerKeyDispatch::Inert`. The App then
+sets its render override to false and submits no directory request.
+
+Fresh automated closure evidence:
+
+| Gate | Result |
+|---|---|
+| `TP-FMH-LEFT-01/02`, `RIGHT-01/03`, `STEP-01`, `ALIAS-01` | 3/3; run `d0aed4e5-82e1-47ec-b92c-9df94b87e2ec` |
+| Horizontal + async/stale/close-reopen cross-layer matrix | 10/10; run `6250e842-3ad1-47c8-ac60-d85773436c02` |
+| Input/Trail/snapshot/worker/watcher failure matrix | 190/190; run `9295437e-82d2-43e6-ab09-087ac8745cee` |
+| Full Nextest | 3,622/3,622 passed, 4 intentionally skipped; run `cb2b0920-1783-452d-99c1-d0b34232d1bb` |
+| rustfmt + Linux all-target Clippy `-D warnings` | clean |
+| Windows MSVC Clippy, SIMD disabled | clean |
+| Python maintenance | 68/68 passed |
+| Integration assets + plugin marketplace Bun | 5/5 + 12/12 passed |
+| Deterministic Ratatui exporter | 1/1; run `5cabc949-a769-4524-ad91-db87f5adb8c6` |
+| Full Chromium | 33/33 passed with snapshot updates disabled |
+| Visual scope | generated JSON and every PNG have zero delta |
+| Source/dependency/vendor/diff audit | clean; no new production unwrap/allow/filesystem read and no Cargo/vendor mutation |
+| Working-tree graph | CLI 24,078 nodes / 129,027 edges; 12 changed, 0 extraction errors; all three FMH tests and current production `return Inert` resolve |
+
+The long-lived built-in graph channel still reports its stale 24,072-node /
+129,520-edge snapshot. It was not accepted as fresh and no proxy or user process
+was restarted; the single-worker CLI store is the current-symbol authority.
+Only the cleanup-first physical Left/Right trial and alignment-gated CyPack
+publication remain. They are intentionally not claimed in this automated
+record.
 
 ## Cache and pre-warm decision
 

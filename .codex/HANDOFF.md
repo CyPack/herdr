@@ -2,9 +2,56 @@
 
 Updated: 2026-07-22 CEST
 
-## 0. SONRAKI ADIM — FMN-5 USER E2E, THEN GRAPH/GIT PUBLICATION
+## 0. SONRAKI ADIM — FMH ISOLATED E2E, THEN MESSAGE ALIGNMENT/PUBLICATION
 
-**CURRENT OVERRIDE — ANA STUTTER KAPANDI VE KULLANICI CANLIDA KABUL ETTI.**
+**CURRENT OVERRIDE — FMH HORIZONTAL MILLER FOCUS FIX LOKALDE HAZIR.** Local
+HEAD ve `origin/feat/native-fm` çalışma başlangıcında aynı
+`787bb96b91148a50352d4162acbc9b745729d1b7` SHA'sındaydı. Tracked tree temiz,
+yalnız kullanıcıya ait `.superpowers/` untracked idi. Geri dönüş ref'i
+`refs/checkpoints/herdr-fm-horizontal-pre-fix-20260722` bu head'i korur. Stable
+Herdr process/socket/config hiçbir aşamada hedef olmadı.
+
+Kullanıcı önceki FMN build'ini fiziksel olarak test edip kusursuz çalıştığını
+bildirdi; wheel'in 3-5 satır atlaması ve vertical cursor'ın directory üzerinde
+child kolona kendiliğinden geçmesi kapanmıştır. Yeni FMH contract:
+
+1. Left varsa tam bir resident parent kolona geçer; root'ta inerttir.
+2. Right/`l` exact cursor directory ise tam bir child edge geçer veya bounded
+   activation worker'ı kuyruğa alır.
+3. Right/`l` file/non-entry/stale/boundary üzerinde tamamen inerttir; file
+   selection, Trail truncation, worker, focus veya render üretemez.
+4. Enter/click'in mevcut file/directory explicit activation semantiği korunur.
+
+Graph-first zincir key mapping'in zaten var olduğunu; bug'ın Right branch'inde
+`active_directory_dispatch` directory bulamayınca
+`activate_selected_trail_entry` ile file activation'a düşmesi olduğunu
+kanıtladı. TDD RED `0ddfe67c-72fc-4f0f-baa5-715f83a1f1c6`: file cursor üzerinde
+Right resident iki kolonlu Trail'i tek kolonlu `SelectedFile` projection'a
+çevirdi. Minimum GREEN bu fallback'i kaldırıp `Inert` döndürüyor. Left,
+directory activation, bounded worker ve Enter/click production yolları
+değişmedi.
+
+Taze kapılar: FMH 3/3 (`d0aed4e5-82e1-47ec-b92c-9df94b87e2ec`), cross-layer
+10/10 (`6250e842-3ad1-47c8-ac60-d85773436c02`), broad FM input/Trail/
+snapshot/worker/watcher 190/190 (`9295437e-82d2-43e6-ab09-087ac8745cee`),
+full Nextest 3,622/3,622 + 4 skip
+(`cb2b0920-1783-452d-99c1-d0b34232d1bb`), Linux+Windows Clippy, Python 68/68,
+Bun 5/5 + 12/12, exporter 1/1
+(`5cabc949-a769-4524-ad91-db87f5adb8c6`), Chromium 33/33, generated JSON/PNG
+delta zero, rustfmt ve source/dependency/vendor/diff audit temiz. `just` yok;
+exact child recipe'lerin tamamı doğrudan koşuldu.
+
+Graph CLI store 24,078 node / 129,027 edge ve 12 changed / 0 extraction error
+ile güncel; üç FMH testi ve production `return Inert` branch'i CLI snippet ile
+kanıtlandı. Built-in long-lived channel eski 24,072 / 129,520 snapshot'ında
+kaldı; `ready` tazelik sayılmadı ve hiçbir proxy/user process restart edilmedi.
+Sıradaki tek executable adım cleanup-first isolated debug build ve human
+Left/Right acceptance'tır; sonra commit mesajı hizalama, exact-path staging,
+commit ve yalnız CyPack fork push. PNG snapshot regeneration yapılmadı ve kör
+update yasaktır.
+
+**HISTORICAL FMN SNAPSHOT — ANA STUTTER KAPANDI VE KULLANICI CANLIDA KABUL
+ETTI.**
 Kullanıcının kabul ettiği product behavior head'i
 `d8583d3ab564d42f880e94e0462f9d12ab61d391`'dir. Closure publication buna
 `8f4b2acc` test-only path-identity fixture ve `d52b4417` closure/Yazi/lessons
@@ -52,9 +99,8 @@ Explicit Leave/Backspace rebinds the watcher to the parent once. The legacy
 narrow-layout test now proves root rows before Right, child rows after Right,
 and root restoration after Left.
 
-Son executable iş FMN-5'tir: kullanıcı izole yeni build'de yavaş/fiziksel
-wheel ve held Up/Down kabulünü yapar; ardından graph reindex/current-symbol,
-exact staging, hizalanmış commit, CyPack push ve remote SHA doğrulanır. Pinned
+FMN-5 daha sonra kullanıcı fiziksel kabulü ve `787bb96b` publication head'iyle
+kapandı. Aktif iş yukarıdaki ayrı FMH lane'idir. Pinned
 Home/Desktop/Downloads pre-warm FMN-6'dır ve ayrı first-entry latency RED
 olmadan uygulanmaz. Genel/unbounded LRU yasaktır. Pinned Yazi source ve transfer
 kararı: `.codex/references/yazi-file-manager-performance-transfer.md`.
@@ -66,12 +112,14 @@ Fresh FMN gate: focused 302/302 (run
 Chromium 33/33 temiz. Exactly six legacy VIS-01..06 PNGs were individually
 reviewed and updated; generated JSON and VIS-07..25 stayed clean.
 
-Fresh working-tree Codebase Memory: 24,072 node / 129,692 edge. Current graph
+The FMN working-tree Codebase Memory at that stage was 24,072 node / 129,692
+edge. That graph
 `move_trail_cursor_in_column`, `FileManagerVerticalWheelBurstGate`,
 `queue_file_manager_trail_directory_preview_identity`,
 `project_miller_view_with_resize_preview`, and both active-owner regression
-tests resolve at current source paths. Commit sonrası SHA-bound recheck yine
-zorunludur.
+tests resolved at current source paths. FMN'in SHA-bound publication gate'i
+daha sonra `787bb96b` ile kapandı; güncel FMH graph/publication durumu bu
+dosyanın en üstündeki override'dır.
 Stable Herdr/socket ve `.superpowers/` kesinlikle kapsam dışıdır. Commit/push
 yalnız exact-path staging ve önceden hizalanmış commit mesajıyla yapılır.
 
@@ -784,21 +832,12 @@ yeniden sayar ve exact diff yapar.
 
 ### Source: `.codex/TASKS.md` — 12 unchecked
 
-- [ ] **FMN-5 Production closure.**
-  - [x] `TP-FMN-VIS-01`: scope-locked Layout V1 Chromium baselines plus scoped
-    cursor/preview semantic cells; no blind PNG regeneration.
-    Exporter 1/1 and full Chromium 33/33 are green. Exactly six legacy
-    VIS-01..06 PNGs were inspected and updated after deterministic clock,
-    mtime, no-follow, and async-settlement fixes; generated JSON and
-    VIS-07..25 stayed clean.
-  - [ ] `TP-FMN-E2E-01`: isolated real wheel and held-arrow acceptance; no
-    accidental 3-5 jump, no child focus transfer, zero residue.
-  - [ ] `TP-FMN-GATE-01`: focused/full Nextest, fmt, Linux/Windows Clippy,
-    maintenance, Chromium, graph, Git ancestry, exact CyPack SHA.
-    Local pre-publication gates are green: focused 302/302, active-owner trio
-    3/3, full 3,619/3,619 + 4 skip, fmt, both Clippy targets, Python 68/68,
-    Bun 5/5 + 12/12, exporter 1/1, and Chromium 33/33. Graph/Git/remote SHA
-    remain the publication-time sub-gates.
+- [ ] **FMH-4 Isolated physical acceptance and publication.**
+  - [ ] Build and launch only through the cleanup-first throwaway XDG helper;
+    verify Left at every resident depth, Right on directory, Right on file,
+    held vertical movement, wheel movement, semantic exit, and zero residue.
+  - [ ] Propose and align the commit message; exact-path stage only; commit,
+    push only to the CyPack fork, then prove local/origin SHA equality.
 
 - [ ] **FMN-6 Measure pinned Home/Desktop/Downloads first-entry latency as a
   separate follow-up.**
