@@ -122,9 +122,45 @@ mod tests {
     }
 
     fn set_mtime_fixture_modified(path: &std::path::Path, modified: std::time::SystemTime) {
+        #[cfg(target_os = "linux")]
+        {
+            let seconds = modified
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("visual fixture mtime follows the Unix epoch")
+                .as_secs();
+            let status = std::process::Command::new("touch")
+                .arg("-h")
+                .arg("-d")
+                .arg(format!("@{seconds}"))
+                .arg(path)
+                .status()
+                .expect("GNU touch runs for the Linux visual oracle");
+            assert!(status.success(), "set no-follow visual fixture mtime");
+        }
+
+        #[cfg(not(target_os = "linux"))]
         let file = std::fs::File::open(path).expect("open mtime visual fixture");
+        #[cfg(not(target_os = "linux"))]
         file.set_times(std::fs::FileTimes::new().set_modified(modified))
             .expect("set mtime visual fixture time");
+    }
+
+    fn set_mtime_fixture_tree(root: &std::path::Path, modified: std::time::SystemTime) {
+        let entries = std::fs::read_dir(root)
+            .expect("read visual fixture tree")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect visual fixture tree");
+        for entry in entries {
+            let path = entry.path();
+            if entry
+                .file_type()
+                .expect("read visual fixture kind")
+                .is_dir()
+            {
+                set_mtime_fixture_tree(&path, modified);
+            }
+            set_mtime_fixture_modified(&path, modified);
+        }
     }
 
     fn mtime_fixture_anchor() -> crate::fm::entry_time::LocalCalendarAnchor {
@@ -146,6 +182,47 @@ mod tests {
             accessible: true,
             ejectable: false,
         }
+    }
+
+    fn settle_pending_app_text_preview(app: &mut crate::app::state::AppState) {
+        let pending =
+            app.file_manager
+                .as_ref()
+                .and_then(|file_manager| match &file_manager.preview {
+                    crate::fm::FmPreview::File(crate::fm::FmFilePreview::PendingText {
+                        source_path,
+                        generation,
+                    }) => Some((source_path.clone(), *generation)),
+                    crate::fm::FmPreview::None
+                    | crate::fm::FmPreview::Directory(_)
+                    | crate::fm::FmPreview::File(
+                        crate::fm::FmFilePreview::Text(_)
+                        | crate::fm::FmFilePreview::Image(_)
+                        | crate::fm::FmFilePreview::Unavailable(_),
+                    ) => None,
+                });
+        let Some((source_path, generation)) = pending else {
+            return;
+        };
+        let prepared = crate::fm::prepare_default_text_preview(&source_path);
+        assert!(
+            app.file_manager
+                .as_mut()
+                .expect("pending visual text preview owns Files")
+                .apply_prepared_text_preview(&source_path, generation, prepared),
+            "visual text preview completion must match its exact path/generation"
+        );
+    }
+
+    fn settle_pending_trail_text_preview(
+        snapshots: &mut crate::fm::trail_snapshots::TrailSnapshots,
+        expected_path: &std::path::Path,
+    ) {
+        let prepared = crate::fm::prepare_default_text_preview(expected_path);
+        assert!(
+            snapshots.apply_prepared_text_detail(expected_path, &prepared),
+            "visual Trail text completion must match its pending exact path"
+        );
     }
 
     fn fcl_visual_app(
@@ -179,6 +256,7 @@ mod tests {
         app.file_manager_locations_model = locations_model;
         app.try_open_file_manager_with(|_| Some(file_manager))
             .expect("FCL visual Files activation");
+        settle_pending_app_text_preview(&mut app);
         assert!(
             app.file_manager_locations
                 .activate_location(explicit_origin, &app.file_manager_locations_model),
@@ -553,610 +631,624 @@ mod tests {
         );
         std::fs::create_dir_all(&out_dir).expect("create fixture output dir");
 
-        let render_state = |app: &crate::app::state::AppState, width: u16, height: u16| {
-            let backend = TestBackend::new(width, height);
-            let mut terminal = Terminal::new(backend).expect("test terminal");
-            terminal
-                .draw(|frame| crate::ui::render(app, frame))
-                .expect("render frame");
-            terminal.backend().buffer().clone()
-        };
+        crate::fm::entry_time::with_test_calendar_anchor(mtime_fixture_anchor(), || {
+            let render_state = |app: &crate::app::state::AppState, width: u16, height: u16| {
+                let backend = TestBackend::new(width, height);
+                let mut terminal = Terminal::new(backend).expect("test terminal");
+                terminal
+                    .draw(|frame| crate::ui::render(app, frame))
+                    .expect("render frame");
+                terminal.backend().buffer().clone()
+            };
 
-        let mut app = crate::app::state::AppState::test_new();
-        app.workspaces = vec![crate::workspace::Workspace::test_new("vis")];
-        app.active = Some(0);
-        app.selected = 0;
-        app.mode = crate::app::state::Mode::Terminal;
-        app.mobile_width_threshold = 0;
-        crate::ui::compute_view(&mut app, Rect::new(0, 0, 120, 40));
-        write_fixture(
-            &out_dir,
-            export_cell_fixture("vis-01-terminal", &render_state(&app, 120, 40)),
-        );
-
-        // Fixed filesystem base so cwd labels stay identical across exports.
-        // The FM opens the INNER directory so the rendered parent column shows
-        // only the controlled base content, never the live /tmp listing.
-        let base = std::path::PathBuf::from("/tmp/herdr-vis01-root");
-        let _ = std::fs::remove_dir_all(&base);
-        let root = base.join("inner");
-        for dir in ["alpha", "beta"] {
-            std::fs::create_dir_all(root.join(dir)).expect("fixture dir");
-        }
-        for file in ["gamma.rs", "notes.txt"] {
-            std::fs::write(root.join(file), b"x").expect("fixture file");
-        }
-        std::fs::create_dir_all(root.join("beta").join("deep")).expect("fixture deep dir");
-        std::fs::write(root.join("beta").join("inner.txt"), b"x").expect("fixture inner file");
-        let vis01_modified = mtime_fixture_system_time(2026, time::Month::January, 10, 11, 55);
-        for path in [
-            root.join("alpha"),
-            root.join("beta"),
-            root.join("gamma.rs"),
-            root.join("notes.txt"),
-            root.join("beta").join("deep"),
-            root.join("beta").join("inner.txt"),
-        ] {
-            set_mtime_fixture_modified(&path, vis01_modified);
-        }
-        // Browser fonts do not carry Nerd PUA glyphs. The visual oracle uses
-        // the deterministic ASCII profile so every semantic entry icon is
-        // visible in Chromium.
-        app.file_icon_profile = crate::fm::entry_kind::IconProfile::Ascii;
-        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(root.clone())))
-            .expect("files stage must open for the fixture");
-        crate::ui::compute_view(&mut app, Rect::new(0, 0, 120, 40));
-        write_fixture(
-            &out_dir,
-            export_cell_fixture("vis-01-files", &render_state(&app, 120, 40)),
-        );
-
-        // TP-FIP-VIS-02 / TP-TRAIL-T7-RENDER-05: descend through the NONZERO
-        // child `beta` (index 1) and then into `deep`; the accumulating Trail
-        // must retain exact ancestor highlights, never substitute row zero.
-        {
-            let fm = app.file_manager.as_mut().expect("open file manager");
-            let beta = root.join("beta");
-            let beta_index = fm
-                .entries
-                .iter()
-                .position(|entry| entry.path == beta)
-                .expect("beta row");
-            assert!(beta_index > 0, "fixture requires a nonzero child index");
-            assert!(fm.select(beta_index));
-            fm.enter();
-            let deep = beta.join("deep");
-            let deep_index = fm
-                .entries
-                .iter()
-                .position(|entry| entry.path == deep)
-                .expect("deep row");
-            assert!(fm.select(deep_index));
-            fm.enter();
-            assert_eq!(fm.cwd, deep);
-        }
-        // 160 cells wide so the loaded `inner → beta → deep` Trail stays
-        // visible as complete columns in the bounded window.
-        crate::ui::compute_view(&mut app, Rect::new(0, 0, 160, 40));
-        write_fixture(
-            &out_dir,
-            export_cell_fixture("vis-02-resident-focus", &render_state(&app, 160, 40)),
-        );
-        let _ = std::fs::remove_dir_all(&base);
-
-        // TP-FIP-VIS-03/04: a mixed-kind directory rendered with the
-        // deterministic ASCII icon profile (Nerd private-use glyphs render
-        // empty in the browser font). Same base/inner isolation pattern.
-        let icon_base = std::path::PathBuf::from("/tmp/herdr-vis03-root");
-        let _ = std::fs::remove_dir_all(&icon_base);
-        let icon_root = icon_base.join("inner");
-        std::fs::create_dir_all(icon_root.join("alpha")).expect("fixture dir");
-        for file in [
-            "main.rs",
-            "config.toml",
-            "notes.md",
-            "photo.png",
-            "pack.zip",
-        ] {
-            std::fs::write(icon_root.join(file), b"x").expect("fixture file");
-        }
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(icon_root.join("alpha"), icon_root.join("link-dir"))
-                .expect("link-dir");
-            std::os::unix::fs::symlink(icon_root.join("main.rs"), icon_root.join("link-file"))
-                .expect("link-file");
-            std::os::unix::fs::symlink(icon_root.join("missing"), icon_root.join("broken"))
-                .expect("broken");
-            let status = std::process::Command::new("mkfifo")
-                .arg(icon_root.join("fifo"))
-                .status()
-                .expect("mkfifo runs");
-            assert!(status.success(), "fifo fixture must exist");
-        }
-
-        let mut app = crate::app::state::AppState::test_new();
-        app.workspaces = vec![crate::workspace::Workspace::test_new("vis")];
-        app.active = Some(0);
-        app.selected = 0;
-        app.mode = crate::app::state::Mode::Terminal;
-        app.mobile_width_threshold = 0;
-        app.file_icon_profile = crate::fm::entry_kind::IconProfile::Ascii;
-        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(icon_root.clone())))
-            .expect("files stage must open for the icon fixture");
-        crate::ui::compute_view(&mut app, Rect::new(0, 0, 120, 40));
-        write_fixture(
-            &out_dir,
-            export_cell_fixture("vis-03-icons-ascii", &render_state(&app, 120, 40)),
-        );
-        {
-            let fm = app.file_manager.as_mut().expect("open icon file manager");
-            let main_index = fm
-                .entries
-                .iter()
-                .position(|entry| entry.path == icon_root.join("main.rs"))
-                .expect("main.rs row");
-            assert!(fm.select(main_index));
-        }
-        crate::ui::compute_view(&mut app, Rect::new(0, 0, 60, 16));
-        assert!(
-            !app.view.file_manager_trail.columns.is_empty(),
-            "tiny icon fixture must exercise one complete Trail column"
-        );
-        write_fixture(
-            &out_dir,
-            export_cell_fixture("vis-04-icons-tiny", &render_state(&app, 60, 16)),
-        );
-
-        // TP-FIP-VIS-05/06: the blocking agent picker over the Files stage —
-        // current agent first and preselected, then a disabled (vanished)
-        // second row on a tiny screen. Rows are constructed deterministically
-        // from the fixture workspace's real pane/terminal identities.
-        let workspace_id = app.workspaces[0].id.clone();
-        let pane_id = app.workspaces[0].tabs[0].root_pane;
-        let terminal_id = app.workspaces[0]
-            .terminal_id(pane_id)
-            .expect("fixture terminal identity")
-            .clone();
-        let row = |label: &str, is_current: bool, live: bool| {
-            crate::app::agent_reference_picker::AgentReferencePickerRow {
-                label: label.to_string(),
-                is_current,
-                workspace_id: workspace_id.clone(),
-                pane_id,
-                terminal_id: terminal_id.clone(),
-                live,
-            }
-        };
-        app.agent_reference_picker = Some(
-            crate::app::agent_reference_picker::AgentReferencePickerState {
-                source_path: icon_root.join("main.rs"),
-                source_files_generation: 0,
-                rows: vec![
-                    row("claude — vis", true, true),
-                    row("codex — build", false, true),
-                ],
-                selected: 0,
-            },
-        );
-        app.mode = crate::app::state::Mode::AgentReferencePicker;
-        crate::ui::compute_view(&mut app, Rect::new(0, 0, 120, 40));
-        write_fixture(
-            &out_dir,
-            export_cell_fixture("vis-05-picker", &render_state(&app, 120, 40)),
-        );
-
-        if let Some(picker) = app.agent_reference_picker.as_mut() {
-            picker.rows[1].live = false;
-        }
-        crate::ui::compute_view(&mut app, Rect::new(0, 0, 60, 20));
-        write_fixture(
-            &out_dir,
-            export_cell_fixture("vis-06-picker-disabled-tiny", &render_state(&app, 60, 20)),
-        );
-        let _ = std::fs::remove_dir_all(&icon_base);
-
-        // VIS-07/08 (trail program T3): the standalone Miller trail render —
-        // four accumulated columns with the selection emphasized in every
-        // ancestor (LAW 1/2), then the same trail after an ancestor-sibling
-        // reselect cut the old branch (rebranch proof). Deterministic fixed
-        // tree; ASCII icon profile for browser-visible glyphs.
-        let trail_base = std::path::PathBuf::from("/tmp/herdr-vis07-root");
-        let _ = std::fs::remove_dir_all(&trail_base);
-        let trail_root = trail_base.join("inner");
-        let src = trail_root.join("src");
-        let core = src.join("core");
-        let detail = core.join("detail");
-        std::fs::create_dir_all(&detail).expect("trail tree");
-        std::fs::create_dir_all(trail_root.join("docs")).expect("docs dir");
-        std::fs::create_dir_all(trail_root.join("assets")).expect("assets dir");
-        for (dir, files) in [
-            (&trail_root, &["notes.md", "readme.md"][..]),
-            (&src, &["lib.rs", "main.rs"][..]),
-            (&core, &["engine.rs", "state.rs"][..]),
-            (&detail, &["alpha.rs", "beta.rs"][..]),
-            (&trail_root.join("docs"), &["guide.md", "spec.md"][..]),
-        ] {
-            for file in files {
-                std::fs::write(dir.join(file), b"x").expect("trail file");
-            }
-        }
-
-        let mut trail_app = crate::app::state::AppState::test_new();
-        trail_app.file_icon_profile = crate::fm::entry_kind::IconProfile::Ascii;
-        let mut trail = crate::fm::trail::TrailState::new(&trail_root);
-        let mut snaps = crate::fm::trail_snapshots::TrailSnapshots::new(false);
-        snaps.sync(&trail);
-        for (col, dir) in [(0usize, &src), (1, &core), (2, &detail)] {
-            assert_eq!(
-                snaps.select_dir(&mut trail, col, dir),
-                crate::fm::FmDirectoryStatus::Available,
-                "trail fixture descent must load"
-            );
-        }
-        let fractional_trail = trail.clone();
-        let fractional_snaps = snaps.clone();
-        assert!(trail.select_file(3, &detail.join("alpha.rs")));
-        let render_trail = |trail: &crate::fm::trail::TrailState,
-                            snaps: &crate::fm::trail_snapshots::TrailSnapshots,
-                            width: u16,
-                            height: u16| {
-            let backend = TestBackend::new(width, height);
-            let mut terminal = Terminal::new(backend).expect("trail terminal");
-            let stage = Rect::new(0, 0, width, height);
-            let view =
-                crate::ui::file_manager::trail_view::project_trail_view(stage, trail, snaps, &[]);
-            assert!(!view.columns.is_empty(), "trail fixture must project");
-            terminal
-                .draw(|frame| {
-                    crate::ui::file_manager::trail_view::render_trail_view(
-                        &trail_app, frame, &view, snaps,
-                    );
-                })
-                .expect("render trail frame");
-            terminal.backend().buffer().clone()
-        };
-        write_fixture(
-            &out_dir,
-            export_cell_fixture("vis-07-trail-depth", &render_trail(&trail, &snaps, 120, 40)),
-        );
-
-        // VIS-11 (scrollable Trail viewport): after auto-following the active
-        // end, a user-selected origin exposes the still-live root ancestors
-        // in a narrow viewport instead of snapping back to the deepest column.
-        let render_scrolled_trail = |requested_first_visible: usize| {
-            let width = 60;
-            let height = 20;
-            let backend = TestBackend::new(width, height);
-            let mut terminal = Terminal::new(backend).expect("scrolled trail terminal");
-            let stage = Rect::new(0, 0, width, height);
-            let view = crate::ui::file_manager::trail_view::project_trail_view_with_origin(
-                stage,
-                &trail,
-                &snaps,
-                &[],
-                crate::ui::file_manager::trail_view::TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
-                requested_first_visible as u32,
-            );
-            assert_eq!(
-                view.first_visible, requested_first_visible,
-                "fixture must preserve the explicit horizontal origin"
-            );
-            terminal
-                .draw(|frame| {
-                    crate::ui::file_manager::trail_view::render_trail_view(
-                        &trail_app, frame, &view, &snaps,
-                    );
-                })
-                .expect("render scrolled trail frame");
-            terminal.backend().buffer().clone()
-        };
-        write_fixture(
-            &out_dir,
-            export_cell_fixture("vis-11-trail-horizontal-scroll", &render_scrolled_trail(0)),
-        );
-
-        // VIS-12 (fractional Trail viewport): the viewport begins ten cells
-        // inside the 30-cell second column, so the leading column is clipped
-        // to 20 cells and the 48-cell trailing column begins at the right
-        // edge. The fixture is the real Ratatui buffer, not an HTML layout
-        // reconstruction.
-        {
-            let width = 60;
-            let height = 20;
-            let preferred_widths = [18_u16, 30, 48, 24];
-            let offset_cells = 18_u32 + 1 + 10;
-            let stage = Rect::new(0, 0, width, height);
-            let view = crate::ui::file_manager::trail_view::project_trail_view_with_origin(
-                stage,
-                &fractional_trail,
-                &fractional_snaps,
-                &preferred_widths,
-                crate::ui::file_manager::trail_view::TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
-                offset_cells,
-            );
-            let leading = view.columns.first().expect("fractional leading column");
-            let trailing = view.columns.last().expect("fractional trailing column");
-            assert_eq!(
-                (leading.trail_index, leading.source_x, leading.rect.width),
-                (1, 10, 20)
-            );
-            assert_eq!(trailing.trail_index, 2);
-            assert!(
-                trailing.rect.width > 0 && trailing.rect.width < trailing.logical_width,
-                "fixture must expose the beginning of a clipped trailing column"
-            );
-            let backend = TestBackend::new(width, height);
-            let mut terminal = Terminal::new(backend).expect("fractional trail terminal");
-            terminal
-                .draw(|frame| {
-                    crate::ui::file_manager::trail_view::render_trail_view(
-                        &trail_app,
-                        frame,
-                        &view,
-                        &fractional_snaps,
-                    );
-                })
-                .expect("render fractional trail frame");
+            let mut app = crate::app::state::AppState::test_new();
+            app.workspaces = vec![crate::workspace::Workspace::test_new("vis")];
+            app.active = Some(0);
+            app.selected = 0;
+            app.mode = crate::app::state::Mode::Terminal;
+            app.mobile_width_threshold = 0;
+            crate::ui::compute_view(&mut app, Rect::new(0, 0, 120, 40));
             write_fixture(
                 &out_dir,
-                export_cell_fixture(
-                    "vis-12-fractional-miller-scroll",
-                    terminal.backend().buffer(),
-                ),
+                export_cell_fixture("vis-01-terminal", &render_state(&app, 120, 40)),
             );
-        }
 
-        // Rebranch: reselect the sibling `docs` at the ROOT column — the old
-        // src/core/detail branch is discarded and the trail regrows.
-        assert_eq!(
-            snaps.select_dir(&mut trail, 0, &trail_root.join("docs")),
-            crate::fm::FmDirectoryStatus::Available
-        );
-        assert!(trail.select_file(1, &trail_root.join("docs").join("guide.md")));
-        snaps.sync(&trail);
-        write_fixture(
-            &out_dir,
-            export_cell_fixture(
-                "vis-08-trail-rebranch",
-                &render_trail(&trail, &snaps, 120, 40),
-            ),
-        );
-
-        // VIS-09 (trail LAW 3): activating a FILE through the input seam
-        // opens the resizable right-side detail panel with the prepared text
-        // preview while the sibling columns stay visible.
-        std::fs::write(
-            trail_root.join("docs").join("guide.md"),
-            b"# Guide\n\ntrail detail panel preview",
-        )
-        .expect("guide content");
-        let docs_col = &snaps.cols()[1];
-        let guide = trail_root.join("docs").join("guide.md");
-        let guide_index = docs_col
-            .entries()
-            .iter()
-            .position(|entry| entry.path == guide)
-            .expect("guide row");
-        assert_eq!(
-            snaps.activate_entry(&mut trail, 1, guide_index, &guide),
-            crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
-        );
-        write_fixture(
-            &out_dir,
-            export_cell_fixture(
-                "vis-09-trail-detail-panel",
-                &render_trail(&trail, &snaps, 120, 40),
-            ),
-        );
-
-        // VIS-14 (FMR-3): heavyweight document types stay explicit and
-        // bounded in native Files instead of being misread as text.
-        let manual = trail_root.join("docs").join("manual.pdf");
-        std::fs::write(&manual, b"%PDF fixture").expect("metadata fixture");
-        let mut metadata_snaps = crate::fm::trail_snapshots::TrailSnapshots::new(false);
-        let metadata_trail = metadata_snaps
-            .open_trail_to(&trail_root, &manual)
-            .expect("metadata detail fixture resolves");
-        write_fixture(
-            &out_dir,
-            export_cell_fixture(
-                "vis-14-trail-metadata-preview",
-                &render_trail(&metadata_trail, &metadata_snaps, 120, 40),
-            ),
-        );
-
-        // VIS-10 (trail LAW 5 / FIP-D1): a sidebar deep-link builds the whole
-        // trail from scratch — fresh snapshots, ancestor chain resolved down
-        // to the file, detail panel open. This is the acceptance visual for
-        // "favorites click constructs the trail correctly".
-        let mut deep_snaps = crate::fm::trail_snapshots::TrailSnapshots::new(false);
-        let deep_trail = deep_snaps
-            .open_trail_to(&trail_root, &core.join("state.rs"))
-            .expect("deep link fixture resolves");
-        write_fixture(
-            &out_dir,
-            export_cell_fixture(
-                "vis-10-trail-deep-link",
-                &render_trail(&deep_trail, &deep_snaps, 120, 40),
-            ),
-        );
-
-        // VIS-13 (FMR-1): a mixed directory keeps its actionable file row
-        // while a separate non-actionable status row explains hidden items.
-        let omission_root = trail_base.join("omissions");
-        std::fs::create_dir_all(&omission_root).expect("omission fixture dir");
-        std::fs::write(omission_root.join("visible.txt"), b"x").expect("visible fixture");
-        std::fs::write(omission_root.join(".secret"), b"x").expect("hidden fixture");
-        let omission_trail = crate::fm::trail::TrailState::new(&omission_root);
-        let mut omission_snaps = crate::fm::trail_snapshots::TrailSnapshots::new(false);
-        omission_snaps.sync(&omission_trail);
-        write_fixture(
-            &out_dir,
-            export_cell_fixture(
-                "vis-13-trail-directory-omissions",
-                &render_trail(&omission_trail, &omission_snaps, 80, 20),
-            ),
-        );
-        let _ = std::fs::remove_dir_all(&trail_base);
-
-        // VIS-15..17 (MTIME-1..5): a deterministic UTC calendar tree proves
-        // mixed directory/file ordering, responsive timestamp omission, and
-        // exact-path selection after an mtime-driven reorder. Build every
-        // node first, then set FileTimes last so directory creation cannot
-        // perturb the approved order.
-        let mtime_base = std::path::PathBuf::from("/tmp/herdr-vis15-mtime-root");
-        let _ = std::fs::remove_dir_all(&mtime_base);
-        let mtime_root = mtime_base.join("inner");
-        let active_dir = mtime_root.join("active-project");
-        let yesterday_dir = mtime_root.join("yesterday-folder");
-        let archive_dir = mtime_root.join("archive");
-        std::fs::create_dir_all(&active_dir).expect("active project fixture");
-        std::fs::create_dir_all(&yesterday_dir).expect("yesterday fixture");
-        std::fs::create_dir_all(&archive_dir).expect("archive fixture");
-        for path in [
-            mtime_root.join("today-notes.txt"),
-            mtime_root.join("week-report.md"),
-            mtime_root.join("promoted.txt"),
-            active_dir.join("latest.rs"),
-            active_dir.join("yesterday.log"),
-            active_dir.join("week-plan.md"),
-            active_dir.join("legacy.txt"),
-        ] {
-            std::fs::write(path, b"mtime visual fixture").expect("mtime fixture file");
-        }
-
-        for (path, day, hour, minute) in [
-            (active_dir.clone(), 10, 11, 45),
-            (mtime_root.join("today-notes.txt"), 10, 10, 15),
-            (yesterday_dir.clone(), 9, 16, 30),
-            (mtime_root.join("week-report.md"), 7, 14, 5),
-            (archive_dir, 1, 8, 0),
-            (mtime_root.join("promoted.txt"), 1, 7, 30),
-            (active_dir.join("latest.rs"), 10, 11, 20),
-            (active_dir.join("yesterday.log"), 9, 9, 10),
-            (active_dir.join("week-plan.md"), 6, 13, 40),
-            (active_dir.join("legacy.txt"), 1, 6, 5),
-        ] {
-            set_mtime_fixture_modified(
-                &path,
-                mtime_fixture_system_time(2026, time::Month::January, day, hour, minute),
+            // Fixed filesystem base so cwd labels stay identical across exports.
+            // The FM opens the INNER directory so the rendered parent column shows
+            // only the controlled base content, never the live /tmp listing.
+            let base = std::path::PathBuf::from("/tmp/herdr-vis01-root");
+            let _ = std::fs::remove_dir_all(&base);
+            let root = base.join("inner");
+            for dir in ["alpha", "beta"] {
+                std::fs::create_dir_all(root.join(dir)).expect("fixture dir");
+            }
+            for file in ["gamma.rs", "notes.txt"] {
+                std::fs::write(root.join(file), b"x").expect("fixture file");
+            }
+            std::fs::create_dir_all(root.join("beta").join("deep")).expect("fixture deep dir");
+            std::fs::write(root.join("beta").join("inner.txt"), b"x").expect("fixture inner file");
+            let vis01_modified = mtime_fixture_system_time(2026, time::Month::January, 10, 11, 55);
+            set_mtime_fixture_tree(&root, vis01_modified);
+            // Browser fonts do not carry Nerd PUA glyphs. The visual oracle uses
+            // the deterministic ASCII profile so every semantic entry icon is
+            // visible in Chromium.
+            app.file_icon_profile = crate::fm::entry_kind::IconProfile::Ascii;
+            app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(root.clone())))
+                .expect("files stage must open for the fixture");
+            crate::ui::compute_view(&mut app, Rect::new(0, 0, 120, 40));
+            write_fixture(
+                &out_dir,
+                export_cell_fixture("vis-01-files", &render_state(&app, 120, 40)),
             );
-        }
 
-        let mut mtime_trail = crate::fm::trail::TrailState::new(&mtime_root);
-        let mut mtime_snaps = crate::fm::trail_snapshots::TrailSnapshots::new(false);
-        mtime_snaps.sync(&mtime_trail);
-        assert_eq!(
-            mtime_snaps.select_dir(&mut mtime_trail, 0, &active_dir),
-            crate::fm::FmDirectoryStatus::Available,
-            "mtime fixture descent must load"
-        );
-        let render_mtime_trail = |name: &str,
-                                  trail: &crate::fm::trail::TrailState,
-                                  snaps: &crate::fm::trail_snapshots::TrailSnapshots,
-                                  width: u16,
-                                  height: u16,
-                                  offset_cells: Option<u32>| {
-            let backend = TestBackend::new(width, height);
-            let mut terminal = Terminal::new(backend).expect("mtime fixture terminal");
-            let stage = Rect::new(0, 0, width, height);
-            let view = match offset_cells {
-                Some(offset) => {
-                    crate::ui::file_manager::trail_view::project_trail_view_at_with_origin(
-                        stage,
-                        trail,
-                        snaps,
-                        &[48, 48],
-                        offset,
-                        mtime_fixture_anchor(),
-                    )
+            // TP-FIP-VIS-02 / TP-TRAIL-T7-RENDER-05: descend through the NONZERO
+            // child `beta` (index 1) and then into `deep`; the accumulating Trail
+            // must retain exact ancestor highlights, never substitute row zero.
+            {
+                let fm = app.file_manager.as_mut().expect("open file manager");
+                let beta = root.join("beta");
+                let beta_index = fm
+                    .entries
+                    .iter()
+                    .position(|entry| entry.path == beta)
+                    .expect("beta row");
+                assert!(beta_index > 0, "fixture requires a nonzero child index");
+                assert!(fm.select(beta_index));
+                fm.enter();
+                let deep = beta.join("deep");
+                let deep_index = fm
+                    .entries
+                    .iter()
+                    .position(|entry| entry.path == deep)
+                    .expect("deep row");
+                assert!(fm.select(deep_index));
+                fm.enter();
+                assert_eq!(fm.cwd, deep);
+            }
+            // 160 cells wide so the loaded `inner → beta → deep` Trail stays
+            // visible as complete columns in the bounded window.
+            crate::ui::compute_view(&mut app, Rect::new(0, 0, 160, 40));
+            write_fixture(
+                &out_dir,
+                export_cell_fixture("vis-02-resident-focus", &render_state(&app, 160, 40)),
+            );
+            let _ = std::fs::remove_dir_all(&base);
+
+            // TP-FIP-VIS-03/04: a mixed-kind directory rendered with the
+            // deterministic ASCII icon profile (Nerd private-use glyphs render
+            // empty in the browser font). Same base/inner isolation pattern.
+            let icon_base = std::path::PathBuf::from("/tmp/herdr-vis03-root");
+            let _ = std::fs::remove_dir_all(&icon_base);
+            let icon_root = icon_base.join("inner");
+            std::fs::create_dir_all(icon_root.join("alpha")).expect("fixture dir");
+            for file in [
+                "main.rs",
+                "config.toml",
+                "notes.md",
+                "photo.png",
+                "pack.zip",
+            ] {
+                std::fs::write(icon_root.join(file), b"x").expect("fixture file");
+            }
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(icon_root.join("alpha"), icon_root.join("link-dir"))
+                    .expect("link-dir");
+                std::os::unix::fs::symlink(icon_root.join("main.rs"), icon_root.join("link-file"))
+                    .expect("link-file");
+                std::os::unix::fs::symlink(icon_root.join("missing"), icon_root.join("broken"))
+                    .expect("broken");
+                let status = std::process::Command::new("mkfifo")
+                    .arg(icon_root.join("fifo"))
+                    .status()
+                    .expect("mkfifo runs");
+                assert!(status.success(), "fifo fixture must exist");
+            }
+            set_mtime_fixture_tree(&icon_root, vis01_modified);
+
+            let mut app = crate::app::state::AppState::test_new();
+            app.workspaces = vec![crate::workspace::Workspace::test_new("vis")];
+            app.active = Some(0);
+            app.selected = 0;
+            app.mode = crate::app::state::Mode::Terminal;
+            app.mobile_width_threshold = 0;
+            app.file_icon_profile = crate::fm::entry_kind::IconProfile::Ascii;
+            app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(icon_root.clone())))
+                .expect("files stage must open for the icon fixture");
+            crate::ui::compute_view(&mut app, Rect::new(0, 0, 120, 40));
+            write_fixture(
+                &out_dir,
+                export_cell_fixture("vis-03-icons-ascii", &render_state(&app, 120, 40)),
+            );
+            {
+                let fm = app.file_manager.as_mut().expect("open icon file manager");
+                let main_index = fm
+                    .entries
+                    .iter()
+                    .position(|entry| entry.path == icon_root.join("main.rs"))
+                    .expect("main.rs row");
+                assert!(fm.select(main_index));
+            }
+            crate::ui::compute_view(&mut app, Rect::new(0, 0, 60, 16));
+            assert!(
+                !app.view.file_manager_trail.columns.is_empty(),
+                "tiny icon fixture must exercise one complete Trail column"
+            );
+            write_fixture(
+                &out_dir,
+                export_cell_fixture("vis-04-icons-tiny", &render_state(&app, 60, 16)),
+            );
+
+            // TP-FIP-VIS-05/06: the blocking agent picker over the Files stage —
+            // current agent first and preselected, then a disabled (vanished)
+            // second row on a tiny screen. Rows are constructed deterministically
+            // from the fixture workspace's real pane/terminal identities.
+            let workspace_id = app.workspaces[0].id.clone();
+            let pane_id = app.workspaces[0].tabs[0].root_pane;
+            let terminal_id = app.workspaces[0]
+                .terminal_id(pane_id)
+                .expect("fixture terminal identity")
+                .clone();
+            let row = |label: &str, is_current: bool, live: bool| {
+                crate::app::agent_reference_picker::AgentReferencePickerRow {
+                    label: label.to_string(),
+                    is_current,
+                    workspace_id: workspace_id.clone(),
+                    pane_id,
+                    terminal_id: terminal_id.clone(),
+                    live,
                 }
-                None => crate::ui::file_manager::trail_view::project_trail_view_at(
+            };
+            app.agent_reference_picker = Some(
+                crate::app::agent_reference_picker::AgentReferencePickerState {
+                    source_path: icon_root.join("main.rs"),
+                    source_files_generation: 0,
+                    rows: vec![
+                        row("claude — vis", true, true),
+                        row("codex — build", false, true),
+                    ],
+                    selected: 0,
+                },
+            );
+            app.mode = crate::app::state::Mode::AgentReferencePicker;
+            crate::ui::compute_view(&mut app, Rect::new(0, 0, 120, 40));
+            write_fixture(
+                &out_dir,
+                export_cell_fixture("vis-05-picker", &render_state(&app, 120, 40)),
+            );
+
+            if let Some(picker) = app.agent_reference_picker.as_mut() {
+                picker.rows[1].live = false;
+            }
+            crate::ui::compute_view(&mut app, Rect::new(0, 0, 60, 20));
+            write_fixture(
+                &out_dir,
+                export_cell_fixture("vis-06-picker-disabled-tiny", &render_state(&app, 60, 20)),
+            );
+            let _ = std::fs::remove_dir_all(&icon_base);
+
+            // VIS-07/08 (trail program T3): the standalone Miller trail render —
+            // four accumulated columns with the selection emphasized in every
+            // ancestor (LAW 1/2), then the same trail after an ancestor-sibling
+            // reselect cut the old branch (rebranch proof). Deterministic fixed
+            // tree; ASCII icon profile for browser-visible glyphs.
+            let trail_base = std::path::PathBuf::from("/tmp/herdr-vis07-root");
+            let _ = std::fs::remove_dir_all(&trail_base);
+            let trail_root = trail_base.join("inner");
+            let src = trail_root.join("src");
+            let core = src.join("core");
+            let detail = core.join("detail");
+            std::fs::create_dir_all(&detail).expect("trail tree");
+            std::fs::create_dir_all(trail_root.join("docs")).expect("docs dir");
+            std::fs::create_dir_all(trail_root.join("assets")).expect("assets dir");
+            for (dir, files) in [
+                (&trail_root, &["notes.md", "readme.md"][..]),
+                (&src, &["lib.rs", "main.rs"][..]),
+                (&core, &["engine.rs", "state.rs"][..]),
+                (&detail, &["alpha.rs", "beta.rs"][..]),
+                (&trail_root.join("docs"), &["guide.md", "spec.md"][..]),
+            ] {
+                for file in files {
+                    std::fs::write(dir.join(file), b"x").expect("trail file");
+                }
+            }
+            set_mtime_fixture_tree(&trail_root, vis01_modified);
+
+            let mut trail_app = crate::app::state::AppState::test_new();
+            trail_app.file_icon_profile = crate::fm::entry_kind::IconProfile::Ascii;
+            let mut trail = crate::fm::trail::TrailState::new(&trail_root);
+            let mut snaps = crate::fm::trail_snapshots::TrailSnapshots::new(false);
+            snaps.sync(&trail);
+            for (col, dir) in [(0usize, &src), (1, &core), (2, &detail)] {
+                assert_eq!(
+                    snaps.select_dir(&mut trail, col, dir),
+                    crate::fm::FmDirectoryStatus::Available,
+                    "trail fixture descent must load"
+                );
+            }
+            let fractional_trail = trail.clone();
+            let fractional_snaps = snaps.clone();
+            assert!(trail.select_file(3, &detail.join("alpha.rs")));
+            let render_trail = |trail: &crate::fm::trail::TrailState,
+                                snaps: &crate::fm::trail_snapshots::TrailSnapshots,
+                                width: u16,
+                                height: u16| {
+                let backend = TestBackend::new(width, height);
+                let mut terminal = Terminal::new(backend).expect("trail terminal");
+                let stage = Rect::new(0, 0, width, height);
+                let view = crate::ui::file_manager::trail_view::project_trail_view(
                     stage,
                     trail,
                     snaps,
-                    &[48, 48],
-                    mtime_fixture_anchor(),
-                ),
+                    &[],
+                );
+                assert!(!view.columns.is_empty(), "trail fixture must project");
+                terminal
+                    .draw(|frame| {
+                        crate::ui::file_manager::trail_view::render_trail_view(
+                            &trail_app, frame, &view, snaps,
+                        );
+                    })
+                    .expect("render trail frame");
+                terminal.backend().buffer().clone()
             };
-            assert!(!view.columns.is_empty(), "mtime fixture must project");
-            if name == "vis-16-mtime-groups-narrow" {
-                assert!(
-                    view.columns.iter().any(|column| {
-                        column.source_x > 0 && column.rows.iter().all(|row| row.timestamp.is_none())
-                    }),
-                    "narrow fixture must include a clipped timestamp-free column"
-                );
-                assert!(
-                    view.columns
-                        .iter()
-                        .flat_map(|column| &column.rows)
-                        .all(|row| {
-                            row.actions
-                                .iter()
-                                .all(|action| action.rect.intersection(row.rect) == action.rect)
-                        }),
-                    "narrow fixture actions must remain complete"
-                );
-            }
-            terminal
-                .draw(|frame| {
-                    crate::ui::file_manager::trail_view::render_trail_view(
-                        &trail_app, frame, &view, snaps,
-                    );
-                })
-                .expect("render mtime fixture");
             write_fixture(
                 &out_dir,
-                export_cell_fixture(name, terminal.backend().buffer()),
+                export_cell_fixture("vis-07-trail-depth", &render_trail(&trail, &snaps, 120, 40)),
             );
-        };
-        render_mtime_trail(
-            "vis-15-mtime-groups",
-            &mtime_trail,
-            &mtime_snaps,
-            96,
-            24,
-            None,
-        );
-        render_mtime_trail(
-            "vis-16-mtime-groups-narrow",
-            &mtime_trail,
-            &mtime_snaps,
-            44,
-            16,
-            Some(42),
-        );
 
-        let promoted = mtime_root.join("promoted.txt");
-        assert!(mtime_trail.select_file(0, &promoted));
-        set_mtime_fixture_modified(
-            &promoted,
-            mtime_fixture_system_time(2026, time::Month::January, 10, 11, 55),
-        );
-        assert!(
-            mtime_snaps.refresh_col(0),
-            "mtime reorder fixture must refresh the owning column"
-        );
-        assert!(
-            mtime_snaps.reconcile_refreshed_col(&mut mtime_trail, 0),
-            "mtime reorder fixture must reconcile exact-path Trail authority"
-        );
-        let selected_path = mtime_trail.cols()[0]
-            .selected
-            .as_deref()
-            .expect("mtime reorder selection");
-        assert_eq!(selected_path, promoted);
-        render_mtime_trail(
-            "vis-17-mtime-reorder-selection",
-            &mtime_trail,
-            &mtime_snaps,
-            72,
-            18,
-            None,
-        );
-        let _ = std::fs::remove_dir_all(&mtime_base);
+            // VIS-11 (scrollable Trail viewport): after auto-following the active
+            // end, a user-selected origin exposes the still-live root ancestors
+            // in a narrow viewport instead of snapping back to the deepest column.
+            let render_scrolled_trail = |requested_first_visible: usize| {
+                let width = 60;
+                let height = 20;
+                let backend = TestBackend::new(width, height);
+                let mut terminal = Terminal::new(backend).expect("scrolled trail terminal");
+                let stage = Rect::new(0, 0, width, height);
+                let view = crate::ui::file_manager::trail_view::project_trail_view_with_origin(
+                    stage,
+                    &trail,
+                    &snaps,
+                    &[],
+                    crate::ui::file_manager::trail_view::TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
+                    requested_first_visible as u32,
+                );
+                assert_eq!(
+                    view.first_visible, requested_first_visible,
+                    "fixture must preserve the explicit horizontal origin"
+                );
+                terminal
+                    .draw(|frame| {
+                        crate::ui::file_manager::trail_view::render_trail_view(
+                            &trail_app, frame, &view, &snaps,
+                        );
+                    })
+                    .expect("render scrolled trail frame");
+                terminal.backend().buffer().clone()
+            };
+            write_fixture(
+                &out_dir,
+                export_cell_fixture("vis-11-trail-horizontal-scroll", &render_scrolled_trail(0)),
+            );
+
+            // VIS-12 (fractional Trail viewport): the viewport begins ten cells
+            // inside the 30-cell second column, so the leading column is clipped
+            // to 20 cells and the 48-cell trailing column begins at the right
+            // edge. The fixture is the real Ratatui buffer, not an HTML layout
+            // reconstruction.
+            {
+                let width = 60;
+                let height = 20;
+                let preferred_widths = [18_u16, 30, 48, 24];
+                let offset_cells = 18_u32 + 1 + 10;
+                let stage = Rect::new(0, 0, width, height);
+                let view = crate::ui::file_manager::trail_view::project_trail_view_with_origin(
+                    stage,
+                    &fractional_trail,
+                    &fractional_snaps,
+                    &preferred_widths,
+                    crate::ui::file_manager::trail_view::TRAIL_DETAIL_PANEL_DEFAULT_WIDTH,
+                    offset_cells,
+                );
+                let leading = view.columns.first().expect("fractional leading column");
+                let trailing = view.columns.last().expect("fractional trailing column");
+                assert_eq!(
+                    (leading.trail_index, leading.source_x, leading.rect.width),
+                    (1, 10, 20)
+                );
+                assert_eq!(trailing.trail_index, 2);
+                assert!(
+                    trailing.rect.width > 0 && trailing.rect.width < trailing.logical_width,
+                    "fixture must expose the beginning of a clipped trailing column"
+                );
+                let backend = TestBackend::new(width, height);
+                let mut terminal = Terminal::new(backend).expect("fractional trail terminal");
+                terminal
+                    .draw(|frame| {
+                        crate::ui::file_manager::trail_view::render_trail_view(
+                            &trail_app,
+                            frame,
+                            &view,
+                            &fractional_snaps,
+                        );
+                    })
+                    .expect("render fractional trail frame");
+                write_fixture(
+                    &out_dir,
+                    export_cell_fixture(
+                        "vis-12-fractional-miller-scroll",
+                        terminal.backend().buffer(),
+                    ),
+                );
+            }
+
+            // Rebranch: reselect the sibling `docs` at the ROOT column — the old
+            // src/core/detail branch is discarded and the trail regrows.
+            assert_eq!(
+                snaps.select_dir(&mut trail, 0, &trail_root.join("docs")),
+                crate::fm::FmDirectoryStatus::Available
+            );
+            assert!(trail.select_file(1, &trail_root.join("docs").join("guide.md")));
+            snaps.sync(&trail);
+            write_fixture(
+                &out_dir,
+                export_cell_fixture(
+                    "vis-08-trail-rebranch",
+                    &render_trail(&trail, &snaps, 120, 40),
+                ),
+            );
+
+            // VIS-09 (trail LAW 3): activating a FILE through the input seam
+            // opens the resizable right-side detail panel with the prepared text
+            // preview while the sibling columns stay visible.
+            std::fs::write(
+                trail_root.join("docs").join("guide.md"),
+                b"# Guide\n\ntrail detail panel preview",
+            )
+            .expect("guide content");
+            set_mtime_fixture_modified(&trail_root.join("docs").join("guide.md"), vis01_modified);
+            let docs_col = &snaps.cols()[1];
+            let guide = trail_root.join("docs").join("guide.md");
+            let guide_index = docs_col
+                .entries()
+                .iter()
+                .position(|entry| entry.path == guide)
+                .expect("guide row");
+            assert_eq!(
+                snaps.activate_entry(&mut trail, 1, guide_index, &guide),
+                crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
+            );
+            settle_pending_trail_text_preview(&mut snaps, &guide);
+            write_fixture(
+                &out_dir,
+                export_cell_fixture(
+                    "vis-09-trail-detail-panel",
+                    &render_trail(&trail, &snaps, 120, 40),
+                ),
+            );
+
+            // VIS-14 (FMR-3): heavyweight document types stay explicit and
+            // bounded in native Files instead of being misread as text.
+            let manual = trail_root.join("docs").join("manual.pdf");
+            std::fs::write(&manual, b"%PDF fixture").expect("metadata fixture");
+            set_mtime_fixture_modified(
+                &manual,
+                vis01_modified + std::time::Duration::from_secs(30),
+            );
+            set_mtime_fixture_modified(
+                &trail_root.join("docs"),
+                vis01_modified + std::time::Duration::from_secs(45),
+            );
+            let mut metadata_snaps = crate::fm::trail_snapshots::TrailSnapshots::new(false);
+            let metadata_trail = metadata_snaps
+                .open_trail_to(&trail_root, &manual)
+                .expect("metadata detail fixture resolves");
+            write_fixture(
+                &out_dir,
+                export_cell_fixture(
+                    "vis-14-trail-metadata-preview",
+                    &render_trail(&metadata_trail, &metadata_snaps, 120, 40),
+                ),
+            );
+
+            // VIS-10 (trail LAW 5 / FIP-D1): a sidebar deep-link builds the whole
+            // trail from scratch — fresh snapshots, ancestor chain resolved down
+            // to the file, detail panel open. This is the acceptance visual for
+            // "favorites click constructs the trail correctly".
+            let mut deep_snaps = crate::fm::trail_snapshots::TrailSnapshots::new(false);
+            let deep_trail = deep_snaps
+                .open_trail_to(&trail_root, &core.join("state.rs"))
+                .expect("deep link fixture resolves");
+            settle_pending_trail_text_preview(&mut deep_snaps, &core.join("state.rs"));
+            write_fixture(
+                &out_dir,
+                export_cell_fixture(
+                    "vis-10-trail-deep-link",
+                    &render_trail(&deep_trail, &deep_snaps, 120, 40),
+                ),
+            );
+
+            // VIS-13 (FMR-1): a mixed directory keeps its actionable file row
+            // while a separate non-actionable status row explains hidden items.
+            let omission_root = trail_base.join("omissions");
+            std::fs::create_dir_all(&omission_root).expect("omission fixture dir");
+            std::fs::write(omission_root.join("visible.txt"), b"x").expect("visible fixture");
+            std::fs::write(omission_root.join(".secret"), b"x").expect("hidden fixture");
+            set_mtime_fixture_tree(&omission_root, vis01_modified);
+            let omission_trail = crate::fm::trail::TrailState::new(&omission_root);
+            let mut omission_snaps = crate::fm::trail_snapshots::TrailSnapshots::new(false);
+            omission_snaps.sync(&omission_trail);
+            write_fixture(
+                &out_dir,
+                export_cell_fixture(
+                    "vis-13-trail-directory-omissions",
+                    &render_trail(&omission_trail, &omission_snaps, 80, 20),
+                ),
+            );
+            let _ = std::fs::remove_dir_all(&trail_base);
+
+            // VIS-15..17 (MTIME-1..5): a deterministic UTC calendar tree proves
+            // mixed directory/file ordering, responsive timestamp omission, and
+            // exact-path selection after an mtime-driven reorder. Build every
+            // node first, then set FileTimes last so directory creation cannot
+            // perturb the approved order.
+            let mtime_base = std::path::PathBuf::from("/tmp/herdr-vis15-mtime-root");
+            let _ = std::fs::remove_dir_all(&mtime_base);
+            let mtime_root = mtime_base.join("inner");
+            let active_dir = mtime_root.join("active-project");
+            let yesterday_dir = mtime_root.join("yesterday-folder");
+            let archive_dir = mtime_root.join("archive");
+            std::fs::create_dir_all(&active_dir).expect("active project fixture");
+            std::fs::create_dir_all(&yesterday_dir).expect("yesterday fixture");
+            std::fs::create_dir_all(&archive_dir).expect("archive fixture");
+            for path in [
+                mtime_root.join("today-notes.txt"),
+                mtime_root.join("week-report.md"),
+                mtime_root.join("promoted.txt"),
+                active_dir.join("latest.rs"),
+                active_dir.join("yesterday.log"),
+                active_dir.join("week-plan.md"),
+                active_dir.join("legacy.txt"),
+            ] {
+                std::fs::write(path, b"mtime visual fixture").expect("mtime fixture file");
+            }
+
+            for (path, day, hour, minute) in [
+                (active_dir.clone(), 10, 11, 45),
+                (mtime_root.join("today-notes.txt"), 10, 10, 15),
+                (yesterday_dir.clone(), 9, 16, 30),
+                (mtime_root.join("week-report.md"), 7, 14, 5),
+                (archive_dir, 1, 8, 0),
+                (mtime_root.join("promoted.txt"), 1, 7, 30),
+                (active_dir.join("latest.rs"), 10, 11, 20),
+                (active_dir.join("yesterday.log"), 9, 9, 10),
+                (active_dir.join("week-plan.md"), 6, 13, 40),
+                (active_dir.join("legacy.txt"), 1, 6, 5),
+            ] {
+                set_mtime_fixture_modified(
+                    &path,
+                    mtime_fixture_system_time(2026, time::Month::January, day, hour, minute),
+                );
+            }
+
+            let mut mtime_trail = crate::fm::trail::TrailState::new(&mtime_root);
+            let mut mtime_snaps = crate::fm::trail_snapshots::TrailSnapshots::new(false);
+            mtime_snaps.sync(&mtime_trail);
+            assert_eq!(
+                mtime_snaps.select_dir(&mut mtime_trail, 0, &active_dir),
+                crate::fm::FmDirectoryStatus::Available,
+                "mtime fixture descent must load"
+            );
+            let render_mtime_trail =
+                |name: &str,
+                 trail: &crate::fm::trail::TrailState,
+                 snaps: &crate::fm::trail_snapshots::TrailSnapshots,
+                 width: u16,
+                 height: u16,
+                 offset_cells: Option<u32>| {
+                    let backend = TestBackend::new(width, height);
+                    let mut terminal = Terminal::new(backend).expect("mtime fixture terminal");
+                    let stage = Rect::new(0, 0, width, height);
+                    let view = match offset_cells {
+                        Some(offset) => {
+                            crate::ui::file_manager::trail_view::project_trail_view_at_with_origin(
+                                stage,
+                                trail,
+                                snaps,
+                                &[48, 48],
+                                offset,
+                                mtime_fixture_anchor(),
+                            )
+                        }
+                        None => crate::ui::file_manager::trail_view::project_trail_view_at(
+                            stage,
+                            trail,
+                            snaps,
+                            &[48, 48],
+                            mtime_fixture_anchor(),
+                        ),
+                    };
+                    assert!(!view.columns.is_empty(), "mtime fixture must project");
+                    if name == "vis-16-mtime-groups-narrow" {
+                        assert!(
+                            view.columns.iter().any(|column| {
+                                column.source_x > 0
+                                    && column.rows.iter().all(|row| row.timestamp.is_none())
+                            }),
+                            "narrow fixture must include a clipped timestamp-free column"
+                        );
+                        assert!(
+                            view.columns
+                                .iter()
+                                .flat_map(|column| &column.rows)
+                                .all(|row| {
+                                    row.actions.iter().all(|action| {
+                                        action.rect.intersection(row.rect) == action.rect
+                                    })
+                                }),
+                            "narrow fixture actions must remain complete"
+                        );
+                    }
+                    terminal
+                        .draw(|frame| {
+                            crate::ui::file_manager::trail_view::render_trail_view(
+                                &trail_app, frame, &view, snaps,
+                            );
+                        })
+                        .expect("render mtime fixture");
+                    write_fixture(
+                        &out_dir,
+                        export_cell_fixture(name, terminal.backend().buffer()),
+                    );
+                };
+            render_mtime_trail(
+                "vis-15-mtime-groups",
+                &mtime_trail,
+                &mtime_snaps,
+                96,
+                24,
+                None,
+            );
+            render_mtime_trail(
+                "vis-16-mtime-groups-narrow",
+                &mtime_trail,
+                &mtime_snaps,
+                44,
+                16,
+                Some(42),
+            );
+
+            let promoted = mtime_root.join("promoted.txt");
+            assert!(mtime_trail.select_file(0, &promoted));
+            set_mtime_fixture_modified(
+                &promoted,
+                mtime_fixture_system_time(2026, time::Month::January, 10, 11, 55),
+            );
+            assert!(
+                mtime_snaps.refresh_col(0),
+                "mtime reorder fixture must refresh the owning column"
+            );
+            assert!(
+                mtime_snaps.reconcile_refreshed_col(&mut mtime_trail, 0),
+                "mtime reorder fixture must reconcile exact-path Trail authority"
+            );
+            let selected_path = mtime_trail.cols()[0]
+                .selected
+                .as_deref()
+                .expect("mtime reorder selection");
+            assert_eq!(selected_path, promoted);
+            settle_pending_trail_text_preview(&mut mtime_snaps, &promoted);
+            render_mtime_trail(
+                "vis-17-mtime-reorder-selection",
+                &mtime_trail,
+                &mtime_snaps,
+                72,
+                18,
+                None,
+            );
+            let _ = std::fs::remove_dir_all(&mtime_base);
+        });
 
         // VIS-18..25 (FCL-6): the full Native Files composition proves the
         // content-owned locations rail, explicit-origin authority, responsive

@@ -37,8 +37,18 @@ pub(crate) struct LocalCalendarAnchor {
     fixed_offset: Option<UtcOffset>,
 }
 
+#[cfg(test)]
+std::thread_local! {
+    static TEST_CALENDAR_ANCHOR: std::cell::Cell<Option<LocalCalendarAnchor>> =
+        const { std::cell::Cell::new(None) };
+}
+
 impl LocalCalendarAnchor {
     pub(crate) fn now() -> Self {
+        #[cfg(test)]
+        if let Some(anchor) = TEST_CALENDAR_ANCHOR.with(std::cell::Cell::get) {
+            return anchor;
+        }
         Self {
             now: SystemTime::now(),
             fixed_offset: None,
@@ -63,6 +73,27 @@ impl LocalCalendarAnchor {
             fixed_offset: Some(fixed_offset),
         }
     }
+}
+
+/// Scope a deterministic calendar clock to the current test thread. The
+/// production build has no override state, and nested/panicking test scopes
+/// restore the prior anchor through the drop guard.
+#[cfg(test)]
+pub(crate) fn with_test_calendar_anchor<T>(
+    anchor: LocalCalendarAnchor,
+    run: impl FnOnce() -> T,
+) -> T {
+    struct Restore(Option<LocalCalendarAnchor>);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            TEST_CALENDAR_ANCHOR.with(|slot| slot.set(self.0));
+        }
+    }
+
+    let previous = TEST_CALENDAR_ANCHOR.with(|slot| slot.replace(Some(anchor)));
+    let _restore = Restore(previous);
+    run()
 }
 
 pub(crate) fn present_file_time(
@@ -175,7 +206,10 @@ fn weekday_abbreviation(datetime: OffsetDateTime) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{present_file_time_with_resolver, FileTimeSection, LocalCalendarAnchor};
+    use super::{
+        present_file_time_with_resolver, with_test_calendar_anchor, FileTimeSection,
+        LocalCalendarAnchor,
+    };
     use std::time::SystemTime;
     use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset};
 
@@ -210,6 +244,27 @@ mod tests {
             LocalCalendarAnchor::from_system_time(system_time(anchor)),
             |_| Some(local_offset),
         )
+    }
+
+    #[test]
+    fn test_calendar_anchor_override_is_scoped_and_restores_nested_state() {
+        let outer = LocalCalendarAnchor::from_system_time_at_offset(
+            system_time(local_time(2026, Month::January, 10, 12, 0, UtcOffset::UTC)),
+            UtcOffset::UTC,
+        );
+        let inner = LocalCalendarAnchor::from_system_time_at_offset(
+            system_time(local_time(2026, Month::February, 20, 8, 0, UtcOffset::UTC)),
+            UtcOffset::UTC,
+        );
+
+        with_test_calendar_anchor(outer, || {
+            assert_eq!(LocalCalendarAnchor::now(), outer);
+            with_test_calendar_anchor(inner, || {
+                assert_eq!(LocalCalendarAnchor::now(), inner);
+            });
+            assert_eq!(LocalCalendarAnchor::now(), outer);
+        });
+        assert_ne!(LocalCalendarAnchor::now(), outer);
     }
 
     #[test]
