@@ -224,11 +224,60 @@ impl FileManagerLocationsModel {
         self.revision
     }
 
+    #[cfg(test)]
+    pub(crate) fn content_line_count(&self) -> usize {
+        0
+    }
+
+    #[cfg(test)]
+    pub(crate) fn line_index_for_path(&self, _path: &Path) -> Option<usize> {
+        None
+    }
+
     /// Replace a published test projection and advance its identity so stale
     /// asynchronous completions can be exercised without filesystem timing.
     #[cfg(test)]
     pub(crate) fn replace_with(&mut self, mut replacement: Self) {
         replacement.revision = self.revision.wrapping_add(1).max(1);
         *self = replacement;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::{FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel};
+
+    fn item(path: &str, accessible: bool) -> FileManagerLocationItem {
+        FileManagerLocationItem {
+            label: Path::new(path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(path)
+                .to_string(),
+            path: PathBuf::from(path),
+            icon: FileManagerLocationIcon::Pin,
+            accessible,
+            ejectable: false,
+        }
+    }
+
+    // TP-FLF-STEP-01: input auto-scroll and renderer rows share one content
+    // line identity across headers, inaccessible rows, and section gaps.
+    #[test]
+    fn flf_model_line_identity_matches_render_section_law() {
+        let model = FileManagerLocationsModel::from_sources(
+            vec![item("/workspace", true), item("/missing", false)],
+            vec![item("/pinned", true)],
+            vec![item("/", true)],
+        );
+
+        assert_eq!(model.content_line_count(), 9);
+        assert_eq!(model.line_index_for_path(Path::new("/workspace")), Some(1));
+        assert_eq!(model.line_index_for_path(Path::new("/missing")), Some(2));
+        assert_eq!(model.line_index_for_path(Path::new("/pinned")), Some(5));
+        assert_eq!(model.line_index_for_path(Path::new("/")), Some(8));
+        assert_eq!(model.line_index_for_path(Path::new("/absent")), None);
     }
 }

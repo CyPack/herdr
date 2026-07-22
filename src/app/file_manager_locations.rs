@@ -37,6 +37,13 @@ pub(crate) struct FileManagerLocationPending {
     pub(crate) io_generation: u64,
 }
 
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FileManagerLocationCursorMove {
+    Inert,
+    Moved(PathBuf),
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct FileManagerLocationsState {
     pub(crate) origin: Option<FileManagerLocationOrigin>,
@@ -194,13 +201,47 @@ impl FileManagerLocationsState {
         self.focus = self.drawer_restore_focus;
         true
     }
+
+    #[cfg(test)]
+    pub(crate) fn cursor_path<'a>(
+        &'a self,
+        _model: &FileManagerLocationsModel,
+    ) -> Option<&'a Path> {
+        None
+    }
+
+    #[cfg(test)]
+    pub(crate) fn normalize_cursor_for_rail(&mut self, _model: &FileManagerLocationsModel) -> bool {
+        false
+    }
+
+    #[cfg(test)]
+    pub(crate) fn move_cursor(
+        &mut self,
+        _model: &FileManagerLocationsModel,
+        _delta: isize,
+    ) -> FileManagerLocationCursorMove {
+        FileManagerLocationCursorMove::Inert
+    }
+
+    #[cfg(test)]
+    pub(crate) fn ensure_cursor_visible(
+        &mut self,
+        _model: &FileManagerLocationsModel,
+        _viewport_height: u16,
+    ) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::{FileManagerLocationOrigin, FileManagerLocationsState};
+    use super::{
+        FileManagerLocationCursorMove, FileManagerLocationLoadError, FileManagerLocationOrigin,
+        FileManagerLocationsState,
+    };
     use crate::app::state::{
         FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel,
     };
@@ -225,6 +266,116 @@ mod tests {
             favorites.push(item("/home/ayaz/projects/herdr", true));
         }
         FileManagerLocationsModel::from_sources(favorites, Vec::new(), Vec::new())
+    }
+
+    fn flf_model(include_home: bool) -> FileManagerLocationsModel {
+        let mut favorites = vec![item("/workspace", true), item("/missing", false)];
+        if include_home {
+            favorites.push(item("/home/ayaz", true));
+        }
+        FileManagerLocationsModel::from_sources(
+            favorites,
+            vec![item("/pinned", true)],
+            vec![item("/", true)],
+        )
+    }
+
+    // TP-FLF-FOCUS-01: exact location authority seeds the exact cursor, while
+    // a Direct descendant never invents an ancestor match.
+    #[test]
+    fn flf_cursor_normalizes_exact_location_without_inferred_direct_ancestor() {
+        let model = flf_model(true);
+        let mut exact = FileManagerLocationsState::default();
+        assert!(exact.activate_location(Path::new("/home/ayaz"), &model));
+        assert!(exact.normalize_cursor_for_rail(&model));
+        assert_eq!(exact.cursor_path(&model), Some(Path::new("/home/ayaz")));
+
+        let mut direct = FileManagerLocationsState::default();
+        direct.activate_direct(PathBuf::from("/home/ayaz/projects/herdr"));
+        assert!(direct.normalize_cursor_for_rail(&model));
+        assert_eq!(
+            direct.cursor_path(&model),
+            Some(Path::new("/workspace")),
+            "Direct roots choose the first accessible item, not an inferred ancestor"
+        );
+
+        direct.activate_direct(PathBuf::from("/elsewhere"));
+        assert!(!direct.normalize_cursor_for_rail(&model));
+        assert_eq!(direct.cursor_path(&model), Some(Path::new("/workspace")));
+    }
+
+    // TP-FLF-STEP-01: cursor motion is one accessible item per event and
+    // clamps without manufacturing a visible mutation at either boundary.
+    #[test]
+    fn flf_cursor_steps_accessible_items_one_at_a_time_and_clamps() {
+        let model = flf_model(true);
+        let mut state = FileManagerLocationsState::default();
+        assert!(state.normalize_cursor_for_rail(&model));
+        assert_eq!(state.cursor_path(&model), Some(Path::new("/workspace")));
+
+        assert_eq!(
+            state.move_cursor(&model, 1),
+            FileManagerLocationCursorMove::Moved(PathBuf::from("/home/ayaz"))
+        );
+        assert_eq!(
+            state.move_cursor(&model, 1),
+            FileManagerLocationCursorMove::Moved(PathBuf::from("/pinned"))
+        );
+        assert_eq!(
+            state.move_cursor(&model, -1),
+            FileManagerLocationCursorMove::Moved(PathBuf::from("/home/ayaz"))
+        );
+        assert_eq!(
+            state.move_cursor(&model, -99),
+            FileManagerLocationCursorMove::Moved(PathBuf::from("/workspace"))
+        );
+        assert_eq!(
+            state.move_cursor(&model, -1),
+            FileManagerLocationCursorMove::Inert
+        );
+    }
+
+    // TP-FLF-STALE-01: replacing the model retires request/error authority
+    // tied to an obsolete cursor before selecting the new first accessible row.
+    #[test]
+    fn flf_cursor_reconcile_retires_obsolete_pending_and_failure() {
+        let live = flf_model(true);
+        let replacement = flf_model(false);
+        let mut pending = FileManagerLocationsState::default();
+        assert!(pending.activate_location(Path::new("/home/ayaz"), &live));
+        pending.begin_load(PathBuf::from("/home/ayaz"), 7, live.revision(), 11);
+        assert!(pending.reconcile_model(&replacement));
+        assert_eq!(
+            pending.cursor_path(&replacement),
+            Some(Path::new("/workspace"))
+        );
+        assert_eq!(pending.pending, None);
+
+        let mut failed = FileManagerLocationsState::default();
+        assert!(failed.activate_location(Path::new("/home/ayaz"), &live));
+        failed.fail_load(
+            PathBuf::from("/home/ayaz"),
+            FileManagerLocationLoadError::Unavailable,
+        );
+        assert!(failed.reconcile_model(&replacement));
+        assert_eq!(
+            failed.cursor_path(&replacement),
+            Some(Path::new("/workspace"))
+        );
+        assert_eq!(failed.failure, None);
+    }
+
+    // TP-FLF-STEP-01: revealing a cursor uses the same content-line identity
+    // as render, including section headers and blank separators.
+    #[test]
+    fn flf_cursor_scroll_reveals_exact_model_line() {
+        let model = flf_model(true);
+        let mut state = FileManagerLocationsState::default();
+        assert!(state.activate_location(Path::new("/"), &model));
+        assert!(state.normalize_cursor_for_rail(&model));
+        assert!(state.ensure_cursor_visible(&model, 2));
+        assert_eq!(state.scroll, 7);
+        assert!(!state.ensure_cursor_visible(&model, 2));
     }
 
     // TP-FCL-AUTH-01: current-directory descent is not highlight authority;
