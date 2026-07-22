@@ -3077,6 +3077,7 @@ mod tests {
             files_generation,
             app.file_manager_locations_model.revision(),
             41,
+            crate::app::state::FileManagerLocationNavigationIntent::FollowPreview,
         );
         let frame = Rect::new(0, 0, 90, 10);
         crate::ui::compute_view(&mut app, frame);
@@ -3119,6 +3120,8 @@ mod tests {
 
         app.file_manager_locations.fail_load(
             root.clone(),
+            files_generation,
+            app.file_manager_locations_model.revision(),
             crate::app::FileManagerLocationLoadError::PermissionDenied,
         );
         crate::ui::compute_view(&mut app, frame);

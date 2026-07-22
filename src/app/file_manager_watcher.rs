@@ -402,12 +402,29 @@ impl super::App {
 
     #[cfg(test)]
     pub(crate) fn sync_file_manager_location_navigation(&mut self) -> bool {
-        let consumed = self.sync_file_manager_location_request();
-        if consumed && self.state.file_manager_locations.pending.is_some() {
+        let requested = self
+            .state
+            .request_file_manager_location_navigation
+            .is_some();
+        if let Some(path) = self
+            .state
+            .request_file_manager_location_navigation
+            .as_ref()
+            .map(|request| request.path.clone())
+        {
+            let _ = self
+                .state
+                .file_manager_locations
+                .select_cursor(&path, &self.state.file_manager_locations_model);
+        }
+        let generation_before = self.file_manager_io_worker.latest_generation_for_test();
+        let _ = self.sync_file_manager_location_request();
+        let generation_after = self.file_manager_io_worker.latest_generation_for_test();
+        if generation_after != generation_before {
             self.file_manager_io_worker.wait_for_result_for_test();
             let _ = self.sync_file_manager_io_results();
         }
-        consumed
+        requested
     }
 
     #[cfg(test)]

@@ -3373,6 +3373,7 @@ mod tests {
             1,
             state.file_manager_locations_model.revision(),
             17,
+            crate::app::state::FileManagerLocationNavigationIntent::FollowPreview,
         );
 
         state.close_file_manager();

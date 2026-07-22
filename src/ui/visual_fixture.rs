@@ -555,6 +555,7 @@ mod tests {
             files_generation,
             transition.file_manager_locations_model.revision(),
             91,
+            crate::app::state::FileManagerLocationNavigationIntent::FollowPreview,
         );
         let pending = render_fcl_visual(
             &mut transition,
@@ -579,6 +580,8 @@ mod tests {
 
         transition.file_manager_locations.fail_load(
             downloads,
+            files_generation,
+            transition.file_manager_locations_model.revision(),
             crate::app::FileManagerLocationLoadError::PermissionDenied,
         );
         let failed = render_fcl_visual(

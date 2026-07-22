@@ -5,6 +5,10 @@ use std::thread::JoinHandle;
 
 use tokio::sync::Notify;
 
+use super::file_manager_locations::{
+    FileManagerLocationFailure, FileManagerLocationLoadError, FileManagerLocationsFocus,
+};
+
 #[cfg(test)]
 pub(super) use crate::fm::classify_root_navigation_error;
 pub(super) use crate::fm::{
@@ -71,6 +75,7 @@ pub(super) enum FileManagerIoIdentity {
 }
 
 impl FileManagerIoIdentity {
+    #[cfg(test)]
     pub(super) fn target_path(&self) -> Option<&Path> {
         match self {
             Self::Root { target_root, .. } => Some(target_root),
@@ -451,6 +456,11 @@ impl FileManagerIoWorker {
         }
     }
 
+    #[cfg(test)]
+    pub(in crate::app) fn latest_generation_for_test(&self) -> u64 {
+        self.latest_generation
+    }
+
     /// Deterministically expose the already-observed-dead lifecycle to App
     /// tests without terminating any process or relying on a thread race.
     #[cfg(test)]
@@ -575,11 +585,7 @@ fn process_request(request: FileManagerIoRequest) -> FileManagerIoOutcome {
     }
 }
 
-fn location_load_error(
-    error: FmRootNavigationError,
-) -> super::file_manager_locations::FileManagerLocationLoadError {
-    use super::file_manager_locations::FileManagerLocationLoadError;
-
+fn location_load_error(error: FmRootNavigationError) -> FileManagerLocationLoadError {
     match error {
         FmRootNavigationError::Missing => FileManagerLocationLoadError::Missing,
         FmRootNavigationError::PermissionDenied => FileManagerLocationLoadError::PermissionDenied,
@@ -593,6 +599,56 @@ impl super::App {
         (self.state.stage.surface_view() == crate::ui::surface_host::StageSurfaceView::NativeFiles)
             .then(|| self.state.stage.active_instance_generation())
             .flatten()
+    }
+
+    fn file_manager_location_authority_is_current(
+        &self,
+        path: &Path,
+        files_generation: u32,
+        model_revision: u64,
+    ) -> bool {
+        self.active_file_manager_generation() == Some(files_generation)
+            && self.state.file_manager_locations_model.revision() == model_revision
+            && self.state.file_manager_locations.focus == FileManagerLocationsFocus::Rail
+            && self
+                .state
+                .file_manager_locations
+                .cursor_path(&self.state.file_manager_locations_model)
+                == Some(path)
+            && self
+                .state
+                .file_manager_locations_model
+                .item_for_path(path)
+                .is_some_and(|item| item.accessible)
+    }
+
+    fn recover_file_manager_io_worker(
+        &mut self,
+        failure: Option<FileManagerLocationFailure>,
+    ) -> bool {
+        let changed = failure.is_some_and(|failure| {
+            if !self.file_manager_location_authority_is_current(
+                &failure.path,
+                failure.files_generation,
+                failure.model_revision,
+            ) {
+                return false;
+            }
+            self.state.file_manager_locations.fail_load(
+                failure.path,
+                failure.files_generation,
+                failure.model_revision,
+                failure.error,
+            );
+            true
+        });
+        self.file_manager_io_worker = FileManagerIoWorker::new(self.render_notify.clone());
+        tracing::error!("fm: bounded file-manager I/O worker disconnected; lane replaced");
+        changed
+    }
+
+    fn reject_file_manager_root_result() {
+        crate::render_prof::event("fm.locations.root.stale");
     }
 
     #[cfg(test)]
@@ -613,17 +669,14 @@ impl super::App {
             return false;
         };
         let path = request.path;
+        let intent = request.intent;
         let Some(files_generation) = self.active_file_manager_generation() else {
-            return true;
+            return false;
         };
         let model_revision = self.state.file_manager_locations_model.revision();
-        if !self
-            .state
-            .file_manager_locations_model
-            .item_for_path(&path)
-            .is_some_and(|item| item.accessible)
+        if !self.file_manager_location_authority_is_current(&path, files_generation, model_revision)
         {
-            return true;
+            return false;
         }
 
         if self
@@ -637,6 +690,15 @@ impl super::App {
                 .file_manager_locations
                 .activate_location(&path, &self.state.file_manager_locations_model);
             return true;
+        }
+
+        if self.state.file_manager_locations.promote_pending_intent(
+            &path,
+            files_generation,
+            model_revision,
+            intent,
+        ) {
+            return false;
         }
 
         let show_hidden = self
@@ -657,13 +719,16 @@ impl super::App {
                     files_generation,
                     model_revision,
                     generation,
+                    intent,
                 );
             }
             FileManagerIoSubmit::Disconnected => {
-                self.state.file_manager_locations.fail_load(
+                return self.recover_file_manager_io_worker(Some(FileManagerLocationFailure {
                     path,
-                    super::file_manager_locations::FileManagerLocationLoadError::Unavailable,
-                );
+                    files_generation,
+                    model_revision,
+                    error: FileManagerLocationLoadError::Unavailable,
+                }));
             }
         }
         true
@@ -673,28 +738,27 @@ impl super::App {
     /// identity remains current. No filesystem access occurs in this method.
     pub(crate) fn sync_file_manager_io_results(&mut self) -> bool {
         let drain = self.file_manager_io_worker.drain();
-        let mut changed = false;
         if drain.disconnected {
-            if let Some(path) = self
+            let failure = self
                 .state
                 .file_manager_locations
                 .pending
                 .as_ref()
-                .map(|pending| pending.path.clone())
-            {
-                self.state.file_manager_locations.fail_load(
-                    path,
-                    super::file_manager_locations::FileManagerLocationLoadError::Unavailable,
-                );
-                changed = true;
-            }
-            tracing::error!("fm: bounded file-manager I/O worker disconnected");
+                .map(|pending| FileManagerLocationFailure {
+                    path: pending.path.clone(),
+                    files_generation: pending.files_generation,
+                    model_revision: pending.model_revision,
+                    error: FileManagerLocationLoadError::Unavailable,
+                });
+            // A result from the dead lifecycle is never authoritative, even
+            // when it was ready before the disconnect became observable.
+            return self.recover_file_manager_io_worker(failure);
         }
         let Some(result) = drain.current else {
-            return changed;
+            return false;
         };
         let Some(files_generation) = self.active_file_manager_generation() else {
-            return changed;
+            return false;
         };
         let model_revision = self.state.file_manager_locations_model.revision();
         let source = self
@@ -706,8 +770,12 @@ impl super::App {
             .identity
             .is_current(files_generation, model_revision, source.as_ref())
         {
-            return changed;
+            if matches!(&result.identity, FileManagerIoIdentity::Root { .. }) {
+                Self::reject_file_manager_root_result();
+            }
+            return false;
         }
+        let mut root_pending = None;
         if let FileManagerIoIdentity::Root {
             files_generation: root_files_generation,
             location_model_revision,
@@ -719,9 +787,15 @@ impl super::App {
                 *root_files_generation,
                 *location_model_revision,
                 result.generation,
+            ) || !self.file_manager_location_authority_is_current(
+                target_root,
+                *root_files_generation,
+                *location_model_revision,
             ) {
-                return changed;
+                Self::reject_file_manager_root_result();
+                return false;
             }
+            root_pending = self.state.file_manager_locations.pending.clone();
         }
 
         match result.outcome {
@@ -737,8 +811,11 @@ impl super::App {
                         .item_for_path(&target)
                         .is_some_and(|item| item.accessible)
                 {
-                    return changed;
+                    Self::reject_file_manager_root_result();
+                    return false;
                 }
+                let pending = root_pending.expect("validated Root result has pending authority");
+                let _accepted_intent = pending.intent;
                 self.state.file_manager = Some(prepared.file_manager);
                 let _ = self
                     .state
@@ -747,21 +824,21 @@ impl super::App {
                 true
             }
             FileManagerIoOutcome::Root(Err(error)) => {
-                if let Some(path) = result.identity.target_path().map(Path::to_path_buf) {
-                    self.state
-                        .file_manager_locations
-                        .fail_load(path, location_load_error(error));
-                    true
-                } else {
-                    changed
-                }
+                let pending = root_pending.expect("validated Root result has pending authority");
+                self.state.file_manager_locations.fail_load(
+                    pending.path,
+                    pending.files_generation,
+                    pending.model_revision,
+                    location_load_error(error),
+                );
+                true
             }
             FileManagerIoOutcome::Navigate {
                 files_generation: prepared_files_generation,
                 prepared,
             } => {
                 if prepared_files_generation != files_generation {
-                    return changed;
+                    return false;
                 }
                 prepared.is_some_and(|prepared| {
                     self.state
@@ -791,10 +868,10 @@ impl super::App {
                     expected_directory,
                 };
                 if prepared_identity != result.identity {
-                    return changed;
+                    return false;
                 }
                 let Some((file_manager, projection_changed)) = prepared else {
-                    return changed;
+                    return false;
                 };
                 self.state.file_manager = Some(*file_manager);
                 self.record_file_manager_reconcile_applied();
@@ -827,10 +904,10 @@ impl super::App {
                     expected_path: expected_path.clone(),
                 };
                 if prepared_identity != result.identity || !cursor_is_current {
-                    return changed;
+                    return false;
                 }
                 let Some(file_manager) = prepared else {
-                    return changed;
+                    return false;
                 };
                 self.state.file_manager = Some(*file_manager);
                 true
@@ -851,27 +928,30 @@ impl super::App {
                     expected_path,
                 };
                 if prepared_identity != result.identity {
-                    return changed;
+                    return false;
                 }
                 let Some((file_manager, outcome)) = prepared else {
-                    return changed;
+                    return false;
                 };
                 if outcome != crate::fm::trail_snapshots::TrailActivateOutcome::Branched {
-                    return changed;
+                    return false;
                 }
                 self.state.file_manager = Some(*file_manager);
                 true
             }
             FileManagerIoOutcome::Panicked(identity) => {
                 tracing::error!(?identity, "fm: bounded file-manager I/O processor panicked");
-                if let FileManagerIoIdentity::Root { target_root, .. } = identity {
+                if matches!(identity, FileManagerIoIdentity::Root { .. }) {
+                    let pending = root_pending.expect("validated Root panic has pending authority");
                     self.state.file_manager_locations.fail_load(
-                        target_root,
-                        super::file_manager_locations::FileManagerLocationLoadError::Unavailable,
+                        pending.path,
+                        pending.files_generation,
+                        pending.model_revision,
+                        FileManagerLocationLoadError::Unavailable,
                     );
                     true
                 } else {
-                    changed
+                    false
                 }
             }
         }
@@ -1210,6 +1290,14 @@ mod tests {
                 path.to_path_buf(),
                 intent,
             ),
+        );
+    }
+
+    fn stage_follow(app: &mut crate::app::App, path: &Path) {
+        stage_location(
+            app,
+            path,
+            crate::app::state::FileManagerLocationNavigationIntent::FollowPreview,
         );
     }
 
@@ -1748,7 +1836,7 @@ mod tests {
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
             .unwrap();
         app.state.file_manager_locations_model = location_model(&target);
-        app.state.request_file_manager_location_navigation = Some(target.clone().into());
+        stage_follow(&mut app, &target);
 
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
@@ -1785,7 +1873,7 @@ mod tests {
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
             .unwrap();
         app.state.file_manager_locations_model = location_model(&target);
-        app.state.request_file_manager_location_navigation = Some(target.into());
+        stage_follow(&mut app, &target);
 
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
@@ -1893,7 +1981,7 @@ mod tests {
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
             .unwrap();
         app.state.file_manager_locations_model = location_model(&target);
-        app.state.request_file_manager_location_navigation = Some(target.into());
+        stage_follow(&mut app, &target);
 
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
@@ -1930,7 +2018,7 @@ mod tests {
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
             .unwrap();
         app.state.file_manager_locations_model = location_model(&target);
-        app.state.request_file_manager_location_navigation = Some(target.clone().into());
+        stage_follow(&mut app, &target);
 
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
@@ -1970,7 +2058,7 @@ mod tests {
         app.state
             .file_manager_locations
             .activate_direct(initial.clone());
-        app.state.request_file_manager_location_navigation = Some(target.clone().into());
+        stage_follow(&mut app, &target);
 
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
@@ -1989,16 +2077,28 @@ mod tests {
 
         assert!(app.sync_file_manager_io_results());
         assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, initial);
+        let failure = app
+            .state
+            .file_manager_locations
+            .failure
+            .as_ref()
+            .expect("typed missing-root failure");
+        assert_eq!(failure.path, target);
         assert_eq!(
-            app.state.file_manager_locations.failure,
-            Some((
-                target.clone(),
-                crate::app::file_manager_locations::FileManagerLocationLoadError::Missing,
-            ))
+            failure.error,
+            crate::app::file_manager_locations::FileManagerLocationLoadError::Missing
+        );
+        assert_eq!(
+            Some(failure.files_generation),
+            app.state.stage.active_instance_generation()
+        );
+        assert_eq!(
+            failure.model_revision,
+            app.state.file_manager_locations_model.revision()
         );
 
         std::fs::create_dir(&target).unwrap();
-        app.state.request_file_manager_location_navigation = Some(target.clone().into());
+        stage_follow(&mut app, &target);
         assert!(app.sync_file_manager_location_request());
         started_rx.recv().unwrap();
         app.file_manager_io_worker.wait_for_result_for_test();
@@ -2019,7 +2119,7 @@ mod tests {
             .try_open_file_manager_with(|_| Some(file_manager))
             .unwrap();
         app.state.file_manager_locations_model = location_model(&td.root);
-        app.state.request_file_manager_location_navigation = Some(td.root.clone().into());
+        stage_follow(&mut app, &td.root);
 
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let worker_calls = calls.clone();

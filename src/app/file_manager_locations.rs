@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::state::FileManagerLocationsModel;
+use super::state::{FileManagerLocationNavigationIntent, FileManagerLocationsModel};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FileManagerLocationOrigin {
@@ -35,6 +35,15 @@ pub(crate) struct FileManagerLocationPending {
     pub(crate) files_generation: u32,
     pub(crate) model_revision: u64,
     pub(crate) io_generation: u64,
+    pub(crate) intent: FileManagerLocationNavigationIntent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FileManagerLocationFailure {
+    pub(crate) path: PathBuf,
+    pub(crate) files_generation: u32,
+    pub(crate) model_revision: u64,
+    pub(crate) error: FileManagerLocationLoadError,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,7 +57,7 @@ pub(crate) struct FileManagerLocationsState {
     pub(crate) origin: Option<FileManagerLocationOrigin>,
     pub(crate) cursor: Option<PathBuf>,
     pub(crate) pending: Option<FileManagerLocationPending>,
-    pub(crate) failure: Option<(PathBuf, FileManagerLocationLoadError)>,
+    pub(crate) failure: Option<FileManagerLocationFailure>,
     pub(crate) scroll: usize,
     pub(crate) focus: FileManagerLocationsFocus,
     drawer_open: bool,
@@ -99,6 +108,22 @@ impl FileManagerLocationsState {
 
     pub(crate) fn reconcile_model(&mut self, model: &FileManagerLocationsModel) -> bool {
         let mut changed = false;
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.model_revision != model.revision())
+        {
+            self.pending = None;
+            changed = true;
+        }
+        if self
+            .failure
+            .as_ref()
+            .is_some_and(|failure| failure.model_revision != model.revision())
+        {
+            self.failure = None;
+            changed = true;
+        }
         if let Some(FileManagerLocationOrigin::Location(path)) = self.origin.as_ref() {
             if !model
                 .item_for_path(path)
@@ -126,19 +151,52 @@ impl FileManagerLocationsState {
         files_generation: u32,
         model_revision: u64,
         io_generation: u64,
+        intent: FileManagerLocationNavigationIntent,
     ) {
         self.pending = Some(FileManagerLocationPending {
             path,
             files_generation,
             model_revision,
             io_generation,
+            intent,
         });
         self.failure = None;
     }
 
-    pub(crate) fn fail_load(&mut self, path: PathBuf, error: FileManagerLocationLoadError) {
+    pub(crate) fn promote_pending_intent(
+        &mut self,
+        path: &Path,
+        files_generation: u32,
+        model_revision: u64,
+        intent: FileManagerLocationNavigationIntent,
+    ) -> bool {
+        let Some(pending) = self.pending.as_mut().filter(|pending| {
+            pending.path == path
+                && pending.files_generation == files_generation
+                && pending.model_revision == model_revision
+        }) else {
+            return false;
+        };
+        if intent == FileManagerLocationNavigationIntent::EnterTrail {
+            pending.intent = intent;
+        }
+        true
+    }
+
+    pub(crate) fn fail_load(
+        &mut self,
+        path: PathBuf,
+        files_generation: u32,
+        model_revision: u64,
+        error: FileManagerLocationLoadError,
+    ) {
         self.pending = None;
-        self.failure = Some((path, error));
+        self.failure = Some(FileManagerLocationFailure {
+            path,
+            files_generation,
+            model_revision,
+            error,
+        });
     }
 
     pub(crate) fn is_pending_root(
@@ -176,6 +234,7 @@ impl FileManagerLocationsState {
     }
 
     pub(crate) fn focus_trail(&mut self) {
+        self.pending = None;
         self.focus = FileManagerLocationsFocus::Trail;
     }
 
@@ -428,7 +487,13 @@ mod tests {
         let replacement = flf_model(false);
         let mut pending = FileManagerLocationsState::default();
         assert!(pending.activate_location(Path::new("/home/ayaz"), &live));
-        pending.begin_load(PathBuf::from("/home/ayaz"), 7, live.revision(), 11);
+        pending.begin_load(
+            PathBuf::from("/home/ayaz"),
+            7,
+            live.revision(),
+            11,
+            crate::app::state::FileManagerLocationNavigationIntent::FollowPreview,
+        );
         assert!(pending.reconcile_model(&replacement));
         assert_eq!(
             pending.cursor_path(&replacement),
@@ -440,6 +505,8 @@ mod tests {
         assert!(failed.activate_location(Path::new("/home/ayaz"), &live));
         failed.fail_load(
             PathBuf::from("/home/ayaz"),
+            7,
+            live.revision(),
             FileManagerLocationLoadError::Unavailable,
         );
         assert!(failed.reconcile_model(&replacement));

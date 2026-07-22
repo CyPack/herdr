@@ -292,7 +292,7 @@ fn location_row_line(app: &AppState, item: &FileManagerLocationItem, width: u16)
         .file_manager_locations
         .failure
         .as_ref()
-        .is_some_and(|(path, _)| path == &item.path);
+        .is_some_and(|failure| failure.path == item.path);
     let marker = if pending {
         Some(("…", app.palette.yellow))
     } else if failed || !item.accessible {

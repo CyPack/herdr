@@ -162,6 +162,24 @@ fn stage_location_navigation(
     {
         return false;
     }
+    let files_generation = state.stage.active_instance_generation();
+    let model_revision = state.file_manager_locations_model.revision();
+    if intent == FileManagerLocationNavigationIntent::EnterTrail
+        && files_generation.is_some_and(|files_generation| {
+            state.file_manager_locations.promote_pending_intent(
+                &path,
+                files_generation,
+                model_revision,
+                intent,
+            )
+        })
+    {
+        // The exact worker ticket already owns this path. Upgrade its
+        // completion authority before the scheduled result drain can run;
+        // no duplicate request or render is needed.
+        state.request_file_manager_location_navigation = None;
+        return true;
+    }
     state.request_file_manager_location_navigation =
         Some(FileManagerLocationNavigationRequest::new(path, intent));
     true
@@ -1159,6 +1177,7 @@ impl App {
         // Horizontal preference and divider transactions never override a
         // live Trail row identity.
         if in_trail && self.handle_miller_horizontal_scroll(horizontal_kind, mouse.modifiers) {
+            invalidate_deferred_location_navigation(&mut self.state);
             self.state.file_manager_locations.focus_trail();
             return FileManagerMouseDispatch::Consumed;
         }
@@ -9239,6 +9258,7 @@ command = ["inspect"]
             app.state.stage.active_instance_generation().unwrap(),
             app.state.file_manager_locations_model.revision(),
             io_generation,
+            FileManagerLocationNavigationIntent::EnterTrail,
         );
     }
 
@@ -9634,6 +9654,40 @@ command = ["inspect"]
             );
             assert_eq!(app.file_manager_key_render_override, Some(false));
         }
+    }
+
+    // TP-FLF-IO-02: once Follow owns an exact worker ticket, explicit entry
+    // upgrades that ticket synchronously before a scheduled result drain can
+    // observe the weaker intent. No second request crosses the App boundary.
+    #[test]
+    fn flf_rail_enter_promotes_pending_follow_before_scheduled_drain() {
+        let (_td, mut app, _frame, paths) = wide_flf_app("flf-rail-promote");
+        let path = paths[0].clone();
+        app.state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Rail;
+        app.state.file_manager_locations.begin_load(
+            path.clone(),
+            app.state.stage.active_instance_generation().unwrap(),
+            app.state.file_manager_locations_model.revision(),
+            41,
+            FileManagerLocationNavigationIntent::FollowPreview,
+        );
+
+        assert_eq!(
+            handle_file_manager_key(&mut app.state, key(KeyCode::Right)),
+            FileManagerKeyDispatch::DeferredLocationNavigation
+        );
+        assert_eq!(
+            app.state
+                .file_manager_locations
+                .pending
+                .as_ref()
+                .map(|pending| pending.intent),
+            Some(FileManagerLocationNavigationIntent::EnterTrail)
+        );
+        assert!(
+            app.state.request_file_manager_location_navigation.is_none(),
+            "exact pending promotion must not enqueue a duplicate request"
+        );
     }
 
     // TP-FLF-COMPACT-01: root Left opens the compact Rail owner. Esc restores
