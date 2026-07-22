@@ -651,9 +651,10 @@ pub(crate) fn trail_section_header_at(
 
 /// Paint the projected trail: rows via the shared entry-row renderer (icons,
 /// truncation, selection emphasis) and one-cell dividers between columns.
-/// The selected row stays emphasized in every visible column while Trail
-/// owns focus (LAW 1). Rail focus suppresses paint only; exact Trail identity
-/// remains resident for an immediate focus return.
+/// While Trail owns focus, only the Active Miller Column receives the strong
+/// focus cursor; resident ancestor selections keep a weaker branch-context
+/// emphasis (LAW 1). Rail focus suppresses both paints while exact Trail
+/// identity remains resident for an immediate focus return.
 pub(crate) fn render_trail_view(
     app: &AppState,
     frame: &mut Frame,
@@ -662,6 +663,7 @@ pub(crate) fn render_trail_view(
 ) {
     let styles = super::file_manager_visual_styles(&app.palette);
     let trail_focused = app.file_manager_locations.focus == FileManagerLocationsFocus::Trail;
+    let active_col = app.file_manager.as_ref().map(|fm| fm.trail.active_col());
     for divider in &view.dividers {
         frame.render_widget(
             Block::default()
@@ -690,15 +692,19 @@ pub(crate) fn render_trail_view(
             let Some(entry) = snap.entries().get(row.entry_index) else {
                 continue;
             };
-            let selected = trail_focused && column.selected_entry == Some(row.entry_index);
+            let branch_selected = trail_focused && column.selected_entry == Some(row.entry_index);
+            let cursor_focused = branch_selected && active_col == Some(column.trail_index);
+            let branch_context = branch_selected && !cursor_focused;
             let multi_selected = app
                 .file_manager
                 .as_ref()
                 .is_some_and(|fm| fm.multi_selection_paths().contains(&entry.path));
-            let row_style = if selected {
+            let row_style = if cursor_focused {
                 styles.cursor
             } else if multi_selected {
                 styles.multi_selection
+            } else if branch_context {
+                styles.branch_context
             } else {
                 styles.empty
             };
@@ -713,7 +719,8 @@ pub(crate) fn render_trail_view(
                 row.name_logical_width,
                 row.name_source_x,
                 entry,
-                selected,
+                cursor_focused,
+                branch_context,
                 multi_selected,
             );
             if let Some(timestamp) = &row.timestamp {
@@ -723,7 +730,7 @@ pub(crate) fn render_trail_view(
                 );
             }
             for action in &row.actions {
-                super::render_row_action(app, frame, action, selected, multi_selected);
+                super::render_row_action(frame, action, row_style);
             }
         }
     }

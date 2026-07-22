@@ -346,6 +346,7 @@ pub(crate) fn render_file_manager_locations(
     {
         return;
     }
+    let styles = super::file_manager_visual_styles(&app.palette);
 
     if let Some(action) = view.locations_action_area {
         let style = if view.drawer_area.is_some() {
@@ -426,13 +427,9 @@ pub(crate) fn render_file_manager_locations(
                 let focused_cursor = rail_focused && cursor == Some(item.path.as_path());
                 let accepted_origin = origin == Some(item.path.as_path()) && !focused_cursor;
                 let style = if focused_cursor {
-                    Style::default()
-                        .fg(app.palette.accent)
-                        .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                    styles.cursor
                 } else if accepted_origin {
-                    Style::default()
-                        .fg(app.palette.accent)
-                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                    styles.origin_marker
                 } else if item.accessible {
                     Style::default().fg(app.palette.subtext0)
                 } else {

@@ -59,6 +59,8 @@ struct FileManagerVisualStyles {
     disabled_action: Style,
     empty: Style,
     cursor: Style,
+    branch_context: Style,
+    origin_marker: Style,
     multi_selection: Style,
     directory: Style,
     file: Style,
@@ -92,8 +94,16 @@ fn file_manager_visual_styles(palette: &Palette) -> FileManagerVisualStyles {
             .add_modifier(Modifier::DIM),
         empty: Style::default().fg(palette.overlay0).bg(palette.panel_bg),
         cursor: Style::default()
+            .fg(palette.accent)
+            .bg(palette.panel_bg)
+            .add_modifier(Modifier::BOLD | Modifier::REVERSED),
+        branch_context: Style::default()
             .bg(palette.surface0)
             .fg(palette.text)
+            .add_modifier(Modifier::BOLD),
+        origin_marker: Style::default()
+            .fg(palette.accent)
+            .bg(palette.panel_bg)
             .add_modifier(Modifier::BOLD),
         multi_selection: Style::default()
             .bg(palette.surface1)
@@ -1239,6 +1249,7 @@ fn render_entry_row(
         0,
         entry,
         cursor_focused,
+        false,
         multi_selected,
     );
 }
@@ -1251,6 +1262,7 @@ pub(crate) fn render_entry_row_clipped(
     source_x: u16,
     entry: &FileEntry,
     cursor_focused: bool,
+    branch_context: bool,
     multi_selected: bool,
 ) {
     if row.is_empty() {
@@ -1270,6 +1282,8 @@ pub(crate) fn render_entry_row_clipped(
         styles.cursor
     } else if multi_selected {
         styles.multi_selection
+    } else if branch_context {
+        styles.branch_context
     } else if entry.is_dir() {
         styles.directory
     } else {
@@ -1309,23 +1323,9 @@ fn display_cell_slice(text: &str, source_x: u16, width: u16) -> String {
     visible
 }
 
-fn render_row_action(
-    app: &AppState,
-    frame: &mut Frame,
-    action_area: &FileManagerRowActionArea,
-    cursor_focused: bool,
-    multi_selected: bool,
-) {
-    let p = &app.palette;
-    let style = if cursor_focused {
-        Style::default().bg(p.surface0).fg(p.overlay1)
-    } else if multi_selected {
-        Style::default().bg(p.surface1).fg(p.overlay1)
-    } else {
-        Style::default().fg(p.overlay1)
-    };
+fn render_row_action(frame: &mut Frame, action_area: &FileManagerRowActionArea, row_style: Style) {
     frame.render_widget(
-        Paragraph::new(action_area.action.label()).style(style),
+        Paragraph::new(action_area.action.label()).style(row_style),
         action_area.rect,
     );
 }
@@ -2937,6 +2937,7 @@ mod tests {
                     &entry,
                     false,
                     false,
+                    false,
                 );
             })
             .expect("draw clipped entry row");
@@ -3084,7 +3085,18 @@ mod tests {
 
         // Cursor wins even when the row is also inside the multi-selection.
         let focused_in_selection = render(true, true);
-        assert_eq!(focused_in_selection[(1u16, 0u16)].style(), styles.cursor);
+        assert_eq!(
+            (
+                focused_in_selection[(1u16, 0u16)].fg,
+                focused_in_selection[(1u16, 0u16)].bg,
+                focused_in_selection[(1u16, 0u16)].modifier,
+            ),
+            (
+                styles.cursor.fg.expect("cursor foreground"),
+                styles.cursor.bg.expect("cursor background"),
+                styles.cursor.add_modifier,
+            )
+        );
         assert!(focused_in_selection[(1u16, 0u16)]
             .modifier
             .contains(Modifier::BOLD | Modifier::REVERSED));
@@ -3497,6 +3509,11 @@ mod tests {
             })
             .cloned()
             .expect("active Trail row");
+        let active_trail_action = active_trail_row
+            .actions
+            .first()
+            .cloned()
+            .expect("active Trail row action");
         let resident_selected_rows = app
             .view
             .file_manager_trail
@@ -3534,6 +3551,11 @@ mod tests {
             trail_buffer[(active_trail_row.rect.x, active_trail_row.rect.y)].style(),
             rail_cursor_style,
             "Rail and Trail active cursors must share one semantic style"
+        );
+        assert_eq!(
+            trail_buffer[(active_trail_action.rect.x, active_trail_action.rect.y)].style(),
+            rail_cursor_style,
+            "active row action cells must not drift from the row focus style"
         );
 
         let rail_cursor_after = &trail_buffer[(rail_cursor_row.rect.x, rail_cursor_row.rect.y)];
