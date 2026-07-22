@@ -2182,6 +2182,9 @@ mod tests {
         );
         app.try_open_file_manager_with(|_| Some(file_manager))
             .expect("Files activation");
+        assert!(app
+            .file_manager_locations
+            .activate_location(root, &app.file_manager_locations_model));
         app.file_manager_operation = Some(FileManagerOperationState {
             generation: 1,
             kind: FileManagerOperationKind::Copy,
@@ -2270,8 +2273,11 @@ mod tests {
             .first()
             .expect("expanded Files content-rail row")
             .rect;
-        assert!((current_row.x..current_row.right())
-            .any(|x| { expanded[(x, current_row.y)].bg == app.palette.accent }));
+        assert!((current_row.x..current_row.right()).any(|x| {
+            let cell = &expanded[(x, current_row.y)];
+            cell.fg == app.palette.accent
+                && cell.modifier.contains(Modifier::BOLD | Modifier::REVERSED)
+        }));
         let status_y = app.view.terminal_area.bottom() - 1;
         let status_x = (app.view.terminal_area.x..app.view.terminal_area.right())
             .find(|&x| expanded[(x, status_y)].symbol() == "c")

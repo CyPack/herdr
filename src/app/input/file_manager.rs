@@ -4953,17 +4953,34 @@ mod tests {
             FileManagerKeyDispatch::Consumed
         );
 
-        assert_eq!(
-            handle_file_manager_key(&mut state, key(KeyCode::Right)),
-            FileManagerKeyDispatch::Consumed
-        );
+        let (dispatch, profile) = crate::render_prof::observe_for_test(|| {
+            handle_file_manager_key(&mut state, key(KeyCode::Right))
+        });
+        assert_eq!(dispatch, FileManagerKeyDispatch::Consumed);
         let after = state.file_manager.as_ref().expect("open FM");
         assert_eq!(
             after.trail.active_col(),
             1,
             "one Right event cannot jump through a prepared descendant"
         );
-        assert_eq!(after.trail.cols().len(), 3);
+        assert_eq!(
+            after.trail.cols().len(),
+            2,
+            "entering the child starts a fresh first-row transaction"
+        );
+        assert_eq!(after.trail_snapshots.cols().len(), 2);
+        assert_eq!(
+            after
+                .active_trail_entry_identity()
+                .map(|(_, index, path, _)| (index, path)),
+            Some((0, target)),
+            "the entered column highlights its exact first resident child"
+        );
+        assert_eq!(
+            profile.counter("fm.filesystem.read"),
+            0,
+            "resident Right focus cannot reread an exact prepared child"
+        );
     }
 
     // TP-FMH-RIGHT-03 + TP-FMH-ALIAS-01: Right/l are column-navigation
