@@ -2504,8 +2504,8 @@ mod tests {
     // TP-A2.2: an open file manager renders its entries, directories first, each
     // group in natural order, directories marked with a trailing slash.
 
-    // TP-A2.3: the cursor row is highlighted (surface0 background) while other
-    // rows are not.
+    // TP-A2.3: the cursor row owns the active-focus style while other rows do
+    // not.
 
     // TP-N4.1-SELECTION-STATE: explicit multi-selection uses a distinct row
     // background, while cursor focus remains the unique stronger projection.
@@ -2518,8 +2518,15 @@ mod tests {
         let mut fm = FmState::new(&td.root);
         assert!(fm.replace_selection(0));
         assert!(fm.toggle_selection(2));
-        assert!(fm.select(1));
+        assert!(fm.select(0));
         let app = app_with_fm(fm);
+        let styles = file_manager_visual_styles(&app.palette);
+        assert!(app
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .multi_selection_paths()
+            .contains(&td.root.join("a.txt")));
         let buffer = render_buffer(&app, 20, 6);
         let rows = (0..6)
             .map(|y| {
@@ -2534,10 +2541,44 @@ mod tests {
                 .expect("rendered entry row") as u16
         };
 
-        assert_ne!(app.palette.surface0, app.palette.surface1);
-        assert_eq!(buffer[(2, row_for("a.txt"))].bg, app.palette.surface1);
-        assert_eq!(buffer[(2, row_for("c.txt"))].bg, app.palette.surface1);
-        assert_eq!(buffer[(2, row_for("b.txt"))].bg, app.palette.surface0);
+        let active = &buffer[(2, row_for("a.txt"))];
+        let inactive = &buffer[(2, row_for("b.txt"))];
+        let selected = &buffer[(2, row_for("c.txt"))];
+        assert_eq!(
+            (active.fg, active.bg, active.modifier),
+            (
+                styles.cursor.fg.expect("cursor foreground"),
+                styles.cursor.bg.expect("cursor background"),
+                styles.cursor.add_modifier,
+            )
+        );
+        assert!(active
+            .modifier
+            .contains(Modifier::BOLD | Modifier::REVERSED));
+        assert_eq!(
+            (selected.fg, selected.bg, selected.modifier),
+            (
+                styles
+                    .multi_selection
+                    .fg
+                    .expect("multi-selection foreground"),
+                styles
+                    .multi_selection
+                    .bg
+                    .expect("multi-selection background"),
+                styles.multi_selection.add_modifier,
+            )
+        );
+        assert!(!selected.modifier.contains(Modifier::REVERSED));
+        assert!(!inactive.modifier.contains(Modifier::REVERSED));
+        assert_eq!(
+            [active, inactive, selected]
+                .into_iter()
+                .filter(|cell| cell.modifier.contains(Modifier::REVERSED))
+                .count(),
+            1,
+            "multi-selection preserves exactly one active cursor row"
+        );
     }
 
     // TP-C6.4-THEME: the native FM owns its complete canvas background but
@@ -3043,14 +3084,18 @@ mod tests {
 
         // Cursor wins even when the row is also inside the multi-selection.
         let focused_in_selection = render(true, true);
-        assert_eq!(
-            focused_in_selection[(1u16, 0u16)].style().bg,
-            styles.cursor.bg
-        );
+        assert_eq!(focused_in_selection[(1u16, 0u16)].style(), styles.cursor);
+        assert!(focused_in_selection[(1u16, 0u16)]
+            .modifier
+            .contains(Modifier::BOLD | Modifier::REVERSED));
+        assert!(!focused_in_selection[(1u16, 0u16)]
+            .modifier
+            .contains(Modifier::UNDERLINED));
 
         let multi = render(false, true);
         assert_eq!(multi[(1u16, 0u16)].style().bg, styles.multi_selection.bg);
         assert_eq!(multi[(1u16, 0u16)].style().fg, styles.multi_selection.fg);
+        assert!(!multi[(1u16, 0u16)].modifier.contains(Modifier::REVERSED));
     }
 
     // TP-FIP-ICON-13: a hostile file name containing control characters
@@ -3294,10 +3339,9 @@ mod tests {
             pending[home_pos].fg, app.palette.accent,
             "the accepted origin keeps subdued accent identity"
         );
-        assert!(pending[home_pos]
-            .modifier
-            .contains(Modifier::BOLD | Modifier::UNDERLINED));
+        assert!(pending[home_pos].modifier.contains(Modifier::BOLD));
         assert!(!pending[home_pos].modifier.contains(Modifier::REVERSED));
+        assert!(!pending[home_pos].modifier.contains(Modifier::UNDERLINED));
 
         assert!(app
             .file_manager_locations
@@ -3361,10 +3405,9 @@ mod tests {
             .modifier
             .contains(Modifier::BOLD | Modifier::REVERSED));
         assert_eq!(origin.fg, app.palette.accent);
-        assert!(origin
-            .modifier
-            .contains(Modifier::BOLD | Modifier::UNDERLINED));
+        assert!(origin.modifier.contains(Modifier::BOLD));
         assert!(!origin.modifier.contains(Modifier::REVERSED));
+        assert!(!origin.modifier.contains(Modifier::UNDERLINED));
     }
 
     // TP-FLF-NO-HIGHLIGHT-01: Trail identity stays resident while Rail owns
@@ -3417,6 +3460,113 @@ mod tests {
         );
     }
 
+    // TP-FFO-VIS-01/02/04: Rail and Trail reuse one active-focus tuple, but
+    // only the active Miller column paints it after ownership transfers. The
+    // accepted Rail origin remains a weaker non-underlined context marker.
+    #[test]
+    fn ffo_rail_and_trail_active_rows_share_the_same_cursor_style() {
+        let td = TempDir::new("ffo-cross-region-cursor-style");
+        let (mut app, home, downloads) = flf_render_app(&td);
+        let project = home.join("project");
+        let leaf = project.join("leaf.txt");
+        fs::create_dir_all(&project).expect("create nested Trail fixture");
+        fs::write(&leaf, b"leaf").expect("write nested Trail fixture");
+        app.file_manager = Some(
+            FmState::open_trail_to(&td.root, &leaf, false)
+                .expect("open resident multi-column Trail"),
+        );
+        let frame = Rect::new(0, 0, 120, 12);
+        crate::ui::compute_view(&mut app, frame);
+
+        let rail_cursor_row = flf_location_row(&app, &downloads);
+        let active_col = app
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .trail
+            .active_col();
+        let active_trail_row = app
+            .view
+            .file_manager_trail
+            .columns
+            .iter()
+            .find(|column| column.trail_index == active_col)
+            .and_then(|column| {
+                let selected = column.selected_entry?;
+                column.rows.iter().find(|row| row.entry_index == selected)
+            })
+            .cloned()
+            .expect("active Trail row");
+        let resident_selected_rows = app
+            .view
+            .file_manager_trail
+            .columns
+            .iter()
+            .filter_map(|column| {
+                let selected = column.selected_entry?;
+                column.rows.iter().find(|row| row.entry_index == selected)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(
+            resident_selected_rows.len() >= 2,
+            "fixture must expose ancestor and active Trail selections"
+        );
+
+        let rail_buffer = render_buffer(&app, frame.width, frame.height);
+        let rail_cursor_style =
+            rail_buffer[(rail_cursor_row.rect.x, rail_cursor_row.rect.y)].style();
+        assert_eq!(rail_cursor_style.fg, Some(app.palette.accent));
+        assert_eq!(rail_cursor_style.bg, Some(app.palette.panel_bg));
+        assert!(rail_cursor_style
+            .add_modifier
+            .contains(Modifier::BOLD | Modifier::REVERSED));
+        assert!(
+            !rail_buffer[(active_trail_row.rect.x, active_trail_row.rect.y)]
+                .modifier
+                .contains(Modifier::REVERSED)
+        );
+
+        assert!(app.file_manager_locations.focus_trail());
+        crate::ui::compute_view(&mut app, frame);
+        let trail_buffer = render_buffer(&app, frame.width, frame.height);
+        assert_eq!(
+            trail_buffer[(active_trail_row.rect.x, active_trail_row.rect.y)].style(),
+            rail_cursor_style,
+            "Rail and Trail active cursors must share one semantic style"
+        );
+
+        let rail_cursor_after = &trail_buffer[(rail_cursor_row.rect.x, rail_cursor_row.rect.y)];
+        assert!(!rail_cursor_after.modifier.contains(Modifier::REVERSED));
+        let origin_row = flf_location_row(&app, &home);
+        let origin = &trail_buffer[(origin_row.rect.x, origin_row.rect.y)];
+        assert_eq!(
+            (origin.fg, origin.bg),
+            (app.palette.accent, app.palette.panel_bg)
+        );
+        assert!(origin.modifier.contains(Modifier::BOLD));
+        assert!(!origin
+            .modifier
+            .intersects(Modifier::REVERSED | Modifier::UNDERLINED));
+
+        let reversed_trail_rows = app
+            .view
+            .file_manager_trail
+            .columns
+            .iter()
+            .flat_map(|column| &column.rows)
+            .filter(|row| {
+                trail_buffer[(row.rect.x, row.rect.y)]
+                    .modifier
+                    .contains(Modifier::REVERSED)
+            })
+            .count();
+        assert_eq!(
+            reversed_trail_rows, 1,
+            "only the active Miller column may paint active-focus authority"
+        );
+    }
+
     // TP-FLF-VIS-01: ANSI/no-color users must distinguish cursor and origin
     // through modifiers even when every relevant foreground/background agrees.
     #[test]
@@ -3441,10 +3591,9 @@ mod tests {
             .modifier
             .contains(Modifier::BOLD | Modifier::REVERSED));
         assert!(!cursor.modifier.contains(Modifier::UNDERLINED));
-        assert!(origin
-            .modifier
-            .contains(Modifier::BOLD | Modifier::UNDERLINED));
+        assert!(origin.modifier.contains(Modifier::BOLD));
         assert!(!origin.modifier.contains(Modifier::REVERSED));
+        assert!(!origin.modifier.contains(Modifier::UNDERLINED));
     }
 
     // TP-FLF-FAIL-01/STALE-01: markers require current cursor, Files
