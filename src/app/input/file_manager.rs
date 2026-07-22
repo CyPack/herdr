@@ -4778,6 +4778,41 @@ mod tests {
         );
     }
 
+    // TP-FLF-MOUSE-01: mouse directory activation keeps its existing exact
+    // row contract; unlike keyboard entry it does not synthesize child focus.
+    #[test]
+    fn flf_mouse_activation_preserves_existing_mouse_selection_contract() {
+        let td = TempDir::new("flf-mouse-preserve");
+        td.dir("child");
+        let child = td.root.join("child");
+        fs::write(child.join("first.txt"), b"first").expect("child row");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 80, 16));
+        let target = trail_row_by_path(&app, &child);
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                target.rect.x,
+                target.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert!(app.complete_file_manager_io_for_test());
+
+        let file_manager = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(file_manager.trail.active_col(), 1);
+        assert_eq!(
+            file_manager.trail.cols()[0].selected.as_deref(),
+            Some(child.as_path())
+        );
+        assert_eq!(file_manager.trail.cols()[1].selected, None);
+        assert!(file_manager.trail.cursor_override().is_none());
+        assert!(file_manager.active_trail_entry_identity().is_none());
+    }
+
     // TP-TRAIL-T7-INPUT-03: Left/Right change the Trail's one active-column
     // focus. They do not emit legacy parent-directory navigation requests.
     #[test]
@@ -5138,6 +5173,152 @@ mod tests {
                 Some(td.root.join("01-bravo").as_path())
             );
         }
+    }
+
+    // TP-FLF-ENTER-03: crossing one prepared hierarchy edge with Right owns
+    // the child column and immediately highlights its first real row.
+    #[test]
+    fn flf_entered_child_highlights_first_actionable_entry() {
+        let td = TempDir::new("flf-entered-child");
+        td.dir("child");
+        let child = td.root.join("child");
+        let first = child.join("00-first.txt");
+        fs::write(&first, b"first").expect("first child row");
+        TempDir::set_modified(&first);
+        let file_manager =
+            FmState::open_trail_to(&td.root, &child, false).expect("prepared child Trail");
+        let mut state = app_with_fm(file_manager);
+
+        assert_eq!(
+            handle_file_manager_key(&mut state, key(KeyCode::Left)),
+            FileManagerKeyDispatch::Consumed
+        );
+        assert_eq!(
+            handle_file_manager_key(&mut state, key(KeyCode::Right)),
+            FileManagerKeyDispatch::Consumed
+        );
+
+        let file_manager = state.file_manager.as_ref().expect("open FM");
+        assert_eq!(file_manager.trail.active_col(), 1);
+        assert_eq!(
+            file_manager
+                .active_trail_entry_identity()
+                .map(|(_, index, path, _)| (index, path)),
+            Some((0, first))
+        );
+    }
+
+    // TP-FLF-ENTER-04: because explicit entry owns row zero immediately, the
+    // next Down event advances exactly once to row one.
+    #[test]
+    fn flf_next_down_after_entry_selects_second_entry() {
+        let td = TempDir::new("flf-next-down");
+        td.dir("child");
+        let child = td.root.join("child");
+        let first = child.join("00-first.txt");
+        let second = child.join("01-second.txt");
+        for path in [&first, &second] {
+            fs::write(path, b"row").expect("child row");
+            TempDir::set_modified(path);
+        }
+        let file_manager =
+            FmState::open_trail_to(&td.root, &child, false).expect("prepared child Trail");
+        let mut state = app_with_fm(file_manager);
+
+        assert_eq!(
+            handle_file_manager_key(&mut state, key(KeyCode::Left)),
+            FileManagerKeyDispatch::Consumed
+        );
+        assert_eq!(
+            handle_file_manager_key(&mut state, key(KeyCode::Right)),
+            FileManagerKeyDispatch::Consumed
+        );
+        assert_eq!(
+            handle_file_manager_key(&mut state, key(KeyCode::Down)),
+            FileManagerKeyDispatch::Consumed
+        );
+
+        assert_eq!(
+            state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .active_trail_entry_identity()
+                .map(|(_, index, path, _)| (index, path)),
+            Some((1, second))
+        );
+    }
+
+    // TP-FLF-HISTORY-01: keyboard entry is a fresh focus transaction. A
+    // previously selected deeper destination cannot survive behind it.
+    #[test]
+    fn flf_keyboard_activation_discards_hidden_destination_history() {
+        let td = TempDir::new("flf-discard-history");
+        td.dir("alpha");
+        let alpha = td.root.join("alpha");
+        let bravo = alpha.join("bravo");
+        fs::create_dir_all(&bravo).expect("deep prepared branch");
+        TempDir::set_modified(&bravo);
+        let file_manager =
+            FmState::open_trail_to(&td.root, &bravo, false).expect("deep prepared Trail");
+        let mut state = app_with_fm(file_manager);
+
+        assert_eq!(
+            handle_file_manager_key(&mut state, key(KeyCode::Left)),
+            FileManagerKeyDispatch::Consumed
+        );
+        assert_eq!(
+            handle_file_manager_key(&mut state, key(KeyCode::Left)),
+            FileManagerKeyDispatch::Consumed
+        );
+        assert_eq!(
+            handle_file_manager_key(&mut state, key(KeyCode::Right)),
+            FileManagerKeyDispatch::Consumed
+        );
+
+        let file_manager = state.file_manager.as_ref().expect("open FM");
+        assert_eq!(file_manager.trail.active_col(), 1);
+        assert_eq!(file_manager.trail.cols().len(), 2);
+        assert_eq!(file_manager.trail.cols()[1].selected, None);
+        assert_eq!(
+            file_manager.trail.cursor_override(),
+            Some((1, bravo.as_path()))
+        );
+    }
+
+    // TP-FLF-PERF-01: first-entry initialization is entirely snapshot-backed;
+    // crossing a prepared child edge cannot enumerate the filesystem.
+    #[test]
+    fn flf_first_entry_initialization_performs_zero_filesystem_reads() {
+        let td = TempDir::new("flf-first-entry-no-read");
+        td.dir("child");
+        let child = td.root.join("child");
+        let first = child.join("first.txt");
+        fs::write(&first, b"first").expect("first child row");
+        TempDir::set_modified(&first);
+        let file_manager =
+            FmState::open_trail_to(&td.root, &child, false).expect("prepared child Trail");
+        let mut state = app_with_fm(file_manager);
+        assert_eq!(
+            handle_file_manager_key(&mut state, key(KeyCode::Left)),
+            FileManagerKeyDispatch::Consumed
+        );
+
+        let (dispatch, profile) = crate::render_prof::observe_for_test(|| {
+            handle_file_manager_key(&mut state, key(KeyCode::Right))
+        });
+
+        assert_eq!(dispatch, FileManagerKeyDispatch::Consumed);
+        assert_eq!(profile.counter("fm.filesystem.read"), 0);
+        assert_eq!(
+            state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .active_trail_entry_identity()
+                .map(|(_, index, path, _)| (index, path)),
+            Some((0, first))
+        );
     }
 
     // TP-FMN-IO-01/02 RED: a vertical directory landing publishes its cursor

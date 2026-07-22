@@ -1823,6 +1823,62 @@ mod tests {
         assert!(file_manager.trail.cursor_override().is_none());
     }
 
+    // TP-FLF-ENTER-02: an explicit Rail entry transfers focus only after the
+    // exact root is accepted, and that same transition highlights row zero.
+    #[test]
+    fn flf_entered_root_highlights_first_actionable_entry() {
+        use crate::app::state::FileManagerLocationNavigationIntent::EnterTrail;
+
+        let td = TempDir::new();
+        let initial = td.dir("entered-root-initial");
+        let target = td.dir("entered-root-target");
+        let first = target.join("first.txt");
+        std::fs::write(&first, b"first").unwrap();
+        let mut app = flf_app(&initial, std::slice::from_ref(&target));
+        stage_location(&mut app, &target, EnterTrail);
+
+        assert!(app.sync_file_manager_location_request());
+        app.file_manager_io_worker.wait_for_result_for_test();
+        assert!(app.sync_file_manager_io_results());
+
+        assert_eq!(
+            app.state.file_manager_locations.focus,
+            crate::app::FileManagerLocationsFocus::Trail
+        );
+        let file_manager = app.state.file_manager.as_ref().unwrap();
+        assert_eq!(
+            file_manager
+                .active_trail_entry_identity()
+                .map(|(_, index, path, _)| (index, path)),
+            Some((0, first))
+        );
+    }
+
+    // TP-FLF-EMPTY-02: explicit entry into an empty readable root transfers
+    // Trail ownership but must never invent a row-zero cursor.
+    #[test]
+    fn flf_empty_entered_destination_keeps_none_cursor() {
+        use crate::app::state::FileManagerLocationNavigationIntent::EnterTrail;
+
+        let td = TempDir::new();
+        let initial = td.dir("entered-empty-initial");
+        let empty = td.dir("entered-empty-target");
+        let mut app = flf_app(&initial, std::slice::from_ref(&empty));
+        stage_location(&mut app, &empty, EnterTrail);
+
+        assert!(app.sync_file_manager_location_request());
+        app.file_manager_io_worker.wait_for_result_for_test();
+        assert!(app.sync_file_manager_io_results());
+
+        assert_eq!(
+            app.state.file_manager_locations.focus,
+            crate::app::FileManagerLocationsFocus::Trail
+        );
+        let file_manager = app.state.file_manager.as_ref().unwrap();
+        assert!(file_manager.active_trail_entry_identity().is_none());
+        assert!(file_manager.trail.cursor_override().is_none());
+    }
+
     // TP-FCL-IO-01/03: App root submission preserves the rendered Trail while
     // blocked, then applies only to the still-current Files/model identity.
     #[test]
