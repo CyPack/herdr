@@ -80,7 +80,7 @@ impl FileManagerLocationsState {
         self.set_cursor(Some(path.to_path_buf()));
         self.pending = None;
         self.failure = None;
-        self.focus = FileManagerLocationsFocus::Rail;
+        let _ = self.focus_rail();
         true
     }
 
@@ -88,7 +88,7 @@ impl FileManagerLocationsState {
         self.origin = Some(FileManagerLocationOrigin::Direct(path));
         self.pending = None;
         self.failure = None;
-        self.focus = FileManagerLocationsFocus::Trail;
+        let _ = self.focus_trail();
     }
 
     pub(crate) fn highlighted_path<'a>(
@@ -144,7 +144,7 @@ impl FileManagerLocationsState {
         self.origin = None;
         self.retire_navigation_authority();
         self.scroll = 0;
-        self.focus = FileManagerLocationsFocus::Trail;
+        let _ = self.focus_trail();
         self.drawer_open = false;
         self.drawer_restore_focus = FileManagerLocationsFocus::Trail;
     }
@@ -233,13 +233,23 @@ impl FileManagerLocationsState {
         .min(maximum);
         let changed = next != self.scroll;
         self.scroll = next;
-        self.focus = FileManagerLocationsFocus::Rail;
+        let _ = self.focus_rail();
         changed
     }
 
-    pub(crate) fn focus_trail(&mut self) {
-        self.pending = None;
+    pub(crate) fn focus_rail(&mut self) -> bool {
+        if self.focus == FileManagerLocationsFocus::Rail {
+            return false;
+        }
+        self.focus = FileManagerLocationsFocus::Rail;
+        true
+    }
+
+    pub(crate) fn focus_trail(&mut self) -> bool {
+        let pending_changed = self.pending.take().is_some();
+        let focus_changed = self.focus != FileManagerLocationsFocus::Trail;
         self.focus = FileManagerLocationsFocus::Trail;
+        pending_changed || focus_changed
     }
 
     pub(crate) fn drawer_is_open(&self) -> bool {
@@ -252,7 +262,7 @@ impl FileManagerLocationsState {
         }
         self.drawer_restore_focus = self.focus;
         self.drawer_open = true;
-        self.focus = FileManagerLocationsFocus::Rail;
+        let _ = self.focus_rail();
         true
     }
 
@@ -301,7 +311,7 @@ impl FileManagerLocationsState {
             return false;
         }
         let _ = self.set_cursor(Some(path.to_path_buf()));
-        self.focus = FileManagerLocationsFocus::Rail;
+        let _ = self.focus_rail();
         true
     }
 
@@ -388,7 +398,7 @@ mod tests {
 
     use super::{
         FileManagerLocationCursorMove, FileManagerLocationLoadError, FileManagerLocationOrigin,
-        FileManagerLocationsState,
+        FileManagerLocationsFocus, FileManagerLocationsState,
     };
     use crate::app::state::{
         FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel,
@@ -450,6 +460,54 @@ mod tests {
         direct.activate_direct(PathBuf::from("/elsewhere"));
         assert!(!direct.normalize_cursor_for_rail(&model));
         assert_eq!(direct.cursor_path(&model), Some(Path::new("/workspace")));
+    }
+
+    // TP-FFO-MOUSE-01 / TP-FFO-RENDER-01: named owner transitions report
+    // only an observable authority change and are idempotent once established.
+    #[test]
+    fn ffo_focus_helpers_report_only_real_changes() {
+        let mut state = FileManagerLocationsState::default();
+
+        assert!(!state.focus_trail());
+        assert!(state.focus_rail());
+        assert_eq!(state.focus, FileManagerLocationsFocus::Rail);
+        assert!(!state.focus_rail());
+        assert!(state.focus_trail());
+        assert_eq!(state.focus, FileManagerLocationsFocus::Trail);
+        assert!(!state.focus_trail());
+    }
+
+    // TP-FFO-ASYNC-01: Rail retains its own exact pending navigation ticket,
+    // while Trail ownership always retires that stale async authority. Pending
+    // retirement itself is observable even if Trail already owns focus.
+    #[test]
+    fn ffo_focus_trail_retires_pending_authority() {
+        let mut state = FileManagerLocationsState::default();
+        assert!(state.focus_rail());
+        state.begin_load(
+            PathBuf::from("/workspace"),
+            7,
+            11,
+            13,
+            crate::app::state::FileManagerLocationNavigationIntent::FollowPreview,
+        );
+
+        assert!(!state.focus_rail());
+        assert!(state.pending.is_some(), "Rail keeps its accepted ticket");
+        assert!(state.focus_trail());
+        assert_eq!(state.focus, FileManagerLocationsFocus::Trail);
+        assert!(state.pending.is_none());
+
+        state.begin_load(
+            PathBuf::from("/workspace"),
+            7,
+            11,
+            17,
+            crate::app::state::FileManagerLocationNavigationIntent::EnterTrail,
+        );
+        assert!(state.focus_trail());
+        assert!(state.pending.is_none());
+        assert!(!state.focus_trail());
     }
 
     // TP-FLF-STEP-01: cursor motion is one accessible item per event and

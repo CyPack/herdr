@@ -274,7 +274,7 @@ fn focus_locations_from_trail_root(state: &mut AppState) -> bool {
     if has_compact_action {
         let _ = state.file_manager_locations.open_drawer();
     } else {
-        state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Rail;
+        let _ = state.file_manager_locations.focus_rail();
     }
     let _ = state
         .file_manager_locations
@@ -284,6 +284,15 @@ fn focus_locations_from_trail_root(state: &mut AppState) -> bool {
         .file_manager_locations
         .ensure_cursor_visible(&state.file_manager_locations_model, viewport_height);
     true
+}
+
+fn focus_file_manager_trail(state: &mut AppState) -> bool {
+    let deferred_changed = state
+        .request_file_manager_location_navigation
+        .take()
+        .is_some();
+    let focus_changed = state.file_manager_locations.focus_trail();
+    deferred_changed || focus_changed
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -789,11 +798,13 @@ impl App {
                 let Some(row) = trail_row_target else {
                     return;
                 };
-                if self
-                    .queue_file_manager_trail_directory_activation(row)
-                    .is_some()
-                {
-                    return;
+                match self.queue_file_manager_trail_directory_activation(row) {
+                    Some(true) => {
+                        let _ = focus_file_manager_trail(&mut self.state);
+                        return;
+                    }
+                    Some(false) => return,
+                    None => {}
                 }
                 if let Some((entry_idx, _entry_path, outcome)) = self.activate_trail_row(row) {
                     if let Some(file_manager) = self.state.file_manager.as_mut() {
@@ -850,7 +861,7 @@ impl App {
         }
         crate::render_prof::event("fm.vertical_wheel.accepted");
 
-        let (changed, directory_preview) = {
+        let (trail_changed, directory_preview) = {
             let Some(file_manager) = self.state.file_manager.as_mut() else {
                 return false;
             };
@@ -864,6 +875,8 @@ impl App {
                 .flatten();
             (focus_changed || outcome.changed(), directory_preview)
         };
+        let owner_changed = focus_file_manager_trail(&mut self.state);
+        let changed = trail_changed || owner_changed;
         self.file_manager_mouse_render_override = Some(changed);
 
         if let Some((intent_col, entry_index, expected_path, true)) = directory_preview {
@@ -884,17 +897,26 @@ impl App {
         std::path::PathBuf,
         crate::fm::trail_snapshots::TrailActivateOutcome,
     )> {
-        let file_manager = self.state.file_manager.as_mut()?;
-        let outcome =
-            file_manager.activate_trail_entry(row.trail_index, row.entry_index, &row.entry_path);
-        if outcome == crate::fm::trail_snapshots::TrailActivateOutcome::Rejected {
-            return None;
+        let activated = {
+            let file_manager = self.state.file_manager.as_mut()?;
+            let outcome = file_manager.activate_trail_entry(
+                row.trail_index,
+                row.entry_index,
+                &row.entry_path,
+            );
+            if outcome == crate::fm::trail_snapshots::TrailActivateOutcome::Rejected {
+                return None;
+            }
+            let entry_idx = file_manager
+                .entries
+                .iter()
+                .position(|entry| entry.path == row.entry_path)?;
+            (file_manager.cursor == entry_idx).then(|| (entry_idx, row.entry_path.clone(), outcome))
+        };
+        if activated.is_some() {
+            let _ = focus_file_manager_trail(&mut self.state);
         }
-        let entry_idx = file_manager
-            .entries
-            .iter()
-            .position(|entry| entry.path == row.entry_path)?;
-        (file_manager.cursor == entry_idx).then(|| (entry_idx, row.entry_path.clone(), outcome))
+        activated
     }
 
     /// Route native-FM center-content mouse input before the hidden terminal
@@ -1120,7 +1142,7 @@ impl App {
                 .cloned()
             })
             .flatten();
-        let row_action = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+        let projected_row_action = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
             .then_some(())
             .filter(|_| mouse.modifiers.is_empty())
             .and(trail_row_target.as_ref())
@@ -1128,8 +1150,23 @@ impl App {
                 row.actions
                     .iter()
                     .find(|area| rect_contains(area.rect, mouse.column, mouse.row))
-                    .filter(|area| {
-                        area.entry_idx == row.entry_index && area.entry_path == row.entry_path
+            });
+        let row_action_hit = projected_row_action.is_some();
+        let row_action = projected_row_action
+            .filter(|area| {
+                trail_row_target.as_ref().is_some_and(|row| {
+                    area.entry_idx == row.entry_index && area.entry_path == row.entry_path
+                })
+            })
+            .filter(|area| {
+                self.state
+                    .file_manager
+                    .as_ref()
+                    .and_then(|file_manager| file_manager.trail_entry_identity(&area.entry_path))
+                    .is_some_and(|(trail_col, entry_index)| {
+                        trail_row_target.as_ref().is_some_and(|row| {
+                            trail_col == row.trail_index && entry_index == row.entry_index
+                        })
                     })
             })
             .map(|area| FileManagerMouseDispatch::RowAction {
@@ -1183,8 +1220,7 @@ impl App {
         // Horizontal preference and divider transactions never override a
         // live Trail row identity.
         if in_trail && self.handle_miller_horizontal_scroll(horizontal_kind, mouse.modifiers) {
-            invalidate_deferred_location_navigation(&mut self.state);
-            self.state.file_manager_locations.focus_trail();
+            let _ = focus_file_manager_trail(&mut self.state);
             return FileManagerMouseDispatch::Consumed;
         }
         if trail_row_target.is_none()
@@ -1213,8 +1249,25 @@ impl App {
                 };
             }
             if let Some(row_action) = row_action {
+                let _ = focus_file_manager_trail(&mut self.state);
                 return row_action;
             }
+            if row_action_hit {
+                return FileManagerMouseDispatch::Consumed;
+            }
+        }
+
+        if locations_frame_is_live
+            && trail_frame_is_live
+            && in_trail
+            && trail_row_target.is_none()
+            && trail_section_header_target.is_none()
+            && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+            && mouse.modifiers.is_empty()
+        {
+            let owner_changed = focus_file_manager_trail(&mut self.state);
+            self.file_manager_mouse_render_override = Some(owner_changed);
+            return FileManagerMouseDispatch::Consumed;
         }
 
         let right_click_target = (matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right))
@@ -4759,6 +4812,25 @@ mod tests {
             .state
             .file_manager_locations
             .activate_location(&td.root, &app.state.file_manager_locations_model));
+        let files_generation = app
+            .state
+            .stage
+            .active_instance_generation()
+            .expect("active Files generation");
+        let model_revision = app.state.file_manager_locations_model.revision();
+        let io_generation = 31;
+        app.state.request_file_manager_location_navigation =
+            Some(FileManagerLocationNavigationRequest {
+                path: td.root.clone(),
+                intent: FileManagerLocationNavigationIntent::FollowPreview,
+            });
+        app.state.file_manager_locations.begin_load(
+            td.root.clone(),
+            files_generation,
+            model_revision,
+            io_generation,
+            FileManagerLocationNavigationIntent::FollowPreview,
+        );
         let rail_cursor_before = app.state.file_manager_locations.cursor.clone();
         let target = trail_row_by_path(&app, &td.root.join("00.txt"));
 
@@ -4792,6 +4864,14 @@ mod tests {
             app.state.file_manager_locations.cursor, rail_cursor_before,
             "Trail-owned Down cannot move the Locations Rail cursor"
         );
+        assert!(app.state.request_file_manager_location_navigation.is_none());
+        assert!(app.state.file_manager_locations.pending.is_none());
+        assert!(!app.state.file_manager_locations.is_pending_root(
+            &td.root,
+            files_generation,
+            model_revision,
+            io_generation,
+        ));
         assert_eq!(profile.counter("fm.filesystem.read"), 0);
     }
 
@@ -4867,6 +4947,88 @@ mod tests {
         );
         assert_eq!(app.file_manager_mouse_render_override, Some(true));
         assert_eq!(profile.counter("fm.filesystem.read"), 0);
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                probe.0,
+                probe.1,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(app.file_manager_mouse_render_override, Some(false));
+        assert_eq!(
+            format!(
+                "{:?}",
+                app.state.file_manager.as_ref().expect("open empty Trail")
+            ),
+            trail_before
+        );
+
+        app.state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Rail;
+        app.state.view.file_manager_locations.model_revision = app
+            .state
+            .view
+            .file_manager_locations
+            .model_revision
+            .wrapping_add(1);
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                probe.0,
+                probe.1,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.state.file_manager_locations.focus,
+            crate::app::FileManagerLocationsFocus::Rail,
+            "stale Locations layout cannot grant Trail body authority"
+        );
+        assert_eq!(app.file_manager_mouse_render_override, None);
+    }
+
+    // TP-FFO-LIFE-01: closing Files retires both owner and async location
+    // authority in the same state transaction; reopening cannot inherit Rail.
+    #[test]
+    fn ffo_close_files_restores_trail_owner_and_retires_location_authority() {
+        let td = TempDir::new("ffo-close-owner-lifecycle");
+        td.file("00.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        install_fcl_location_model(&mut app, std::slice::from_ref(&td.root));
+        assert!(app
+            .state
+            .file_manager_locations
+            .activate_location(&td.root, &app.state.file_manager_locations_model));
+        let files_generation = app
+            .state
+            .stage
+            .active_instance_generation()
+            .expect("active Files generation");
+        let model_revision = app.state.file_manager_locations_model.revision();
+        app.state.request_file_manager_location_navigation =
+            Some(FileManagerLocationNavigationRequest {
+                path: td.root.clone(),
+                intent: FileManagerLocationNavigationIntent::EnterTrail,
+            });
+        app.state.file_manager_locations.begin_load(
+            td.root.clone(),
+            files_generation,
+            model_revision,
+            41,
+            FileManagerLocationNavigationIntent::EnterTrail,
+        );
+
+        app.state.close_file_manager();
+
+        assert!(app.state.file_manager.is_none());
+        assert_eq!(
+            app.state.file_manager_locations.focus,
+            crate::app::FileManagerLocationsFocus::Trail
+        );
+        assert!(app.state.file_manager_locations.pending.is_none());
+        assert!(app.state.request_file_manager_location_navigation.is_none());
+        assert!(app.state.view.file_manager_trail.columns.is_empty());
     }
 
     // TP-FFO-MOUSE-04: a coordinate from a retired Trail projection cannot
