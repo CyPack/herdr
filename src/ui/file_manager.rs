@@ -1330,6 +1330,7 @@ fn render_row_action(
 mod tests {
     use super::*;
     use crate::app::state::FileManagerActionBarSelectionKind;
+    use crate::app::FileManagerLocationsFocus;
     use crate::fm::{
         FmDirectoryStatus, FmFilePreview, FmImagePreviewState, FmState, ImagePreviewTarget,
         PreparedImagePreview,
@@ -2001,12 +2002,22 @@ mod tests {
         td.file("beta.txt");
         let mut fm = FmState::new(&td.root);
 
-        let cursor_only = compute_file_manager_action_bar_model(&fm, &[], false);
+        let cursor_only = compute_file_manager_action_bar_model(
+            &fm,
+            &[],
+            false,
+            FileManagerLocationsFocus::Trail,
+        );
         assert!(cursor_only.selection.is_none());
         assert_eq!(cursor_only.clipboard_count, 0);
 
         assert!(fm.replace_selection(0));
-        let directory = compute_file_manager_action_bar_model(&fm, &[], false);
+        let directory = compute_file_manager_action_bar_model(
+            &fm,
+            &[],
+            false,
+            FileManagerLocationsFocus::Trail,
+        );
         let selection = directory.selection.as_ref().expect("directory selection");
         assert_eq!(selection.label, "alpha-dir");
         assert_eq!(selection.paths, vec![td.root.join("alpha-dir")]);
@@ -2015,7 +2026,12 @@ mod tests {
 
         assert!(fm.toggle_selection(1));
         let clipboard = vec![td.root.join("copied-one"), td.root.join("copied-two")];
-        let multiple = compute_file_manager_action_bar_model(&fm, &clipboard, false);
+        let multiple = compute_file_manager_action_bar_model(
+            &fm,
+            &clipboard,
+            false,
+            FileManagerLocationsFocus::Trail,
+        );
         let selection = multiple.selection.as_ref().expect("multiple selection");
         assert_eq!(selection.label, "2 selected");
         assert_eq!(
@@ -2027,15 +2043,24 @@ mod tests {
 
         fm.clear_multi_selection();
         assert!(fm.replace_selection(1));
-        let file = compute_file_manager_action_bar_model(&fm, &clipboard, false);
+        let file = compute_file_manager_action_bar_model(
+            &fm,
+            &clipboard,
+            false,
+            FileManagerLocationsFocus::Trail,
+        );
         let selection = file.selection.as_ref().expect("file selection");
         assert_eq!(selection.label, "beta.txt");
         assert_eq!(selection.paths, vec![td.root.join("beta.txt")]);
         assert_eq!(selection.kind, FileManagerActionBarSelectionKind::File);
 
         let empty = TempDir::new("action-bar-empty");
-        let empty_model =
-            compute_file_manager_action_bar_model(&FmState::new(&empty.root), &[], false);
+        let empty_model = compute_file_manager_action_bar_model(
+            &FmState::new(&empty.root),
+            &[],
+            false,
+            FileManagerLocationsFocus::Trail,
+        );
         assert!(empty_model.selection.is_none());
         assert_eq!(empty_model.clipboard_count, 0);
     }
@@ -2071,7 +2096,12 @@ mod tests {
         td.file("selected.txt");
         let mut fm = FmState::new(&td.root);
         assert!(fm.replace_selection(0));
-        let action_bar = compute_file_manager_action_bar_model(&fm, &[], false);
+        let action_bar = compute_file_manager_action_bar_model(
+            &fm,
+            &[],
+            false,
+            FileManagerLocationsFocus::Trail,
+        );
         assert!(
             !action_bar
                 .action_state(FileManagerHeaderAction::NewFolder)
@@ -2111,7 +2141,12 @@ mod tests {
         assert!(fm.replace_selection(0));
         assert!(fm.toggle_selection(1));
 
-        let model = compute_file_manager_action_bar_model(&fm, &[], false);
+        let model = compute_file_manager_action_bar_model(
+            &fm,
+            &[],
+            false,
+            FileManagerLocationsFocus::Trail,
+        );
         assert_eq!(
             model.selection.expect("bulk selection").paths,
             vec![td.root.join("file2.txt"), td.root.join("file10.txt")]
@@ -2180,7 +2215,12 @@ mod tests {
         td.file("unsupported.txt");
         let mut fm = FmState::new(&td.root);
 
-        let base = compute_file_manager_action_bar_model(&fm, &[], false);
+        let base = compute_file_manager_action_bar_model(
+            &fm,
+            &[],
+            false,
+            FileManagerLocationsFocus::Trail,
+        );
         for action in [
             FileManagerHeaderAction::Copy,
             FileManagerHeaderAction::Delete,
@@ -2205,7 +2245,12 @@ mod tests {
             Some(FileManagerActionDisabledReason::UnsupportedAction)
         );
         assert!(fm.replace_selection(0));
-        let selected = compute_file_manager_action_bar_model(&fm, &[], false);
+        let selected = compute_file_manager_action_bar_model(
+            &fm,
+            &[],
+            false,
+            FileManagerLocationsFocus::Trail,
+        );
         assert!(
             selected
                 .action_state(FileManagerHeaderAction::Copy)
@@ -2220,7 +2265,12 @@ mod tests {
         );
 
         let clipboard = vec![td.root.join("copied.txt")];
-        let with_clipboard = compute_file_manager_action_bar_model(&fm, &clipboard, false);
+        let with_clipboard = compute_file_manager_action_bar_model(
+            &fm,
+            &clipboard,
+            false,
+            FileManagerLocationsFocus::Trail,
+        );
         assert!(
             with_clipboard
                 .action_state(FileManagerHeaderAction::Paste)
@@ -2229,7 +2279,12 @@ mod tests {
         );
 
         fm.cwd_writable = false;
-        let read_only = compute_file_manager_action_bar_model(&fm, &clipboard, false);
+        let read_only = compute_file_manager_action_bar_model(
+            &fm,
+            &clipboard,
+            false,
+            FileManagerLocationsFocus::Trail,
+        );
         assert!(
             read_only
                 .action_state(FileManagerHeaderAction::Copy)
@@ -2259,7 +2314,12 @@ mod tests {
         fm.cwd_writable = true;
         assert!(fm.toggle_selection(1));
         fm.entries[1].kind = crate::fm::entry_kind::FileEntryKind::UnsupportedSpecial;
-        let unsupported = compute_file_manager_action_bar_model(&fm, &clipboard, false);
+        let unsupported = compute_file_manager_action_bar_model(
+            &fm,
+            &clipboard,
+            false,
+            FileManagerLocationsFocus::Trail,
+        );
         for action in [
             FileManagerHeaderAction::Copy,
             FileManagerHeaderAction::Delete,
@@ -2275,7 +2335,12 @@ mod tests {
 
         fm.entries[1].kind = crate::fm::entry_kind::FileEntryKind::RegularFile;
         fm.entries.clear();
-        let stale = compute_file_manager_action_bar_model(&fm, &clipboard, false);
+        let stale = compute_file_manager_action_bar_model(
+            &fm,
+            &clipboard,
+            false,
+            FileManagerLocationsFocus::Trail,
+        );
         for action in [
             FileManagerHeaderAction::Copy,
             FileManagerHeaderAction::Delete,
@@ -2289,7 +2354,12 @@ mod tests {
             );
         }
 
-        let in_flight = compute_file_manager_action_bar_model(&fm, &clipboard, true);
+        let in_flight = compute_file_manager_action_bar_model(
+            &fm,
+            &clipboard,
+            true,
+            FileManagerLocationsFocus::Trail,
+        );
         for action in FileManagerHeaderAction::ALL {
             assert_eq!(
                 in_flight
@@ -2298,6 +2368,47 @@ mod tests {
                     .disabled_reason,
                 Some(FileManagerActionDisabledReason::OperationInFlight)
             );
+        }
+    }
+
+    // TP-FFO-ACTION-01: focus ownership outranks operation and per-action
+    // eligibility without discarding the resident selection or clipboard
+    // metadata needed when Trail focus is restored.
+    #[test]
+    fn ffo_rail_owner_disables_every_file_action_with_owner_precedence() {
+        let td = TempDir::new("ffo-rail-action-authority");
+        td.file("selected.txt");
+        let mut fm = FmState::new(&td.root);
+        assert!(fm.replace_selection(0));
+        let selected = td.root.join("selected.txt");
+        let clipboard = vec![td.root.join("clipboard.txt")];
+
+        for operation_in_flight in [false, true] {
+            let model = compute_file_manager_action_bar_model(
+                &fm,
+                &clipboard,
+                operation_in_flight,
+                FileManagerLocationsFocus::Rail,
+            );
+
+            assert_eq!(
+                model
+                    .selection
+                    .as_ref()
+                    .expect("resident selection metadata")
+                    .paths,
+                [selected.clone()]
+            );
+            assert_eq!(model.clipboard_count, 1);
+            for action in FileManagerHeaderAction::ALL {
+                let state = model.action_state(action).expect("catalog action");
+                assert!(!state.enabled, "Rail cannot authorize {action:?}");
+                assert_eq!(
+                    format!("{:?}", state.disabled_reason),
+                    "Some(InactiveFocusOwner)",
+                    "focus ownership must outrank every other reason for {action:?}"
+                );
+            }
         }
     }
 

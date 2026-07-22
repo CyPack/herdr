@@ -1496,6 +1496,24 @@ mod tests {
         )
     }
 
+    fn directory_snapshot(root: &std::path::Path) -> Vec<(std::ffi::OsString, bool, Vec<u8>)> {
+        let mut snapshot = fs::read_dir(root)
+            .expect("read directory snapshot")
+            .map(|entry| {
+                let entry = entry.expect("directory snapshot entry");
+                let file_type = entry.file_type().expect("directory snapshot file type");
+                let bytes = if file_type.is_file() {
+                    fs::read(entry.path()).expect("read directory snapshot file")
+                } else {
+                    Vec::new()
+                };
+                (entry.file_name(), file_type.is_dir(), bytes)
+            })
+            .collect::<Vec<_>>();
+        snapshot.sort_by(|left, right| left.0.cmp(&right.0));
+        snapshot
+    }
+
     // TP-C4.1-LIFECYCLE: one bounded lane rejects concurrent work and reopens
     // only after the current generation reaches one terminal completion.
     #[test]
@@ -1961,6 +1979,100 @@ mod tests {
             fs::read(second).expect("read second after copy action"),
             before_second
         );
+    }
+
+    // TP-FFO-ACTION-03: direct controller callers cannot bypass the current
+    // focus owner. An otherwise valid Copy must neither queue an intent nor
+    // alter resident clipboard or filesystem state while Rail owns focus.
+    #[test]
+    fn ffo_rail_owner_rejects_direct_copy_without_side_effects() {
+        let td = TempDir::new("ffo-direct-copy");
+        let selected = td.root.join("selected.txt");
+        fs::write(&selected, b"selected").expect("write direct-copy fixture");
+        let mut file_manager = crate::fm::FmState::new(&td.root);
+        assert!(file_manager.replace_selection(0));
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+        app.state.file_manager_clipboard = vec![td.root.join("resident-clipboard.txt")];
+        app.state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Rail;
+        let before_clipboard = app.state.file_manager_clipboard.clone();
+        let before_directory = directory_snapshot(&td.root);
+
+        assert!(!app.dispatch_file_manager_header_action(FileManagerHeaderAction::Copy));
+
+        assert_eq!(app.state.file_manager_clipboard, before_clipboard);
+        assert!(app.state.request_file_manager_context_action.is_none());
+        assert!(app.state.file_manager_operation.is_none());
+        assert!(!app.file_operation_worker.is_busy());
+        assert_eq!(directory_snapshot(&td.root), before_directory);
+    }
+
+    // TP-FFO-ACTION-03: Paste must reject Rail authority before preflight or
+    // worker admission. The injected executor blocks without mutating disk if
+    // the old implementation incorrectly starts it during the RED run.
+    #[test]
+    fn ffo_rail_owner_rejects_direct_paste_before_worker_or_filesystem() {
+        let td = TempDir::new("ffo-direct-paste");
+        let source_root = td.root.join("source");
+        let destination = td.root.join("destination");
+        fs::create_dir(&source_root).expect("create direct-paste source root");
+        fs::create_dir(&destination).expect("create direct-paste destination");
+        let source = source_root.join("payload.txt");
+        fs::write(&source, b"payload").expect("write direct-paste source");
+        let mut app = test_app();
+        let (_release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        app.file_operation_worker = FileOperationWorker::with_executor(
+            Arc::new(Notify::new()),
+            move |plan, cancellation| {
+                release_rx
+                    .recv()
+                    .expect("Rail-owned Paste unexpectedly reached the worker");
+                execute_file_operation(plan, cancellation)
+            },
+        );
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&destination)))
+            .expect("Files activation");
+        app.state.file_manager_clipboard = vec![source.clone()];
+        app.state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Rail;
+        let before_source = directory_snapshot(&source_root);
+        let before_destination = directory_snapshot(&destination);
+
+        assert!(!app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
+
+        assert_eq!(app.state.file_manager_clipboard, vec![source]);
+        assert!(app.state.request_file_manager_context_action.is_none());
+        assert!(app.state.file_manager_operation.is_none());
+        assert!(!app.file_operation_worker.is_busy());
+        assert_eq!(directory_snapshot(&source_root), before_source);
+        assert_eq!(directory_snapshot(&destination), before_destination);
+    }
+
+    // TP-FFO-ACTION-03: Delete authority is also owner-scoped at the direct
+    // controller boundary; Rail cannot even queue a confirmation intent.
+    #[test]
+    fn ffo_rail_owner_rejects_direct_delete_without_side_effects() {
+        let td = TempDir::new("ffo-direct-delete");
+        let selected = td.root.join("selected.txt");
+        fs::write(&selected, b"selected").expect("write direct-delete fixture");
+        let mut file_manager = crate::fm::FmState::new(&td.root);
+        assert!(file_manager.replace_selection(0));
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+        app.state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Rail;
+        let before_directory = directory_snapshot(&td.root);
+
+        assert!(!app.dispatch_file_manager_header_action(FileManagerHeaderAction::Delete));
+
+        assert!(app.state.request_file_manager_context_action.is_none());
+        assert!(app.state.file_manager_delete_confirmation.is_none());
+        assert!(app.state.file_manager_operation.is_none());
+        assert!(!app.file_operation_worker.is_busy());
+        assert_eq!(directory_snapshot(&td.root), before_directory);
     }
 
     // TP-C6.3-AUTHORITY: Context Open is a scheduled A3 navigation intent,

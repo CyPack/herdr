@@ -8529,6 +8529,88 @@ mod tests {
         );
     }
 
+    // TP-FFO-ACTION-02: a prepared Trail-owned action rectangle is paint
+    // history, not dispatch authority. If Rail takes focus before the next
+    // frame, the old enabled Copy target is consumed without emitting intent.
+    #[test]
+    fn ffo_prepared_enabled_header_action_fails_closed_after_rail_takes_focus() {
+        let td = TempDir::new("ffo-stale-prepared-header");
+        td.file("selected.txt");
+        let selected_path = td.root.join("selected.txt");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        assert!(app
+            .state
+            .file_manager
+            .as_mut()
+            .expect("open FM")
+            .replace_selection(0));
+        app.state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Trail;
+        install_wide_header_actions(&mut app);
+        app.state.view.file_manager_action_bar = app.state.file_manager.as_ref().map(|fm| {
+            crate::ui::compute_file_manager_action_bar_model(
+                fm,
+                &app.state.file_manager_clipboard,
+                false,
+                crate::app::FileManagerLocationsFocus::Trail,
+            )
+        });
+        assert!(app
+            .state
+            .view
+            .file_manager_action_bar
+            .as_ref()
+            .and_then(|model| model.action_state(FileManagerHeaderAction::Copy))
+            .is_some_and(|action| action.enabled));
+
+        let before_selection = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .multi_selection_paths()
+            .clone();
+        let before_clipboard = app.state.file_manager_clipboard.clone();
+        let before_file = fs::read(&selected_path).expect("read selected fixture before click");
+        let mut before_entries = fs::read_dir(&td.root)
+            .expect("read fixture directory before click")
+            .map(|entry| entry.expect("fixture entry").file_name())
+            .collect::<Vec<_>>();
+        before_entries.sort();
+
+        app.state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Rail;
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 50, 0)),
+            FileManagerMouseDispatch::Consumed
+        );
+
+        assert_eq!(
+            app.state.file_manager_locations.focus,
+            crate::app::FileManagerLocationsFocus::Rail
+        );
+        assert_eq!(app.state.file_manager_clipboard, before_clipboard);
+        assert!(app.state.request_file_manager_context_action.is_none());
+        assert!(app.state.file_manager_operation.is_none());
+        assert!(app.state.file_manager_delete_confirmation.is_none());
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .multi_selection_paths(),
+            &before_selection
+        );
+        assert_eq!(
+            fs::read(&selected_path).expect("read selected fixture after click"),
+            before_file
+        );
+        let mut after_entries = fs::read_dir(&td.root)
+            .expect("read fixture directory after click")
+            .map(|entry| entry.expect("fixture entry").file_name())
+            .collect::<Vec<_>>();
+        after_entries.sort();
+        assert_eq!(after_entries, before_entries);
+    }
+
     // TP-C2.2-ROW-DISPATCH: every complete visible row-action rectangle
     // resolves to its exact tag plus stable path identity. C2.2 only routes
     // tags; it must not select the row or mutate clipboard/cwd/filesystem.
