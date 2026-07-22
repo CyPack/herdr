@@ -232,6 +232,7 @@ impl App {
                     .file_manager_operation
                     .as_ref()
                     .is_some_and(crate::app::state::FileManagerOperationState::is_running),
+                self.state.file_manager_locations.focus,
             );
             let plugin_actions = file_manifest_actions(&self.state.installed_plugins);
             crate::app::state::FileManagerContextMenuModel::from_action_bar_with_plugins(
@@ -1941,7 +1942,7 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
                     plugin_id: "example.fm-runtime".into(),
                     action_id: "inspect".into(),
                 },
-                paths: vec![selected],
+                paths: vec![selected.clone()],
             });
 
         let _ = app.handle_scheduled_tasks(std::time::Instant::now(), false);
@@ -1956,6 +1957,27 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
         let _ = app.handle_scheduled_tasks(std::time::Instant::now(), false);
         assert_eq!(app.state.plugin_command_logs.len(), 1);
         assert_eq!(app.state.plugin_command_logs[0].log_id, first_log_id);
+
+        app.state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Rail;
+        app.state.request_file_manager_context_action =
+            Some(crate::app::state::FileManagerContextActionIntent {
+                action: crate::app::state::FileManagerContextMenuAction::Plugin {
+                    plugin_id: "example.fm-runtime".into(),
+                    action_id: "inspect".into(),
+                },
+                paths: vec![selected.clone()],
+            });
+        let _ = app.handle_scheduled_tasks(std::time::Instant::now(), false);
+        assert!(app.state.request_file_manager_context_action.is_none());
+        assert_eq!(
+            app.state.plugin_command_logs.len(),
+            1,
+            "Rail-owned plugin intent cannot start another command"
+        );
+        assert_eq!(
+            std::fs::read(&selected).expect("Rail-owned plugin preserves selected file"),
+            b"selected"
+        );
 
         let _ = std::fs::remove_dir_all(files_root);
         let _ = std::fs::remove_dir_all(plugin_root);

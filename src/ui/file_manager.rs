@@ -299,10 +299,13 @@ pub(crate) fn compute_file_manager_action_bar_model(
     file_manager: &FmState,
     clipboard: &[std::path::PathBuf],
     operation_in_flight: bool,
+    focus_owner: crate::app::FileManagerLocationsFocus,
 ) -> FileManagerActionBarModel {
     let prepared_selection = prepare_file_manager_action_bar_selection(file_manager);
     let actions = FileManagerHeaderAction::ALL.map(|action| {
-        let disabled_reason = if operation_in_flight {
+        let disabled_reason = if focus_owner != crate::app::FileManagerLocationsFocus::Trail {
+            Some(FileManagerActionDisabledReason::InactiveFocusOwner)
+        } else if operation_in_flight {
             Some(FileManagerActionDisabledReason::OperationInFlight)
         } else {
             match action {
@@ -626,6 +629,7 @@ pub(crate) fn render_file_manager(app: &AppState, frame: &mut Frame, area: Rect)
             app.file_manager_operation
                 .as_ref()
                 .is_some_and(crate::app::state::FileManagerOperationState::is_running),
+            app.file_manager_locations.focus,
         );
         Some(&fallback_action_bar)
     };
@@ -2396,19 +2400,27 @@ mod tests {
                     .selection
                     .as_ref()
                     .expect("resident selection metadata")
-                    .paths,
-                [selected.clone()]
+                    .paths
+                    .as_slice(),
+                std::slice::from_ref(&selected)
             );
             assert_eq!(model.clipboard_count, 1);
             for action in FileManagerHeaderAction::ALL {
                 let state = model.action_state(action).expect("catalog action");
                 assert!(!state.enabled, "Rail cannot authorize {action:?}");
                 assert_eq!(
-                    format!("{:?}", state.disabled_reason),
-                    "Some(InactiveFocusOwner)",
+                    state.disabled_reason,
+                    Some(FileManagerActionDisabledReason::InactiveFocusOwner),
                     "focus ownership must outrank every other reason for {action:?}"
                 );
             }
+            let context = crate::app::state::FileManagerContextMenuModel::from_action_bar(&model)
+                .expect("resident selection keeps context metadata available");
+            assert!(context.items.iter().all(|item| {
+                !item.enabled
+                    && item.disabled_reason
+                        == Some(FileManagerActionDisabledReason::InactiveFocusOwner)
+            }));
         }
     }
 

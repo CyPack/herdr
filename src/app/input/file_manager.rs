@@ -621,6 +621,7 @@ impl App {
                 .file_manager_operation
                 .as_ref()
                 .is_some_and(crate::app::state::FileManagerOperationState::is_running),
+            self.state.file_manager_locations.focus,
         );
         let Some(model) =
             FileManagerContextMenuModel::from_action_bar_with_plugins(&action_bar, &[])
@@ -749,6 +750,7 @@ impl App {
                     .file_manager_operation
                     .as_ref()
                     .is_some_and(|operation| operation.is_running()),
+                self.state.file_manager_locations.focus,
             )
         });
         let plugin_actions =
@@ -1235,14 +1237,20 @@ impl App {
             && mouse.modifiers.is_empty()
         {
             if let Some(header_action) = header_action {
-                let enabled = self
+                let prepared_enabled = self
                     .state
                     .view
                     .file_manager_action_bar
                     .as_ref()
                     .and_then(|model| model.action_state(header_action))
                     .is_some_and(|state| state.enabled);
-                return if enabled {
+                let currently_enabled = prepared_enabled
+                    && super::super::file_operation_worker::current_action_paths(
+                        &self.state,
+                        header_action,
+                    )
+                    .is_some();
+                return if currently_enabled {
                     FileManagerMouseDispatch::HeaderAction(header_action)
                 } else {
                     FileManagerMouseDispatch::Consumed
@@ -8329,24 +8337,42 @@ mod tests {
         );
     }
 
-    // TP-C1.2-DISPATCH: every complete visible header rectangle resolves to
-    // its exact tag, while C1.2 performs no filesystem mutation or selection.
+    // TP-C1.2-DISPATCH / TP-FFO-ACTION-03: a complete visible header rectangle
+    // resolves to its exact tag only while current Trail authority also enables
+    // that action. Unsupported actions are consumed without filesystem work.
     #[test]
-    fn header_left_click_dispatches_exact_tags_without_filesystem_effects() {
+    fn header_left_click_dispatches_currently_enabled_exact_tags_without_filesystem_effects() {
         let td = TempDir::new("header-actions");
         td.file("selected.txt");
         let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        assert!(app
+            .state
+            .file_manager
+            .as_mut()
+            .expect("open FM")
+            .replace_selection(0));
+        app.state.file_manager_clipboard = vec![td.root.join("selected.txt")];
+        app.state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Trail;
         install_wide_header_actions(&mut app);
         let before_entries = fs::read_dir(&td.root)
             .expect("read fixture before clicks")
             .map(|entry| entry.expect("fixture entry").file_name())
             .collect::<Vec<_>>();
 
-        for (column, action) in [
-            (50, FileManagerHeaderAction::Copy),
-            (63, FileManagerHeaderAction::Paste),
-            (76, FileManagerHeaderAction::NewFolder),
-            (85, FileManagerHeaderAction::Delete),
+        for (column, expected) in [
+            (
+                50,
+                FileManagerMouseDispatch::HeaderAction(FileManagerHeaderAction::Copy),
+            ),
+            (
+                63,
+                FileManagerMouseDispatch::HeaderAction(FileManagerHeaderAction::Paste),
+            ),
+            (76, FileManagerMouseDispatch::Consumed),
+            (
+                85,
+                FileManagerMouseDispatch::HeaderAction(FileManagerHeaderAction::Delete),
+            ),
         ] {
             assert_eq!(
                 app.handle_file_manager_mouse(mouse(
@@ -8354,7 +8380,7 @@ mod tests {
                     column,
                     0,
                 )),
-                FileManagerMouseDispatch::HeaderAction(action)
+                expected
             );
         }
 

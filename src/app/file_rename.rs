@@ -76,6 +76,7 @@ impl crate::app::App {
                 .file_manager_operation
                 .as_ref()
                 .is_some_and(FileManagerOperationState::is_running),
+            self.state.file_manager_locations.focus,
         );
         let Some(model) =
             FileManagerContextMenuModel::from_action_bar_with_plugins(&action_bar, &[])
@@ -94,7 +95,8 @@ impl crate::app::App {
     }
 
     fn open_file_manager_rename(&mut self, paths: Vec<std::path::PathBuf>) -> bool {
-        if paths.len() != 1
+        if self.state.file_manager_locations.focus != crate::app::FileManagerLocationsFocus::Trail
+            || paths.len() != 1
             || self.file_operation_worker.is_busy()
             || self
                 .state
@@ -140,6 +142,9 @@ impl crate::app::App {
     }
 
     pub(super) fn submit_file_manager_rename(&mut self) -> bool {
+        if self.state.file_manager_locations.focus != crate::app::FileManagerLocationsFocus::Trail {
+            return false;
+        }
         let Some(rename) = self.state.file_manager_rename.as_ref() else {
             return false;
         };
@@ -392,6 +397,36 @@ mod tests {
         assert_ne!(app.state.mode, Mode::RenameFile);
         assert!(app.state.file_manager_operation.is_none());
         assert!(source.exists());
+        assert!(!source.with_file_name("renamed.txt").exists());
+    }
+
+    // TP-FFO-ACTION-03: direct rename entry points share the same current
+    // Trail-owner law as the header/context actions. Rail cannot open a rename
+    // modal, and a focus change after modal preparation cannot emit a request.
+    #[test]
+    fn ffo_rail_owner_rejects_direct_rename_open_and_submit() {
+        let (_td, mut app, source) = app_with_source("ffo-rename-owner");
+        app.state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Rail;
+
+        assert!(!app.open_file_manager_row_rename(source.clone()));
+        assert!(!app.open_file_manager_context_rename(vec![source.clone()]));
+        assert_ne!(app.state.mode, Mode::RenameFile);
+        assert!(app.state.file_manager_rename.is_none());
+        assert!(app.state.request_file_manager_rename.is_none());
+
+        app.state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Trail;
+        assert!(app.open_file_manager_row_rename(source.clone()));
+        app.state.name_input = "renamed.txt".to_string();
+        app.state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Rail;
+
+        assert!(!app.submit_file_manager_rename());
+        assert_eq!(app.state.mode, Mode::RenameFile);
+        assert!(app.state.file_manager_rename.is_some());
+        assert!(app.state.request_file_manager_rename.is_none());
+        assert_eq!(
+            fs::read(&source).expect("Rail-owned rename preserves source"),
+            b"selected"
+        );
         assert!(!source.with_file_name("renamed.txt").exists());
     }
 

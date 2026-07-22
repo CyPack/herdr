@@ -888,6 +888,7 @@ pub struct FileManagerActionBarSelection {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileManagerActionDisabledReason {
+    InactiveFocusOwner,
     NoSelection,
     EmptyClipboard,
     ReadOnlyTarget,
@@ -1026,6 +1027,7 @@ impl FileManagerContextMenuModel {
         );
         let selection_reasons = [copy_reason, write_reason];
         let selection_failure = [
+            FileManagerActionDisabledReason::InactiveFocusOwner,
             FileManagerActionDisabledReason::OperationInFlight,
             FileManagerActionDisabledReason::StaleSelection,
             FileManagerActionDisabledReason::UnsupportedSelection,

@@ -349,6 +349,7 @@ fn compute_view_internal(
             app.file_manager_operation
                 .as_ref()
                 .is_some_and(crate::app::state::FileManagerOperationState::is_running),
+            app.file_manager_locations.focus,
         )
     });
     let file_manager_header_action_areas = if app.file_manager.is_some() {
@@ -540,6 +541,7 @@ fn compute_mobile_view(
             app.file_manager_operation
                 .as_ref()
                 .is_some_and(crate::app::state::FileManagerOperationState::is_running),
+            app.file_manager_locations.focus,
         )
     });
     let file_manager_header_action_areas = if app.file_manager.is_some() {

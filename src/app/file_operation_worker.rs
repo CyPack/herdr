@@ -752,6 +752,9 @@ impl crate::app::App {
             FileManagerOperationKind, FileManagerOperationState, FileManagerOperationStatus,
         };
 
+        if self.state.file_manager_locations.focus != crate::app::FileManagerLocationsFocus::Trail {
+            return false;
+        }
         let Some(file_manager) = self.state.file_manager.as_ref() else {
             return false;
         };
@@ -820,6 +823,9 @@ impl crate::app::App {
             FileManagerOperationKind, FileManagerOperationState, FileManagerOperationStatus,
         };
 
+        if self.state.file_manager_locations.focus != crate::app::FileManagerLocationsFocus::Trail {
+            return false;
+        }
         let Some(file_manager) = self.state.file_manager.as_ref() else {
             return false;
         };
@@ -1005,6 +1011,7 @@ impl crate::app::App {
                 .file_manager_operation
                 .as_ref()
                 .is_some_and(crate::app::state::FileManagerOperationState::is_running),
+            self.state.file_manager_locations.focus,
         );
         let is_current =
             crate::app::state::FileManagerContextMenuModel::from_action_bar_with_plugins(
@@ -1116,6 +1123,7 @@ pub(super) fn current_action_paths(
             .file_manager_operation
             .as_ref()
             .is_some_and(crate::app::state::FileManagerOperationState::is_running),
+        state.file_manager_locations.focus,
     );
     action_bar
         .action_state(action)
@@ -3141,6 +3149,103 @@ mod tests {
             .entries
             .iter()
             .all(|entry| entry.path != source));
+    }
+
+    // TP-FFO-ACTION-03: an injected rename request is consumed but cannot
+    // reach worker admission after Rail becomes the current focus owner.
+    #[test]
+    fn ffo_rail_owner_rejects_injected_rename_before_worker_or_filesystem() {
+        let td = TempDir::new("ffo-injected-rename");
+        let source = td.root.join("selected.txt");
+        let destination = td.root.join("renamed.txt");
+        fs::write(&source, b"selected").expect("write injected-rename source");
+        let mut app = test_app();
+        let (_release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        app.file_operation_worker = FileOperationWorker::with_task_executor(
+            Arc::new(Notify::new()),
+            move |task, cancellation| match task {
+                FileOperationWorkerTask::Rename(plan) => {
+                    release_rx
+                        .recv()
+                        .expect("Rail-owned rename unexpectedly reached the worker");
+                    FileOperationWorkerResult::Rename(crate::fm::rename::execute_rename_operation(
+                        plan,
+                        cancellation,
+                    ))
+                }
+                _ => panic!("expected rename worker task"),
+            },
+        );
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files activation");
+        app.state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Rail;
+        app.state.request_file_manager_rename = Some(crate::app::state::FileManagerRenameRequest {
+            source_path: source.clone(),
+            new_name: "renamed.txt".to_string(),
+        });
+
+        assert!(app.sync_file_operation_worker());
+
+        assert!(app.state.request_file_manager_rename.is_none());
+        assert!(app.state.file_manager_operation.is_none());
+        assert!(!app.file_operation_worker.is_busy());
+        assert_eq!(
+            fs::read(&source).expect("Rail-owned rename preserves source"),
+            b"selected"
+        );
+        assert!(!destination.exists());
+    }
+
+    // TP-FFO-ACTION-03: the bulk-rename worker boundary follows the same
+    // owner law; an injected otherwise-valid mapping cannot bypass Rail focus.
+    #[test]
+    fn ffo_rail_owner_rejects_injected_bulk_rename_before_worker_or_filesystem() {
+        let td = TempDir::new("ffo-injected-bulk-rename");
+        let alpha = td.root.join("alpha.txt");
+        let beta = td.root.join("beta.txt");
+        fs::write(&alpha, b"alpha").expect("write bulk alpha source");
+        fs::write(&beta, b"beta").expect("write bulk beta source");
+        let mut file_manager = crate::fm::FmState::new(&td.root);
+        assert!(file_manager.replace_selection(0));
+        assert!(file_manager.toggle_selection(1));
+        let mut app = test_app();
+        let (_release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        app.file_operation_worker = FileOperationWorker::with_task_executor(
+            Arc::new(Notify::new()),
+            move |task, cancellation| match task {
+                FileOperationWorkerTask::BulkRename(plan) => {
+                    release_rx
+                        .recv()
+                        .expect("Rail-owned bulk rename unexpectedly reached the worker");
+                    FileOperationWorkerResult::BulkRename(
+                        crate::fm::rename::execute_bulk_rename_operation(plan, cancellation),
+                    )
+                }
+                _ => panic!("expected bulk-rename worker task"),
+            },
+        );
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+        app.state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Rail;
+        app.state.request_file_manager_bulk_rename =
+            Some(crate::app::state::FileManagerBulkRenameRequest {
+                mappings: vec![
+                    (alpha.clone(), "alpha-renamed.txt".to_string()),
+                    (beta.clone(), "beta-renamed.txt".to_string()),
+                ],
+            });
+
+        assert!(app.sync_file_operation_worker());
+
+        assert!(app.state.request_file_manager_bulk_rename.is_none());
+        assert!(app.state.file_manager_operation.is_none());
+        assert!(!app.file_operation_worker.is_busy());
+        assert_eq!(fs::read(&alpha).expect("Rail preserves alpha"), b"alpha");
+        assert_eq!(fs::read(&beta).expect("Rail preserves beta"), b"beta");
+        assert!(!td.root.join("alpha-renamed.txt").exists());
+        assert!(!td.root.join("beta-renamed.txt").exists());
     }
 
     // TP-C4.3-LIFECYCLE: stale, closed, or busy App authority is consumed but

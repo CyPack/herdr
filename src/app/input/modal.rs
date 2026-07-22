@@ -697,6 +697,7 @@ fn validated_file_context_action(
             .file_manager_operation
             .as_ref()
             .is_some_and(|operation| operation.is_running()),
+        state.file_manager_locations.focus,
     );
     let plugin_actions = crate::app::api::plugins::file_manifest_actions(&state.installed_plugins);
     let current =
