@@ -88,9 +88,16 @@ const cases = [
     contract:
       "Rail cursor outranks accepted origin while retained Trail focus stays inactive",
   },
+  {
+    name: "vis-27-files-locations-trail-focus",
+    width: 96,
+    height: 24,
+    contract:
+      "Trail cursor owns the shared focus style while the accepted Rail origin stays subdued",
+  },
 ] as const;
 
-// VIS-18..26 (FCL-6/FLF): each snapshot is rendered from the real Ratatui
+// VIS-18..27 (FCL-6/FLF/FFO): each snapshot is rendered from the real Ratatui
 // TestBackend buffer. Chromium only maps exact prepared cells to pixels.
 for (const visual of cases) {
   test(`${visual.name}: ${visual.contract}`, async ({ page }) => {

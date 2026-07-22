@@ -611,7 +611,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    fn export_locations_follow_visual_fixture(out_dir: &std::path::Path) {
+    fn export_locations_focus_visual_fixtures(out_dir: &std::path::Path) {
         use crate::app::state::{FileManagerLocationIcon, FileManagerLocationsModel};
         use crate::ui::file_manager::locations::FileManagerLocationsMode;
 
@@ -657,7 +657,7 @@ mod tests {
             .file_manager_locations
             .select_cursor(&downloads, &app.file_manager_locations_model));
 
-        let buffer = render_fcl_visual(
+        let rail_buffer = render_fcl_visual(
             &mut app,
             96,
             24,
@@ -676,6 +676,7 @@ mod tests {
             .rows
             .iter()
             .find(|row| row.path == home)
+            .map(|row| row.rect)
             .expect("VIS-26 Home row");
         let downloads_row = app
             .view
@@ -683,46 +684,145 @@ mod tests {
             .rows
             .iter()
             .find(|row| row.path == downloads)
+            .map(|row| row.rect)
             .expect("VIS-26 Downloads row");
-        let origin = &buffer[(home_row.rect.x, home_row.rect.y)];
-        let cursor = &buffer[(downloads_row.rect.x, downloads_row.rect.y)];
-        assert!(origin
+        let origin = &rail_buffer[(home_row.x, home_row.y)];
+        let cursor = &rail_buffer[(downloads_row.x, downloads_row.y)];
+        assert_eq!(
+            (origin.fg, origin.bg),
+            (app.palette.accent, app.palette.panel_bg)
+        );
+        assert!(origin.modifier.contains(Modifier::BOLD));
+        assert!(!origin
             .modifier
-            .contains(Modifier::BOLD | Modifier::UNDERLINED));
-        assert!(!origin.modifier.contains(Modifier::REVERSED));
+            .intersects(Modifier::REVERSED | Modifier::UNDERLINED));
+        assert_eq!(
+            (cursor.fg, cursor.bg),
+            (app.palette.accent, app.palette.panel_bg)
+        );
         assert!(cursor
             .modifier
             .contains(Modifier::BOLD | Modifier::REVERSED));
-        let inactive_trail_row = app
+        assert!(!cursor.modifier.contains(Modifier::UNDERLINED));
+        let rail_cursor_style = cursor.style();
+        assert_eq!(
+            app.view
+                .file_manager_locations
+                .rows
+                .iter()
+                .filter(|row| rail_buffer[(row.rect.x, row.rect.y)]
+                    .modifier
+                    .contains(Modifier::REVERSED))
+                .count(),
+            1,
+            "VIS-26 has exactly one Rail focus cursor"
+        );
+        let inactive_trail_rows = app
             .view
             .file_manager_trail
             .columns
             .iter()
-            .find_map(|column| {
-                let selected = column.selected_entry?;
-                column.rows.iter().find(|row| row.entry_index == selected)
-            })
-            .expect("VIS-26 accepted Trail row");
-        let inactive_trail = &buffer[(inactive_trail_row.rect.x, inactive_trail_row.rect.y)];
-        assert!(!inactive_trail.modifier.contains(Modifier::REVERSED));
-        assert_eq!(inactive_trail.bg, app.palette.panel_bg);
+            .flat_map(|column| &column.rows)
+            .map(|row| row.rect)
+            .collect::<Vec<_>>();
+        assert!(
+            !inactive_trail_rows.is_empty(),
+            "VIS-26 resident Trail rows"
+        );
+        assert!(inactive_trail_rows.iter().all(|row| {
+            !rail_buffer[(row.x, row.y)]
+                .modifier
+                .contains(Modifier::REVERSED)
+        }));
 
         write_fixture(
             out_dir,
-            export_cell_fixture("vis-26-files-locations-follow-focus", &buffer),
+            export_cell_fixture("vis-26-files-locations-follow-focus", &rail_buffer),
+        );
+
+        assert!(app.file_manager_locations.focus_trail());
+        let trail_buffer = render_fcl_visual(
+            &mut app,
+            96,
+            24,
+            FileManagerLocationsMode::Wide,
+            Some(24),
+            1,
+            true,
+        );
+        assert_eq!(
+            app.file_manager_locations.focus,
+            crate::app::FileManagerLocationsFocus::Trail
+        );
+        let active_col = app
+            .file_manager
+            .as_ref()
+            .expect("VIS-27 open file manager")
+            .trail
+            .active_col();
+        let active_trail_row = app
+            .view
+            .file_manager_trail
+            .columns
+            .iter()
+            .find(|column| column.trail_index == active_col)
+            .and_then(|column| {
+                let selected = column.selected_entry?;
+                column.rows.iter().find(|row| row.entry_index == selected)
+            })
+            .map(|row| row.rect)
+            .expect("VIS-27 active Trail row");
+        assert_eq!(
+            trail_buffer[(active_trail_row.x, active_trail_row.y)].style(),
+            rail_cursor_style,
+            "VIS-27 Trail cursor reuses the VIS-26 Rail cursor tuple"
+        );
+        assert_eq!(
+            app.view
+                .file_manager_trail
+                .columns
+                .iter()
+                .flat_map(|column| &column.rows)
+                .filter(|row| trail_buffer[(row.rect.x, row.rect.y)]
+                    .modifier
+                    .contains(Modifier::REVERSED))
+                .count(),
+            1,
+            "VIS-27 has exactly one active Miller cursor"
+        );
+        assert!(app
+            .view
+            .file_manager_locations
+            .rows
+            .iter()
+            .all(|row| !trail_buffer[(row.rect.x, row.rect.y)]
+                .modifier
+                .contains(Modifier::REVERSED)));
+        let trail_origin = &trail_buffer[(home_row.x, home_row.y)];
+        assert_eq!(
+            (trail_origin.fg, trail_origin.bg),
+            (app.palette.accent, app.palette.panel_bg)
+        );
+        assert!(trail_origin.modifier.contains(Modifier::BOLD));
+        assert!(!trail_origin
+            .modifier
+            .intersects(Modifier::REVERSED | Modifier::UNDERLINED));
+        write_fixture(
+            out_dir,
+            export_cell_fixture("vis-27-files-locations-trail-focus", &trail_buffer),
         );
         let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
-    #[ignore = "exports only VIS-26; set HERDR_VISUAL_FIXTURE_DIR explicitly"]
+    #[ignore = "exports only VIS-26/27; set HERDR_VISUAL_FIXTURE_DIR explicitly"]
     fn write_locations_follow_visual_fixture() {
         let out_dir = std::path::PathBuf::from(
             std::env::var("HERDR_VISUAL_FIXTURE_DIR")
                 .expect("HERDR_VISUAL_FIXTURE_DIR must point at the fixture output directory"),
         );
         std::fs::create_dir_all(&out_dir).expect("create FLF fixture output dir");
-        export_locations_follow_visual_fixture(&out_dir);
+        export_locations_focus_visual_fixtures(&out_dir);
     }
 
     #[test]
