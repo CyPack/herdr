@@ -1,26 +1,42 @@
 # Herdr Native-FM Planning State
 
-- Updated: 2026-07-21
+- Updated: 2026-07-22
 - Branch: `feat/native-fm`
-- Current override: **Main Native Files stutter closed; FMN input corrections
-  next.** The human-accepted product head is `d8583d3a`; closure publication
+- Current override: **Main Native Files stutter closed; FMN navigation
+  implemented locally, human E2E/publication pending.** The human-accepted
+  main-stutter product head is `d8583d3a`; closure publication
   adds `8f4b2acc` test-only path-identity fixture and `d52b4417` closure/Yazi/
-  lessons. The published branch tip is the commit containing this state record
-  and must be revalidated against `origin/feat/native-fm` on resume. The user
+  lessons, with prior published continuity at `616e7278`. The FMN diff remains
+  uncommitted until its message is aligned and must be revalidated against
+  `origin/feat/native-fm` on resume. The user
   completed the isolated live test and reported that the original freeze and
   stutter appear completely gone. Final production commits: `b2accbb4` resident file
   projection, `8851b5e0` inert-move render gate, `ed329058` off-loop text
   preview, `d8583d3a` deterministic filesystem-time fixtures. Canonical
   closure:
   `.codex/evidence/files-performance-fix-closure-and-navigation-followups.md`.
-  The next task is FMN-1: measure physical wheel gesture -> decoded event ->
-  dispatch -> cursor mutation, then FMN-2 RED cursor-only Up/Down/wheel versus
-  explicit Right/Enter/click activation. Do not add wheel debounce before the
-  trace and do not add a general cache. Pinned Yazi reference:
+  FMN-1 through FMN-4 are complete. Isolated Ghostty evidence captured 333
+  vertical packets, including 226 same-direction deltas below 2 ms in
+  identical-coordinate triplets/sextuplets; the next deliberate groups were
+  normally at least 5 ms apart. One-to-one routing rejected duplicate Herdr
+  dispatch. Vertical keys/wheel now move an exact-path cursor only, explicit
+  Right/Enter/click owns activation, directory preview is bounded/latest and
+  stale-safe, and the wheel gate coalesces only identical
+  generation/owner/direction/coordinate packets below 2 ms. FMN-5 next action
+  is the user's isolated physical wheel plus held-arrow acceptance, followed
+  by graph/Git/remote publication gates. Do not add a general cache. Pinned
+  Yazi reference:
   `.codex/references/yazi-file-manager-performance-transfer.md`. Stable
-  Herdr/socket and `.superpowers/` remain untouched. Fresh gates: exact fixture
-  20/20, related family 5/5, full Nextest 3,599/3,599 + 4 skip, fmt,
-  Linux/Windows Clippy, Bun 5/5 + 12/12, and Python 68/68.
+  Herdr/socket and `.superpowers/` remain untouched. Resident depth is not
+  focus: initial preview restores the parent owner and render, hit, resize,
+  and watcher authority all follow `active_col()`, not `deepest()`. Fresh FMN
+  gates: focused 302/302; active-owner trio 3/3; full Nextest 3,619/3,619 + 4
+  skip (run `d42e9919-f7dd-4f43-b855-a0ed4fd6922e`); fmt; Linux/Windows
+  Clippy; Bun 5/5 + 12/12; Python 68/68; exporter 1/1; Chromium 33/33. Exactly
+  six reviewed VIS-01..06 PNGs changed; generated JSON and VIS-07..25 stayed
+  clean. Fresh working-tree graph is 24,072 nodes / 129,692 edges and resolves
+  the cursor reducer, wheel gate, preview identity, active-owner projection,
+  and regression tests; post-commit SHA recheck remains open.
 - Current override: **MTIME program closed.** The user
   approved strict mixed directory/file ordering by modification time
   descending plus Finder-like local-calendar sections and right-side mtime

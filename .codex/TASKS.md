@@ -19,43 +19,61 @@ Pinned Yazi architecture comparison:
   - [x] Package the deterministic path-identity fixture as `8f4b2acc` and the
     closure/Yazi/lesson record as `d52b4417`; keep product behavior anchored at
     the human-accepted `d8583d3a`.
-- [ ] **FMN-1 Observe wheel multiplicity before product mutation.**
-  - [ ] `TP-FMN-OBS-01`: in an isolated Ghostty/dev runtime, correlate one
+- [x] **FMN-1 Observe wheel multiplicity before product mutation.**
+  - [x] `TP-FMN-OBS-01`: in an isolated Ghostty/dev runtime, correlate one
     physical wheel gesture with raw decoded events, dispatcher calls, and
     cursor mutations using bounded non-sensitive counters.
-  - [ ] `TP-FMN-OBS-02`: trace held Up/Down across file-directory-file rows and
+    Raw Ghostty SGR evidence captured 333 vertical events; 226 same-direction
+    deltas were below 2 ms and arrived as identical-coordinate triplets or
+    occasional sextuplets, while the next deliberate groups were normally
+    5 ms or more apart.
+  - [x] `TP-FMN-OBS-02`: trace held Up/Down across file-directory-file rows and
     record exact owner column/cursor path without logging unrelated user data.
-  - [ ] Decide H1 terminal burst/momentum, H2 duplicate dispatch, and H3
+    Deterministic file-directory-file traces preserve the owner column and
+    exact path for every accepted step; live human acceptance remains FMN-5.
+  - [x] Decide H1 terminal burst/momentum, H2 duplicate dispatch, and H3
     auto-branch amplification from evidence; do not add debounce speculatively.
-- [ ] **FMN-2 RED cursor-only movement and explicit activation.**
-  - [ ] `TP-FMN-NAV-01..06`: Up/Down, `j/k`, Shift movement, explicit
+    H1 and H3 were confirmed; the one-to-one route plus counters rejected H2.
+- [x] **FMN-2 RED cursor-only movement and explicit activation.**
+  - [x] `TP-FMN-NAV-01..06`: Up/Down, `j/k`, Shift movement, explicit
     Right/`l`/Enter/click, kind/edge/failure matrix.
-  - [ ] `TP-FMN-WHEEL-01..03`: one decoded event = one owner-column step;
+  - [x] `TP-FMN-WHEEL-01..03`: one decoded event = one owner-column step;
     directory rows never transfer focus; row/header/empty/detail/rail/outside
     geometry stays disjoint.
-  - [ ] `TP-FMN-IO-01..03` and `TP-FMN-RENDER-01`: blocked/stale/failure
+  - [x] `TP-FMN-IO-01..03` and `TP-FMN-RENDER-01`: blocked/stale/failure
     preview and inert-versus-visible render authority.
-- [ ] **FMN-3 GREEN decouple movement from activation.**
-  - [ ] Add the smallest cursor-only reducer that preserves exact path,
+- [x] **FMN-3 GREEN decouple movement from activation.**
+  - [x] Add the smallest cursor-only reducer that preserves exact path,
     viewport, multi-selection, watcher, and Layout V1 invariants.
-  - [ ] Keep optional right-side directory preview asynchronous,
+  - [x] Keep optional right-side directory preview asynchronous,
     bounded/latest, generation/source/column/path validated, and unable to
     steal active-column focus.
-  - [ ] Keep explicit directory activation on Right/`l`, Enter, or primary
+  - [x] Keep explicit directory activation on Right/`l`, Enter, or primary
     click and keep cold I/O off the input loop.
-- [ ] **FMN-4 Normalize physical wheel bursts only if FMN-1 still proves a
+- [x] **FMN-4 Normalize physical wheel bursts only if FMN-1 still proves a
   separate defect after FMN-3.**
-  - [ ] `TP-FMN-WHEEL-04`: distinguish one high-resolution gesture from
+  - [x] `TP-FMN-WHEEL-04`: distinguish one high-resolution gesture from
     deliberate continuous scroll and immediate direction reversal.
-  - [ ] Bound time/state/memory; no sleep-throttle, hot retry, unbounded
+    Coalesce only identical generation/owner/direction/coordinates below
+    2 ms; preserve reversal, coordinate or owner change, the exact 2 ms
+    boundary, and the observed 5 ms next-detent interval.
+  - [x] Bound time/state/memory; no sleep-throttle, hot retry, unbounded
     accumulator, dropped ordered control, or sticky scrolling.
 - [ ] **FMN-5 Production closure.**
-  - [ ] `TP-FMN-VIS-01`: unchanged Layout V1 Chromium baselines plus scoped
+  - [x] `TP-FMN-VIS-01`: scope-locked Layout V1 Chromium baselines plus scoped
     cursor/preview semantic cells; no blind PNG regeneration.
+    Exporter 1/1 and full Chromium 33/33 are green. Exactly six legacy
+    VIS-01..06 PNGs were inspected and updated after deterministic clock,
+    mtime, no-follow, and async-settlement fixes; generated JSON and
+    VIS-07..25 stayed clean.
   - [ ] `TP-FMN-E2E-01`: isolated real wheel and held-arrow acceptance; no
     accidental 3-5 jump, no child focus transfer, zero residue.
   - [ ] `TP-FMN-GATE-01`: focused/full Nextest, fmt, Linux/Windows Clippy,
     maintenance, Chromium, graph, Git ancestry, exact CyPack SHA.
+    Local pre-publication gates are green: focused 302/302, active-owner trio
+    3/3, full 3,619/3,619 + 4 skip, fmt, both Clippy targets, Python 68/68,
+    Bun 5/5 + 12/12, exporter 1/1, and Chromium 33/33. Graph/Git/remote SHA
+    remain the publication-time sub-gates.
 - [ ] **FMN-6 Measure pinned Home/Desktop/Downloads first-entry latency as a
   separate follow-up.**
   - [ ] Do not implement pre-warm without a reproducible first-entry RED.

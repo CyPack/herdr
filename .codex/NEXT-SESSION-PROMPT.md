@@ -1,31 +1,41 @@
 # NEXT SESSION TRIGGER — Herdr Files Interaction Polish
 
-Updated: 2026-07-21 CEST
+Updated: 2026-07-22 CEST
 
-## Current Override — Main Stutter Closed; FMN Next
+## Current Override — FMN Implemented; Human E2E and Publication Next
 
 Continue `feat/native-fm` from the exact published
 `origin/feat/native-fm` tip. Required ancestry is the human-accepted product
 head `d8583d3a`, test-only fixture `8f4b2acc`, closure/Yazi/lessons
-`d52b4417`, then the continuity commit containing this trigger. Verify local
-HEAD equals the remote ref before work. The user has live-accepted the main
+`d52b4417`, then published continuity `616e7278`. The current FMN source/docs
+diff is uncommitted until its message is aligned. Verify local HEAD and the
+remote ref before work. The user has live-accepted the main
 rapid-click/mouse-motion stutter fix. Do not restart FMP or reimplement commits
 `b2accbb4`, `8851b5e0`, `ed329058`, or `d8583d3a`.
 
-The exact next task is **FMN-1** from `.codex/TASKS.md`:
+FMN-1 through FMN-4 are implemented and automated gates are green:
 
-1. in an isolated Ghostty/dev runtime, correlate one physical wheel gesture
-   with raw decoded-event, dispatch, and cursor-mutation counts;
-2. then add FMN-2 RED tests proving Up/Down/`j/k`/Shift/wheel are cursor-only in
-   the exact owner column;
-3. require Right/`l`, Enter, or explicit primary click for directory
-   activation;
-4. allow right-side directory preview only through bounded stale-safe async
-   work without active-column transfer;
-5. consider wheel burst normalization only after the cursor/activation GREEN
-   and only if FMN-1 still proves a separate multiplicity;
-6. leave Home/Desktop/Downloads pre-warm for FMN-6 measurement-first work; no
-   general/unbounded LRU.
+1. raw Ghostty trace: 333 vertical packets, 226 same-direction deltas below
+   2 ms in identical-coordinate triplets/occasional sextuplets;
+2. one-to-one routing rejected duplicate Herdr dispatch; host micro-burst and
+   old automatic branch amplification were confirmed;
+3. Up/Down/`j/k`/Shift/wheel now move one exact owner-column cursor row;
+   Right/`l`, Enter, or primary click alone activates;
+4. directory cursor preview uses the bounded latest worker and rejects stale
+   generation/source/owner/index/path/current-cursor results;
+5. wheel normalization coalesces only identical owner/direction/coordinates
+   strictly below 2 ms and preserves reversal, changes, 2 ms, and 5 ms input;
+6. initial preview restores the parent owner; every render/hit/resize/watcher
+   projection follows `active_col()`, while `deepest()` is resident extent;
+7. focused 302/302, active-owner trio 3/3, full 3,619/3,619 + 4 skip, fmt,
+   both Clippy targets, Python 68/68, Bun 5/5 + 12/12, exporter 1/1, and full
+   Chromium 33/33 are green. Six reviewed VIS-01..06 PNGs changed; generated
+   JSON and VIS-07..25 stayed clean.
+
+The exact next task is **FMN-5**: give the user the existing cleanup-first
+isolated helper, collect physical slow-wheel and held-arrow acceptance, then
+finish graph/Git/CyPack publication gates. Leave Home/Desktop/Downloads
+pre-warm for FMN-6 measurement-first work; no general/unbounded LRU.
 
 Read these current authorities before code:
 
@@ -34,9 +44,10 @@ Read these current authorities before code:
 - `.codex/TASKS.md` FMN section;
 - `.local/ISOLATED-DEV-TEST.md`.
 
-Fresh built-in graph at handoff: 23,925 nodes / 124,127 edges. Prove freshness
-again with `move_trail_selection_in_column` and
-`queue_file_manager_trail_directory_activation`. Lower FIP task counts and
+Fresh working-tree graph: 24,072 nodes / 129,692 edges. After commit, recheck
+SHA-bound freshness with `move_trail_cursor_in_column`,
+`FileManagerVerticalWheelBurstGate`, and
+`queue_file_manager_trail_directory_preview_identity`. Lower FIP task counts and
 “exact first work” paragraphs in this historical file are superseded by this
 override; recount the canonical task files rather than using old totals.
 Never touch stable Herdr/socket or `.superpowers/`; never regenerate PNGs
@@ -127,32 +138,34 @@ out of scope.
 
 Expected canonical inventory at the 2026-07-21 handoff:
 
-- `.codex/TASKS.md`: 16 unchecked product/deferred tasks;
+- `.codex/TASKS.md`: 12 unchecked product/deferred tasks;
 - `.codex/CHANGE-PIPELINE-TASKS.md`: 89 unchecked paused tooling tasks;
-- total: 105;
-- `.codex/HANDOFF.md` section 8: exact 105-block copy.
+- total: 101;
+- `.codex/HANDOFF.md` section 8: exact 101-block copy.
 
 Recount all three and compare exact task blocks. If count or text differs,
 stop before code and reconcile CURRENT/TASKS/HANDOFF.
 
 Status assignment:
 
-- set only **FMN-1** to `in_progress`;
-- keep FMN-2 through FMN-6 pending (FMN-0 is closed);
+- keep **FMN-5** `in_progress` until human E2E and publication gates close;
+- keep FMN-6 pending (FMN-0 through FMN-4 are closed);
 - keep S5/S7 trigger-gated;
 - keep change-pipeline T3.1-T10.9 paused;
 - never choose an easier lower-priority task.
 
 ## Exact First Work
 
-1. Complete FMN-1 observability without production behavior mutation.
-2. Decide whether wheel multiplicity starts at terminal decode, Herdr dispatch,
-   reducer mutation, or automatic branch amplification.
-3. Load `rust-dev` and its lessons before FMN-2 Rust work; then write the
-   behavior-specific cursor-only RED before production code.
-4. Execute FMN-2 -> FMN-3 in order with separate RED/GREEN commits. Execute
-   FMN-4 only if the post-GREEN trace still proves a separate wheel defect.
-5. Re-verify every graph-qualified owner immediately before editing.
+1. Revalidate the uncommitted FMN diff, checkpoint, stable-runtime exclusion,
+   focused/full gates, and exact task-copy parity.
+2. Align the proposed product and documentation commit messages before any
+   staging; use exact paths only and never stage `.superpowers/`.
+3. Run the cleanup-first isolated helper and collect the user's slow physical
+   wheel, held Up/Down, explicit Right/Enter, semantic exit, and zero-residue
+   acceptance without touching stable Herdr.
+4. Reindex Codebase Memory after the commit, prove current FMN symbols, then
+   push only `origin/feat/native-fm` and verify exact remote SHA equality.
+5. Keep FMN-6 cache/pre-warm work separate and measurement-first.
 
 ## Codebase Memory Protocol
 
@@ -182,17 +195,19 @@ Final handoff graph evidence:
 - `install_trail_operation_projection` exposes resident file projection;
 - `queue_file_manager_trail_directory_activation` exposes the bounded explicit
   click path;
-- `move_trail_selection_in_column` exposes the remaining movement/activation
-  coupling.
+- `move_trail_cursor_in_column` exposes the cursor-only reducer;
+- `FileManagerVerticalWheelBurstGate` exposes the measured host-packet gate;
+- `queue_file_manager_trail_directory_preview_identity` exposes bounded
+  cursor-follow directory preview.
 
-Current root-cause hypotheses requiring FMN-1 executable discrimination:
+FMN-1 root-cause verdict:
 
-- H1: one physical high-resolution/momentum gesture decodes into multiple
-  terminal wheel events;
-- H2: one decoded event is dispatched more than once;
-- H3: directory landing branches and the remaining repeat/burst events mutate
-  the child column. H3 is source-confirmed as possible and must be removed
-  before wheel cadence is tuned.
+- H1 confirmed: one physical high-resolution/momentum gesture can decode into
+  identical-coordinate triplets/sextuplets below 2 ms;
+- H2 rejected: the Herdr route is one-to-one and counters show no duplicate
+  dispatcher application;
+- H3 confirmed and closed: the old activation-coupled reducer branched on a
+  directory; the cursor-only reducer retains owner-column authority.
 
 After committed changes, refresh the graph with the safe single-worker route if
 the long-lived channel is stale:

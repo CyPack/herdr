@@ -30,10 +30,19 @@
   fixture) and `d52b4417` (evidence, Yazi transfer reference, and lessons).
   Canonical evidence:
   `.codex/evidence/files-performance-fix-closure-and-navigation-followups.md`.
-- The next program is `FMN — Files Movement Semantics and Wheel Normalization`.
-  First observe physical wheel -> decoded event -> dispatch -> mutation counts;
-  then RED/GREEN cursor-only vertical navigation. Do not tune wheel cadence
-  before automatic directory branching is removed.
+- `FMN — Files Movement Semantics and Wheel Normalization` is implemented
+  locally through FMN-4. Raw isolated Ghostty evidence captured 333 vertical
+  packets and 226 same-direction deltas below 2 ms in identical-coordinate
+  triplets/occasional sextuplets; one-to-one routing rejected duplicate Herdr
+  dispatch. Vertical keys/wheel now move an exact owner-column cursor without
+  branching; Right/Enter/`l`/click owns activation; directory preview reuses
+  the bounded latest worker with current cursor authority; a narrow `<2 ms`
+  owner/direction/coordinate gate coalesces only the measured host burst.
+  FMN-5 human E2E and publication gates remain open.
+- Resident Trail depth and focus are distinct: `deepest()` is prepared-data
+  extent; initialization, auto-follow, render/hit geometry, resize projection,
+  and watcher binding use `active_col()`. Explicit Right/Left changes the
+  owner; vertical movement never does.
 - Yazi source commit `6d84921e7004eb8d49ba13a4acc97c6cfeb094b4`
   proves cursor/activation separation, discardable async folder preview,
   ticketed stale-result rejection, change-gated rendering, and an unbounded

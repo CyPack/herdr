@@ -1,12 +1,14 @@
-# Current State — 2026-07-21
+# Current State — 2026-07-22
 
-> **CURRENT OVERRIDE — MAIN FILES STUTTER CLOSED; FMN INPUT CORRECTIONS
-> NEXT (2026-07-21).** The human-accepted product behavior head is
+> **CURRENT OVERRIDE — FMN NAVIGATION IMPLEMENTED; HUMAN E2E AND PUBLICATION
+> REMAIN (2026-07-22).** The human-accepted main-stutter behavior head is
 > `d8583d3ab564d42f880e94e0462f9d12ab61d391`. Closure publication then adds
 > `8f4b2acc` (test-only path-identity fixture) and `d52b4417` (closure evidence,
-> Yazi transfer reference, and lessons). The published branch tip is the commit
-> containing this continuity override; every resume must verify local HEAD
-> equals `origin/feat/native-fm` instead of treating `d8583d3a` as the tip. The
+> Yazi transfer reference, and lessons), with prior published continuity at
+> `616e7278`. The current FMN source/docs diff is intentionally uncommitted
+> until its commit message is aligned. Every resume must verify local HEAD
+> against `origin/feat/native-fm` rather than treating an older product SHA as
+> the branch tip. The
 > final production residual sequence is
 > `b2accbb4` resident file projection, `8851b5e0` inert mouse-move render gate,
 > `ed329058` background text preview, and `d8583d3a` deterministic
@@ -22,21 +24,41 @@
 > mtime-order fixture failure and correction are preserved in the evidence;
 > production sorting was not changed.
 >
-> The next separate program is **FMN — Files Movement Semantics and Wheel
-> Normalization**. Two user-confirmed bugs are open: a physical vertical wheel
-> gesture can appear to skip 3-5 entries; and holding Up/Down can land on a
-> directory and implicitly continue in its right-side child without
-> Right/Enter. Current source confirms the semantic coupling:
-> `move_selection_in_column` immediately calls `activate_entry`, so directory
-> landings branch and later repeat events can target the child. The frozen law
-> is cursor-only Up/Down/`j/k`/Shift/wheel in the exact owner column; only
-> Right/`l`, Enter, or explicit primary click activates a directory. First
-> measure physical wheel -> decoded event -> dispatch -> mutation counts, then
-> RED/GREEN the cursor/activation split; authorize wheel coalescing only if a
-> separate multiplicity remains. Home/Desktop/Downloads pre-warm stays a later
+> **FMN — Files Movement Semantics and Wheel Normalization** is implemented
+> locally through FMN-4. Raw isolated Ghostty evidence captured 333 vertical
+> events: 226 same-direction deltas below 2 ms formed identical-coordinate
+> triplets or occasional sextuplets, while deliberate next groups normally
+> arrived at least 5 ms later. The server/client route is one-to-one, so H2
+> duplicate Herdr dispatch was rejected; terminal micro-burst H1 and the old
+> auto-branch amplifier H3 were confirmed. `TrailState` now separates an exact
+> ephemeral cursor from the activated directory chain. Up/Down/`j/k`, Shift
+> movement, and vertical row/header wheel stay in the exact owner column;
+> Right/`l`, Enter, or primary click alone activates. Directory cursor preview
+> uses the existing one-running/one-latest bounded worker and applies only when
+> Files generation, source, owner column, entry index, exact path, and active
+> cursor still match. Wheel normalization coalesces only identical
+> generation/owner/direction/coordinates below 2 ms; reversal, owner or pointer
+> change, the exact 2 ms boundary, and 5 ms next-detent input survive.
+>
+> TDD evidence includes the original directory-focus RED, async/stale-preview
+> REDs, wheel-gate RED, render-authority RED, initial-owner RED, active-versus-
+> deepest auto-follow RED, watcher-rebind characterization, and auxiliary
+> resize-projection invariant. Fresh gates: focused FMN 302/302 (run
+> `a718ae73-da90-4155-91a6-3f336f2149e5`); full Nextest run
+> `d42e9919-f7dd-4f43-b855-a0ed4fd6922e` 3,619/3,619 + 4 skip; fmt; Linux
+> all-target and Windows MSVC Clippy; Python 68/68; Bun 5/5 + 12/12;
+> deterministic exporter 1/1; full Chromium 33/33. Exactly six legacy
+> VIS-01..06 PNGs were inspected and updated; generated JSON and VIS-07..25
+> stayed clean. FMN-5 remains open only for the user's isolated physical
+> wheel/held-arrow acceptance plus publication-time graph/Git/remote-SHA gates.
+> Home/Desktop/Downloads pre-warm stays a later
 > measurement-first, per-directory entry/byte-capped, mtime-invalidated lane;
-> Yazi's unbounded history map is explicitly rejected. Fresh built-in graph is
-> 23,925 nodes / 124,127 edges and resolves all final-fix plus FMN seam symbols.
+> Yazi's unbounded history map is explicitly rejected. Fresh working-tree
+> graph is 24,072 nodes / 129,692 edges and resolves
+> `move_trail_cursor_in_column`, `FileManagerVerticalWheelBurstGate`,
+> `queue_file_manager_trail_directory_preview_identity`, the active-owner
+> resize projection, and its regression tests. Post-commit SHA recheck remains
+> a publication gate.
 > Stable Herdr/socket and `.superpowers/` remain untouched.
 
 > **HISTORICAL OVERRIDE — FILES LAYOUT V1 LOCKED; FMP PERFORMANCE

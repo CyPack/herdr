@@ -251,7 +251,7 @@ product behavior under the user's clarified contract.
 | `TP-FMN-IO-02` | preview races newer cursor, explicit activation, watcher, location switch, close/reopen | stale completion is inert and cannot steal focus |
 | `TP-FMN-IO-03` | missing, permission, changed-type, panic, disconnect | resident Trail and cursor survive; bounded unavailable state; no retry loop |
 | `TP-FMN-RENDER-01` | clamped/inert move and real cursor/preview transition | inert action declines render; visible transition requests bounded render |
-| `TP-FMN-VIS-01` | unchanged Layout V1 Chromium fixtures plus cursor/preview cells | no unapproved layout or PNG regeneration |
+| `TP-FMN-VIS-01` | Layout V1 Chromium fixtures plus cursor/preview cells | no unreviewed layout drift; any legacy PNG update is individually scoped and inspected |
 | `TP-FMN-E2E-01` | isolated Ghostty wheel and held-arrow trial | no 3–5 accidental jump and no child focus transfer; cleanup leaves zero test residue |
 | `TP-FMN-GATE-01` | focused/full Rust, Linux/Windows Clippy, maintenance, Chromium, graph, Git | all fresh and clean before CyPack-only publication |
 
@@ -270,6 +270,138 @@ FMN-0 freeze report, source diff, and test contract
 Do not implement FMN-4 first. Decoupling movement from activation may eliminate
 the cross-column part of the apparent skip, and raw-event evidence is required
 before choosing coalescing, accumulation, rate limiting, or no normalization.
+
+## FMN implementation and verification — 2026-07-21
+
+### Observation result
+
+The isolated Ghostty trace recorded 333 vertical wheel packets. Of those,
+226 consecutive same-direction deltas were below 2 ms. The raw SGR packets
+repeated the same coordinates in triplets and occasional sextuplets, commonly
+around 0.02–0.4 ms apart; the next independent groups were normally at least
+5 ms apart. The server/client call chain and route tests remained one-to-one.
+
+Verdict:
+
+- H1 terminal/host micro-burst: confirmed;
+- H2 duplicate Herdr dispatch: rejected;
+- H3 automatic branch amplification: confirmed by the old reducer and the
+  original RED that transferred `active_col` on a directory landing.
+
+The authorized normalization is therefore intentionally narrower than a
+generic debounce: only the same Files generation, Trail owner column,
+direction, pointer coordinates, and a delta strictly below 2 ms coalesce.
+Reversal, owner change, coordinate change, the exact 2 ms boundary, and the
+observed 5 ms next detent remain independent semantic input. Every raw packet
+advances the gate timestamp so a dense train cannot leak every Nth duplicate.
+The state is one fixed-size stamp; there is no sleep, queue, retry, history, or
+unbounded accumulator.
+
+### Implemented state and authority split
+
+- `TrailState` carries an ephemeral exact-path cursor separately from
+  `TrailCol::selected`, which remains the activated directory-chain identity.
+- `TrailSnapshots::move_cursor[_in_column]` moves one clamped row and reports
+  entry index/kind without calling activation, truncating the chain, or moving
+  the active column.
+- Up/Down/`j/k`, Shift+vertical, row wheel, and header wheel use that
+  cursor-only reducer. Right/`l`, Enter, and primary click remain the only
+  directory activation commands.
+- A directory cursor landing schedules `TrailPreview` through the existing
+  one-running/one-latest `FileManagerIoWorker`. The serial input loop performs
+  no cold directory read.
+- Preview apply requires the original worker identity plus the current Files
+  generation, source, owner column, entry index, exact path, directory kind,
+  and active cursor identity. A newer cursor, horizontal focus change,
+  activation, location/model change, missing target, or failed preparation is
+  inert and cannot steal focus.
+- Render projection highlights the cursor exact path and temporarily hides a
+  mismatched stale child until the matching preview arrives. Clamped keyboard
+  or wheel input and coalesced packets explicitly decline render.
+- Profiler counters `fm.vertical_wheel.accepted` and
+  `fm.vertical_wheel.coalesced` expose the live normalization without logging
+  user paths or content.
+
+### RED/GREEN and failure evidence
+
+- The first cursor-only navigation RED failed because a directory landing
+  changed `active_col`; GREEN keeps every accepted vertical step in the owner.
+- The async preview RED initially had no worker request, then proved bounded
+  off-loop preparation and owner-focus preservation after the request path was
+  wired.
+- The stale-preview RED applied after a horizontal focus change; GREEN adds
+  current active cursor/column authority.
+- The wheel RED first failed on the absent gate, then the end-to-end triplet
+  fixture proved one semantic row plus preserved 5 ms detent and reversal.
+- Clamped wheel and keyboard REDs requested renders; GREEN consumes them while
+  declining the frame.
+- A final Shift+Up edge RED returned `Consumed` despite preserving the same
+  cursor and selection. GREEN returns `Inert` when range extension rolls back
+  or a clamped cursor leaves the explicit set unchanged, while a real
+  directory-crossing range extension still renders.
+- A worker test wait initially accepted an older result-slot generation. The
+  test seam now waits for `latest_generation`, preventing false completion or
+  hangs without changing production scheduling.
+- Missing directory preview preserves the exact cursor, resident branch, and
+  owner focus. Shift+vertical across a directory extends selection without
+  branching.
+- Initial/resync integration originally reused `select_dir`, which prepared the
+  resident child but also left `active_col` on that child. The exact RED proved
+  this recreated the reported auto-entry before the first keypress. GREEN keeps
+  the child resident and explicitly restores the parent owner.
+- Trail auto-follow and the compatibility resize projection initially used
+  `deepest()` as focus authority. That value is only the resident-data extent;
+  all rendered, hit-tested, and resize geometry now follows `active_col()`.
+  The 10,000-action invariant caught the otherwise hidden divider mismatch.
+- A watcher characterization expected an explicit Leave/Backspace to remain
+  bound to the resident child. The clarified product law says Leave changes the
+  owner to the parent, so the test now requires exactly one parent rebind and a
+  stable second sync.
+- The full suite rejected a legacy narrow-layout assertion that expected the
+  resident child's `preview.txt` before Right. The corrected full-frame test
+  proves the root rows remain visible, explicit Right reveals the child, and
+  explicit Left restores the root owner.
+
+### Fresh gate ledger
+
+| Gate | Fresh result |
+|---|---|
+| Focused FMN/Files family | 302/302 passed; run `a718ae73-da90-4155-91a6-3f336f2149e5` |
+| Active-owner/full-frame regression trio | 3/3 passed; run `4cb8b23e-94ec-4420-9b5a-0e9e8186aafc` |
+| Full Nextest | 3,619/3,619 passed, 4 intentionally skipped; run `d42e9919-f7dd-4f43-b855-a0ed4fd6922e` |
+| `cargo fmt --all -- --check` | clean |
+| Linux all-target Clippy `-D warnings` | clean |
+| Windows MSVC Clippy, SIMD disabled | clean |
+| Python maintenance | 68/68 passed |
+| Integration assets Bun | 5/5 passed |
+| Plugin marketplace Bun | 12/12 passed |
+| Deterministic Ratatui exporter | 1/1 passed; all generated JSON stayed clean |
+| Full Chromium | 33/33 passed |
+| Snapshot scope | exactly six reviewed legacy PNGs: VIS-01 through VIS-06; no other PNG changed |
+
+Earlier exhaustive runs exposed real contract drift instead of being waved
+away: first the watcher expectation, then the auxiliary resize projection, and
+finally the legacy narrow-layout assertion. After those exact RED/GREEN loops,
+run `d42e9919-f7dd-4f43-b855-a0ed4fd6922e` completed in 38.430 s with
+3,619/3,619 passes and 4 intentional skips. The exporter now injects a fixed
+calendar anchor, equalizes order-insensitive mtimes, settles async preview by
+exact identity/generation, and uses no-follow timestamp handling for symlink/
+FIFO fixtures. The six VIS-01..06 pixel updates were reviewed individually;
+VIS-07..25 and every generated JSON remained unchanged.
+
+`TP-FMN-E2E-01` remains intentionally open for the user's new isolated build:
+slow physical wheel, held Up/Down across file-directory-file rows, explicit
+Right/Enter activation, semantic exit, and zero throwaway residue. Graph
+refresh, exact-path staging, commit, CyPack push, and remote SHA equality also
+remain publication-time gates; none is represented as complete here.
+
+Working-tree graph refresh completed at 24,072 nodes / 129,692 edges. Current
+symbol queries resolve `move_trail_cursor_in_column`,
+`FileManagerVerticalWheelBurstGate`,
+`queue_file_manager_trail_directory_preview_identity`,
+`project_miller_view_with_resize_preview`, and the active-owner regression
+tests at their live source paths. A post-commit SHA-bound recheck is still
+required before publication closure.
 
 ## Cache and pre-warm decision
 

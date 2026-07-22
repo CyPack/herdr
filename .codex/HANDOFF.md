@@ -1,15 +1,16 @@
 # SESSION HANDOFF — Herdr Native Files Performance
 
-Updated: 2026-07-21 CEST
+Updated: 2026-07-22 CEST
 
-## 0. SONRAKI ADIM — FMN-1 WHEEL TRACE, THEN CURSOR/ACTIVATION RED
+## 0. SONRAKI ADIM — FMN-5 USER E2E, THEN GRAPH/GIT PUBLICATION
 
 **CURRENT OVERRIDE — ANA STUTTER KAPANDI VE KULLANICI CANLIDA KABUL ETTI.**
 Kullanıcının kabul ettiği product behavior head'i
 `d8583d3ab564d42f880e94e0462f9d12ab61d391`'dir. Closure publication buna
 `8f4b2acc` test-only path-identity fixture ve `d52b4417` closure/Yazi/lessons
-commit'lerini ekler. Published branch tip bu continuity kaydını içeren
-commit'tir; resume sırasında local HEAD ile `origin/feat/native-fm` exact
+commit'lerini ekler; prior published continuity `616e7278`'dir. FMN
+source/docs diff'i commit mesajı hizalanana kadar bilinçli olarak
+uncommitted'dır; resume sırasında local HEAD ile `origin/feat/native-fm`
 eşitliği yeniden kanıtlanır. Son production residual zincir `b2accbb4`
 resident file projection, `8851b5e0` inert mouse-move render gate, `ed329058`
 off-loop text preview ve `d8583d3a` deterministic filesystem-time fixture
@@ -20,37 +21,57 @@ kanıtlarından ayrı tutulur. Kanonik kayıt:
 `.codex/evidence/files-performance-fix-closure-and-navigation-followups.md`.
 
 Sıradaki ayrı program **FMN — Files Movement Semantics and Wheel
-Normalization**. İki bug açık:
+Normalization** için FMN-1..4 lokal olarak tamamlandı. Başlangıçtaki iki bug:
 
 1. tek fiziksel wheel gesture görünürde 3-5 entry atlayabiliyor;
 2. Up/Down basılıyken cursor directory'ye gelince Right/Enter olmadan child
    kolona geçip orada devam ediyor.
 
-İkinci kök neden source-confirmed: `move_selection_in_column` landed row'u
-bulup doğrudan `activate_entry` çağırıyor; directory branch active column'u
-değiştiriyor ve burst'ün kalan event'leri child'a uygulanabiliyor. Frozen UX
-law: Up/Down/`j/k`/Shift/wheel yalnız exact owner column cursor hareketidir;
-Right/`l`, Enter veya explicit primary click directory activation sahibidir.
-Directory preview sağda async güncellenebilir ama active-column authority'yi
-çalamaz.
+İkinci kök neden doğrulandı: eski `move_selection_in_column` landed row'u
+doğrudan aktive ediyor, directory branch active column'u değiştiriyordu. Raw
+izole Ghostty kanıtında 333 vertical packet'in 226 aynı-yön delta'sı 2 ms'nin
+altındaydı; aynı coordinate'te triplet/ara sıra sextuplet geldi, sonraki gerçek
+gruplar çoğunlukla 5 ms veya daha uzaktı. Server/client route one-to-one olduğu
+için H2 duplicate dispatch reddedildi; H1 host micro-burst ve H3 auto-branch
+amplification doğrulandı.
 
-İlk executable iş FMN-1'dir: izole Ghostty/dev runtime'da bir fiziksel gesture
-→ raw decoded event → dispatch → cursor mutation sayılarını ölç. Sonra FMN-2
-RED ile cursor/activation ayrımını dondur. FMN-3 minimum GREEN'den sonra hâlâ
-ayrı burst varsa FMN-4 normalization tasarla; debounce/coalescing'i önceden
-varsayma. Pinned Home/Desktop/Downloads pre-warm FMN-6'dır ve ayrı first-entry
-latency RED olmadan uygulanmaz. Genel/unbounded LRU yasaktır. Pinned Yazi
-source ve transfer kararı:
-`.codex/references/yazi-file-manager-performance-transfer.md`.
+Yeni law/implementation: Up/Down/`j/k`/Shift/wheel exact owner column'daki ayrı
+ephemeral cursor'ı hareket ettirir; activated directory chain'i değiştirmez.
+Right/`l`, Enter veya explicit primary click activation sahibidir. Directory
+preview mevcut one-running/one-latest worker'da hazırlanır ve Files generation,
+source, owner column, index, path ve active cursor eşleşmeden apply olmaz.
+Wheel gate yalnız aynı generation/owner/direction/coordinate ve `<2 ms`
+packet'leri bir semantic step'e indirger; reversal, coordinate/owner değişimi,
+exact 2 ms boundary ve 5 ms next-detent korunur.
 
-Fresh publication gate: exact escaped mtime fixture 20/20, highlight/path
-family 5/5, full Nextest 3,599/3,599 + 4 skip (run
-`4dd813f9-9d36-42c0-9ba3-d50dfbd33904`), fmt, Linux/Windows Clippy, Bun 5/5 +
-12/12 ve Python maintenance 68/68 temiz. İlk full run'daki tek fixture fail'i
-ve root cause evidence'ta saklıdır; production sort değişmedi.
+Final invariant sweep also proved that a resident child is not focus authority:
+initial preview integration restores the parent owner; Trail auto-follow,
+render/hit geometry, resize compatibility projection, and watcher rebinding
+all follow `active_col()`, while `deepest()` is only prepared-data extent.
+Explicit Leave/Backspace rebinds the watcher to the parent once. The legacy
+narrow-layout test now proves root rows before Right, child rows after Right,
+and root restoration after Left.
 
-Fresh built-in Codebase Memory: 23,925 node / 124,127 edge; final fix sembolleri
-ile `move_trail_selection_in_column` ve bounded click-worker seam'i bulunuyor.
+Son executable iş FMN-5'tir: kullanıcı izole yeni build'de yavaş/fiziksel
+wheel ve held Up/Down kabulünü yapar; ardından graph reindex/current-symbol,
+exact staging, hizalanmış commit, CyPack push ve remote SHA doğrulanır. Pinned
+Home/Desktop/Downloads pre-warm FMN-6'dır ve ayrı first-entry latency RED
+olmadan uygulanmaz. Genel/unbounded LRU yasaktır. Pinned Yazi source ve transfer
+kararı: `.codex/references/yazi-file-manager-performance-transfer.md`.
+
+Fresh FMN gate: focused 302/302 (run
+`a718ae73-da90-4155-91a6-3f336f2149e5`); full Nextest 3,619/3,619 + 4 skip
+(run `d42e9919-f7dd-4f43-b855-a0ed4fd6922e`); fmt; Linux/Windows Clippy; Bun
+5/5 + 12/12; Python maintenance 68/68; deterministic exporter 1/1; full
+Chromium 33/33 temiz. Exactly six legacy VIS-01..06 PNGs were individually
+reviewed and updated; generated JSON and VIS-07..25 stayed clean.
+
+Fresh working-tree Codebase Memory: 24,072 node / 129,692 edge. Current graph
+`move_trail_cursor_in_column`, `FileManagerVerticalWheelBurstGate`,
+`queue_file_manager_trail_directory_preview_identity`,
+`project_miller_view_with_resize_preview`, and both active-owner regression
+tests resolve at current source paths. Commit sonrası SHA-bound recheck yine
+zorunludur.
 Stable Herdr/socket ve `.superpowers/` kesinlikle kapsam dışıdır. Commit/push
 yalnız exact-path staging ve önceden hizalanmış commit mesajıyla yapılır.
 
@@ -755,55 +776,29 @@ stable runtime’a dokunma izni vermez ve test kapılarını kaldırmaz.
 ## 8. AÇIK GÖREV ENVANTERİ — MACHINE-EXACT COPY
 
 Bu bölüm iki canonical registry’den mechanically copied unchecked task
-bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 16 ve
-89, toplam 105 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan
+bloklarını continuation satırlarıyla içerir. Beklenen kaynak sayıları 12 ve
+89, toplam 101 olmalıdır. Fresh agent bu kopyaya kör güvenmez; kaynaklardan
 yeniden sayar ve exact diff yapar.
 
 <!-- OPEN_TASKS_START -->
 
-### Source: `.codex/TASKS.md` — 16 unchecked
-
-- [ ] **FMN-1 Observe wheel multiplicity before product mutation.**
-  - [ ] `TP-FMN-OBS-01`: in an isolated Ghostty/dev runtime, correlate one
-    physical wheel gesture with raw decoded events, dispatcher calls, and
-    cursor mutations using bounded non-sensitive counters.
-  - [ ] `TP-FMN-OBS-02`: trace held Up/Down across file-directory-file rows and
-    record exact owner column/cursor path without logging unrelated user data.
-  - [ ] Decide H1 terminal burst/momentum, H2 duplicate dispatch, and H3
-    auto-branch amplification from evidence; do not add debounce speculatively.
-
-- [ ] **FMN-2 RED cursor-only movement and explicit activation.**
-  - [ ] `TP-FMN-NAV-01..06`: Up/Down, `j/k`, Shift movement, explicit
-    Right/`l`/Enter/click, kind/edge/failure matrix.
-  - [ ] `TP-FMN-WHEEL-01..03`: one decoded event = one owner-column step;
-    directory rows never transfer focus; row/header/empty/detail/rail/outside
-    geometry stays disjoint.
-  - [ ] `TP-FMN-IO-01..03` and `TP-FMN-RENDER-01`: blocked/stale/failure
-    preview and inert-versus-visible render authority.
-
-- [ ] **FMN-3 GREEN decouple movement from activation.**
-  - [ ] Add the smallest cursor-only reducer that preserves exact path,
-    viewport, multi-selection, watcher, and Layout V1 invariants.
-  - [ ] Keep optional right-side directory preview asynchronous,
-    bounded/latest, generation/source/column/path validated, and unable to
-    steal active-column focus.
-  - [ ] Keep explicit directory activation on Right/`l`, Enter, or primary
-    click and keep cold I/O off the input loop.
-
-- [ ] **FMN-4 Normalize physical wheel bursts only if FMN-1 still proves a
-  separate defect after FMN-3.**
-  - [ ] `TP-FMN-WHEEL-04`: distinguish one high-resolution gesture from
-    deliberate continuous scroll and immediate direction reversal.
-  - [ ] Bound time/state/memory; no sleep-throttle, hot retry, unbounded
-    accumulator, dropped ordered control, or sticky scrolling.
+### Source: `.codex/TASKS.md` — 12 unchecked
 
 - [ ] **FMN-5 Production closure.**
-  - [ ] `TP-FMN-VIS-01`: unchanged Layout V1 Chromium baselines plus scoped
+  - [x] `TP-FMN-VIS-01`: scope-locked Layout V1 Chromium baselines plus scoped
     cursor/preview semantic cells; no blind PNG regeneration.
+    Exporter 1/1 and full Chromium 33/33 are green. Exactly six legacy
+    VIS-01..06 PNGs were inspected and updated after deterministic clock,
+    mtime, no-follow, and async-settlement fixes; generated JSON and
+    VIS-07..25 stayed clean.
   - [ ] `TP-FMN-E2E-01`: isolated real wheel and held-arrow acceptance; no
     accidental 3-5 jump, no child focus transfer, zero residue.
   - [ ] `TP-FMN-GATE-01`: focused/full Nextest, fmt, Linux/Windows Clippy,
     maintenance, Chromium, graph, Git ancestry, exact CyPack SHA.
+    Local pre-publication gates are green: focused 302/302, active-owner trio
+    3/3, full 3,619/3,619 + 4 skip, fmt, both Clippy targets, Python 68/68,
+    Bun 5/5 + 12/12, exporter 1/1, and Chromium 33/33. Graph/Git/remote SHA
+    remain the publication-time sub-gates.
 
 - [ ] **FMN-6 Measure pinned Home/Desktop/Downloads first-entry latency as a
   separate follow-up.**
@@ -867,6 +862,14 @@ yeniden sayar ve exact diff yapar.
 - [ ] Implement and verify `herdr-change-pipeline`, adapters, pilots, Git
   publication, and graph refresh; paused at T3.1 while the sequential active
   product lane closes its current phase.
+
+Full non-product macro/micro registry:
+`.codex/CHANGE-PIPELINE-TASKS.md`.
+
+This lane does not authorize Rust product changes and does not activate S5,
+S6, S7, or N2.2. A parallel feature/bugfix session may use the registry's
+mid-flight adoption contract only after it inventories and preserves the live
+work state.
 
 - [ ] S5 ComponentRegistry only when a second real component/page proves the
   abstraction; do not build a speculative registry.

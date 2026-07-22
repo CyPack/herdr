@@ -4,13 +4,13 @@
 
 | Field | Value |
 |---|---|
-| Verified | 2026-07-21 |
+| Verified | 2026-07-22 |
 | Reference checkout | `/home/ayaz/.cartography/refpool/yazi-src` |
 | Pinned commit | `6d84921e7004eb8d49ba13a4acc97c6cfeb094b4` |
 | Commit date | `2026-07-13T02:01:37+08:00` |
 | Checkout state | clean `main...origin/main` at verification time |
 | Evidence tier | `source_code` |
-| Overall confidence | high (`0.95`) for cited Yazi behavior; medium (`0.75`) for Herdr transfer decisions until their RED/GREEN cycle closes |
+| Overall confidence | high (`0.95`) for cited Yazi behavior and high (`0.95`) for the completed Herdr FMN transfer; isolated human E2E remains separate |
 
 This record answers a narrow question: which Yazi architectural properties
 explain responsive cursor navigation and directory preview, and which of those
@@ -37,12 +37,14 @@ directory preview
   -> apply only matching ticket/revision results
 ```
 
-Herdr already has the right bounded worker and generation-validation
-primitives. Its remaining navigation defect is semantic: Up/Down and row wheel
-currently call the same Trail activation reducer as a click. Landing on a
-directory can therefore branch into the child column without an explicit
-Right/Enter/click. The next change must separate cursor movement from
-activation before considering wheel-rate normalization or a new cache.
+Herdr already had the right bounded worker and generation-validation
+primitives. FMN now applies the separation directly: Up/Down and row/header
+wheel mutate a cursor-only exact-path identity, while Right/Enter/`l`/click own
+activation. A directory cursor landing schedules a bounded discardable
+preview and cannot transfer focus. A separate isolated Ghostty trace also
+proved identical-coordinate host packet triplets below 2 ms, so a narrow
+owner/direction/coordinate-aware gate was authorized after the semantic split.
+No directory history cache was added.
 
 ## Primary-source chain
 
@@ -124,7 +126,7 @@ history can turn responsive navigation into unbounded process growth.
 
 Confidence: `0.99`, direct source and Herdr executable calibration.
 
-## Herdr source comparison at `d8583d3a`
+## Historical Herdr source comparison at `d8583d3a`
 
 ### Correct primitives already present
 
@@ -142,7 +144,7 @@ Confidence: `0.99`, direct source and Herdr executable calibration.
   `ed329058`.
 - Inert pointer motion can decline a render after `8851b5e0`.
 
-### Remaining semantic mismatch
+### Semantic mismatch that FMN closed
 
 `src/app/input/file_manager.rs:111-119` routes plain Up/Down and `j/k` to
 `FmState::move_trail_selection`. Visible-row wheel input does the same at
@@ -164,9 +166,51 @@ Consequences:
 4. Keyboard/header-wheel directory movement still bypasses the click-specific
    bounded activation request and can retain synchronous projection work.
 
-Confidence: `0.99`, current Herdr source plus user reproduction.
+Confidence: `0.99`, historical Herdr source plus user reproduction.
 
-## Transfer laws for the next Herdr slice
+## Applied Herdr transfer after FMN
+
+The uncommitted FMN diff based on published continuity `616e7278` implements
+the reference laws with Herdr-native bounds:
+
+- `TrailState::cursor` is separate from the activated `TrailCol::selected`
+  chain. `TrailSnapshots::move_cursor[_in_column]` changes one exact row and
+  never calls `activate_entry`.
+- Up/Down/`j/k`, Shift+vertical, visible-row wheel, and header wheel retain the
+  exact owner column. Right/`l`, Enter, and primary click are explicit
+  activation commands.
+- `FileManagerIoRequest::TrailPreview` reuses the one-running/one-latest
+  worker. Apply validates Files generation, source, owner column, entry index,
+  exact path, directory kind, and the active cursor. Horizontal focus change,
+  newer cursor, model/location change, missing path, or failed preparation is
+  stale/inert.
+- Render consumes the cursor identity, hides an old mismatched child while the
+  new preview is pending, renders a matching child when ready, and declines a
+  frame for clamped/coalesced movement.
+- The isolated Ghostty trace captured 333 vertical packets and 226
+  same-direction deltas below 2 ms in identical-coordinate triplets or
+  occasional sextuplets. The gate coalesces only the same generation, owner,
+  direction, and coordinates strictly below 2 ms; reversal, pointer/owner
+  changes, the 2 ms boundary, and 5 ms next-detent input remain independent.
+- `fm.vertical_wheel.accepted` and `fm.vertical_wheel.coalesced` provide
+  non-sensitive live evidence.
+- A resident preview is data availability, not focus authority. Initialization,
+  auto-follow, rendering, hit testing, resize projection, and watcher rebinding
+  all use `active_col()` for ownership; `deepest()` only identifies the loaded
+  chain extent.
+
+Fresh automated evidence is focused 302/302, full Nextest 3,619/3,619 plus 4
+intentional skips, fmt, Linux/Windows Clippy, Python 68/68, Bun 5/5 + 12/12,
+one deterministic exporter pass, and full Chromium 33/33. The exporter uses a
+fixed calendar anchor, exact async-preview settlement, equal order-insensitive
+mtimes, and no-follow symlink/FIFO timestamp handling. Exactly six legacy
+VIS-01..06 PNGs were inspected and updated; generated JSON and VIS-07..25 did
+not drift. Isolated human wheel/held-arrow acceptance remains FMN-5, not an
+automated claim.
+
+Confidence: `0.95` for the source/TDD transfer; live UX acceptance pending.
+
+## Transfer laws applied by the Herdr FMN slice
 
 ### YT-1 — Movement and activation are different commands
 
@@ -231,9 +275,9 @@ Before relying on this reference after either repository moves:
 
 1. require the exact Yazi commit above or update every cited line;
 2. verify the checkout is clean before treating file:line as source evidence;
-3. run Codebase Memory `index_status`, then prove a current Herdr symbol such as
-   `move_trail_selection_in_column` or
-   `queue_file_manager_trail_directory_activation`;
+3. run Codebase Memory `index_status`, then prove current Herdr symbols such as
+   `move_trail_cursor_in_column`, `FileManagerVerticalWheelBurstGate`, or
+   `queue_file_manager_trail_directory_preview_identity`;
 4. inspect the exact current Herdr reducer before editing;
 5. preserve the user contract in
    `.codex/evidence/files-performance-fix-closure-and-navigation-followups.md`.
