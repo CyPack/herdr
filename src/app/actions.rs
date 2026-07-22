@@ -3363,11 +3363,24 @@ mod tests {
                     "/herdr-test-missing-fm-root/stale",
                 )],
             });
+        state.request_file_manager_location_navigation = Some(
+            crate::app::state::FileManagerLocationNavigationRequest::follow(
+                std::path::PathBuf::from("/herdr-test-missing-fm-root/location"),
+            ),
+        );
+        state.file_manager_locations.begin_load(
+            std::path::PathBuf::from("/herdr-test-missing-fm-root/location"),
+            1,
+            state.file_manager_locations_model.revision(),
+            17,
+        );
 
         state.close_file_manager();
 
         assert!(state.file_manager.is_none());
         assert!(state.request_file_manager_context_action.is_none());
+        assert!(state.request_file_manager_location_navigation.is_none());
+        assert!(state.file_manager_locations.pending.is_none());
         assert!(
             state.file_manager_locations.origin.is_none(),
             "closing Files retires client-local location authority"

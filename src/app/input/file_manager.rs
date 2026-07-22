@@ -9,7 +9,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 
 use crate::app::state::{
     AppState, ContextMenuKind, ContextMenuState, FileManagerContextMenuModel,
-    FileManagerHeaderAction, FileManagerRowAction, MenuListState,
+    FileManagerHeaderAction, FileManagerLocationNavigationIntent,
+    FileManagerLocationNavigationRequest, FileManagerRowAction, MenuListState,
 };
 use crate::app::{App, Mode};
 
@@ -85,8 +86,6 @@ pub(super) enum FileManagerMouseDispatch {
 pub(super) enum FileManagerKeyDispatch {
     Consumed,
     Inert,
-    // The GREEN owner-first reducer constructs this staged dispatch.
-    #[allow(dead_code)]
     DeferredLocationNavigation,
     CancelOperation,
     Refresh(Box<crate::fm::FmCurrentRefreshRequest>),
@@ -126,6 +125,149 @@ fn active_directory_dispatch(
     })
 }
 
+fn invalidate_deferred_location_navigation(state: &mut AppState) {
+    state.request_file_manager_location_navigation = None;
+    state.file_manager_locations.pending = None;
+}
+
+fn location_navigation_viewport_height(state: &AppState) -> u16 {
+    let view = &state.view.file_manager_locations;
+    view.layout
+        .rail
+        .map(|rail| rail.height)
+        .or_else(|| {
+            view.drawer_area
+                .map(crate::ui::locations_drawer_content_area)
+                .map(|content| content.height)
+        })
+        // Immediately after root Left opens the compact drawer, the next
+        // compute has not projected drawer_area yet. The Trail owns the same
+        // body rect, minus the drawer's one-cell top/bottom border.
+        .or_else(|| {
+            view.locations_action_area
+                .is_some()
+                .then(|| view.layout.trail.height.saturating_sub(2))
+        })
+        .unwrap_or(0)
+}
+
+fn stage_location_navigation(
+    state: &mut AppState,
+    path: std::path::PathBuf,
+    intent: FileManagerLocationNavigationIntent,
+) -> bool {
+    if !state
+        .file_manager_locations
+        .select_cursor(&path, &state.file_manager_locations_model)
+    {
+        return false;
+    }
+    state.request_file_manager_location_navigation =
+        Some(FileManagerLocationNavigationRequest::new(path, intent));
+    true
+}
+
+fn move_locations_rail_cursor(state: &mut AppState, delta: isize) -> FileManagerKeyDispatch {
+    match state
+        .file_manager_locations
+        .move_cursor(&state.file_manager_locations_model, delta)
+    {
+        crate::app::file_manager_locations::FileManagerLocationCursorMove::Inert => {
+            FileManagerKeyDispatch::Inert
+        }
+        crate::app::file_manager_locations::FileManagerLocationCursorMove::Moved(path) => {
+            let viewport_height = location_navigation_viewport_height(state);
+            let _ = state
+                .file_manager_locations
+                .ensure_cursor_visible(&state.file_manager_locations_model, viewport_height);
+            state.request_file_manager_location_navigation =
+                Some(FileManagerLocationNavigationRequest::new(
+                    path,
+                    FileManagerLocationNavigationIntent::FollowPreview,
+                ));
+            FileManagerKeyDispatch::Consumed
+        }
+    }
+}
+
+fn handle_locations_rail_key(
+    state: &mut AppState,
+    key: KeyEvent,
+) -> Option<FileManagerKeyDispatch> {
+    if state.file_manager_locations.focus != crate::app::FileManagerLocationsFocus::Rail {
+        return None;
+    }
+
+    let dispatch = match (key.code, key.modifiers) {
+        (KeyCode::Esc, _)
+            if state
+                .file_manager_operation
+                .as_ref()
+                .is_some_and(crate::app::state::FileManagerOperationState::is_running) =>
+        {
+            FileManagerKeyDispatch::CancelOperation
+        }
+        (KeyCode::Esc | KeyCode::Char('q'), _) => {
+            state.close_file_manager();
+            FileManagerKeyDispatch::Consumed
+        }
+        (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
+            move_locations_rail_cursor(state, 1)
+        }
+        (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) => {
+            move_locations_rail_cursor(state, -1)
+        }
+        (KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter, KeyModifiers::NONE) => {
+            let target = state
+                .file_manager_locations
+                .cursor_path(&state.file_manager_locations_model)
+                .map(std::path::Path::to_path_buf);
+            if target.is_some_and(|path| {
+                stage_location_navigation(
+                    state,
+                    path,
+                    FileManagerLocationNavigationIntent::EnterTrail,
+                )
+            }) {
+                FileManagerKeyDispatch::DeferredLocationNavigation
+            } else {
+                FileManagerKeyDispatch::Inert
+            }
+        }
+        (KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h'), KeyModifiers::NONE) => {
+            FileManagerKeyDispatch::Inert
+        }
+        _ => FileManagerKeyDispatch::Inert,
+    };
+    Some(dispatch)
+}
+
+fn focus_locations_from_trail_root(state: &mut AppState) -> bool {
+    let view = &state.view.file_manager_locations;
+    let frame_is_live = view.files_generation == state.stage.active_instance_generation()
+        && view.model_revision == state.file_manager_locations_model.revision();
+    let has_wide_rail = view.layout.rail.is_some();
+    let has_compact_action = view.locations_action_area.is_some();
+    if !frame_is_live || (!has_wide_rail && !has_compact_action) {
+        return false;
+    }
+
+    invalidate_deferred_location_navigation(state);
+    if has_compact_action {
+        let _ = state.file_manager_locations.open_drawer();
+    } else {
+        state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Rail;
+    }
+    let _ = state
+        .file_manager_locations
+        .normalize_cursor_for_rail(&state.file_manager_locations_model);
+    let viewport_height = location_navigation_viewport_height(state);
+    let _ = state
+        .file_manager_locations
+        .ensure_cursor_visible(&state.file_manager_locations_model, viewport_height);
+    true
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AttachmentPickerKeyDispatch {
     Consumed,
@@ -143,7 +285,11 @@ pub(super) fn handle_file_manager_key(
     key: KeyEvent,
 ) -> FileManagerKeyDispatch {
     if key.code == KeyCode::Esc && state.file_manager_locations.close_drawer() {
+        invalidate_deferred_location_navigation(state);
         return FileManagerKeyDispatch::Consumed;
+    }
+    if let Some(dispatch) = handle_locations_rail_key(state, key) {
+        return dispatch;
     }
     if state.file_manager_locations.drawer_is_open() {
         return FileManagerKeyDispatch::Consumed;
@@ -268,11 +414,14 @@ pub(super) fn handle_file_manager_key(
             }
         }
         (KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h'), KeyModifiers::NONE) => {
-            if let Some(fm) = state.file_manager.as_mut() {
-                if !fm.trail.move_active_left() {
-                    return FileManagerKeyDispatch::Inert;
-                }
-            } else {
+            let Some(moved) = state
+                .file_manager
+                .as_mut()
+                .map(|fm| fm.trail.move_active_left())
+            else {
+                return FileManagerKeyDispatch::Inert;
+            };
+            if !moved && !focus_locations_from_trail_root(state) {
                 return FileManagerKeyDispatch::Inert;
             }
         }
@@ -777,9 +926,19 @@ impl App {
                 && mouse.modifiers.is_empty()
             {
                 if self.state.file_manager_locations.drawer_is_open() {
+                    invalidate_deferred_location_navigation(&mut self.state);
                     let _ = self.state.file_manager_locations.close_drawer();
                 } else {
                     let _ = self.state.file_manager_locations.open_drawer();
+                    let _ = self
+                        .state
+                        .file_manager_locations
+                        .normalize_cursor_for_rail(&self.state.file_manager_locations_model);
+                    let viewport_height = location_navigation_viewport_height(&self.state);
+                    let _ = self.state.file_manager_locations.ensure_cursor_visible(
+                        &self.state.file_manager_locations_model,
+                        viewport_height,
+                    );
                 }
             }
             return FileManagerMouseDispatch::Consumed;
@@ -804,8 +963,11 @@ impl App {
                                     .map(|_| row.path.clone())
                             });
                         if let Some(path) = target {
-                            self.state.request_file_manager_location_navigation = Some(path.into());
-                            let _ = self.state.file_manager_locations.close_drawer();
+                            let _ = stage_location_navigation(
+                                &mut self.state,
+                                path,
+                                FileManagerLocationNavigationIntent::EnterTrail,
+                            );
                         }
                     }
                     MouseEventKind::ScrollUp if mouse.modifiers.is_empty() => {
@@ -832,6 +994,7 @@ impl App {
                 && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
                 && mouse.modifiers.is_empty()
             {
+                invalidate_deferred_location_navigation(&mut self.state);
                 let _ = self.state.file_manager_locations.close_drawer();
             }
             return FileManagerMouseDispatch::Consumed;
@@ -860,9 +1023,11 @@ impl App {
                                     .map(|_| row.path.clone())
                             });
                         if let Some(path) = target {
-                            self.state.request_file_manager_location_navigation = Some(path.into());
-                            self.state.file_manager_locations.focus =
-                                crate::app::FileManagerLocationsFocus::Rail;
+                            let _ = stage_location_navigation(
+                                &mut self.state,
+                                path,
+                                FileManagerLocationNavigationIntent::FollowPreview,
+                            );
                         }
                     }
                     MouseEventKind::ScrollUp if mouse.modifiers.is_empty() => {
@@ -4630,11 +4795,11 @@ mod tests {
         );
     }
 
-    // TP-FMH-LEFT-01/02 + TP-FMH-STEP-01: Left is pure column focus. One
-    // physical key event crosses exactly one resident edge, never mutates the
-    // prepared Trail, and becomes render-neutral at the root boundary.
+    // TP-FMH-LEFT-01/02 + TP-FMH-STEP-01 + TP-FLF-FOCUS-01: Left is pure
+    // owner focus. Each event crosses one resident edge; the first event past
+    // the root transfers to Rail, where another Left is render-neutral.
     #[test]
-    fn left_arrow_moves_one_column_per_event_and_stops_at_root() {
+    fn left_arrow_moves_one_column_per_event_and_transfers_to_rail_at_root() {
         let td = TempDir::new("horizontal-left-step");
         td.dir("alpha");
         fs::create_dir(td.root.join("alpha").join("bravo")).expect("nested directory");
@@ -4644,6 +4809,10 @@ mod tests {
         let file_manager =
             FmState::open_trail_to(&td.root, &target, false).expect("open three-column Trail");
         let mut app = runtime_app_with_fm(file_manager);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        install_fcl_location_model(&mut app, std::slice::from_ref(&td.root));
+        compute_view(&mut app.state, Rect::new(0, 0, 100, 16));
         let prepared = app
             .state
             .file_manager
@@ -4679,17 +4848,25 @@ mod tests {
         app.file_manager_key_render_override = None;
         assert_eq!(
             handle_file_manager_key(&mut app.state, key(KeyCode::Left)),
-            FileManagerKeyDispatch::Inert,
-            "the pure reducer rejects Left at the root boundary"
+            FileManagerKeyDispatch::Consumed,
+            "the next Left crosses exactly one owner edge into Rail"
+        );
+        assert_eq!(
+            app.state.file_manager_locations.focus,
+            crate::app::FileManagerLocationsFocus::Rail
         );
         app.handle_focused_file_manager_key(key(KeyCode::Left));
         let after = app.state.file_manager.as_ref().expect("open FM");
-        assert_eq!(after.trail.active_col(), 0, "Left at root is inert");
+        assert_eq!(
+            after.trail.active_col(),
+            0,
+            "Rail Left leaves Trail at root"
+        );
         assert_eq!(after.trail.cols(), prepared.as_slice());
         assert_eq!(
             app.file_manager_key_render_override,
             Some(false),
-            "an inert boundary key cannot request a render"
+            "an inert Rail boundary key cannot request a render"
         );
     }
 
@@ -9039,6 +9216,32 @@ command = ["inspect"]
             .expect("open compact Locations drawer")
     }
 
+    fn stage_flf_drawer_entry_for_test(app: &mut crate::app::App, io_generation: u64) {
+        let path = app
+            .state
+            .file_manager_locations
+            .cursor_path(&app.state.file_manager_locations_model)
+            .expect("drawer cursor")
+            .to_path_buf();
+        assert_eq!(
+            handle_file_manager_key(&mut app.state, key(KeyCode::Right)),
+            FileManagerKeyDispatch::DeferredLocationNavigation
+        );
+        assert_eq!(
+            app.state
+                .request_file_manager_location_navigation
+                .as_ref()
+                .map(|request| request.intent),
+            Some(FileManagerLocationNavigationIntent::EnterTrail)
+        );
+        app.state.file_manager_locations.begin_load(
+            path,
+            app.state.stage.active_instance_generation().unwrap(),
+            app.state.file_manager_locations_model.revision(),
+            io_generation,
+        );
+    }
+
     // TP-FCL-DRAWER-01: the complete compact action opens a bounded top
     // overlay, and one fresh prepared row emits its exact typed navigation
     // request without authorizing any path from coordinates alone.
@@ -9069,7 +9272,20 @@ command = ["inspect"]
         ));
         assert_eq!(
             app.state.request_file_manager_location_navigation,
-            Some(target.path.into())
+            Some(FileManagerLocationNavigationRequest {
+                path: target.path.clone(),
+                intent: FileManagerLocationNavigationIntent::EnterTrail,
+            })
+        );
+        assert_eq!(
+            app.state
+                .file_manager_locations
+                .cursor_path(&app.state.file_manager_locations_model),
+            Some(target.path.as_path())
+        );
+        assert!(
+            app.state.file_manager_locations.drawer_is_open(),
+            "the drawer remains authoritative until exact entry acceptance"
         );
     }
 
@@ -9080,6 +9296,7 @@ command = ["inspect"]
     fn fcl_drawer_outside_escape_resize_and_reopen_restore_focus() {
         let (_td, mut app, compact, _paths) = compact_fcl_app("fcl-drawer-lifecycle");
         let drawer = open_fcl_drawer(&mut app, compact);
+        stage_flf_drawer_entry_for_test(&mut app, 41);
         let trail = app.state.view.file_manager_locations.layout.trail;
         let outside = (
             trail.right().saturating_sub(1),
@@ -9102,8 +9319,11 @@ command = ["inspect"]
             app.state.file_manager_locations.focus,
             crate::app::FileManagerLocationsFocus::Trail
         );
+        assert!(app.state.request_file_manager_location_navigation.is_none());
+        assert!(app.state.file_manager_locations.pending.is_none());
 
         let _ = open_fcl_drawer(&mut app, compact);
+        stage_flf_drawer_entry_for_test(&mut app, 42);
         assert_eq!(
             handle_file_manager_key(&mut app.state, key(KeyCode::Esc)),
             FileManagerKeyDispatch::Consumed
@@ -9114,11 +9334,16 @@ command = ["inspect"]
             "Esc closes only the drawer"
         );
         assert!(app.state.view.file_manager_locations.drawer_area.is_none());
+        assert!(app.state.request_file_manager_location_navigation.is_none());
+        assert!(app.state.file_manager_locations.pending.is_none());
 
         let _ = open_fcl_drawer(&mut app, compact);
+        stage_flf_drawer_entry_for_test(&mut app, 43);
         let wide = Rect::new(0, 0, 90, 12);
         compute_view(&mut app.state, wide);
         assert!(app.state.view.file_manager_locations.drawer_area.is_none());
+        assert!(app.state.request_file_manager_location_navigation.is_none());
+        assert!(app.state.file_manager_locations.pending.is_none());
         assert_eq!(
             app.state.file_manager_locations.focus,
             crate::app::FileManagerLocationsFocus::Trail

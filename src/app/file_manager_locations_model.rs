@@ -229,8 +229,6 @@ impl FileManagerLocationsModel {
             .filter(|item| item.accessible)
     }
 
-    // Task 2 consumes this through cursor visibility projection.
-    #[allow(dead_code)]
     pub(crate) fn content_line_count(&self) -> usize {
         self.sections
             .iter()
@@ -239,8 +237,6 @@ impl FileManagerLocationsModel {
             .saturating_add(self.sections.len().saturating_sub(1))
     }
 
-    // Task 2 consumes this through cursor visibility projection.
-    #[allow(dead_code)]
     pub(crate) fn line_index_for_path(&self, path: &Path) -> Option<usize> {
         let mut line_index = 0usize;
         for (section_index, section) in self.sections.iter().enumerate() {

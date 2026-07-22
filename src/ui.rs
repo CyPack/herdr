@@ -249,6 +249,8 @@ fn sync_file_manager_locations_view(app: &mut AppState, area: Rect) -> FileManag
             || view.locations_action_area.is_none()
             || view.drawer_area.is_none());
     if drawer_is_invalid {
+        app.request_file_manager_location_navigation = None;
+        app.file_manager_locations.pending = None;
         let _ = app.file_manager_locations.close_drawer();
         view = project_file_manager_locations_view(app, area);
     }

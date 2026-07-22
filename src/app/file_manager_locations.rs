@@ -37,9 +37,6 @@ pub(crate) struct FileManagerLocationPending {
     pub(crate) io_generation: u64,
 }
 
-// Task 2 wires this cursor outcome into the keyboard owner; keep this atomic
-// model commit independently warning-free until that consumer lands.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FileManagerLocationCursorMove {
     Inert,
@@ -233,8 +230,18 @@ impl FileManagerLocationsState {
         self.set_cursor(next)
     }
 
-    // Task 2 consumes this from the Rail input owner.
-    #[allow(dead_code)]
+    pub(crate) fn select_cursor(&mut self, path: &Path, model: &FileManagerLocationsModel) -> bool {
+        if !model
+            .item_for_path(path)
+            .is_some_and(|item| item.accessible)
+        {
+            return false;
+        }
+        let _ = self.set_cursor(Some(path.to_path_buf()));
+        self.focus = FileManagerLocationsFocus::Rail;
+        true
+    }
+
     pub(crate) fn move_cursor(
         &mut self,
         model: &FileManagerLocationsModel,
@@ -266,8 +273,6 @@ impl FileManagerLocationsState {
         FileManagerLocationCursorMove::Moved(path)
     }
 
-    // Task 2 consumes this after Rail cursor movement.
-    #[allow(dead_code)]
     pub(crate) fn ensure_cursor_visible(
         &mut self,
         model: &FileManagerLocationsModel,

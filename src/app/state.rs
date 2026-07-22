@@ -746,8 +746,6 @@ pub struct FileManagerDeleteRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FileManagerLocationNavigationIntent {
     FollowPreview,
-    // The GREEN owner-first reducer constructs explicit Rail entry intent.
-    #[allow(dead_code)]
     EnterTrail,
 }
 
@@ -758,11 +756,12 @@ pub(crate) struct FileManagerLocationNavigationRequest {
 }
 
 impl FileManagerLocationNavigationRequest {
+    pub(crate) fn new(path: PathBuf, intent: FileManagerLocationNavigationIntent) -> Self {
+        Self { path, intent }
+    }
+
     pub(crate) fn follow(path: PathBuf) -> Self {
-        Self {
-            path,
-            intent: FileManagerLocationNavigationIntent::FollowPreview,
-        }
+        Self::new(path, FileManagerLocationNavigationIntent::FollowPreview)
     }
 }
 
