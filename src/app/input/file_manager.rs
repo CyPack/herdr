@@ -256,11 +256,7 @@ pub(super) fn handle_file_manager_key(
                     if let Some(dispatch) = active_directory_dispatch(fm, true) {
                         return dispatch;
                     }
-                    if fm.activate_selected_trail_entry()
-                        == crate::fm::trail_snapshots::TrailActivateOutcome::Rejected
-                    {
-                        return FileManagerKeyDispatch::Inert;
-                    }
+                    return FileManagerKeyDispatch::Inert;
                 } else if !fm.trail.move_active_right() {
                     return FileManagerKeyDispatch::Inert;
                 }
@@ -4628,6 +4624,154 @@ mod tests {
                 .active_col(),
             0
         );
+    }
+
+    // TP-FMH-LEFT-01/02 + TP-FMH-STEP-01: Left is pure column focus. One
+    // physical key event crosses exactly one resident edge, never mutates the
+    // prepared Trail, and becomes render-neutral at the root boundary.
+    #[test]
+    fn left_arrow_moves_one_column_per_event_and_stops_at_root() {
+        let td = TempDir::new("horizontal-left-step");
+        td.dir("alpha");
+        fs::create_dir(td.root.join("alpha").join("bravo")).expect("nested directory");
+        fs::write(td.root.join("alpha").join("bravo").join("inside.txt"), b"x")
+            .expect("nested file");
+        let target = td.root.join("alpha").join("bravo");
+        let file_manager =
+            FmState::open_trail_to(&td.root, &target, false).expect("open three-column Trail");
+        let mut app = runtime_app_with_fm(file_manager);
+        let prepared = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .trail
+            .cols()
+            .to_vec();
+
+        app.handle_focused_file_manager_key(key(KeyCode::Left));
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .trail
+                .active_col(),
+            1,
+            "one Left event crosses exactly one resident edge"
+        );
+        app.handle_focused_file_manager_key(key(KeyCode::Left));
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .trail
+                .active_col(),
+            0,
+            "the second Left event reaches the root"
+        );
+
+        app.file_manager_key_render_override = None;
+        assert_eq!(
+            handle_file_manager_key(&mut app.state, key(KeyCode::Left)),
+            FileManagerKeyDispatch::Inert,
+            "the pure reducer rejects Left at the root boundary"
+        );
+        app.handle_focused_file_manager_key(key(KeyCode::Left));
+        let after = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(after.trail.active_col(), 0, "Left at root is inert");
+        assert_eq!(after.trail.cols(), prepared.as_slice());
+        assert_eq!(
+            app.file_manager_key_render_override,
+            Some(false),
+            "an inert boundary key cannot request a render"
+        );
+    }
+
+    // TP-FMH-RIGHT-01 + TP-FMH-STEP-01: a resident directory chain may be
+    // traversed without disk I/O, but one Right event may focus only the next
+    // column even when multiple descendants are already prepared.
+    #[test]
+    fn right_arrow_moves_one_resident_column_per_event() {
+        let td = TempDir::new("horizontal-right-step");
+        td.dir("alpha");
+        fs::create_dir(td.root.join("alpha").join("bravo")).expect("nested directory");
+        fs::write(td.root.join("alpha").join("bravo").join("inside.txt"), b"x")
+            .expect("nested file");
+        let target = td.root.join("alpha").join("bravo");
+        let file_manager =
+            FmState::open_trail_to(&td.root, &target, false).expect("open three-column Trail");
+        let mut state = app_with_fm(file_manager);
+        assert_eq!(
+            handle_file_manager_key(&mut state, key(KeyCode::Left)),
+            FileManagerKeyDispatch::Consumed
+        );
+        assert_eq!(
+            handle_file_manager_key(&mut state, key(KeyCode::Left)),
+            FileManagerKeyDispatch::Consumed
+        );
+
+        assert_eq!(
+            handle_file_manager_key(&mut state, key(KeyCode::Right)),
+            FileManagerKeyDispatch::Consumed
+        );
+        let after = state.file_manager.as_ref().expect("open FM");
+        assert_eq!(
+            after.trail.active_col(),
+            1,
+            "one Right event cannot jump through a prepared descendant"
+        );
+        assert_eq!(after.trail.cols().len(), 3);
+    }
+
+    // TP-FMH-RIGHT-03 + TP-FMH-ALIAS-01: Right/l are column-navigation
+    // commands, not file activation aliases. A non-directory cursor must be
+    // completely inert: no selection projection, worker, focus, or render.
+    #[test]
+    fn right_navigation_on_file_is_inert_without_side_effects() {
+        for code in [KeyCode::Right, KeyCode::Char('l')] {
+            let td = TempDir::new("horizontal-right-file-inert");
+            td.dir("00-child");
+            td.file("01-file.txt");
+            td.set_equal_modified(&["00-child", "01-file.txt"]);
+            let file_manager = FmState::new(&td.root);
+            let mut app = runtime_app_with_fm(file_manager);
+
+            app.handle_focused_file_manager_key(key(KeyCode::Left));
+            app.handle_focused_file_manager_key(key(KeyCode::Down));
+            let before = app.state.file_manager.as_ref().expect("open FM").clone();
+            assert_eq!(
+                before.selected().map(|entry| entry.path.as_path()),
+                Some(td.root.join("01-file.txt").as_path()),
+                "fixture cursor must own the file row"
+            );
+
+            assert_eq!(
+                handle_file_manager_key(&mut app.state, key(code)),
+                FileManagerKeyDispatch::Inert,
+                "the pure reducer cannot turn Right/l into file activation"
+            );
+            app.file_manager_key_render_override = None;
+            app.handle_focused_file_manager_key(key(code));
+
+            let after = app.state.file_manager.as_ref().expect("open FM");
+            assert_eq!(
+                after.trail, before.trail,
+                "Right/l on a file cannot mutate the Trail"
+            );
+            assert_eq!(after.trail_snapshots, before.trail_snapshots);
+            assert_eq!(after.cwd, before.cwd);
+            assert_eq!(after.entries, before.entries);
+            assert_eq!(after.cursor, before.cursor);
+            assert_eq!(after.directory_generation, before.directory_generation);
+            assert_eq!(after.preview_generation, before.preview_generation);
+            assert_eq!(
+                app.file_manager_key_render_override,
+                Some(false),
+                "Right/l on a file is render-neutral"
+            );
+        }
     }
 
     // TP-FMN-NAV-01..03 RED: each Up event advances exactly one row in the
