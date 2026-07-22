@@ -2,24 +2,30 @@
 
 - Updated: 2026-07-22
 - Branch: `feat/native-fm`
-- Current override: **FMH horizontal focus fix fully gated locally; isolated
-  acceptance and publication pending.** Local/origin started equal at
-  `787bb96b`; checkpoint
-  `refs/checkpoints/herdr-fm-horizontal-pre-fix-20260722` preserves it. The user
-  physically accepted the prior vertical/wheel build as working perfectly, so
-  FMN-5 is closed. FMH freezes Left as one resident parent edge and Right/`l`
-  as one directory-only child edge. The RED proved Right on a file fell through
-  to `SelectedFile`, truncated the resident Trail, and rendered. The minimum
-  GREEN returns `Inert` for a non-directory cursor and leaves directory worker,
-  Enter/click, Left, vertical, and wheel paths unchanged. Fresh gates: FMH
-  3/3, cross-layer 10/10, broad FM 190/190, full 3,622/3,622 + 4 skip, both
-  Clippy targets, Python 68/68, Bun 5/5 + 12/12, exporter 1/1, Chromium 33/33,
-  zero JSON/PNG delta, clean source/dependency/vendor/diff audits, and current
-  CLI graph 24,078 / 129,027 with exact FMH snippets. The long-lived built-in
-  graph channel remains stale at 24,072 / 129,520 and is not treated as fresh.
-  Isolated E2E, commit-message alignment, exact staging, and CyPack publication
-  remain.
-  Stable Herdr/socket and `.superpowers/` are untouched.
+- Current override: **FFO Files focus ownership automated closure is complete
+  through product head `d85d610e`; closure docs/post-doc gates/CyPack push are
+  active and user physical acceptance remains pending.** One existing
+  `FileManagerLocationsFocus::{Rail, Trail}` owns top-level Files input.
+  Accepted current-frame Trail click, modified click, right click, row action,
+  wheel, horizontal input, and live body input transfer only after typed
+  validation; stale/coalesced/blocked input cannot. `TrailState::active_col()`
+  remains subordinate; resident depth, accepted origin, selection, hover, and
+  paint are not owner authority. Rail ownership disables Copy/Paste/New
+  Folder/Delete with `InactiveFocusOwner`, and header/context/plugin/rename/
+  worker boundaries revalidate current Trail ownership before effects. One
+  shared accent/panel/bold/reversed cursor paints exactly one current-owner row;
+  origin is weaker bold accent context without underline or reverse. Fresh
+  doc-aware gates: full Nextest 3,680/3,680 + 6 skip (run
+  `195f02e5-dbc2-4853-a5e3-ea2e09624d5d`), fmt, Linux/Windows Clippy, Bun 5/5
+  + 12/12, Python 68/68, build, Chromium 35/35, deterministic exporter A/B
+  1/1 with empty diff, clean architecture/no-I/O audit, and final doc-aware CLI
+  graph 24,327 / 129,874 resolving new symbols with a stored/read-back FFO ADR.
+  Built-in graph 24,217 / 128,975 is stale and
+  explicitly not freshness evidence. Canonical evidence:
+  `.codex/evidence/files-focus-ownership-closure.md`. Next automated action is
+  full gates + exact closure commit + only
+  `origin HEAD:feat/native-fm`; then user runs cleanup-first isolated E2E.
+  Stable Herdr/socket/config, user sessions, and `.superpowers/` are untouched.
 - Historical override: **Main Native Files stutter closed; this snapshot was
   captured while FMN human E2E/publication were still pending.** The human-accepted
   main-stutter product head is `d8583d3a`; closure publication
@@ -56,7 +62,7 @@
   clean. That FMN working-tree graph was 24,072 nodes / 129,692 edges and resolved
   the cursor reducer, wheel gate, preview identity, active-owner projection,
   and regression tests; its post-commit SHA gate later closed at `787bb96b`.
-  Current FMH graph/publication state is authoritative above.
+  Current FFO graph/publication state is authoritative above.
 - Current override: **MTIME program closed.** The user
   approved strict mixed directory/file ordering by modification time
   descending plus Finder-like local-calendar sections and right-side mtime

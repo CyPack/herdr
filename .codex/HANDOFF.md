@@ -2,53 +2,81 @@
 
 Updated: 2026-07-22 CEST
 
-## 0. SONRAKI ADIM — FMH ISOLATED E2E, THEN MESSAGE ALIGNMENT/PUBLICATION
+## 0. SONRAKI ADIM — FFO DOC-AWARE GATES/PUBLICATION, THEN USER E2E
 
-**CURRENT OVERRIDE — FMH HORIZONTAL MILLER FOCUS FIX LOKALDE HAZIR.** Local
-HEAD ve `origin/feat/native-fm` çalışma başlangıcında aynı
-`787bb96b91148a50352d4162acbc9b745729d1b7` SHA'sındaydı. Tracked tree temiz,
-yalnız kullanıcıya ait `.superpowers/` untracked idi. Geri dönüş ref'i
-`refs/checkpoints/herdr-fm-horizontal-pre-fix-20260722` bu head'i korur. Stable
-Herdr process/socket/config hiçbir aşamada hedef olmadı.
+**CURRENT OVERRIDE — FFO FILES FOCUS OWNERSHIP PRODUCT KODU VE AUTOMATED
+ORACLE TAMAM.** Pre-closure product head `d85d610e`; current live HEAD must be
+read with Git because the documentation commit and CyPack-only publication are
+the active closure step. The approved chain is `bf9fcf46`, `0e415d81`,
+`0549c8aa`, `3c5f94e4`, `6b18529a`, `83fb77ec`, `de6656e5`, `680eb194`,
+`4422f8ae`, and `d85d610e`. Checkpoint
+`refs/checkpoints/herdr-flf-pre-implementation-20260722` preserves the
+pre-FFO state. Stable Herdr process/socket/config and user sessions were never
+addressed; `.superpowers/` remains user-owned and unstaged.
 
-Kullanıcı önceki FMN build'ini fiziksel olarak test edip kusursuz çalıştığını
-bildirdi; wheel'in 3-5 satır atlaması ve vertical cursor'ın directory üzerinde
-child kolona kendiliğinden geçmesi kapanmıştır. Yeni FMH contract:
+Use this product vocabulary:
 
-1. Left varsa tam bir resident parent kolona geçer; root'ta inerttir.
-2. Right/`l` exact cursor directory ise tam bir child edge geçer veya bounded
-   activation worker'ı kuyruğa alır.
-3. Right/`l` file/non-entry/stale/boundary üzerinde tamamen inerttir; file
-   selection, Trail truncation, worker, focus veya render üretemez.
-4. Enter/click'in mevcut file/directory explicit activation semantiği korunur.
+1. **Locations Rail:** fixed Home/Desktop/Downloads/configured locations.
+2. **Miller Trail:** dynamic root/ancestor/current/child/detail region.
+3. **Active Miller Column:** `TrailState::active_col()`, subordinate to Trail.
+4. **Focus Owner:** the single `FileManagerLocationsFocus::{Rail, Trail}`.
+5. **Focus Cursor:** exactly one strong filled current-owner row.
+6. **Accepted Origin / Origin Marker:** weaker Rail context, not focus.
+7. **File Action Bar:** Copy/Paste/New Folder/Delete capabilities.
 
-Graph-first zincir key mapping'in zaten var olduğunu; bug'ın Right branch'inde
-`active_directory_dispatch` directory bulamayınca
-`activate_selected_trail_entry` ile file activation'a düşmesi olduğunu
-kanıtladı. TDD RED `0ddfe67c-72fc-4f0f-baa5-715f83a1f1c6`: file cursor üzerinde
-Right resident iki kolonlu Trail'i tek kolonlu `SelectedFile` projection'a
-çevirdi. Minimum GREEN bu fallback'i kaldırıp `Inert` döndürüyor. Left,
-directory activation, bounded worker ve Enter/click production yolları
-değişmedi.
+Root cause: accepted typed Trail interactions changed Trail cursor/selection
+but did not transfer top-level owner, so the next owner-first key route still
+moved the Rail. The thin blue line was not terminal corruption; the old
+renderer deliberately underlined the accepted origin. Action preparation and
+direct dispatch also omitted top-level ownership, allowing old Trail selection
+metadata to retain authority while Rail owned focus.
 
-Taze kapılar: FMH 3/3 (`d0aed4e5-82e1-47ec-b92c-9df94b87e2ec`), cross-layer
-10/10 (`6250e842-3ad1-47c8-ac60-d85773436c02`), broad FM input/Trail/
-snapshot/worker/watcher 190/190 (`9295437e-82d2-43e6-ab09-087ac8745cee`),
-full Nextest 3,622/3,622 + 4 skip
-(`cb2b0920-1783-452d-99c1-d0b34232d1bb`), Linux+Windows Clippy, Python 68/68,
-Bun 5/5 + 12/12, exporter 1/1
-(`5cabc949-a769-4524-ad91-db87f5adb8c6`), Chromium 33/33, generated JSON/PNG
-delta zero, rustfmt ve source/dependency/vendor/diff audit temiz. `just` yok;
-exact child recipe'lerin tamamı doğrudan koşuldu.
+Current law:
 
-Graph CLI store 24,078 node / 129,027 edge ve 12 changed / 0 extraction error
-ile güncel; üç FMH testi ve production `return Inert` branch'i CLI snippet ile
-kanıtlandı. Built-in long-lived channel eski 24,072 / 129,520 snapshot'ında
-kaldı; `ready` tazelik sayılmadı ve hiçbir proxy/user process restart edilmedi.
-Sıradaki tek executable adım cleanup-first isolated debug build ve human
-Left/Right acceptance'tır; sonra commit mesajı hizalama, exact-path staging,
-commit ve yalnız CyPack fork push. PNG snapshot regeneration yapılmadı ve kör
-update yasaktır.
+- accepted live Trail row/modified/right-click/action/wheel/horizontal/body
+  input transfers to Trail only after exact current-frame validation;
+- stale, blocked, malformed, outside, or coalesced input cannot transfer;
+- Rail Up/Down stays in Rail; Trail Up/Down stays in the active Miller column;
+- resident depth, origin, selection, hover, and paint are not focus authority;
+- Rail owner disables every File Action Bar action with
+  `InactiveFocusOwner`; header/context/plugin/rename/worker boundaries
+  revalidate current owner before effects;
+- Rail and Trail share accent/panel/bold/reversed cursor paint, exactly one row
+  is strong, and origin is bold accent without reverse/underline.
+
+Fresh doc-aware gates: full Nextest run
+`195f02e5-dbc2-4853-a5e3-ea2e09624d5d` 3,680/3,680 + 6 skipped; fmt; Linux and
+Windows Clippy; Bun 5/5 + 12/12; Python 68/68; build; Chromium 35/35. Visual
+exporter A/B each passed 1/1 with an empty recursive diff. The prior
+product-head run `947bae41-4901-4f38-ad9f-5f187dcc4399` was also fully green.
+VIS-26 changed only
+the reviewed origin underline; VIS-27 is the reviewed Trail-owner oracle. The
+FFO diff adds no server/protocol/platform/dependency/cache/worker/timer or
+production filesystem I/O. `just` is unavailable, so exact child recipes are
+the evidence; never claim the absent wrapper passed.
+
+Final doc-aware single-worker CLI graph is 24,327 nodes / 129,874 edges and
+resolves `focus_file_manager_trail`, `focus_trail`,
+`compute_file_manager_action_bar_model`, and `InactiveFocusOwner`. The
+long-lived built-in graph remains stale at 24,217 / 128,975 and was not
+restarted. The FFO ADR was stored and read back through the fresh CLI. Closure
+must finish post-doc full gates, exact-path `docs: record file manager focus ownership`
+commit, `git push origin HEAD:feat/native-fm`, and local/origin SHA proof.
+
+Physical `TP-FFO-E2E-01` remains pending and user-driven. After publication,
+give exactly this cleanup-first isolated launcher:
+
+~~~bash
+cd /home/ayaz/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run
+~~~
+
+Verify Rail/Trail mouse-to-key ownership, one-step wheel including a clamped
+ownership transfer, Right-first-child/Left-parent laws, Rail-disabled actions,
+one filled cursor/no origin underline, dense-input smoothness, and zero
+`/tmp/herdr-trail-manual-test` residue. Never launch the interactive TUI from
+the agent tool. Canonical claim/evidence/confidence record:
+`.codex/evidence/files-focus-ownership-closure.md`. Pinned pre-warm remains the
+separate measurement-first FMN-6 lane.
 
 **HISTORICAL FMN SNAPSHOT — ANA STUTTER KAPANDI VE KULLANICI CANLIDA KABUL
 ETTI.**
@@ -100,7 +128,8 @@ narrow-layout test now proves root rows before Right, child rows after Right,
 and root restoration after Left.
 
 FMN-5 daha sonra kullanıcı fiziksel kabulü ve `787bb96b` publication head'iyle
-kapandı. Aktif iş yukarıdaki ayrı FMH lane'idir. Pinned
+kapandı. Sonraki FMH lane'i de kapalıdır; aktif iş yukarıdaki FFO owner
+contract'ıdır. Pinned
 Home/Desktop/Downloads pre-warm FMN-6'dır ve ayrı first-entry latency RED
 olmadan uygulanmaz. Genel/unbounded LRU yasaktır. Pinned Yazi source ve transfer
 kararı: `.codex/references/yazi-file-manager-performance-transfer.md`.
@@ -118,7 +147,7 @@ edge. That graph
 `queue_file_manager_trail_directory_preview_identity`,
 `project_miller_view_with_resize_preview`, and both active-owner regression
 tests resolved at current source paths. FMN'in SHA-bound publication gate'i
-daha sonra `787bb96b` ile kapandı; güncel FMH graph/publication durumu bu
+daha sonra `787bb96b` ile kapandı; güncel FFO graph/publication durumu bu
 dosyanın en üstündeki override'dır.
 Stable Herdr/socket ve `.superpowers/` kesinlikle kapsam dışıdır. Commit/push
 yalnız exact-path staging ve önceden hizalanmış commit mesajıyla yapılır.

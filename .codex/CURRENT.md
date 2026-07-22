@@ -1,49 +1,63 @@
 # Current State — 2026-07-22
 
-> **CURRENT OVERRIDE — FMH HORIZONTAL FOCUS FIX FULLY GATED LOCALLY; PHYSICAL
-> E2E AND PUBLICATION REMAIN (2026-07-22).** Local HEAD and
-> `origin/feat/native-fm` are both `787bb96b91148a50352d4162acbc9b745729d1b7`;
-> tracked state was clean before FMH and `.superpowers/` was the only untracked
-> path. Checkpoint
-> `refs/checkpoints/herdr-fm-horizontal-pre-fix-20260722` preserves that exact
-> head. The user physically accepted the prior FMN build as working perfectly,
-> so FMN-5 is closed and must not be reopened.
+> **CURRENT OVERRIDE — FFO FILES FOCUS OWNERSHIP AUTOMATED CLOSURE COMPLETE;
+> USER PHYSICAL ACCEPTANCE REMAINS (2026-07-22).** The approved FFO chain is
+> `bf9fcf46` design, `0e415d81` executable plan, `0549c8aa` characterization,
+> `3c5f94e4` input RED, `6b18529a` input GREEN, `83fb77ec` action RED,
+> `de6656e5` action GREEN, `680eb194` visual RED, `4422f8ae` visual GREEN,
+> and `d85d610e` deterministic visual oracle. This continuity snapshot is the
+> closure-documentation step immediately before post-doc gates and the audited
+> CyPack-only push; live Git equality must be checked rather than inferred from
+> this prose.
 >
-> The active FMH contract is directional, not a generic activation alias:
-> Left crosses exactly one resident parent edge whenever one exists and is
-> inert at root. Right/`l` crosses or activates exactly one child only when the
-> exact cursor entry is a directory; on a file/non-entry/stale identity it is
-> model-, worker-, focus-, and render-inert. Enter and explicit click retain
-> their file/directory activation behavior. Graph-first tracing proved the key
-> mapping already existed and isolated the defect to Right's fallback from
-> `active_directory_dispatch` into `activate_selected_trail_entry`.
+> Native Files now has one top-level region owner:
+> `FileManagerLocationsFocus::{Rail, Trail}`. Accepted current-frame Trail
+> click, modified click, right click, row action, wheel, horizontal input, and
+> live body input transfer ownership only after typed validation. Stale,
+> blocked, coalesced, or malformed input cannot transfer it. Rail Up/Down stays
+> in the Rail; Trail Up/Down stays in `TrailState::active_col()`. Resident
+> depth, accepted origin, multi-selection, prepared selection, hover, and paint
+> are not focus authority.
 >
-> TDD RED run `0ddfe67c-72fc-4f0f-baa5-715f83a1f1c6` showed Right over a file
-> replacing the two-column resident Trail with a one-column `SelectedFile`
-> projection. The minimum GREEN removes that fallback and returns `Inert` for
-> a non-directory cursor; directory worker paths and Left are unchanged. Fresh
-> evidence so far: horizontal matrix 3/3
-> (`d0aed4e5-82e1-47ec-b92c-9df94b87e2ec`), cross-layer matrix 10/10
-> (`6250e842-3ad1-47c8-ac60-d85773436c02`), broad input/Trail/snapshot/
-> worker/watcher matrix 190/190
-> (`9295437e-82d2-43e6-ab09-087ac8745cee`); full Nextest 3,622/3,622 + 4 skip
-> (`cb2b0920-1783-452d-99c1-d0b34232d1bb`); rustfmt; Linux all-target and
-> Windows MSVC Clippy; Python 68/68; Bun 5/5 + 12/12; deterministic exporter
-> 1/1 (`5cabc949-a769-4524-ad91-db87f5adb8c6`); Chromium 33/33; generated
-> JSON/PNG delta zero; dependency/vendor/source/diff audits clean. `just` is
-> unavailable, so every exact `just check` child recipe was run directly.
+> Rail ownership disables Copy/Paste/New Folder/Delete with the typed
+> `InactiveFocusOwner` reason while preserving resident selection metadata.
+> Header, context, plugin, rename, copy/delete/paste, and worker admission
+> boundaries recompute current Trail ownership, so old enabled geometry fails
+> closed. The shared active cursor is accent foreground + panel background +
+> bold/reversed; exactly one valid current-owner row receives it. The accepted
+> origin is bold accent context with no reverse or underline. Only the active
+> Miller column is strong; resident ancestors and multi-selection remain
+> distinct.
 >
-> Single-worker graph refresh completed with 12 changed files, zero extraction
-> errors, 24,078 nodes / 129,027 edges. CLI `search_graph` and
-> `get_code_snippet` resolve all three FMH tests and the live Right branch's
-> non-directory `return Inert`. The long-lived built-in channel still reports
-> its older 24,072 / 129,520 snapshot; no proxy/user process was restarted and
-> `ready` alone is not counted as freshness. Only cleanup-first isolated
-> physical Left/Right acceptance remains before message alignment and
-> publication. Commit/push remain alignment-gated; exact-path staging only,
-> CyPack fork only. Stable Herdr/socket and `.superpowers/` remain untouched.
+> Fresh doc-aware gates: full Nextest run
+> `195f02e5-dbc2-4853-a5e3-ea2e09624d5d` passed 3,680/3,680 with 6 skipped;
+> fmt, Linux all-target Clippy, Windows MSVC Clippy, Bun 5/5 + 12/12, Python
+> 68/68, build, and full Chromium 35/35 are clean. The prior product-head full
+> run `947bae41-4901-4f38-ad9f-5f187dcc4399` was also 3,680/3,680. Exporter A/B runs were 1/1
+> with empty recursive diff; VIS-26/VIS-27 JSON hashes are recorded in
+> `.codex/evidence/files-focus-ownership-closure.md`. The FFO diff is empty in
+> `src/server`, `src/protocol`, `src/platform`, `Cargo.toml`, and `Cargo.lock`,
+> and adds no production filesystem read, worker, cache, channel, timer, sleep,
+> or debounce. `just` is unavailable, so every exact child recipe is recorded
+> separately rather than claiming the wrapper passed.
+>
+> Final doc-aware single-worker graph is 24,327 nodes / 129,874 edges and
+> resolves `focus_file_manager_trail`, its `focus_trail`
+> call, and `compute_file_manager_action_bar_model` with
+> `InactiveFocusOwner`. The long-lived built-in channel is stale at 24,217 /
+> 128,975; it was not restarted and is not freshness evidence. The FFO ADR was
+> stored through the fresh CLI and read back with all six required sections.
+>
+> Manual `TP-FFO-E2E-01` is honestly pending. Run only the cleanup-first
+> isolated helper:
+> `cd /home/ayaz/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run`.
+> Verify Rail/Trail mouse-to-key ownership, one-step wheel, Right/Left column
+> laws, Rail-disabled actions, one filled active row/no origin underline,
+> smooth dense input, and zero throwaway residue. Stable Herdr/socket/config
+> and `.superpowers/` remain untouched. Pinned Home/Desktop/Downloads pre-warm
+> remains the separate measurement-first FMN-6 lane.
 
-> **HISTORICAL FMN PRE-PUBLICATION SNAPSHOT — SUPERSEDED BY THE FMH OVERRIDE
+> **HISTORICAL FMN PRE-PUBLICATION SNAPSHOT — SUPERSEDED BY THE FFO OVERRIDE
 > ABOVE (2026-07-22).** The human-accepted main-stutter behavior head is
 > `d8583d3ab564d42f880e94e0462f9d12ab61d391`. Closure publication then adds
 > `8f4b2acc` (test-only path-identity fixture) and `d52b4417` (closure evidence,
@@ -93,7 +107,8 @@
 > deterministic exporter 1/1; full Chromium 33/33. Exactly six legacy
 > VIS-01..06 PNGs were inspected and updated; generated JSON and VIS-07..25
 > stayed clean. FMN-5 was subsequently accepted by the user and published;
-> current work is the separate FMH horizontal-focus lane above.
+> the later FMH horizontal-focus lane is also closed; current work is the FFO
+> owner contract above.
 > Home/Desktop/Downloads pre-warm stays a later
 > measurement-first, per-directory entry/byte-capped, mtime-invalidated lane;
 > Yazi's unbounded history map is explicitly rejected. The FMN working-tree
@@ -101,7 +116,7 @@
 > `move_trail_cursor_in_column`, `FileManagerVerticalWheelBurstGate`,
 > `queue_file_manager_trail_directory_preview_identity`, the active-owner
 > resize projection, and its regression tests. FMN's post-commit SHA gate later
-> closed at `787bb96b`; current FMH graph/publication state is authoritative in
+> closed at `787bb96b`; current FFO graph/publication state is authoritative in
 > the override above.
 > Stable Herdr/socket and `.superpowers/` remain untouched.
 

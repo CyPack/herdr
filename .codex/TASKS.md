@@ -1,50 +1,71 @@
 # Durable Tasks — Herdr Native FM
 
-## P0 ACTIVE — FMH Horizontal Miller Focus Navigation
+## P0 ACTIVE — FFO Files Focus Ownership
 
-Activated by the user's 2026-07-22 physical acceptance of FMN and the next
-explicit interaction contract: Left must always focus one resident parent
-column when one exists; Right must focus/enter one child column only when the
-exact cursor entry is a directory. Right on a file or non-entry is inert.
+The user approved one Files region owner across the fixed Locations Rail and
+dynamic Miller Trail. The implementation is automated-gate complete through
+`d85d610e`; closure documentation, doc-aware gates, and CyPack publication are
+the current step. Physical acceptance remains user-driven and must not be
+inferred from automated evidence.
 
-- [x] **FMH-0 Freeze the directional contract before Rust.**
-  - [x] `TP-FMH-LEFT-01`: one Left event crosses exactly one resident edge.
-  - [x] `TP-FMH-LEFT-02`: Left at root is model-, worker-, and render-inert.
-  - [x] `TP-FMH-RIGHT-01`: one Right event over the resident directory chain
-    crosses exactly one edge, even when multiple descendants are prepared.
-  - [x] `TP-FMH-RIGHT-02`: an exact nonresident directory emits one bounded
-    activation request and focuses only its matching completion.
-  - [x] `TP-FMH-RIGHT-03`: Right/`l` on a file, special entry, stale identity,
-    or boundary is inert and cannot change selection/detail/focus.
-  - [x] `TP-FMH-STEP-01`: no horizontal event may skip a column.
-- [x] **FMH-1 RED the production route, not only `TrailState`.**
-  - [x] The new route-level file test failed behaviorally: Right converted the
-    exact file cursor into `SelectedFile`, truncated the resident child, and
-    requested a render. This was not a key-mapping or render-only defect.
-  - [x] Preserve existing directory activation, stale completion, watcher,
-    close/reopen, and exact-path characterizations.
-- [x] **FMH-2 GREEN with the smallest semantic gate.**
-  - [x] Remove Right/`l`'s fallback to file activation when the exact cursor
-    is not a directory; return `Inert` and let the App decline the render.
-  - [x] Keep Enter/click file activation and every directory bounded-worker
-    path unchanged.
-- [x] **FMH-3 Automated closure.**
-  - [x] New horizontal matrix 3/3; focused cross-layer matrix 10/10; broad
-    input/Trail/snapshot/worker/watcher matrix 190/190; rustfmt clean.
-  - [x] Full Nextest, Linux/Windows Clippy, maintenance, deterministic
-    exporter/Chromium, source audit, graph freshness, and Git diff gates.
-    Fresh results: 3,622/3,622 + 4 skip; both Clippy targets clean; Python
-    68/68; Bun 5/5 + 12/12; exporter 1/1; Chromium 33/33; JSON/PNG delta zero;
-    graph CLI 24,078 nodes / 129,027 edges with current FMH symbols; source,
-    dependency, vendor, formatting, and diff audits clean.
-  - [x] Record the completed law in evidence, Yazi transfer, engineering
-    patterns, project lessons, and every canonical continuity file.
-- [ ] **FMH-4 Isolated physical acceptance and publication.**
-  - [ ] Build and launch only through the cleanup-first throwaway XDG helper;
-    verify Left at every resident depth, Right on directory, Right on file,
-    held vertical movement, wheel movement, semantic exit, and zero residue.
-  - [ ] Propose and align the commit message; exact-path stage only; commit,
-    push only to the CyPack fork, then prove local/origin SHA equality.
+- [x] **FFO-0 Freeze the architecture, vocabulary, 21 test points, and
+  protected characterizations.**
+  - [x] Design `bf9fcf46`; executable plan `0e415d81`.
+  - [x] Existing exact click, Rail intent, focus suppression, and origin
+    characterizations passed 4/4 before Rust changes.
+- [x] **FFO-1 RED accepted input ownership and fail-closed negatives.**
+  - [x] Exact Trail click, empty live Trail body, and clamped accepted wheel
+    proved that subordinate Trail mutation did not transfer top-level owner.
+  - [x] Stale frame, coalesced packet, blocked target, divider, overlay, and
+    invalid input retain zero authority.
+- [x] **FFO-2 GREEN one named current-frame owner transition.**
+  - [x] Accepted row/modified/right-click/row-action/wheel/horizontal/body
+    paths transfer after typed validation and retire incompatible Rail intent.
+  - [x] Rail key behavior, Trail active-column behavior, lifecycle, async,
+    render, and no-I/O laws remain separate.
+- [x] **FFO-3 RED File Action Bar and direct-operation authority.**
+  - [x] Rail owner requires typed `InactiveFocusOwner` precedence.
+  - [x] Previously enabled geometry must fail closed after owner changes.
+  - [x] Direct copy/paste/delete/rename and injected worker entry points need
+    current owner authorization before side effects.
+- [x] **FFO-4 GREEN every action boundary from current `AppState`.**
+  - [x] Header, context, plugin, rename, copy/delete/paste, and worker admission
+    all reject Rail ownership while preserving resident metadata.
+  - [x] Rejection emits no clipboard, confirmation, request, worker, or
+    filesystem mutation.
+- [x] **FFO-5 RED and GREEN one shared semantic active cursor.**
+  - [x] Rail and Trail share accent/panel/bold/reversed active style.
+  - [x] Exactly one valid current-owner row is strong; only Trail
+    `active_col()` qualifies.
+  - [x] Origin has no underline/reverse; ancestor context and multi-selection
+    remain weaker and distinct; cursor style covers row actions and metadata.
+- [x] **FFO-6 Deterministic visual oracle.**
+  - [x] Exporter A/B 1/1 with empty recursive diff and recorded SHA-256.
+  - [x] VIS-26 Rail-owner delta and new VIS-27 Trail-owner image were inspected
+    individually, updated one at a time, and pass in focused 10/10 plus full
+    Chromium 35/35.
+- [x] **FFO-7 Product-head automated closure.**
+  - [x] Full Nextest 3,680/3,680 + 6 skip, fmt, Linux/Windows Clippy, Bun 5/5
+    + 12/12, Python 68/68, build, full visual suite, architecture/no-I/O diff,
+    graph snippet/trace, and cleanup-helper audits are green.
+  - [x] No server/protocol/platform/dependency/cache/worker/timer expansion.
+- [ ] **FFO-8 Durable closure and fork publication — current step.**
+  - [x] Record evidence, architecture pattern, reference tier/confidence,
+    errors, golden path, edge cases, continuity, and graph ADR.
+  - [x] Rerun every `just check` child plus full Playwright after docs: full
+    Nextest 3,680/3,680 + 6 skip and Chromium 35/35, with all other gates clean.
+  - [ ] Exact stage only; commit `docs: record file manager focus ownership`;
+    rerun post-commit gates; push only `origin HEAD:feat/native-fm`; prove
+    local/origin equality.
+- [ ] **FFO-9 User physical `TP-FFO-E2E-01`.**
+  - [ ] Run only `.local/herdr-trail-test.sh run` under cleanup-first throwaway
+    XDG; verify mouse-to-key ownership, one-step wheel, Right/Left, Rail-disabled
+    actions, one filled cursor/no underline, smooth dense input, and zero
+    residue.
+
+Canonical closure evidence:
+`.codex/evidence/files-focus-ownership-closure.md`. The prior FMH behavior is
+closed historical context and must not replace the active FFO owner contract.
 
 ## P0 CLOSED — FMN Files Movement Semantics and Wheel Normalization
 
