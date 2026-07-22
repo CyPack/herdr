@@ -85,6 +85,9 @@ pub(super) enum FileManagerMouseDispatch {
 pub(super) enum FileManagerKeyDispatch {
     Consumed,
     Inert,
+    // The GREEN owner-first reducer constructs this staged dispatch.
+    #[allow(dead_code)]
+    DeferredLocationNavigation,
     CancelOperation,
     Refresh(Box<crate::fm::FmCurrentRefreshRequest>),
     PreviewDirectory {
@@ -801,7 +804,7 @@ impl App {
                                     .map(|_| row.path.clone())
                             });
                         if let Some(path) = target {
-                            self.state.request_file_manager_location_navigation = Some(path);
+                            self.state.request_file_manager_location_navigation = Some(path.into());
                             let _ = self.state.file_manager_locations.close_drawer();
                         }
                     }
@@ -857,7 +860,7 @@ impl App {
                                     .map(|_| row.path.clone())
                             });
                         if let Some(path) = target {
-                            self.state.request_file_manager_location_navigation = Some(path);
+                            self.state.request_file_manager_location_navigation = Some(path.into());
                             self.state.file_manager_locations.focus =
                                 crate::app::FileManagerLocationsFocus::Rail;
                         }
@@ -1056,8 +1059,9 @@ mod tests {
     use crate::app::state::{
         ContextMenuKind, FileManagerActionBarModel, FileManagerActionDisabledReason,
         FileManagerActionState, FileManagerContextMenuAction, FileManagerContextMenuTargetKind,
-        FileManagerHeaderAction, FileManagerHeaderActionArea, FileManagerRowAction,
-        FileManagerRowActionArea, FileManagerRowArea,
+        FileManagerHeaderAction, FileManagerHeaderActionArea, FileManagerLocationNavigationIntent,
+        FileManagerLocationNavigationRequest, FileManagerRowAction, FileManagerRowActionArea,
+        FileManagerRowArea,
     };
     use crate::app::Mode;
     use crate::fm::{FmState, MAX_MULTI_SELECTION_PATHS};
@@ -8758,7 +8762,7 @@ command = ["inspect"]
         );
         assert_eq!(
             app.state.request_file_manager_location_navigation,
-            Some(target.path.clone()),
+            Some(target.path.clone().into()),
             "the fresh row must emit its exact prepared path once"
         );
         app.state.request_file_manager_location_navigation = None;
@@ -9065,7 +9069,7 @@ command = ["inspect"]
         ));
         assert_eq!(
             app.state.request_file_manager_location_navigation,
-            Some(target.path)
+            Some(target.path.into())
         );
     }
 
@@ -9191,5 +9195,346 @@ command = ["inspect"]
             .expect("Files stays open");
         assert_eq!(trail_after, trail_before);
         assert!(app.state.request_file_manager_location_navigation.is_none());
+    }
+
+    fn wide_flf_app(tag: &str) -> (TempDir, crate::app::App, Rect, Vec<PathBuf>) {
+        let td = TempDir::new(tag);
+        let paths = (0..4)
+            .map(|index| {
+                let name = format!("location-{index:02}");
+                td.dir(&name);
+                td.root.join(name)
+            })
+            .collect::<Vec<_>>();
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        install_fcl_location_model(&mut app, &paths);
+        let frame = Rect::new(0, 0, 100, 16);
+        compute_view(&mut app.state, frame);
+        assert!(
+            app.state.view.file_manager_locations.layout.rail.is_some(),
+            "wide FLF fixture requires the persistent Locations Rail"
+        );
+        (td, app, frame, paths)
+    }
+
+    fn assert_flf_trail_unchanged(before: &FmState, after: &FmState) {
+        assert_eq!(after.cwd, before.cwd);
+        assert_eq!(after.entries, before.entries);
+        assert_eq!(after.cursor, before.cursor);
+        assert_eq!(after.viewport_start, before.viewport_start);
+        assert_eq!(after.trail, before.trail);
+        assert_eq!(after.trail_snapshots, before.trail_snapshots);
+        assert_eq!(after.directory_generation, before.directory_generation);
+        assert_eq!(after.preview_generation, before.preview_generation);
+    }
+
+    // TP-FLF-FOCUS-01: one Left beyond the resident Trail root transfers
+    // ownership to Rail without reading disk or inventing a Direct ancestor.
+    #[test]
+    fn flf_root_left_focuses_rail_with_exact_or_direct_fallback() {
+        let (_td, mut exact, _frame, paths) = wide_flf_app("flf-root-left-exact");
+        assert!(exact
+            .state
+            .file_manager_locations
+            .activate_location(&paths[1], &exact.state.file_manager_locations_model));
+        exact.state.file_manager_locations.focus_trail();
+        let exact_trail = exact.state.file_manager.as_ref().unwrap().clone();
+
+        let (dispatch, profile) = crate::render_prof::observe_for_test(|| {
+            handle_file_manager_key(&mut exact.state, key(KeyCode::Left))
+        });
+
+        assert_eq!(dispatch, FileManagerKeyDispatch::Consumed);
+        assert_eq!(
+            exact.state.file_manager_locations.focus,
+            crate::app::FileManagerLocationsFocus::Rail
+        );
+        assert_eq!(
+            exact
+                .state
+                .file_manager_locations
+                .cursor_path(&exact.state.file_manager_locations_model),
+            Some(paths[1].as_path())
+        );
+        assert_flf_trail_unchanged(
+            &exact_trail,
+            exact.state.file_manager.as_ref().expect("open exact Trail"),
+        );
+        assert_eq!(profile.counter("fm.filesystem.read"), 0);
+
+        let (_td, mut direct, _frame, paths) = wide_flf_app("flf-root-left-direct");
+        direct
+            .state
+            .file_manager_locations
+            .activate_direct(direct.state.file_manager.as_ref().unwrap().cwd.clone());
+        assert!(!direct
+            .state
+            .file_manager_locations
+            .normalize_cursor_for_rail(&direct.state.file_manager_locations_model));
+        assert!(matches!(
+            direct
+                .state
+                .file_manager_locations
+                .move_cursor(&direct.state.file_manager_locations_model, 1),
+            crate::app::file_manager_locations::FileManagerLocationCursorMove::Moved(_)
+        ));
+        assert_eq!(
+            handle_file_manager_key(&mut direct.state, key(KeyCode::Left)),
+            FileManagerKeyDispatch::Consumed
+        );
+        assert_eq!(
+            direct
+                .state
+                .file_manager_locations
+                .cursor_path(&direct.state.file_manager_locations_model),
+            Some(paths[1].as_path()),
+            "Direct origin preserves the prior valid cursor instead of inferring an ancestor"
+        );
+    }
+
+    // TP-FLF-STEP-01 + TP-FLF-PREVIEW-01: Rail vertical ownership advances
+    // exactly one accessible row and cannot mutate the resident Miller Trail.
+    #[test]
+    fn flf_rail_up_down_move_one_and_never_mutate_trail() {
+        let (_td, mut app, _frame, paths) = wide_flf_app("flf-rail-step");
+        assert_eq!(
+            app.state
+                .file_manager_locations
+                .cursor_path(&app.state.file_manager_locations_model),
+            Some(paths[0].as_path())
+        );
+        app.state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Rail;
+        let trail_before = app.state.file_manager.as_ref().unwrap().clone();
+
+        assert_eq!(
+            handle_file_manager_key(&mut app.state, key(KeyCode::Down)),
+            FileManagerKeyDispatch::Consumed
+        );
+        assert_eq!(
+            app.state
+                .file_manager_locations
+                .cursor_path(&app.state.file_manager_locations_model),
+            Some(paths[1].as_path())
+        );
+        assert_eq!(
+            app.state.request_file_manager_location_navigation,
+            Some(FileManagerLocationNavigationRequest {
+                path: paths[1].clone(),
+                intent: FileManagerLocationNavigationIntent::FollowPreview,
+            })
+        );
+        assert_flf_trail_unchanged(
+            &trail_before,
+            app.state.file_manager.as_ref().expect("open Trail"),
+        );
+
+        assert_eq!(
+            handle_file_manager_key(&mut app.state, key(KeyCode::Up)),
+            FileManagerKeyDispatch::Consumed
+        );
+        assert_eq!(
+            app.state
+                .file_manager_locations
+                .cursor_path(&app.state.file_manager_locations_model),
+            Some(paths[0].as_path())
+        );
+    }
+
+    // TP-FLF-FOCUS-01: once Rail owns the keyboard, modified or unrelated
+    // keys are fail-closed and cannot leak into hidden Trail shortcuts.
+    #[test]
+    fn flf_rail_owner_swallows_shift_ctrl_and_hidden_trail_actions() {
+        let (_td, mut app, _frame, _paths) = wide_flf_app("flf-rail-owner");
+        assert!(app
+            .state
+            .file_manager_locations
+            .cursor_path(&app.state.file_manager_locations_model)
+            .is_some());
+        app.state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Rail;
+        let before = app.state.file_manager.as_ref().unwrap().clone();
+
+        for event in [
+            key_with_modifiers(KeyCode::Down, KeyModifiers::SHIFT),
+            key_with_modifiers(KeyCode::Char('a'), KeyModifiers::CONTROL),
+            key(KeyCode::Char('.')),
+            key(KeyCode::Char(' ')),
+            key(KeyCode::Char('x')),
+        ] {
+            assert_eq!(
+                handle_file_manager_key(&mut app.state, event),
+                FileManagerKeyDispatch::Inert
+            );
+        }
+        assert_flf_trail_unchanged(
+            &before,
+            app.state.file_manager.as_ref().expect("open Trail"),
+        );
+        assert!(app.state.request_file_manager_location_navigation.is_none());
+    }
+
+    // TP-FLF-ENTER-01: explicit entry is a typed deferred request. It cannot
+    // move Trail focus before the exact root has been accepted.
+    #[test]
+    fn flf_rail_right_and_enter_queue_enter_without_immediate_focus() {
+        for code in [KeyCode::Right, KeyCode::Char('l'), KeyCode::Enter] {
+            let (_td, mut app, _frame, paths) = wide_flf_app("flf-rail-enter");
+            assert_eq!(
+                app.state
+                    .file_manager_locations
+                    .cursor_path(&app.state.file_manager_locations_model),
+                Some(paths[0].as_path())
+            );
+            app.state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Rail;
+            let before = app.state.file_manager.as_ref().unwrap().clone();
+            app.file_manager_key_render_override = None;
+
+            app.handle_focused_file_manager_key(key(code));
+
+            assert_eq!(
+                app.state.request_file_manager_location_navigation,
+                Some(FileManagerLocationNavigationRequest {
+                    path: paths[0].clone(),
+                    intent: FileManagerLocationNavigationIntent::EnterTrail,
+                })
+            );
+            assert_eq!(
+                app.state.file_manager_locations.focus,
+                crate::app::FileManagerLocationsFocus::Rail
+            );
+            assert_flf_trail_unchanged(
+                &before,
+                app.state.file_manager.as_ref().expect("open Trail"),
+            );
+            assert_eq!(app.file_manager_key_render_override, Some(false));
+        }
+    }
+
+    // TP-FLF-COMPACT-01: root Left opens the compact Rail owner. Esc restores
+    // Trail and retires a deferred entry request that can no longer own focus.
+    #[test]
+    fn flf_compact_root_left_opens_drawer_and_escape_invalidates_entry() {
+        let (_td, mut app, frame, paths) = compact_fcl_app("flf-compact-left");
+        compute_view(&mut app.state, frame);
+
+        assert_eq!(
+            handle_file_manager_key(&mut app.state, key(KeyCode::Left)),
+            FileManagerKeyDispatch::Consumed
+        );
+        assert!(app.state.file_manager_locations.drawer_is_open());
+        assert_eq!(
+            app.state
+                .file_manager_locations
+                .cursor_path(&app.state.file_manager_locations_model),
+            Some(paths[0].as_path())
+        );
+        assert_eq!(
+            handle_file_manager_key(&mut app.state, key(KeyCode::Right)),
+            FileManagerKeyDispatch::DeferredLocationNavigation
+        );
+        assert_eq!(
+            app.state.request_file_manager_location_navigation,
+            Some(FileManagerLocationNavigationRequest {
+                path: paths[0].clone(),
+                intent: FileManagerLocationNavigationIntent::EnterTrail,
+            })
+        );
+
+        assert_eq!(
+            handle_file_manager_key(&mut app.state, key(KeyCode::Esc)),
+            FileManagerKeyDispatch::Consumed
+        );
+        assert!(!app.state.file_manager_locations.drawer_is_open());
+        assert_eq!(
+            app.state.file_manager_locations.focus,
+            crate::app::FileManagerLocationsFocus::Trail
+        );
+        assert!(app.state.request_file_manager_location_navigation.is_none());
+    }
+
+    // TP-FLF-COMPACT-01 + TP-FLF-PREVIEW-01: mouse uses the same exact Rail
+    // cursor but carries surface-specific Follow versus Enter intent.
+    #[test]
+    fn flf_mouse_location_click_synchronizes_cursor_and_typed_intent() {
+        let (_td, mut wide, _frame, paths) = wide_flf_app("flf-mouse-wide");
+        let target = wide.state.view.file_manager_locations.rows[1].clone();
+        assert_eq!(
+            wide.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                target.rect.x,
+                target.rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            wide.state
+                .file_manager_locations
+                .cursor_path(&wide.state.file_manager_locations_model),
+            Some(paths[1].as_path())
+        );
+        assert_eq!(
+            wide.state.request_file_manager_location_navigation,
+            Some(FileManagerLocationNavigationRequest {
+                path: paths[1].clone(),
+                intent: FileManagerLocationNavigationIntent::FollowPreview,
+            })
+        );
+
+        let (_td, mut compact, frame, _paths) = compact_fcl_app("flf-mouse-compact");
+        let _ = open_fcl_drawer(&mut compact, frame);
+        let target = compact.state.view.file_manager_locations.rows[1].clone();
+        compact.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            target.rect.x,
+            target.rect.y,
+        ));
+        assert_eq!(
+            compact
+                .state
+                .file_manager_locations
+                .cursor_path(&compact.state.file_manager_locations_model),
+            Some(target.path.as_path())
+        );
+        assert_eq!(
+            compact.state.request_file_manager_location_navigation,
+            Some(FileManagerLocationNavigationRequest {
+                path: target.path,
+                intent: FileManagerLocationNavigationIntent::EnterTrail,
+            })
+        );
+        assert!(
+            compact.state.file_manager_locations.drawer_is_open(),
+            "compact drawer closes only after an accepted entry transition"
+        );
+    }
+
+    // TP-FLF-STEP-01: a boundary key and a deferred activation are both
+    // render-neutral; a real cursor move retains the normal single render.
+    #[test]
+    fn flf_clamped_and_deferred_keys_decline_immediate_render() {
+        let (_td, mut app, _frame, paths) = wide_flf_app("flf-render-neutral");
+        assert_eq!(
+            app.state
+                .file_manager_locations
+                .cursor_path(&app.state.file_manager_locations_model),
+            Some(paths[0].as_path())
+        );
+        app.state.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Rail;
+
+        app.file_manager_key_render_override = None;
+        app.handle_focused_file_manager_key(key(KeyCode::Up));
+        assert_eq!(app.file_manager_key_render_override, Some(false));
+
+        app.file_manager_key_render_override = None;
+        app.handle_focused_file_manager_key(key(KeyCode::Right));
+        assert_eq!(app.file_manager_key_render_override, Some(false));
+
+        app.file_manager_key_render_override = None;
+        app.handle_focused_file_manager_key(key(KeyCode::Down));
+        assert_eq!(
+            app.file_manager_key_render_override, None,
+            "a visible one-row cursor move requests the normal single render"
+        );
     }
 }

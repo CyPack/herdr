@@ -207,6 +207,9 @@ impl App {
             file_manager::FileManagerKeyDispatch::Inert => {
                 self.file_manager_key_render_override = Some(false);
             }
+            file_manager::FileManagerKeyDispatch::DeferredLocationNavigation => {
+                self.file_manager_key_render_override = Some(false);
+            }
             file_manager::FileManagerKeyDispatch::Consumed => {}
         }
     }

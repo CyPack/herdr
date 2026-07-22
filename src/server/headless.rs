@@ -6693,7 +6693,7 @@ next_tab = ""
         }));
         assert_eq!(
             server.app.state.request_file_manager_location_navigation,
-            Some(target.clone()),
+            Some(target.clone().into()),
             "raw SGR input reaches the exact model-revalidated locations rail seam"
         );
 

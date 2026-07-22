@@ -2413,7 +2413,7 @@ mod tests {
 
         assert_eq!(
             app.state.request_file_manager_location_navigation,
-            Some(std::path::PathBuf::from("/home/a"))
+            Some(std::path::PathBuf::from("/home/a").into())
         );
         assert_eq!(app.state.file_manager.is_some(), before_file_manager);
 
@@ -2425,7 +2425,7 @@ mod tests {
         ));
         assert_eq!(
             app.state.request_file_manager_location_navigation,
-            Some(std::path::PathBuf::from("/home/a/Downloads")),
+            Some(std::path::PathBuf::from("/home/a/Downloads").into()),
             "latest exact click replaces the prior unconsumed intent"
         );
     }
@@ -2477,7 +2477,7 @@ mod tests {
         ));
         assert_eq!(
             app.state.request_file_manager_location_navigation,
-            Some(target.clone()),
+            Some(target.clone().into()),
             "primary click prepares the exact current-model path"
         );
 

@@ -600,9 +600,10 @@ impl super::App {
     /// Consume one exact locations intent without performing filesystem work
     /// on the scheduled thread.
     pub(crate) fn sync_file_manager_location_request(&mut self) -> bool {
-        let Some(path) = self.state.request_file_manager_location_navigation.take() else {
+        let Some(request) = self.state.request_file_manager_location_navigation.take() else {
             return false;
         };
+        let path = request.path;
         let Some(files_generation) = self.active_file_manager_generation() else {
             return true;
         };
@@ -1172,7 +1173,7 @@ mod tests {
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
             .unwrap();
         app.state.file_manager_locations_model = location_model(&target);
-        app.state.request_file_manager_location_navigation = Some(target.clone());
+        app.state.request_file_manager_location_navigation = Some(target.clone().into());
 
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
@@ -1209,7 +1210,7 @@ mod tests {
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
             .unwrap();
         app.state.file_manager_locations_model = location_model(&target);
-        app.state.request_file_manager_location_navigation = Some(target);
+        app.state.request_file_manager_location_navigation = Some(target.into());
 
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
@@ -1317,7 +1318,7 @@ mod tests {
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
             .unwrap();
         app.state.file_manager_locations_model = location_model(&target);
-        app.state.request_file_manager_location_navigation = Some(target);
+        app.state.request_file_manager_location_navigation = Some(target.into());
 
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
@@ -1354,7 +1355,7 @@ mod tests {
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&initial)))
             .unwrap();
         app.state.file_manager_locations_model = location_model(&target);
-        app.state.request_file_manager_location_navigation = Some(target.clone());
+        app.state.request_file_manager_location_navigation = Some(target.clone().into());
 
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
@@ -1394,7 +1395,7 @@ mod tests {
         app.state
             .file_manager_locations
             .activate_direct(initial.clone());
-        app.state.request_file_manager_location_navigation = Some(target.clone());
+        app.state.request_file_manager_location_navigation = Some(target.clone().into());
 
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
@@ -1422,7 +1423,7 @@ mod tests {
         );
 
         std::fs::create_dir(&target).unwrap();
-        app.state.request_file_manager_location_navigation = Some(target.clone());
+        app.state.request_file_manager_location_navigation = Some(target.clone().into());
         assert!(app.sync_file_manager_location_request());
         started_rx.recv().unwrap();
         app.file_manager_io_worker.wait_for_result_for_test();
@@ -1443,7 +1444,7 @@ mod tests {
             .try_open_file_manager_with(|_| Some(file_manager))
             .unwrap();
         app.state.file_manager_locations_model = location_model(&td.root);
-        app.state.request_file_manager_location_navigation = Some(td.root.clone());
+        app.state.request_file_manager_location_navigation = Some(td.root.clone().into());
 
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let worker_calls = calls.clone();

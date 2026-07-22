@@ -637,7 +637,7 @@ mod tests {
             ],
             Vec::new(),
         );
-        app.state.request_file_manager_location_navigation = Some(target.clone());
+        app.state.request_file_manager_location_navigation = Some(target.clone().into());
 
         assert!(app.sync_file_manager_location_navigation());
         let file_manager = app
@@ -675,7 +675,7 @@ mod tests {
             .expect("open FM")
             .cwd
             .clone();
-        app.state.request_file_manager_location_navigation = Some(regular_file);
+        app.state.request_file_manager_location_navigation = Some(regular_file.into());
         assert!(app.sync_file_manager_location_navigation());
         assert_eq!(
             app.state.file_manager.as_ref().expect("FM preserved").cwd,
@@ -683,14 +683,14 @@ mod tests {
         );
 
         let missing = td.root.join("missing");
-        app.state.request_file_manager_location_navigation = Some(missing);
+        app.state.request_file_manager_location_navigation = Some(missing.into());
         assert!(app.sync_file_manager_location_navigation());
         assert_eq!(
             app.state.file_manager.as_ref().expect("FM preserved").cwd,
             before_cwd
         );
 
-        app.state.request_file_manager_location_navigation = Some(target.clone());
+        app.state.request_file_manager_location_navigation = Some(target.clone().into());
         app.state.file_manager_locations_model = FileManagerLocationsModel::default();
         assert!(app.sync_file_manager_location_navigation());
         assert_eq!(
@@ -705,7 +705,7 @@ mod tests {
             vec![item("Other", other.clone())],
             Vec::new(),
         );
-        app.state.request_file_manager_location_navigation = Some(other.clone());
+        app.state.request_file_manager_location_navigation = Some(other.clone().into());
         app.state.sidebar_tab = crate::app::state::SidebarTab::Projects;
         assert!(app.sync_file_manager_location_navigation());
         assert_eq!(
@@ -715,10 +715,10 @@ mod tests {
         );
 
         app.state.sidebar_tab = crate::app::state::SidebarTab::Files;
-        app.state.request_file_manager_location_navigation = Some(target.clone());
+        app.state.request_file_manager_location_navigation = Some(target.clone().into());
         app.state.close_file_manager();
         assert!(app.state.request_file_manager_location_navigation.is_none());
-        app.state.request_file_manager_location_navigation = Some(target);
+        app.state.request_file_manager_location_navigation = Some(target.into());
         app.state.open_file_manager();
         assert!(app.state.request_file_manager_location_navigation.is_none());
     }
@@ -760,7 +760,7 @@ mod tests {
             }],
             Vec::new(),
         );
-        app.state.request_file_manager_location_navigation = Some(target.clone());
+        app.state.request_file_manager_location_navigation = Some(target.clone().into());
 
         assert!(app.sync_file_manager_location_navigation());
 

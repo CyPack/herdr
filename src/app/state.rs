@@ -743,6 +743,41 @@ pub struct FileManagerDeleteRequest {
     pub paths: Vec<PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FileManagerLocationNavigationIntent {
+    FollowPreview,
+    // The GREEN owner-first reducer constructs explicit Rail entry intent.
+    #[allow(dead_code)]
+    EnterTrail,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FileManagerLocationNavigationRequest {
+    pub(crate) path: PathBuf,
+    pub(crate) intent: FileManagerLocationNavigationIntent,
+}
+
+impl FileManagerLocationNavigationRequest {
+    pub(crate) fn follow(path: PathBuf) -> Self {
+        Self {
+            path,
+            intent: FileManagerLocationNavigationIntent::FollowPreview,
+        }
+    }
+}
+
+impl From<PathBuf> for FileManagerLocationNavigationRequest {
+    fn from(path: PathBuf) -> Self {
+        Self::follow(path)
+    }
+}
+
+impl PartialEq<PathBuf> for FileManagerLocationNavigationRequest {
+    fn eq(&self, other: &PathBuf) -> bool {
+        self.path == *other
+    }
+}
+
 /// Exact client-local native-FM identities owned by the Rename text modal.
 /// Opening or rendering this state performs no filesystem work.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2150,9 +2185,9 @@ pub struct AppState {
     /// through the server protocol.
     pub(crate) file_manager_locations:
         crate::app::file_manager_locations::FileManagerLocationsState,
-    /// Exact row path prepared by input and consumed once by the App-owned
-    /// scheduled navigation boundary.
-    pub request_file_manager_location_navigation: Option<PathBuf>,
+    /// Exact row path and surface intent prepared by input and consumed once
+    /// by the App-owned scheduled navigation boundary.
+    pub request_file_manager_location_navigation: Option<FileManagerLocationNavigationRequest>,
     pub should_quit: bool,
     /// In monolithic --no-session mode, detach exits the app because there is no server to detach from.
     pub detach_exits: bool,
