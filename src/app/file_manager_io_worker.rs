@@ -9,6 +9,14 @@ use super::file_manager_locations::{
     FileManagerLocationFailure, FileManagerLocationLoadError, FileManagerLocationsFocus,
 };
 
+const ROOT_SUBMITTED: &str = "fm.locations.root.submitted";
+const ROOT_REPLACED: &str = "fm.locations.root.replaced";
+const ROOT_PROCESSED: &str = "fm.locations.root.processed";
+const ROOT_ACCEPTED: &str = "fm.locations.root.accepted";
+const ROOT_FAILED: &str = "fm.locations.root.failed";
+const ROOT_STALE: &str = "fm.locations.root.stale";
+const ROOT_ENUMERATION: &str = "fm.locations.root.enumeration";
+
 #[cfg(test)]
 pub(super) use crate::fm::classify_root_navigation_error;
 pub(super) use crate::fm::{
@@ -399,10 +407,16 @@ impl FileManagerIoWorker {
                 if state.closed {
                     break;
                 }
-                if result.generation == state.latest_generation {
+                let is_latest = result.generation == state.latest_generation;
+                let stale_root =
+                    !is_latest && matches!(&result.identity, FileManagerIoIdentity::Root { .. });
+                if is_latest {
                     state.result = Some(result);
                 }
                 drop(state);
+                if stale_root {
+                    crate::render_prof::event(ROOT_STALE);
+                }
                 changed.notify_all();
                 wake.notify_one();
             }
@@ -417,6 +431,7 @@ impl FileManagerIoWorker {
     }
 
     pub(super) fn submit(&mut self, request: FileManagerIoRequest) -> FileManagerIoSubmit {
+        let is_root = matches!(&request, FileManagerIoRequest::Root(_));
         let (state, changed) = &*self.shared;
         let mut state = lock_state(state);
         if state.closed || !state.alive {
@@ -429,6 +444,13 @@ impl FileManagerIoWorker {
             request,
         });
         changed.notify_one();
+        drop(state);
+        if is_root {
+            crate::render_prof::event(ROOT_SUBMITTED);
+            if replaced_pending.is_some() {
+                crate::render_prof::event(ROOT_REPLACED);
+            }
+        }
         FileManagerIoSubmit::Accepted {
             generation: self.latest_generation,
             replaced_pending: replaced_pending.is_some(),
@@ -439,9 +461,17 @@ impl FileManagerIoWorker {
         let (state, _) = &*self.shared;
         let mut state = lock_state(state);
         let result = state.result.take();
+        let stale_root = result.as_ref().is_some_and(|result| {
+            result.generation != self.latest_generation
+                && matches!(result.identity, FileManagerIoIdentity::Root { .. })
+        });
         let disconnected = !state.alive && !state.closed && !self.disconnect_reported;
         self.disconnect_reported |= disconnected;
         drop(state);
+
+        if stale_root {
+            crate::render_prof::event(ROOT_STALE);
+        }
 
         FileManagerIoDrain {
             current: result.filter(|result| result.generation == self.latest_generation),
@@ -523,6 +553,8 @@ fn lock_state(state: &Mutex<FileManagerIoWorkerState>) -> MutexGuard<'_, FileMan
 fn process_request(request: FileManagerIoRequest) -> FileManagerIoOutcome {
     match request {
         FileManagerIoRequest::Root(request) => {
+            crate::render_prof::event(ROOT_PROCESSED);
+            crate::render_prof::event(ROOT_ENUMERATION);
             FileManagerIoOutcome::Root(prepare_root_navigation_io(request).map(Box::new))
         }
         FileManagerIoRequest::Navigate {
@@ -659,6 +691,7 @@ impl super::App {
                 failure.model_revision,
                 failure.error,
             );
+            crate::render_prof::event(ROOT_FAILED);
             true
         });
         self.file_manager_io_worker = FileManagerIoWorker::new(self.render_notify.clone());
@@ -667,7 +700,7 @@ impl super::App {
     }
 
     fn reject_file_manager_root_result() {
-        crate::render_prof::event("fm.locations.root.stale");
+        crate::render_prof::event(ROOT_STALE);
     }
 
     fn accept_file_manager_location(
@@ -779,6 +812,13 @@ impl super::App {
     pub(crate) fn sync_file_manager_io_results(&mut self) -> bool {
         let drain = self.file_manager_io_worker.drain();
         if drain.disconnected {
+            if drain
+                .current
+                .as_ref()
+                .is_some_and(|result| matches!(result.identity, FileManagerIoIdentity::Root { .. }))
+            {
+                Self::reject_file_manager_root_result();
+            }
             let failure = self
                 .state
                 .file_manager_locations
@@ -798,6 +838,9 @@ impl super::App {
             return false;
         };
         let Some(files_generation) = self.active_file_manager_generation() else {
+            if matches!(&result.identity, FileManagerIoIdentity::Root { .. }) {
+                Self::reject_file_manager_root_result();
+            }
             return false;
         };
         let model_revision = self.state.file_manager_locations_model.revision();
@@ -865,10 +908,15 @@ impl super::App {
                         pending.model_revision,
                         FileManagerLocationLoadError::Unavailable,
                     );
+                    crate::render_prof::event(ROOT_FAILED);
                     return true;
                 }
                 self.state.file_manager = Some(prepared.file_manager);
-                self.accept_file_manager_location(&target, pending.intent)
+                let accepted = self.accept_file_manager_location(&target, pending.intent);
+                if accepted {
+                    crate::render_prof::event(ROOT_ACCEPTED);
+                }
+                accepted
             }
             FileManagerIoOutcome::Root(Err(error)) => {
                 let pending = root_pending.expect("validated Root result has pending authority");
@@ -878,6 +926,7 @@ impl super::App {
                     pending.model_revision,
                     location_load_error(error),
                 );
+                crate::render_prof::event(ROOT_FAILED);
                 true
             }
             FileManagerIoOutcome::Navigate {
@@ -998,6 +1047,7 @@ impl super::App {
                         pending.model_revision,
                         FileManagerLocationLoadError::Unavailable,
                     );
+                    crate::render_prof::event(ROOT_FAILED);
                     true
                 } else {
                     false
@@ -1011,6 +1061,7 @@ impl super::App {
 mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Condvar, Mutex};
+    use std::time::{Duration, Instant};
 
     use tokio::sync::Notify;
 
@@ -1041,15 +1092,23 @@ mod tests {
         }
     }
 
+    struct GateReleaseOnDrop(Arc<Gate>);
+
+    impl Drop for GateReleaseOnDrop {
+        fn drop(&mut self) {
+            self.0.release();
+        }
+    }
+
     fn root_request(
         files_generation: u32,
         location_model_revision: u64,
-        target_root: &str,
+        target_root: impl Into<PathBuf>,
     ) -> FileManagerIoRequest {
         FileManagerIoRequest::Root(FmRootNavigationRequest {
             files_generation,
             location_model_revision,
-            target_root: PathBuf::from(target_root),
+            target_root: target_root.into(),
             show_hidden: false,
         })
     }
@@ -1075,6 +1134,14 @@ mod tests {
         fn dir(&self, name: &str) -> PathBuf {
             let path = self.root.join(name);
             std::fs::create_dir_all(&path).unwrap();
+            path
+        }
+
+        fn flat_dir(&self, name: &str, entry_count: usize) -> PathBuf {
+            let path = self.dir(name);
+            for index in 0..entry_count {
+                std::fs::File::create(path.join(format!("entry-{index:06}.dat"))).unwrap();
+            }
             path
         }
     }
@@ -1349,6 +1416,418 @@ mod tests {
             path,
             crate::app::state::FileManagerLocationNavigationIntent::FollowPreview,
         );
+    }
+
+    #[test]
+    fn flf_profiler_counts_root_processing_and_enumeration_with_fixed_labels() {
+        let td = TempDir::new();
+        let request = FileManagerIoRequest::Root(FmRootNavigationRequest {
+            files_generation: 7,
+            location_model_revision: 11,
+            target_root: td.root.clone(),
+            show_hidden: false,
+        });
+
+        let (outcome, profile) = crate::render_prof::observe_for_test(|| process_request(request));
+
+        assert!(matches!(outcome, FileManagerIoOutcome::Root(Ok(_))));
+        assert_eq!(profile.counter("fm.locations.root.processed"), 1);
+        assert_eq!(profile.counter("fm.locations.root.enumeration"), 1);
+        assert_eq!(
+            profile
+                .counter_labels()
+                .filter(|label| label.starts_with("fm.locations.root."))
+                .collect::<Vec<_>>(),
+            vec![
+                "fm.locations.root.enumeration",
+                "fm.locations.root.processed",
+            ],
+            "root profiling must use only the fixed, path-free label set"
+        );
+    }
+
+    #[test]
+    fn flf_profiler_counts_submit_replace_accept_failure_and_stale() {
+        use crate::app::state::FileManagerLocationNavigationIntent::FollowPreview;
+
+        let td = TempDir::new();
+        let initial = td.dir("profile-initial");
+        let paths = (0..3)
+            .map(|index| td.dir(&format!("profile-replace-{index}")))
+            .collect::<Vec<_>>();
+        let mut replaced_app = flf_app(&initial, &paths);
+        let gate = Arc::new(Gate::default());
+        let worker_gate = gate.clone();
+        let blocked_first = paths[0].clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        replaced_app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                if request.identity().target_path() == Some(blocked_first.as_path()) {
+                    started_tx.send(()).unwrap();
+                    worker_gate.wait();
+                }
+                process_request(request)
+            });
+
+        let ((first_changed, second_changed, third_changed, applied), replaced_profile) =
+            crate::render_prof::observe_for_test(|| {
+                stage_location(&mut replaced_app, &paths[0], FollowPreview);
+                let first_changed = replaced_app.sync_file_manager_location_request();
+                started_rx.recv().unwrap();
+                stage_location(&mut replaced_app, &paths[1], FollowPreview);
+                let second_changed = replaced_app.sync_file_manager_location_request();
+                stage_location(&mut replaced_app, &paths[2], FollowPreview);
+                let third_changed = replaced_app.sync_file_manager_location_request();
+                gate.release();
+                replaced_app
+                    .file_manager_io_worker
+                    .wait_for_result_for_test();
+                let applied = replaced_app.sync_file_manager_io_results();
+                (first_changed, second_changed, third_changed, applied)
+            });
+        assert!(first_changed && second_changed && third_changed && applied);
+        assert_eq!(replaced_profile.counter("fm.locations.root.submitted"), 3);
+        assert_eq!(replaced_profile.counter("fm.locations.root.replaced"), 1);
+        assert_eq!(replaced_profile.counter("fm.locations.root.accepted"), 1);
+        assert_eq!(
+            replaced_profile
+                .counter_labels()
+                .filter(|label| label.starts_with("fm.locations.root."))
+                .collect::<Vec<_>>(),
+            vec![
+                "fm.locations.root.accepted",
+                "fm.locations.root.replaced",
+                "fm.locations.root.submitted",
+            ]
+        );
+
+        let failed = td.root.join("profile-missing");
+        let mut failed_app = flf_app(&initial, std::slice::from_ref(&failed));
+        failed_app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                FileManagerIoOutcome::Root(Err(FmRootNavigationError::Missing))
+                    .for_request(&request)
+            });
+        stage_location(&mut failed_app, &failed, FollowPreview);
+        let (failed_changed, failed_profile) = crate::render_prof::observe_for_test(|| {
+            assert!(failed_app.sync_file_manager_location_request());
+            failed_app.file_manager_io_worker.wait_for_result_for_test();
+            failed_app.sync_file_manager_io_results()
+        });
+        assert!(failed_changed);
+        assert_eq!(failed_profile.counter("fm.locations.root.submitted"), 1);
+        assert_eq!(failed_profile.counter("fm.locations.root.failed"), 1);
+        assert_eq!(
+            failed_profile
+                .counter_labels()
+                .filter(|label| label.starts_with("fm.locations.root."))
+                .collect::<Vec<_>>(),
+            vec!["fm.locations.root.failed", "fm.locations.root.submitted"]
+        );
+
+        let stale = td.dir("profile-stale");
+        let mut stale_app = flf_app(&initial, std::slice::from_ref(&stale));
+        stage_location(&mut stale_app, &stale, FollowPreview);
+        let (stale_applied, stale_profile) = crate::render_prof::observe_for_test(|| {
+            assert!(stale_app.sync_file_manager_location_request());
+            stale_app.file_manager_io_worker.wait_for_result_for_test();
+            stale_app.state.file_manager_locations.focus_trail();
+            stale_app.sync_file_manager_io_results()
+        });
+        assert!(!stale_applied);
+        assert_eq!(stale_profile.counter("fm.locations.root.submitted"), 1);
+        assert_eq!(stale_profile.counter("fm.locations.root.stale"), 1);
+        assert_eq!(
+            stale_profile
+                .counter_labels()
+                .filter(|label| label.starts_with("fm.locations.root."))
+                .collect::<Vec<_>>(),
+            vec!["fm.locations.root.stale", "fm.locations.root.submitted"]
+        );
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct TimingSummary {
+        p50_ns: u128,
+        p95_ns: u128,
+        max_ns: u128,
+    }
+
+    impl TimingSummary {
+        fn p50_us(self) -> u128 {
+            self.p50_ns.div_ceil(1_000)
+        }
+
+        fn p95_us(self) -> u128 {
+            self.p95_ns.div_ceil(1_000)
+        }
+
+        fn max_us(self) -> u128 {
+            self.max_ns.div_ceil(1_000)
+        }
+    }
+
+    fn timing_summary(mut samples: Vec<Duration>) -> TimingSummary {
+        assert!(!samples.is_empty(), "calibration requires timing samples");
+        samples.sort_unstable();
+        let percentile = |percent: usize| {
+            let rank = samples.len().saturating_mul(percent).div_ceil(100);
+            samples[rank.saturating_sub(1).min(samples.len() - 1)].as_nanos()
+        };
+        TimingSummary {
+            p50_ns: percentile(50),
+            p95_ns: percentile(95),
+            max_ns: samples.last().unwrap().as_nanos(),
+        }
+    }
+
+    fn measure_root_enumeration(path: &Path, sample_count: usize) -> TimingSummary {
+        let warmup = process_request(root_request(71, 73, path));
+        assert!(matches!(warmup, FileManagerIoOutcome::Root(Ok(_))));
+
+        let mut samples = Vec::with_capacity(sample_count);
+        for _ in 0..sample_count {
+            let started = Instant::now();
+            let outcome = process_request(root_request(71, 73, path));
+            samples.push(started.elapsed());
+            assert!(matches!(outcome, FileManagerIoOutcome::Root(Ok(_))));
+        }
+        timing_summary(samples)
+    }
+
+    fn linux_vm_rss_kib() -> Option<u64> {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        let line = status.lines().find(|line| line.starts_with("VmRSS:"))?;
+        line.split_whitespace().nth(1)?.parse().ok()
+    }
+
+    // TP-FLF-BOUNDED-01/TP-FLF-BLOCKED-01: explicit host calibration. It is
+    // ignored in routine suites because it creates 110k synthetic inodes and
+    // records timing observations rather than portable CI budgets.
+    #[test]
+    #[ignore = "explicit locations-follow release calibration"]
+    fn flf_scale_locations_follow_navigation() {
+        use crate::app::state::FileManagerLocationNavigationIntent::FollowPreview;
+
+        const SMALL_ENTRIES: usize = 32;
+        const MEDIUM_ENTRIES: usize = 10_000;
+        const LARGE_ENTRIES: usize = 100_000;
+        const DISPATCH_SAMPLES_PER_ROOT: usize = 25;
+        const ENUMERATION_SAMPLES_PER_ROOT: usize = 5;
+        const BLOCKED_EVENTS: usize = 100;
+        const HOLD_DURATION: Duration = Duration::from_millis(500);
+
+        let td = TempDir::new();
+        let fixture_started = Instant::now();
+        let small = td.flat_dir("scale-small", SMALL_ENTRIES);
+        let small_fixture_us = fixture_started.elapsed().as_micros();
+        let fixture_started = Instant::now();
+        let medium = td.flat_dir("scale-10k", MEDIUM_ENTRIES);
+        let medium_fixture_us = fixture_started.elapsed().as_micros();
+        let fixture_started = Instant::now();
+        let large = td.flat_dir("scale-100k", LARGE_ENTRIES);
+        let large_fixture_us = fixture_started.elapsed().as_micros();
+        let fixture_paths = [small.as_path(), medium.as_path(), large.as_path()];
+
+        let dispatch_gate = Arc::new(Gate::default());
+        let dispatch_release = GateReleaseOnDrop(dispatch_gate.clone());
+        let dispatch_worker_gate = dispatch_gate.clone();
+        let dispatch_processed = Arc::new(Mutex::new(Vec::new()));
+        let worker_dispatch_processed = dispatch_processed.clone();
+        let dispatch_sentinel = small.clone();
+        let worker_dispatch_sentinel = dispatch_sentinel.clone();
+        let (dispatch_started_tx, dispatch_started_rx) = std::sync::mpsc::channel();
+        let mut dispatch_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                let target = request.identity().target_path().unwrap().to_path_buf();
+                worker_dispatch_processed
+                    .lock()
+                    .unwrap()
+                    .push(target.clone());
+                if target == worker_dispatch_sentinel {
+                    dispatch_started_tx.send(()).unwrap();
+                    dispatch_worker_gate.wait();
+                }
+                FileManagerIoOutcome::Root(Err(FmRootNavigationError::Unavailable))
+                    .for_request(&request)
+            });
+        let sentinel_submit = dispatch_worker.submit(root_request(79, 83, &dispatch_sentinel));
+        dispatch_started_rx.recv().unwrap();
+
+        let mut dispatch_samples: [Vec<Duration>; 3] =
+            std::array::from_fn(|_| Vec::with_capacity(DISPATCH_SAMPLES_PER_ROOT));
+        let mut dispatch_accepted = 0_usize;
+        let mut dispatch_replaced = 0_usize;
+        let mut dispatch_disconnected = 0_usize;
+        for sample_index in 0..DISPATCH_SAMPLES_PER_ROOT {
+            for (fixture_index, path) in fixture_paths.iter().enumerate() {
+                let started = Instant::now();
+                let submit =
+                    dispatch_worker.submit(root_request(79, 83 + sample_index as u64, *path));
+                dispatch_samples[fixture_index].push(started.elapsed());
+                match submit {
+                    FileManagerIoSubmit::Accepted {
+                        replaced_pending, ..
+                    } => {
+                        dispatch_accepted += 1;
+                        dispatch_replaced += usize::from(replaced_pending);
+                    }
+                    FileManagerIoSubmit::Disconnected => dispatch_disconnected += 1,
+                }
+            }
+        }
+        let expected_dispatch_final = large.clone();
+        drop(dispatch_release);
+        dispatch_worker.wait_for_result_for_test();
+        let dispatch_result = dispatch_worker.drain().current;
+        let dispatch_processed = dispatch_processed.lock().unwrap().clone();
+        let dispatch_small = timing_summary(std::mem::take(&mut dispatch_samples[0]));
+        let dispatch_medium = timing_summary(std::mem::take(&mut dispatch_samples[1]));
+        let dispatch_large = timing_summary(std::mem::take(&mut dispatch_samples[2]));
+
+        let enumeration_small = measure_root_enumeration(&small, ENUMERATION_SAMPLES_PER_ROOT);
+        let enumeration_medium = measure_root_enumeration(&medium, ENUMERATION_SAMPLES_PER_ROOT);
+        let enumeration_large = measure_root_enumeration(&large, ENUMERATION_SAMPLES_PER_ROOT);
+
+        let initial = td.dir("blocked-initial");
+        let blocked_paths = (0..BLOCKED_EVENTS)
+            .map(|index| td.dir(&format!("blocked-target-{index:03}")))
+            .collect::<Vec<_>>();
+        let blocked_first = blocked_paths.first().unwrap().clone();
+        let blocked_final = blocked_paths.last().unwrap().clone();
+        let mut blocked_app = flf_app(&initial, &blocked_paths);
+        let blocked_gate = Arc::new(Gate::default());
+        let blocked_release = GateReleaseOnDrop(blocked_gate.clone());
+        let worker_blocked_gate = blocked_gate.clone();
+        let blocked_processed = Arc::new(Mutex::new(Vec::new()));
+        let worker_blocked_processed = blocked_processed.clone();
+        let worker_blocked_first = blocked_first.clone();
+        let (blocked_started_tx, blocked_started_rx) = std::sync::mpsc::channel();
+        blocked_app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                let target = request.identity().target_path().unwrap().to_path_buf();
+                worker_blocked_processed
+                    .lock()
+                    .unwrap()
+                    .push(target.clone());
+                if target == worker_blocked_first {
+                    blocked_started_tx.send(()).unwrap();
+                    worker_blocked_gate.wait();
+                }
+                process_request(request)
+            });
+
+        let mut scheduled_changes = 0_usize;
+        stage_location(&mut blocked_app, &blocked_paths[0], FollowPreview);
+        scheduled_changes += usize::from(blocked_app.sync_file_manager_location_request());
+        blocked_started_rx.recv().unwrap();
+        for path in &blocked_paths[1..] {
+            stage_location(&mut blocked_app, path, FollowPreview);
+            scheduled_changes += usize::from(blocked_app.sync_file_manager_location_request());
+        }
+
+        let hold_started = Instant::now();
+        let mut loop_ticks = 0_u64;
+        let mut neutral_drains = 0_u64;
+        let mut previous_tick = hold_started;
+        let mut max_tick_gap = Duration::ZERO;
+        while hold_started.elapsed() < HOLD_DURATION {
+            let now = Instant::now();
+            max_tick_gap = max_tick_gap.max(now.duration_since(previous_tick));
+            previous_tick = now;
+            neutral_drains += u64::from(!blocked_app.sync_file_manager_io_results());
+            loop_ticks += 1;
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let hold_elapsed = hold_started.elapsed();
+        let settle_started = Instant::now();
+        drop(blocked_release);
+        blocked_app
+            .file_manager_io_worker
+            .wait_for_result_for_test();
+        let final_applied = blocked_app.sync_file_manager_io_results();
+        let settle_us = settle_started.elapsed().as_micros();
+        let blocked_processed = blocked_processed.lock().unwrap().clone();
+        let final_path_matches =
+            blocked_app.state.file_manager.as_ref().unwrap().cwd == blocked_final;
+        let final_focus_is_rail = blocked_app.state.file_manager_locations.focus
+            == crate::app::FileManagerLocationsFocus::Rail;
+        let vm_rss_kib = linux_vm_rss_kib();
+
+        eprintln!(
+            "FLF_SCALE fixtures=small:{SMALL_ENTRIES},medium:{MEDIUM_ENTRIES},large:{LARGE_ENTRIES} \
+             fixture_us=small:{small_fixture_us},medium:{medium_fixture_us},large:{large_fixture_us} \
+             dispatch_samples_per_root={DISPATCH_SAMPLES_PER_ROOT} \
+             dispatch_small_ns=p50:{},p95:{},max:{} \
+             dispatch_medium_ns=p50:{},p95:{},max:{} \
+             dispatch_large_ns=p50:{},p95:{},max:{} \
+             enumeration_samples_per_root={ENUMERATION_SAMPLES_PER_ROOT} \
+             enumeration_small_us=p50:{},p95:{},max:{} \
+             enumeration_medium_us=p50:{},p95:{},max:{} \
+             enumeration_large_us=p50:{},p95:{},max:{} \
+             blocked_events={BLOCKED_EVENTS} scheduled_changes={scheduled_changes} \
+             processed_targets={} first_final_only={} \
+             hold_us={} loop_ticks={loop_ticks} neutral_drains={neutral_drains} \
+             max_tick_gap_us={} settle_us={settle_us} final_path_matches={final_path_matches} \
+             final_focus_is_rail={final_focus_is_rail} vm_rss_kib={vm_rss_kib:?}",
+            dispatch_small.p50_ns,
+            dispatch_small.p95_ns,
+            dispatch_small.max_ns,
+            dispatch_medium.p50_ns,
+            dispatch_medium.p95_ns,
+            dispatch_medium.max_ns,
+            dispatch_large.p50_ns,
+            dispatch_large.p95_ns,
+            dispatch_large.max_ns,
+            enumeration_small.p50_us(),
+            enumeration_small.p95_us(),
+            enumeration_small.max_us(),
+            enumeration_medium.p50_us(),
+            enumeration_medium.p95_us(),
+            enumeration_medium.max_us(),
+            enumeration_large.p50_us(),
+            enumeration_large.p95_us(),
+            enumeration_large.max_us(),
+            blocked_processed.len(),
+            blocked_processed.as_slice() == [blocked_first.as_path(), blocked_final.as_path()],
+            hold_elapsed.as_micros(),
+            max_tick_gap.as_micros(),
+        );
+
+        assert!(matches!(
+            sentinel_submit,
+            FileManagerIoSubmit::Accepted {
+                replaced_pending: false,
+                ..
+            }
+        ));
+        assert_eq!(
+            dispatch_accepted,
+            DISPATCH_SAMPLES_PER_ROOT * fixture_paths.len()
+        );
+        assert_eq!(dispatch_replaced, dispatch_accepted.saturating_sub(1));
+        assert_eq!(dispatch_disconnected, 0);
+        assert_eq!(
+            dispatch_processed.as_slice(),
+            [
+                dispatch_sentinel.as_path(),
+                expected_dispatch_final.as_path()
+            ]
+        );
+        assert!(dispatch_result.is_some_and(|result| {
+            result.identity.target_path() == Some(expected_dispatch_final.as_path())
+        }));
+        assert_eq!(scheduled_changes, BLOCKED_EVENTS);
+        assert_eq!(neutral_drains, loop_ticks);
+        assert!(loop_ticks > 0);
+        assert!(hold_elapsed >= HOLD_DURATION);
+        assert_eq!(
+            blocked_processed.as_slice(),
+            [blocked_first.as_path(), blocked_final.as_path()]
+        );
+        assert!(final_applied);
+        assert!(final_path_matches);
+        assert!(final_focus_is_rail);
     }
 
     // TP-FLF-IO-01: Follow is asynchronous, preserves the resident Trail

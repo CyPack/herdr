@@ -251,6 +251,10 @@ impl TestRenderProfile {
         self.counters.get(name).copied().unwrap_or(0)
     }
 
+    pub(crate) fn counter_labels(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.counters.keys().copied()
+    }
+
     pub(crate) fn duration_count(&self, name: &'static str) -> u64 {
         self.durations
             .get(name)
