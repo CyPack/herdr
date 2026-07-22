@@ -450,6 +450,15 @@ impl FileManagerIoWorker {
             };
         }
     }
+
+    /// Deterministically expose the already-observed-dead lifecycle to App
+    /// tests without terminating any process or relying on a thread race.
+    #[cfg(test)]
+    fn disconnect_for_test(&self) {
+        let (state, changed) = &*self.shared;
+        lock_state(state).alive = false;
+        changed.notify_all();
+    }
 }
 
 impl Drop for FileManagerIoWorker {
@@ -1158,6 +1167,572 @@ mod tests {
             }],
             Vec::new(),
         )
+    }
+
+    fn locations_model(paths: &[PathBuf]) -> crate::app::state::FileManagerLocationsModel {
+        crate::app::state::FileManagerLocationsModel::from_sources(
+            paths
+                .iter()
+                .enumerate()
+                .map(|(index, path)| crate::app::state::FileManagerLocationItem {
+                    label: format!("Target {index}"),
+                    path: path.clone(),
+                    icon: crate::app::state::FileManagerLocationIcon::Pin,
+                    accessible: true,
+                    ejectable: false,
+                })
+                .collect(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
+    fn flf_app(initial: &Path, paths: &[PathBuf]) -> crate::app::App {
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(initial)))
+            .unwrap();
+        app.state.file_manager_locations_model = locations_model(paths);
+        app
+    }
+
+    fn stage_location(
+        app: &mut crate::app::App,
+        path: &Path,
+        intent: crate::app::state::FileManagerLocationNavigationIntent,
+    ) {
+        assert!(app
+            .state
+            .file_manager_locations
+            .select_cursor(path, &app.state.file_manager_locations_model));
+        app.state.request_file_manager_location_navigation = Some(
+            crate::app::state::FileManagerLocationNavigationRequest::new(
+                path.to_path_buf(),
+                intent,
+            ),
+        );
+    }
+
+    // TP-FLF-IO-01: Follow is asynchronous, preserves the resident Trail
+    // while blocked, and keeps the Rail as focus owner after exact success.
+    #[test]
+    fn flf_follow_request_keeps_rail_focus_until_exact_success() {
+        use crate::app::state::FileManagerLocationNavigationIntent::FollowPreview;
+
+        let td = TempDir::new();
+        let initial = td.dir("follow-initial");
+        let target = td.dir("follow-target");
+        std::fs::write(target.join("first.txt"), b"first").unwrap();
+        let mut app = flf_app(&initial, std::slice::from_ref(&target));
+        stage_location(&mut app, &target, FollowPreview);
+
+        let gate = Arc::new(Gate::default());
+        let worker_gate = gate.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                started_tx.send(()).unwrap();
+                worker_gate.wait();
+                process_request(request)
+            });
+
+        assert!(app.sync_file_manager_location_request());
+        started_rx.recv().unwrap();
+        let blocked_focus = app.state.file_manager_locations.focus;
+        let blocked_cwd = app.state.file_manager.as_ref().unwrap().cwd.clone();
+        gate.release();
+        app.file_manager_io_worker.wait_for_result_for_test();
+        assert!(app.sync_file_manager_io_results());
+
+        assert_eq!(blocked_focus, crate::app::FileManagerLocationsFocus::Rail);
+        assert_eq!(blocked_cwd, initial);
+        assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, target);
+        assert_eq!(
+            app.state.file_manager_locations.focus,
+            crate::app::FileManagerLocationsFocus::Rail
+        );
+    }
+
+    // TP-FLF-IO-02: Right/Enter over the exact pending Follow upgrades the
+    // intent in place. It must not allocate a second worker generation.
+    #[test]
+    fn flf_enter_promotes_exact_pending_without_duplicate_submission() {
+        use crate::app::state::FileManagerLocationNavigationIntent::{EnterTrail, FollowPreview};
+
+        let td = TempDir::new();
+        let initial = td.dir("promote-initial");
+        let target = td.dir("promote-target");
+        let mut app = flf_app(&initial, std::slice::from_ref(&target));
+        let gate = Arc::new(Gate::default());
+        let worker_gate = gate.clone();
+        let processed = Arc::new(Mutex::new(Vec::new()));
+        let worker_processed = processed.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                let path = request.identity().target_path().unwrap().to_path_buf();
+                worker_processed.lock().unwrap().push(path);
+                started_tx.send(()).unwrap();
+                worker_gate.wait();
+                process_request(request)
+            });
+
+        stage_location(&mut app, &target, FollowPreview);
+        assert!(app.sync_file_manager_location_request());
+        started_rx.recv().unwrap();
+        stage_location(&mut app, &target, EnterTrail);
+        let promotion_changed = app.sync_file_manager_location_request();
+        let generation_after_promotion = app.file_manager_io_worker.latest_generation;
+
+        gate.release();
+        app.file_manager_io_worker.wait_for_result_for_test();
+        let _ = app.sync_file_manager_io_results();
+
+        assert!(
+            !promotion_changed,
+            "intent-only promotion is render-neutral"
+        );
+        assert_eq!(generation_after_promotion, 1, "promotion cannot resubmit");
+        assert_eq!(processed.lock().unwrap().as_slice(), [target.as_path()]);
+    }
+
+    // TP-FLF-STALE-02: if input moves the cursor before the scheduled request
+    // is consumed, an already-ready old result cannot win that scheduling race.
+    #[test]
+    fn flf_result_before_request_rejects_old_root_after_cursor_move() {
+        use crate::app::state::FileManagerLocationNavigationIntent::FollowPreview;
+
+        let td = TempDir::new();
+        let initial = td.dir("order-initial");
+        let first = td.dir("order-first");
+        let second = td.dir("order-second");
+        let mut app = flf_app(&initial, &[first.clone(), second.clone()]);
+        let gate = Arc::new(Gate::default());
+        let worker_gate = gate.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                started_tx.send(()).unwrap();
+                worker_gate.wait();
+                process_request(request)
+            });
+
+        stage_location(&mut app, &first, FollowPreview);
+        assert!(app.sync_file_manager_location_request());
+        started_rx.recv().unwrap();
+        stage_location(&mut app, &second, FollowPreview);
+        gate.release();
+        app.file_manager_io_worker.wait_for_result_for_test();
+
+        assert!(!app.sync_file_manager_io_results());
+        assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, initial);
+        assert!(app.sync_file_manager_location_request());
+        app.file_manager_io_worker.wait_for_result_for_test();
+        assert!(app.sync_file_manager_io_results());
+        assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, second);
+    }
+
+    // TP-FLF-STALE-03: path equality is not generation equality. A -> B -> A
+    // must finish with the newest Follow intent, never the original Enter.
+    #[test]
+    fn flf_same_path_a_b_a_cannot_revive_old_enter_intent() {
+        use crate::app::state::FileManagerLocationNavigationIntent::{EnterTrail, FollowPreview};
+
+        let td = TempDir::new();
+        let initial = td.dir("aba-initial");
+        let a = td.dir("aba-a");
+        let b = td.dir("aba-b");
+        let mut app = flf_app(&initial, &[a.clone(), b.clone()]);
+        let gate = Arc::new(Gate::default());
+        let worker_gate = gate.clone();
+        let processed = Arc::new(Mutex::new(Vec::new()));
+        let worker_processed = processed.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let blocked_a = a.clone();
+        app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                let path = request.identity().target_path().unwrap().to_path_buf();
+                worker_processed.lock().unwrap().push(path.clone());
+                if path == blocked_a {
+                    let _ = started_tx.send(());
+                    worker_gate.wait();
+                }
+                process_request(request)
+            });
+
+        stage_location(&mut app, &a, EnterTrail);
+        assert!(app.sync_file_manager_location_request());
+        started_rx.recv().unwrap();
+        stage_location(&mut app, &b, FollowPreview);
+        assert!(app.sync_file_manager_location_request());
+        stage_location(&mut app, &a, FollowPreview);
+        assert!(app.sync_file_manager_location_request());
+        gate.release();
+        app.file_manager_io_worker.wait_for_result_for_test();
+        assert!(app.sync_file_manager_io_results());
+
+        assert_eq!(
+            processed.lock().unwrap().as_slice(),
+            [a.as_path(), a.as_path()]
+        );
+        assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, a);
+        assert_eq!(
+            app.state.file_manager_locations.focus,
+            crate::app::FileManagerLocationsFocus::Rail
+        );
+    }
+
+    // TP-FLF-BOUND-01: while one request executes, a hundred cursor targets
+    // collapse to the final pending target instead of growing a FIFO queue.
+    #[test]
+    fn flf_blocked_hundred_move_burst_processes_first_and_final_only() {
+        use crate::app::state::FileManagerLocationNavigationIntent::FollowPreview;
+
+        let td = TempDir::new();
+        let initial = td.dir("burst-initial");
+        let paths = (0..100)
+            .map(|index| td.dir(&format!("burst-{index:03}")))
+            .collect::<Vec<_>>();
+        let mut app = flf_app(&initial, &paths);
+        let first = paths.first().unwrap().clone();
+        let final_path = paths.last().unwrap().clone();
+        let gate = Arc::new(Gate::default());
+        let worker_gate = gate.clone();
+        let processed = Arc::new(Mutex::new(Vec::new()));
+        let worker_processed = processed.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                let target = request.identity().target_path().unwrap().to_path_buf();
+                worker_processed.lock().unwrap().push(target.clone());
+                if target == first {
+                    let _ = started_tx.send(());
+                    worker_gate.wait();
+                }
+                process_request(request)
+            });
+
+        stage_location(&mut app, &paths[0], FollowPreview);
+        assert!(app.sync_file_manager_location_request());
+        started_rx.recv().unwrap();
+        for path in &paths[1..] {
+            stage_location(&mut app, path, FollowPreview);
+            assert!(app.sync_file_manager_location_request());
+        }
+        gate.release();
+        app.file_manager_io_worker.wait_for_result_for_test();
+        assert!(app.sync_file_manager_io_results());
+
+        assert_eq!(
+            processed.lock().unwrap().as_slice(),
+            [paths[0].as_path(), final_path.as_path()]
+        );
+        assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, final_path);
+        assert_eq!(
+            app.state.file_manager_locations.origin,
+            Some(
+                crate::app::file_manager_locations::FileManagerLocationOrigin::Location(final_path)
+            )
+        );
+    }
+
+    // TP-FLF-BOUND-02: cursor/focus and the caller's scheduled progress stay
+    // available while the only filesystem processor is deterministically held.
+    #[test]
+    fn flf_blocked_root_keeps_cursor_input_and_render_loop_responsive() {
+        use crate::app::state::FileManagerLocationNavigationIntent::FollowPreview;
+
+        let td = TempDir::new();
+        let initial = td.dir("responsive-initial");
+        let first = td.dir("responsive-first");
+        let second = td.dir("responsive-second");
+        let mut app = flf_app(&initial, &[first.clone(), second.clone()]);
+        let gate = Arc::new(Gate::default());
+        let worker_gate = gate.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                started_tx.send(()).unwrap();
+                worker_gate.wait();
+                process_request(request)
+            });
+
+        stage_location(&mut app, &first, FollowPreview);
+        assert!(app.sync_file_manager_location_request());
+        started_rx.recv().unwrap();
+        stage_location(&mut app, &second, FollowPreview);
+        let observed = (
+            app.state
+                .file_manager_locations
+                .cursor_path(&app.state.file_manager_locations_model)
+                .map(Path::to_path_buf),
+            app.state.file_manager_locations.focus,
+            app.state.file_manager.as_ref().unwrap().cwd.clone(),
+        );
+        gate.release();
+
+        assert_eq!(observed.0, Some(second));
+        assert_eq!(observed.1, crate::app::FileManagerLocationsFocus::Rail);
+        assert_eq!(observed.2, initial);
+    }
+
+    // TP-FLF-LATEST-01: only the latest worker ticket may update the accepted
+    // origin, Trail root, cursor, and focus projection.
+    #[test]
+    fn flf_latest_root_only_updates_cursor_origin_trail_and_focus() {
+        use crate::app::state::FileManagerLocationNavigationIntent::FollowPreview;
+
+        let td = TempDir::new();
+        let initial = td.dir("latest-initial");
+        let first = td.dir("latest-first");
+        let latest = td.dir("latest-final");
+        let mut app = flf_app(&initial, &[first.clone(), latest.clone()]);
+        let gate = Arc::new(Gate::default());
+        let worker_gate = gate.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let blocked_first = first.clone();
+        app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                if request.identity().target_path() == Some(blocked_first.as_path()) {
+                    started_tx.send(()).unwrap();
+                    worker_gate.wait();
+                }
+                process_request(request)
+            });
+
+        stage_location(&mut app, &first, FollowPreview);
+        assert!(app.sync_file_manager_location_request());
+        started_rx.recv().unwrap();
+        stage_location(&mut app, &latest, FollowPreview);
+        assert!(app.sync_file_manager_location_request());
+        gate.release();
+        app.file_manager_io_worker.wait_for_result_for_test();
+        assert!(app.sync_file_manager_io_results());
+
+        assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, latest);
+        assert_eq!(
+            app.state
+                .file_manager_locations
+                .cursor_path(&app.state.file_manager_locations_model),
+            Some(latest.as_path())
+        );
+        assert_eq!(
+            app.state.file_manager_locations.origin,
+            Some(crate::app::file_manager_locations::FileManagerLocationOrigin::Location(latest))
+        );
+        assert_eq!(
+            app.state.file_manager_locations.focus,
+            crate::app::FileManagerLocationsFocus::Rail
+        );
+    }
+
+    // TP-FLF-FAST-01: both surface intents use the resident snapshot fast path
+    // and perform zero worker processor calls.
+    #[test]
+    fn flf_resident_follow_and_enter_perform_zero_worker_reads() {
+        use crate::app::state::FileManagerLocationNavigationIntent::{EnterTrail, FollowPreview};
+
+        let td = TempDir::new();
+        let child = td.dir("resident-child");
+        let file_manager = crate::fm::FmState::open_trail_to(&td.root, &child, false).unwrap();
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .unwrap();
+        app.state.file_manager_locations_model = locations_model(std::slice::from_ref(&td.root));
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let worker_calls = calls.clone();
+        app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                worker_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                process_request(request)
+            });
+
+        stage_location(&mut app, &td.root, FollowPreview);
+        assert!(app.sync_file_manager_location_request());
+        stage_location(&mut app, &td.root, EnterTrail);
+        assert!(app.sync_file_manager_location_request());
+
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, td.root);
+    }
+
+    // TP-FLF-FAIL-01: stable failure classes preserve the last accepted Trail
+    // and never install a failed root as the accepted location.
+    #[test]
+    fn flf_missing_changed_type_permission_preserve_last_accepted_trail() {
+        use crate::app::state::FileManagerLocationNavigationIntent::FollowPreview;
+
+        let td = TempDir::new();
+        let initial = td.dir("failure-initial");
+        let missing = td.root.join("failure-missing");
+        let changed = td.root.join("failure-changed");
+        let permission = td.root.join("failure-permission");
+        let mut app = flf_app(
+            &initial,
+            &[missing.clone(), changed.clone(), permission.clone()],
+        );
+        app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                let error = match request.identity().target_path().and_then(Path::file_name) {
+                    Some(name) if name == "failure-missing" => FmRootNavigationError::Missing,
+                    Some(name) if name == "failure-changed" => FmRootNavigationError::ChangedType,
+                    _ => FmRootNavigationError::PermissionDenied,
+                };
+                FileManagerIoOutcome::Root(Err(error)).for_request(&request)
+            });
+
+        for path in [&missing, &changed, &permission] {
+            stage_location(&mut app, path, FollowPreview);
+            assert!(app.sync_file_manager_location_request());
+            app.file_manager_io_worker.wait_for_result_for_test();
+            assert!(app.sync_file_manager_io_results());
+            assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, initial);
+            assert!(app.state.file_manager_locations.failure.is_some());
+        }
+        assert_eq!(
+            app.state.file_manager_locations.origin,
+            Some(crate::app::file_manager_locations::FileManagerLocationOrigin::Direct(initial))
+        );
+    }
+
+    // TP-FLF-FAIL-02: a root processor panic becomes a typed failure, and the
+    // same bounded lane accepts and completes the next explicit request.
+    #[test]
+    fn flf_root_panic_reports_failure_and_lane_remains_reusable() {
+        use crate::app::state::FileManagerLocationNavigationIntent::FollowPreview;
+
+        let td = TempDir::new();
+        let initial = td.dir("panic-initial");
+        let panic_target = td.dir("panic-target");
+        let recovered = td.dir("panic-recovered");
+        let mut app = flf_app(&initial, &[panic_target.clone(), recovered.clone()]);
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let worker_calls = calls.clone();
+        app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                if worker_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                    panic!("injected FLF root panic");
+                }
+                process_request(request)
+            });
+
+        stage_location(&mut app, &panic_target, FollowPreview);
+        assert!(app.sync_file_manager_location_request());
+        app.file_manager_io_worker.wait_for_result_for_test();
+        assert!(app.sync_file_manager_io_results());
+        assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, initial);
+        assert!(app.state.file_manager_locations.failure.is_some());
+
+        stage_location(&mut app, &recovered, FollowPreview);
+        assert!(app.sync_file_manager_location_request());
+        app.file_manager_io_worker.wait_for_result_for_test();
+        assert!(app.sync_file_manager_io_results());
+        assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, recovered);
+    }
+
+    // TP-FLF-DISCONNECT-01: a dead lifecycle discards even a ready result,
+    // replaces the lane once, never replays, and permits a later explicit try.
+    #[test]
+    fn flf_worker_disconnect_reports_failure_restarts_once_and_next_request_succeeds() {
+        use crate::app::state::FileManagerLocationNavigationIntent::FollowPreview;
+
+        let td = TempDir::new();
+        let initial = td.dir("disconnect-initial");
+        let discarded = td.dir("disconnect-discarded");
+        let recovered = td.dir("disconnect-recovered");
+        let submit_dead = td.dir("disconnect-submit-dead");
+        let mut app = flf_app(
+            &initial,
+            &[discarded.clone(), recovered.clone(), submit_dead.clone()],
+        );
+
+        stage_location(&mut app, &discarded, FollowPreview);
+        assert!(app.sync_file_manager_location_request());
+        app.file_manager_io_worker.wait_for_result_for_test();
+        app.file_manager_io_worker.disconnect_for_test();
+        assert!(app.sync_file_manager_io_results());
+        assert_eq!(
+            app.state.file_manager.as_ref().unwrap().cwd,
+            initial,
+            "a result from the disconnected lifecycle must be discarded"
+        );
+        assert!(app.state.file_manager_locations.failure.is_some());
+        assert!(
+            !app.sync_file_manager_io_results(),
+            "idle drain cannot replace twice"
+        );
+
+        stage_location(&mut app, &recovered, FollowPreview);
+        assert!(app.sync_file_manager_location_request());
+        app.file_manager_io_worker.wait_for_result_for_test();
+        assert!(app.sync_file_manager_io_results());
+        assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, recovered);
+
+        app.file_manager_io_worker.disconnect_for_test();
+        stage_location(&mut app, &submit_dead, FollowPreview);
+        assert!(app.sync_file_manager_location_request());
+        assert!(app.state.file_manager_locations.failure.is_some());
+        assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, recovered);
+
+        stage_location(&mut app, &submit_dead, FollowPreview);
+        assert!(app.sync_file_manager_location_request());
+        app.file_manager_io_worker.wait_for_result_for_test();
+        assert!(app.sync_file_manager_io_results());
+        assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, submit_dead);
+    }
+
+    // TP-FLF-STALE-04: pending identity alone is insufficient. Losing Rail
+    // focus retires a late completion just like close/model/generation changes.
+    #[test]
+    fn flf_close_model_focus_and_generation_invalidate_completion() {
+        use crate::app::state::FileManagerLocationNavigationIntent::FollowPreview;
+
+        let td = TempDir::new();
+        let initial = td.dir("lifecycle-initial");
+        let target = td.dir("lifecycle-target");
+        let mut app = flf_app(&initial, std::slice::from_ref(&target));
+        let gate = Arc::new(Gate::default());
+        let worker_gate = gate.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        app.file_manager_io_worker =
+            FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
+                started_tx.send(()).unwrap();
+                worker_gate.wait();
+                process_request(request)
+            });
+
+        stage_location(&mut app, &target, FollowPreview);
+        assert!(app.sync_file_manager_location_request());
+        started_rx.recv().unwrap();
+        app.state.file_manager_locations.focus_trail();
+        gate.release();
+        app.file_manager_io_worker.wait_for_result_for_test();
+
+        assert!(!app.sync_file_manager_io_results());
+        assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, initial);
+        assert!(app.state.file_manager_locations.failure.is_none());
+    }
+
+    // TP-FLF-EMPTY-01: an empty readable destination is a successful exact
+    // root with no fabricated Trail cursor or synthetic row.
+    #[test]
+    fn flf_empty_root_succeeds_without_synthetic_cursor() {
+        use crate::app::state::FileManagerLocationNavigationIntent::FollowPreview;
+
+        let td = TempDir::new();
+        let initial = td.dir("empty-initial");
+        let empty = td.dir("empty-target");
+        let mut app = flf_app(&initial, std::slice::from_ref(&empty));
+        stage_location(&mut app, &empty, FollowPreview);
+
+        assert!(app.sync_file_manager_location_request());
+        app.file_manager_io_worker.wait_for_result_for_test();
+        assert!(app.sync_file_manager_io_results());
+        let file_manager = app.state.file_manager.as_ref().unwrap();
+        assert_eq!(file_manager.cwd, empty);
+        assert!(file_manager.active_trail_entry_identity().is_none());
+        assert!(file_manager.trail.cursor_override().is_none());
     }
 
     // TP-FCL-IO-01/03: App root submission preserves the rendered Trail while
