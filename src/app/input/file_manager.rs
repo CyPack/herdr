@@ -4883,6 +4883,163 @@ mod tests {
         assert_eq!(profile.counter("fm.filesystem.read"), 0);
     }
 
+    // TP-DCLICK-01/02/04/06/07 RED: primary click is exact cursor intent,
+    // including for directories. It transfers top-level ownership and paints
+    // the clicked row in its owning column, but only explicit Right/Enter may
+    // transfer focus into a child column. The following vertical key therefore
+    // advances exactly one row inside the clicked owner without serial I/O.
+    #[test]
+    fn directory_primary_click_keeps_vertical_navigation_in_the_owner_column() {
+        let td = TempDir::new("directory-click-owner-focus");
+        for name in ["00-alpha", "01-bravo", "02-current"] {
+            td.dir(name);
+            td.file(&format!("{name}/00-inside.txt"));
+        }
+        td.set_equal_modified(&["00-alpha", "01-bravo", "02-current"]);
+        let current = td.root.join("02-current");
+        let bravo = td.root.join("01-bravo");
+        let file_manager =
+            FmState::open_trail_to(&td.root, &current, false).expect("open resident child Trail");
+        let mut app = runtime_app_with_fm(file_manager);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        let frame = Rect::new(0, 0, 120, 16);
+        compute_view(&mut app.state, frame);
+        let target = trail_row_by_path(&app, &bravo);
+        assert_eq!(target.trail_index, 0, "fixture clicks the parent column");
+
+        let (dispatch, profile) = crate::render_prof::observe_for_test(|| {
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                target.name_rect.x,
+                target.name_rect.y,
+            ))
+        });
+
+        assert_eq!(dispatch, FileManagerMouseDispatch::Consumed);
+        assert_eq!(profile.counter("fm.filesystem.read"), 0);
+        assert_eq!(
+            app.state.file_manager_locations.focus,
+            crate::app::FileManagerLocationsFocus::Trail
+        );
+        {
+            let clicked = app.state.file_manager.as_ref().expect("open FM");
+            assert_eq!(clicked.trail.active_col(), target.trail_index);
+            assert_eq!(
+                clicked.trail.cursor_path_in_col(target.trail_index),
+                Some(bravo.as_path())
+            );
+            assert_eq!(
+                clicked.selected().map(|entry| entry.path.as_path()),
+                Some(bravo.as_path())
+            );
+            assert_eq!(clicked.cwd, td.root, "operations project the row owner");
+            assert_eq!(
+                clicked.trail.cols()[1].directory, current,
+                "primary dispatch cannot activate or replace the resident child"
+            );
+        }
+
+        compute_view(&mut app.state, frame);
+        let clicked_column = app
+            .state
+            .view
+            .file_manager_trail
+            .columns
+            .iter()
+            .find(|column| column.trail_index == target.trail_index)
+            .expect("clicked owner column remains visible");
+        assert_eq!(
+            clicked_column.selected_entry,
+            Some(target.entry_index),
+            "render projection must paint the exact clicked directory row"
+        );
+
+        let key_dispatch = handle_file_manager_key(&mut app.state, key(KeyCode::Down));
+        assert!(matches!(
+            key_dispatch,
+            FileManagerKeyDispatch::PreviewDirectory { .. }
+        ));
+        let after_down = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(after_down.trail.active_col(), target.trail_index);
+        assert_eq!(
+            after_down.selected().map(|entry| entry.path.as_path()),
+            Some(current.as_path()),
+            "Down advances one row in the clicked owner column"
+        );
+    }
+
+    // TP-DCLICK-03/06 RED: bounded preview may replace the resident child
+    // behind a directory cursor, but it cannot own keyboard focus. Right is
+    // the explicit boundary crossing and highlights the child's first row in
+    // that same dispatch.
+    #[test]
+    fn directory_primary_click_requires_right_to_focus_the_prepared_child() {
+        let td = TempDir::new("directory-click-explicit-right");
+        for name in ["00-alpha", "01-bravo", "02-current"] {
+            td.dir(name);
+        }
+        td.file("01-bravo/00-first.txt");
+        td.file("01-bravo/01-second.txt");
+        td.file("02-current/00-old.txt");
+        td.set_equal_modified(&["00-alpha", "01-bravo", "02-current"]);
+        td.set_equal_modified(&["01-bravo/00-first.txt", "01-bravo/01-second.txt"]);
+        let current = td.root.join("02-current");
+        let bravo = td.root.join("01-bravo");
+        let first = bravo.join("00-first.txt");
+        let file_manager =
+            FmState::open_trail_to(&td.root, &current, false).expect("open resident child Trail");
+        let mut app = runtime_app_with_fm(file_manager);
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        compute_view(&mut app.state, Rect::new(0, 0, 120, 16));
+        let target = trail_row_by_path(&app, &bravo);
+
+        assert_eq!(
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                target.name_rect.x,
+                target.name_rect.y,
+            )),
+            FileManagerMouseDispatch::Consumed
+        );
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .expect("open FM")
+                .trail
+                .active_col(),
+            0,
+            "click must keep owner focus before preview completion"
+        );
+        assert!(
+            app.complete_file_manager_io_for_test(),
+            "bounded directory preview applies"
+        );
+        {
+            let previewed = app.state.file_manager.as_ref().expect("open FM");
+            assert_eq!(previewed.trail.active_col(), 0);
+            assert_eq!(previewed.trail.cols()[1].directory, bravo);
+            assert_eq!(
+                previewed.trail.cursor_path_in_col(0),
+                Some(bravo.as_path())
+            );
+        }
+
+        assert_eq!(
+            handle_file_manager_key(&mut app.state, key(KeyCode::Right)),
+            FileManagerKeyDispatch::Consumed
+        );
+        let entered = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(entered.trail.active_col(), 1);
+        assert_eq!(
+            entered.selected().map(|entry| entry.path.as_path()),
+            Some(first.as_path()),
+            "Right highlights the child's first actionable row immediately"
+        );
+    }
+
     // TP-FFO-MOUSE-02 / TP-FFO-RENDER-01 / TP-FFO-IO-01: region focus is
     // independent of row activation. A primary click in a live empty Trail
     // body transfers only owner state and requests one visible repaint.
