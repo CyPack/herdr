@@ -3025,6 +3025,57 @@ mod tests {
         }
     }
 
+    fn flf_render_app(td: &TempDir) -> (AppState, PathBuf, PathBuf) {
+        let home = td.root.join("home");
+        let downloads = td.root.join("downloads");
+        for path in [&home, &downloads] {
+            fs::create_dir_all(path).expect("create FLF rendered location");
+        }
+        let mut app = AppState::test_new();
+        app.try_open_file_manager_with(|_| Some(FmState::new(&td.root)))
+            .expect("Files activation");
+        app.mobile_width_threshold = 0;
+        app.sidebar_collapsed = true;
+        app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
+        app.file_manager_locations_model =
+            crate::app::state::FileManagerLocationsModel::from_sources(
+                vec![
+                    fcl_render_item(
+                        "Home",
+                        home.clone(),
+                        crate::app::state::FileManagerLocationIcon::Home,
+                    ),
+                    fcl_render_item(
+                        "Downloads",
+                        downloads.clone(),
+                        crate::app::state::FileManagerLocationIcon::Downloads,
+                    ),
+                ],
+                Vec::new(),
+                Vec::new(),
+            );
+        assert!(app
+            .file_manager_locations
+            .activate_location(&home, &app.file_manager_locations_model));
+        assert!(app
+            .file_manager_locations
+            .select_cursor(&downloads, &app.file_manager_locations_model));
+        (app, home, downloads)
+    }
+
+    fn flf_location_row(
+        app: &AppState,
+        path: &std::path::Path,
+    ) -> crate::ui::file_manager::locations::FileManagerLocationRowArea {
+        app.view
+            .file_manager_locations
+            .rows
+            .iter()
+            .find(|row| row.path == path)
+            .cloned()
+            .expect("projected location row")
+    }
+
     // TP-FCL-RENDER-01/02: Native Files renders the prepared Favorites and
     // Locations model inside its content-local rail. Explicit origin,
     // in-flight root, and typed failure are visible presentation states and
@@ -3114,9 +3165,13 @@ mod tests {
         );
         let home_pos = find_rendered_text(&pending, frame.width, frame.height, "Home");
         assert_eq!(
-            pending[home_pos].bg, app.palette.accent,
-            "the explicit location origin owns the sole highlighted row"
+            pending[home_pos].fg, app.palette.accent,
+            "the accepted origin keeps subdued accent identity"
         );
+        assert!(pending[home_pos]
+            .modifier
+            .contains(Modifier::BOLD | Modifier::UNDERLINED));
+        assert!(!pending[home_pos].modifier.contains(Modifier::REVERSED));
 
         app.file_manager_locations.fail_load(
             root.clone(),
@@ -3154,5 +3209,290 @@ mod tests {
             "…",
             "failure transition retires the prior pending marker"
         );
+    }
+
+    // TP-FLF-VIS-01: the keyboard target is the strongest Rail identity;
+    // accepted origin remains visible without impersonating current focus.
+    #[test]
+    fn flf_render_rail_cursor_wins_and_origin_remains_subdued() {
+        let td = TempDir::new("flf-rail-cursor-origin");
+        let (mut app, home, downloads) = flf_render_app(&td);
+        let frame = Rect::new(0, 0, 90, 10);
+        crate::ui::compute_view(&mut app, frame);
+
+        let home_row = flf_location_row(&app, &home);
+        let downloads_row = flf_location_row(&app, &downloads);
+        let buffer = render_buffer(&app, frame.width, frame.height);
+        let origin = &buffer[(home_row.rect.x, home_row.rect.y)];
+        let cursor = &buffer[(downloads_row.rect.x, downloads_row.rect.y)];
+
+        assert_eq!(cursor.bg, app.palette.accent);
+        assert!(cursor
+            .modifier
+            .contains(Modifier::BOLD | Modifier::REVERSED));
+        assert_eq!(origin.fg, app.palette.accent);
+        assert!(origin
+            .modifier
+            .contains(Modifier::BOLD | Modifier::UNDERLINED));
+        assert!(!origin.modifier.contains(Modifier::REVERSED));
+    }
+
+    // TP-FLF-NO-HIGHLIGHT-01: Trail identity stays resident while Rail owns
+    // focus, but only the Rail cursor may receive the painted focus style.
+    #[test]
+    fn flf_render_rail_focus_suppresses_trail_cursor_style() {
+        let td = TempDir::new("flf-suppress-trail-focus");
+        td.file("only.txt");
+        let mut app = AppState::test_new();
+        app.try_open_file_manager_with(|_| Some(FmState::new(&td.root)))
+            .expect("Files activation");
+        app.mobile_width_threshold = 0;
+        app.sidebar_collapsed = true;
+        app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
+        app.file_manager_locations.focus = crate::app::FileManagerLocationsFocus::Rail;
+        let frame = Rect::new(0, 0, 90, 8);
+        crate::ui::compute_view(&mut app, frame);
+
+        let selected_rect = app
+            .view
+            .file_manager_trail
+            .columns
+            .iter()
+            .find_map(|column| {
+                let selected = column.selected_entry?;
+                column
+                    .rows
+                    .iter()
+                    .find(|row| row.entry_index == selected)
+                    .map(|row| row.rect)
+            })
+            .expect("resident selected Trail row");
+        let before_identity = app
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .active_trail_entry_identity();
+        let buffer = render_buffer(&app, frame.width, frame.height);
+        let painted = &buffer[(selected_rect.x, selected_rect.y)];
+
+        assert_eq!(painted.bg, app.palette.panel_bg);
+        assert!(!painted.modifier.contains(Modifier::BOLD));
+        assert_eq!(
+            app.file_manager
+                .as_ref()
+                .expect("open FM")
+                .active_trail_entry_identity(),
+            before_identity,
+            "paint suppression cannot erase Trail selection authority"
+        );
+    }
+
+    // TP-FLF-VIS-01: ANSI/no-color users must distinguish cursor and origin
+    // through modifiers even when every relevant foreground/background agrees.
+    #[test]
+    fn flf_render_no_color_distinguishes_cursor_from_origin_by_modifiers() {
+        let td = TempDir::new("flf-no-color");
+        let (mut app, home, downloads) = flf_render_app(&td);
+        let monochrome = Color::Indexed(7);
+        app.palette.accent = monochrome;
+        app.palette.panel_bg = monochrome;
+        app.palette.subtext0 = monochrome;
+        let frame = Rect::new(0, 0, 90, 10);
+        crate::ui::compute_view(&mut app, frame);
+
+        let home_row = flf_location_row(&app, &home);
+        let downloads_row = flf_location_row(&app, &downloads);
+        let buffer = render_buffer(&app, frame.width, frame.height);
+        let origin = &buffer[(home_row.rect.x, home_row.rect.y)];
+        let cursor = &buffer[(downloads_row.rect.x, downloads_row.rect.y)];
+
+        assert_eq!((cursor.fg, cursor.bg), (origin.fg, origin.bg));
+        assert!(cursor
+            .modifier
+            .contains(Modifier::BOLD | Modifier::REVERSED));
+        assert!(!cursor.modifier.contains(Modifier::UNDERLINED));
+        assert!(origin
+            .modifier
+            .contains(Modifier::BOLD | Modifier::UNDERLINED));
+        assert!(!origin.modifier.contains(Modifier::REVERSED));
+    }
+
+    // TP-FLF-FAIL-01/STALE-01: markers require current cursor, Files
+    // generation, and model revision authority. Matching only a path is stale.
+    #[test]
+    fn flf_render_pending_failure_apply_only_to_current_cursor() {
+        let td = TempDir::new("flf-marker-authority");
+        let (mut app, home, downloads) = flf_render_app(&td);
+        let frame = Rect::new(0, 0, 90, 10);
+        crate::ui::compute_view(&mut app, frame);
+        let home_row = flf_location_row(&app, &home);
+        let downloads_row = flf_location_row(&app, &downloads);
+        let files_generation = app
+            .stage
+            .active_instance_generation()
+            .expect("active Files generation");
+        let model_revision = app.file_manager_locations_model.revision();
+        let marker =
+            |app: &AppState,
+             row: &crate::ui::file_manager::locations::FileManagerLocationRowArea| {
+                let buffer = render_buffer(app, frame.width, frame.height);
+                buffer[(row.rect.right().saturating_sub(1), row.rect.y)]
+                    .symbol()
+                    .to_string()
+            };
+
+        app.file_manager_locations.begin_load(
+            home.clone(),
+            files_generation,
+            model_revision,
+            1,
+            crate::app::state::FileManagerLocationNavigationIntent::FollowPreview,
+        );
+        assert_ne!(marker(&app, &home_row), "…", "non-cursor pending is stale");
+        app.file_manager_locations.begin_load(
+            downloads.clone(),
+            files_generation.wrapping_add(1),
+            model_revision,
+            2,
+            crate::app::state::FileManagerLocationNavigationIntent::FollowPreview,
+        );
+        assert_ne!(
+            marker(&app, &downloads_row),
+            "…",
+            "wrong Files generation cannot render pending"
+        );
+        app.file_manager_locations.begin_load(
+            downloads.clone(),
+            files_generation,
+            model_revision,
+            3,
+            crate::app::state::FileManagerLocationNavigationIntent::FollowPreview,
+        );
+        assert_eq!(marker(&app, &downloads_row), "…");
+
+        app.file_manager_locations.fail_load(
+            home,
+            files_generation,
+            model_revision,
+            crate::app::FileManagerLocationLoadError::PermissionDenied,
+        );
+        assert_ne!(marker(&app, &home_row), "!", "non-cursor failure is stale");
+        app.file_manager_locations.fail_load(
+            downloads.clone(),
+            files_generation,
+            model_revision.wrapping_add(1),
+            crate::app::FileManagerLocationLoadError::PermissionDenied,
+        );
+        assert_ne!(
+            marker(&app, &downloads_row),
+            "!",
+            "wrong model revision cannot render failure"
+        );
+        app.file_manager_locations.fail_load(
+            downloads,
+            files_generation,
+            model_revision,
+            crate::app::FileManagerLocationLoadError::PermissionDenied,
+        );
+        assert_eq!(marker(&app, &downloads_row), "!");
+    }
+
+    // TP-FLF-RENDER-01: focus changes may alter paint only. They cannot alter
+    // state, row hit targets, column projection, or repeated output bytes.
+    #[test]
+    fn flf_render_is_state_pure_and_geometry_identical() {
+        let td = TempDir::new("flf-render-purity");
+        let (mut app, _home, downloads) = flf_render_app(&td);
+        let frame = Rect::new(0, 0, 90, 10);
+        app.file_manager_locations.focus_trail();
+        crate::ui::compute_view(&mut app, frame);
+        let trail_focus_locations = app.view.file_manager_locations.clone();
+        let trail_focus_trail = app.view.file_manager_trail.clone();
+
+        assert!(app
+            .file_manager_locations
+            .select_cursor(&downloads, &app.file_manager_locations_model));
+        crate::ui::compute_view(&mut app, frame);
+        assert_eq!(app.view.file_manager_locations, trail_focus_locations);
+        assert_eq!(app.view.file_manager_trail, trail_focus_trail);
+        let before_locations = app.file_manager_locations.clone();
+        let before_file_manager = {
+            let file_manager = app.file_manager.as_ref().expect("open FM");
+            (
+                file_manager.cwd.clone(),
+                file_manager.entries.clone(),
+                file_manager.cursor,
+                file_manager.viewport_start,
+                file_manager.directory_generation,
+                file_manager.preview_generation,
+                file_manager.trail.clone(),
+                file_manager.trail_snapshots.clone(),
+            )
+        };
+        let before_view = app.view.file_manager_locations.clone();
+
+        let first = render_buffer(&app, frame.width, frame.height);
+        let second = render_buffer(&app, frame.width, frame.height);
+
+        assert_eq!(first, second, "identical state must paint identical cells");
+        assert_eq!(app.file_manager_locations, before_locations);
+        let after_file_manager = {
+            let file_manager = app.file_manager.as_ref().expect("open FM");
+            (
+                file_manager.cwd.clone(),
+                file_manager.entries.clone(),
+                file_manager.cursor,
+                file_manager.viewport_start,
+                file_manager.directory_generation,
+                file_manager.preview_generation,
+                file_manager.trail.clone(),
+                file_manager.trail_snapshots.clone(),
+            )
+        };
+        assert_eq!(after_file_manager, before_file_manager);
+        assert_eq!(app.view.file_manager_locations, before_view);
+    }
+
+    // TP-FLF-COMPACT-01/VIS-01: the drawer is the compact Rail owner and
+    // paints the same strong cursor semantics as the persistent wide Rail.
+    #[test]
+    fn flf_compact_drawer_focus_matches_wide_rail() {
+        let td = TempDir::new("flf-compact-focus");
+        let (mut app, _home, downloads) = flf_render_app(&td);
+        let wide_frame = Rect::new(0, 0, 90, 10);
+        crate::ui::compute_view(&mut app, wide_frame);
+        let wide_row = flf_location_row(&app, &downloads);
+        let wide = render_buffer(&app, wide_frame.width, wide_frame.height);
+        let wide_style = (
+            wide[(wide_row.rect.x, wide_row.rect.y)].fg,
+            wide[(wide_row.rect.x, wide_row.rect.y)].bg,
+            wide[(wide_row.rect.x, wide_row.rect.y)].modifier,
+        );
+
+        assert!(app.file_manager_locations.open_drawer());
+        let compact_frame = Rect::new(
+            0,
+            0,
+            locations::COMPACT_CONTENT_THRESHOLD.saturating_sub(1),
+            10,
+        );
+        crate::ui::compute_view(&mut app, compact_frame);
+        assert_eq!(
+            app.view.file_manager_locations.layout.mode,
+            locations::FileManagerLocationsMode::Compact
+        );
+        assert!(app.view.file_manager_locations.drawer_area.is_some());
+        let compact_row = flf_location_row(&app, &downloads);
+        let compact = render_buffer(&app, compact_frame.width, compact_frame.height);
+        let compact_style = (
+            compact[(compact_row.rect.x, compact_row.rect.y)].fg,
+            compact[(compact_row.rect.x, compact_row.rect.y)].bg,
+            compact[(compact_row.rect.x, compact_row.rect.y)].modifier,
+        );
+
+        assert_eq!(compact_style, wide_style);
+        assert!(compact_style
+            .2
+            .contains(Modifier::BOLD | Modifier::REVERSED));
     }
 }
