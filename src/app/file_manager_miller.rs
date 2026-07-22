@@ -18,6 +18,7 @@ impl crate::app::App {
             row.entry_index,
             &row.entry_path,
             false,
+            crate::app::file_manager_io_worker::FileManagerTrailDestinationPolicy::PreserveMouseSelection,
         )
     }
 
@@ -27,8 +28,14 @@ impl crate::app::App {
         entry_index: usize,
         expected_path: &std::path::Path,
     ) -> bool {
-        self.queue_file_manager_trail_directory_request(trail_col, entry_index, expected_path, true)
-            .unwrap_or(false)
+        self.queue_file_manager_trail_directory_request(
+            trail_col,
+            entry_index,
+            expected_path,
+            true,
+            crate::app::file_manager_io_worker::FileManagerTrailDestinationPolicy::PreserveMouseSelection,
+        )
+        .unwrap_or(false)
     }
 
     pub(super) fn queue_file_manager_trail_directory_activation_identity(
@@ -42,6 +49,7 @@ impl crate::app::App {
             entry_index,
             expected_path,
             false,
+            crate::app::file_manager_io_worker::FileManagerTrailDestinationPolicy::FocusFirstActionable,
         )
         .unwrap_or(false)
     }
@@ -52,6 +60,7 @@ impl crate::app::App {
         entry_index: usize,
         expected_path: &std::path::Path,
         preview_only: bool,
+        destination_policy: crate::app::file_manager_io_worker::FileManagerTrailDestinationPolicy,
     ) -> Option<bool> {
         let files_generation = self.state.stage.active_instance_generation()?;
         let file_manager = self.state.file_manager.as_ref()?;
@@ -79,6 +88,7 @@ impl crate::app::App {
                 trail_col,
                 entry_index,
                 expected_path: expected_path.to_path_buf(),
+                destination_policy,
                 file_manager: Box::new(file_manager.clone()),
             }
         };

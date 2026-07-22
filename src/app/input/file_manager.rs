@@ -424,8 +424,14 @@ pub(super) fn handle_file_manager_key(
                         return dispatch;
                     }
                     return FileManagerKeyDispatch::Inert;
-                } else if !fm.trail.move_active_right() {
-                    return FileManagerKeyDispatch::Inert;
+                } else {
+                    if !fm.trail.move_active_right() {
+                        return FileManagerKeyDispatch::Inert;
+                    }
+                    if !fm.focus_first_active_trail_entry() {
+                        debug_assert!(false, "resident child focus must have an aligned snapshot");
+                        return FileManagerKeyDispatch::Inert;
+                    }
                 }
             } else {
                 return FileManagerKeyDispatch::Inert;
@@ -5205,6 +5211,35 @@ mod tests {
                 .active_trail_entry_identity()
                 .map(|(_, index, path, _)| (index, path)),
             Some((0, first))
+        );
+
+        let cold = TempDir::new("flf-entered-child-cold");
+        let cold_anchor = cold.root.join("00-anchor.txt");
+        fs::write(&cold_anchor, b"anchor").expect("cold anchor row");
+        TempDir::set_modified(&cold_anchor);
+        cold.dir("01-child");
+        let cold_child = cold.root.join("01-child");
+        let cold_first = cold_child.join("00-first.txt");
+        fs::write(&cold_first, b"first").expect("cold first child row");
+        TempDir::set_modified(&cold_first);
+        cold.set_equal_modified(&["00-anchor.txt", "01-child"]);
+        let mut app = runtime_app_with_fm(FmState::new(&cold.root));
+        app.state.file_manager_locations.focus_trail();
+
+        assert!(matches!(
+            handle_file_manager_key(&mut app.state, key(KeyCode::Down)),
+            FileManagerKeyDispatch::PreviewDirectory { .. }
+        ));
+        app.handle_focused_file_manager_key(key(KeyCode::Right));
+        assert!(app.complete_file_manager_io_for_test());
+
+        let file_manager = app.state.file_manager.as_ref().expect("open cold FM");
+        assert_eq!(file_manager.trail.active_col(), 1);
+        assert_eq!(
+            file_manager
+                .active_trail_entry_identity()
+                .map(|(_, index, path, _)| (index, path)),
+            Some((0, cold_first))
         );
     }
 

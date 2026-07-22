@@ -1187,7 +1187,36 @@ impl FmState {
             return false;
         }
         self.clear_multi_selection();
-        self.install_trail_projection_without_selection(0).is_some()
+        self.install_resident_trail_projection_without_selection(0)
+    }
+
+    /// Initialize explicit keyboard focus at the first real row in the active
+    /// Trail column. Every input is resident; no directory or metadata read is
+    /// permitted on this path. Empty columns remain valid with no cursor.
+    pub(crate) fn focus_first_active_trail_entry(&mut self) -> bool {
+        let active_col = self.trail.active_col();
+        if !self
+            .trail_snapshots
+            .reset_active_column_cursor(&mut self.trail)
+        {
+            return false;
+        }
+        let Some(first_path) = self
+            .trail_snapshots
+            .cols()
+            .get(active_col)
+            .and_then(|snapshot| snapshot.entries().first())
+            .map(|entry| entry.path.clone())
+        else {
+            return self.install_resident_trail_projection_without_selection(active_col);
+        };
+        let outcome = self
+            .trail_snapshots
+            .move_cursor_in_column(&mut self.trail, active_col, 1);
+        if outcome.entry_index() != Some(0) {
+            return false;
+        }
+        self.install_trail_operation_projection(active_col, 0, &first_path)
     }
 
     /// Exact directory owned by the single Trail focus authority.
@@ -1414,6 +1443,37 @@ impl FmState {
         self.preview_viewport_start = 0;
         self.preview_generation = self.preview_generation.wrapping_add(1).max(1);
         self.preview = preview;
+        true
+    }
+
+    fn install_resident_trail_projection_without_selection(&mut self, col_idx: usize) -> bool {
+        let Some(snapshot) = self.trail_snapshots.cols().get(col_idx) else {
+            return false;
+        };
+        let directory = snapshot.directory().to_path_buf();
+        let entries = snapshot.entries().to_vec();
+        let status = snapshot.status();
+        let writable = snapshot.writable();
+        let parent = col_idx.checked_sub(1).and_then(|parent_idx| {
+            let snapshot = self.trail_snapshots.cols().get(parent_idx)?;
+            let entries = snapshot.entries().to_vec();
+            let cursor = entries.iter().position(|entry| entry.path == directory);
+            Some(FmParent { entries, cursor })
+        });
+
+        self.cwd = directory;
+        self.entries = entries;
+        self.cwd_status = status;
+        self.cwd_writable = writable;
+        self.directory_generation = self.directory_generation.wrapping_add(1).max(1);
+        self.reconcile_multi_selection();
+        self.cursor = 0;
+        self.clamp_cursor();
+        self.viewport_start = 0;
+        self.parent = parent;
+        self.preview_viewport_start = 0;
+        self.preview_generation = self.preview_generation.wrapping_add(1).max(1);
+        self.preview = FmPreview::None;
         true
     }
 

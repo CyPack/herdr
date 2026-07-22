@@ -37,6 +37,12 @@ impl FileManagerIoSource {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::app) enum FileManagerTrailDestinationPolicy {
+    FocusFirstActionable,
+    PreserveMouseSelection,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum FileManagerIoIdentity {
     Root {
@@ -71,6 +77,7 @@ pub(super) enum FileManagerIoIdentity {
         trail_col: usize,
         entry_index: usize,
         expected_path: PathBuf,
+        destination_policy: FileManagerTrailDestinationPolicy,
     },
 }
 
@@ -162,6 +169,7 @@ pub(super) enum FileManagerIoRequest {
         trail_col: usize,
         entry_index: usize,
         expected_path: PathBuf,
+        destination_policy: FileManagerTrailDestinationPolicy,
         file_manager: Box<crate::fm::FmState>,
     },
 }
@@ -228,6 +236,7 @@ impl FileManagerIoRequest {
                 trail_col,
                 entry_index,
                 expected_path,
+                destination_policy,
                 ..
             } => FileManagerIoIdentity::TrailActivate {
                 files_generation: *files_generation,
@@ -235,6 +244,7 @@ impl FileManagerIoRequest {
                 trail_col: *trail_col,
                 entry_index: *entry_index,
                 expected_path: expected_path.clone(),
+                destination_policy: *destination_policy,
             },
         }
     }
@@ -268,6 +278,7 @@ pub(super) enum FileManagerIoOutcome {
         trail_col: usize,
         entry_index: usize,
         expected_path: PathBuf,
+        destination_policy: FileManagerTrailDestinationPolicy,
         prepared: Option<(
             Box<crate::fm::FmState>,
             crate::fm::trail_snapshots::TrailActivateOutcome,
@@ -565,20 +576,28 @@ fn process_request(request: FileManagerIoRequest) -> FileManagerIoOutcome {
             trail_col,
             entry_index,
             expected_path,
+            destination_policy,
             mut file_manager,
         } => {
             let outcome = file_manager.activate_trail_entry(trail_col, entry_index, &expected_path);
             let prepared = (outcome == crate::fm::trail_snapshots::TrailActivateOutcome::Branched)
                 .then(|| {
                     file_manager.clear_multi_selection();
-                    (file_manager, outcome)
-                });
+                    if destination_policy == FileManagerTrailDestinationPolicy::FocusFirstActionable
+                        && !file_manager.focus_first_active_trail_entry()
+                    {
+                        return None;
+                    }
+                    Some((file_manager, outcome))
+                })
+                .flatten();
             FileManagerIoOutcome::TrailActivate {
                 files_generation,
                 source,
                 trail_col,
                 entry_index,
                 expected_path,
+                destination_policy,
                 prepared,
             }
         }
@@ -651,6 +670,25 @@ impl super::App {
         crate::render_prof::event("fm.locations.root.stale");
     }
 
+    fn accept_file_manager_location(
+        &mut self,
+        path: &Path,
+        intent: crate::app::state::FileManagerLocationNavigationIntent,
+    ) -> bool {
+        if !self
+            .state
+            .file_manager_locations
+            .activate_location(path, &self.state.file_manager_locations_model)
+        {
+            return false;
+        }
+        if intent == crate::app::state::FileManagerLocationNavigationIntent::EnterTrail {
+            let _ = self.state.file_manager_locations.close_drawer();
+            self.state.file_manager_locations.focus_trail();
+        }
+        true
+    }
+
     #[cfg(test)]
     pub(crate) fn complete_file_manager_io_for_test(&mut self) -> bool {
         self.file_manager_io_worker.wait_for_result_for_test();
@@ -679,17 +717,19 @@ impl super::App {
             return false;
         }
 
-        if self
+        let resident_root = self
             .state
             .file_manager
             .as_mut()
-            .is_some_and(|file_manager| file_manager.reset_to_resident_trail_root(&path))
-        {
-            let _ = self
-                .state
-                .file_manager_locations
-                .activate_location(&path, &self.state.file_manager_locations_model);
-            return true;
+            .is_some_and(|file_manager| {
+                if !file_manager.reset_to_resident_trail_root(&path) {
+                    return false;
+                }
+                intent != crate::app::state::FileManagerLocationNavigationIntent::EnterTrail
+                    || file_manager.focus_first_active_trail_entry()
+            });
+        if resident_root {
+            return self.accept_file_manager_location(&path, intent);
         }
 
         if self.state.file_manager_locations.promote_pending_intent(
@@ -800,7 +840,7 @@ impl super::App {
 
         match result.outcome {
             FileManagerIoOutcome::Root(Ok(prepared)) => {
-                let prepared = *prepared;
+                let mut prepared = *prepared;
                 let prepared_identity =
                     FileManagerIoRequest::Root(prepared.request.clone()).identity();
                 let target = prepared.request.target_root.clone();
@@ -815,13 +855,20 @@ impl super::App {
                     return false;
                 }
                 let pending = root_pending.expect("validated Root result has pending authority");
-                let _accepted_intent = pending.intent;
+                if pending.intent
+                    == crate::app::state::FileManagerLocationNavigationIntent::EnterTrail
+                    && !prepared.file_manager.focus_first_active_trail_entry()
+                {
+                    self.state.file_manager_locations.fail_load(
+                        pending.path,
+                        pending.files_generation,
+                        pending.model_revision,
+                        FileManagerLocationLoadError::Unavailable,
+                    );
+                    return true;
+                }
                 self.state.file_manager = Some(prepared.file_manager);
-                let _ = self
-                    .state
-                    .file_manager_locations
-                    .activate_location(&target, &self.state.file_manager_locations_model);
-                true
+                self.accept_file_manager_location(&target, pending.intent)
             }
             FileManagerIoOutcome::Root(Err(error)) => {
                 let pending = root_pending.expect("validated Root result has pending authority");
@@ -918,6 +965,7 @@ impl super::App {
                 trail_col,
                 entry_index,
                 expected_path,
+                destination_policy,
                 prepared,
             } => {
                 let prepared_identity = FileManagerIoIdentity::TrailActivate {
@@ -926,6 +974,7 @@ impl super::App {
                     trail_col,
                     entry_index,
                     expected_path,
+                    destination_policy,
                 };
                 if prepared_identity != result.identity {
                     return false;
@@ -968,7 +1017,8 @@ mod tests {
     use super::{
         classify_root_navigation_error, prepare_root_navigation_io, process_request,
         FileManagerIoIdentity, FileManagerIoOutcome, FileManagerIoRequest, FileManagerIoSource,
-        FileManagerIoSubmit, FileManagerIoWorker, FmRootNavigationError, FmRootNavigationRequest,
+        FileManagerIoSubmit, FileManagerIoWorker, FileManagerTrailDestinationPolicy,
+        FmRootNavigationError, FmRootNavigationRequest,
     };
 
     #[derive(Default)]
@@ -1643,6 +1693,19 @@ mod tests {
 
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, td.root);
+        assert_eq!(
+            app.state.file_manager_locations.focus,
+            crate::app::FileManagerLocationsFocus::Trail
+        );
+        assert_eq!(
+            app.state
+                .file_manager
+                .as_ref()
+                .unwrap()
+                .active_trail_entry_identity()
+                .map(|(_, index, path, _)| (index, path)),
+            Some((0, child))
+        );
     }
 
     // TP-FLF-FAIL-01: stable failure classes preserve the last accepted Trail
@@ -1982,6 +2045,7 @@ mod tests {
             trail_col: 0,
             entry_index: zeta_index,
             expected_path: zeta,
+            destination_policy: FileManagerTrailDestinationPolicy::FocusFirstActionable,
             file_manager: Box::new(file_manager.clone()),
         };
 

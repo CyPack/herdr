@@ -159,6 +159,25 @@ pub(crate) struct TrailSnapshots {
 }
 
 impl TrailSnapshots {
+    /// Start a fresh cursor transaction in the exact active column using only
+    /// resident snapshots. Deeper destination history and detail authority
+    /// are retired before callers choose the first actionable row.
+    pub(crate) fn reset_active_column_cursor(&mut self, trail: &mut TrailState) -> bool {
+        let active_col = trail.active_col();
+        let aligned = self.cols.get(active_col).is_some_and(|snapshot| {
+            trail
+                .cols()
+                .get(active_col)
+                .is_some_and(|column| column.directory == snapshot.directory)
+        });
+        if !aligned {
+            return false;
+        }
+        self.cols.truncate(active_col + 1);
+        self.detail = None;
+        trail.clear_selection_at(active_col)
+    }
+
     /// Reset to an already loaded root without touching the filesystem.
     pub(crate) fn reset_to_resident_root(
         &mut self,
