@@ -800,25 +800,20 @@ impl App {
                 let Some(row) = trail_row_target else {
                     return;
                 };
-                match self.queue_file_manager_trail_directory_activation(row) {
-                    Some(true) => {
-                        let _ = focus_file_manager_trail(&mut self.state);
-                        return;
-                    }
-                    Some(false) => return,
-                    None => {}
-                }
-                if let Some((entry_idx, _entry_path, outcome)) = self.activate_trail_row(row) {
+                if let Some((entry_idx, entry_path, outcome)) = self.focus_trail_row(row) {
                     if let Some(file_manager) = self.state.file_manager.as_mut() {
-                        match outcome {
-                            crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile => {
-                                let _ = file_manager.replace_selection(entry_idx);
-                            }
-                            crate::fm::trail_snapshots::TrailActivateOutcome::Branched => {
-                                file_manager.clear_multi_selection();
-                            }
-                            crate::fm::trail_snapshots::TrailActivateOutcome::Rejected => {}
+                        if outcome.is_directory() {
+                            file_manager.clear_multi_selection();
+                        } else {
+                            let _ = file_manager.replace_selection(entry_idx);
                         }
+                    }
+                    if outcome.is_directory() {
+                        let _ = self.queue_file_manager_trail_directory_preview_identity(
+                            row.trail_index,
+                            row.entry_index,
+                            &entry_path,
+                        );
                     }
                 }
             }
@@ -919,6 +914,33 @@ impl App {
             let _ = focus_file_manager_trail(&mut self.state);
         }
         activated
+    }
+
+    fn focus_trail_row(
+        &mut self,
+        row: &crate::ui::TrailRowView,
+    ) -> Option<(
+        usize,
+        std::path::PathBuf,
+        crate::fm::trail_snapshots::TrailCursorMoveOutcome,
+    )> {
+        let focused = {
+            let file_manager = self.state.file_manager.as_mut()?;
+            let outcome =
+                file_manager.focus_trail_entry(row.trail_index, row.entry_index, &row.entry_path);
+            if outcome.is_rejected() {
+                return None;
+            }
+            let entry_idx = file_manager
+                .entries
+                .iter()
+                .position(|entry| entry.path == row.entry_path)?;
+            (file_manager.cursor == entry_idx).then(|| (entry_idx, row.entry_path.clone(), outcome))
+        };
+        if focused.is_some() {
+            let _ = focus_file_manager_trail(&mut self.state);
+        }
+        focused
     }
 
     /// Route native-FM center-content mouse input before the hidden terminal
@@ -4935,7 +4957,8 @@ mod tests {
             );
             assert_eq!(clicked.cwd, td.root, "operations project the row owner");
             assert_eq!(
-                clicked.trail.cols()[1].directory, current,
+                clicked.trail.cols()[1].directory,
+                current,
                 "primary dispatch cannot activate or replace the resident child"
             );
         }
@@ -5021,10 +5044,7 @@ mod tests {
             let previewed = app.state.file_manager.as_ref().expect("open FM");
             assert_eq!(previewed.trail.active_col(), 0);
             assert_eq!(previewed.trail.cols()[1].directory, bravo);
-            assert_eq!(
-                previewed.trail.cursor_path_in_col(0),
-                Some(bravo.as_path())
-            );
+            assert_eq!(previewed.trail.cursor_path_in_col(0), Some(bravo.as_path()));
         }
 
         assert_eq!(
@@ -5293,10 +5313,11 @@ mod tests {
         );
     }
 
-    // TP-FLF-MOUSE-01: mouse directory activation keeps its existing exact
-    // row contract; unlike keyboard entry it does not synthesize child focus.
+    // TP-FLF-MOUSE-01 / TP-DCLICK-01: mouse directory selection keeps the
+    // exact parent row focused. Its prepared child may remain resident, but
+    // unlike explicit keyboard entry it cannot synthesize child focus.
     #[test]
-    fn flf_mouse_activation_preserves_existing_mouse_selection_contract() {
+    fn flf_mouse_directory_click_preserves_parent_focus_contract() {
         let td = TempDir::new("flf-mouse-preserve");
         td.dir("child");
         let child = td.root.join("child");
@@ -5318,14 +5339,17 @@ mod tests {
         assert!(app.complete_file_manager_io_for_test());
 
         let file_manager = app.state.file_manager.as_ref().expect("open FM");
-        assert_eq!(file_manager.trail.active_col(), 1);
+        assert_eq!(file_manager.trail.active_col(), 0);
         assert_eq!(
             file_manager.trail.cols()[0].selected.as_deref(),
             Some(child.as_path())
         );
         assert_eq!(file_manager.trail.cols()[1].selected, None);
         assert!(file_manager.trail.cursor_override().is_none());
-        assert!(file_manager.active_trail_entry_identity().is_none());
+        assert_eq!(
+            file_manager.active_trail_entry_identity(),
+            Some((0, 0, child, true))
+        );
     }
 
     // TP-TRAIL-T7-INPUT-03: Left/Right change the Trail's one active-column
@@ -5544,7 +5568,7 @@ mod tests {
     // TP-FMN-NAV-01..03 RED: each Up event advances exactly one row in the
     // original owner column, including when the landed rows are directories.
     // The resident child may remain visible, but focus must never transfer to
-    // it without an explicit Right/l/Enter/click command.
+    // it without an explicit Right/l/Enter command.
     #[test]
     fn repeated_up_over_directories_moves_one_row_without_child_focus_transfer() {
         let td = TempDir::new("keyboard-cursor-only-directories");
@@ -5994,10 +6018,9 @@ mod tests {
         assert_eq!(after.trail.cols()[1].directory, current);
     }
 
-    // TP-FMN-NAV-05 + TP-FMN-IO-03 RED: explicit Enter uses the same bounded
-    // cold-directory lane as primary click. The serial input call returns
-    // before the target directory is read; only a matching completion focuses
-    // the new child.
+    // TP-FMN-NAV-05 + TP-FMN-IO-03 RED: explicit Enter uses the bounded
+    // activation lane shared with Right/l. Unlike primary click's preview
+    // lane, only a matching activation completion focuses the new child.
     #[test]
     fn keyboard_enter_activates_cursor_directory_off_input_loop() {
         let td = TempDir::new("async-keyboard-directory-activation");
@@ -6336,10 +6359,11 @@ mod tests {
         assert!(app.state.request_file_manager_context_action.is_none());
     }
 
-    // TP-TRAIL-T7-INPUT-02: an ancestor-column hit revalidates the exact path,
-    // truncates the retired branch, and opens the selected sibling column.
+    // TP-TRAIL-T7-INPUT-02 / TP-DCLICK-01: an ancestor-column click
+    // revalidates the exact path and prepares the selected sibling branch,
+    // while focus remains on the exact clicked owner row.
     #[test]
-    fn mouse_activation_rebranches_exact_ancestor_trail_row() {
+    fn directory_click_previews_exact_ancestor_branch_without_entering() {
         let td = TempDir::new("trail-ancestor-rebranch");
         td.dir("alpha");
         td.dir("zeta");
@@ -6381,9 +6405,10 @@ mod tests {
         );
         assert!(
             app.complete_file_manager_io_for_test(),
-            "the exact cold directory activation applies after bounded I/O"
+            "the exact cold directory preview applies after bounded I/O"
         );
         let file_manager = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(file_manager.trail.active_col(), 0);
         assert_eq!(file_manager.trail.cols().len(), 2);
         assert_eq!(
             file_manager.trail.cols()[0].selected.as_deref(),
@@ -6551,8 +6576,9 @@ mod tests {
         assert!(app.state.context_menu.is_none());
     }
 
-    // TP-FM3-ALL-COLUMN-PLAIN / TP-TRAIL-T7-INPUT-02: one plain click in each
-    // visible Trail column focuses its exact live entry and rebranches there.
+    // TP-FM3-ALL-COLUMN-PLAIN / TP-DCLICK-01: one plain click in each visible
+    // Trail column focuses its exact live entry and prepares any directory
+    // branch without transferring focus into it.
     #[test]
     fn plain_click_focuses_exact_live_row_in_every_visible_column() {
         let td = TempDir::new("typed-all-column-click");
@@ -6617,15 +6643,20 @@ mod tests {
             if target_is_directory {
                 assert!(
                     app.complete_file_manager_io_for_test(),
-                    "the exact directory activation applies after bounded I/O"
+                    "the exact directory preview applies after bounded I/O"
                 );
             }
 
             let actual = app.state.file_manager.as_ref().expect("open FM");
             assert_eq!(
+                actual.trail.active_col(),
+                target.trail_index,
+                "plain click retains the exact row-owner column"
+            );
+            assert_eq!(
                 actual.cwd.as_path(),
                 owner_directory.as_path(),
-                "plain click activates the row's owning Trail directory"
+                "plain click projects the row's owning Trail directory"
             );
             assert_eq!(
                 actual.selected().map(|entry| &entry.path),
@@ -6692,11 +6723,11 @@ mod tests {
         assert_eq!(model.paths, vec![target_path]);
     }
 
-    // TP-FM3-CROSS-COLUMN-DOUBLE / TP-TRAIL-T7-INPUT-02: selecting an exact
-    // directory row opens its branch immediately; a fresh frame preserves that
-    // stable path and a repeated activation remains idempotent.
+    // TP-FM3-CROSS-COLUMN-DOUBLE / TP-DCLICK-01/03: repeated clicks preserve
+    // one exact prepared directory branch without entering it. Only a
+    // subsequent Right crosses into the child and highlights its first row.
     #[test]
-    fn double_click_non_current_directory_revalidates_then_enters() {
+    fn repeated_directory_click_requires_right_to_enter_prepared_child() {
         let td = TempDir::new("typed-noncurrent-double");
         let current = td.root.join("current");
         let preview_directory = current.join("preview-directory");
@@ -6721,7 +6752,7 @@ mod tests {
         ));
         assert!(
             app.complete_file_manager_io_for_test(),
-            "the first directory activation applies after bounded I/O"
+            "the first bounded directory preview applies"
         );
         assert_eq!(
             app.state.file_manager.as_ref().expect("open FM").cwd,
@@ -6737,29 +6768,47 @@ mod tests {
         ));
         assert!(
             app.complete_file_manager_io_for_test(),
-            "the repeated directory activation applies after bounded I/O"
+            "the repeated bounded directory preview applies"
         );
 
-        let file_manager = app.state.file_manager.as_ref().expect("open FM");
+        {
+            let file_manager = app.state.file_manager.as_ref().expect("open FM");
+            assert_eq!(
+                file_manager
+                    .trail
+                    .cols()
+                    .last()
+                    .map(|column| &column.directory),
+                Some(&child_directory),
+                "repeated stable-path preview preserves the exact child branch"
+            );
+            assert_eq!(
+                file_manager.trail.active_col(),
+                file_manager.trail.cols().len().saturating_sub(2),
+                "repeated clicks keep focus in the child owner's column"
+            );
+        }
+
         assert_eq!(
-            file_manager
-                .trail
-                .cols()
-                .last()
-                .map(|column| &column.directory),
-            Some(&child_directory),
-            "repeated stable-path activation preserves the exact child branch"
+            handle_file_manager_key(&mut app.state, key(KeyCode::Right)),
+            FileManagerKeyDispatch::Consumed
+        );
+        let entered = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(
+            entered.trail.active_col(),
+            entered.trail.cols().len().saturating_sub(1)
         );
         assert_eq!(
-            file_manager.trail.active_col(),
-            file_manager.trail.cols().len().saturating_sub(1)
+            entered.selected().map(|entry| entry.path.as_path()),
+            Some(child_directory.join("inside.txt").as_path()),
+            "Right highlights the first child row without an extra Down"
         );
     }
 
-    // TP-A3.3-DISPATCH: one Trail activation selects a directory and opens its
-    // child column; repeated activation remains on that exact branch.
+    // TP-A3.3-DISPATCH / TP-DCLICK-01: repeated primary focus keeps one exact
+    // prepared child branch while the owner directory retains focus.
     #[test]
-    fn repeated_directory_activation_preserves_open_trail_branch() {
+    fn repeated_directory_click_preserves_prepared_branch_without_entering() {
         let td = TempDir::new("mouse-double-directory");
         td.dir("alpha-dir");
         fs::write(td.root.join("alpha-dir").join("child.txt"), b"x").expect("write child fixture");
@@ -6777,10 +6826,11 @@ mod tests {
         app.handle_mouse(click);
         assert!(
             app.complete_file_manager_io_for_test() || app.complete_file_manager_io_for_test(),
-            "the latest repeated directory activation applies"
+            "the latest repeated directory preview applies"
         );
 
         let fm = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(fm.trail.active_col(), 0);
         assert_eq!(fm.cwd, td.root, "operation projection keeps the row owner");
         assert_eq!(fm.cursor, 0);
         assert_eq!(fm.trail.cols().len(), 2);
@@ -6820,8 +6870,8 @@ mod tests {
         );
     }
 
-    // TP-A3.3-DISPATCH: activation of two different Trail rows rebranches to
-    // the second exact directory without inheriting the first child branch.
+    // TP-A3.3-DISPATCH / TP-DCLICK-01: rapid focus of two directory rows keeps
+    // the second exact preview and cursor without transferring into its child.
     #[test]
     fn rapid_clicks_on_different_rows_do_not_activate_directory() {
         let td = TempDir::new("mouse-different-rows");
@@ -6845,10 +6895,11 @@ mod tests {
         ));
         assert!(
             app.complete_file_manager_io_for_test() || app.complete_file_manager_io_for_test(),
-            "only the latest rapid directory activation applies"
+            "only the latest rapid directory preview applies"
         );
 
         let fm = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(fm.trail.active_col(), 0);
         assert_eq!(fm.cwd, td.root);
         assert_eq!(fm.cursor, 1);
         assert_eq!(
@@ -7434,7 +7485,7 @@ mod tests {
     // Reactivating the real directory there preserves the loaded Trail branch
     // and rearms active-end following so its child column is visible again.
     #[test]
-    fn rightmost_visible_directory_click_reveals_the_hidden_child_column() {
+    fn rightmost_visible_directory_click_waits_for_right_to_reveal_hidden_child_column() {
         let td = TempDir::new("trail-rightmost-visible-branch");
         let root = td.root.join("root");
         let mut current = root.clone();
@@ -7525,7 +7576,7 @@ mod tests {
         );
         assert!(
             app.complete_file_manager_io_for_test(),
-            "the hidden child activation applies after bounded I/O"
+            "the hidden child preview applies after bounded I/O"
         );
         compute_view(&mut app.state, frame);
 
@@ -7539,9 +7590,36 @@ mod tests {
             after.trail.cols().last().map(|column| &column.directory),
             Some(&current)
         );
+        assert_eq!(
+            after.trail.active_col(),
+            target.trail_index,
+            "click keeps focus on the visible directory owner"
+        );
         assert!(
             after.miller.horizontal.follow_active,
-            "same-branch directory activation must rearm active-end following"
+            "same-branch preview rearms following around the focused owner"
+        );
+        assert!(
+            !app.state
+                .view
+                .file_manager_trail
+                .columns
+                .iter()
+                .any(|column| column.directory == current),
+            "click alone cannot reveal or focus the hidden child"
+        );
+
+        assert_eq!(
+            handle_file_manager_key(&mut app.state, key(KeyCode::Right)),
+            FileManagerKeyDispatch::Consumed
+        );
+        compute_view(&mut app.state, frame);
+        let entered = app.state.file_manager.as_ref().expect("open FM");
+        assert_eq!(entered.trail.active_col(), deepest);
+        assert_eq!(
+            entered.selected().map(|entry| entry.path.as_path()),
+            Some(next.as_path()),
+            "Right highlights the hidden child's first row immediately"
         );
         assert!(
             app.state

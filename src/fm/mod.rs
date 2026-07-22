@@ -1012,6 +1012,29 @@ impl FmState {
         outcome
     }
 
+    /// Focus one exact live Trail row without activating its directory. The
+    /// prepared owner snapshot supplies the legacy operation projection, so
+    /// primary mouse selection remains disk-free and shares the same cursor
+    /// authority as vertical keyboard/wheel movement.
+    pub(crate) fn focus_trail_entry(
+        &mut self,
+        col_idx: usize,
+        entry_index: usize,
+        expected_path: &Path,
+    ) -> trail_snapshots::TrailCursorMoveOutcome {
+        let outcome =
+            self.trail_snapshots
+                .focus_entry(&mut self.trail, col_idx, entry_index, expected_path);
+        if outcome.is_rejected() {
+            return outcome;
+        }
+        if !self.install_trail_operation_projection(col_idx, entry_index, expected_path) {
+            debug_assert!(false, "validated Trail focus projection must install");
+            return trail_snapshots::TrailCursorMoveOutcome::Rejected;
+        }
+        outcome
+    }
+
     /// Move the cursor inside the one active Trail column. This never enters a
     /// directory or transfers focus; explicit activation remains separate.
     pub(crate) fn move_trail_cursor(
@@ -2404,8 +2427,8 @@ mod tests {
 
     // TP-FMN-NAV-06 RED: preparing the first directory's resident preview on
     // Files open may expose its right-side Miller child, but must not
-    // masquerade as an explicit Right/Enter/click. The row cursor and focus
-    // remain in the root column; only explicit activation may focus the child.
+    // masquerade as an explicit Right/Enter. The row cursor and focus remain
+    // in the root column; only an explicit traversal may focus the child.
     #[test]
     fn fmstate_directory_cursor_does_not_activate_child_on_open() {
         let td = TempDir::new("state-open-directory-cursor-only");

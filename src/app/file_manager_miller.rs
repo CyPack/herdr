@@ -5,23 +5,6 @@
 //! revalidated before a width preference may change.
 
 impl crate::app::App {
-    /// Route a validated directory row through the shared bounded FM worker.
-    /// `None` means the row is a file and may use the prepared file path;
-    /// `Some` means a directory intent was consumed, whether submission
-    /// succeeded or failed closed.
-    pub(super) fn queue_file_manager_trail_directory_activation(
-        &mut self,
-        row: &crate::ui::TrailRowView,
-    ) -> Option<bool> {
-        self.queue_file_manager_trail_directory_request(
-            row.trail_index,
-            row.entry_index,
-            &row.entry_path,
-            false,
-            crate::app::file_manager_io_worker::FileManagerTrailDestinationPolicy::PreserveMouseSelection,
-        )
-    }
-
     pub(super) fn queue_file_manager_trail_directory_preview_identity(
         &mut self,
         trail_col: usize,

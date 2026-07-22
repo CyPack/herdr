@@ -109,8 +109,8 @@ pub(crate) enum TrailActivateOutcome {
     Rejected,
 }
 
-/// Outcome of one cursor-only vertical movement. Unlike activation, a moved
-/// directory never owns Trail branching or active-column transfer.
+/// Outcome of one cursor-only focus or vertical movement. Unlike activation,
+/// a focused directory never owns Trail branching or child-column transfer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TrailCursorMoveOutcome {
     Moved { entry_index: usize, directory: bool },
@@ -322,8 +322,8 @@ impl TrailSnapshots {
                         false,
                     ));
                     // The prepared child is a Miller preview, not an
-                    // implicit Right/Enter/click. Keep keyboard/wheel focus
-                    // on the directory column that owns the cursor.
+                    // implicit Right/Enter. Keep keyboard, wheel, and primary
+                    // click focus on the directory column that owns the cursor.
                     let moved_to_owner = trail.move_active_left();
                     debug_assert!(moved_to_owner, "preview child must have an owner column");
                 }
@@ -412,8 +412,9 @@ impl TrailSnapshots {
         FmDirectoryStatus::Available
     }
 
-    /// Activate one entry (mouse click or keyboard Enter) against the CURRENT
-    /// loaded listing. `expected_path` is the path the input frame saw; a
+    /// Activate one entry for an explicit traversal/activation command against
+    /// the CURRENT loaded listing. Primary row focus uses `focus_entry`
+    /// instead. `expected_path` is the path the input frame saw; a
     /// mismatch with the live snapshot means the hit is stale and is
     /// rejected without touching any state (generation-safe hits).
     /// Directories branch the trail (fail-closed via `select_dir`); files
@@ -454,6 +455,59 @@ impl TrailSnapshots {
                 TrailActivateOutcome::SelectedFile
             } else {
                 TrailActivateOutcome::Rejected
+            }
+        }
+    }
+
+    /// Focus one exact entry from a live input frame without activating it.
+    /// The column/index/path triple is revalidated before either focus or the
+    /// ephemeral cursor changes. Directory focus clears file detail but never
+    /// truncates or extends the resident Trail branch; callers may prepare a
+    /// discardable child preview on the bounded worker afterwards.
+    pub(crate) fn focus_entry(
+        &mut self,
+        trail: &mut TrailState,
+        col_idx: usize,
+        entry_index: usize,
+        expected_path: &Path,
+    ) -> TrailCursorMoveOutcome {
+        let Some(entry) = self
+            .cols
+            .get(col_idx)
+            .and_then(|col| col.snapshot.entries.get(entry_index))
+        else {
+            return TrailCursorMoveOutcome::Rejected;
+        };
+        if entry.path != expected_path {
+            return TrailCursorMoveOutcome::Rejected;
+        }
+
+        let target = entry.path.clone();
+        let kind = entry.kind;
+        let directory = kind.is_directory_target();
+        let focus_changed = trail.active_col() != col_idx;
+        if !trail.focus_col(col_idx) {
+            return TrailCursorMoveOutcome::Rejected;
+        }
+        let cursor_changed = trail.cursor_path_in_col(col_idx) != Some(target.as_path());
+        if cursor_changed && !trail.move_cursor_to(col_idx, &target) {
+            debug_assert!(
+                false,
+                "validated Trail cursor target must accept exact focus"
+            );
+            return TrailCursorMoveOutcome::Rejected;
+        }
+
+        self.detail = (!directory).then(|| prepare_trail_detail(&target, kind));
+        if focus_changed || cursor_changed {
+            TrailCursorMoveOutcome::Moved {
+                entry_index,
+                directory,
+            }
+        } else {
+            TrailCursorMoveOutcome::Unchanged {
+                entry_index,
+                directory,
             }
         }
     }
@@ -1101,6 +1155,80 @@ mod tests {
             Some(td.root.join("01-bravo").as_path()),
             "the landed exact path becomes the current cursor entry"
         );
+    }
+
+    // TP-DCLICK-01/05: exact mouse focus uses the same ephemeral cursor law as
+    // vertical navigation. It may change the active owner column, but it can
+    // neither mutate the resident branch nor accept a stale path identity.
+    #[test]
+    fn exact_directory_focus_preserves_branch_and_rejects_stale_identity() {
+        let td = TempDir::new("exact-directory-cursor-focus");
+        for name in ["00-alpha", "01-bravo", "02-current"] {
+            fs::create_dir(td.root.join(name)).expect("create directory fixture");
+        }
+        let modified = std::time::UNIX_EPOCH + std::time::Duration::from_secs(10);
+        for name in ["00-alpha", "01-bravo", "02-current"] {
+            fs::File::open(td.root.join(name))
+                .expect("open directory fixture")
+                .set_times(fs::FileTimes::new().set_modified(modified))
+                .expect("set deterministic directory mtime");
+        }
+
+        let bravo = td.root.join("01-bravo");
+        let current = td.root.join("02-current");
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        let current_index = snaps.cols()[0]
+            .entries()
+            .iter()
+            .position(|entry| entry.path == current)
+            .expect("current directory row");
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 0, current_index, &current),
+            TrailActivateOutcome::Branched
+        );
+        assert_eq!(trail.active_col(), 1, "fixture starts inside the child");
+        let before_columns = trail.cols().to_vec();
+        let before_snapshot_directories = snaps
+            .cols()
+            .iter()
+            .map(|snapshot| snapshot.directory().to_path_buf())
+            .collect::<Vec<_>>();
+        let bravo_index = snaps.cols()[0]
+            .entries()
+            .iter()
+            .position(|entry| entry.path == bravo)
+            .expect("bravo directory row");
+
+        assert_eq!(
+            snaps.focus_entry(&mut trail, 0, bravo_index, &bravo),
+            TrailCursorMoveOutcome::Moved {
+                entry_index: bravo_index,
+                directory: true,
+            }
+        );
+        assert_eq!(trail.active_col(), 0);
+        assert_eq!(trail.cursor_path_in_col(0), Some(bravo.as_path()));
+        assert_eq!(trail.cols(), before_columns);
+        assert_eq!(
+            snaps
+                .cols()
+                .iter()
+                .map(|snapshot| snapshot.directory().to_path_buf())
+                .collect::<Vec<_>>(),
+            before_snapshot_directories
+        );
+        assert!(snaps.detail().is_none());
+
+        let focused_trail = trail.clone();
+        let focused_snapshots = snaps.clone();
+        assert_eq!(
+            snaps.focus_entry(&mut trail, 0, bravo_index, &current),
+            TrailCursorMoveOutcome::Rejected
+        );
+        assert_eq!(trail, focused_trail);
+        assert_eq!(snaps, focused_snapshots);
     }
 
     // LAW 3 / FM-PERF-TEXT-02: activating a FILE prepares exact path and kind
