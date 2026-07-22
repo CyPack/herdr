@@ -11,6 +11,7 @@ use ratatui::{
 use crate::app::state::{
     AppState, FileManagerLocationIcon, FileManagerLocationItem, FileManagerLocationsModel,
 };
+use crate::app::FileManagerLocationsFocus;
 use crate::fm::miller::MILLER_COLUMN_MIN_WIDTH;
 use crate::ui::surface_host::StageSurfaceView;
 
@@ -283,16 +284,33 @@ fn location_row_line(app: &AppState, item: &FileManagerLocationItem, width: u16)
     if width == 0 {
         return Line::default();
     }
-    let pending = app
-        .file_manager_locations
-        .pending
-        .as_ref()
-        .is_some_and(|pending| pending.path == item.path);
-    let failed = app
-        .file_manager_locations
-        .failure
-        .as_ref()
-        .is_some_and(|failure| failure.path == item.path);
+    let active_generation = app.stage.active_instance_generation();
+    let model_revision = app.file_manager_locations_model.revision();
+    let current_rail_cursor = app.file_manager_locations.focus == FileManagerLocationsFocus::Rail
+        && app
+            .file_manager_locations
+            .cursor_path(&app.file_manager_locations_model)
+            == Some(item.path.as_path());
+    let pending = current_rail_cursor
+        && app
+            .file_manager_locations
+            .pending
+            .as_ref()
+            .is_some_and(|pending| {
+                pending.path == item.path
+                    && Some(pending.files_generation) == active_generation
+                    && pending.model_revision == model_revision
+            });
+    let failed = current_rail_cursor
+        && app
+            .file_manager_locations
+            .failure
+            .as_ref()
+            .is_some_and(|failure| {
+                failure.path == item.path
+                    && Some(failure.files_generation) == active_generation
+                    && failure.model_revision == model_revision
+            });
     let marker = if pending {
         Some(("…", app.palette.yellow))
     } else if failed || !item.accessible {
@@ -373,9 +391,13 @@ pub(crate) fn render_file_manager_locations(
     else {
         return;
     };
-    let highlighted = app
+    let cursor = app
+        .file_manager_locations
+        .cursor_path(&app.file_manager_locations_model);
+    let origin = app
         .file_manager_locations
         .highlighted_path(&app.file_manager_locations_model);
+    let rail_focused = app.file_manager_locations.focus == FileManagerLocationsFocus::Rail;
     for (line_index, line) in location_lines(&app.file_manager_locations_model)
         .into_iter()
         .skip(view.scroll)
@@ -401,10 +423,16 @@ pub(crate) fn render_file_manager_locations(
             ),
             FileManagerLocationLine::Blank => {}
             FileManagerLocationLine::Item(item) => {
-                let style = if highlighted == Some(item.path.as_path()) {
+                let focused_cursor = rail_focused && cursor == Some(item.path.as_path());
+                let accepted_origin = origin == Some(item.path.as_path()) && !focused_cursor;
+                let style = if focused_cursor {
                     Style::default()
-                        .fg(app.palette.panel_bg)
-                        .bg(app.palette.accent)
+                        .fg(app.palette.accent)
+                        .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                } else if accepted_origin {
+                    Style::default()
+                        .fg(app.palette.accent)
+                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
                 } else if item.accessible {
                     Style::default().fg(app.palette.subtext0)
                 } else {

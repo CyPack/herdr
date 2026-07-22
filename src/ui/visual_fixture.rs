@@ -611,6 +611,120 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    fn export_locations_follow_visual_fixture(out_dir: &std::path::Path) {
+        use crate::app::state::{FileManagerLocationIcon, FileManagerLocationsModel};
+        use crate::ui::file_manager::locations::FileManagerLocationsMode;
+
+        let base = std::path::PathBuf::from("/tmp/herdr-vis26-flf-root");
+        let _ = std::fs::remove_dir_all(&base);
+        let home = base.join("home");
+        let desktop = home.join("Desktop");
+        let downloads = home.join("Downloads");
+        for directory in [&desktop, &downloads] {
+            std::fs::create_dir_all(directory).expect("create FLF visual directory");
+        }
+        let accepted_file = home.join("readme.txt");
+        std::fs::write(&accepted_file, "accepted Home Trail").expect("write FLF visual file");
+        for path in [
+            accepted_file.clone(),
+            desktop.clone(),
+            downloads.clone(),
+            home.clone(),
+        ] {
+            set_mtime_fixture_modified(
+                &path,
+                mtime_fixture_system_time(2026, time::Month::January, 10, 10, 0),
+            );
+        }
+
+        let locations_model = FileManagerLocationsModel::from_sources(
+            vec![
+                fcl_location_item("Home", home.clone(), FileManagerLocationIcon::Home),
+                fcl_location_item("Desktop", desktop.clone(), FileManagerLocationIcon::Desktop),
+                fcl_location_item(
+                    "Downloads",
+                    downloads.clone(),
+                    FileManagerLocationIcon::Downloads,
+                ),
+            ],
+            Vec::new(),
+            Vec::new(),
+        );
+        let mut app = fcl_visual_app(&home, &accepted_file, &home, locations_model);
+        app.sidebar_collapsed = true;
+        app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
+        assert!(app
+            .file_manager_locations
+            .select_cursor(&downloads, &app.file_manager_locations_model));
+
+        let buffer = render_fcl_visual(
+            &mut app,
+            96,
+            24,
+            FileManagerLocationsMode::Wide,
+            Some(24),
+            1,
+            true,
+        );
+        assert_eq!(
+            app.file_manager_locations.focus,
+            crate::app::FileManagerLocationsFocus::Rail
+        );
+        let home_row = app
+            .view
+            .file_manager_locations
+            .rows
+            .iter()
+            .find(|row| row.path == home)
+            .expect("VIS-26 Home row");
+        let downloads_row = app
+            .view
+            .file_manager_locations
+            .rows
+            .iter()
+            .find(|row| row.path == downloads)
+            .expect("VIS-26 Downloads row");
+        let origin = &buffer[(home_row.rect.x, home_row.rect.y)];
+        let cursor = &buffer[(downloads_row.rect.x, downloads_row.rect.y)];
+        assert!(origin
+            .modifier
+            .contains(Modifier::BOLD | Modifier::UNDERLINED));
+        assert!(!origin.modifier.contains(Modifier::REVERSED));
+        assert!(cursor
+            .modifier
+            .contains(Modifier::BOLD | Modifier::REVERSED));
+        let inactive_trail_row = app
+            .view
+            .file_manager_trail
+            .columns
+            .iter()
+            .find_map(|column| {
+                let selected = column.selected_entry?;
+                column.rows.iter().find(|row| row.entry_index == selected)
+            })
+            .expect("VIS-26 accepted Trail row");
+        let inactive_trail = &buffer[(inactive_trail_row.rect.x, inactive_trail_row.rect.y)];
+        assert!(!inactive_trail.modifier.contains(Modifier::REVERSED));
+        assert_eq!(inactive_trail.bg, app.palette.panel_bg);
+
+        write_fixture(
+            out_dir,
+            export_cell_fixture("vis-26-files-locations-follow-focus", &buffer),
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    #[ignore = "exports only VIS-26; set HERDR_VISUAL_FIXTURE_DIR explicitly"]
+    fn write_locations_follow_visual_fixture() {
+        let out_dir = std::path::PathBuf::from(
+            std::env::var("HERDR_VISUAL_FIXTURE_DIR")
+                .expect("HERDR_VISUAL_FIXTURE_DIR must point at the fixture output directory"),
+        );
+        std::fs::create_dir_all(&out_dir).expect("create FLF fixture output dir");
+        export_locations_follow_visual_fixture(&out_dir);
+    }
+
     #[test]
     #[ignore = "exports FCL visual fixtures; set HERDR_VISUAL_FIXTURE_DIR explicitly"]
     fn write_files_locations_visual_fixtures() {

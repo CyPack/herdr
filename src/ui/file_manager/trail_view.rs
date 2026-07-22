@@ -3,8 +3,8 @@
 //! contract. Columns run left to right from the trail root; the DEEPEST
 //! column is always auto-scrolled into the visible window (LAW 2); widths
 //! are per-index (LAW 4); the selected entry stays highlighted in every
-//! ancestor column (LAW 1). Render consumes only this snapshot — no
-//! filesystem work, no state mutation.
+//! ancestor column while Trail owns focus (LAW 1). Render consumes only this
+//! snapshot — no filesystem work, no state mutation.
 
 use std::path::PathBuf;
 
@@ -14,6 +14,7 @@ use ratatui::Frame;
 
 use super::miller::{miller_auto_follow_offset, miller_viewport_geometry_at_offset};
 use crate::app::state::AppState;
+use crate::app::FileManagerLocationsFocus;
 use crate::fm::entry_time::{
     present_file_time, FileTimePresentation, FileTimeSection, LocalCalendarAnchor,
 };
@@ -650,7 +651,9 @@ pub(crate) fn trail_section_header_at(
 
 /// Paint the projected trail: rows via the shared entry-row renderer (icons,
 /// truncation, selection emphasis) and one-cell dividers between columns.
-/// The selected row stays emphasized in EVERY visible column (LAW 1).
+/// The selected row stays emphasized in every visible column while Trail
+/// owns focus (LAW 1). Rail focus suppresses paint only; exact Trail identity
+/// remains resident for an immediate focus return.
 pub(crate) fn render_trail_view(
     app: &AppState,
     frame: &mut Frame,
@@ -658,6 +661,7 @@ pub(crate) fn render_trail_view(
     snaps: &TrailSnapshots,
 ) {
     let styles = super::file_manager_visual_styles(&app.palette);
+    let trail_focused = app.file_manager_locations.focus == FileManagerLocationsFocus::Trail;
     for divider in &view.dividers {
         frame.render_widget(
             Block::default()
@@ -686,7 +690,7 @@ pub(crate) fn render_trail_view(
             let Some(entry) = snap.entries().get(row.entry_index) else {
                 continue;
             };
-            let selected = column.selected_entry == Some(row.entry_index);
+            let selected = trail_focused && column.selected_entry == Some(row.entry_index);
             let multi_selected = app
                 .file_manager
                 .as_ref()

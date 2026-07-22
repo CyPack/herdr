@@ -3119,6 +3119,9 @@ mod tests {
         assert!(app
             .file_manager_locations
             .activate_location(&home, &app.file_manager_locations_model));
+        assert!(app
+            .file_manager_locations
+            .select_cursor(&downloads, &app.file_manager_locations_model));
         let files_generation = app
             .stage
             .active_instance_generation()
@@ -3173,6 +3176,9 @@ mod tests {
             .contains(Modifier::BOLD | Modifier::UNDERLINED));
         assert!(!pending[home_pos].modifier.contains(Modifier::REVERSED));
 
+        assert!(app
+            .file_manager_locations
+            .select_cursor(&root, &app.file_manager_locations_model));
         app.file_manager_locations.fail_load(
             root.clone(),
             files_generation,
@@ -3226,7 +3232,8 @@ mod tests {
         let origin = &buffer[(home_row.rect.x, home_row.rect.y)];
         let cursor = &buffer[(downloads_row.rect.x, downloads_row.rect.y)];
 
-        assert_eq!(cursor.bg, app.palette.accent);
+        assert_eq!(cursor.fg, app.palette.accent);
+        assert_eq!(cursor.bg, app.palette.panel_bg);
         assert!(cursor
             .modifier
             .contains(Modifier::BOLD | Modifier::REVERSED));

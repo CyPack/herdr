@@ -133,7 +133,11 @@ impl FileManagerLocationsState {
                 changed = true;
             }
         }
-        self.normalize_cursor_for_rail(model) || changed
+        if self.cursor_path(model).is_some() {
+            changed
+        } else {
+            self.normalize_cursor_for_rail(model) || changed
+        }
     }
 
     pub(crate) fn retire_for_closed_files(&mut self) {
@@ -515,6 +519,28 @@ mod tests {
             Some(Path::new("/workspace"))
         );
         assert_eq!(failed.failure, None);
+    }
+
+    // TP-FLF-STEP-01/RENDER-01: routine compute_view reconciliation cannot
+    // snap a still-valid keyboard cursor back to the accepted origin.
+    #[test]
+    fn flf_reconcile_preserves_valid_cursor_distinct_from_origin() {
+        let model = flf_model(true);
+        let mut state = FileManagerLocationsState::default();
+        assert!(state.activate_location(Path::new("/workspace"), &model));
+        assert_eq!(
+            state.move_cursor(&model, 1),
+            FileManagerLocationCursorMove::Moved(PathBuf::from("/home/ayaz"))
+        );
+
+        assert!(!state.reconcile_model(&model));
+        assert_eq!(state.cursor_path(&model), Some(Path::new("/home/ayaz")));
+        assert_eq!(
+            state.origin,
+            Some(FileManagerLocationOrigin::Location(PathBuf::from(
+                "/workspace"
+            )))
+        );
     }
 
     // TP-FLF-STEP-01: revealing a cursor uses the same content-line identity
