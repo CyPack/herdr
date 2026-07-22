@@ -37,7 +37,9 @@ pub(crate) struct FileManagerLocationPending {
     pub(crate) io_generation: u64,
 }
 
-#[cfg(test)]
+// Task 2 wires this cursor outcome into the keyboard owner; keep this atomic
+// model commit independently warning-free until that consumer lands.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FileManagerLocationCursorMove {
     Inert,
@@ -47,6 +49,7 @@ pub(crate) enum FileManagerLocationCursorMove {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct FileManagerLocationsState {
     pub(crate) origin: Option<FileManagerLocationOrigin>,
+    pub(crate) cursor: Option<PathBuf>,
     pub(crate) pending: Option<FileManagerLocationPending>,
     pub(crate) failure: Option<(PathBuf, FileManagerLocationLoadError)>,
     pub(crate) scroll: usize,
@@ -68,6 +71,7 @@ impl FileManagerLocationsState {
             return false;
         }
         self.origin = Some(FileManagerLocationOrigin::Location(path.to_path_buf()));
+        self.set_cursor(Some(path.to_path_buf()));
         self.pending = None;
         self.failure = None;
         self.focus = FileManagerLocationsFocus::Rail;
@@ -97,23 +101,22 @@ impl FileManagerLocationsState {
     }
 
     pub(crate) fn reconcile_model(&mut self, model: &FileManagerLocationsModel) -> bool {
-        let Some(FileManagerLocationOrigin::Location(path)) = self.origin.as_ref() else {
-            return false;
-        };
-        if model
-            .item_for_path(path)
-            .is_some_and(|item| item.accessible)
-        {
-            return false;
+        let mut changed = false;
+        if let Some(FileManagerLocationOrigin::Location(path)) = self.origin.as_ref() {
+            if !model
+                .item_for_path(path)
+                .is_some_and(|item| item.accessible)
+            {
+                self.origin = None;
+                changed = true;
+            }
         }
-        self.origin = None;
-        true
+        self.normalize_cursor_for_rail(model) || changed
     }
 
     pub(crate) fn retire_for_closed_files(&mut self) {
         self.origin = None;
-        self.pending = None;
-        self.failure = None;
+        self.retire_navigation_authority();
         self.scroll = 0;
         self.focus = FileManagerLocationsFocus::Trail;
         self.drawer_open = false;
@@ -202,35 +205,112 @@ impl FileManagerLocationsState {
         true
     }
 
-    #[cfg(test)]
-    pub(crate) fn cursor_path<'a>(
-        &'a self,
-        _model: &FileManagerLocationsModel,
-    ) -> Option<&'a Path> {
-        None
+    pub(crate) fn cursor_path<'a>(&'a self, model: &FileManagerLocationsModel) -> Option<&'a Path> {
+        let path = self.cursor.as_deref()?;
+        model
+            .item_for_path(path)
+            .is_some_and(|item| item.accessible)
+            .then_some(path)
     }
 
-    #[cfg(test)]
-    pub(crate) fn normalize_cursor_for_rail(&mut self, _model: &FileManagerLocationsModel) -> bool {
-        false
+    pub(crate) fn normalize_cursor_for_rail(&mut self, model: &FileManagerLocationsModel) -> bool {
+        let preferred = match self.origin.as_ref() {
+            Some(FileManagerLocationOrigin::Location(path)) => model
+                .item_for_path(path)
+                .filter(|item| item.accessible)
+                .map(|item| item.path.clone()),
+            Some(FileManagerLocationOrigin::Direct(_)) => {
+                self.cursor_path(model).map(Path::to_path_buf)
+            }
+            None => None,
+        };
+        let next = preferred.or_else(|| {
+            model
+                .accessible_items()
+                .next()
+                .map(|item| item.path.clone())
+        });
+        self.set_cursor(next)
     }
 
-    #[cfg(test)]
+    // Task 2 consumes this from the Rail input owner.
+    #[allow(dead_code)]
     pub(crate) fn move_cursor(
         &mut self,
-        _model: &FileManagerLocationsModel,
-        _delta: isize,
+        model: &FileManagerLocationsModel,
+        delta: isize,
     ) -> FileManagerLocationCursorMove {
-        FileManagerLocationCursorMove::Inert
+        let current = self
+            .cursor_path(model)
+            .and_then(|path| model.accessible_items().position(|item| item.path == path));
+        let item_count = model.accessible_items().count();
+        if item_count == 0 {
+            self.set_cursor(None);
+            return FileManagerLocationCursorMove::Inert;
+        }
+        let current = current.unwrap_or(0);
+        let next = current
+            .saturating_add_signed(delta)
+            .min(item_count.saturating_sub(1));
+        if next == current && self.cursor_path(model).is_some() {
+            return FileManagerLocationCursorMove::Inert;
+        }
+        let Some(path) = model
+            .accessible_items()
+            .nth(next)
+            .map(|item| item.path.clone())
+        else {
+            return FileManagerLocationCursorMove::Inert;
+        };
+        self.set_cursor(Some(path.clone()));
+        FileManagerLocationCursorMove::Moved(path)
     }
 
-    #[cfg(test)]
+    // Task 2 consumes this after Rail cursor movement.
+    #[allow(dead_code)]
     pub(crate) fn ensure_cursor_visible(
         &mut self,
-        _model: &FileManagerLocationsModel,
-        _viewport_height: u16,
+        model: &FileManagerLocationsModel,
+        viewport_height: u16,
     ) -> bool {
-        false
+        let Some(path) = self.cursor_path(model) else {
+            return false;
+        };
+        let Some(line_index) = model.line_index_for_path(path) else {
+            return false;
+        };
+        let height = usize::from(viewport_height);
+        if height == 0 {
+            return false;
+        }
+        let maximum = model.content_line_count().saturating_sub(height);
+        let next = if line_index < self.scroll {
+            line_index
+        } else if line_index >= self.scroll.saturating_add(height) {
+            line_index.saturating_add(1).saturating_sub(height)
+        } else {
+            self.scroll
+        }
+        .min(maximum);
+        let changed = next != self.scroll;
+        self.scroll = next;
+        changed
+    }
+
+    pub(crate) fn retire_navigation_authority(&mut self) {
+        self.cursor = None;
+        self.pending = None;
+        self.failure = None;
+    }
+
+    fn set_cursor(&mut self, next: Option<PathBuf>) -> bool {
+        if self.cursor == next {
+            return false;
+        }
+        self.cursor = next;
+        self.pending = None;
+        self.failure = None;
+        true
     }
 }
 
@@ -287,7 +367,7 @@ mod tests {
         let model = flf_model(true);
         let mut exact = FileManagerLocationsState::default();
         assert!(exact.activate_location(Path::new("/home/ayaz"), &model));
-        assert!(exact.normalize_cursor_for_rail(&model));
+        assert!(!exact.normalize_cursor_for_rail(&model));
         assert_eq!(exact.cursor_path(&model), Some(Path::new("/home/ayaz")));
 
         let mut direct = FileManagerLocationsState::default();
@@ -372,9 +452,9 @@ mod tests {
         let model = flf_model(true);
         let mut state = FileManagerLocationsState::default();
         assert!(state.activate_location(Path::new("/"), &model));
-        assert!(state.normalize_cursor_for_rail(&model));
+        assert!(!state.normalize_cursor_for_rail(&model));
         assert!(state.ensure_cursor_visible(&model, 2));
-        assert_eq!(state.scroll, 7);
+        assert_eq!(state.scroll, 8);
         assert!(!state.ensure_cursor_visible(&model, 2));
     }
 

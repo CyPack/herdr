@@ -220,18 +220,46 @@ impl FileManagerLocationsModel {
             .find(|item| item.path == path)
     }
 
+    pub(crate) fn accessible_items(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = &FileManagerLocationItem> {
+        self.sections
+            .iter()
+            .flat_map(|section| section.items.iter())
+            .filter(|item| item.accessible)
+    }
+
+    // Task 2 consumes this through cursor visibility projection.
+    #[allow(dead_code)]
+    pub(crate) fn content_line_count(&self) -> usize {
+        self.sections
+            .iter()
+            .map(|section| 1usize.saturating_add(section.items.len()))
+            .sum::<usize>()
+            .saturating_add(self.sections.len().saturating_sub(1))
+    }
+
+    // Task 2 consumes this through cursor visibility projection.
+    #[allow(dead_code)]
+    pub(crate) fn line_index_for_path(&self, path: &Path) -> Option<usize> {
+        let mut line_index = 0usize;
+        for (section_index, section) in self.sections.iter().enumerate() {
+            line_index = line_index.saturating_add(1);
+            for item in &section.items {
+                if item.path == path {
+                    return Some(line_index);
+                }
+                line_index = line_index.saturating_add(1);
+            }
+            if section_index + 1 < self.sections.len() {
+                line_index = line_index.saturating_add(1);
+            }
+        }
+        None
+    }
+
     pub(crate) fn revision(&self) -> u64 {
         self.revision
-    }
-
-    #[cfg(test)]
-    pub(crate) fn content_line_count(&self) -> usize {
-        0
-    }
-
-    #[cfg(test)]
-    pub(crate) fn line_index_for_path(&self, _path: &Path) -> Option<usize> {
-        None
     }
 
     /// Replace a published test projection and advance its identity so stale
