@@ -1197,6 +1197,54 @@ mod tests {
         std::fs::remove_dir_all(root).expect("remove temp root");
     }
 
+    // TP-FMN-NAV-08 RED: the composed Files projection must preserve the
+    // canonical Trail focus. The legacy Miller projection runs first during
+    // `compute_view`, but its viewport may not drag an inactive preview child
+    // into focus before the Trail projection is published.
+    #[test]
+    fn compute_view_auto_follow_tracks_active_trail_owner() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "herdr-ui-active-trail-owner-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let child = root.join("00-child");
+        std::fs::create_dir_all(&child).expect("create active-owner fixture");
+        std::fs::write(child.join("inside.txt"), b"x").expect("write active-owner fixture");
+
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.mobile_width_threshold = 0;
+        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .expect("Files activation");
+        assert_eq!(
+            app.file_manager
+                .as_ref()
+                .expect("open file manager")
+                .trail
+                .active_col(),
+            0
+        );
+
+        compute_view(&mut app, Rect::new(0, 0, 120, 40));
+
+        assert_eq!(
+            app.view.file_manager_trail.offset_cells, 0,
+            "composed auto-follow preserves the owner column"
+        );
+        assert_eq!(
+            app.view.file_manager_miller.focused_chain_index,
+            Some(0),
+            "legacy geometry reports the same canonical focus"
+        );
+        std::fs::remove_dir_all(root).expect("remove active-owner fixture");
+    }
+
     // TP-C2.1-VIEWSTATE: desktop compute_view snapshots CURRENT name and action
     // rects from one geometry source, then clears both when FM closes so stale
     // terminal coordinates can never remain clickable.
@@ -2238,6 +2286,15 @@ mod tests {
 
         app.sidebar_collapsed = false;
         let mobile_two = Rect::new(0, 0, 33, 15);
+        {
+            let file_manager = app.file_manager.as_ref().expect("open Files state");
+            assert_eq!(file_manager.trail.active_col(), 0);
+            assert_eq!(
+                file_manager.trail.deepest(),
+                1,
+                "the child snapshot remains resident without owning focus"
+            );
+        }
         compute_view(&mut app, mobile_two);
         assert_eq!(app.view.layout, ViewLayout::Mobile);
         assert!(!app.view.file_manager_locations.rows.is_empty());
@@ -2245,11 +2302,43 @@ mod tests {
             &render_full_frame_for_test(&app, mobile_two),
             app.view.terminal_area,
         );
-        assert!(two.contains("preview.txt"));
+        assert!(two.contains("child/"));
+        assert!(two.contains("peer.txt"));
+        assert!(
+            !two.contains("preview.txt"),
+            "a resident child must not displace the active root column"
+        );
         assert!(!two.contains("PARENT"));
         assert!(!two.contains("CURRENT"));
         assert!(!two.contains("PREVIEW"));
         assert!(two.contains("copy 0/1"));
+
+        assert!(
+            app.file_manager
+                .as_mut()
+                .expect("open Files state")
+                .trail
+                .move_active_right(),
+            "explicit Right focuses the resident child"
+        );
+        compute_view(&mut app, mobile_two);
+        let child = buffer_rect_text(
+            &render_full_frame_for_test(&app, mobile_two),
+            app.view.terminal_area,
+        );
+        assert!(
+            child.contains("preview.txt"),
+            "the child column becomes visible only after explicit Right"
+        );
+
+        assert!(
+            app.file_manager
+                .as_mut()
+                .expect("open Files state")
+                .trail
+                .move_active_left(),
+            "explicit Left restores the root owner"
+        );
 
         let mobile_one = Rect::new(0, 0, 20, 15);
         compute_view(&mut app, mobile_one);
@@ -2258,7 +2347,9 @@ mod tests {
             &render_full_frame_for_test(&app, mobile_one),
             app.view.terminal_area,
         );
-        assert!(one.contains("preview.txt"));
+        assert!(one.contains("child/"));
+        assert!(one.contains("peer.txt"));
+        assert!(!one.contains("preview.txt"));
         assert!(!one.contains("CURRENT"));
         assert!(!one.contains("PARENT"));
         assert!(!one.contains("PREVIEW"));

@@ -109,6 +109,47 @@ pub(crate) enum TrailActivateOutcome {
     Rejected,
 }
 
+/// Outcome of one cursor-only vertical movement. Unlike activation, a moved
+/// directory never owns Trail branching or active-column transfer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TrailCursorMoveOutcome {
+    Moved { entry_index: usize, directory: bool },
+    Unchanged { entry_index: usize, directory: bool },
+    Rejected,
+}
+
+impl TrailCursorMoveOutcome {
+    pub(crate) fn is_rejected(self) -> bool {
+        self == Self::Rejected
+    }
+
+    pub(crate) fn changed(self) -> bool {
+        matches!(self, Self::Moved { .. })
+    }
+
+    pub(crate) fn entry_index(self) -> Option<usize> {
+        match self {
+            Self::Moved { entry_index, .. } | Self::Unchanged { entry_index, .. } => {
+                Some(entry_index)
+            }
+            Self::Rejected => None,
+        }
+    }
+
+    pub(crate) fn is_directory(self) -> bool {
+        matches!(
+            self,
+            Self::Moved {
+                directory: true,
+                ..
+            } | Self::Unchanged {
+                directory: true,
+                ..
+            }
+        )
+    }
+}
+
 /// Loaded snapshots kept index-aligned with a `TrailState`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TrailSnapshots {
@@ -182,6 +223,14 @@ impl TrailSnapshots {
     /// index-aligned loaded snapshots. The deepest marked column wins, while
     /// the unselected child column after a directory branch is skipped.
     pub(crate) fn selected_entry<'a>(&'a self, trail: &TrailState) -> Option<&'a FileEntry> {
+        if let Some((col_idx, cursor_path)) = trail.cursor_override() {
+            return self
+                .cols
+                .get(col_idx)?
+                .entries()
+                .iter()
+                .find(|entry| entry.path == cursor_path);
+        }
         trail
             .cols()
             .iter()
@@ -253,6 +302,11 @@ impl TrailSnapshots {
                         },
                         false,
                     ));
+                    // The prepared child is a Miller preview, not an
+                    // implicit Right/Enter/click. Keep keyboard/wheel focus
+                    // on the directory column that owns the cursor.
+                    let moved_to_owner = trail.move_active_left();
+                    debug_assert!(moved_to_owner, "preview child must have an owner column");
                 }
             }
             FmPreview::File(file_preview) if !selected.is_dir() => {
@@ -385,37 +439,35 @@ impl TrailSnapshots {
         }
     }
 
-    /// Keyboard selection move inside the ACTIVE column: step the selection
-    /// by `delta` rows (clamped) and activate the landed entry with the same
-    /// semantics as a click — directories branch, files mark.
-    pub(crate) fn move_selection(
+    /// Move only the cursor inside the ACTIVE column. Directory activation and
+    /// optional preview scheduling are separate commands owned by callers.
+    pub(crate) fn move_cursor(
         &mut self,
         trail: &mut TrailState,
         delta: isize,
-    ) -> TrailActivateOutcome {
+    ) -> TrailCursorMoveOutcome {
         let col_idx = trail.active_col();
-        self.move_selection_in_column(trail, col_idx, delta)
+        self.move_cursor_in_column(trail, col_idx, delta)
     }
 
-    /// Step selection inside one exact loaded column. Header-wheel input uses
-    /// this seam so typed header terrain cannot silently fall back to the
-    /// active or horizontally visible column.
-    pub(crate) fn move_selection_in_column(
+    /// Step the cursor inside one exact loaded column without touching the
+    /// activated branch. Header/row wheel input uses this seam so geometry can
+    /// never fall back to a different active or horizontally visible column.
+    pub(crate) fn move_cursor_in_column(
         &mut self,
         trail: &mut TrailState,
         col_idx: usize,
         delta: isize,
-    ) -> TrailActivateOutcome {
+    ) -> TrailCursorMoveOutcome {
         let Some(col) = self.cols.get(col_idx) else {
-            return TrailActivateOutcome::Rejected;
+            return TrailCursorMoveOutcome::Rejected;
         };
         let entries = &col.snapshot.entries;
         if entries.is_empty() {
-            return TrailActivateOutcome::Rejected;
+            return TrailCursorMoveOutcome::Rejected;
         }
-        let current = trail.cols()[col_idx]
-            .selected
-            .as_deref()
+        let current = trail
+            .cursor_path_in_col(col_idx)
             .and_then(|selected| entries.iter().position(|entry| entry.path == selected));
         let landed = match current {
             Some(index) => index
@@ -425,8 +477,24 @@ impl TrailSnapshots {
             None if delta >= 0 => 0,
             None => entries.len() - 1,
         };
-        let expected = entries[landed].path.clone();
-        self.activate_entry(trail, col_idx, landed, &expected)
+        let entry = &entries[landed];
+        let directory = entry.kind.is_directory_target();
+        if current == Some(landed) {
+            return TrailCursorMoveOutcome::Unchanged {
+                entry_index: landed,
+                directory,
+            };
+        }
+        let target = entry.path.clone();
+        let kind = entry.kind;
+        if !trail.move_cursor_to(col_idx, &target) {
+            return TrailCursorMoveOutcome::Rejected;
+        }
+        self.detail = (!directory).then(|| prepare_trail_detail(&target, kind));
+        TrailCursorMoveOutcome::Moved {
+            entry_index: landed,
+            directory,
+        }
     }
 
     /// LAW 5 sidebar/deep-link entry: build a FRESH trail rooted at `root`,
@@ -879,8 +947,8 @@ mod tests {
         assert_eq!(trail, before);
     }
 
-    // LAW 2 keyboard: Down/Up move the selection inside the ACTIVE column
-    // with click semantics — a directory branches, a file only marks.
+    // FMN cursor law: Down/Up move inside the ACTIVE column without activating
+    // either a directory or a file.
     #[test]
     fn keyboard_selection_moves_within_active_column() {
         let td = TempDir::new("kbd");
@@ -901,34 +969,118 @@ mod tests {
         let mut snaps = TrailSnapshots::new(false);
         snaps.sync(&trail);
 
-        // First Down lands on row 0: the directory `alpha` → branch.
+        // First Down lands on row 0 without entering the directory.
         assert_eq!(
-            snaps.move_selection(&mut trail, 1),
-            TrailActivateOutcome::Branched
+            snaps.move_cursor(&mut trail, 1),
+            TrailCursorMoveOutcome::Moved {
+                entry_index: 0,
+                directory: true,
+            }
         );
-        assert_eq!(trail.cols().len(), 2);
-        assert_eq!(trail.cols()[0].selected.as_deref(), Some(alpha.as_path()));
+        assert_eq!(trail.cols().len(), 1);
+        assert_eq!(trail.cols()[0].selected, None);
+        assert_eq!(
+            snaps
+                .selected_entry(&trail)
+                .map(|entry| entry.path.as_path()),
+            Some(alpha.as_path())
+        );
 
-        // Focus back on the root column, step down to the file row.
-        assert!(trail.move_active_left());
+        // The next Down remains in the root column and lands on the file.
         assert_eq!(
-            snaps.move_selection(&mut trail, 1),
-            TrailActivateOutcome::SelectedFile
+            snaps.move_cursor(&mut trail, 1),
+            TrailCursorMoveOutcome::Moved {
+                entry_index: 1,
+                directory: false,
+            }
         );
         assert_eq!(
-            trail.cols()[0].selected.as_deref(),
+            snaps
+                .selected_entry(&trail)
+                .map(|entry| entry.path.as_path()),
             Some(td.root.join("beta.txt").as_path())
         );
-        assert_eq!(trail.cols().len(), 1, "file selection cut the branch");
+        assert_eq!(trail.cols().len(), 1);
+        assert_eq!(trail.active_col(), 0);
 
         // Clamped at the listing edge: stepping past the end stays put.
         assert_eq!(
-            snaps.move_selection(&mut trail, 5),
-            TrailActivateOutcome::SelectedFile
+            snaps.move_cursor(&mut trail, 5),
+            TrailCursorMoveOutcome::Unchanged {
+                entry_index: 1,
+                directory: false,
+            }
         );
         assert_eq!(
-            trail.cols()[0].selected.as_deref(),
+            snaps
+                .selected_entry(&trail)
+                .map(|entry| entry.path.as_path()),
             Some(td.root.join("beta.txt").as_path())
+        );
+    }
+
+    // TP-FMN-NAV-01/02 + TP-FMN-IO-01 RED: vertical movement is a cursor
+    // command, not directory activation. Landing on a sibling directory must
+    // leave the already-open branch and the owner-column focus untouched while
+    // exposing the landed exact path as the current entry.
+    #[test]
+    fn vertical_directory_landing_preserves_owner_focus_and_open_branch() {
+        let td = TempDir::new("cursor-only-directory-landing");
+        for name in ["00-alpha", "01-bravo", "02-current"] {
+            fs::create_dir(td.root.join(name)).expect("create directory fixture");
+        }
+        let modified = std::time::UNIX_EPOCH + std::time::Duration::from_secs(10);
+        for name in ["00-alpha", "01-bravo", "02-current"] {
+            fs::File::open(td.root.join(name))
+                .expect("open directory fixture")
+                .set_times(fs::FileTimes::new().set_modified(modified))
+                .expect("set deterministic directory mtime");
+        }
+
+        let current = td.root.join("02-current");
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        let current_index = snaps.cols()[0]
+            .entries()
+            .iter()
+            .position(|entry| entry.path == current)
+            .expect("current directory row");
+        assert_eq!(
+            snaps.activate_entry(&mut trail, 0, current_index, &current),
+            TrailActivateOutcome::Branched
+        );
+        assert!(trail.move_active_left());
+        let before_columns = trail.cols().to_vec();
+        let before_snapshot_directories = snaps
+            .cols()
+            .iter()
+            .map(|snapshot| snapshot.directory().to_path_buf())
+            .collect::<Vec<_>>();
+
+        let _ = snaps.move_cursor(&mut trail, -1);
+
+        assert_eq!(trail.active_col(), 0, "vertical movement keeps owner focus");
+        assert_eq!(
+            trail.cols(),
+            before_columns,
+            "vertical movement neither truncates nor replaces the open branch"
+        );
+        assert_eq!(
+            snaps
+                .cols()
+                .iter()
+                .map(|snapshot| snapshot.directory().to_path_buf())
+                .collect::<Vec<_>>(),
+            before_snapshot_directories,
+            "cursor movement performs no directory activation/read"
+        );
+        assert_eq!(
+            snaps
+                .selected_entry(&trail)
+                .map(|entry| entry.path.as_path()),
+            Some(td.root.join("01-bravo").as_path()),
+            "the landed exact path becomes the current cursor entry"
         );
     }
 

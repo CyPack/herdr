@@ -2810,8 +2810,9 @@ mod tests {
 
     #[test]
     fn non_move_mouse_events_always_request_render() {
-        // TP-2C / TP-2F: press, release, drag, and wheel are never gated — only
-        // an inert Moved is. Each still repaints exactly as before the gate.
+        // TP-2C / TP-2F: generic press, release, drag, and wheel input repaint.
+        // Native-FM vertical wheel duplicates have their own exact typed
+        // override; this fixture deliberately has no live Files row target.
         for kind in [
             MouseEventKind::Down(MouseButton::Left),
             MouseEventKind::Up(MouseButton::Left),

@@ -54,6 +54,13 @@ pub(super) enum FileManagerIoIdentity {
         source: FileManagerIoSource,
         expected_directory: PathBuf,
     },
+    TrailPreview {
+        files_generation: u32,
+        source: FileManagerIoSource,
+        trail_col: usize,
+        entry_index: usize,
+        expected_path: PathBuf,
+    },
     TrailActivate {
         files_generation: u32,
         source: FileManagerIoSource,
@@ -74,7 +81,8 @@ impl FileManagerIoIdentity {
             Self::TrailRefresh {
                 expected_directory, ..
             } => Some(expected_directory),
-            Self::TrailActivate { expected_path, .. } => Some(expected_path),
+            Self::TrailPreview { expected_path, .. }
+            | Self::TrailActivate { expected_path, .. } => Some(expected_path),
         }
     }
 
@@ -107,6 +115,11 @@ impl FileManagerIoIdentity {
                 source: expected_source,
                 ..
             }
+            | Self::TrailPreview {
+                files_generation: expected_files_generation,
+                source: expected_source,
+                ..
+            }
             | Self::TrailActivate {
                 files_generation: expected_files_generation,
                 source: expected_source,
@@ -128,6 +141,14 @@ pub(super) enum FileManagerIoRequest {
         files_generation: u32,
         source: FileManagerIoSource,
         expected_directory: PathBuf,
+        file_manager: Box<crate::fm::FmState>,
+    },
+    TrailPreview {
+        files_generation: u32,
+        source: FileManagerIoSource,
+        trail_col: usize,
+        entry_index: usize,
+        expected_path: PathBuf,
         file_manager: Box<crate::fm::FmState>,
     },
     TrailActivate {
@@ -182,6 +203,20 @@ impl FileManagerIoRequest {
                 source: source.clone(),
                 expected_directory: expected_directory.clone(),
             },
+            Self::TrailPreview {
+                files_generation,
+                source,
+                trail_col,
+                entry_index,
+                expected_path,
+                ..
+            } => FileManagerIoIdentity::TrailPreview {
+                files_generation: *files_generation,
+                source: source.clone(),
+                trail_col: *trail_col,
+                entry_index: *entry_index,
+                expected_path: expected_path.clone(),
+            },
             Self::TrailActivate {
                 files_generation,
                 source,
@@ -213,6 +248,14 @@ pub(super) enum FileManagerIoOutcome {
         source: FileManagerIoSource,
         expected_directory: PathBuf,
         prepared: Option<(Box<crate::fm::FmState>, bool)>,
+    },
+    TrailPreview {
+        files_generation: u32,
+        source: FileManagerIoSource,
+        trail_col: usize,
+        entry_index: usize,
+        expected_path: PathBuf,
+        prepared: Option<Box<crate::fm::FmState>>,
     },
     TrailActivate {
         files_generation: u32,
@@ -394,7 +437,13 @@ impl FileManagerIoWorker {
     pub(in crate::app) fn wait_for_result_for_test(&self) {
         let (state, changed) = &*self.shared;
         let mut state = lock_state(state);
-        while state.result.is_none() && state.alive && !state.closed {
+        while state
+            .result
+            .as_ref()
+            .is_none_or(|result| result.generation != self.latest_generation)
+            && state.alive
+            && !state.closed
+        {
             state = match changed.wait(state) {
                 Ok(state) => state,
                 Err(poisoned) => poisoned.into_inner(),
@@ -468,6 +517,27 @@ fn process_request(request: FileManagerIoRequest) -> FileManagerIoOutcome {
                 source,
                 expected_directory,
                 prepared: changed.map(|changed| (file_manager, changed)),
+            }
+        }
+        FileManagerIoRequest::TrailPreview {
+            files_generation,
+            source,
+            trail_col,
+            entry_index,
+            expected_path,
+            mut file_manager,
+        } => {
+            let outcome = file_manager.activate_trail_entry(trail_col, entry_index, &expected_path);
+            let prepared = (outcome == crate::fm::trail_snapshots::TrailActivateOutcome::Branched
+                && file_manager.trail.move_active_left())
+            .then_some(file_manager);
+            FileManagerIoOutcome::TrailPreview {
+                files_generation,
+                source,
+                trail_col,
+                entry_index,
+                expected_path,
+                prepared,
             }
         }
         FileManagerIoRequest::TrailActivate {
@@ -719,6 +789,41 @@ impl super::App {
                 self.state.file_manager = Some(*file_manager);
                 self.record_file_manager_reconcile_applied();
                 projection_changed
+            }
+            FileManagerIoOutcome::TrailPreview {
+                files_generation: prepared_files_generation,
+                source: prepared_source,
+                trail_col,
+                entry_index,
+                expected_path,
+                prepared,
+            } => {
+                let cursor_is_current = self
+                    .state
+                    .file_manager
+                    .as_ref()
+                    .and_then(crate::fm::FmState::active_trail_entry_identity)
+                    .is_some_and(|(current_col, current_index, current_path, is_directory)| {
+                        current_col == trail_col
+                            && current_index == entry_index
+                            && current_path == expected_path
+                            && is_directory
+                    });
+                let prepared_identity = FileManagerIoIdentity::TrailPreview {
+                    files_generation: prepared_files_generation,
+                    source: prepared_source,
+                    trail_col,
+                    entry_index,
+                    expected_path: expected_path.clone(),
+                };
+                if prepared_identity != result.identity || !cursor_is_current {
+                    return changed;
+                }
+                let Some(file_manager) = prepared else {
+                    return changed;
+                };
+                self.state.file_manager = Some(*file_manager);
+                true
             }
             FileManagerIoOutcome::TrailActivate {
                 files_generation: prepared_files_generation,

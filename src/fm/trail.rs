@@ -28,6 +28,11 @@ pub(crate) struct TrailCol {
 pub(crate) struct TrailState {
     cols: Vec<TrailCol>,
     active_col: usize,
+    /// Ephemeral keyboard/wheel cursor. This is deliberately separate from
+    /// `TrailCol::selected`: the latter owns the activated directory chain,
+    /// while this exact path may move inside one column without truncating or
+    /// extending that chain.
+    cursor: Option<(usize, PathBuf)>,
 }
 
 impl TrailState {
@@ -40,6 +45,7 @@ impl TrailState {
                 selected: None,
             }],
             active_col: 0,
+            cursor: None,
         }
     }
 
@@ -55,6 +61,7 @@ impl TrailState {
             return false;
         }
         self.active_col -= 1;
+        self.cursor = None;
         true
     }
 
@@ -65,6 +72,7 @@ impl TrailState {
             return false;
         }
         self.active_col += 1;
+        self.cursor = None;
         true
     }
 
@@ -74,7 +82,39 @@ impl TrailState {
         if col_idx >= self.cols.len() {
             return false;
         }
+        if self.active_col != col_idx {
+            self.cursor = None;
+        }
         self.active_col = col_idx;
+        true
+    }
+
+    /// Exact cursor identity for one column. A vertical cursor override wins;
+    /// otherwise the activated branch/file selection remains the fallback.
+    pub(crate) fn cursor_path_in_col(&self, col_idx: usize) -> Option<&Path> {
+        self.cursor
+            .as_ref()
+            .filter(|(cursor_col, _)| *cursor_col == col_idx)
+            .map(|(_, path)| path.as_path())
+            .or_else(|| self.cols.get(col_idx)?.selected.as_deref())
+    }
+
+    /// Active ephemeral cursor, used by render and exact-entry resolution.
+    pub(crate) fn cursor_override(&self) -> Option<(usize, &Path)> {
+        self.cursor
+            .as_ref()
+            .map(|(col_idx, path)| (*col_idx, path.as_path()))
+    }
+
+    /// Move only the row cursor in one exact live column. The activated Trail
+    /// chain is intentionally untouched; callers may schedule a discardable
+    /// preview separately.
+    pub(crate) fn move_cursor_to(&mut self, col_idx: usize, path: &Path) -> bool {
+        if col_idx >= self.cols.len() || self.cursor_path_in_col(col_idx) == Some(path) {
+            return false;
+        }
+        self.active_col = col_idx;
+        self.cursor = Some((col_idx, path.to_path_buf()));
         true
     }
 
@@ -102,6 +142,7 @@ impl TrailState {
         self.cols.truncate(col_idx + 1);
         self.cols[col_idx].selected = None;
         self.active_col = col_idx;
+        self.cursor = None;
         true
     }
 
@@ -145,6 +186,7 @@ impl TrailState {
         self.cols.truncate(col_idx + 1);
         self.cols[col_idx].selected = Some(child.to_path_buf());
         self.active_col = col_idx;
+        self.cursor = None;
         true
     }
 }

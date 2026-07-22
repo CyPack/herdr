@@ -13,13 +13,49 @@ impl crate::app::App {
         &mut self,
         row: &crate::ui::TrailRowView,
     ) -> Option<bool> {
-        let files_generation = self.state.stage.active_instance_generation()?;
-        let file_manager = self.state.file_manager.as_ref()?;
-        match file_manager.trail_entry_is_directory(
+        self.queue_file_manager_trail_directory_request(
             row.trail_index,
             row.entry_index,
             &row.entry_path,
-        ) {
+            false,
+        )
+    }
+
+    pub(super) fn queue_file_manager_trail_directory_preview_identity(
+        &mut self,
+        trail_col: usize,
+        entry_index: usize,
+        expected_path: &std::path::Path,
+    ) -> bool {
+        self.queue_file_manager_trail_directory_request(trail_col, entry_index, expected_path, true)
+            .unwrap_or(false)
+    }
+
+    pub(super) fn queue_file_manager_trail_directory_activation_identity(
+        &mut self,
+        trail_col: usize,
+        entry_index: usize,
+        expected_path: &std::path::Path,
+    ) -> bool {
+        self.queue_file_manager_trail_directory_request(
+            trail_col,
+            entry_index,
+            expected_path,
+            false,
+        )
+        .unwrap_or(false)
+    }
+
+    fn queue_file_manager_trail_directory_request(
+        &mut self,
+        trail_col: usize,
+        entry_index: usize,
+        expected_path: &std::path::Path,
+        preview_only: bool,
+    ) -> Option<bool> {
+        let files_generation = self.state.stage.active_instance_generation()?;
+        let file_manager = self.state.file_manager.as_ref()?;
+        match file_manager.trail_entry_is_directory(trail_col, entry_index, expected_path) {
             Some(false) => return None,
             None => return Some(false),
             Some(true) => {}
@@ -27,13 +63,24 @@ impl crate::app::App {
         let source = crate::app::file_manager_io_worker::FileManagerIoSource::from_file_manager(
             file_manager,
         );
-        let request = crate::app::file_manager_io_worker::FileManagerIoRequest::TrailActivate {
-            files_generation,
-            source,
-            trail_col: row.trail_index,
-            entry_index: row.entry_index,
-            expected_path: row.entry_path.clone(),
-            file_manager: Box::new(file_manager.clone()),
+        let request = if preview_only {
+            crate::app::file_manager_io_worker::FileManagerIoRequest::TrailPreview {
+                files_generation,
+                source,
+                trail_col,
+                entry_index,
+                expected_path: expected_path.to_path_buf(),
+                file_manager: Box::new(file_manager.clone()),
+            }
+        } else {
+            crate::app::file_manager_io_worker::FileManagerIoRequest::TrailActivate {
+                files_generation,
+                source,
+                trail_col,
+                entry_index,
+                expected_path: expected_path.to_path_buf(),
+                file_manager: Box::new(file_manager.clone()),
+            }
         };
         Some(matches!(
             self.file_manager_io_worker.submit(request),

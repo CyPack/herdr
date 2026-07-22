@@ -1595,7 +1595,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_ancestor_projection_does_not_rebind_active_trail_watcher() {
+    fn explicit_leave_rebinds_watcher_to_parent_owner_once() {
         let tree = TempDir::new("ancestor-watcher");
         let child = tree.root.join("child");
         std::fs::create_dir(&child).expect("create watched child");
@@ -1630,23 +1630,37 @@ mod tests {
                 .map(|file_manager| file_manager.cwd.as_path()),
             Some(tree.root.as_path())
         );
+        let file_manager = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(
+            file_manager.trail.active_col(),
+            0,
+            "explicit leave returns focus to the parent owner column"
+        );
+        assert_eq!(
+            file_manager.active_trail_directory(),
+            Some(tree.root.as_path())
+        );
         assert!(!app.sync_file_manager_watcher());
         assert_eq!(
             app.file_manager_watcher.watched_dir(),
-            Some(child.as_path()),
-            "legacy cwd movement cannot replace active Trail authority"
+            Some(tree.root.as_path()),
+            "watcher follows the explicit parent-column focus"
         );
         assert!(app.file_manager_watcher.has_backend());
-        assert_eq!(app.file_manager_watcher.generation(), child_generation);
+        let parent_generation = app.file_manager_watcher.generation();
+        assert_ne!(
+            parent_generation, child_generation,
+            "the changed owner directory rebinds exactly once"
+        );
 
         assert!(
             !app.sync_file_manager_watcher(),
-            "legacy ancestor projection keeps the active Trail watcher stable"
+            "unchanged parent focus keeps the active Trail watcher stable"
         );
         assert_eq!(
             app.file_manager_watcher.generation(),
-            child_generation,
-            "no second persistent ancestor watcher may be created"
+            parent_generation,
+            "no second persistent parent watcher may be created"
         );
 
         app.state.file_manager = None;

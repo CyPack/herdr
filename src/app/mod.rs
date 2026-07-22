@@ -121,6 +121,11 @@ pub struct App {
     pub(crate) input_rx: Option<mpsc::Receiver<crate::raw_input::RawInputEvent>>,
     file_manager_watcher: file_manager_watcher::NativeFileManagerWatcher,
     file_manager_io_worker: file_manager_io_worker::FileManagerIoWorker,
+    file_manager_vertical_wheel_gate: input::FileManagerVerticalWheelBurstGate,
+    /// One-event override for the legacy void mouse dispatcher. Accepted FM
+    /// wheel input repaints; a coalesced host duplicate explicitly declines.
+    file_manager_mouse_render_override: Option<bool>,
+    file_manager_key_render_override: Option<bool>,
     file_operation_worker: file_operation_worker::FileOperationWorker,
     file_operation_reconcile_baseline:
         Option<file_operation_worker::FileOperationReconcileBaseline>,
@@ -874,6 +879,9 @@ impl App {
             file_manager_io_worker: file_manager_io_worker::FileManagerIoWorker::new(
                 render_notify.clone(),
             ),
+            file_manager_vertical_wheel_gate: input::FileManagerVerticalWheelBurstGate::default(),
+            file_manager_mouse_render_override: None,
+            file_manager_key_render_override: None,
             file_operation_worker: file_operation_worker::FileOperationWorker::new(
                 render_notify.clone(),
             ),
@@ -1718,7 +1726,7 @@ impl App {
             let previous_mode = self.state.mode;
             match event {
                 crate::raw_input::RawInputEvent::Key(key) => {
-                    render_needed = true;
+                    self.file_manager_key_render_override = None;
                     let key_id = repeat_key_identity(&key);
                     match key.kind {
                         crossterm::event::KeyEventKind::Press => {
@@ -1742,15 +1750,17 @@ impl App {
                             self.suppressed_repeat_keys.remove(&key_id);
                         }
                     }
+                    render_needed |= self.file_manager_key_render_override.take().unwrap_or(true);
                 }
                 crate::raw_input::RawInputEvent::Mouse(mouse) => {
                     let is_move = matches!(mouse.kind, crossterm::event::MouseEventKind::Moved);
-                    if self.state.mouse_capture {
-                        self.handle_mouse_event_headless(mouse);
+                    let render_override = if self.state.mouse_capture {
+                        self.handle_mouse_event_headless(mouse)
                     } else {
                         self.state
                             .handle_pane_mouse_only(&self.terminal_runtimes, mouse);
-                    }
+                        None
+                    };
                     // A hover move (no button held) only repaints chrome when a
                     // hover-sensitive overlay owns the pointer: a context menu
                     // or settings pane tracks its highlight. Inert file-manager,
@@ -1758,9 +1768,11 @@ impl App {
                     // motion-tracking pane repaints from its own output through
                     // `render_dirty`, not from this input event — so gating them
                     // keeps rapid pointer motion from saturating the loop with
-                    // full virtual frames. Every non-move mouse kind still
-                    // repaints unconditionally.
-                    render_needed |= !is_move || self.state.blocking_overlay_active();
+                    // full virtual frames. Non-move events repaint by default;
+                    // the native-FM wheel path may additionally decline an
+                    // exact Ghostty micro-burst duplicate after consuming it.
+                    render_needed |= render_override
+                        .unwrap_or_else(|| !is_move || self.state.blocking_overlay_active());
                 }
                 crate::raw_input::RawInputEvent::Paste(text) => {
                     render_needed = true;
@@ -1900,8 +1912,10 @@ impl App {
     /// Delegates to the same mouse handling logic used in the monolithic
     /// mode (hit-testing against the rendered UI), which works because
     /// the server's AppState maintains view geometry from virtual rendering.
-    fn handle_mouse_event_headless(&mut self, mouse: crossterm::event::MouseEvent) {
+    fn handle_mouse_event_headless(&mut self, mouse: crossterm::event::MouseEvent) -> Option<bool> {
+        self.file_manager_mouse_render_override = None;
         self.handle_mouse(mouse);
+        self.file_manager_mouse_render_override.take()
     }
 }
 

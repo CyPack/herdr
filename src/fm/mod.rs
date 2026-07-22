@@ -1012,56 +1012,43 @@ impl FmState {
         outcome
     }
 
-    /// Move selection inside the one active Trail column with the same
-    /// directory-branch/file-detail semantics as mouse activation.
-    pub(crate) fn move_trail_selection(
+    /// Move the cursor inside the one active Trail column. This never enters a
+    /// directory or transfers focus; explicit activation remains separate.
+    pub(crate) fn move_trail_cursor(
         &mut self,
         delta: isize,
-    ) -> trail_snapshots::TrailActivateOutcome {
+    ) -> trail_snapshots::TrailCursorMoveOutcome {
         let owner_col = self.trail.active_col();
-        self.move_trail_selection_in_column(owner_col, delta)
+        self.move_trail_cursor_in_column(owner_col, delta)
     }
 
-    /// Move selection in one exact loaded Trail column. This is the typed
-    /// non-row header input seam; the accepted entry still installs the same
-    /// path-validated operation projection as ordinary row activation.
-    pub(crate) fn move_trail_selection_in_column(
+    /// Move the cursor in one exact loaded Trail column. The landed resident
+    /// entry installs the path-validated operation projection, but the
+    /// activated Trail branch stays byte-for-byte unchanged.
+    pub(crate) fn move_trail_cursor_in_column(
         &mut self,
         owner_col: usize,
         delta: isize,
-    ) -> trail_snapshots::TrailActivateOutcome {
-        let outcome =
-            self.trail_snapshots
-                .move_selection_in_column(&mut self.trail, owner_col, delta);
-        if outcome == trail_snapshots::TrailActivateOutcome::Rejected {
+    ) -> trail_snapshots::TrailCursorMoveOutcome {
+        let outcome = self
+            .trail_snapshots
+            .move_cursor_in_column(&mut self.trail, owner_col, delta);
+        if outcome.is_rejected() || !outcome.changed() {
             return outcome;
         }
         let Some(expected_path) = self
             .trail
-            .cols()
-            .get(owner_col)
-            .and_then(|col| col.selected.clone())
+            .cursor_path_in_col(owner_col)
+            .map(Path::to_path_buf)
         else {
-            return trail_snapshots::TrailActivateOutcome::Rejected;
+            return trail_snapshots::TrailCursorMoveOutcome::Rejected;
         };
-        let Some(entry_index) = self
-            .trail_snapshots
-            .cols()
-            .get(owner_col)
-            .and_then(|snapshot| {
-                snapshot
-                    .entries()
-                    .iter()
-                    .position(|entry| entry.path == expected_path)
-            })
-        else {
-            return trail_snapshots::TrailActivateOutcome::Rejected;
+        let Some(entry_index) = outcome.entry_index() else {
+            return trail_snapshots::TrailCursorMoveOutcome::Rejected;
         };
         if !self.install_trail_operation_projection(owner_col, entry_index, &expected_path) {
-            return trail_snapshots::TrailActivateOutcome::Rejected;
-        }
-        if outcome == trail_snapshots::TrailActivateOutcome::Branched {
-            self.miller.horizontal.follow_active = true;
+            debug_assert!(false, "validated Trail cursor projection must install");
+            return trail_snapshots::TrailCursorMoveOutcome::Rejected;
         }
         outcome
     }
@@ -1073,9 +1060,8 @@ impl FmState {
         let col_idx = self.trail.active_col();
         let Some(expected_path) = self
             .trail
-            .cols()
-            .get(col_idx)
-            .and_then(|col| col.selected.clone())
+            .cursor_path_in_col(col_idx)
+            .map(Path::to_path_buf)
         else {
             return trail_snapshots::TrailActivateOutcome::Rejected;
         };
@@ -1138,6 +1124,24 @@ impl FmState {
             .get(entry_index)
             .filter(|entry| entry.path == expected_path)
             .map(FileEntry::is_dir)
+    }
+
+    /// Resolve the exact row currently owned by the active Trail cursor.
+    /// The tuple is stable enough to cross into the bounded I/O request only
+    /// after the worker submission path revalidates column/index/path/kind.
+    pub(crate) fn active_trail_entry_identity(&self) -> Option<(usize, usize, PathBuf, bool)> {
+        let col_idx = self.trail.active_col();
+        let expected_path = self
+            .trail
+            .cursor_path_in_col(col_idx)
+            .map(Path::to_path_buf)?;
+        let snapshot = self.trail_snapshots.cols().get(col_idx)?;
+        let entry_index = snapshot
+            .entries()
+            .iter()
+            .position(|entry| entry.path == expected_path)?;
+        let entry = snapshot.entries().get(entry_index)?;
+        Some((col_idx, entry_index, expected_path, entry.is_dir()))
     }
 
     /// Build a fresh LAW-5 trail for a sidebar/deep-link target. No first row
@@ -1281,13 +1285,13 @@ impl FmState {
         let Some(owner) = self.trail_snapshots.cols().get(col_idx) else {
             return false;
         };
-        if owner
-            .entries()
-            .get(entry_index)
-            .is_none_or(|entry| entry.path != expected_path)
-        {
+        let Some(entry) = owner.entries().get(entry_index) else {
+            return false;
+        };
+        if entry.path != expected_path {
             return false;
         }
+        let entry_is_directory = entry.is_dir();
         // Selecting an already-loaded file must not enumerate the parent
         // directory on the serial server input loop. The owning column and its
         // resident parent already carry the exact entries, status, writability,
@@ -1317,11 +1321,14 @@ impl FmState {
         self.preview_viewport_start = 0;
         self.preview_generation = self.preview_generation.wrapping_add(1).max(1);
         let generation = self.preview_generation;
-        self.preview = self
-            .entries
-            .get(entry_index)
-            .map(|entry| prepare_deferred_file_preview(entry.path.clone(), generation))
-            .unwrap_or(FmPreview::None);
+        self.preview = if entry_is_directory {
+            FmPreview::None
+        } else {
+            self.entries
+                .get(entry_index)
+                .map(|entry| prepare_deferred_file_preview(entry.path.clone(), generation))
+                .unwrap_or(FmPreview::None)
+        };
         true
     }
 
@@ -2333,6 +2340,34 @@ mod tests {
         assert_eq!(st.cursor, 0);
         assert_eq!(st.entries.len(), 2);
         assert_eq!(st.selected().map(|e| e.name.as_str()), Some("a.txt"));
+    }
+
+    // TP-FMN-NAV-06 RED: preparing the first directory's resident preview on
+    // Files open may expose its right-side Miller child, but must not
+    // masquerade as an explicit Right/Enter/click. The row cursor and focus
+    // remain in the root column; only explicit activation may focus the child.
+    #[test]
+    fn fmstate_directory_cursor_does_not_activate_child_on_open() {
+        let td = TempDir::new("state-open-directory-cursor-only");
+        td.dir("00-alpha");
+        td.file("00-alpha/inside.txt");
+        td.file("01-zeta.txt");
+        set_equal_modified(&td, &["00-alpha", "01-zeta.txt"]);
+
+        let state = FmState::new(&td.root);
+        let alpha = td.root.join("00-alpha");
+
+        assert_eq!(state.selected().map(|entry| &entry.path), Some(&alpha));
+        assert!(matches!(state.preview, FmPreview::Directory(_)));
+        assert_eq!(state.trail.cols().len(), 2, "resident preview is visible");
+        assert_eq!(state.trail.cols()[1].directory, alpha);
+        assert_eq!(state.trail.active_col(), 0, "focus stays in root");
+        assert_eq!(state.trail.cursor_path_in_col(0), Some(alpha.as_path()));
+        assert_eq!(
+            state.trail.cols().len(),
+            state.trail_snapshots.cols().len(),
+            "Trail/snapshot alignment remains exact"
+        );
     }
 
     // TP-TRAIL-T7-BRIDGE-03: FmState owns one index-aligned trail/snapshot

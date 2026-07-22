@@ -293,16 +293,35 @@ fn project_trail_view_inner(
     requested_offset_cells: Option<u32>,
     anchor: LocalCalendarAnchor,
 ) -> TrailViewSnapshot {
-    let trail_cols = trail.cols();
-    let snap_cols = snaps.cols();
-    let aligned = trail_cols.len() == snap_cols.len()
-        && trail_cols
+    let all_trail_cols = trail.cols();
+    let all_snap_cols = snaps.cols();
+    let aligned = all_trail_cols.len() == all_snap_cols.len()
+        && all_trail_cols
             .iter()
-            .zip(snap_cols.iter())
+            .zip(all_snap_cols.iter())
             .all(|(col, snap)| snap.directory() == col.directory.as_path());
-    if trail_cols.is_empty() || !aligned {
+    if all_trail_cols.is_empty() || !aligned {
         return TrailViewSnapshot::default();
     }
+
+    // A cursor-only move may temporarily disagree with the previously
+    // activated child while its bounded async preview is pending. Keep the
+    // activated chain in state, but never render that stale child under a new
+    // sibling highlight. A matching child remains visible immediately.
+    let visible_len = trail
+        .cursor_override()
+        .map_or(all_trail_cols.len(), |(col_idx, path)| {
+            let child_matches = all_trail_cols
+                .get(col_idx + 1)
+                .is_some_and(|child| child.directory == path);
+            if child_matches {
+                all_trail_cols.len()
+            } else {
+                col_idx.saturating_add(1).min(all_trail_cols.len())
+            }
+        });
+    let trail_cols = &all_trail_cols[..visible_len];
+    let snap_cols = &all_snap_cols[..visible_len];
 
     // LAW 3: a selected FILE reserves the resizable right-side panel BEFORE
     // the columns are laid out — a side panel, never an overlay. The panel
@@ -346,8 +365,10 @@ fn project_trail_view_inner(
     let widths: Vec<u16> = (0..trail_cols.len())
         .map(|index| trail_column_width(preferred_widths, index))
         .collect();
-    let requested_offset_cells = requested_offset_cells
-        .unwrap_or_else(|| miller_auto_follow_offset(stage.width, &widths, trail.deepest()));
+    let requested_offset_cells = requested_offset_cells.unwrap_or_else(|| {
+        let focused_column = trail.active_col().min(trail_cols.len().saturating_sub(1));
+        miller_auto_follow_offset(stage.width, &widths, focused_column)
+    });
     let geometry = miller_viewport_geometry_at_offset(stage, &widths, requested_offset_cells);
 
     let columns = geometry
@@ -356,9 +377,8 @@ fn project_trail_view_inner(
         .map(|column| {
             let trail_index = column.chain_index;
             let entries = snap_cols[trail_index].entries();
-            let selected_entry = trail_cols[trail_index]
-                .selected
-                .as_deref()
+            let selected_entry = trail
+                .cursor_path_in_col(trail_index)
                 .and_then(|selected| entries.iter().position(|entry| entry.path == selected));
             let has_status = snap_cols[trail_index].omission_message().is_some();
             let height = usize::from(column.rect.height.saturating_sub(u16::from(has_status)));
@@ -928,6 +948,49 @@ mod tests {
         assert!(
             view.first_visible > 0,
             "a 7-column trail on a 70-cell stage must scroll ancestors left"
+        );
+    }
+
+    // TP-FMN-NAV-07 RED: a resident right-side directory preview is not the
+    // horizontal focus authority. Auto-follow tracks the active column, so
+    // an owner column remains fully visible until Right explicitly focuses
+    // its child.
+    #[test]
+    fn auto_follow_tracks_active_column_instead_of_deepest_preview() {
+        let td = TempDir::new("active-column-auto-follow");
+        let child = td.root.join("child");
+        fs::create_dir(&child).expect("create child preview fixture");
+        fs::write(child.join("inside.txt"), b"x").expect("write child preview fixture");
+
+        let mut trail = TrailState::new(&td.root);
+        let mut snaps = TrailSnapshots::new(false);
+        snaps.sync(&trail);
+        assert_eq!(
+            snaps.select_dir(&mut trail, 0, &child),
+            FmDirectoryStatus::Available
+        );
+        assert!(trail.move_active_left(), "preview owner becomes active");
+
+        let stage = Rect::new(0, 0, 30, 8);
+        let owner_view = project_trail_view(stage, &trail, &snaps, &[28, 28]);
+        assert_eq!(owner_view.offset_cells, 0, "owner starts unscrolled");
+        let owner = owner_view
+            .columns
+            .iter()
+            .find(|column| column.trail_index == 0)
+            .expect("active owner column is visible");
+        assert_eq!(owner.source_x, 0);
+        assert_eq!(owner.rect.x, stage.x);
+
+        assert!(trail.move_active_right(), "explicit Right focuses child");
+        let child_view = project_trail_view(stage, &trail, &snaps, &[28, 28]);
+        assert!(child_view.offset_cells > 0, "child focus advances viewport");
+        assert!(
+            child_view
+                .columns
+                .iter()
+                .any(|column| column.trail_index == 1),
+            "focused child remains visible"
         );
     }
 

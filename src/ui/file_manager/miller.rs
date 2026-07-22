@@ -161,7 +161,7 @@ pub(crate) fn project_miller_view_with_resize_preview(
     let column_stage = detail_width.map_or(stage, |width| {
         Rect::new(stage.x, stage.y, stage.width - width, stage.height)
     });
-    let focused_index = file_manager.trail.deepest();
+    let focused_index = file_manager.trail.active_col();
     let first_visible_min = 0;
     let first_visible_max = focused_index;
     let requested_offset = if file_manager.miller.horizontal.follow_active {

@@ -36,6 +36,7 @@ fn modified_url_click_modifier_matches_terminal_mouse_reporting() {
 
 mod copy_mode;
 mod file_manager;
+pub(in crate::app) use file_manager::FileManagerVerticalWheelBurstGate;
 mod modal;
 pub(crate) use modal::leave_modal;
 mod mouse;
@@ -180,6 +181,31 @@ impl App {
             }
             file_manager::FileManagerKeyDispatch::Refresh(request) => {
                 let _ = self.execute_file_manager_current_refresh(*request);
+            }
+            file_manager::FileManagerKeyDispatch::PreviewDirectory {
+                trail_col,
+                entry_index,
+                expected_path,
+            } => {
+                let _ = self.queue_file_manager_trail_directory_preview_identity(
+                    trail_col,
+                    entry_index,
+                    &expected_path,
+                );
+            }
+            file_manager::FileManagerKeyDispatch::ActivateDirectory {
+                trail_col,
+                entry_index,
+                expected_path,
+            } => {
+                let _ = self.queue_file_manager_trail_directory_activation_identity(
+                    trail_col,
+                    entry_index,
+                    &expected_path,
+                );
+            }
+            file_manager::FileManagerKeyDispatch::Inert => {
+                self.file_manager_key_render_override = Some(false);
             }
             file_manager::FileManagerKeyDispatch::Consumed => {}
         }
