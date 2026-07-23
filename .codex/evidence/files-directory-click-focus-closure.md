@@ -216,7 +216,7 @@ or a newer request wins, the old completion is inert.
 | Post-docs broad file_manager | Nextest `d291a985-cb1c-4eb0-b59c-484a2d52ba37`, 307/307 | PASS |
 | Post-docs full Rust | Nextest `b1d1304a-4830-496f-b641-c9192d8ff008`, 3,683/3,683, 6 intentional skips, 34.899 s | PASS |
 | Post-docs fmt/clippy/maintenance/visual | `cargo fmt --check`; Linux all-target Clippy; Windows MSVC Herdr Clippy; Python 68/68; Bun 5/5 + 12/12; Playwright Chromium 35/35 without snapshot update | PASS |
-| Exact commits and CyPack equality | RED `da413d1d`; GREEN `b90a177d`; docs `f14c112e`; CyPack fast-forward `05b9ba70..f14c112e` with local/origin SHA equality proven; this commit records the post-push publication ledger and closes DCLICK-5 | PASS |
+| Exact commits and CyPack equality | RED `da413d1d`; GREEN `b90a177d`; docs `f14c112e`; publication ledger `756a9f61`; CyPack fast-forward `05b9ba70..756a9f61` with local/`origin/feat/native-fm` SHA equality proven; DCLICK-5 closed | PASS |
 | Isolated physical E2E | User-driven after publication | PENDING |
 
 ## Manual acceptance matrix
