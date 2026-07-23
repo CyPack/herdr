@@ -40,8 +40,10 @@ directory preview
 Herdr already had the right bounded worker and generation-validation
 primitives. FMN now applies the separation directly: Up/Down and row/header
 wheel mutate a cursor-only exact-path identity; Right/`l` owns directory-only
-traversal, while Enter/click retains explicit file/directory activation. A
-directory cursor landing schedules a bounded discardable
+traversal and Enter remains explicit activation. The 2026-07-23 DCLICK
+clarification makes primary click exact cursor focus for both files and
+directories; directory click schedules preview but does not enter. A directory
+cursor landing schedules a bounded discardable
 preview and cannot transfer focus. A separate isolated Ghostty trace also
 proved identical-coordinate host packet triplets below 2 ms, so a narrow
 owner/direction/coordinate-aware gate was authorized after the semantic split.
@@ -178,8 +180,9 @@ reference laws with Herdr-native bounds:
   chain. `TrailSnapshots::move_cursor[_in_column]` changes one exact row and
   never calls `activate_entry`.
 - Up/Down/`j/k`, Shift+vertical, visible-row wheel, and header wheel retain the
-  exact owner column. Right/`l` is directory-only traversal; Enter and primary
-  click are explicit file/directory activation commands.
+  exact owner column. Right/`l` is directory-only traversal; Enter is explicit
+  activation. Primary click is exact cursor focus; a directory click uses the
+  preview lane and retains the clicked owner column.
 - `FileManagerIoRequest::TrailPreview` reuses the one-running/one-latest
   worker. Apply validates Files generation, source, owner column, entry index,
   exact path, directory kind, and the active cursor. Horizontal focus change,
@@ -222,9 +225,11 @@ inside the exact owning Trail column. They must not change `active_col`, truncat
 or extend the branch, rearm horizontal follow for a different column, or
 transfer selection authority to a child.
 
-Right/`l` owns directory-only child traversal. Enter or an explicit primary row
-click retains explicit file/directory activation. No implicit activation is
-inferred from the selected entry kind, and Right/`l` on a file is inert.
+Right/`l` owns directory-only child traversal and Enter remains explicit
+activation. A primary row click focuses the exact row in its owner column; for
+a directory it may prepare a bounded child preview but cannot transfer focus.
+No implicit activation is inferred from the selected entry kind, and Right/`l`
+on a file is inert.
 
 ### FMH clarification — directional traversal is not file activation
 
@@ -239,14 +244,40 @@ Herdr therefore narrows the transferred law:
 - Left is one resident parent-column focus step;
 - Right/`l` is one directory-only child traversal/activation step;
 - Right/`l` on files/non-entries is inert;
-- Enter/click remains the explicit activation surface for files and
-  directories.
+- Enter remains an explicit activation surface;
+- primary click is exact file/directory cursor focus, with directory preview
+  separate from child-column focus.
 
 This is a Herdr product-contract refinement, not a claim about Yazi's keymap.
 It preserves Yazi's deeper architectural lesson—movement, preview, and
 activation must have distinct authority—without copying an unrelated binding
 policy. Confidence: `0.98` for the Herdr RED/GREEN distinction and `0.90` for
 the reference-fit inference.
+
+### DCLICK clarification — pointer selection is not hierarchy traversal
+
+The user's 2026-07-23 physical report exposed the remaining conflation: plain
+directory click was routed through `TrailActivate`, so the strong cursor moved
+to a child column before the user pressed Right. Herdr now treats primary
+pointer intent like exact cursor movement, while still reusing the bounded
+preview worker:
+
+- `TrailSnapshots::focus_entry` revalidates `(column,index,path)`, updates only
+  `active_col` plus the ephemeral cursor/detail, and preserves the resident
+  branch byte-for-byte;
+- `FmState::focus_trail_entry` installs the resident owner operation projection
+  without filesystem reads;
+- directory click submits `TrailPreview`, never mouse `TrailActivate`;
+- a matching preview may prepare/replace the right-hand resident child but
+  keeps the clicked owner active;
+- Right/`l`/Enter is the explicit hierarchy boundary; Right immediately
+  highlights the first child row;
+- stale click, superseded preview, backpressure, and failure remain inert with
+  respect to focus authority.
+
+This is consistent with the transferred Yazi separation of cursor, preview,
+and activation, while the exact pointer binding remains a Herdr product
+decision. Confidence: `0.99` for Herdr behavior and `0.90` for reference fit.
 
 ### YT-2 — Preview may follow the cursor without focus transfer
 

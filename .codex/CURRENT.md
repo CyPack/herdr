@@ -1,4 +1,40 @@
-# Current State — 2026-07-22
+# Current State — 2026-07-23
+
+> **CURRENT OVERRIDE — DCLICK DIRECTORY PRIMARY-CLICK FOCUS AUTOMATED CLOSURE
+> COMPLETE; DOC COMMIT/PUSH THEN USER E2E (2026-07-23).** The user's physical report
+> supersedes the older FMN mouse-binding prose below. A primary click on any
+> live file/directory row now focuses that exact row in its owning Miller
+> column. Directory click queues bounded `TrailPreview` but never transfers
+> focus into the child; Up/Down remains in the clicked column. Right/`l`/Enter
+> is the explicit hierarchy transition, and Right highlights the child's first
+> actionable row immediately.
+>
+> Graph-first root cause: `handle_file_manager_row_mouse` called
+> `queue_file_manager_trail_directory_activation`; the resulting
+> `TrailActivateOutcome::Branched` made the child `active_col` before explicit
+> Right. The replacement chain is exact cursor focus
+> (`focus_trail_row -> FmState::focus_trail_entry ->
+> TrailSnapshots::focus_entry`) plus the existing stale-safe preview worker.
+> The owner projection is resident/disk-free; stale `(column,index,path)` is
+> inert; preview completion may replace resident child data but cannot steal
+> focus.
+>
+> RED run `1fcd96df-30c4-4b39-b673-e7c43f178d37` passed compilation and failed
+> 0/2 exactly at `active_col 1 != 0`; GREEN
+> `3f217ee8-9a05-4490-90f4-b6f9d1e28903` passed 2/2. Old-contract audit
+> `19492c0e-e982-4723-80a6-278edd3debbf` passed 141/144 and exposed only three
+> explicit click-enters-child expectations; after conversion, reducer plus the
+> complete input/invariant surface passed 145/145 in
+> `6d4c0671-b18b-481a-8ebc-8d8c19f4666c`. RED is commit `da413d1d`; production
+> is `b90a177d`. Post-commit related surface is 256/256; full Nextest run
+> `130f0c02-5a9e-4844-9667-9e72219d8a40` is 3,683/3,683 plus 6 intentional
+> skips. Fmt, Linux/Windows Clippy, Python 68/68, Bun 5/5 + 12/12, Chromium
+> 35/35 without snapshot regeneration, and the architecture diff are clean.
+> Fresh graph is 24,357 nodes / 129,888 edges and the six-section FFO+DCLICK
+> ADR was read back. Exact doc commit, CyPack equality, and user isolated E2E
+> status must be read from the final DCLICK evidence rather than inferred
+> here. Stable
+> Herdr/socket/config and `.superpowers/` remain untouched.
 
 > **CURRENT OVERRIDE — FFO FILES FOCUS OWNERSHIP AUTOMATED CLOSURE COMPLETE;
 > USER PHYSICAL ACCEPTANCE REMAINS (2026-07-22).** The approved FFO chain is
@@ -90,7 +126,8 @@
 > auto-branch amplifier H3 were confirmed. `TrailState` now separates an exact
 > ephemeral cursor from the activated directory chain. Up/Down/`j/k`, Shift
 > movement, and vertical row/header wheel stay in the exact owner column;
-> Right/`l`, Enter, or primary click alone activates. Directory cursor preview
+> Right/`l` or Enter activates. The later DCLICK override makes primary click
+> exact owner-row focus plus preview, never child focus. Directory cursor preview
 > uses the existing one-running/one-latest bounded worker and applies only when
 > Files generation, source, owner column, entry index, exact path, and active
 > cursor still match. Wheel normalization coalesces only identical

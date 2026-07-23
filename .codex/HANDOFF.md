@@ -1,6 +1,38 @@
 # SESSION HANDOFF — Herdr Native Files Performance
 
-Updated: 2026-07-22 CEST
+Updated: 2026-07-23 CEST
+
+## 0. CURRENT OVERRIDE — DCLICK DOC COMMIT/PUSH, THEN USER E2E
+
+The user's latest physical report supersedes the older mouse activation law:
+primary click on a live file or directory focuses the exact row in its owning
+Miller column. Directory click may prepare the right-side child through the
+bounded latest `TrailPreview` lane, but cannot transfer focus there. Up/Down
+after click remains in the owner column. Right/`l`/Enter is the explicit
+hierarchy transition; Right highlights the child first row immediately.
+
+Root cause was plain-click routing through
+`queue_file_manager_trail_directory_activation`, which made a bounded
+`TrailActivate` completion own the child. GREEN replaces that route with
+`focus_trail_row -> FmState::focus_trail_entry ->
+TrailSnapshots::focus_entry`, then optional preview. Exact identity is
+revalidated before mutation; operation projection uses resident snapshots;
+stale/failed/superseded preview cannot steal focus.
+
+TDD evidence: RED `1fcd96df-30c4-4b39-b673-e7c43f178d37` 0/2 at
+`active_col 1 != 0`; GREEN `3f217ee8-9a05-4490-90f4-b6f9d1e28903` 2/2; old
+contract audit `19492c0e-e982-4723-80a6-278edd3debbf` 141/144 with only three
+expected retired assertions; reducer/full input invariant
+`6d4c0671-b18b-481a-8ebc-8d8c19f4666c` 145/145. RED commit is `da413d1d`;
+production is `b90a177d`. Post-commit related surface is 256/256; full run
+`130f0c02-5a9e-4844-9667-9e72219d8a40` is 3,683/3,683 plus 6 intentional
+skips. Fmt, Linux/Windows Clippy, Python 68/68, Bun 5/5 + 12/12, Chromium
+35/35 without snapshot regeneration, architecture/hot-path diff audit, and
+the 24,357-node / 129,888-edge graph plus six-section ADR are clean. Only the
+exact docs commit, CyPack push/equality proof, and physical E2E remain. Exact
+live Git and publication belong in
+`.codex/evidence/files-directory-click-focus-closure.md`. Never touch stable
+Herdr/socket/config, user sessions, or `.superpowers/`.
 
 ## 0. SONRAKI ADIM — FFO DOC-AWARE GATES/PUBLICATION, THEN USER E2E
 
@@ -112,8 +144,9 @@ amplification doğrulandı.
 
 Yeni law/implementation: Up/Down/`j/k`/Shift/wheel exact owner column'daki ayrı
 ephemeral cursor'ı hareket ettirir; activated directory chain'i değiştirmez.
-Right/`l`, Enter veya explicit primary click activation sahibidir. Directory
-preview mevcut one-running/one-latest worker'da hazırlanır ve Files generation,
+Right/`l` veya Enter activation sahibidir. Later DCLICK override altında
+primary click exact owner-row focus + bounded preview'dir ve child focus
+alamaz. Directory preview mevcut one-running/one-latest worker'da hazırlanır ve Files generation,
 source, owner column, index, path ve active cursor eşleşmeden apply olmaz.
 Wheel gate yalnız aynı generation/owner/direction/coordinate ve `<2 ms`
 packet'leri bir semantic step'e indirger; reversal, coordinate/owner değişimi,

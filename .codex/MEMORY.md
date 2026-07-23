@@ -16,8 +16,10 @@
 - Vertical cursor movement and directory activation are separate product
   intents. Up/Down, `j/k`, Shift+Up/Down, and row wheel must remain in the exact
   owner column. Left moves one resident parent edge. Right/`l` owns
-  directory-only child traversal and is inert on files/non-entries; Enter or
-  explicit primary click retains file/directory activation.
+  directory-only child traversal and is inert on files/non-entries; Enter is
+  explicit activation. Primary click focuses the exact file/directory row in
+  its owner column; directory click may prepare a bounded preview but cannot
+  transfer focus into the child.
 - Stable installed Herdr and development Herdr must remain isolated. Use `.local/ISOLATED-DEV-TEST.md` for runtime checks.
 - The acting GitHub account is `CyPack`; this is external-contributor/fork work. Never push upstream or open upstream issues/PRs for the user.
 
@@ -37,16 +39,31 @@
   packets and 226 same-direction deltas below 2 ms in identical-coordinate
   triplets/occasional sextuplets; one-to-one routing rejected duplicate Herdr
   dispatch. Vertical keys/wheel now move an exact owner-column cursor without
-  branching; Right/`l` owns directory traversal and Enter/click owns explicit
-  activation; directory preview reuses
+  branching; Right/`l` owns directory traversal and Enter owns explicit
+  activation; primary click owns exact cursor focus; directory preview reuses
   the bounded latest worker with current cursor authority; a narrow `<2 ms`
   owner/direction/coordinate gate coalesces only the measured host burst.
   FMN-5 E2E/publication gates are complete.
-- `FMH — Horizontal Miller Focus Navigation` is the active local lane. Its
-  behavioral RED proved Right on a file fell through to `SelectedFile`,
-  truncating the resident Trail and rendering. The minimum GREEN returns
-  `Inert` for a non-directory cursor while preserving directory worker,
-  Enter/click, Left, vertical, and wheel semantics. Automated closure is green:
+- `DCLICK — Directory Primary-Click Focus` supersedes only the old FMN mouse
+  binding, not its cursor/preview architecture. Graph root-cause proved plain
+  click called `queue_file_manager_trail_directory_activation`, whose
+  `TrailActivate` completion moved `active_col` into the child. Primary click
+  now uses exact `TrailSnapshots::focus_entry` + disk-free owner projection and
+  queues only bounded `TrailPreview`; preview completion preserves parent
+  focus, Up/Down remains in that column, and Right highlights the child first
+  row immediately. Canonical evidence:
+  `.codex/evidence/files-directory-click-focus-closure.md`.
+  RED is `da413d1d`; production is `b90a177d`. Automated closure is green:
+  post-commit 256/256, full 3,683/3,683 plus 6 intentional skips, both Clippy
+  targets, Python 68/68, Bun 5/5 + 12/12, Chromium 35/35, clean architecture
+  diff, graph 24,357/129,888, and read-back six-section ADR. Physical isolated
+  acceptance remains user-owned and must not be inferred from these gates.
+- `FMH — Horizontal Miller Focus Navigation` is closed historical context under
+  the current DCLICK publication atom. Its behavioral RED proved Right on a
+  file fell through to `SelectedFile`, truncating the resident Trail and
+  rendering. The minimum GREEN returns `Inert` for a non-directory cursor while
+  preserving directory worker, Enter activation, primary-click focus, Left,
+  vertical, and wheel semantics. Automated closure is green:
   FMH 3/3, cross-layer 10/10, broad FM 190/190, full 3,622/3,622 + 4 skip,
   both Clippy targets, Python 68/68, Bun 5/5 + 12/12, exporter 1/1, Chromium
   33/33, zero JSON/PNG delta, and clean source/dependency/vendor/diff audits.

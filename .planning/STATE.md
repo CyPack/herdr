@@ -1,7 +1,21 @@
 # Herdr Native-FM Planning State
 
-- Updated: 2026-07-22
+- Updated: 2026-07-23
 - Branch: `feat/native-fm`
+- Current override: **DCLICK directory primary-click focus automated closure
+  is complete; exact docs commit/CyPack push and user E2E remain.** Primary click focuses the
+  exact file/directory row and owning `active_col`; directory click queues only
+  bounded `TrailPreview`. Resident preview may change child data but cannot
+  own focus. Right/`l`/Enter is the explicit hierarchy crossing and Right
+  highlights the first child row immediately. Root cause was the retired
+  mouse `TrailActivate` route. RED `1fcd96df-30c4-4b39-b673-e7c43f178d37`
+  failed 0/2 at child focus; RED commit is `da413d1d`, production is
+  `b90a177d`, GREEN is 2/2, reducer/input invariant is 145/145, post-commit
+  related is 256/256, and full run is 3,683/3,683 plus 6 intentional skips.
+  Fmt, both Clippy targets, Python 68/68, Bun 5/5 + 12/12, Chromium 35/35,
+  architecture diff, graph 24,357/129,888, and ADR read-back are complete.
+  Canonical detail: `.codex/evidence/files-directory-click-focus-closure.md`.
+  Stable Herdr/socket/config and `.superpowers/` are excluded.
 - Current override: **FFO Files focus ownership automated closure is complete
   through product head `d85d610e`; closure docs/post-doc gates/CyPack push are
   active and user physical acceptance remains pending.** One existing
@@ -43,9 +57,9 @@
   vertical packets, including 226 same-direction deltas below 2 ms in
   identical-coordinate triplets/sextuplets; the next deliberate groups were
   normally at least 5 ms apart. One-to-one routing rejected duplicate Herdr
-  dispatch. Vertical keys/wheel now move an exact-path cursor only, explicit
-  Right/Enter/click owns activation, directory preview is bounded/latest and
-  stale-safe, and the wheel gate coalesces only identical
+  dispatch. Vertical keys/wheel and primary click now move/focus an exact-path
+  cursor only; explicit Right/Enter owns activation, directory preview is
+  bounded/latest and stale-safe, and the wheel gate coalesces only identical
   generation/owner/direction/coordinate packets below 2 ms. At that snapshot,
   FMN-5's next action was the user's isolated physical wheel plus held-arrow
   acceptance and publication; it subsequently closed at `787bb96b`. Do not add

@@ -1,5 +1,43 @@
 # Durable Tasks — Herdr Native FM
 
+## P0 ACTIVE — DCLICK Directory Primary-Click Focus
+
+The user's 2026-07-23 physical report overrides the old `click = directory
+activation` binding. Primary click must focus the exact row in its owner
+column; only Right/`l`/Enter may move into a child.
+
+- [x] **DCLICK-0 Graph-first root-cause and failure matrix.** Prove current
+  graph freshness with FFO symbols; trace row click through bounded worker;
+  rank activation, render, and hit-geometry hypotheses.
+- [x] **DCLICK-1 RED exact pointer ownership.** Before production code, require
+  clicked directory strong selection, same `active_col`, same-column next
+  vertical step, zero serial filesystem reads, preview focus preservation, and
+  Right-first-child highlight. RED `1fcd96df-30c4-4b39-b673-e7c43f178d37`
+  failed 0/2 exactly at child focus.
+- [x] **DCLICK-2 GREEN cursor-only primary click.** Add exact stale-safe
+  `TrailSnapshots::focus_entry`, resident `FmState` owner projection, and App
+  focus route; replace mouse `TrailActivate` with bounded `TrailPreview`.
+- [x] **DCLICK-3 Adversarial contract reconciliation.** Preserve file click,
+  right-click, stale hit, rapid latest preview, wheel, keyboard, hidden-child
+  viewport, and 10,000-action invariants. Focused reducer/input run
+  `6d4c0671-b18b-481a-8ebc-8d8c19f4666c` passed 145/145.
+- [x] **DCLICK-4 Durable architecture/lesson/evidence record.** Update the
+  canonical Miller contract, HP11/12/14, Yazi transfer, skill error/golden/
+  edge lessons, current/handoff/state, and Codebase Memory ADR.
+- [ ] **DCLICK-5 Publication gates.** Fmt; related/broad/full Nextest; Linux and
+  Windows Clippy; maintenance/Bun/Chromium without blind PNG regeneration;
+  dependency/server/protocol/platform diff audit; fresh single-worker graph;
+  exact-path GREEN/docs commits; CyPack-only push and local/origin equality.
+  All automated gates, source GREEN commit, graph, ADR, and exact diff audits
+  are complete; only the exact docs commit and remote publication proof remain.
+- [ ] **DCLICK-6 User physical isolated E2E.** Click files/directories in root,
+  ancestor, current, and rightmost visible columns; require immediate filled
+  row focus, same-column Up/Down, Right-first-child, smooth rapid clicks, and
+  cleanup-first zero residue.
+
+Canonical evidence:
+`.codex/evidence/files-directory-click-focus-closure.md`.
+
 ## P0 ACTIVE — FFO Files Focus Ownership
 
 The user approved one Files region owner across the fixed Locations Rail and
@@ -103,7 +141,8 @@ Pinned Yazi architecture comparison:
     H1 and H3 were confirmed; the one-to-one route plus counters rejected H2.
 - [x] **FMN-2 RED cursor-only movement and explicit activation.**
   - [x] `TP-FMN-NAV-01..06`: Up/Down, `j/k`, Shift movement, explicit
-    Right/`l`/Enter/click, kind/edge/failure matrix.
+    Right/`l`/Enter, primary-click focus, and kind/edge/failure matrix. The
+    DCLICK override closes the later pointer-binding correction.
   - [x] `TP-FMN-WHEEL-01..03`: one decoded event = one owner-column step;
     directory rows never transfer focus; row/header/empty/detail/rail/outside
     geometry stays disjoint.
@@ -115,8 +154,9 @@ Pinned Yazi architecture comparison:
   - [x] Keep optional right-side directory preview asynchronous,
     bounded/latest, generation/source/column/path validated, and unable to
     steal active-column focus.
-  - [x] Keep explicit directory activation on Right/`l`, Enter, or primary
-    click and keep cold I/O off the input loop.
+  - [x] Keep explicit directory activation on Right/`l` or Enter; primary
+    click uses exact owner focus plus bounded preview under the later DCLICK
+    override. Keep cold I/O off the input loop.
 - [x] **FMN-4 Normalize physical wheel bursts only if FMN-1 still proves a
   separate defect after FMN-3.**
   - [x] `TP-FMN-WHEEL-04`: distinguish one high-resolution gesture from

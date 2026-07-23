@@ -1,6 +1,35 @@
 # NEXT SESSION TRIGGER — Herdr Files Interaction Polish
 
-Updated: 2026-07-22 CEST
+Updated: 2026-07-23 CEST
+
+## Current Override — DCLICK Directory Primary-Click Focus
+
+The user's 2026-07-23 physical report supersedes the older mouse-binding text
+below: primary click on a file or directory focuses the exact clicked row in
+its owning Miller column. Directory click may prepare/replace the resident
+right-side child through bounded `TrailPreview`, but it never transfers
+`active_col` into that child. Up/Down after the click remains in the clicked
+column. Right/`l`/Enter is the explicit hierarchy transition; Right highlights
+the child's first actionable row in the same dispatch. Enter remains explicit
+activation; click does not.
+
+Root cause was the plain-click call to
+`queue_file_manager_trail_directory_activation`, which converted pointer focus
+into `TrailActivate`. The replacement chain is
+`handle_file_manager_row_mouse -> focus_trail_row ->
+FmState::focus_trail_entry -> TrailSnapshots::focus_entry`, followed only by a
+stale-safe directory preview request. RED run
+`1fcd96df-30c4-4b39-b673-e7c43f178d37` failed 0/2 at `active_col 1 != 0`;
+GREEN run `3f217ee8-9a05-4490-90f4-b6f9d1e28903` passed 2/2; reducer/input
+invariant run `6d4c0671-b18b-481a-8ebc-8d8c19f4666c` passed 145/145. Read
+`.codex/evidence/files-directory-click-focus-closure.md`. RED commit is
+`da413d1d`; production is `b90a177d`. Post-commit 256/256 and full
+3,683/3,683 plus 6 intentional skips are green; both Clippy targets, Python
+68/68, Bun 5/5 + 12/12, Chromium 35/35 without snapshot regeneration, diff
+audits, graph 24,357/129,888, and the read-back FFO+DCLICK ADR are clean. Exact
+docs commit, CyPack push/equality, and user isolated E2E remain. Verify current
+Git rather than trusting historical SHA text below. Stable
+Herdr/socket/config and `.superpowers/` remain out of scope.
 
 ## Current Override — FMH Fully Gated Locally; Isolated E2E Next
 
@@ -21,7 +50,8 @@ falling through to file activation. The required interaction law is:
 2. Right/`l` moves/activates exactly one child only over a directory.
 3. Right/`l` over a file/non-entry/stale identity is model-, worker-, focus-,
    and render-inert.
-4. Enter/click retain explicit file/directory activation.
+4. Enter retains explicit activation; primary click focuses the exact owner row
+   and directory preview cannot acquire child focus.
 
 TDD evidence: behavioral RED `0ddfe67c-72fc-4f0f-baa5-715f83a1f1c6`, FMH
 3/3, cross-layer 10/10, broad FM 190/190, full 3,622/3,622 + 4 skip, both
@@ -39,9 +69,9 @@ FMN-1 through FMN-5 are closed and published:
    2 ms in identical-coordinate triplets/occasional sextuplets;
 2. one-to-one routing rejected duplicate Herdr dispatch; host micro-burst and
    old automatic branch amplification were confirmed;
-3. Up/Down/`j/k`/Shift/wheel move one exact owner-column cursor row;
-   Right/`l` owns directory traversal while Enter/click remain explicit
-   activation commands;
+3. Up/Down/`j/k`/Shift/wheel and primary click move/focus one exact owner-column
+   cursor row; Right/`l` owns directory traversal while Enter remains an
+   explicit activation command;
 4. directory cursor preview uses the bounded latest worker and rejects stale
    generation/source/owner/index/path/current-cursor results;
 5. wheel normalization coalesces only identical owner/direction/coordinates

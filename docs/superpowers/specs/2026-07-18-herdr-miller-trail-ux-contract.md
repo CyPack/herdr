@@ -1,4 +1,4 @@
-# Miller Trail UX Kontratı — KANONİK (kullanıcı direktifi, 2026-07-18)
+# Miller Trail UX Kontratı — KANONİK (kullanıcı direktifi, 2026-07-18; mouse-focus güncellemesi 2026-07-23)
 
 Kaynak: kullanıcının kendi referans implementasyonu **circet-miller**
 (`/home/ayaz/cc-dashboard-circet-data-platform/web/src/pages/sections/CircetMillerSection.tsx`,
@@ -11,11 +11,14 @@ kurulacak (custom-layout/FM programının çekirdeği).
 
 ```
 trail: [ {parent:null, selected:null} ]              // açılış: tek kolon (kök)
-klasöre tık (kolon i) →
-    trail = trail[0..=i] ; trail[i].selected = tıklanan
-    trail.push({parent: tıklanan, selected:null})     // yeni kolon SAĞA eklenir
-dosyaya tık (kolon i) →
-    trail = trail[0..=i] ; trail[i].selected = tıklanan
+klasöre primary tık (kolon i) →
+    activeCol = i ; cursor = exact(tıklanan)          // strong focus AYNI kolonda
+    child-preview(tıklanan) async hazırlanabilir      // child focus ALMAZ
+Right/l/Enter (cursor directory iken) →
+    trail = trail[0..=i] ; trail[i].selected = cursor
+    trail.push({parent: cursor, selected:first})      // yeni kolon SAĞA ve focus oraya
+dosyaya primary tık (kolon i) →
+    activeCol = i ; cursor = exact(tıklanan)
     detay/önizleme paneli açılır (sağda, resizable)   // kolon EKLENMEZ
 ```
 
@@ -23,16 +26,21 @@ dosyaya tık (kolon i) →
 - **"(unavailable)" placeholder kolonu ASLA render edilmez.** Yüklenmemiş ata = gösterilmez;
   gösterilen her şey canlıdır. (FIP-D3'ün nihai cevabı budur — lazy-load tartışması kapandı:
   trail zaten kökten indiği için her kolon tanım gereği yüklüdür.)
-- Ata kolonunda BAŞKA bir kardeşe tık → trail o noktadan kesilir ve yeniden dallanır
-  (`trail.slice(0, i+1)` deseni). Kullanıcı hiçbir zaman "geri" tuşuna mahkûm değildir.
+- Ata kolonunda BAŞKA bir kardeşe tık → strong focus tam o satıra ve o kolona geçer;
+  bounded preview eski sağ dalı hazırlanan kardeşle değiştirebilir fakat child focus alamaz.
+  Right/`l`/Enter bu hazırlanmış dala explicit geçiştir. Kullanıcı hiçbir zaman görünmez
+  bir focus değişimini geri almak için Left'e basmak zorunda kalmaz.
 - Seçili öğe her ata kolonunda vurgulu kalır (yol görsel olarak okunur: kova → werkmap → bölüm → dosya).
 
 ## YASA 2 — Odak ve kaydırma
 
-- En derin (aktif) kolon her derinleşmede **otomatik görünüre kaydırılır** (yatay scroll,
-  smooth); ata kolonları sola taşar ama CANLI kalır (referans: `colsRef.scrollTo(scrollWidth)`).
+- Explicit Right/`l`/Enter ile odaklanan child kolon **otomatik görünüre kaydırılır** (yatay
+  scroll, smooth). Primary click ise tıklanan owner kolonu görünür/aktif tutar; resident child
+  yalnız hazırlanmış veri olabilir. Ata kolonları sola taşsa da CANLI kalır.
 - Aktif kolon kavramı tek otoritedir (`activeCol`); klavye ve fare aynı seçimi paylaşır
   (FIP-5'te picker için kurduğumuz ilkeyle aynı).
+- Primary pointer intent = focus/select; hierarchy crossing = Right/`l`/Enter. Async preview,
+  resident depth veya painted branch marker kendi başına `activeCol` değiştiremez.
 
 ## YASA 3 — Dosya = detay + evrensel önizleme (sağ panel)
 
@@ -66,9 +74,11 @@ dosyaya tık (kolon i) →
   `read_directory_snapshot`/watcher altyapısını kullanır — her trail kolonu bir snapshot.
 - Bounded'lık korunur: derinlik sınırı (mevcut chain≤32) trail uzunluğu sınırı olarak kalır;
   görünür pencere yatay scroll'dur, "(unavailable)" değil.
-- Test noktaları (plan aşamasında zorunlu tablo): trail-truncate-rebranch; auto-scroll-right;
-  dosya-tık-kolon-eklemez; ata-kardeş-tık-yeniden-dallanır; unavailable-asla-render;
-  sidebar-favorite-trail-kurar; per-index-resize-persist; VIS-07+ Chromium baseline'ları.
+- Test noktaları (plan aşamasında zorunlu tablo): directory-primary-click-owner-focus;
+  click-sonrası-Up/Down-aynı-kolon; Right-first-child-highlight; async-preview-focus-çalmaz;
+  stale-click-inert; trail-truncate-rebranch; auto-scroll-right; dosya-tık-kolon-eklemez;
+  unavailable-asla-render; sidebar-favorite-trail-kurar; per-index-resize-persist;
+  VIS-07+ Chromium baseline'ları.
 
 *Bu kontrat B-zinciri (custom layout/FM programı) design spec'inin girdi yasasıdır; ona aykırı
 hiçbir Miller tasarımı onaylanamaz.*
