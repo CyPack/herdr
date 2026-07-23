@@ -24,12 +24,14 @@ column; only Right/`l`/Enter may move into a child.
 - [x] **DCLICK-4 Durable architecture/lesson/evidence record.** Update the
   canonical Miller contract, HP11/12/14, Yazi transfer, skill error/golden/
   edge lessons, current/handoff/state, and Codebase Memory ADR.
-- [ ] **DCLICK-5 Publication gates.** Fmt; related/broad/full Nextest; Linux and
+- [x] **DCLICK-5 Publication gates.** Fmt; related/broad/full Nextest; Linux and
   Windows Clippy; maintenance/Bun/Chromium without blind PNG regeneration;
-  dependency/server/protocol/platform diff audit; fresh single-worker graph;
-  exact-path GREEN/docs commits; CyPack-only push and local/origin equality.
-  All automated gates, source GREEN commit, graph, ADR, and exact diff audits
-  are complete; only the exact docs commit and remote publication proof remain.
+  dependency/server/protocol/platform diff audit; fresh graph resolving
+  `TrailSnapshots::focus_entry`; exact-path docs commit `f14c112e`; CyPack-only
+  push of `da413d1d`/`b90a177d`/`f14c112e` with local/`origin/feat/native-fm`
+  SHA equality proven. Post-docs gates: focused 8/8, broad file_manager 307/307,
+  full 3,683/3,683 + 6 skip, both Clippy targets, Python 68/68, Bun 5/5 + 12/12,
+  Chromium 35/35.
 - [ ] **DCLICK-6 User physical isolated E2E.** Click files/directories in root,
   ancestor, current, and rightmost visible columns; require immediate filled
   row focus, same-column Up/Down, Right-first-child, smooth rapid clicks, and

@@ -212,7 +212,11 @@ or a newer request wins, the old completion is inert.
 | Visual oracle | Playwright Chromium 35/35, 1 worker, 18.8 s; `updateSnapshots` never requested and no PNG regenerated | PASS |
 | Architecture/performance diff | `05b9ba70..b90a177d`: server/protocol/platform/Cargo boundary empty; no added `read_dir`, metadata I/O, spawn/channel/timer/cache primitive | PASS |
 | Post-edit graph/ADR | Full graph 24,357 nodes / 129,888 edges; exact three focus symbols resolved; six-section 5,697-character FFO+DCLICK ADR written and read back | PASS |
-| Exact commits and CyPack equality | To be filled after publication | PENDING |
+| Post-docs focused DCLICK | Nextest `b2a8c04a-ecf4-437d-9e0b-4f9c1ef61ad6`, 8/8 | PASS |
+| Post-docs broad file_manager | Nextest `d291a985-cb1c-4eb0-b59c-484a2d52ba37`, 307/307 | PASS |
+| Post-docs full Rust | Nextest `b1d1304a-4830-496f-b641-c9192d8ff008`, 3,683/3,683, 6 intentional skips, 34.899 s | PASS |
+| Post-docs fmt/clippy/maintenance/visual | `cargo fmt --check`; Linux all-target Clippy; Windows MSVC Herdr Clippy; Python 68/68; Bun 5/5 + 12/12; Playwright Chromium 35/35 without snapshot update | PASS |
+| Exact commits and CyPack equality | RED `da413d1d`; GREEN `b90a177d`; docs `f14c112e`; CyPack fast-forward `05b9ba70..f14c112e` with local/origin SHA equality proven; this commit records the post-push publication ledger and closes DCLICK-5 | PASS |
 | Isolated physical E2E | User-driven after publication | PENDING |
 
 ## Manual acceptance matrix

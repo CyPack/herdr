@@ -2,7 +2,7 @@
 
 Updated: 2026-07-23 CEST
 
-## 0. CURRENT OVERRIDE — DCLICK DOC COMMIT/PUSH, THEN USER E2E
+## 0. CURRENT OVERRIDE — DCLICK PUBLISHED; USER PHYSICAL E2E REMAINS
 
 The user's latest physical report supersedes the older mouse activation law:
 primary click on a live file or directory focuses the exact row in its owning
@@ -24,15 +24,27 @@ TDD evidence: RED `1fcd96df-30c4-4b39-b673-e7c43f178d37` 0/2 at
 contract audit `19492c0e-e982-4723-80a6-278edd3debbf` 141/144 with only three
 expected retired assertions; reducer/full input invariant
 `6d4c0671-b18b-481a-8ebc-8d8c19f4666c` 145/145. RED commit is `da413d1d`;
-production is `b90a177d`. Post-commit related surface is 256/256; full run
-`130f0c02-5a9e-4844-9667-9e72219d8a40` is 3,683/3,683 plus 6 intentional
+production is `b90a177d`; docs record is `f14c112e`. Post-docs focused DCLICK
+is 8/8; broad file_manager 307/307; full run
+`b1d1304a-4830-496f-b641-c9192d8ff008` is 3,683/3,683 plus 6 intentional
 skips. Fmt, Linux/Windows Clippy, Python 68/68, Bun 5/5 + 12/12, Chromium
 35/35 without snapshot regeneration, architecture/hot-path diff audit, and
-the 24,357-node / 129,888-edge graph plus six-section ADR are clean. Only the
-exact docs commit, CyPack push/equality proof, and physical E2E remain. Exact
-live Git and publication belong in
-`.codex/evidence/files-directory-click-focus-closure.md`. Never touch stable
-Herdr/socket/config, user sessions, or `.superpowers/`.
+graph resolution of `TrailSnapshots::focus_entry` are clean. CyPack
+`origin/feat/native-fm` published through `f14c112e` with local/origin SHA
+equality proven. Only physical E2E remains. Exact live Git and publication
+belong in `.codex/evidence/files-directory-click-focus-closure.md`. Never
+touch stable Herdr/socket/config, user sessions, or `.superpowers/`.
+
+After publication, give exactly this cleanup-first isolated launcher:
+
+~~~bash
+cd /home/ayaz/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run
+~~~
+
+Verify file and directory primary-click focus, same-column Up/Down, Right
+first-child highlight, Left parent restore, rapid click smoothness, and zero
+`/tmp/herdr-trail-manual-test` residue. Never launch the interactive TUI from
+the agent tool.
 
 ## 0. SONRAKI ADIM — FFO DOC-AWARE GATES/PUBLICATION, THEN USER E2E
 

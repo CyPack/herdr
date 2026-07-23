@@ -2,7 +2,7 @@
 
 Updated: 2026-07-23 CEST
 
-## Current Override — DCLICK Directory Primary-Click Focus
+## Current Override — DCLICK Published; User Physical E2E Remains
 
 The user's 2026-07-23 physical report supersedes the older mouse-binding text
 below: primary click on a file or directory focuses the exact clicked row in
@@ -23,13 +23,21 @@ stale-safe directory preview request. RED run
 GREEN run `3f217ee8-9a05-4490-90f4-b6f9d1e28903` passed 2/2; reducer/input
 invariant run `6d4c0671-b18b-481a-8ebc-8d8c19f4666c` passed 145/145. Read
 `.codex/evidence/files-directory-click-focus-closure.md`. RED commit is
-`da413d1d`; production is `b90a177d`. Post-commit 256/256 and full
-3,683/3,683 plus 6 intentional skips are green; both Clippy targets, Python
-68/68, Bun 5/5 + 12/12, Chromium 35/35 without snapshot regeneration, diff
-audits, graph 24,357/129,888, and the read-back FFO+DCLICK ADR are clean. Exact
-docs commit, CyPack push/equality, and user isolated E2E remain. Verify current
-Git rather than trusting historical SHA text below. Stable
-Herdr/socket/config and `.superpowers/` remain out of scope.
+`da413d1d`; production is `b90a177d`; docs record is `f14c112e`. Post-docs
+focused DCLICK 8/8, broad file_manager 307/307, and full
+`b1d1304a-4830-496f-b641-c9192d8ff008` 3,683/3,683 plus 6 intentional skips
+are green; both Clippy targets, Python 68/68, Bun 5/5 + 12/12, Chromium 35/35
+without snapshot regeneration, diff audits, and graph resolution of
+`TrailSnapshots::focus_entry` are clean. CyPack `origin/feat/native-fm`
+published through `f14c112e` with local/origin SHA equality proven. Only user
+isolated E2E remains. Verify current Git rather than trusting historical SHA
+text below. Stable Herdr/socket/config and `.superpowers/` remain out of scope.
+
+Run only:
+
+~~~bash
+cd /home/ayaz/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run
+~~~
 
 ## Current Override — FMH Fully Gated Locally; Isolated E2E Next
 

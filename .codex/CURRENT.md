@@ -1,7 +1,7 @@
 # Current State — 2026-07-23
 
-> **CURRENT OVERRIDE — DCLICK DIRECTORY PRIMARY-CLICK FOCUS AUTOMATED CLOSURE
-> COMPLETE; DOC COMMIT/PUSH THEN USER E2E (2026-07-23).** The user's physical report
+> **CURRENT OVERRIDE — DCLICK DIRECTORY PRIMARY-CLICK FOCUS PUBLISHED;
+> USER PHYSICAL E2E REMAINS (2026-07-23).** The user's physical report
 > supersedes the older FMN mouse-binding prose below. A primary click on any
 > live file/directory row now focuses that exact row in its owning Miller
 > column. Directory click queues bounded `TrailPreview` but never transfers
@@ -26,14 +26,15 @@
 > explicit click-enters-child expectations; after conversion, reducer plus the
 > complete input/invariant surface passed 145/145 in
 > `6d4c0671-b18b-481a-8ebc-8d8c19f4666c`. RED is commit `da413d1d`; production
-> is `b90a177d`. Post-commit related surface is 256/256; full Nextest run
-> `130f0c02-5a9e-4844-9667-9e72219d8a40` is 3,683/3,683 plus 6 intentional
+> is `b90a177d`; docs record is `f14c112e`. Post-docs focused DCLICK is 8/8;
+> broad file_manager 307/307; full Nextest
+> `b1d1304a-4830-496f-b641-c9192d8ff008` is 3,683/3,683 plus 6 intentional
 > skips. Fmt, Linux/Windows Clippy, Python 68/68, Bun 5/5 + 12/12, Chromium
 > 35/35 without snapshot regeneration, and the architecture diff are clean.
-> Fresh graph is 24,357 nodes / 129,888 edges and the six-section FFO+DCLICK
-> ADR was read back. Exact doc commit, CyPack equality, and user isolated E2E
-> status must be read from the final DCLICK evidence rather than inferred
-> here. Stable
+> Graph resolves `TrailSnapshots::focus_entry` at 24,357 nodes. CyPack
+> `origin/feat/native-fm` published through `f14c112e` with local/origin SHA
+> equality proven. Only user isolated E2E remains; read
+> `.codex/evidence/files-directory-click-focus-closure.md`. Stable
 > Herdr/socket/config and `.superpowers/` remain untouched.
 
 > **CURRENT OVERRIDE — FFO FILES FOCUS OWNERSHIP AUTOMATED CLOSURE COMPLETE;
