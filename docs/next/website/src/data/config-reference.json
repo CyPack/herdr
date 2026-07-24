@@ -540,6 +540,24 @@
           "type": "string",
           "default": "unset",
           "description": "Modifier combo for agent shortcuts 1-9. Unset by default."
+        },
+        {
+          "key": "keys.new_chat_tab",
+          "type": "keybinding",
+          "default": "unset",
+          "description": "Open a new chat tab in the home directory with the default chat agent. Unset by default."
+        },
+        {
+          "key": "keys.toggle_file_manager",
+          "type": "keybinding",
+          "default": "\"prefix+f\"",
+          "description": "Toggle the native file manager."
+        },
+        {
+          "key": "keys.agent_attachment_picker",
+          "type": "keybinding",
+          "default": "\"prefix+a\"",
+          "description": "Open the focused-agent attachment picker."
         }
       ]
     },
@@ -703,6 +721,48 @@
           "type": "color",
           "default": "\"cyan\"",
           "description": "Accent color for highlights, borders, and navigation UI. Accepts hex (#89b4fa), named colors (cyan, blue), or RGB (rgb(137,180,250))."
+        }
+      ]
+    },
+    {
+      "id": "projects",
+      "title": "Projects",
+      "keys": [
+        {
+          "key": "projects.pinned",
+          "type": "list of strings",
+          "default": "[]",
+          "description": "Absolute (or `~`-rooted) project directories pinned to the Projects tab. Blank and non-absolute entries are dropped from the usable set and reported as diagnostics instead of failing the config load."
+        },
+        {
+          "key": "projects.default_chat_agent",
+          "type": "string",
+          "default": "unset",
+          "description": "Agent CLI id used for new chats opened from the Projects tab. Unknown values fall back to claude at launch, so a stale entry cannot break the \"+\" button."
+        },
+        {
+          "key": "projects.actives_only",
+          "type": "boolean",
+          "default": "unset",
+          "description": "List only chats that are open as tabs in the Projects tab (the footer \"actives\" toggle). Defaults to on when absent."
+        }
+      ]
+    },
+    {
+      "id": "preview",
+      "title": "Preview",
+      "keys": [
+        {
+          "key": "preview.placement",
+          "type": "enum",
+          "default": "\"same-screen-half\"",
+          "description": "How the wired browser preview places itself when a chat tab gains focus. Only same-screen-half is implemented; the announced modes behave like the default at runtime.",
+          "values": [
+            "same-screen-half",
+            "other-monitor-shared-tabs",
+            "other-monitor-per-chat",
+            "custom-matrix"
+          ]
         }
       ]
     },

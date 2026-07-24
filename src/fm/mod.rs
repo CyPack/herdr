@@ -517,6 +517,24 @@ fn sort_entries(entries: &mut [FileEntry]) {
     });
 }
 
+/// Pin fixture mtimes so directory-row order is decided by the natsort name
+/// tie-break rather than filesystem clock granularity.
+///
+/// [`sort_entries`] orders rows by `modified` DESC before falling back to the
+/// name comparison, so fixtures written back-to-back only keep creation order
+/// when they happen to land in the same filesystem tick. Any test that asserts
+/// a row index, a row label, or a selection order must pin the mtimes first;
+/// otherwise it passes on a fast run and flips once the suite gets slower.
+#[cfg(test)]
+pub(crate) fn pin_equal_fixture_mtimes(paths: &[&Path]) {
+    let pinned = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+    for path in paths {
+        let file = std::fs::File::open(path).expect("open fixture for mtime");
+        file.set_times(std::fs::FileTimes::new().set_modified(pinned))
+            .expect("set fixture mtime");
+    }
+}
+
 fn read_parent_context_for(cwd: &Path, show_hidden: bool) -> Option<FmParent> {
     let parent_path = cwd.parent()?;
     let mut entries = read_dir_entries(parent_path, show_hidden);

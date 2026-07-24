@@ -1960,6 +1960,18 @@ mod tests {
             .attached_terminal_id
             .clone();
         app.terminals.get_mut(&terminal_id).unwrap().detected_agent = Some(Agent::Pi);
+        // A custom-named tab leads with its own label and pairs with the git
+        // branch of its terminal cwd, so the second token here is the branch
+        // rather than the workspace name. Seed the branch cache to produce the
+        // two-token row this test narrows.
+        let cwd = std::path::PathBuf::from("/proj/logs");
+        app.terminals.get_mut(&terminal_id).unwrap().cwd = cwd.clone();
+        app.tab_branch_cache.insert(
+            cwd,
+            crate::app::tab_branches::TabBranchEntry::test_with_branch(Some(
+                "very-long-branch-name",
+            )),
+        );
 
         let area = Rect::new(0, 0, 18, 20);
         let mut terminal = Terminal::new(TestBackend::new(18, 20)).unwrap();

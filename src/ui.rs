@@ -1641,6 +1641,7 @@ mod tests {
         std::fs::create_dir_all(&root).expect("create temp root");
         std::fs::write(root.join("a.txt"), b"a").expect("write a fixture");
         std::fs::write(root.join("b.txt"), b"b").expect("write b fixture");
+        crate::fm::pin_equal_fixture_mtimes(&[&root.join("a.txt"), &root.join("b.txt")]);
 
         let mut app = crate::app::state::AppState::test_new();
         app.workspaces = vec![Workspace::test_new("one")];

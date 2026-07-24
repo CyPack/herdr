@@ -1940,6 +1940,7 @@ mod tests {
         let second = td.root.join("second.txt");
         fs::write(&first, b"first").expect("write first selection fixture");
         fs::write(&second, b"second").expect("write second selection fixture");
+        crate::fm::pin_equal_fixture_mtimes(&[&first, &second]);
         let mut app = test_app();
         let mut file_manager = crate::fm::FmState::new(&td.root);
         let first_idx = file_manager
