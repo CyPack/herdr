@@ -1,6 +1,6 @@
 [package]
 name = "herdr"
-version = "0.7.3"
+version = "0.7.4"
 edition = "2021"
 build = "build.rs"
 description = "terminal workspace manager for AI coding agents"
@@ -58,6 +58,7 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Console",
+    "Win32_System_JobObjects",
     "Win32_System_Kernel",
     "Win32_System_Memory",
     "Win32_System_Ole",

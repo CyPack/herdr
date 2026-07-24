@@ -70,7 +70,10 @@ use self::mobile::{
 use self::navigator::render_navigator_overlay;
 pub(crate) use self::onboarding::onboarding_welcome_continue_rect;
 use self::onboarding::render_onboarding_overlay;
-use self::panes::{compute_pane_infos, render_panes, resize_tab_panes};
+pub(crate) use self::panes::popup_pane_rects;
+use self::panes::{
+    compute_pane_infos, render_panes, render_popup_pane, resize_popup_pane, resize_tab_panes,
+};
 pub(crate) use self::release_notes::{
     product_announcement_display_lines, release_notes_close_button_rect,
     release_notes_display_lines, release_notes_wrapped_line_count, PRODUCT_ANNOUNCEMENT_MODAL_SIZE,
@@ -107,14 +110,14 @@ pub(crate) use self::{
         SETTINGS_POPUP_WIDTH,
     },
     sidebar::{
-        agent_panel_body_rect, agent_panel_entries, agent_panel_scroll_metrics,
-        agent_panel_scrollbar_rect, agent_panel_toggle_rect, collapsed_sidebar_sections,
-        collapsed_sidebar_toggle_rect, compute_workspace_card_areas, expanded_sidebar_sections,
-        expanded_sidebar_toggle_rect, normalized_workspace_scroll, projects_scroll_metrics,
-        projects_scrollbar_rect, sidebar_section_divider_rect, workspace_drop_indicator_row,
-        workspace_list_entries, workspace_list_entries_expanded, workspace_list_rect,
-        workspace_list_scroll_metrics, workspace_list_scrollbar_rect, workspace_parent_group_state,
-        WorkspaceListEntry,
+        agent_entry_gap, agent_entry_height_in_body, agent_panel_body_rect, agent_panel_entries,
+        agent_panel_scroll_for_target, agent_panel_scroll_metrics, agent_panel_scrollbar_rect,
+        agent_panel_toggle_rect, collapsed_sidebar_sections, collapsed_sidebar_toggle_rect,
+        compute_workspace_card_areas, expanded_sidebar_sections, expanded_sidebar_toggle_rect,
+        normalized_workspace_scroll, projects_scroll_metrics, projects_scrollbar_rect,
+        sidebar_section_divider_rect, workspace_drop_indicator_row, workspace_list_entries,
+        workspace_list_entries_expanded, workspace_list_rect, workspace_list_scroll_metrics,
+        workspace_list_scrollbar_rect, workspace_parent_group_state, WorkspaceListEntry,
     },
 };
 pub(crate) use self::{
@@ -453,6 +456,7 @@ fn compute_view_internal(
     let agent_attachment_picker_row_areas = sync_agent_attachment_picker_view(app, terminal_area);
     if resize_panes {
         resize_background_tab_panes_for_desktop(app, terminal_runtimes, main_area, cell_size);
+        resize_popup_pane(app, terminal_runtimes, terminal_area, cell_size);
     }
 
     // Complete dock targets for this frame; the legacy default template
@@ -589,6 +593,7 @@ fn compute_mobile_view(
     let agent_attachment_picker_row_areas = sync_agent_attachment_picker_view(app, terminal_area);
     if resize_panes {
         resize_background_tab_panes_to_area(app, terminal_runtimes, terminal_area, cell_size);
+        resize_popup_pane(app, terminal_runtimes, terminal_area, cell_size);
     }
     let header_hits = compute_mobile_header_hit_areas(app, header_rect);
 
@@ -853,6 +858,7 @@ impl compose::Component for BaseLayer {
         // Ambient notifications sit above the center content, but below
         // interactive overlays.
         render_notifications(app, frame, terminal_area);
+        render_popup_pane(app, terminal_runtimes, frame, terminal_area);
     }
 }
 
@@ -3253,6 +3259,8 @@ mod tests {
                 command: "lazygit".to_string(),
                 action: crate::config::CustomCommandAction::Pane,
                 description: Some("open lazygit".to_string()),
+                width: None,
+                height: None,
             },
             crate::config::CustomCommandKeybind {
                 bindings: crate::config::ActionKeybinds::prefix("alt+h"),
@@ -3260,6 +3268,8 @@ mod tests {
                 command: "echo hello".to_string(),
                 action: crate::config::CustomCommandAction::Shell,
                 description: None,
+                width: None,
+                height: None,
             },
         ];
 

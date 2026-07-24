@@ -4766,6 +4766,12 @@ mod tests {
         let alpha_child = alpha.join("inner");
         fs::create_dir_all(&alpha_child).expect("fixture dir");
         fs::create_dir_all(&beta).expect("fixture dir");
+        // Rows sort by mtime DESC before the natsort name tie-break, and `beta`
+        // is created last. Whether its mtime lands in the same filesystem tick
+        // as `alpha` decides the row order, so an unpinned fixture flips under
+        // load. Pin both so this focus-rebinding test asserts focus, not clock
+        // granularity.
+        set_equal_modified(&td, &["alpha", "beta"]);
         let mut state = FmState::new(&td.root);
 
         let alpha_index = state

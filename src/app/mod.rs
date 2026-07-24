@@ -28,6 +28,7 @@ mod file_rename;
 mod ids;
 mod image_preview_worker;
 mod input;
+mod popup;
 mod preview;
 mod projects;
 mod runtime;
@@ -36,6 +37,7 @@ mod session;
 pub mod state;
 pub(crate) mod tab_branches;
 mod terminal_targets;
+mod terminal_titles;
 mod theme_sync;
 mod worktrees;
 
@@ -178,6 +180,7 @@ pub struct App {
     pub(crate) selection_highlight_clear_deadline: Option<Instant>,
     pub(crate) session_save_deadline: Option<Instant>,
     pub(crate) session_save_thread: Option<std::thread::JoinHandle<()>>,
+    pub(crate) detached_custom_command_children: Vec<std::process::Child>,
     pub(crate) persist_pane_history: bool,
     pub(crate) last_render_at: Option<Instant>,
     pub(crate) suppressed_repeat_keys:
@@ -573,7 +576,12 @@ impl App {
             state::Mode::Navigate
         };
 
+        #[cfg(not(test))]
         let agent_manifest_summaries = crate::detect::manifest::reload_manifests();
+        // Nextest runs each unit test in a fresh process. Manifest-sensitive tests reload
+        // explicitly; unrelated App tests should not recompile every bundled regex.
+        #[cfg(test)]
+        let agent_manifest_summaries = Vec::new();
         let theme_runtime = theme_runtime_config(config, true);
         let (theme_palette, theme_name) = resolve_effective_theme(&theme_runtime, None);
 
@@ -727,6 +735,8 @@ impl App {
             sidebar_collapsed_mode: config.ui.sidebar_collapsed_mode,
             sidebar_section_split,
             agent_panel_sort,
+            sidebar_agents: config.ui.sidebar.agents.clone(),
+            sidebar_spaces: config.ui.sidebar.spaces.clone(),
             next_agent_state_change_seq: 0,
             mouse_capture: config.ui.mouse_capture,
             copy_on_select: config.ui.copy_on_select,
@@ -776,11 +786,16 @@ impl App {
             integration_install_messages: Vec::new(),
             installed_plugins: load_plugin_registry(no_session),
             plugin_panes: std::collections::HashMap::new(),
+            pane_graphics_layers: std::collections::HashMap::new(),
+            pane_graphics_streams: std::collections::HashMap::new(),
+            pane_graphics_revision: 0,
+            popup_pane: None,
             plugin_command_logs: Vec::new(),
             next_plugin_command_log_id: 1,
             plugin_commands_in_flight: 0,
             global_menu: state::MenuListState::new(0),
             host_terminal_theme: crate::terminal_theme::TerminalTheme::default(),
+            host_cell_size: crate::kitty_graphics::HostCellSize::default(),
             session_dirty: false,
             terminal_runtime_shutdowns: Vec::new(),
         };
@@ -863,6 +878,7 @@ impl App {
             pending_agent_resume_deadline: None,
             session_save_deadline: None,
             session_save_thread: None,
+            detached_custom_command_children: Vec::new(),
             selection_autoscroll_deadline: None,
             selection_highlight_clear_deadline: None,
             persist_pane_history: config.experimental.pane_history,
@@ -1041,13 +1057,21 @@ impl App {
         let mut host_mouse_capture_active = self.state.mouse_capture;
 
         while !self.state.should_quit {
+            self.reap_finished_custom_commands();
             if self.render_dirty.load(Ordering::Acquire) {
+                needs_render = true;
+            }
+            let terminal_title_changed = self.sync_terminal_titles();
+            if terminal_title_changed && self.terminal_title_sidebar_configured() {
                 needs_render = true;
             }
 
             // Drain a bounded internal-event batch for responsiveness. API handlers
             // perform an exhaustive drain before reading pane/runtime state.
             if self.drain_internal_events() {
+                needs_render = true;
+            }
+            if self.expire_due_metadata(Instant::now()) {
                 needs_render = true;
             }
             if self.drain_api_requests() {
@@ -1180,7 +1204,14 @@ impl App {
                 terminal.draw(|frame| {
                     let area = frame.area();
                     if kitty_graphics_enabled {
-                        cell_size = crate::kitty_graphics::HostCellSize::from_terminal(area);
+                        let observed_cell_size =
+                            crate::kitty_graphics::HostCellSize::try_from_terminal(area);
+                        if let Some(observed_cell_size) = observed_cell_size {
+                            self.state.host_cell_size = observed_cell_size;
+                        }
+                        cell_size = observed_cell_size.unwrap_or_else(|| {
+                            crate::kitty_graphics::HostCellSize::fallback_for_area(area)
+                        });
                         crate::ui::compute_view_with_cell_size(
                             &mut self.state,
                             &self.terminal_runtimes,
@@ -1571,6 +1602,8 @@ impl App {
                 self.state.hide_tab_bar_when_single_tab = config.ui.hide_tab_bar_when_single_tab;
                 self.state.agent_panel_sort =
                     agent_panel_sort_from_config(config.ui.agent_panel_sort);
+                self.state.sidebar_agents = config.ui.sidebar.agents.clone();
+                self.state.sidebar_spaces = config.ui.sidebar.spaces.clone();
                 self.state.agent_panel_scroll = 0;
                 self.state.accent = crate::config::parse_color(&config.ui.accent);
                 if !self.state.local_sound_playback && self.state.sound != config.ui.sound {
@@ -1587,6 +1620,9 @@ impl App {
             crate::kitty_graphics::set_enabled(config.experimental.kitty_graphics);
             if was_kitty_graphics_enabled && !config.experimental.kitty_graphics {
                 let _ = crate::kitty_graphics::clear_all_host_graphics();
+                self.state.pane_graphics_layers.clear();
+                self.state.pane_graphics_streams.clear();
+                self.state.host_cell_size = crate::kitty_graphics::HostCellSize::default();
             }
             self.state.reveal_hidden_cursor_for_cjk_ime =
                 config.experimental.reveal_hidden_cursor_for_cjk_ime;
@@ -1730,7 +1766,8 @@ impl App {
                     let key_id = repeat_key_identity(&key);
                     match key.kind {
                         crossterm::event::KeyEventKind::Press => {
-                            if self.state.mode == Mode::Terminal {
+                            if self.state.popup_pane.is_some() || self.state.mode == Mode::Terminal
+                            {
                                 self.suppressed_repeat_keys.remove(&key_id);
                             } else {
                                 self.suppressed_repeat_keys.insert(key_id);
@@ -1738,7 +1775,8 @@ impl App {
                             self.handle_key_headless(key);
                         }
                         crossterm::event::KeyEventKind::Repeat => {
-                            if self.state.mode == Mode::Terminal
+                            if (self.state.popup_pane.is_some()
+                                || self.state.mode == Mode::Terminal)
                                 && !self.suppressed_repeat_keys.contains(&key_id)
                             {
                                 self.handle_key_headless(key);
@@ -1754,13 +1792,14 @@ impl App {
                 }
                 crate::raw_input::RawInputEvent::Mouse(mouse) => {
                     let is_move = matches!(mouse.kind, crossterm::event::MouseEventKind::Moved);
-                    let render_override = if self.state.mouse_capture {
-                        self.handle_mouse_event_headless(mouse)
-                    } else {
-                        self.state
-                            .handle_pane_mouse_only(&self.terminal_runtimes, mouse);
-                        None
-                    };
+                    let render_override =
+                        if self.state.popup_pane.is_some() || self.state.mouse_capture {
+                            self.handle_mouse_event_headless(mouse)
+                        } else {
+                            self.state
+                                .handle_pane_mouse_only(&self.terminal_runtimes, mouse);
+                            None
+                        };
                     // A hover move (no button held) only repaints chrome when a
                     // hover-sensitive overlay owns the pointer: a context menu
                     // or settings pane tracks its highlight. Inert file-manager,
@@ -1776,7 +1815,8 @@ impl App {
                 }
                 crate::raw_input::RawInputEvent::Paste(text) => {
                     render_needed = true;
-                    if self.state.mode != Mode::Terminal {
+                    if self.try_route_paste_to_popup(&text) {
+                    } else if self.state.mode != Mode::Terminal {
                         self.paste_into_active_text_input(&text);
                     } else if self.visible_terminal_owns_paste() {
                         if let Some(ws_idx) = self.state.active {
@@ -1787,17 +1827,7 @@ impl App {
                                         ws_idx,
                                         focused,
                                     ) {
-                                        let _ = runtime.try_send_bytes(bytes::Bytes::from(
-                                            if runtime
-                                                .input_state()
-                                                .map(|s| s.bracketed_paste)
-                                                .unwrap_or(false)
-                                            {
-                                                format!("\x1b[200~{text}\x1b[201~")
-                                            } else {
-                                                text
-                                            },
-                                        ));
+                                        let _ = runtime.try_send_paste(text);
                                     }
                                 }
                             }
@@ -1806,8 +1836,11 @@ impl App {
                 }
                 crate::raw_input::RawInputEvent::OuterFocusGained => {
                     render_needed = true;
+                    self.send_outer_focus_event(crate::ghostty::FocusEvent::Gained);
                 }
-                crate::raw_input::RawInputEvent::OuterFocusLost => {}
+                crate::raw_input::RawInputEvent::OuterFocusLost => {
+                    self.send_outer_focus_event(crate::ghostty::FocusEvent::Lost);
+                }
                 crate::raw_input::RawInputEvent::HostDefaultColor { kind, color } => {
                     if apply_host_terminal_theme {
                         self.update_host_terminal_theme(kind, color);
@@ -2903,6 +2936,61 @@ mod tests {
     }
 
     #[test]
+    fn reload_config_updates_sidebar_token_rows() {
+        let _guard = config_env_lock().lock().unwrap();
+        let path = temp_config_path("reload-config-sidebar-tokens");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+        let mut app = test_app();
+
+        std::fs::write(
+            &path,
+            "[ui.sidebar.agents]\nrows = [[\"state_icon\", \"$summary\"]]\nrow_gap = 1\n\n[ui.sidebar.agents.rows_by_agent]\nclaude = [[\"terminal_title_stripped\"]]\n\n[ui.sidebar.spaces]\nrows = [[\"workspace\", \"$jj_status\"]]\nrow_gap = 3\n",
+        )
+        .unwrap();
+        app.state.agent_panel_scroll = 5;
+        let report = app.reload_config();
+
+        assert_eq!(report.status, crate::config::ConfigReloadStatus::Applied);
+        assert_eq!(app.state.agent_panel_scroll, 0);
+        assert_eq!(
+            app.state.sidebar_agents.rows,
+            vec![vec![
+                crate::config::AgentSidebarToken::StateIcon,
+                crate::config::AgentSidebarToken::Custom("summary".into()),
+            ]]
+        );
+        assert_eq!(
+            app.state.sidebar_agents.rows_by_agent["claude"],
+            vec![vec![
+                crate::config::AgentSidebarToken::TerminalTitleStripped,
+            ]]
+        );
+        assert_eq!(app.state.sidebar_agents.row_gap, 1);
+        assert_eq!(
+            app.state.sidebar_spaces.rows,
+            vec![vec![
+                crate::config::SpaceSidebarToken::Workspace,
+                crate::config::SpaceSidebarToken::Custom("jj_status".into()),
+            ]]
+        );
+        assert_eq!(app.state.sidebar_spaces.row_gap, 3);
+
+        let previous_agents = app.state.sidebar_agents.clone();
+        std::fs::write(
+            &path,
+            "[ui.sidebar.agents]\nrows = [[\"agent\"]]\n\n[ui.sidebar.agents.rows_by_agent]\nclaude-code = [[\"terminal_title\"]]\n",
+        )
+        .unwrap();
+        let report = app.reload_config();
+        assert_eq!(report.status, crate::config::ConfigReloadStatus::Partial);
+        assert_eq!(app.state.sidebar_agents, previous_agents);
+
+        std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
     fn reload_config_updates_sidebar_collapsed_mode() {
         let _guard = config_env_lock().lock().unwrap();
         let path = temp_config_path("reload-config-sidebar-collapsed-mode");
@@ -3300,7 +3388,7 @@ mod tests {
             .config_diagnostic
             .as_deref()
             .is_some_and(|message| {
-                message.contains("config.toml:1:6") && message.contains("herdr config check")
+                message == "config.toml invalid; keeping current config; herdr config check"
             }));
         assert!(app.state.toast.is_none());
 
@@ -3409,6 +3497,118 @@ mod tests {
         assert!(handled);
         assert_eq!(app.state.outer_terminal_focus, Some(true));
         assert!(!app.full_redraw_pending);
+    }
+
+    #[tokio::test]
+    async fn monolithic_outer_focus_events_reach_reporting_pane() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("focus-reporting");
+        let pane_id = workspace.tabs[0].root_pane;
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                80,
+                24,
+                0,
+                b"\x1b[?1004h",
+                4,
+            );
+        workspace.insert_test_runtime(pane_id, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        assert!(
+            app.handle_raw_input_event(crate::raw_input::RawInputEvent::OuterFocusGained)
+                .await
+        );
+        assert_eq!(
+            input_rx
+                .recv()
+                .await
+                .expect("forwarded focus gained report"),
+            bytes::Bytes::from_static(b"\x1b[I")
+        );
+
+        assert!(
+            !app.handle_raw_input_event(crate::raw_input::RawInputEvent::OuterFocusLost)
+                .await
+        );
+        assert_eq!(
+            input_rx.recv().await.expect("forwarded focus lost report"),
+            bytes::Bytes::from_static(b"\x1b[O")
+        );
+    }
+
+    #[tokio::test]
+    async fn outer_focus_events_reconcile_pending_pane_focus() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("focus-transition");
+        let previous_pane = workspace.tabs[0].root_pane;
+        let next_pane = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        workspace.tabs[0].layout.focus_pane(previous_pane);
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                80,
+                24,
+                0,
+                b"\x1b[?1004h",
+                4,
+            );
+        workspace.insert_test_runtime(next_pane, runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.last_focus = Some((0, previous_pane));
+
+        assert!(app.state.focus_pane_in_workspace(0, next_pane));
+        assert!(
+            !app.handle_raw_input_event(crate::raw_input::RawInputEvent::OuterFocusLost)
+                .await
+        );
+        app.sync_focus_events();
+        assert_eq!(
+            input_rx.try_recv().unwrap(),
+            bytes::Bytes::from_static(b"\x1b[O")
+        );
+        assert!(input_rx.try_recv().is_err());
+
+        assert!(app.state.focus_pane_in_workspace(0, previous_pane));
+        app.sync_focus_events();
+        assert_eq!(
+            input_rx.try_recv().unwrap(),
+            bytes::Bytes::from_static(b"\x1b[O")
+        );
+
+        assert!(app.state.focus_pane_in_workspace(0, next_pane));
+        app.sync_focus_events();
+        assert_eq!(
+            input_rx.try_recv().unwrap(),
+            bytes::Bytes::from_static(b"\x1b[O")
+        );
+
+        assert!(
+            app.handle_raw_input_event(crate::raw_input::RawInputEvent::OuterFocusGained)
+                .await
+        );
+        assert_eq!(
+            input_rx.try_recv().unwrap(),
+            bytes::Bytes::from_static(b"\x1b[I")
+        );
+
+        assert!(app.state.focus_pane_in_workspace(0, previous_pane));
+        app.sync_focus_events();
+        assert_eq!(
+            input_rx.try_recv().unwrap(),
+            bytes::Bytes::from_static(b"\x1b[O")
+        );
+        assert!(app.state.focus_pane_in_workspace(0, next_pane));
+        app.sync_focus_events();
+        assert_eq!(
+            input_rx.try_recv().unwrap(),
+            bytes::Bytes::from_static(b"\x1b[I")
+        );
     }
 
     #[tokio::test]
@@ -5087,6 +5287,168 @@ last_pane = "prefix+tab"
                 .map(|create| create.branch.as_str()),
             Some("feature/linear-302")
         );
+    }
+
+    #[tokio::test]
+    async fn route_client_events_pastes_only_into_popup() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("tiled");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (tiled_runtime, mut tiled_rx) = TerminalRuntime::test_with_channel(80, 24);
+        workspace.tabs[0].runtimes.insert(focused, tiled_runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        let (popup_runtime, mut popup_rx) = TerminalRuntime::test_with_channel(40, 12);
+        app.install_test_popup_runtime(popup_runtime);
+        assert!(app
+            .state
+            .should_capture_host_mouse_from(&app.terminal_runtimes));
+
+        app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Paste("popup-only".into())],
+            true,
+        );
+
+        assert_eq!(
+            popup_rx.try_recv().unwrap(),
+            bytes::Bytes::from_static(b"popup-only")
+        );
+        assert!(tiled_rx.try_recv().is_err());
+
+        app.route_client_events(
+            vec![raw_key(
+                KeyCode::Char('x'),
+                KeyModifiers::NONE,
+                KeyEventKind::Press,
+            )],
+            true,
+        );
+        assert_eq!(
+            popup_rx.try_recv().unwrap(),
+            bytes::Bytes::from_static(b"x")
+        );
+        assert!(tiled_rx.try_recv().is_err());
+
+        app.state.mode = Mode::Settings;
+        assert!(
+            app.handle_raw_input_event(raw_key(
+                KeyCode::Char('y'),
+                KeyModifiers::NONE,
+                KeyEventKind::Repeat,
+            ))
+            .await
+        );
+        assert_eq!(
+            popup_rx.try_recv().unwrap(),
+            bytes::Bytes::from_static(b"y")
+        );
+        assert!(tiled_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn route_client_events_discards_paste_when_popup_runtime_is_missing() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("tiled");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (tiled_runtime, mut tiled_rx) = TerminalRuntime::test_with_channel(80, 24);
+        workspace.tabs[0].runtimes.insert(focused, tiled_runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        let install_missing_popup = |app: &mut App| {
+            let popup_terminal_id = crate::terminal::TerminalId::alloc();
+            app.state.terminals.insert(
+                popup_terminal_id.clone(),
+                crate::terminal::TerminalState::new(
+                    popup_terminal_id.clone(),
+                    std::path::PathBuf::from("/popup"),
+                ),
+            );
+            app.state.popup_pane = Some(state::PopupPaneState {
+                pane_id: crate::layout::PaneId::alloc(),
+                terminal_id: popup_terminal_id,
+                width: None,
+                height: None,
+            });
+        };
+        install_missing_popup(&mut app);
+
+        app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Paste("discard-me".into())],
+            true,
+        );
+
+        assert!(tiled_rx.try_recv().is_err());
+        assert!(app.state.popup_pane.is_none());
+
+        install_missing_popup(&mut app);
+        assert!(
+            app.handle_raw_input_event(crate::raw_input::RawInputEvent::Paste(
+                "discard-monolithic".into(),
+            ))
+            .await
+        );
+        assert!(tiled_rx.try_recv().is_err());
+        assert!(app.state.popup_pane.is_none());
+    }
+
+    #[tokio::test]
+    async fn route_client_events_routes_popup_mouse_when_global_capture_is_disabled() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("tiled");
+        let focused = workspace.focused_pane_id().unwrap();
+        let (tiled_runtime, mut tiled_rx) = TerminalRuntime::test_with_channel(80, 24);
+        tiled_runtime.test_process_pty_bytes(b"\x1b[?1000h\x1b[?1006h");
+        workspace.tabs[0].runtimes.insert(focused, tiled_runtime);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.mouse_capture = false;
+        app.state.view.terminal_area = ratatui::layout::Rect::new(0, 0, 80, 24);
+
+        let (popup_runtime, mut popup_rx) = TerminalRuntime::test_with_channel(40, 12);
+        popup_runtime.test_process_pty_bytes(b"\x1b[?1000h\x1b[?1006h");
+        app.install_test_popup_runtime(popup_runtime);
+        let (_, inner) =
+            crate::ui::popup_pane_rects(&app.state, app.state.view.terminal_area).unwrap();
+
+        app.route_client_events(
+            vec![crate::raw_input::RawInputEvent::Mouse(
+                crossterm::event::MouseEvent {
+                    kind: crossterm::event::MouseEventKind::Down(
+                        crossterm::event::MouseButton::Left,
+                    ),
+                    column: inner.x,
+                    row: inner.y,
+                    modifiers: crossterm::event::KeyModifiers::NONE,
+                },
+            )],
+            true,
+        );
+
+        assert!(popup_rx.try_recv().is_ok());
+        assert!(tiled_rx.try_recv().is_err());
+
+        assert!(
+            app.handle_raw_input_event(crate::raw_input::RawInputEvent::Mouse(
+                crossterm::event::MouseEvent {
+                    kind: crossterm::event::MouseEventKind::Down(
+                        crossterm::event::MouseButton::Left,
+                    ),
+                    column: inner.x + 1,
+                    row: inner.y,
+                    modifiers: crossterm::event::KeyModifiers::NONE,
+                },
+            ))
+            .await
+        );
+        assert!(popup_rx.try_recv().is_ok());
+        assert!(tiled_rx.try_recv().is_err());
     }
 
     #[test]

@@ -12,6 +12,7 @@ use crate::api::schema::{
     PluginPlatform, PluginSetEnabledParams, PluginSourceInfo, PluginSourceKind, PluginUnlinkParams,
     Request, ResponseResult, SplitDirection, SuccessResponse,
 };
+use crate::popup_size::PopupSize;
 
 const PLUGIN_BUILD_OUTPUT_MAX_BYTES: usize = 64 * 1024;
 
@@ -488,6 +489,8 @@ fn plugin_pane_open(args: &[String]) -> std::io::Result<i32> {
     let mut plugin_id = None;
     let mut entrypoint = None;
     let mut placement = None;
+    let mut width = None;
+    let mut height = None;
     let mut workspace_id = None;
     let mut target_pane_id = None;
     let mut direction = None;
@@ -518,6 +521,24 @@ fn plugin_pane_open(args: &[String]) -> std::io::Result<i32> {
                     return Ok(2);
                 };
                 placement = Some(parsed);
+            }
+            "--width" => {
+                let Some(value) = required_value(args, &mut index, "--width") else {
+                    return Ok(2);
+                };
+                let Some(parsed) = parse_popup_dimension(&value, "--width") else {
+                    return Ok(2);
+                };
+                width = Some(parsed);
+            }
+            "--height" => {
+                let Some(value) = required_value(args, &mut index, "--height") else {
+                    return Ok(2);
+                };
+                let Some(parsed) = parse_popup_dimension(&value, "--height") else {
+                    return Ok(2);
+                };
+                height = Some(parsed);
             }
             "--workspace" => {
                 let Some(value) = required_value(args, &mut index, "--workspace") else {
@@ -587,6 +608,8 @@ fn plugin_pane_open(args: &[String]) -> std::io::Result<i32> {
         plugin_id,
         entrypoint,
         placement,
+        width,
+        height,
         workspace_id,
         target_pane_id,
         direction,
@@ -594,6 +617,16 @@ fn plugin_pane_open(args: &[String]) -> std::io::Result<i32> {
         focus,
         env,
     }))
+}
+
+fn parse_popup_dimension(value: &str, flag: &str) -> Option<PopupSize> {
+    match PopupSize::parse_cli(value) {
+        Ok(value) => Some(value),
+        Err(message) => {
+            eprintln!("{flag} {message}");
+            None
+        }
+    }
 }
 
 fn plugin_pane_focus(args: &[String]) -> std::io::Result<i32> {
@@ -636,6 +669,7 @@ fn required_value(args: &[String], index: &mut usize, flag: &str) -> Option<Stri
 fn parse_pane_placement(value: &str) -> Option<PluginPanePlacement> {
     match value {
         "overlay" => Some(PluginPanePlacement::Overlay),
+        "popup" => Some(PluginPanePlacement::Popup),
         "split" => Some(PluginPanePlacement::Split),
         "tab" => Some(PluginPanePlacement::Tab),
         "zoomed" | "fullscreen" => Some(PluginPanePlacement::Zoomed),
@@ -1605,7 +1639,7 @@ fn print_plugin_action_help() {
 
 fn print_plugin_pane_help() {
     eprintln!("herdr plugin pane commands:");
-    eprintln!("  herdr plugin pane open --plugin ID --entrypoint ID [--placement overlay|split|tab|zoomed] [--workspace ID] [--target-pane PANE] [--direction right|down] [--cwd PATH] [--env KEY=VALUE] [--focus|--no-focus]");
+    eprintln!("  herdr plugin pane open --plugin ID --entrypoint ID [--placement overlay|popup|split|tab|zoomed] [--width SIZE] [--height SIZE] [--workspace ID] [--target-pane PANE] [--direction right|down] [--cwd PATH] [--env KEY=VALUE] [--focus|--no-focus]");
     eprintln!("  herdr plugin pane focus <pane_id>");
     eprintln!("  herdr plugin pane close <pane_id>");
 }

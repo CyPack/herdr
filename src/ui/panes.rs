@@ -2,7 +2,7 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
 
@@ -14,6 +14,7 @@ use super::widgets::panel_contrast_fg;
 use crate::app::state::{AgentAttachmentActionArea, AgentWorktreeActionArea, Palette};
 use crate::app::{AppState, Mode};
 use crate::layout::PaneInfo;
+use crate::popup_size::resolve_popup_geometry;
 use crate::terminal::{TerminalRuntime, TerminalRuntimeRegistry};
 
 pub(crate) fn pane_is_scrolled_back(rt: &TerminalRuntime) -> bool {
@@ -467,6 +468,67 @@ pub(super) fn render_panes(
     }
 
     render_pane_borders(app, ws, frame);
+}
+
+pub(crate) fn popup_pane_rects(app: &AppState, area: Rect) -> Option<(Rect, Rect)> {
+    let popup = app.popup_pane.as_ref()?;
+    resolve_popup_geometry(popup.width, popup.height, area)
+        .map(|geometry| (geometry.outer, geometry.inner))
+}
+
+pub(super) fn resize_popup_pane(
+    app: &AppState,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    area: Rect,
+    cell_size: crate::kitty_graphics::HostCellSize,
+) {
+    let Some(popup) = app.popup_pane.as_ref() else {
+        return;
+    };
+    let Some((_outer, inner)) = popup_pane_rects(app, area) else {
+        return;
+    };
+    if app.direct_attach_resize_locks.contains(&popup.terminal_id) {
+        return;
+    }
+    if let Some(rt) = terminal_runtimes.get(&popup.terminal_id) {
+        rt.resize(
+            inner.height,
+            inner.width,
+            cell_size.width_px,
+            cell_size.height_px,
+        );
+    }
+}
+
+pub(super) fn render_popup_pane(
+    app: &AppState,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    frame: &mut Frame,
+    area: Rect,
+) {
+    let Some(popup) = app.popup_pane.as_ref() else {
+        return;
+    };
+    let Some((outer, inner)) = popup_pane_rects(app, area) else {
+        return;
+    };
+    let Some(rt) = terminal_runtimes.get(&popup.terminal_id) else {
+        return;
+    };
+    let title = app
+        .terminals
+        .get(&popup.terminal_id)
+        .and_then(|terminal| terminal.manual_label.as_deref())
+        .unwrap_or("popup");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(app.palette.accent))
+        .title(pane_border_title(title, outer.width, true).unwrap_or_default())
+        .style(Style::default().bg(app.palette.panel_bg));
+    frame.render_widget(Clear, outer);
+    frame.render_widget(block, outer);
+    rt.render(frame, inner, !pane_is_scrolled_back(rt));
 }
 
 #[derive(Clone, Copy, Default)]

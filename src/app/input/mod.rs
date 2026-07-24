@@ -1,6 +1,8 @@
 //! Input handling — translates crossterm key/mouse events into state mutations.
 
+use bytes::Bytes;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use tracing::warn;
 
 use crate::app::PaneClickState;
 use crate::input::TerminalKey;
@@ -75,6 +77,10 @@ use super::App;
 
 impl App {
     pub(super) async fn handle_key(&mut self, key: TerminalKey) {
+        if self.state.popup_pane.is_some() {
+            self.handle_terminal_key(key).await;
+            return;
+        }
         let key_event = key.as_key_event();
         if modal_paste_target_active(&self.state) && is_modal_paste_shortcut(&key_event) {
             if let Some(text) = crate::platform::read_clipboard_text() {
@@ -256,6 +262,14 @@ impl App {
     }
 
     pub(super) async fn handle_paste(&mut self, text: String) {
+        if self.state.popup_pane.is_some() {
+            if let Some(runtime) = self.popup_runtime() {
+                let _ = runtime.send_paste(text).await;
+            } else {
+                self.close_popup_pane();
+            }
+            return;
+        }
         if self.state.mode != Mode::Terminal {
             self.paste_into_active_text_input(&text);
             return;
@@ -392,6 +406,10 @@ impl App {
     }
 
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent) {
+        if self.state.popup_pane.is_some() {
+            self.handle_popup_mouse(mouse);
+            return;
+        }
         if self.state.mode == Mode::Terminal {
             let action = self.state.view.agent_worktree_action_area.clone();
             if let Some(action) = action.filter(|action| {
@@ -678,6 +696,62 @@ impl App {
         let previous_toast = self.state.toast.clone();
         let _ = self.state.open_agent_attachment_picker();
         self.sync_toast_deadline(previous_toast);
+    }
+
+    fn handle_popup_mouse(&mut self, mouse: MouseEvent) {
+        let Some((_outer, inner)) =
+            crate::ui::popup_pane_rects(&self.state, self.state.view.terminal_area)
+        else {
+            return;
+        };
+        if mouse.column < inner.x
+            || mouse.column >= inner.x.saturating_add(inner.width)
+            || mouse.row < inner.y
+            || mouse.row >= inner.y.saturating_add(inner.height)
+        {
+            return;
+        }
+        let Some(rt) = self.popup_runtime() else {
+            self.close_popup_pane();
+            return;
+        };
+        let column = mouse.column.saturating_sub(inner.x);
+        let row = mouse.row.saturating_sub(inner.y);
+        let bytes = match mouse.kind {
+            MouseEventKind::ScrollUp
+            | MouseEventKind::ScrollDown
+            | MouseEventKind::ScrollLeft
+            | MouseEventKind::ScrollRight => match rt.wheel_routing() {
+                Some(crate::pane::WheelRouting::MouseReport) => {
+                    rt.encode_mouse_wheel(mouse.kind, column, row, mouse.modifiers)
+                }
+                Some(crate::pane::WheelRouting::AlternateScroll) => {
+                    rt.encode_alternate_scroll(mouse.kind)
+                }
+                Some(crate::pane::WheelRouting::HostScroll) | None => {
+                    let lines_per_notch = self.state.mouse_scroll_lines;
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => rt.scroll_up(lines_per_notch),
+                        MouseEventKind::ScrollDown => rt.scroll_down(lines_per_notch),
+                        _ => {}
+                    }
+                    return;
+                }
+            },
+            MouseEventKind::Down(_) | MouseEventKind::Up(_) | MouseEventKind::Drag(_) => {
+                rt.encode_mouse_button(mouse.kind, column, row, mouse.modifiers)
+            }
+            MouseEventKind::Moved => {
+                rt.encode_mouse_motion(mouse.kind, column, row, mouse.modifiers)
+            }
+        };
+        let Some(bytes) = bytes else {
+            return;
+        };
+        rt.scroll_reset();
+        if let Err(err) = rt.try_send_bytes(Bytes::from(bytes)) {
+            warn!(err = %err, kind = ?mouse.kind, "failed to forward popup mouse event");
+        }
     }
 
     fn handle_modified_url_click(&mut self, mouse: MouseEvent) -> bool {
