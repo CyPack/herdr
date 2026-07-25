@@ -334,16 +334,31 @@ impl TerminalRuntime {
         self.0.recent_text(lines)
     }
 
-    pub fn recent_ansi(&self, lines: usize) -> String {
-        self.0.recent_ansi(lines)
+    pub(crate) fn recent_text_snapshot(&self, lines: usize) -> crate::pane::TerminalReadSnapshot {
+        self.0.recent_text_snapshot(lines)
     }
 
+    pub(crate) fn recent_ansi_snapshot(&self, lines: usize) -> crate::pane::TerminalReadSnapshot {
+        self.0.recent_ansi_snapshot(lines)
+    }
+
+    #[cfg(test)]
     pub fn recent_unwrapped_text(&self, lines: usize) -> String {
-        self.0.recent_unwrapped_text(lines)
+        self.0.recent_unwrapped_text_snapshot(lines).text
     }
 
-    pub fn recent_unwrapped_ansi(&self, lines: usize) -> String {
-        self.0.recent_unwrapped_ansi(lines)
+    pub(crate) fn recent_unwrapped_text_snapshot(
+        &self,
+        lines: usize,
+    ) -> crate::pane::TerminalReadSnapshot {
+        self.0.recent_unwrapped_text_snapshot(lines)
+    }
+
+    pub(crate) fn recent_unwrapped_ansi_snapshot(
+        &self,
+        lines: usize,
+    ) -> crate::pane::TerminalReadSnapshot {
+        self.0.recent_unwrapped_ansi_snapshot(lines)
     }
 
     pub fn snapshot_history(&self) -> Option<String> {

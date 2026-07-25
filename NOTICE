@@ -1,0 +1,23 @@
+Herdr (CyPack fork)
+
+This distribution combines two bodies of work:
+
+1. Upstream Herdr, Copyright (c) Ogulcan Celik and the Herdr contributors.
+   Commits up to and including v0.7.5 were released under the GNU Affero
+   General Public License v3.0 or later. Commits from cd5ea1be onward are
+   released under the Apache License, Version 2.0; a copy of that license is
+   included as LICENSE-APACHE. Upstream source:
+   https://github.com/ogulcancelik/herdr
+
+2. Modifications and additions, Copyright (c) CyPack.
+
+The combined work is distributed under the terms in LICENSE
+(GNU Affero General Public License v3.0 or later). This is permitted because
+Apache-2.0 is one-way compatible with AGPL-3.0: Apache-licensed material may
+be incorporated into an AGPL-licensed work, and the Apache terms continue to
+apply to the upstream portions.
+
+Files in this repository have been modified relative to upstream. The Git
+history records every modification, its author, and its date.
+
+This NOTICE is a technical attribution record, not legal advice.

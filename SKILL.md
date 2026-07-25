@@ -180,7 +180,9 @@ Use the read source that matches the task:
 
 Use `--format ansi` when colors and terminal styling are evidence. Otherwise use text.
 
-Full-screen agents may use the terminal alternate screen. Rows that disappear from that screen do not enter Herdr's host scrollback, so `recent`, `recent-unwrapped`, and larger `--lines` values cannot recover them. Enlarge the pane, request concise output, use the agent's transcript controls, or scroll inside the agent and read `--source visible`.
+`--lines` asks Herdr for more rows from the pane's available screen and host scrollback. If increasing it does not reveal more of a completed response, the pane is probably running the agent on the terminal's alternate screen. Rows that leave the alternate screen do not enter Herdr's host scrollback, so a larger line count cannot recover them.
+
+After that failed read, ask the agent to write its complete response as Markdown in a temporary directory and reply only with the file path, then read the file directly. Use this only as a fallback; do not request file output in the initial prompt.
 
 ## Safety and coordination rules
 

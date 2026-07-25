@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "protocol": 17,
+  "protocol": 18,
   "schema_version": 1,
   "schemas": {
     "error_response": {
@@ -2085,7 +2085,8 @@
             "hermes",
             "qodercli",
             "cursor",
-            "mastracode"
+            "mastracode",
+            "grok"
           ],
           "type": "string"
         },
@@ -7004,7 +7005,8 @@
             "hermes",
             "qodercli",
             "cursor",
-            "mastracode"
+            "mastracode",
+            "grok"
           ],
           "type": "string"
         },

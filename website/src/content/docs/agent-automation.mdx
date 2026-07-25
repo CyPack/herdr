@@ -83,9 +83,11 @@ At the CLI, both `pane read` and `agent read` print terminal text directly. The 
 
 ## Known caveat: alternate-screen output
 
-Full-screen agents such as Claude Code and OpenCode may render in the terminal's alternate screen. Alternate-screen rows do not enter Herdr's host scrollback. If a response exceeds the visible pane, `recent` and `recent-unwrapped` cannot recover rows that the app no longer displays; increasing `--lines` does not make that history available. A larger font or smaller pane makes this more likely.
+Full-screen agents such as Claude Code and OpenCode may render in the terminal's alternate screen. Alternate-screen rows do not enter Herdr's host scrollback. `--lines` can only request more rows from the pane's available screen and host scrollback; it cannot create missing history. If increasing `--lines` returns no additional response text, the pane is probably using the alternate screen and those response rows are no longer retained. A larger font or smaller pane makes this more likely.
 
 Ask the agent for concise responses, enlarge the pane or use a smaller font, or use the agent's own transcript and scrolling controls. After scrolling inside the agent, use `--source visible` to read the page it currently renders.
+
+After that failed read, ask the agent to write its complete response as Markdown in a temporary directory and reply only with the file path, then read the file directly. Use this only as a fallback; do not request file output in the initial prompt.
 
 Successful `agent start`, `agent prompt`, and `agent wait` commands return the current agent at `.result.agent`. `pane wait-output` returns `.result.pane_id`, `.result.matched_line`, and the matched snapshot at `.result.read`.
 

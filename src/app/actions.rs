@@ -3039,7 +3039,7 @@ impl AppState {
                 seq,
                 ..
             } => {
-                if crate::agent_resume::is_reserved_native_state_source(&source, &agent_label) {
+                if crate::agent_resume::is_official_agent_source(&source, &agent_label) {
                     Vec::new()
                 } else {
                     self.update_terminal_state(pane_id, |terminal| {
@@ -3136,8 +3136,16 @@ impl AppState {
             previous_state: change.previous_state,
             previous_seen,
             previous_presentation: change.previous_presentation.clone(),
-            agent_label: change.agent_label.clone(),
-            known_agent: change.known_agent,
+            agent_label: if agent_released {
+                change.previous_agent_label.clone()
+            } else {
+                change.agent_label.clone()
+            },
+            known_agent: if agent_released {
+                change.previous_known_agent
+            } else {
+                change.known_agent
+            },
             state: change.state,
             seen,
             presentation: change.presentation.clone(),
@@ -3257,7 +3265,11 @@ impl AppState {
             return None;
         }
 
-        let agent_label = change.agent_label.clone()?;
+        let agent_label = change
+            .agent_label
+            .clone()
+            .or_else(|| change.previous_agent_label.clone())?;
+        let known_agent = change.known_agent.or(change.previous_known_agent);
         let kind = client_notification_kind.unwrap_or(match sound {
             Some(crate::sound::Sound::Request) => ToastKind::NeedsAttention,
             Some(crate::sound::Sound::Done) | None => ToastKind::Finished,
@@ -3270,7 +3282,7 @@ impl AppState {
                 pane_id,
                 workspace_id,
                 agent_label,
-                change.known_agent,
+                known_agent,
                 kind,
                 change.state,
             );
@@ -3282,7 +3294,7 @@ impl AppState {
                 pane_id,
                 workspace_id,
                 agent_label,
-                known_agent: change.known_agent,
+                known_agent,
                 kind,
                 state: change.state,
                 deadline: {
@@ -3317,7 +3329,10 @@ impl AppState {
         if terminal_state.state != expected_state {
             return None;
         }
-        if terminal_state.effective_agent_label() != Some(agent_label.as_str()) {
+        if terminal_state
+            .effective_agent_label()
+            .is_some_and(|current| current != agent_label)
+        {
             return None;
         }
 
@@ -5378,7 +5393,7 @@ mod tests {
     }
 
     #[test]
-    fn reserved_native_release_report_does_not_clear_screen_state() {
+    fn official_release_preserves_process_owned_agent_identity() {
         let mut state = app_with_workspaces(&["active"]);
         let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
         let terminal_id = state.workspaces[0]
@@ -5390,24 +5405,51 @@ mod tests {
 
         state.handle_app_event(AppEvent::StateChanged {
             pane_id,
-            agent: Some(Agent::Claude),
+            agent: Some(Agent::Pi),
             state: AgentState::Working,
             visible_blocker: false,
             visible_working: true,
             process_exited: false,
             observed_at: std::time::Instant::now(),
         });
-        state.handle_app_event(AppEvent::HookAgentReleased {
+        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
+            source: "herdr:pi".into(),
+            agent: "pi".into(),
+            session_ref: crate::agent_resume::AgentSessionRef::path(
+                std::env::current_dir()
+                    .unwrap()
+                    .join("release-session.jsonl")
+                    .display()
+                    .to_string(),
+            )
+            .unwrap(),
+        });
+        terminal.set_hook_authority(
+            "herdr:pi".into(),
+            "pi".into(),
+            AgentState::Working,
+            None,
+            Some(1),
+        );
+        terminal.set_agent_name("reviewer".into());
+        state.session_dirty = false;
+
+        let updates = state.handle_app_event(AppEvent::HookAgentReleased {
             pane_id,
-            source: "herdr:claude".into(),
-            agent_label: "claude".into(),
-            known_agent: Some(Agent::Claude),
-            seq: Some(1),
+            source: "herdr:pi".into(),
+            agent_label: "pi".into(),
+            known_agent: Some(Agent::Pi),
+            seq: Some(2),
         });
 
-        let terminal = state.terminals.get(&terminal_id).unwrap();
+        assert!(updates.is_empty());
+        let terminal = &state.terminals[&terminal_id];
         assert_eq!(terminal.state, AgentState::Working);
-        assert_eq!(terminal.detected_agent, Some(Agent::Claude));
+        assert_eq!(terminal.detected_agent, Some(Agent::Pi));
+        assert_eq!(terminal.agent_name.as_deref(), Some("reviewer"));
+        assert!(terminal.full_lifecycle_hook_authority_active());
+        assert!(!state.session_dirty);
     }
 
     #[test]
@@ -5481,7 +5523,7 @@ mod tests {
     }
 
     #[test]
-    fn releasing_an_agent_alias_marks_the_session_dirty() {
+    fn custom_release_clears_report_owned_agent() {
         let mut state = app_with_workspaces(&["active"]);
         let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
         let terminal_id = state.workspaces[0]
@@ -5489,21 +5531,29 @@ mod tests {
             .unwrap()
             .attached_terminal_id
             .clone();
-        let terminal = state.terminals.get_mut(&terminal_id).unwrap();
-        terminal.set_detected_state(Some(Agent::Pi), AgentState::Working);
-        terminal.set_agent_name("reviewer".into());
-        state.session_dirty = false;
+        state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_hook_authority(
+                "custom:agent".into(),
+                "custom-agent".into(),
+                AgentState::Working,
+                None,
+                Some(1),
+            );
 
         state.handle_app_event(AppEvent::HookAgentReleased {
             pane_id,
-            source: "herdr:pi".into(),
-            agent_label: "pi".into(),
-            known_agent: Some(Agent::Pi),
-            seq: Some(1),
+            source: "custom:agent".into(),
+            agent_label: "custom-agent".into(),
+            known_agent: None,
+            seq: Some(2),
         });
 
-        assert!(state.terminals[&terminal_id].agent_name.is_none());
-        assert!(state.session_dirty);
+        let terminal = &state.terminals[&terminal_id];
+        assert!(terminal.hook_authority.is_none());
+        assert_eq!(terminal.state, AgentState::Unknown);
     }
 
     #[test]

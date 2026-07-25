@@ -1529,7 +1529,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn agent_explain_reports_hook_only_full_lifecycle_authority() {
+    async fn agent_explain_rejects_hook_only_full_lifecycle_authority() {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
             &crate::config::Config::default(),
@@ -1567,17 +1567,7 @@ mod tests {
         });
         let response: serde_json::Value = serde_json::from_str(&response).unwrap();
 
-        assert_eq!(response["result"]["type"], "agent_explain");
-        assert_eq!(response["result"]["explain"]["agent"], "omp");
-        assert_eq!(response["result"]["explain"]["state"], "working");
-        assert_eq!(
-            response["result"]["explain"]["screen_detection_skip_reason"],
-            "full_lifecycle_hook_authority"
-        );
-        assert_eq!(
-            response["result"]["explain"]["matched_rule"],
-            serde_json::Value::Null
-        );
+        assert_eq!(response["error"]["code"], "agent_not_found");
     }
 
     #[tokio::test]
@@ -1941,7 +1931,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_detector_exit_does_not_release_a_newer_hook_owned_agent() {
+    fn process_exit_releases_a_newer_hook_owned_agent() {
         let event_hub = crate::api::EventHub::default();
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
@@ -1983,9 +1973,9 @@ mod tests {
         });
 
         let terminal = &app.state.terminals[&terminal_id];
-        assert_eq!(terminal.state, AgentState::Working);
-        assert_eq!(terminal.agent_name.as_deref(), Some("reviewer"));
-        assert!(!event_hub.events_after(0).iter().any(|(_, event)| matches!(
+        assert_eq!(terminal.state, AgentState::Idle);
+        assert!(terminal.agent_name.is_none());
+        assert!(event_hub.events_after(0).iter().any(|(_, event)| matches!(
             event.data,
             crate::api::schema::EventData::PaneAgentDetected { released: true, .. }
         )));

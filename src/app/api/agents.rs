@@ -117,7 +117,7 @@ impl App {
         else {
             return agent_not_found(id, &params.target);
         };
-        let text = crate::app::api_helpers::read_terminal_snapshot(
+        let snapshot = crate::app::api_helpers::read_terminal_snapshot(
             pane,
             params.source,
             params.format,
@@ -137,9 +137,9 @@ impl App {
                         .unwrap(),
                     source: params.source,
                     format: params.format,
-                    text,
+                    text: snapshot.text,
                     revision: 0,
-                    truncated: false,
+                    truncated: snapshot.truncated,
                 },
             },
         )

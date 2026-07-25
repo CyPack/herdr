@@ -1296,6 +1296,10 @@ mod tests {
             .expect("write first preview fixture");
         std::fs::write(td.root.join("beta.py"), "def beta():\n    pass\n")
             .expect("write second preview fixture");
+        // Rows sort by mtime DESC before the name tie-break, so an unpinned
+        // fixture can put beta.py first and make the FIRST worker request the
+        // one this test expects second.
+        crate::fm::pin_equal_fixture_mtimes(&[&td.root.join("alpha.rs"), &td.root.join("beta.py")]);
         let (first_started_tx, first_started_rx) = mpsc::channel();
         let (first_release_tx, first_release_rx) = mpsc::channel();
         let (second_started_tx, second_started_rx) = mpsc::channel();
