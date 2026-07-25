@@ -280,6 +280,15 @@ pub enum FmImagePreviewState {
         target: ImagePreviewTarget,
         error: ImagePreviewError,
     },
+    /// An image herdr has no decoder for, recognised by extension alone.
+    ///
+    /// Carries no target because the answer does not depend on one: no panel
+    /// size makes an `.svg` decodable. Kept distinct from `Unavailable` so the
+    /// file is never opened to discover what its name already said, and so the
+    /// limitation reads as a decision rather than a failure — the alternative
+    /// was falling through to the text reader, which produced an image icon
+    /// above the words "text preview source is binary".
+    Unsupported,
 }
 
 /// Read the immediate children of `dir` in strict mixed modification-time
@@ -577,6 +586,17 @@ fn prepare_preview(
                 state: FmImagePreviewState::Pending,
             }))
         }
+        // An image we cannot decode stays an image. Sending it to the text
+        // reader is what produced an image icon above a message about binary
+        // text; saying so directly is both honest and cheaper, since the
+        // extension already answered the question.
+        Some((path, false)) if crate::fm::entry_kind::path_looks_like_image(&path) => {
+            FmPreview::File(FmFilePreview::Image(FmImagePreview {
+                source_path: path,
+                generation,
+                state: FmImagePreviewState::Unsupported,
+            }))
+        }
         Some((path, false)) => match read_text_preview(&path, TextPreviewLimits::default()) {
             Ok(mut preview) => {
                 if let Some(previous) = previous_text.filter(|previous| {
@@ -602,6 +622,14 @@ fn prepare_deferred_file_preview(path: PathBuf, generation: u64) -> FmPreview {
             source_path: path,
             generation,
             state: FmImagePreviewState::Pending,
+        }))
+    } else if crate::fm::entry_kind::path_looks_like_image(&path) {
+        // Mirrors the immediate path above. The two must agree, or the same
+        // file describes itself differently depending on which one ran.
+        FmPreview::File(FmFilePreview::Image(FmImagePreview {
+            source_path: path,
+            generation,
+            state: FmImagePreviewState::Unsupported,
         }))
     } else {
         FmPreview::File(FmFilePreview::PendingText {

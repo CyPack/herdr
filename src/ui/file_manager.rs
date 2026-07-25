@@ -1012,6 +1012,11 @@ pub(super) fn render_image_preview_status(
                 image_preview_error_label(*error),
                 image_preview_error_style(*error, styles),
             )),
+            // Styled as a stated limit rather than an error: nothing went
+            // wrong, herdr simply has no decoder for this format.
+            FmImagePreviewState::Unsupported => {
+                Some(("(no preview for this image format)", styles.warning))
+            }
         }
     };
     let Some((label, style)) = label_and_style else {

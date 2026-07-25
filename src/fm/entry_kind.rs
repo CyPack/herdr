@@ -127,6 +127,17 @@ impl VisualClass {
     }
 }
 
+/// Does this path name an image, whether or not herdr can decode it?
+///
+/// Derived from the same classifier that picks the row icon, so the preview and
+/// the icon can never disagree about what a file *is*. Whether it can be
+/// *decoded* is a separate question, answered by `DECODABLE_IMAGE_FORMATS`.
+pub(crate) fn path_looks_like_image(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| visual_class(FileEntryKind::RegularFile, name) == VisualClass::Image)
+}
+
 /// Classify the visual class from the prepared kind and file name. Pure:
 /// no filesystem, config, process, or socket work (TP-FIP-ICON-11).
 pub fn visual_class(kind: FileEntryKind, name: &str) -> VisualClass {

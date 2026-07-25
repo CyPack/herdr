@@ -278,6 +278,13 @@ impl super::App {
             let FmPreview::File(FmFilePreview::Image(preview)) = &file_manager.preview else {
                 return None;
             };
+            // A format with no decoder is settled before any work starts, and
+            // must stay settled: handing it to the worker would read the file
+            // only to rediscover what its extension already said, and would
+            // then overwrite a stated limitation with a decode failure.
+            if matches!(preview.state, FmImagePreviewState::Unsupported) {
+                return None;
+            }
             let target = file_manager_image_target(
                 &self.state.view.file_manager_trail,
                 file_manager,
@@ -654,6 +661,58 @@ mod tests {
             );
             std::thread::yield_now();
         }
+    }
+
+    // An image format with no decoder settles without the file being opened.
+    //
+    // The state is decided from the extension, so the worker must leave it
+    // alone. If it did not, selecting a large SVG would read it from disk to
+    // learn what its name already said, and the stated limitation would be
+    // overwritten by a decode failure — the user would see an error where
+    // there is only a boundary.
+    //
+    // TP-FIP-FORMAT-05
+    #[test]
+    fn an_undecodable_image_format_never_reaches_the_decoder() {
+        let temp = TempDir::new("unsupported");
+        // Real SVG bytes: if anything did try to decode this, it would be a
+        // decode failure rather than a trivially-rejected empty file.
+        std::fs::write(
+            temp.root.join("diagram.svg"),
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"></svg>"#,
+        )
+        .expect("write SVG fixture");
+        let mut app = test_app();
+        let frame = Rect::new(0, 0, 115, 16);
+        app.image_preview_cell_size = HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        app.state
+            .try_open_file_manager_with(|_| Some(FmState::new(&temp.root)))
+            .expect("Files activation");
+        crate::ui::compute_view(&mut app.state, frame);
+
+        assert_eq!(
+            current_image_state(&app),
+            &FmImagePreviewState::Unsupported,
+            "an SVG is an image herdr has no decoder for, and says so"
+        );
+
+        // Several rounds, because a worker that was going to pick this up
+        // would do so within one and settle on Unavailable soon after.
+        for _ in 0..8 {
+            assert!(
+                !app.sync_image_preview_worker(),
+                "a settled unsupported format gives the frame nothing to redraw"
+            );
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            current_image_state(&app),
+            &FmImagePreviewState::Unsupported,
+            "the stated limitation must not decay into a decode failure"
+        );
     }
 
     #[test]
