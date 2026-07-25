@@ -3920,6 +3920,7 @@ impl HeadlessServer {
     fn handle_scheduled_tasks_headless(&mut self, now: Instant, geometry_dirty: bool) -> bool {
         let mut changed = false;
 
+        changed |= self.app.sync_file_manager_plugin_action();
         changed |= self.app.sync_file_manager_io_results();
         changed |= self.app.sync_file_manager_location_request();
         changed |= self.app.sync_file_preview_worker();
@@ -7759,12 +7760,11 @@ next_tab = ""
         // server-mode gap tracked as its own work item; naming them here keeps
         // them visible instead of letting them rot unnoticed the way the image
         // preview did.
-        const KNOWN_HEADLESS_GAPS: [&str; 7] = [
+        const KNOWN_HEADLESS_GAPS: [&str; 6] = [
             "sync_agent_attachment_delivery",
             "sync_agent_reference_picker",
             "sync_file_manager_agent_handoff",
             "sync_file_manager_agent_handoff_send",
-            "sync_file_manager_plugin_action",
             "sync_file_manager_watcher_at",
             "sync_file_operation_worker",
         ];
@@ -7837,6 +7837,165 @@ next_tab = ""
             "these gaps no longer exist in the monolithic loop either, so the \
              entry is stale: {vanished:?}"
         );
+    }
+
+    /// Install a one-action file plugin into a server's app and return its root.
+    #[cfg(unix)]
+    fn headless_link_file_action_plugin(server: &mut HeadlessServer, label: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "headless-{}-{}-{}",
+            label,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&root).expect("create plugin root");
+        fs::write(
+            root.join("herdr-plugin.toml"),
+            r#"
+id = "example.fm-headless"
+name = "FM Headless"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+
+[[actions]]
+id = "inspect"
+title = "Inspect"
+contexts = ["file"]
+command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
+"#,
+        )
+        .expect("write plugin manifest");
+
+        let linked = server.app.handle_api_request(crate::api::schema::Request {
+            id: "link".into(),
+            method: crate::api::schema::Method::PluginLink(crate::api::schema::PluginLinkParams {
+                path: root.display().to_string(),
+                enabled: true,
+                source: None,
+            }),
+        });
+        assert!(linked.contains("plugin_linked"), "expected link: {linked}");
+
+        root
+    }
+
+    // A file-manager plugin intent chosen from the context menu is consumed and
+    // executed by the headless scheduled loop, exactly as by the monolithic one.
+    //
+    // Without this the right-click menu is dead over a socket: the menu builds,
+    // the intent is prepared, and then nothing ever consumes it. The monolithic
+    // loop has driven this since the feature landed (TP-C6.3-AUTHORITY); the
+    // server loop never did.
+    //
+    // TP-FMR-PLUGIN-HL-01
+    #[cfg(unix)]
+    #[test]
+    fn headless_scheduler_runs_file_manager_plugin_intent_once() {
+        let mut server = test_headless_server();
+        let plugin_root = headless_link_file_action_plugin(&mut server, "plugin-intent");
+
+        let files_root = std::env::temp_dir().join(format!(
+            "headless-plugin-files-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&files_root).expect("create files root");
+        let selected = files_root.join("selected.txt");
+        fs::write(&selected, b"selected").expect("write selected file");
+
+        let mut file_manager = crate::fm::FmState::new(&files_root);
+        assert!(file_manager.replace_selection(0));
+        server
+            .app
+            .state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+        server.app.state.request_file_manager_context_action =
+            Some(crate::app::state::FileManagerContextActionIntent {
+                action: crate::app::state::FileManagerContextMenuAction::Plugin {
+                    plugin_id: "example.fm-headless".into(),
+                    action_id: "inspect".into(),
+                },
+                paths: vec![selected.clone()],
+            });
+
+        let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
+
+        assert!(
+            server
+                .app
+                .state
+                .request_file_manager_context_action
+                .is_none(),
+            "the headless scheduler must consume the typed plugin intent"
+        );
+        assert_eq!(
+            server.app.state.plugin_command_logs.len(),
+            1,
+            "the intent must reach the existing command runtime"
+        );
+        assert_eq!(
+            server.app.state.plugin_command_logs[0].action_id.as_deref(),
+            Some("inspect")
+        );
+
+        // A second round must not re-run it: the intent is one-shot.
+        let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
+        assert_eq!(
+            server.app.state.plugin_command_logs.len(),
+            1,
+            "a consumed intent cannot run twice"
+        );
+
+        let _ = fs::remove_dir_all(files_root);
+        let _ = fs::remove_dir_all(plugin_root);
+    }
+
+    // An intent whose file manager has since closed is consumed but not run.
+    //
+    // Closing retires the authority (TP-C6.3-LIFECYCLE). If the server loop
+    // consumed without revalidating, a menu choice prepared before close would
+    // execute after a same-directory reopen against paths that only look the
+    // same.
+    //
+    // TP-FMR-PLUGIN-HL-02
+    #[cfg(unix)]
+    #[test]
+    fn headless_scheduler_drops_plugin_intent_whose_files_surface_closed() {
+        let mut server = test_headless_server();
+        let plugin_root = headless_link_file_action_plugin(&mut server, "plugin-stale");
+
+        server.app.state.request_file_manager_context_action =
+            Some(crate::app::state::FileManagerContextActionIntent {
+                action: crate::app::state::FileManagerContextMenuAction::Plugin {
+                    plugin_id: "example.fm-headless".into(),
+                    action_id: "inspect".into(),
+                },
+                paths: vec![PathBuf::from("/herdr-test-missing-fm-root/selected.txt")],
+            });
+
+        let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
+
+        assert!(
+            server
+                .app
+                .state
+                .request_file_manager_context_action
+                .is_none(),
+            "a stale intent is still consumed, so it cannot linger and fire later"
+        );
+        assert!(
+            server.app.state.plugin_command_logs.is_empty(),
+            "an intent with no live Files authority must not execute"
+        );
+
+        let _ = fs::remove_dir_all(plugin_root);
     }
 
     #[test]

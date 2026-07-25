@@ -234,7 +234,12 @@ impl App {
         Ok((action, context, log))
     }
 
-    pub(in crate::app) fn sync_file_manager_plugin_action(&mut self) -> bool {
+    /// Consume one revalidated file-manager plugin intent.
+    ///
+    /// `pub(crate)` rather than `pub(in crate::app)`: the headless server
+    /// schedules this too, and without it the file manager's context menu is
+    /// inert in server mode.
+    pub(crate) fn sync_file_manager_plugin_action(&mut self) -> bool {
         let is_plugin = self
             .state
             .request_file_manager_context_action
