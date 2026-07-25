@@ -45,7 +45,17 @@ unicode-width = "0.2"
 schemars = { version = "1.2.1", features = ["derive"] }
 notify-debouncer-full = "0.7.0"
 syntect = { version = "5.3.0", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
-image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+# Decoders only, and every one of them is pure Rust. `bmp` and `ico` are
+# already inside the crate and cost nothing. `tiff` measured at five new crates
+# rather than the one it looked like — tiff, fax, half, crunchy and zerocopy —
+# all permissively licensed, none carrying an advisory that applies to the
+# versions resolved here. `avif` is deliberately absent: decoding it needs
+# libdav1d, a C system dependency, which would put a system library in the build
+# matrix for the least common format.
+#
+# The list is mirrored by `DECODABLE_IMAGE_FORMATS`, and a test decodes a real
+# sample of each so a feature dropped here cannot pass silently.
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico", "tiff"] }
 trash = { version = "5.2.6", default-features = false, features = ["coinit_multithreaded"] }
 
 [patch.crates-io]

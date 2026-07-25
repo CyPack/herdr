@@ -205,6 +205,45 @@ pub(crate) fn prepare_image_preview_bytes(
     decode_with_panic_boundary(|| decode_image(encoded, target, limits))
 }
 
+/// Every image format the preview can decode, with the extensions that name it.
+///
+/// One table because the question "which image formats do we handle" was
+/// answered independently in four places — the icon classifier, the preview
+/// router, the decoder's own guard, and the `image` feature list — and any two
+/// of them disagreeing produces a silent defect. A `.bmp` carried an image icon
+/// and then failed as *binary text*, because the classifier said image and the
+/// router did not.
+///
+/// The `image` features in `Cargo.toml` are the one part that cannot be derived
+/// from here, so `every_listed_format_actually_decodes` decodes a real sample of
+/// each entry: a format listed without its feature fails that test rather than
+/// reaching a user.
+pub(crate) const DECODABLE_IMAGE_FORMATS: &[(ImageFormat, &[&str])] = &[
+    (ImageFormat::Png, &["png"]),
+    (ImageFormat::Jpeg, &["jpg", "jpeg"]),
+    (ImageFormat::Gif, &["gif"]),
+    (ImageFormat::WebP, &["webp"]),
+    (ImageFormat::Bmp, &["bmp"]),
+    (ImageFormat::Ico, &["ico"]),
+    (ImageFormat::Tiff, &["tif", "tiff"]),
+];
+
+/// Can the preview decode the file this path names, judging by extension?
+///
+/// Extension only: this runs on the input path and must not read the file.
+/// Content is authoritative later, inside the decoder.
+pub(crate) fn is_decodable_image_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            DECODABLE_IMAGE_FORMATS.iter().any(|(_, extensions)| {
+                extensions
+                    .iter()
+                    .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+            })
+        })
+}
+
 fn decode_image(
     encoded: &[u8],
     target: ImagePreviewTarget,
@@ -216,10 +255,10 @@ fn decode_image(
     let format = reader
         .format()
         .ok_or(ImagePreviewError::UnsupportedFormat)?;
-    if !matches!(
-        format,
-        ImageFormat::Png | ImageFormat::Jpeg | ImageFormat::Gif | ImageFormat::WebP
-    ) {
+    if !DECODABLE_IMAGE_FORMATS
+        .iter()
+        .any(|(supported, _)| *supported == format)
+    {
         return Err(ImagePreviewError::UnsupportedFormat);
     }
 
@@ -461,6 +500,96 @@ mod tests {
             max_pixels: 32 * 32,
             max_decoded_bytes: 32 * 32 * 8,
             max_output_bytes: 32 * 32 * 4,
+        }
+    }
+
+    // Every format the table claims can actually be decoded.
+    //
+    // The `image` feature list in Cargo.toml is the one part of the format set
+    // that cannot be derived from the table, so it is the one that can drift
+    // out of sight. Claiming a format without its feature would otherwise ship:
+    // the router sends the file to the image path, the decoder rejects it, and
+    // the user gets an unexplained failure on a file we said we support.
+    //
+    // TP-FIP-FORMAT-01
+    #[test]
+    fn every_listed_format_actually_decodes() {
+        for (format, extensions) in DECODABLE_IMAGE_FORMATS {
+            assert!(
+                !extensions.is_empty(),
+                "{format:?} names no extension, so nothing would ever route to it"
+            );
+            let bytes = encoded(*format, 4, 3);
+            let decoded =
+                prepare_image_preview_bytes(&bytes, target(4, 3), limits_for(bytes.len()))
+                    .unwrap_or_else(|error| {
+                        panic!("{format:?} is listed as decodable but failed: {error:?}")
+                    });
+            assert_eq!((decoded.width, decoded.height), (4, 3), "{format:?}");
+        }
+    }
+
+    // Extension routing and decoder support answer the same question.
+    //
+    // The defect this replaces was exactly a mismatch between two lists, so the
+    // guard is the relation itself rather than a copy of the contents.
+    //
+    // TP-FIP-FORMAT-02
+    #[test]
+    fn every_listed_extension_routes_to_the_image_preview() {
+        for (format, extensions) in DECODABLE_IMAGE_FORMATS {
+            for extension in *extensions {
+                let lower = std::path::PathBuf::from(format!("sample.{extension}"));
+                assert!(
+                    is_decodable_image_path(&lower),
+                    "{format:?} lists .{extension} but the router would not send it here"
+                );
+                let upper =
+                    std::path::PathBuf::from(format!("sample.{}", extension.to_uppercase()));
+                assert!(
+                    is_decodable_image_path(&upper),
+                    "extension matching is case-insensitive, so .{} must route too",
+                    extension.to_uppercase()
+                );
+            }
+        }
+
+        // A format we deliberately do not decode must not route here, or it
+        // reaches the decoder only to be rejected.
+        for extension in ["svg", "avif", "txt", "rs"] {
+            let path = std::path::PathBuf::from(format!("sample.{extension}"));
+            assert!(
+                !is_decodable_image_path(&path),
+                ".{extension} is not decodable and must not route to the image preview"
+            );
+        }
+    }
+
+    // A corrupt file of a newly enabled type fails, and does not take the
+    // process with it.
+    //
+    // Every decoder added is new parsing surface reached from a directory
+    // listing, which is about as untrusted as input gets.
+    //
+    // TP-FIP-FORMAT-03
+    #[test]
+    fn corrupt_input_of_every_listed_format_fails_without_panicking() {
+        for (format, _) in DECODABLE_IMAGE_FORMATS {
+            let mut bytes = encoded(*format, 4, 3);
+            // Keep the magic bytes so the format is still recognised, then
+            // ruin the body: the interesting path is a decoder that accepts
+            // the file and then meets nonsense.
+            let head = bytes.len().min(8);
+            for byte in bytes.iter_mut().skip(head) {
+                *byte = byte.wrapping_add(0x5b);
+            }
+            let result = prepare_image_preview_bytes(&bytes, target(4, 3), limits_for(bytes.len()));
+            if let Ok(decoded) = result {
+                // Some formats survive a scrambled body and simply produce
+                // different pixels. That is fine; the requirement is bounded
+                // output, not failure.
+                assert_eq!((decoded.width, decoded.height), (4, 3), "{format:?}");
+            }
         }
     }
 

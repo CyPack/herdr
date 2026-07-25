@@ -47,6 +47,22 @@ Format and rules: [`README.md`](README.md).
 | TP-FIP-ICON-11 | Render consumes prepared entry data only: a path that vanished after the snapshot renders byte-identically to a live one. | Rendering touches the filesystem, so a deleted file makes the frame differ or stall. | `render_entry_row_performs_no_filesystem_io`, `visual_class` |
 | TP-FIP-ICON-13 | A hostile file name containing control characters renders as printable escapes and never shifts or clips row content. | A crafted filename rewrites the terminal around it — the classic escape-injection hole. | `control_characters_in_name_render_escaped_and_do_not_shift_rows`, `display_name`, `escape_control_chars`, `escape_control_chars_maps_every_control_to_printable` |
 
+## Image formats — one table, four consumers
+
+"Which image formats do we handle" used to be answered independently by the icon
+classifier, the preview router, the decoder's own guard, and the `image` feature
+list. Any two of them disagreeing produced a silent defect, and one did: a `.bmp`
+carried an image icon and then failed as *binary text*, because the classifier
+said image and the router did not. These rows exist so the four cannot drift
+apart again.
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-FIP-FORMAT-01 | Every format the table claims as decodable is decoded from a real sample at test time. | The `image` feature list is the one part that cannot be derived from the table, so a format claimed without its decoder ships: the router sends the file to the image path and the decoder rejects it, on a file we said we support. | `every_listed_format_actually_decodes` |
+| TP-FIP-FORMAT-02 | Extension routing derives from the same table as decoder support, case-insensitively, and formats we deliberately do not decode (`svg`, `avif`) do not route there. | The routing list and the decoder list diverge again — the original defect — or an undecodable format reaches the decoder only to be refused. | `every_listed_extension_routes_to_the_image_preview` |
+| TP-FIP-FORMAT-03 | A corrupt file of every listed format fails or produces bounded output, and never panics. | Each decoder added is new parsing surface reached straight from a directory listing, which is about as untrusted as input gets. | `corrupt_input_of_every_listed_format_fails_without_panicking` |
+| TP-FIP-FORMAT-04 | Every decodable extension is classified as an image, so the icon and the preview agree. | A file previews as a picture while showing a generic icon: the same defect mirrored. The reverse is allowed — `.svg` looks like an image and is not decodable. | `every_decodable_image_extension_carries_the_image_icon` |
+
 ## Agent reference — the path-bytes contract
 
 | ID | Behavior | Breaks if lost | Verified by |

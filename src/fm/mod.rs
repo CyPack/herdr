@@ -1861,14 +1861,12 @@ impl FmState {
     }
 }
 
+/// Route to the image preview only for formats the decoder can actually read.
+///
+/// Derived from the decoder's own table rather than repeating it: a second list
+/// is how a `.bmp` came to carry an image icon and then fail as binary text.
 fn is_image_preview_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            ["png", "jpg", "jpeg", "gif", "webp"]
-                .iter()
-                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
-        })
+    crate::fm::image_preview::is_decodable_image_path(path)
 }
 
 fn unique_entry_index(entries: &[FileEntry], entry_path: &Path) -> Option<usize> {

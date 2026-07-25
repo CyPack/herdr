@@ -306,6 +306,29 @@ mod tests {
         );
     }
 
+    // Anything the preview can decode carries the image icon.
+    //
+    // The two answers may legitimately differ in one direction — `.svg` looks
+    // like an image and is not decodable — but never in the other. A file that
+    // previews as a picture while showing a generic icon is the same defect
+    // that produced an image icon above the words "text preview source is
+    // binary", only mirrored.
+    //
+    // TP-FIP-FORMAT-04
+    #[test]
+    fn every_decodable_image_extension_carries_the_image_icon() {
+        let file = FileEntryKind::RegularFile;
+        for (format, extensions) in crate::fm::image_preview::DECODABLE_IMAGE_FORMATS {
+            for extension in *extensions {
+                assert_eq!(
+                    visual_class(file, &format!("sample.{extension}")),
+                    VisualClass::Image,
+                    "{format:?} decodes .{extension}, so the row must look like an image"
+                );
+            }
+        }
+    }
+
     // TP-FIP-ICON-06: extension matching is case-insensitive.
     #[test]
     fn visual_class_extension_match_is_case_insensitive() {
