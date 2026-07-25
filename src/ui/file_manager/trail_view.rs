@@ -800,6 +800,16 @@ fn render_trail_detail_panel(
                 lines.push(Line::from("(image preview)"));
             }
         }
+        crate::fm::trail_snapshots::TrailDetailPreview::PendingSheet => {
+            lines.push(Line::from(format!("kind: {:?}", detail.kind)));
+            lines.push(Line::from(""));
+            lines.push(Line::from("(loading preview...)"));
+        }
+        crate::fm::trail_snapshots::TrailDetailPreview::Sheet(preview) => {
+            for text in super::sheet_preview_lines(preview, panel.content_rect.width as usize) {
+                lines.push(Line::from(text));
+            }
+        }
         crate::fm::trail_snapshots::TrailDetailPreview::MetadataOnly(reason) => {
             lines.push(Line::from(format!("kind: {:?}", detail.kind)));
             lines.push(Line::from(""));

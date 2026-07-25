@@ -88,6 +88,37 @@ apart again.
 | TP-FIP-REF-17 | An explicit multi-selection disables the reference action: the intent carries multiple paths and opens nothing. | One path from a multi-selection is silently chosen and sent. | `multi_selection_disables_reference_action` |
 | TP-FIP-REF-18 | Spaces and punctuation survive prepare, revalidation and delivery byte-for-byte; the validator never rejects them. | Ordinary filenames with spaces cannot be referenced. | `spaces_and_punctuation_paths_preserved_byte_for_byte` |
 
+## Workbook preview — read natively, not deferred to a provider
+
+`xlsx` and its relatives used to sit in the same extension list as `docx`, and
+that list resolves through an *optional plugin provider*. No provider is ever
+supplied — `preview_capability` is called from exactly one place, with a
+hardcoded `PreviewProviderSet::default()` — so the branch that would use one is
+unreachable. Every workbook therefore rendered as `(metadata only)`, always,
+with no way to configure otherwise. These rows keep the native reader wired in.
+
+The reader deliberately does **not** evaluate formulas: it shows the value the
+writing application cached, which is what the user saw in Excel. An evaluator is
+a parser, an AST, a dependency graph, cycle detection and a function library —
+a separate product (`docs/patterns/document-rendering.md` DR12/DA9).
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-FSH-01 | Workbook extensions resolve to the native reader; document formats with no reader stay honest metadata. | The reported defect returns: every spreadsheet shows "(metadata only)" and no configuration can change it, because the provider branch is unreachable. | `workbooks_route_to_the_native_sheet_reader` |
+| TP-FSH-02 | The classifier routes exactly the extension set the reader accepts. | The two lists drift and a workbook is either routed to a reader that refuses it, or refused by a router the reader would have handled — the same defect FAZ A fixed for images. | `every_readable_workbook_extension_is_classified_as_a_sheet` |
+| TP-FSH-03 | Cell values, sheet names and numeric classification survive the read. | The preview shows a grid that does not match the file, which is worse than showing nothing. | `reads_cell_values_and_sheet_names` |
+| TP-FSH-04 | Every sheet name is read even though only the first is materialised. | Sheet switching has no input to work from, and the preview silently implies a multi-sheet workbook has one sheet. | `reads_every_sheet_name_while_materialising_only_the_first` |
+| TP-FSH-05 | A sheet larger than the window is truncated to it and still reports its real size. | `calamine` materialises a range densely, so a large sheet becomes an out-of-memory kill triggered by moving the cursor onto a file (DA8). | `large_sheet_is_windowed_and_reports_its_real_size` |
+| TP-FSH-06 | Damaged workbooks and files whose extension lies fail as typed errors, never panics. | A malformed download takes the process down from a directory listing — about as untrusted as input gets. | `damaged_and_misnamed_workbooks_fail_without_panicking` |
+| TP-FSH-07 | An empty sheet is a valid preview, not a failure. | A workbook that simply has nothing in it reads as a bug in herdr. | `empty_sheet_is_a_valid_preview` |
+| TP-FSH-08 | A formula cell shows the cached value, not the expression. | The panel shows `=B1*A1` where Excel showed `84`, which reads as a broken preview rather than a deliberate limit. | `formula_cells_show_the_cached_value_not_the_expression` |
+| TP-FSH-09 | Newlines and tabs inside a cell collapse to spaces. | One cell breaks its row into pieces and every column after it loses alignment. | `control_characters_in_a_cell_collapse_to_one_line` |
+| TP-FSH-10 | Columns are padded by display width, so alignment holds across double-width glyphs. | Columns line up for ASCII data and silently shear for everyone else — the group least likely to appear in a casual manual check. | `sheet_rows_align_columns_by_display_width`, `column_width_uses_display_width_and_is_capped` |
+| TP-FSH-11 | Selecting a workbook resolves end to end: pending sheet state, bounded worker, applied result, trail detail. | The layers each stay correct while the panel still shows the wrong thing — which is exactly how the original defect hid from unit tests. | `selecting_a_workbook_resolves_to_a_sheet_preview_end_to_end` |
+| TP-FSH-12 | A workbook result whose generation no longer matches is dropped, leaving pending state intact. | A slow read lands after the user moved on and overwrites the preview of a different file (DR7). | `a_stale_workbook_result_cannot_replace_the_current_preview` |
+| TP-FSH-13 | An oversized workbook is refused before the parser is handed anything. | The cheap outer gate disappears and the inner row/column ceilings become the only defence against a file that expands enormously. | `oversized_workbook_is_refused_before_parsing` |
+| TP-FSH-14 | The header names the active sheet and says how many others exist. | A multi-sheet workbook silently presents its first sheet as the whole file. | `sheet_header_names_the_active_sheet_and_counts_the_rest` |
+
 ## Visual snapshots
 
 | ID | Behavior | Breaks if lost | Verified by |

@@ -57,6 +57,7 @@ syntect = { version = "5.3.0", default-features = false, features = ["default-sy
 # sample of each so a feature dropped here cannot pass silently.
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico", "tiff"] }
 trash = { version = "5.2.6", default-features = false, features = ["coinit_multithreaded"] }
+calamine = "0.36.0"
 
 [patch.crates-io]
 portable-pty = { path = "vendor/portable-pty" }
@@ -79,3 +80,6 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[dev-dependencies]
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }

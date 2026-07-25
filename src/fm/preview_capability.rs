@@ -45,6 +45,12 @@ impl PreviewReason {
 pub(crate) enum PreviewCapability {
     NativeText,
     NativeImage,
+    /// A workbook herdr reads itself.
+    ///
+    /// Separate from the document group beside it because the answer differs in
+    /// kind, not degree: a spreadsheet resolves to a grid herdr can draw, while
+    /// `.docx` and friends still have no reader and remain metadata.
+    NativeSheet,
     MetadataOnly {
         reason: PreviewReason,
     },
@@ -109,6 +115,9 @@ pub(crate) fn preview_capability(
     if super::is_image_preview_path(path) {
         return PreviewCapability::NativeImage;
     }
+    if super::sheet_preview::is_readable_sheet_path(path) {
+        return PreviewCapability::NativeSheet;
+    }
 
     let name = path
         .file_name()
@@ -123,11 +132,13 @@ pub(crate) fn preview_capability(
     if matches_extension(extension.as_deref(), &["md", "markdown", "mdown"]) {
         return plugin_or_fallback(providers.markdown.as_ref(), PreviewFallback::NativeText);
     }
+    // Workbooks are gone from this list: they are read natively above. What
+    // remains is the set herdr genuinely cannot open yet, so the metadata
+    // fallback below states a real limitation instead of hiding a missing
+    // reader behind a provider that is never supplied.
     if matches_extension(
         extension.as_deref(),
-        &[
-            "pdf", "doc", "docx", "odt", "rtf", "xls", "xlsx", "ods", "ppt", "pptx", "odp",
-        ],
+        &["pdf", "doc", "docx", "odt", "rtf", "ppt", "pptx", "odp"],
     ) {
         return plugin_or_fallback(
             providers.documents.as_ref(),
@@ -312,6 +323,58 @@ mod tests {
                 preview_capability(Path::new(path), kind, &providers),
                 expected,
                 "capability mismatch for {path}"
+            );
+        }
+    }
+
+    /// TP-FSH-01: a workbook routes to the native reader, not to the document
+    /// group's metadata fallback.
+    ///
+    /// This is the exact origin of the reported defect. `xlsx` sat in the same
+    /// list as `docx`, that list is gated on a `documents` provider, and no
+    /// provider is ever supplied — so selecting a spreadsheet produced
+    /// "(metadata only)" and nothing else, for every workbook, always.
+    #[test]
+    fn workbooks_route_to_the_native_sheet_reader() {
+        let providers = PreviewProviderSet::default();
+        for name in [
+            "budget.xlsx",
+            "macros.xlsm",
+            "legacy.xls",
+            "binary.xlsb",
+            "open.ods",
+            "SHOUTING.XLSX",
+        ] {
+            assert_eq!(
+                preview_capability(Path::new(name), FileEntryKind::RegularFile, &providers),
+                PreviewCapability::NativeSheet,
+                "{name} must reach the native workbook reader"
+            );
+        }
+
+        for name in ["report.docx", "slides.pptx", "letter.odt", "notes.rtf"] {
+            assert_eq!(
+                preview_capability(Path::new(name), FileEntryKind::RegularFile, &providers),
+                PreviewCapability::MetadataOnly {
+                    reason: PreviewReason::DocumentMetadata,
+                },
+                "{name} has no reader, so it must stay honest metadata"
+            );
+        }
+    }
+
+    /// TP-FSH-02: the classifier and the reader must name the same set of extensions.
+    /// Disagreement is how a file gets a spreadsheet icon and then fails as
+    /// binary text — the defect FAZ A had to fix for images.
+    #[test]
+    fn every_readable_workbook_extension_is_classified_as_a_sheet() {
+        let providers = PreviewProviderSet::default();
+        for extension in crate::fm::sheet_preview::READABLE_SHEET_EXTENSIONS {
+            let path = format!("book.{extension}");
+            assert_eq!(
+                preview_capability(Path::new(&path), FileEntryKind::RegularFile, &providers),
+                PreviewCapability::NativeSheet,
+                "the reader accepts .{extension}, so the classifier must route it"
             );
         }
     }

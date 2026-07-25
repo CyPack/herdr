@@ -198,7 +198,10 @@ mod tests {
                     | crate::fm::FmPreview::File(
                         crate::fm::FmFilePreview::Text(_)
                         | crate::fm::FmFilePreview::Image(_)
-                        | crate::fm::FmFilePreview::Unavailable(_),
+                        | crate::fm::FmFilePreview::PendingSheet { .. }
+                        | crate::fm::FmFilePreview::Sheet(_)
+                        | crate::fm::FmFilePreview::Unavailable(_)
+                        | crate::fm::FmFilePreview::SheetUnavailable(_),
                     ) => None,
                 });
         let Some((source_path, generation)) = pending else {

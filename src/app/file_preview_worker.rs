@@ -5,7 +5,9 @@ use std::thread::JoinHandle;
 use sha2::{Digest, Sha256};
 use tokio::sync::Notify;
 
-use crate::fm::{highlight_text_preview, TextPreview, TextPreviewError};
+use crate::fm::{
+    highlight_text_preview, FilePreviewFailure, PreparedFilePreview, TextPreview, TextPreviewError,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FilePreviewKey {
@@ -139,7 +141,7 @@ struct FilePreviewRequest {
 struct FilePreviewResult {
     generation: u64,
     key: FilePreviewKey,
-    prepared: Result<TextPreview, TextPreviewError>,
+    prepared: Result<PreparedFilePreview, FilePreviewFailure>,
 }
 
 #[derive(Debug, Default)]
@@ -197,7 +199,9 @@ impl FilePreviewWorker {
 
     fn with_preview_processor<F>(wake: Arc<Notify>, processor: F) -> Self
     where
-        F: Fn(&Path, FilePreviewSource) -> Result<TextPreview, TextPreviewError> + Send + 'static,
+        F: Fn(&Path, FilePreviewSource) -> Result<PreparedFilePreview, FilePreviewFailure>
+            + Send
+            + 'static,
     {
         let shared = Arc::new((
             Mutex::new(FilePreviewWorkerState::default()),
@@ -242,11 +246,12 @@ impl FilePreviewWorker {
     {
         Self::with_preview_processor(wake, move |path, source| {
             let mut preview = match source {
-                FilePreviewSource::Pending => crate::fm::prepare_default_text_preview(path)?,
+                FilePreviewSource::Pending => crate::fm::prepare_default_text_preview(path)
+                    .map_err(FilePreviewFailure::Text)?,
                 FilePreviewSource::Prepared(preview) => preview,
             };
             preview.highlighted = Some(processor(path, &preview));
-            Ok(preview)
+            Ok(PreparedFilePreview::Text(preview))
         })
     }
 
@@ -357,13 +362,27 @@ fn take_next_request(shared: &SharedWorkerState) -> Option<FilePreviewRequest> {
 fn process_preview(
     path: &Path,
     source: FilePreviewSource,
-) -> Result<TextPreview, TextPreviewError> {
-    let mut preview = match source {
-        FilePreviewSource::Pending => crate::fm::prepare_default_text_preview(path)?,
+) -> Result<PreparedFilePreview, FilePreviewFailure> {
+    let preview = match source {
+        // The reader is chosen here, from the path, so the worker owns the
+        // decision in one place. The state that queued this request already
+        // made the same call when it installed `PendingSheet` or
+        // `PendingText`, and both consult the same extension table — a
+        // workbook cannot be handed to the text reader and rediscovered as
+        // binary.
+        FilePreviewSource::Pending => {
+            if crate::fm::sheet_preview::is_readable_sheet_path(path) {
+                return crate::fm::prepare_default_sheet_preview(path)
+                    .map(PreparedFilePreview::Sheet)
+                    .map_err(FilePreviewFailure::Sheet);
+            }
+            crate::fm::prepare_default_text_preview(path).map_err(FilePreviewFailure::Text)?
+        }
         FilePreviewSource::Prepared(preview) => preview,
     };
+    let mut preview = preview;
     preview.highlighted = Some(highlight_text_preview(path, &preview));
-    Ok(preview)
+    Ok(PreparedFilePreview::Text(preview))
 }
 
 fn lock_state(state: &Mutex<FilePreviewWorkerState>) -> MutexGuard<'_, FilePreviewWorkerState> {
@@ -388,10 +407,20 @@ impl super::App {
             self.state.file_manager.as_ref().and_then(|file_manager| {
                 let selected_path = file_manager.selected()?.path.clone();
                 match &file_manager.preview {
-                    crate::fm::FmPreview::File(crate::fm::FmFilePreview::PendingText {
-                        source_path,
-                        generation,
-                    }) if source_path == &selected_path
+                    // Both pending tracks submit the same request. The worker
+                    // picks the reader from the path, so a workbook and a text
+                    // file differ in what comes back, not in how it is queued —
+                    // which keeps one bounded slot as the only scheduler.
+                    crate::fm::FmPreview::File(
+                        crate::fm::FmFilePreview::PendingText {
+                            source_path,
+                            generation,
+                        }
+                        | crate::fm::FmFilePreview::PendingSheet {
+                            source_path,
+                            generation,
+                        },
+                    ) if source_path == &selected_path
                         && *generation == file_manager.preview_generation =>
                     {
                         Some(FilePreviewTarget::pending(
@@ -427,28 +456,42 @@ impl super::App {
             tracing::warn!("fm: text preview worker stopped; pending preview is unavailable");
         }
         if drained.disconnected {
+            // A dead worker leaves either track stuck on "loading" forever, so
+            // both are resolved to an explicit failure.
             let pending = self.state.file_manager.as_ref().and_then(|file_manager| {
                 match &file_manager.preview {
                     crate::fm::FmPreview::File(crate::fm::FmFilePreview::PendingText {
                         source_path,
                         generation,
-                    }) => Some((source_path.clone(), *generation)),
+                    }) => Some((
+                        source_path.clone(),
+                        *generation,
+                        crate::fm::FilePreviewFailure::Text(TextPreviewError::Io(
+                            std::io::ErrorKind::BrokenPipe,
+                        )),
+                    )),
+                    crate::fm::FmPreview::File(crate::fm::FmFilePreview::PendingSheet {
+                        source_path,
+                        generation,
+                    }) => Some((
+                        source_path.clone(),
+                        *generation,
+                        crate::fm::FilePreviewFailure::Sheet(crate::fm::SheetPreviewError::Io(
+                            std::io::ErrorKind::BrokenPipe,
+                        )),
+                    )),
                     crate::fm::FmPreview::None
                     | crate::fm::FmPreview::Directory(_)
                     | crate::fm::FmPreview::File(_) => None,
                 }
             });
-            if let Some((path, generation)) = pending {
+            if let Some((path, generation, failure)) = pending {
                 changed |= self
                     .state
                     .file_manager
                     .as_mut()
                     .is_some_and(|file_manager| {
-                        file_manager.apply_prepared_text_preview(
-                            &path,
-                            generation,
-                            Err(TextPreviewError::Io(std::io::ErrorKind::BrokenPipe)),
-                        )
+                        file_manager.apply_prepared_file_preview(&path, generation, Err(failure))
                     });
             }
         }
@@ -462,13 +505,15 @@ impl super::App {
             return changed;
         };
         if result.key.is_pending() {
-            return file_manager.apply_prepared_text_preview(
+            return file_manager.apply_prepared_file_preview(
                 &result.key.path,
                 result.key.preview_generation,
                 result.prepared,
             ) || changed;
         }
-        let Ok(prepared) = result.prepared else {
+        // The second pass exists only to attach syntax highlighting, which is a
+        // text-only stage: a workbook is complete when its first pass lands.
+        let Ok(PreparedFilePreview::Text(prepared)) = result.prepared else {
             return changed;
         };
         let crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(preview)) =
@@ -567,6 +612,23 @@ mod tests {
             syntax_name: None,
             truncated_bytes: false,
             truncated_lines: false,
+        }
+    }
+
+    /// Unwrap the text payload these tests are about.
+    ///
+    /// The worker carries two kinds of result; every test in this module drives
+    /// the text path, so a workbook arriving here means the reader was chosen
+    /// wrongly and the test should say that rather than fail somewhere later.
+    fn expect_text(prepared: PreparedFilePreview) -> TextPreview {
+        match prepared {
+            PreparedFilePreview::Text(preview) => preview,
+            PreparedFilePreview::Sheet(preview) => {
+                panic!(
+                    "expected a text preview, got a workbook for {:?}",
+                    preview.source_path
+                )
+            }
         }
     }
 
@@ -716,7 +778,7 @@ mod tests {
                     .push(name.clone());
                 let mut preview = preview_for(path, &name);
                 preview.highlighted = Some(highlighted(&name));
-                Ok(preview)
+                Ok(PreparedFilePreview::Text(preview))
             },
         );
         let first = PathBuf::from("first.rs");
@@ -735,7 +797,10 @@ mod tests {
 
         let current = wait_for_current(&mut worker);
         assert_eq!(current.key, third_key);
-        assert_eq!(current.prepared.expect("latest preview").source_path, third);
+        assert_eq!(
+            expect_text(current.prepared.expect("latest preview")).source_path,
+            third
+        );
         assert_eq!(
             *processed.lock().expect("processed lock"),
             vec!["first.rs".to_owned(), "third.rs".to_owned()]
@@ -791,7 +856,7 @@ mod tests {
             release_tx.send(()).expect("release current text request");
             let current = wait_for_current(&mut worker);
             assert_eq!(
-                current.prepared.expect("prepared preview").highlighted,
+                expect_text(current.prepared.expect("prepared preview")).highlighted,
                 Some(highlighted("second"))
             );
         });
@@ -840,7 +905,7 @@ mod tests {
             move |_path, _source| {
                 started_tx.send(()).expect("signal blocked processor");
                 release_rx.recv().expect("release blocked processor");
-                Ok(preview("released"))
+                Ok(PreparedFilePreview::Text(preview("released")))
             },
         );
         worker.sync_target(Some(FilePreviewTarget::pending(
@@ -999,6 +1064,144 @@ mod tests {
         );
     }
 
+    /// TP-FSH-11: selecting a workbook resolves, end to end, to a drawn sheet.
+    ///
+    /// Every layer between the click and the panel is real here — the
+    /// classifier, the pending state, the bounded worker, the applied result
+    /// and the trail detail. The reported defect was invisible to unit tests of
+    /// any single layer: each one behaved correctly, and the workbook still
+    /// arrived at the panel as "(metadata only)".
+    #[test]
+    fn selecting_a_workbook_resolves_to_a_sheet_preview_end_to_end() {
+        let td = TempDir::new("workbook-e2e");
+        let path = td.root.join("budget.xlsx");
+        std::fs::write(
+            &path,
+            crate::fm::sheet_preview::xlsx_fixture(&[(
+                "Budget",
+                &[&["Item", "Cost"], &["cable", "42"]],
+            )]),
+        )
+        .expect("write workbook fixture");
+
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files activation");
+        let file_manager = app.state.file_manager.as_mut().expect("open Files");
+        let entry_index = file_manager.trail_snapshots.cols()[0]
+            .entries()
+            .iter()
+            .position(|entry| entry.path == path)
+            .expect("workbook row identity");
+        assert_eq!(
+            file_manager.activate_trail_entry(0, entry_index, &path),
+            crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
+        );
+
+        // The workbook must take the sheet track from the moment it is
+        // selected: falling to PendingText here is the old defect, and the
+        // reader would then reject the file as binary.
+        assert!(
+            matches!(
+                &file_manager.preview,
+                crate::fm::FmPreview::File(crate::fm::FmFilePreview::PendingSheet { source_path, .. })
+                    if source_path == &path
+            ),
+            "expected a pending workbook, got {:?}",
+            file_manager.preview
+        );
+        assert_eq!(
+            file_manager
+                .trail_snapshots
+                .detail()
+                .map(|detail| &detail.preview),
+            Some(&crate::fm::trail_snapshots::TrailDetailPreview::PendingSheet)
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if app.sync_file_preview_worker() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "timed out reading the workbook");
+            std::thread::yield_now();
+        }
+
+        let file_manager = app.state.file_manager.as_ref().expect("open Files");
+        match &file_manager.preview {
+            crate::fm::FmPreview::File(crate::fm::FmFilePreview::Sheet(preview)) => {
+                assert_eq!(preview.source_path, path);
+                assert_eq!(preview.sheets, vec!["Budget".to_owned()]);
+                assert_eq!(preview.rows[1][0].text, "cable");
+                assert_eq!(preview.rows[1][1].text, "42");
+            }
+            other => panic!("expected a resolved workbook preview, got {other:?}"),
+        }
+        match file_manager
+            .trail_snapshots
+            .detail()
+            .map(|detail| &detail.preview)
+        {
+            Some(crate::fm::trail_snapshots::TrailDetailPreview::Sheet(preview)) => {
+                assert_eq!(preview.source_path, path);
+            }
+            other => panic!("expected a resolved workbook detail, got {other:?}"),
+        }
+    }
+
+    /// TP-FSH-12: a workbook result that arrives after the selection moved on is
+    /// dropped, exactly as a text result would be.
+    #[test]
+    fn a_stale_workbook_result_cannot_replace_the_current_preview() {
+        let td = TempDir::new("workbook-stale");
+        let path = td.root.join("stale.xlsx");
+        std::fs::write(
+            &path,
+            crate::fm::sheet_preview::xlsx_fixture(&[("Sheet1", &[&["a"]])]),
+        )
+        .expect("write workbook fixture");
+
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files activation");
+        let file_manager = app.state.file_manager.as_mut().expect("open Files");
+        let entry_index = file_manager.trail_snapshots.cols()[0]
+            .entries()
+            .iter()
+            .position(|entry| entry.path == path)
+            .expect("workbook row identity");
+        file_manager.activate_trail_entry(0, entry_index, &path);
+        let generation = file_manager.preview_generation;
+
+        let prepared = crate::fm::sheet_preview::read_sheet_preview(
+            &path,
+            crate::fm::sheet_preview::SheetPreviewLimits::default(),
+        )
+        .expect("fixture is readable");
+
+        assert!(
+            !file_manager.apply_prepared_sheet_preview(
+                &path,
+                generation.wrapping_add(1),
+                Ok(prepared.clone()),
+            ),
+            "a stale generation cannot replace pending state"
+        );
+        assert!(
+            matches!(
+                &file_manager.preview,
+                crate::fm::FmPreview::File(crate::fm::FmFilePreview::PendingSheet { .. })
+            ),
+            "the rejected result must leave the pending state untouched"
+        );
+        assert!(
+            file_manager.apply_prepared_sheet_preview(&path, generation, Ok(prepared)),
+            "the current generation is accepted"
+        );
+    }
+
     // FM-PERF-TEXT-05: TOCTOU deletion is an explicit bounded failure, not a
     // retry loop or a permanently loading detail panel.
     #[test]
@@ -1112,7 +1315,7 @@ mod tests {
         let mut app = test_app();
         app.file_preview_worker = FilePreviewWorker::with_preview_processor(
             Arc::new(Notify::new()),
-            |_path, _source| -> Result<TextPreview, TextPreviewError> {
+            |_path, _source| -> Result<PreparedFilePreview, FilePreviewFailure> {
                 panic!("intentional pending preview processor failure")
             },
         );

@@ -18,7 +18,7 @@ use crate::fm::entry_kind::FileEntryKind;
 use crate::fm::preview_capability::{
     preview_capability, PreviewCapability, PreviewFallback, PreviewProviderSet,
 };
-use crate::fm::TextPreview;
+use crate::fm::{SheetPreview, TextPreview};
 
 /// Prepared detail-panel content for the selected FILE (contract LAW 3):
 /// prepared at selection time, outside render, so the panel never does
@@ -40,6 +40,9 @@ pub(crate) enum TrailDetailPreview {
     /// A recognized image; pixel delivery is the Kitty-graphics track
     /// (FIP-D4) and completes at integration.
     Image,
+    /// Exact workbook target is queued in the bounded preview worker.
+    PendingSheet,
+    Sheet(SheetPreview),
     MetadataOnly(String),
     Unpreviewable(String),
 }
@@ -238,6 +241,35 @@ impl TrailSnapshots {
         true
     }
 
+    /// Install a prepared workbook into the detail panel, or the reason it
+    /// could not be read.
+    ///
+    /// Gated on `PendingSheet` specifically: a workbook result must not be able
+    /// to overwrite a panel that has since moved to a text file, an image, or a
+    /// different workbook.
+    pub(crate) fn apply_prepared_sheet_detail(
+        &mut self,
+        expected_path: &Path,
+        prepared: &Result<SheetPreview, super::SheetPreviewError>,
+    ) -> bool {
+        let Some(detail) = self.detail.as_mut() else {
+            return false;
+        };
+        if detail.path != expected_path
+            || detail.preview != TrailDetailPreview::PendingSheet
+            || prepared
+                .as_ref()
+                .is_ok_and(|preview| preview.source_path != expected_path)
+        {
+            return false;
+        }
+        detail.preview = match prepared {
+            Ok(preview) => TrailDetailPreview::Sheet(preview.clone()),
+            Err(error) => TrailDetailPreview::Unpreviewable(error.to_string()),
+        };
+        true
+    }
+
     /// Resolve the trail's single exact-path selection through the
     /// index-aligned loaded snapshots. The deepest marked column wins, while
     /// the unselected child column after a directory branch is skipped.
@@ -339,7 +371,14 @@ impl TrailSnapshots {
                                 TrailDetailPreview::Text(preview.clone())
                             }
                             FmFilePreview::Image(_) => TrailDetailPreview::Image,
+                            FmFilePreview::PendingSheet { .. } => TrailDetailPreview::PendingSheet,
+                            FmFilePreview::Sheet(preview) => {
+                                TrailDetailPreview::Sheet(preview.clone())
+                            }
                             FmFilePreview::Unavailable(error) => {
+                                TrailDetailPreview::Unpreviewable(error.to_string())
+                            }
+                            FmFilePreview::SheetUnavailable(error) => {
                                 TrailDetailPreview::Unpreviewable(error.to_string())
                             }
                         },
@@ -703,6 +742,7 @@ impl TrailSnapshots {
 fn prepare_trail_detail(path: &Path, kind: FileEntryKind) -> TrailDetail {
     let preview = match preview_capability(path, kind, &PreviewProviderSet::default()) {
         PreviewCapability::NativeImage => TrailDetailPreview::Image,
+        PreviewCapability::NativeSheet => TrailDetailPreview::PendingSheet,
         PreviewCapability::NativeText => TrailDetailPreview::PendingText,
         PreviewCapability::MetadataOnly { reason } => {
             TrailDetailPreview::MetadataOnly(reason.label().to_owned())

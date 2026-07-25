@@ -984,7 +984,90 @@ fn render_file_preview(app: &AppState, frame: &mut Frame, area: Rect, preview: &
         FmFilePreview::Image(preview) => {
             render_image_preview_status(app, frame, content_area, preview);
         }
+        FmFilePreview::PendingSheet { .. } => {
+            let label = truncate_end("  loading preview...", content_area.width as usize);
+            frame.render_widget(Paragraph::new(label).style(styles.empty), content_area);
+        }
+        FmFilePreview::Sheet(preview) => {
+            let lines: Vec<Line> = sheet_preview_lines(preview, content_area.width as usize)
+                .into_iter()
+                .take(content_area.height as usize)
+                .map(|line| Line::styled(line, styles.empty))
+                .collect();
+            frame.render_widget(Paragraph::new(lines), content_area);
+        }
+        FmFilePreview::SheetUnavailable(error) => {
+            let label = truncate_end(&format!("  {error}"), content_area.width as usize);
+            frame.render_widget(Paragraph::new(label).style(styles.warning), content_area);
+        }
     }
+}
+
+/// Lay a prepared workbook out as aligned rows of text.
+///
+/// Columns are padded to the width measured when the preview was prepared, and
+/// numbers are pushed to the right of their column — a column of figures whose
+/// digits do not line up is materially harder to read than one that does.
+///
+/// Padding is computed from display width, not character count, so a CJK glyph
+/// counts as the two cells it occupies. Counting characters here would put
+/// every column after the first wide one permanently out of line.
+pub(super) fn sheet_preview_lines(
+    preview: &crate::fm::SheetPreview,
+    max_width: usize,
+) -> Vec<String> {
+    use unicode_width::UnicodeWidthStr;
+
+    let mut lines = Vec::with_capacity(preview.rows.len() + 3);
+    let sheet_name = preview
+        .sheets
+        .get(preview.active)
+        .map(String::as_str)
+        .unwrap_or("sheet");
+    if preview.sheets.len() > 1 {
+        lines.push(format!(
+            "  {sheet_name}  ({} of {})",
+            preview.active + 1,
+            preview.sheets.len()
+        ));
+    } else {
+        lines.push(format!("  {sheet_name}"));
+    }
+    lines.push(format!(
+        "  {} rows x {} columns",
+        preview.total_rows, preview.total_columns
+    ));
+    lines.push(String::new());
+
+    for row in &preview.rows {
+        let mut text = String::from("  ");
+        for (index, cell) in row.iter().enumerate() {
+            let width = preview
+                .columns
+                .get(index)
+                .map(|column| column.width)
+                .unwrap_or(0);
+            let clamped = truncate_end(&cell.text, width);
+            let padding = " ".repeat(width.saturating_sub(clamped.width()));
+            if cell.numeric {
+                text.push_str(&padding);
+                text.push_str(&clamped);
+            } else {
+                text.push_str(&clamped);
+                text.push_str(&padding);
+            }
+            if index + 1 < row.len() {
+                text.push_str("  ");
+            }
+        }
+        lines.push(truncate_end(text.trim_end(), max_width));
+    }
+
+    if preview.truncated_rows || preview.truncated_columns {
+        lines.push(String::new());
+        lines.push(truncate_end("  (preview truncated)", max_width));
+    }
+    lines
 }
 
 pub(super) fn render_image_preview_status(
@@ -1343,6 +1426,8 @@ mod tests {
     use super::*;
     use crate::app::state::FileManagerActionBarSelectionKind;
     use crate::app::FileManagerLocationsFocus;
+    use crate::fm::sheet_preview::{SheetCell, SheetColumn};
+    use crate::fm::SheetPreview;
     use crate::fm::{
         FmDirectoryStatus, FmFilePreview, FmImagePreviewState, FmState, ImagePreviewTarget,
         PreparedImagePreview,
@@ -1353,6 +1438,103 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn sheet_cell(text: &str, numeric: bool) -> SheetCell {
+        SheetCell {
+            text: text.to_owned(),
+            numeric,
+        }
+    }
+
+    fn sheet_fixture(rows: Vec<Vec<SheetCell>>, sheets: Vec<String>) -> SheetPreview {
+        let column_count = rows.iter().map(Vec::len).max().unwrap_or(0);
+        let columns = (0..column_count)
+            .map(|index| SheetColumn {
+                width: rows
+                    .iter()
+                    .filter_map(|row| row.get(index))
+                    .map(|cell| unicode_width::UnicodeWidthStr::width(cell.text.as_str()))
+                    .max()
+                    .unwrap_or(0),
+            })
+            .collect();
+        SheetPreview {
+            source_path: PathBuf::from("book.xlsx"),
+            sheets,
+            active: 0,
+            columns,
+            rows,
+            total_rows: 2,
+            total_columns: column_count as u64,
+            truncated_rows: false,
+            truncated_columns: false,
+        }
+    }
+
+    /// TP-FSH-10: columns line up, including across characters that occupy two
+    /// terminal cells.
+    ///
+    /// Padding computed from character count instead of display width puts
+    /// every column after the first wide glyph permanently out of line, and the
+    /// defect only appears for users whose data is not ASCII — exactly the
+    /// group least likely to be represented in a casual manual check.
+    #[test]
+    fn sheet_rows_align_columns_by_display_width() {
+        let preview = sheet_fixture(
+            vec![
+                vec![sheet_cell("ab", false), sheet_cell("1", true)],
+                vec![
+                    sheet_cell("\u{65e5}\u{672c}\u{8a9e}", false),
+                    sheet_cell("22", true),
+                ],
+            ],
+            vec!["Sheet1".to_owned()],
+        );
+
+        let lines = sheet_preview_lines(&preview, 80);
+        let rows: Vec<&String> = lines.iter().skip(3).collect();
+
+        // Both rows end at the same display width: the first column is padded
+        // to six cells either way — "ab" plus four spaces, or three CJK glyphs
+        // that already occupy six — and the numbers are right-aligned within
+        // their own two-cell column.
+        let widths: Vec<usize> = rows
+            .iter()
+            .map(|row| unicode_width::UnicodeWidthStr::width(row.trim_end()))
+            .collect();
+        assert_eq!(
+            widths[0], widths[1],
+            "rows must end at the same display width, got {rows:?}"
+        );
+        assert!(
+            rows[0].starts_with("  ab    "),
+            "the narrow cell is padded to the six-cell column, got {:?}",
+            rows[0]
+        );
+        assert!(
+            rows[0].ends_with(" 1") && rows[1].ends_with("22"),
+            "a one-digit number is pushed right under a two-digit one, got {rows:?}"
+        );
+    }
+
+    /// TP-FSH-14: sheet switching is not built yet, but the header already has to tell the
+    /// user a workbook has more than one sheet — otherwise the preview silently
+    /// implies the first sheet is the whole file.
+    #[test]
+    fn sheet_header_names_the_active_sheet_and_counts_the_rest() {
+        let single = sheet_fixture(vec![vec![sheet_cell("a", false)]], vec!["Only".to_owned()]);
+        assert_eq!(sheet_preview_lines(&single, 80)[0], "  Only");
+
+        let many = sheet_fixture(
+            vec![vec![sheet_cell("a", false)]],
+            vec![
+                "Summary".to_owned(),
+                "Detail".to_owned(),
+                "Notes".to_owned(),
+            ],
+        );
+        assert_eq!(sheet_preview_lines(&many, 80)[0], "  Summary  (1 of 3)");
+    }
 
     fn unique() -> u64 {
         static COUNTER: AtomicU64 = AtomicU64::new(0);

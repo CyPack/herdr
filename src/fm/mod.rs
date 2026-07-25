@@ -22,6 +22,7 @@ mod natsort;
 pub(crate) mod operations;
 pub(crate) mod preview_capability;
 pub(crate) mod rename;
+pub(crate) mod sheet_preview;
 mod text_preview;
 #[allow(dead_code)] // consumed from FIP trail program T3 (render) onward
 pub(crate) mod trail;
@@ -38,6 +39,8 @@ use std::path::{Path, PathBuf};
 pub(crate) const MAX_MULTI_SELECTION_PATHS: usize = 4_096;
 
 pub use image_preview::{ImagePreviewError, ImagePreviewTarget, PreparedImagePreview};
+use sheet_preview::{read_sheet_preview, SheetPreviewLimits};
+pub use sheet_preview::{SheetPreview, SheetPreviewError};
 pub(crate) use text_preview::highlight_text_preview;
 use text_preview::{read_text_preview, TextPreviewLimits};
 pub use text_preview::{
@@ -253,8 +256,22 @@ pub enum FmFilePreview {
     Text(TextPreview),
     /// Common image format prepared asynchronously outside render.
     Image(FmImagePreview),
+    /// Exact workbook target awaiting the bounded preview worker.
+    PendingSheet {
+        source_path: PathBuf,
+        generation: u64,
+    },
+    /// A bounded window onto the workbook's first sheet.
+    Sheet(SheetPreview),
     /// Stable preparation failure; TP-B1.2 defines the complete UI mapping.
     Unavailable(TextPreviewError),
+    /// Stable workbook preparation failure.
+    ///
+    /// Separate from `Unavailable` because the two carry different error types
+    /// and a workbook failure has nothing to say about UTF-8 or binary content.
+    /// Collapsing them would mean converting one to the other and losing the
+    /// reason the read actually failed.
+    SheetUnavailable(SheetPreviewError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -631,6 +648,11 @@ fn prepare_deferred_file_preview(path: PathBuf, generation: u64) -> FmPreview {
             generation,
             state: FmImagePreviewState::Unsupported,
         }))
+    } else if crate::fm::sheet_preview::is_readable_sheet_path(&path) {
+        FmPreview::File(FmFilePreview::PendingSheet {
+            source_path: path,
+            generation,
+        })
     } else {
         FmPreview::File(FmFilePreview::PendingText {
             source_path: path,
@@ -644,6 +666,33 @@ fn prepare_deferred_file_preview(path: PathBuf, generation: u64) -> FmPreview {
 /// unbounded read policy.
 pub(crate) fn prepare_default_text_preview(path: &Path) -> Result<TextPreview, TextPreviewError> {
     read_text_preview(path, TextPreviewLimits::default())
+}
+
+/// Bounded workbook preparation entry point for the dedicated preview worker.
+pub(crate) fn prepare_default_sheet_preview(
+    path: &Path,
+) -> Result<SheetPreview, SheetPreviewError> {
+    read_sheet_preview(path, SheetPreviewLimits::default())
+}
+
+/// What the bounded preview worker carries back for one prepared file.
+///
+/// The worker is one bounded slot for the whole selection, not one slot per
+/// content type: a second worker would mean a second generation counter racing
+/// the first, and a selection could settle showing the loser's output. Naming
+/// the two payloads in one type keeps the existing stale-rejection contract as
+/// the single authority (`docs/patterns/document-rendering.md` DR7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreparedFilePreview {
+    Text(TextPreview),
+    Sheet(SheetPreview),
+}
+
+/// Typed failure for either preparation path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilePreviewFailure {
+    Text(TextPreviewError),
+    Sheet(SheetPreviewError),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -740,7 +789,10 @@ impl FmState {
             | FmPreview::File(
                 FmFilePreview::PendingText { .. }
                 | FmFilePreview::Image(_)
-                | FmFilePreview::Unavailable(_),
+                | FmFilePreview::PendingSheet { .. }
+                | FmFilePreview::Sheet(_)
+                | FmFilePreview::Unavailable(_)
+                | FmFilePreview::SheetUnavailable(_),
             ) => None,
         };
         FmCurrentRefreshRequest {
@@ -1462,6 +1514,70 @@ impl FmState {
             Err(error) => FmFilePreview::Unavailable(error),
         });
         true
+    }
+
+    /// Install a prepared workbook, or the typed reason it could not be read.
+    ///
+    /// The acceptance conditions mirror the text path exactly: the generation,
+    /// the selected path and the pending state must all still agree. A result
+    /// that arrives after the user has moved on is dropped rather than drawn.
+    pub(crate) fn apply_prepared_sheet_preview(
+        &mut self,
+        expected_path: &Path,
+        expected_generation: u64,
+        prepared: Result<SheetPreview, SheetPreviewError>,
+    ) -> bool {
+        if self.preview_generation != expected_generation
+            || self.selected().map(|entry| entry.path.as_path()) != Some(expected_path)
+            || !matches!(
+                &self.preview,
+                FmPreview::File(FmFilePreview::PendingSheet {
+                    source_path,
+                    generation,
+                }) if source_path == expected_path && *generation == expected_generation
+            )
+            || prepared
+                .as_ref()
+                .is_ok_and(|preview| preview.source_path != expected_path)
+        {
+            return false;
+        }
+
+        self.trail_snapshots
+            .apply_prepared_sheet_detail(expected_path, &prepared);
+        self.preview = FmPreview::File(match prepared {
+            Ok(preview) => FmFilePreview::Sheet(preview),
+            Err(error) => FmFilePreview::SheetUnavailable(error),
+        });
+        true
+    }
+
+    /// Route one bounded worker result to the track that asked for it.
+    ///
+    /// The worker decides which reader to run from the path, so the payload
+    /// already names its own track and this only has to honour it. A text
+    /// result can never satisfy a pending workbook, and the reverse holds too:
+    /// each branch re-checks its own pending state before installing anything.
+    pub(crate) fn apply_prepared_file_preview(
+        &mut self,
+        expected_path: &Path,
+        expected_generation: u64,
+        prepared: Result<PreparedFilePreview, FilePreviewFailure>,
+    ) -> bool {
+        match prepared {
+            Ok(PreparedFilePreview::Text(preview)) => {
+                self.apply_prepared_text_preview(expected_path, expected_generation, Ok(preview))
+            }
+            Err(FilePreviewFailure::Text(error)) => {
+                self.apply_prepared_text_preview(expected_path, expected_generation, Err(error))
+            }
+            Ok(PreparedFilePreview::Sheet(preview)) => {
+                self.apply_prepared_sheet_preview(expected_path, expected_generation, Ok(preview))
+            }
+            Err(FilePreviewFailure::Sheet(error)) => {
+                self.apply_prepared_sheet_preview(expected_path, expected_generation, Err(error))
+            }
+        }
     }
 
     fn install_resident_directory_operation_projection(
