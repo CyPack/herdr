@@ -119,6 +119,15 @@ fn serve_with_timeouts(
         return Ok(());
     }
 
+    // Register before acknowledging. `cancel_inactive_streams` cancels by
+    // looking the owner up in the registry, so registering after the ack leaves
+    // a window in which the client already believes the stream is open while a
+    // cancel matches nothing at all — the stream then runs on until an
+    // unrelated timeout. Registering first makes "the client has seen the ack"
+    // imply "the stream is cancellable".
+    let stream_active = Arc::new(AtomicBool::new(true));
+    register_stream(&owner, &stream_active);
+
     if let Err(err) = write_json_line(
         &mut stream,
         &SuccessResponse {
@@ -126,6 +135,7 @@ fn serve_with_timeouts(
             result: ResponseResult::Ok {},
         },
     ) {
+        unregister_stream(&owner);
         clear_layer(&pane_id, &owner, api_tx);
         if is_connection_closed_error(&err) {
             return Ok(());
@@ -133,8 +143,6 @@ fn serve_with_timeouts(
         return Err(err);
     }
 
-    let stream_active = Arc::new(AtomicBool::new(true));
-    register_stream(&owner, &stream_active);
     let result = serve_frames(
         &mut stream,
         &request_id,
@@ -584,6 +592,21 @@ mod tests {
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc;
 
+    /// Hang guard for a wait on a dispatch that normally arrives well inside
+    /// one `CONNECTION_POLL_INTERVAL` (100ms).
+    ///
+    /// Its job is to fail a *hung* test, not to assert a deadline, so it is
+    /// deliberately far larger than the expected latency: the suite runs in
+    /// parallel and cores are oversubscribed, so a guard close to the real
+    /// latency reports scheduler delay as a defect.
+    ///
+    /// Raising it from 1s/2s was **not** what fixed the flake this file had —
+    /// that was a registration race in `serve_with_timeouts` (see the comment
+    /// there). Raising the guard only made the failure legible: the test began
+    /// failing at exactly the guard, which is what showed the close was never
+    /// dispatched rather than merely late.
+    const DISPATCH_HANG_GUARD: Duration = Duration::from_secs(10);
+
     static NEXT_LOCAL_STREAM_ID: AtomicU64 = AtomicU64::new(1);
 
     fn local_stream_pair(_name: &str) -> (LocalStream, LocalStream, PathBuf) {
@@ -893,10 +916,7 @@ mod tests {
         std::thread::spawn(move || {
             close_tx.send(api_rx.blocking_recv()).unwrap();
         });
-        let close = close_rx
-            .recv_timeout(Duration::from_secs(2))
-            .unwrap()
-            .unwrap();
+        let close = close_rx.recv_timeout(DISPATCH_HANG_GUARD).unwrap().unwrap();
         match &close.request.method {
             Method::PaneGraphicsStreamClose(params) => {
                 assert_eq!(params.pane_id, "pane_1");
@@ -987,7 +1007,7 @@ mod tests {
         let (close_tx, close_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || close_tx.send(api_rx.blocking_recv()).unwrap());
         let close = close_rx
-            .recv_timeout(Duration::from_secs(1))
+            .recv_timeout(DISPATCH_HANG_GUARD)
             .expect("canceled idle stream should dispatch a close")
             .expect("API request channel should remain open");
         match &close.request.method {
@@ -1137,10 +1157,7 @@ mod tests {
 
         let (close_tx, close_rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || close_tx.send(api_rx.blocking_recv()).unwrap());
-        let close = close_rx
-            .recv_timeout(Duration::from_secs(1))
-            .unwrap()
-            .unwrap();
+        let close = close_rx.recv_timeout(DISPATCH_HANG_GUARD).unwrap().unwrap();
         match &close.request.method {
             Method::PaneGraphicsStreamClose(params) => {
                 assert_eq!(params.pane_id, "pane_1");
