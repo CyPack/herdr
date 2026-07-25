@@ -303,6 +303,74 @@ pub(crate) enum AttachmentPickerKeyDispatch {
     Refresh(crate::fm::FmCurrentRefreshRequest),
 }
 
+/// Open the enlarged viewer on the current selection, if it has a picture.
+///
+/// Only a raster preview can be enlarged: a text or workbook preview is drawn
+/// from cells that already fill the panel, so "enlarging" it would be a
+/// different feature rather than a bigger version of this one. Refusing here
+/// keeps the viewer from opening onto a frame with nothing in it.
+pub(crate) fn open_preview_viewer(state: &mut AppState) -> bool {
+    let Some(file_manager) = state.file_manager.as_ref() else {
+        return false;
+    };
+    let source_path = match &file_manager.preview {
+        crate::fm::FmPreview::File(crate::fm::FmFilePreview::Image(preview)) => {
+            if matches!(
+                preview.state,
+                crate::fm::FmImagePreviewState::Unsupported
+                    | crate::fm::FmImagePreviewState::Unavailable { .. }
+            ) {
+                return false;
+            }
+            preview.source_path.clone()
+        }
+        crate::fm::FmPreview::File(crate::fm::FmFilePreview::Pdf(preview)) => {
+            if matches!(
+                preview.state,
+                crate::fm::FmPdfPreviewState::Unavailable { .. }
+            ) {
+                return false;
+            }
+            preview.source_path.clone()
+        }
+        _ => return false,
+    };
+    state.preview_viewer = Some(crate::app::state::PreviewViewerState { source_path });
+    state.enter_overlay_mode(Mode::PreviewViewer);
+    true
+}
+
+/// Close the viewer and hand focus back to whoever had it.
+pub(crate) fn close_preview_viewer(state: &mut AppState) -> bool {
+    if state.preview_viewer.take().is_none() {
+        return false;
+    }
+    super::leave_modal(state);
+    true
+}
+
+/// Handle one key while the enlarged viewer is open.
+///
+/// `q` and `Esc` close the viewer rather than the application: the viewer owns
+/// the keyboard while it is up, and the tier that is forgotten is exactly this
+/// one — the suppressed global. Page keys keep working so a PDF can be read at
+/// full size. Everything else is swallowed, so no key reaches the surface
+/// underneath a blocking overlay.
+pub(crate) fn handle_preview_viewer_key(state: &mut AppState, key: KeyEvent) {
+    match (key.code, key.modifiers) {
+        (KeyCode::Esc | KeyCode::Char('q'), KeyModifiers::NONE) => {
+            let _ = close_preview_viewer(state);
+        }
+        (KeyCode::PageDown, KeyModifiers::NONE) => {
+            let _ = turn_previewed_pdf_page(state, PdfPageStep::Next);
+        }
+        (KeyCode::PageUp, KeyModifiers::NONE) => {
+            let _ = turn_previewed_pdf_page(state, PdfPageStep::Previous);
+        }
+        _ => {}
+    }
+}
+
 /// Turn the previewed PDF one page, reporting whether anything moved.
 ///
 /// The bounds live in the model; input only names the direction.
@@ -424,6 +492,11 @@ pub(super) fn handle_file_manager_key(
             }
         }
         (KeyCode::Enter, KeyModifiers::NONE) => {
+            // A picture is the one selection Enter had nothing to do with, so
+            // it becomes the way to enlarge one. Directories keep their meaning.
+            if open_preview_viewer(state) {
+                return FileManagerKeyDispatch::Consumed;
+            }
             if let Some(fm) = state.file_manager.as_mut() {
                 if let Some(dispatch) = active_directory_dispatch(fm, true) {
                     return dispatch;
@@ -1027,6 +1100,11 @@ impl App {
         if self.state.mode == Mode::ContextMenu {
             return FileManagerMouseDispatch::NotHandled;
         }
+        // While the enlarged viewer is up it covers the file manager, so a
+        // press belongs to it rather than to whatever row is underneath.
+        if self.state.preview_viewer.is_some() {
+            return FileManagerMouseDispatch::Consumed;
+        }
 
         // The one typed Miller capture owns drag/up everywhere, including
         // outside the Files Stage, so fast pointer movement cannot escape the
@@ -1315,6 +1393,14 @@ impl App {
             if let Some(step) = self.pdf_page_indicator_step_at(mouse.column, mouse.row) {
                 let turned = turn_previewed_pdf_page(&mut self.state, step);
                 self.file_manager_mouse_render_override = Some(turned);
+                return FileManagerMouseDispatch::Consumed;
+            }
+            // Clicking the picture enlarges it. The indicator is answered
+            // first because its arrows sit inside the same rect.
+            if crate::kitty_graphics::file_manager_raster_content_area(&self.state)
+                .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
+                && open_preview_viewer(&mut self.state)
+            {
                 return FileManagerMouseDispatch::Consumed;
             }
         }
@@ -4559,6 +4645,35 @@ mod tests {
         assert_eq!(previewed_pdf_page(&app.state), 4);
     }
 
+    // TP-FVIEW-11: clicking the picture enlarges it, and the indicator's
+    // arrows keep their meaning inside the same rect. Without the ordering the
+    // arrows would open the viewer instead of turning the page.
+    #[test]
+    fn clicking_the_picture_opens_the_viewer_but_the_arrows_still_turn_pages() {
+        let (mut app, _fixture, indicator) = runtime_app_with_pdf_preview(4, 10);
+        let next = indicator.next.expect("next arrow mid-document");
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            next.x,
+            next.y,
+        ));
+        assert!(
+            app.state.preview_viewer.is_none(),
+            "an arrow press turns the page instead of enlarging"
+        );
+        assert_eq!(previewed_pdf_page(&app.state), 5);
+
+        let content = crate::kitty_graphics::file_manager_raster_content_area(&app.state)
+            .expect("raster content area");
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            content.x,
+            content.y,
+        ));
+        assert_eq!(app.state.mode, Mode::PreviewViewer);
+        assert!(app.state.preview_viewer.is_some());
+    }
+
     // TP-FPDF-24: the rest of the indicator row is not a button. Without this
     // the empty half of the status line silently turns pages.
     #[test]
@@ -4806,6 +4921,116 @@ mod tests {
         let after = app.file_manager.as_ref().expect("open FM");
         assert_eq!(after.cursor, before.cursor);
         assert_eq!(after.preview, before.preview);
+    }
+
+    // TP-FVIEW-03: Enter enlarges a picture. Directories keep their meaning,
+    // so the two never compete for the same selection.
+    #[test]
+    fn enter_opens_the_viewer_on_a_picture() {
+        let (mut app, _fixture) = app_with_pdf_preview(0, 3);
+        assert_eq!(
+            handle_file_manager_key(&mut app, key(KeyCode::Enter)),
+            FileManagerKeyDispatch::Consumed
+        );
+        assert_eq!(app.mode, Mode::PreviewViewer);
+        assert_eq!(
+            app.preview_viewer
+                .as_ref()
+                .map(|viewer| viewer.source_path.clone()),
+            Some(
+                app.file_manager
+                    .as_ref()
+                    .expect("open FM")
+                    .cwd
+                    .join("manual.pdf")
+            )
+        );
+    }
+
+    // TP-FVIEW-04: `q` closes the viewer, not the application. This is the
+    // tier that gets forgotten: a suppressed global that must be gated on "no
+    // viewer open", or the first `q` inside the viewer quits herdr.
+    #[test]
+    fn q_and_esc_close_the_viewer_rather_than_the_app() {
+        for closing in [KeyCode::Char('q'), KeyCode::Esc] {
+            let (mut app, _fixture) = app_with_pdf_preview(0, 3);
+            handle_file_manager_key(&mut app, key(KeyCode::Enter));
+            assert_eq!(app.mode, Mode::PreviewViewer);
+
+            handle_preview_viewer_key(&mut app, key(closing));
+
+            assert!(
+                app.preview_viewer.is_none(),
+                "{closing:?} closes the viewer"
+            );
+            assert_ne!(app.mode, Mode::PreviewViewer);
+            assert!(
+                app.file_manager.is_some(),
+                "{closing:?} must not close the file manager underneath"
+            );
+        }
+    }
+
+    // TP-FVIEW-05: while the viewer is up it owns the keyboard, so navigation
+    // keys do not move the selection behind it. Without this the file manager
+    // scrolls under a picture the user cannot see moving.
+    #[test]
+    fn the_viewer_owns_the_keyboard_while_it_is_open() {
+        let (mut app, _fixture) = app_with_pdf_preview(0, 3);
+        handle_file_manager_key(&mut app, key(KeyCode::Enter));
+        let before = app.file_manager.as_ref().expect("open FM").clone();
+
+        assert!(
+            app.blocking_overlay_active(),
+            "the viewer routes as a topmost overlay"
+        );
+        for code in [KeyCode::Down, KeyCode::Char('j'), KeyCode::Right] {
+            handle_preview_viewer_key(&mut app, key(code));
+        }
+
+        let after = app.file_manager.as_ref().expect("open FM");
+        assert_eq!(after.cursor, before.cursor);
+        assert_eq!(after.trail.active_col(), before.trail.active_col());
+        assert_eq!(app.mode, Mode::PreviewViewer, "unknown keys are swallowed");
+    }
+
+    // TP-FVIEW-06: page keys keep working inside the viewer, which is the
+    // point of enlarging a PDF in the first place.
+    #[test]
+    fn page_keys_still_turn_pages_inside_the_viewer() {
+        let (mut app, _fixture) = app_with_pdf_preview(0, 3);
+        handle_file_manager_key(&mut app, key(KeyCode::Enter));
+
+        handle_preview_viewer_key(&mut app, key(KeyCode::PageDown));
+        assert_eq!(previewed_pdf_page(&app), 1);
+        handle_preview_viewer_key(&mut app, key(KeyCode::PageUp));
+        assert_eq!(previewed_pdf_page(&app), 0);
+    }
+
+    // TP-FVIEW-07: a preview drawn from cells has nothing to enlarge, and
+    // opening the viewer on one would produce a full frame with no picture in
+    // it. Enter keeps its other meanings there.
+    #[test]
+    fn the_viewer_refuses_previews_that_have_no_picture() {
+        let td = TempDir::new("viewer-refusal");
+        td.file("notes.txt");
+        let mut app = app_with_fm(FmState::new(&td.root));
+        assert!(!open_preview_viewer(&mut app));
+        assert!(app.preview_viewer.is_none());
+        assert_ne!(app.mode, Mode::PreviewViewer);
+
+        // An undecodable image is a picture herdr cannot show, which is the
+        // same empty frame by a different route.
+        let file_manager = app.file_manager.as_mut().expect("open FM");
+        file_manager.preview = crate::fm::FmPreview::File(crate::fm::FmFilePreview::Image(
+            crate::fm::FmImagePreview {
+                source_path: td.root.join("drawing.svg"),
+                generation: 1,
+                state: crate::fm::FmImagePreviewState::Unsupported,
+            },
+        ));
+        assert!(!open_preview_viewer(&mut app));
+        assert!(app.preview_viewer.is_none());
     }
 
     // TP-A3.5: j/k (and arrows) move the cursor within the list.

@@ -107,15 +107,36 @@ fn image_geometry_for_content_area(
 }
 
 pub(crate) fn file_manager_image_target(
-    snapshot: &crate::ui::TrailViewSnapshot,
-    file_manager: &crate::fm::FmState,
+    app: &crate::app::state::AppState,
     cell_size: HostCellSize,
 ) -> Option<ImagePreviewTarget> {
-    image_geometry_for_content_area(
-        file_manager_trail_image_content_area(snapshot, file_manager)?,
-        cell_size,
-    )
-    .map(|(_, target)| target)
+    image_geometry_for_content_area(file_manager_raster_content_area(app)?, cell_size)
+        .map(|(_, target)| target)
+}
+
+/// The rect a raster preview may draw into: the enlarged viewer's when one is
+/// open, the Trail's detail panel otherwise.
+///
+/// One authority for both. Enlarging is not a second picture but the same one
+/// decoded and placed into a different rect, so the decode target, the Kitty
+/// placement and the indicator hit test all move together — and the worker's
+/// key changes with the rect, which is what makes the viewer re-decode at full
+/// size instead of stretching the panel-sized pixels.
+pub(crate) fn file_manager_raster_content_area(app: &crate::app::state::AppState) -> Option<Rect> {
+    let file_manager = app.file_manager.as_ref()?;
+    if let Some(viewer) = app.preview_viewer.as_ref() {
+        let content = app.view.preview_viewer_content_area?;
+        // The viewer names the file it was opened on. A selection that has
+        // since moved on belongs to the panel behind it, not to this rect.
+        return file_manager_trail_image_content_area(&app.view.file_manager_trail, file_manager)
+            .is_some()
+            .then_some(())
+            .and(
+                (file_manager.trail_snapshots.detail()?.path == viewer.source_path)
+                    .then_some(content),
+            );
+    }
+    file_manager_trail_image_content_area(&app.view.file_manager_trail, file_manager)
 }
 
 /// The panel rect a raster preview may draw into, if one is selected.
@@ -257,8 +278,7 @@ fn collect_file_manager_image_placement(
         }
         _ => return None,
     };
-    let content_area =
-        file_manager_trail_image_content_area(&app.view.file_manager_trail, file_manager)?;
+    let content_area = file_manager_raster_content_area(app)?;
     if image_geometry_for_content_area(content_area, cell_size).map(|(_, target)| target)?
         != *target
     {
@@ -1459,6 +1479,133 @@ mod tests {
         assert_eq!(images.len(), 1);
         assert!(placements.is_empty());
         assert!(sources.is_empty());
+    }
+
+    /// An app whose file manager has an image selected, projected at `frame`.
+    fn app_with_selected_image(frame: Rect) -> crate::app::state::AppState {
+        let image_path = std::path::PathBuf::from("/virtual/preview.png");
+        let mut file_manager = crate::fm::FmState::test_empty("/virtual");
+        file_manager.entries = vec![crate::fm::FileEntry {
+            name: "preview.png".into(),
+            path: image_path.clone(),
+            kind: crate::fm::entry_kind::FileEntryKind::RegularFile,
+            modified: None,
+        }];
+        file_manager.preview_generation = 1;
+        file_manager.preview = crate::fm::FmPreview::File(crate::fm::FmFilePreview::Image(
+            crate::fm::FmImagePreview {
+                source_path: image_path,
+                generation: 1,
+                state: crate::fm::FmImagePreviewState::Pending,
+            },
+        ));
+        file_manager.sync_trail_bridge_for_test();
+
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![crate::workspace::Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = crate::app::state::Mode::Terminal;
+        app.mobile_width_threshold = 0;
+        app.sidebar_collapsed = true;
+        app.sidebar_collapsed_mode = crate::config::SidebarCollapsedModeConfig::Hidden;
+        app.try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+        crate::ui::compute_view(&mut app, frame);
+        app
+    }
+
+    fn open_viewer_on_selection(app: &mut crate::app::state::AppState, frame: Rect) {
+        let source_path = app
+            .file_manager
+            .as_ref()
+            .and_then(|file_manager| file_manager.trail_snapshots.detail())
+            .expect("selected detail")
+            .path
+            .clone();
+        app.preview_viewer = Some(crate::app::state::PreviewViewerState { source_path });
+        app.mode = crate::app::state::Mode::PreviewViewer;
+        crate::ui::compute_view(app, frame);
+    }
+
+    // TP-FVIEW-08: enlarging asks for more pixels. If the viewer reused the
+    // panel's decode target it would stretch panel-sized pixels across the
+    // frame, which is a blurrier picture rather than a bigger one — and the
+    // whole feature would be indistinguishable from doing nothing.
+    #[test]
+    fn opening_the_viewer_asks_for_more_pixels_than_the_panel() {
+        let cells = HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        let frame = Rect::new(0, 0, 120, 30);
+        let mut app = app_with_selected_image(frame);
+        let panel = file_manager_image_target(&app, cells).expect("panel decode target");
+
+        open_viewer_on_selection(&mut app, frame);
+        let viewer = file_manager_image_target(&app, cells).expect("viewer decode target");
+
+        assert!(
+            viewer.width_px > panel.width_px && viewer.height_px > panel.height_px,
+            "viewer target {viewer:?} must exceed panel target {panel:?}"
+        );
+        let content = app
+            .view
+            .preview_viewer_content_area
+            .expect("viewer content area");
+        assert_eq!(viewer.width_px, u32::from(content.width) * cells.width_px);
+        assert_eq!(
+            viewer.height_px,
+            u32::from(content.height) * cells.height_px
+        );
+    }
+
+    // TP-FVIEW-09: resizing the terminal while the viewer is open produces a
+    // new decode target, so the picture is re-fitted instead of left placed
+    // against geometry that no longer exists.
+    #[test]
+    fn resizing_while_the_viewer_is_open_retargets_the_picture() {
+        let cells = HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        let frame = Rect::new(0, 0, 120, 30);
+        let mut app = app_with_selected_image(frame);
+        open_viewer_on_selection(&mut app, frame);
+        let before = file_manager_image_target(&app, cells).expect("first viewer target");
+
+        let wider = Rect::new(0, 0, 160, 40);
+        crate::ui::compute_view(&mut app, wider);
+        let after = file_manager_image_target(&app, cells).expect("resized viewer target");
+
+        assert!(
+            after.width_px > before.width_px && after.height_px > before.height_px,
+            "a larger frame must produce a larger target: {before:?} -> {after:?}"
+        );
+    }
+
+    // TP-FVIEW-10: with the viewer closed the panel is the target again, so
+    // closing does not leave the file manager decoding at full-frame size.
+    #[test]
+    fn closing_the_viewer_returns_the_target_to_the_panel() {
+        let cells = HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        let frame = Rect::new(0, 0, 120, 30);
+        let mut app = app_with_selected_image(frame);
+        let panel = file_manager_image_target(&app, cells).expect("panel decode target");
+
+        open_viewer_on_selection(&mut app, frame);
+        app.preview_viewer = None;
+        app.mode = crate::app::state::Mode::Terminal;
+        crate::ui::compute_view(&mut app, frame);
+
+        assert_eq!(
+            file_manager_image_target(&app, cells),
+            Some(panel),
+            "closing restores the panel's decode target exactly"
+        );
     }
 
     // TP-TRAIL-T7-IMAGE-02: host placement and decode target share the live

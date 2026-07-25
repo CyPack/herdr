@@ -631,6 +631,7 @@ impl App {
             request_agent_attachment_delivery: None,
             file_manager_clipboard: Vec::new(),
             file_icon_profile: crate::fm::entry_kind::IconProfile::Nerd,
+            preview_viewer: None,
             file_manager_operation: None,
             file_manager_delete_confirmation: None,
             file_manager_rename: None,
@@ -717,6 +718,7 @@ impl App {
                 file_manager_row_areas: Vec::new(),
                 file_manager_row_action_areas: Vec::new(),
                 file_manager_header_action_areas: Vec::new(),
+                preview_viewer_content_area: None,
                 file_manager_action_bar: None,
                 agent_attachment_action_area: None,
                 agent_worktree_action_area: None,
@@ -2021,6 +2023,9 @@ impl App {
             }
             Mode::AgentReferencePicker => {
                 self.handle_agent_reference_picker_key(key_event);
+            }
+            Mode::PreviewViewer => {
+                input::handle_preview_viewer_key(&mut self.state, key_event);
             }
             Mode::AttachFile => {
                 self.route_agent_attachment_picker_key(key_event);

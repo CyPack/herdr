@@ -328,13 +328,7 @@ impl super::App {
         }
 
         let target = self.state.file_manager.as_ref().and_then(|file_manager| {
-            let target = || {
-                file_manager_image_target(
-                    &self.state.view.file_manager_trail,
-                    file_manager,
-                    self.image_preview_cell_size,
-                )
-            };
+            let target = || file_manager_image_target(&self.state, self.image_preview_cell_size);
             match &file_manager.preview {
                 FmPreview::File(FmFilePreview::Image(preview)) => {
                     // A format with no decoder is settled before any work

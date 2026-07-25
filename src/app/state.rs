@@ -1479,6 +1479,12 @@ pub struct ViewState {
     /// Named native-FM header actions for this frame. Empty while FM is closed
     /// or when the header cannot preserve its minimum identity width.
     pub file_manager_header_action_areas: Vec<FileManagerHeaderActionArea>,
+    /// The rect the enlarged preview draws into, when the viewer is open.
+    ///
+    /// Published here rather than derived twice: the decode target, the Kitty
+    /// placement and the renderer must agree on one rect, and the two that run
+    /// outside render have no frame to measure.
+    pub preview_viewer_content_area: Option<Rect>,
     /// Selection-sensitive persistent action-bar content for this frame.
     /// `None` while the native FM is closed.
     pub file_manager_action_bar: Option<FileManagerActionBarModel>,
@@ -1511,6 +1517,16 @@ pub struct ViewState {
     pub split_borders: Vec<SplitBorder>,
 }
 
+/// The file manager's raster preview, opened to fill the frame.
+///
+/// Identity is the exact path, matching the Trail's selection authority: a row
+/// index would survive a directory refresh that moved the file, and the viewer
+/// would then be showing something the user did not open.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewViewerState {
+    pub source_path: std::path::PathBuf,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Onboarding,
@@ -1537,6 +1553,7 @@ pub enum Mode {
     KeybindHelp,
     Navigator,
     AgentReferencePicker,
+    PreviewViewer,
 }
 
 impl Mode {
@@ -2252,6 +2269,14 @@ pub struct AppState {
     /// Pure client-local projection of the App-owned bounded operation worker.
     /// Render/input consume this state but never perform filesystem work.
     pub file_manager_operation: Option<FileManagerOperationState>,
+    /// The file manager's raster preview, opened to fill the frame.
+    ///
+    /// Pure client presentation: the server has no opinion about how large a
+    /// preview is drawn. The viewer holds no pixels of its own — it changes
+    /// which rect the one raster preview is decoded and placed into, so
+    /// enlarging is a bigger decode rather than an upscale of the panel-sized
+    /// one.
+    pub preview_viewer: Option<PreviewViewerState>,
     /// Exact native-FM identities awaiting an explicit destructive choice.
     /// Opening or rendering this modal never performs filesystem work.
     pub file_manager_delete_confirmation: Option<FileManagerDeleteConfirmation>,
@@ -2762,6 +2787,7 @@ impl AppState {
             request_agent_attachment_delivery: None,
             file_manager_clipboard: Vec::new(),
             file_icon_profile: crate::fm::entry_kind::IconProfile::Nerd,
+            preview_viewer: None,
             file_manager_operation: None,
             file_manager_delete_confirmation: None,
             file_manager_rename: None,
@@ -2841,6 +2867,7 @@ impl AppState {
                 file_manager_row_areas: Vec::new(),
                 file_manager_row_action_areas: Vec::new(),
                 file_manager_header_action_areas: Vec::new(),
+                preview_viewer_content_area: None,
                 file_manager_action_bar: None,
                 agent_attachment_action_area: None,
                 agent_worktree_action_area: None,

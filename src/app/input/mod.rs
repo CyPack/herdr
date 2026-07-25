@@ -51,6 +51,7 @@ mod sidebar;
 mod terminal;
 
 pub(crate) use self::{
+    file_manager::handle_preview_viewer_key,
     modal::{
         handle_global_menu_key, handle_keybind_help_key, handle_navigator_key,
         insert_keybind_help_query_text, insert_navigator_search_text, insert_rename_input_text,
@@ -288,6 +289,9 @@ impl App {
                 }
                 Mode::AgentReferencePicker => {
                     self.handle_agent_reference_picker_key(key_event);
+                }
+                Mode::PreviewViewer => {
+                    handle_preview_viewer_key(&mut self.state, key_event);
                 }
                 Mode::Terminal => unreachable!(),
                 Mode::AttachFile => unreachable!(),

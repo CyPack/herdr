@@ -181,6 +181,35 @@ deciding when to re-render.
 | TP-FPDF-26 | A render that lands after a turn is rejected. | The wrong page is installed with no further event to correct it. | `a_page_render_that_lands_after_a_turn_is_rejected` |
 | TP-FPDF-27 | Opening the file manager onto a PDF or a workbook classifies it the same way moving the cursor onto one does. | The immediate path fell through to the text reader, so a PDF selected at open time was shown as its own raw bytes until the cursor moved away and back. | `opening_onto_a_document_prepares_it_as_that_document` |
 
+## Enlarged preview viewer
+
+`Enter`, or a click on the picture, opens the raster preview to fill the frame.
+`Esc`/`q` close it and hand focus back to whoever had it.
+
+The viewer holds no pixels of its own. `file_manager_raster_content_area` is the
+single authority for "which rect does the raster preview live in", and the
+viewer changes its answer — so the decode target, the Kitty placement and the
+indicator hit test move together, and enlarging is a bigger decode rather than
+an upscale of the panel-sized one.
+
+It is deliberately **not** a surface-hiding overlay: the picture is a host image,
+not cells in the frame buffer, so declaring it one would suppress the placement
+pass and the viewer would open onto an empty frame.
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-FVIEW-01 | The picture never overlaps the title and status rows. | A host image is not erased by the cells drawn under it, so an overlapping picture hides its own label permanently. | `viewer_content_leaves_room_for_its_title_and_status` |
+| TP-FVIEW-02 | A frame too small for chrome and picture together yields no content rect. | Half a viewer places the image over the title it is supposed to be labelled by. | `a_frame_too_small_for_the_chrome_has_no_content_area` |
+| TP-FVIEW-03 | `Enter` enlarges a picture; directories keep their meaning. | The one selection `Enter` had nothing to do with stays unusable, or directory navigation breaks. | `enter_opens_the_viewer_on_a_picture` |
+| TP-FVIEW-04 | `q` and `Esc` close the viewer, not the application. | This is the forgotten tier — a suppressed global that must be gated on "no viewer open", or the first `q` inside the viewer quits herdr. | `q_and_esc_close_the_viewer_rather_than_the_app` |
+| TP-FVIEW-05 | The viewer owns the keyboard: navigation keys do not move the selection behind it. | The file manager scrolls under a picture the user cannot see moving. | `the_viewer_owns_the_keyboard_while_it_is_open` |
+| TP-FVIEW-06 | Page keys keep turning pages inside the viewer. | Enlarging a PDF gives a bigger first page and no way to read the rest. | `page_keys_still_turn_pages_inside_the_viewer` |
+| TP-FVIEW-07 | Previews drawn from cells, and pictures with no decoder, refuse to open. | The viewer opens onto a full frame with nothing in it. | `the_viewer_refuses_previews_that_have_no_picture` |
+| TP-FVIEW-08 | Opening the viewer asks for more pixels than the panel did. | Reusing the panel's decode target stretches panel-sized pixels across the frame: a blurrier picture rather than a bigger one, indistinguishable from doing nothing. | `opening_the_viewer_asks_for_more_pixels_than_the_panel` |
+| TP-FVIEW-09 | Resizing while the viewer is open produces a new decode target. | The classic graphics bug: a picture left placed against geometry that no longer exists. | `resizing_while_the_viewer_is_open_retargets_the_picture` |
+| TP-FVIEW-10 | Closing restores the panel's decode target exactly. | The file manager keeps decoding at full-frame size for a panel-sized hole. | `closing_the_viewer_returns_the_target_to_the_panel` |
+| TP-FVIEW-11 | Clicking the picture enlarges it; the indicator's arrows still turn pages. | The arrows sit inside the same rect, so without the ordering they would open the viewer instead of turning the page. | `clicking_the_picture_opens_the_viewer_but_the_arrows_still_turn_pages` |
+
 ## Visual snapshots
 
 | ID | Behavior | Breaks if lost | Verified by |

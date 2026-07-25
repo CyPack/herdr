@@ -15,6 +15,7 @@ mod mobile;
 mod navigator;
 mod onboarding;
 mod panes;
+mod preview_viewer;
 mod release_notes;
 mod scrollbar;
 mod settings;
@@ -76,6 +77,7 @@ pub(crate) use self::onboarding::onboarding_welcome_continue_rect;
 use self::onboarding::render_onboarding_overlay;
 pub(crate) use self::panes::popup_pane_rects;
 use self::panes::{render_empty, render_popup_pane, resize_popup_pane};
+pub(crate) use self::preview_viewer::{preview_viewer_content_area, render_preview_viewer};
 pub(crate) use self::release_notes::{
     product_announcement_display_lines, release_notes_close_button_rect,
     release_notes_display_lines, release_notes_wrapped_line_count, PRODUCT_ANNOUNCEMENT_MODAL_SIZE,
@@ -370,6 +372,11 @@ fn compute_view_internal(
     } else {
         Vec::new()
     };
+    let preview_viewer_content_area = app
+        .preview_viewer
+        .is_some()
+        .then(|| preview_viewer_content_area(area))
+        .flatten();
 
     if !app.sidebar_collapsed {
         app.workspace_scroll = normalized_workspace_scroll(app, sidebar_area, app.workspace_scroll);
@@ -496,6 +503,7 @@ fn compute_view_internal(
         file_manager_row_areas,
         file_manager_row_action_areas,
         file_manager_header_action_areas,
+        preview_viewer_content_area,
         file_manager_action_bar,
         agent_attachment_action_area,
         agent_worktree_action_area,
@@ -557,6 +565,11 @@ fn compute_mobile_view(
     } else {
         Vec::new()
     };
+    let preview_viewer_content_area = app
+        .preview_viewer
+        .is_some()
+        .then(|| preview_viewer_content_area(area))
+        .flatten();
 
     if app.mode == Mode::Navigate {
         let switcher_viewport_h = area.height.saturating_sub(header_h + 1);
@@ -619,6 +632,7 @@ fn compute_mobile_view(
         file_manager_row_areas,
         file_manager_row_action_areas,
         file_manager_header_action_areas,
+        preview_viewer_content_area,
         file_manager_action_bar,
         agent_attachment_action_area: None,
         agent_worktree_action_area: None,
@@ -908,6 +922,7 @@ impl compose::Component for OverlayLayer {
             }
             Mode::Settings => render_settings_overlay(app, frame, frame.area()),
             Mode::AgentReferencePicker => render_agent_reference_picker(app, frame),
+            Mode::PreviewViewer => render_preview_viewer(app, frame, frame.area()),
             Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane | Mode::RenameFile => {
                 render_rename_overlay(app, frame, frame.area())
             }

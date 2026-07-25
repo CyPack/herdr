@@ -141,6 +141,7 @@ impl AppState {
             | Mode::GlobalMenu
             | Mode::KeybindHelp
             | Mode::Navigator
+            | Mode::PreviewViewer
             | Mode::AgentReferencePicker => true,
         }
     }
@@ -173,6 +174,11 @@ impl AppState {
             | Mode::Resize
             | Mode::ContextMenu
             | Mode::ConfirmClose
+            // The viewer's whole purpose is the picture, and the picture is a
+            // host image rather than cells in the frame buffer. Declaring it a
+            // surface-hiding overlay would suppress the placement pass and the
+            // viewer would open onto an empty frame.
+            | Mode::PreviewViewer
             | Mode::ConfirmFileDelete => false,
             Mode::Onboarding
             | Mode::ReleaseNotes
