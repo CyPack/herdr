@@ -1001,12 +1001,15 @@ pub(super) fn render_image_preview_status(
         Some(("(Kitty graphics req.)", styles.warning))
     } else {
         match &preview.state {
-            FmImagePreviewState::Pending => {
-                Some(("(image preview pending)", styles.enabled_action))
-            }
-            FmImagePreviewState::Loading { .. } => {
-                Some(("(loading image...)", styles.enabled_action))
-            }
+            // Nothing is drawn while a decode is in flight. Optimised, that
+            // takes about 16 ms on this machine, so a label announcing it does
+            // not inform anyone — it flickers once per row while the cursor
+            // moves through a directory, which is worse than an empty panel
+            // that fills in.
+            //
+            // The states below are different: they are where the preview comes
+            // to rest, and silence there would read as broken.
+            FmImagePreviewState::Pending | FmImagePreviewState::Loading { .. } => None,
             FmImagePreviewState::Ready { .. } => None,
             FmImagePreviewState::Unavailable { error, .. } => Some((
                 image_preview_error_label(*error),
@@ -1701,6 +1704,61 @@ mod tests {
         let ready = render_rows(&app, 80, 6).join("\n");
         assert!(!ready.contains("image preview"));
         assert!(!ready.contains("loading image"));
+    }
+
+    // A decode in flight says nothing at all.
+    //
+    // Optimised, a decode is about 16 ms, so a "loading" label never informs
+    // anyone — it flickers once per row as the cursor moves through a
+    // directory. Resting states still speak: an empty panel is only acceptable
+    // while something is on its way.
+    //
+    // TP-FIP-IMAGE-QUIET-01
+    #[test]
+    fn a_decode_in_flight_draws_no_label_but_resting_states_still_speak() {
+        let td = TempDir::new("image-quiet");
+        fs::write(td.root.join("selected.png"), b"image candidate").expect("write candidate");
+        let mut fm = FmState::new(&td.root);
+
+        for state in [
+            FmImagePreviewState::Pending,
+            FmImagePreviewState::Loading {
+                target: ImagePreviewTarget {
+                    width_px: 96,
+                    height_px: 64,
+                },
+            },
+        ] {
+            match &mut fm.preview {
+                FmPreview::File(FmFilePreview::Image(preview)) => preview.state = state.clone(),
+                other => panic!("expected image preview state, got {other:?}"),
+            }
+            let mut app = app_with_fm(fm.clone());
+            app.kitty_graphics_enabled = true;
+            let rendered = render_rows(&app, 80, 6).join("\n");
+            assert!(
+                !rendered.contains("loading") && !rendered.contains("pending"),
+                "{state:?} must draw nothing: {rendered}"
+            );
+        }
+
+        // The limit is a resting state, so it keeps its voice.
+        match &mut fm.preview {
+            FmPreview::File(FmFilePreview::Image(preview)) => {
+                preview.state = FmImagePreviewState::Unsupported;
+            }
+            other => panic!("expected image preview state, got {other:?}"),
+        }
+        let mut app = app_with_fm(fm);
+        app.kitty_graphics_enabled = true;
+        let rendered = render_rows(&app, 80, 6).join("\n");
+        // Matched on a prefix: the panel truncates by display cells, so
+        // asserting the whole sentence would make this a test about column
+        // width rather than about whether the limit is stated at all.
+        assert!(
+            rendered.contains("no preview"),
+            "a settled limit must still be stated: {rendered}"
+        );
     }
 
     // TP-B1.5-TRUNCATION: both reader-byte and highlighter-line limits produce
