@@ -167,31 +167,29 @@ pub(crate) fn compute_tab_bar_view(
     }
 
     let area_right = area.x + area.width;
-    // Stage entries are reserved out of the strip up front so terminal tab
-    // layout, scrolling and overflow arithmetic never have to know about them.
-    let stage_reserved = stage_tabs_reserved_width(stage_tabs);
+    // TP-FTAB-ENTRY-05: stage entries are pinned to the leading edge and never
+    // scroll, so they are laid out first and the terminal tabs get what remains.
+    // Everything downstream — scrolling, overflow, drag-reorder — then keeps
+    // working on a narrower area without knowing they exist.
+    let stage_tab_hit_areas = layout_stage_tab_hit_areas(stage_tabs, area.x, area_right, area.y);
+    let tabs_x = area
+        .x
+        .saturating_add(stage_tabs_reserved_width(stage_tabs))
+        .min(area_right);
+    let tabs_width = area_right.saturating_sub(tabs_x);
 
     if !mouse_chrome {
-        let tabs_area = Rect::new(
-            area.x,
-            area.y,
-            area.width.saturating_sub(stage_reserved),
-            area.height,
-        );
+        let tabs_area = Rect::new(tabs_x, area.y, tabs_width, area.height);
         let max_scroll = max_tab_scroll(ws, tabs_area);
         let scroll = if follow_active {
             centered_tab_scroll(ws, tabs_area).min(max_scroll)
         } else {
             current_scroll.min(max_scroll)
         };
-        let tab_hit_areas = layout_tab_hit_areas(ws, tabs_area, scroll);
-        let stage_x = trailing_tab_controls_x(&tab_hit_areas, area.x);
         return TabBarView {
             scroll,
-            stage_tab_hit_areas: layout_stage_tab_hit_areas(
-                stage_tabs, stage_x, area_right, area.y,
-            ),
-            tab_hit_areas,
+            stage_tab_hit_areas,
+            tab_hit_areas: layout_tab_hit_areas(ws, tabs_area, scroll),
             scroll_left_hit_area: Rect::default(),
             scroll_right_hit_area: Rect::default(),
             new_tab_hit_area: Rect::default(),
@@ -199,25 +197,15 @@ pub(crate) fn compute_tab_bar_view(
     }
 
     let all_tabs_area = Rect::new(
-        area.x,
+        tabs_x,
         area.y,
-        area.width
-            .saturating_sub(NEW_TAB_WIDTH)
-            .saturating_sub(stage_reserved),
+        tabs_width.saturating_sub(NEW_TAB_WIDTH),
         area.height,
     );
     let all_tabs = layout_tab_hit_areas(ws, all_tabs_area, 0);
     let overflow = all_tabs.iter().any(|rect| rect.width == 0);
     if !overflow {
-        let stage_x = trailing_tab_controls_x(&all_tabs, area.x);
-        let stage_tab_hit_areas =
-            layout_stage_tab_hit_areas(stage_tabs, stage_x, area_right, area.y);
-        let new_tab_x = stage_tab_hit_areas
-            .iter()
-            .rev()
-            .find(|entry| entry.rect.width > 0)
-            .map(|entry| entry.rect.x + entry.rect.width + 1)
-            .unwrap_or(stage_x);
+        let new_tab_x = trailing_tab_controls_x(&all_tabs, tabs_x);
         let new_tab_hit_area = Rect::new(
             new_tab_x,
             area.y,
@@ -234,11 +222,9 @@ pub(crate) fn compute_tab_bar_view(
         };
     }
 
-    let left_hit_area = Rect::new(area.x, area.y, TAB_SCROLL_BUTTON_WIDTH.min(area.width), 1);
+    let left_hit_area = Rect::new(tabs_x, area.y, TAB_SCROLL_BUTTON_WIDTH.min(tabs_width), 1);
     let tab_area_x = left_hit_area.x + left_hit_area.width;
-    let reserved_trailing_width = NEW_TAB_WIDTH
-        .saturating_add(TAB_SCROLL_BUTTON_WIDTH)
-        .saturating_add(stage_reserved);
+    let reserved_trailing_width = NEW_TAB_WIDTH.saturating_add(TAB_SCROLL_BUTTON_WIDTH);
     let tab_area_right = area_right.saturating_sub(reserved_trailing_width);
     let tab_area = Rect::new(
         tab_area_x,
@@ -254,14 +240,7 @@ pub(crate) fn compute_tab_bar_view(
         current_scroll.min(max_scroll)
     };
     let tab_hit_areas = layout_tab_hit_areas(ws, tab_area, scroll);
-    let stage_x = trailing_tab_controls_x(&tab_hit_areas, tab_area_x).min(tab_area_right);
-    let stage_tab_hit_areas = layout_stage_tab_hit_areas(stage_tabs, stage_x, area_right, area.y);
-    let trailing_x = stage_tab_hit_areas
-        .iter()
-        .rev()
-        .find(|entry| entry.rect.width > 0)
-        .map(|entry| entry.rect.x + entry.rect.width + 1)
-        .unwrap_or(stage_x);
+    let trailing_x = trailing_tab_controls_x(&tab_hit_areas, tab_area_x).min(tab_area_right);
     let right_hit_area = Rect::new(
         trailing_x,
         area.y,
@@ -639,6 +618,51 @@ mod tests {
                     || tab_rect.x >= files_rect.x + files_rect.width,
                 "the Files entry overlaps terminal tab {idx}: {tab_rect:?} vs {files_rect:?}"
             );
+        }
+    }
+
+    // TP-FTAB-ENTRY-05: stage entries are pinned to the left edge, ahead of
+    // every terminal tab, and stay there when the terminal tabs overflow and
+    // scroll. An entry that scrolls out of reach is not pinned.
+    #[test]
+    fn files_entry_is_pinned_left_of_every_terminal_tab() {
+        for mouse_chrome in [false, true] {
+            let (mut app, root) = stage_fixture("pinned-left");
+            app.mouse_capture = mouse_chrome;
+            for _ in 0..12 {
+                app.workspaces[0].test_add_tab(None);
+            }
+            let last = app.workspaces[0].tabs.len() - 1;
+            app.workspaces[0].active_tab = last;
+            let area = Rect::new(0, 0, 80, 24);
+            open_files(&mut app, &root);
+            crate::ui::compute_view(&mut app, area);
+
+            let files = app.view.stage_tab_hit_areas[0].rect;
+            assert!(
+                files.width > 0,
+                "mouse_chrome={mouse_chrome}: the pinned entry is always visible"
+            );
+            assert_eq!(
+                files.x, app.view.tab_bar_rect.x,
+                "mouse_chrome={mouse_chrome}: the pinned entry starts at the strip's left edge"
+            );
+            assert!(
+                app.view
+                    .tab_hit_areas
+                    .iter()
+                    .any(|rect: &Rect| rect.width == 0),
+                "control: twelve tabs in an 80-cell strip must overflow"
+            );
+            for (idx, tab) in app.view.tab_hit_areas.iter().enumerate() {
+                if tab.width == 0 {
+                    continue;
+                }
+                assert!(
+                    files.x + files.width <= tab.x,
+                    "mouse_chrome={mouse_chrome}: terminal tab {idx} must start right of the pinned entry: {tab:?} vs {files:?}"
+                );
+            }
         }
     }
 
