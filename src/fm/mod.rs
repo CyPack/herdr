@@ -517,8 +517,8 @@ fn sort_entries(entries: &mut [FileEntry]) {
     });
 }
 
-/// Pin fixture mtimes so directory-row order is decided by the natsort name
-/// tie-break rather than filesystem clock granularity.
+/// TP-MTIME-04: pin fixture mtimes so directory-row order is decided by the
+/// natsort name tie-break rather than filesystem clock granularity.
 ///
 /// [`sort_entries`] orders rows by `modified` DESC before falling back to the
 /// name comparison, so fixtures written back-to-back only keep creation order
