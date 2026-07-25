@@ -53,6 +53,24 @@ Format and rules: [`README.md`](README.md).
 | TP-FTAB-DOCK-02 | Leaving Files through the shell (dock Terminal, Spaces/Projects click) backgrounds the tab instead of closing it. | An ordinary sidebar click discards the Files tab's state. | `dock_terminal_activation_backgrounds_files_instead_of_closing_it`, `spaces_tab_click_restores_terminal_stage_and_preserves_identity`, `projects_tab_click_restores_terminal_stage_and_preserves_identity` |
 | TP-FTAB-DOCK-03 | The toggle has three states: dismiss the active Files surface, raise a backgrounded one, open when none exists. | The keybinding closes a backgrounded Files tab instead of raising it, throwing away the directory left open there. | `toggle_raises_a_backgrounded_files_tab_and_still_dismisses_an_active_one` |
 
+
+## Surviving a restart
+
+Phase 2. The tab is recorded in the **session file**, which is a different type
+from the protocol's `SessionSnapshot` despite the shared name — so restart
+survival cost no protocol change and left `workspace::Tab` untouched.
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-FTAB-PERSIST-01 | The session file records the exact directory the tab was left in. | A near-miss directory silently reopens the wrong place, which is worse than not restoring because it looks like it worked. | `an_open_files_tab_is_captured_with_its_exact_directory` |
+| TP-FTAB-PERSIST-02 | No tab open means no record; absence stays absence. | A defaulted path resurrects a Files tab the user had closed. | `no_files_tab_is_captured_when_none_is_open` |
+| TP-FTAB-PERSIST-03 | Which surface owned the stage is part of the record. | A backgrounded tab restores as active and takes over the stage on every start. | `a_backgrounded_files_tab_is_captured_as_inactive` |
+| TP-FTAB-PERSIST-04 | Session files written before this field keep loading, through the real migrating load path rather than a bare derive. | Every existing session becomes unreadable on the first run after an update. | `snapshots_written_before_the_files_tab_load_without_one` |
+| TP-FTAB-PERSIST-05 | The record survives a JSON round trip. | An unrelated edit to the serde attributes drops the field silently. | `files_tab_snapshot_round_trips_through_json` |
+| TP-FTAB-PERSIST-06 | Restore reopens the tab at the recorded directory and raises it when it was active. | The tab comes back pointing somewhere else, or comes back hidden. | `restore_reopens_the_files_tab_at_its_recorded_directory` |
+| TP-FTAB-PERSIST-07 | An inactive record restores a tab that is present but does not own the stage. | Every start opens on Files regardless of where the user left off. | `restoring_an_inactive_files_tab_leaves_the_terminal_surface_active` |
+| TP-FTAB-PERSIST-08 | A directory that no longer reads restores nothing at all. | A deleted directory strands the user on an empty Files surface at startup — the likely case, since directories disappear between sessions. | `restore_of_a_vanished_directory_opens_no_files_tab` |
+| TP-FTAB-PERSIST-09 | A Files tab survives a full capture, serialize, load and restore cycle, in both surface states. | Capture and restore drift apart while each half's own tests still pass. | `a_files_tab_survives_a_full_save_and_load_cycle` |
 ## Notes for the next sync
 
 - `TP-FTAB-INPUT-05` is the one to defend hardest. Every other failure here is

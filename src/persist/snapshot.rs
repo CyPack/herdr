@@ -168,6 +168,28 @@ pub struct SessionSnapshot {
     pub sidebar_section_split: Option<f32>,
     #[serde(default)]
     pub collapsed_space_keys: std::collections::HashSet<String>,
+    /// The Files tab left open at save time, if any.
+    ///
+    /// Optional and defaulted so session files written before the tab existed
+    /// keep loading, and so a file written by a build that has it stays
+    /// readable by one that does not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files_tab: Option<FilesTabSnapshot>,
+}
+
+/// A Files tab as recorded in the session file.
+///
+/// Deliberately self-describing rather than a reference into the workspace
+/// tree: the tab is a stage app, so it is not owned by any `TabSnapshot`, and
+/// keeping it standalone is what let restart survival land without touching
+/// `workspace::Tab` or the wire protocol.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FilesTabSnapshot {
+    /// Exact directory the tab was left in.
+    pub cwd: std::path::PathBuf,
+    /// Whether it owned the stage at save time.
+    #[serde(default)]
+    pub active: bool,
 }
 
 impl SessionSnapshot {
@@ -342,6 +364,8 @@ struct RawSessionSnapshot {
     sidebar_section_split: Option<f32>,
     #[serde(default)]
     collapsed_space_keys: std::collections::HashSet<String>,
+    #[serde(default)]
+    files_tab: Option<FilesTabSnapshot>,
 }
 
 fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> {
@@ -379,6 +403,7 @@ fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> 
         sidebar_width: raw.sidebar_width,
         sidebar_section_split: raw.sidebar_section_split,
         collapsed_space_keys: raw.collapsed_space_keys,
+        files_tab: raw.files_tab,
     })
 }
 
@@ -442,6 +467,7 @@ pub fn capture(
     shell_presentation: &ShellPresentationState,
     sidebar_section_split: f32,
     collapsed_space_keys: std::collections::HashSet<String>,
+    files_tab: Option<FilesTabSnapshot>,
 ) -> SessionSnapshot {
     SessionSnapshot {
         version: SNAPSHOT_VERSION,
@@ -458,6 +484,7 @@ pub fn capture(
         sidebar_width: Some(sidebar_width),
         sidebar_section_split: Some(sidebar_section_split),
         collapsed_space_keys,
+        files_tab,
     }
 }
 
@@ -673,6 +700,99 @@ mod tests {
     use crate::layout::NavDirection;
     use crate::workspace::Workspace;
 
+    // TP-FTAB-PERSIST-09: the promise the user actually made — close herdr with
+    // a Files tab open, reopen it, and the tab is there in the same directory.
+    // Capture and restore are covered separately elsewhere; only this one fails
+    // if the two halves disagree about the file that passes between them.
+    #[test]
+    fn a_files_tab_survives_a_full_save_and_load_cycle() {
+        struct FixtureRoot(PathBuf);
+        impl Drop for FixtureRoot {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let root = std::env::temp_dir().join(format!("herdr-persist-e2e-{}", std::process::id()));
+        let _fixture = FixtureRoot(root.clone());
+        std::fs::create_dir_all(&root).expect("fixture root");
+        std::fs::write(root.join("00.txt"), b"x").expect("fixture entry");
+
+        for left_active in [true, false] {
+            let mut saved = AppState::test_new();
+            saved.workspaces = vec![Workspace::test_new("persisted")];
+            saved.active = Some(0);
+            saved
+                .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+                .expect("Files activation");
+            if !left_active {
+                saved.show_terminal_workspace();
+            }
+
+            let encoded =
+                serde_json::to_string(&capture_from_state(&saved)).expect("serialize session");
+            let reloaded = parse_snapshot(&encoded).expect("load session");
+
+            let mut restored = AppState::test_new();
+            restored.workspaces = vec![Workspace::test_new("persisted")];
+            restored.active = Some(0);
+            restored.restore_files_tab(
+                reloaded
+                    .files_tab
+                    .as_ref()
+                    .expect("the cycle must carry the Files tab"),
+            );
+
+            assert_eq!(
+                restored
+                    .file_manager
+                    .as_ref()
+                    .expect("restored Files tab")
+                    .cwd,
+                root,
+                "left_active={left_active}"
+            );
+            assert_eq!(
+                restored.stage.surface_view()
+                    == crate::ui::surface_host::StageSurfaceView::NativeFiles,
+                left_active,
+                "left_active={left_active}: surface ownership must survive the cycle"
+            );
+        }
+    }
+
+    // TP-FTAB-PERSIST-04: session files written before the Files tab existed
+    // must keep loading. A required field here would make every existing
+    // session unreadable on the first run after an update.
+    #[test]
+    fn snapshots_written_before_the_files_tab_load_without_one() {
+        for name in ["current-herdr", "current-herdr-dev", "legacy-pre-tabs-v2"] {
+            let snapshot = parse_snapshot(session_fixture(name))
+                .unwrap_or_else(|err| panic!("{name} must still load: {err}"));
+            assert_eq!(
+                snapshot.files_tab, None,
+                "{name}: an absent field must read as no Files tab"
+            );
+        }
+    }
+
+    // TP-FTAB-PERSIST-05: the recorded directory and surface ownership survive
+    // a serialization round trip. This pins the serde attributes themselves,
+    // which are the part most easily broken by an unrelated edit.
+    #[test]
+    fn files_tab_snapshot_round_trips_through_json() {
+        let mut snapshot = parse_snapshot(session_fixture("current-herdr")).expect("fixture");
+        snapshot.files_tab = Some(FilesTabSnapshot {
+            cwd: PathBuf::from("/tmp/herdr-persist-round-trip"),
+            active: false,
+        });
+
+        let encoded = serde_json::to_string(&snapshot).expect("serialize");
+        let decoded = parse_snapshot(&encoded).expect("deserialize");
+
+        assert_eq!(decoded.files_tab, snapshot.files_tab);
+    }
+
     fn session_fixture(name: &str) -> &'static str {
         match name {
             "current-herdr" => {
@@ -848,6 +968,7 @@ mod tests {
             &state.shell_presentation,
             state.sidebar_section_split,
             state.collapsed_space_keys.clone(),
+            state.files_tab_snapshot(),
         )
     }
 
@@ -913,6 +1034,7 @@ mod tests {
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
+            files_tab: None,
         };
         let json = serde_json::to_string(&snap).unwrap();
         let restored = parse_snapshot(&json).unwrap();
@@ -1001,6 +1123,7 @@ mod tests {
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
+            files_tab: None,
             version: SNAPSHOT_VERSION,
         };
 
@@ -1814,6 +1937,7 @@ mod tests {
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
+            files_tab: None,
         };
 
         let json = serde_json::to_string(&snap).unwrap();

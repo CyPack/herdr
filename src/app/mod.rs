@@ -444,6 +444,7 @@ impl App {
             sidebar_width_source,
             sidebar_section_split,
             collapsed_space_keys,
+            restored_files_tab,
         ) = if no_session {
             (
                 Vec::new(),
@@ -454,6 +455,7 @@ impl App {
                 state::SidebarWidthSource::ConfigDefault,
                 0.5_f32,
                 std::collections::HashSet::new(),
+                None,
             )
         } else if let Some(snap) = crate::persist::load() {
             let restored_left_panel = snap.restored_left_panel_preference();
@@ -497,6 +499,7 @@ impl App {
                     },
                     snap.sidebar_section_split.unwrap_or(0.5),
                     snap.collapsed_space_keys,
+                    snap.files_tab.clone(),
                 )
             } else {
                 crate::logging::session_restored(ws.len(), "ok");
@@ -515,6 +518,7 @@ impl App {
                     },
                     snap.sidebar_section_split.unwrap_or(0.5),
                     snap.collapsed_space_keys,
+                    snap.files_tab.clone(),
                 )
             }
         } else {
@@ -527,6 +531,7 @@ impl App {
                 state::SidebarWidthSource::ConfigDefault,
                 0.5_f32,
                 std::collections::HashSet::new(),
+                None,
             )
         };
 
@@ -854,6 +859,13 @@ impl App {
             std::thread::spawn(move || {
                 crate::detect::manifest_update::auto_update(manifest_update_tx)
             });
+        }
+
+        // TP-FTAB-PERSIST-06/07/08: reopen the Files tab the session file
+        // recorded. A directory that no longer reads restores nothing, so a
+        // deleted directory cannot strand the user on an empty surface.
+        if let Some(files_tab) = restored_files_tab.as_ref() {
+            state.restore_files_tab(files_tab);
         }
 
         let last_focus = state.active.and_then(|idx| {

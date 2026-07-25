@@ -643,6 +643,47 @@ impl AppState {
         }
     }
 
+    /// Capture the resident Files tab for the session file.
+    ///
+    /// TP-FTAB-PERSIST-01/02/03: records the exact directory and whether the
+    /// tab owned the stage. Absence is recorded as absence — defaulting to a
+    /// path here would resurrect a tab the user had closed.
+    pub(crate) fn files_tab_snapshot(&self) -> Option<crate::persist::FilesTabSnapshot> {
+        let file_manager = self.file_manager.as_ref()?;
+        self.resident_files_instance()?;
+        Some(crate::persist::FilesTabSnapshot {
+            cwd: file_manager.cwd.clone(),
+            active: self.stage.surface_view()
+                == crate::ui::surface_host::StageSurfaceView::NativeFiles,
+        })
+    }
+
+    /// Reopen a Files tab recorded in the session file.
+    ///
+    /// TP-FTAB-PERSIST-08: a directory that no longer reads restores nothing.
+    /// Directories disappear between sessions, and a Files surface pointing at
+    /// one is a state the user cannot navigate out of, so this fails closed
+    /// rather than opening an empty surface.
+    pub(crate) fn restore_files_tab(&mut self, snapshot: &crate::persist::FilesTabSnapshot) {
+        if std::fs::read_dir(&snapshot.cwd).is_err() {
+            tracing::debug!(
+                cwd = %snapshot.cwd.display(),
+                "recorded Files tab directory is gone; not restoring it"
+            );
+            return;
+        }
+        let cwd = snapshot.cwd.clone();
+        if self
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&cwd)))
+            .is_err()
+        {
+            return;
+        }
+        if !snapshot.active {
+            self.show_terminal_workspace();
+        }
+    }
+
     /// The resident Files instance, active or backgrounded.
     fn resident_files_instance(&self) -> Option<crate::ui::surface_host::AppInstanceId> {
         self.stage
@@ -3717,6 +3758,116 @@ mod tests {
             "toggling the active Files surface still dismisses it"
         );
         assert_eq!(state.stage.app_tab_instances().count(), 0);
+    }
+
+    // TP-FTAB-PERSIST-01: the session file records the exact directory the tab
+    // was left in. A near-miss here silently reopens the wrong place, which is
+    // worse than not restoring at all because it looks like it worked.
+    #[test]
+    fn an_open_files_tab_is_captured_with_its_exact_directory() {
+        let (mut state, root) = backgroundable_files_fixture("persist-active");
+        open_files_at(&mut state, &root);
+
+        let captured = state.files_tab_snapshot().expect("an open tab is captured");
+
+        assert_eq!(captured.cwd, root.0);
+        assert!(captured.active, "it owned the stage at capture time");
+    }
+
+    // TP-FTAB-PERSIST-02: absence stays absence. Defaulting to a path here
+    // would resurrect a Files tab the user had closed.
+    #[test]
+    fn no_files_tab_is_captured_when_none_is_open() {
+        let mut state = app_with_workspaces(&["one"]);
+
+        assert_eq!(state.files_tab_snapshot(), None);
+
+        let (mut opened, root) = backgroundable_files_fixture("persist-closed");
+        open_files_at(&mut opened, &root);
+        opened.close_file_manager();
+        assert_eq!(opened.files_tab_snapshot(), None);
+        state.close_file_manager();
+    }
+
+    // TP-FTAB-PERSIST-03: which surface owned the stage is part of the record.
+    // Restoring a backgrounded tab as active would take over the stage on
+    // every single start.
+    #[test]
+    fn a_backgrounded_files_tab_is_captured_as_inactive() {
+        let (mut state, root) = backgroundable_files_fixture("persist-background");
+        open_files_at(&mut state, &root);
+        state.show_terminal_workspace();
+
+        let captured = state
+            .files_tab_snapshot()
+            .expect("a resident tab is captured");
+
+        assert_eq!(captured.cwd, root.0);
+        assert!(!captured.active);
+    }
+
+    // TP-FTAB-PERSIST-06: restore reopens the tab where it was left, and an
+    // inactive record stays inactive.
+    #[test]
+    fn restore_reopens_the_files_tab_at_its_recorded_directory() {
+        let (mut state, root) = backgroundable_files_fixture("persist-restore");
+
+        state.restore_files_tab(&crate::persist::FilesTabSnapshot {
+            cwd: root.0.clone(),
+            active: true,
+        });
+
+        assert_eq!(
+            state.file_manager.as_ref().expect("restored Files tab").cwd,
+            root.0
+        );
+        assert_eq!(
+            state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::NativeFiles
+        );
+    }
+
+    // TP-FTAB-PERSIST-07: an inactive record restores a tab that is present but
+    // does not own the stage.
+    #[test]
+    fn restoring_an_inactive_files_tab_leaves_the_terminal_surface_active() {
+        let (mut state, root) = backgroundable_files_fixture("persist-restore-bg");
+
+        state.restore_files_tab(&crate::persist::FilesTabSnapshot {
+            cwd: root.0.clone(),
+            active: false,
+        });
+
+        assert_eq!(
+            state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace
+        );
+        assert!(
+            state.file_manager.is_some(),
+            "the tab is restored, just not raised"
+        );
+        assert_eq!(state.stage.app_tab_instances().count(), 1);
+    }
+
+    // TP-FTAB-PERSIST-08: a directory that no longer reads restores nothing.
+    // This is the likely case — directories get deleted between sessions — and
+    // a Files surface pointing at one is a state the user cannot get out of.
+    #[test]
+    fn restore_of_a_vanished_directory_opens_no_files_tab() {
+        let (mut state, root) = backgroundable_files_fixture("persist-vanished");
+        let vanished = root.0.join("gone");
+
+        state.restore_files_tab(&crate::persist::FilesTabSnapshot {
+            cwd: vanished,
+            active: true,
+        });
+
+        assert!(state.file_manager.is_none());
+        assert_eq!(state.stage.app_tab_instances().count(), 0);
+        assert_eq!(
+            state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace
+        );
     }
 
     fn insert_test_pane_graphics_layer(state: &mut AppState, pane_id: PaneId) {

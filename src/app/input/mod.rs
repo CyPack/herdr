@@ -1152,6 +1152,7 @@ fn capture_snapshot(state: &AppState) -> crate::persist::SessionSnapshot {
         &state.shell_presentation,
         state.sidebar_section_split,
         state.collapsed_space_keys.clone(),
+        state.files_tab_snapshot(),
     )
 }
 
