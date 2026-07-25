@@ -7557,6 +7557,51 @@ next_tab = ""
         );
     }
 
+    /// Does this payload place an image?
+    ///
+    /// A cleared cache still emits bytes — delete commands (`a=d`) for images
+    /// the terminal should drop. Asserting the payload is merely non-empty
+    /// therefore passes while the picture is being taken away, which is the
+    /// exact failure this suite exists to catch.
+    fn places_an_image(graphics: &[u8]) -> bool {
+        graphics.windows(3).any(|window| window == b"a=p")
+    }
+
+    /// Does this payload take an image off the screen?
+    ///
+    /// The counterpart to [`places_an_image`], and the one to reach for when
+    /// asking whether a picture *stays*. The encoder sends diffs: once an image
+    /// is placed, a frame that changes nothing about it carries no bytes at
+    /// all. So "is it still there" cannot be read from a single frame — but
+    /// "was it taken away" can, and that is the question these tests mean.
+    fn deletes_an_image(graphics: &[u8]) -> bool {
+        graphics.windows(3).any(|window| window == b"a=d")
+    }
+
+    /// Drive the scheduler until the image preview holds decoded pixels.
+    ///
+    /// Decoding happens on a worker thread, so a single scheduled round proves
+    /// nothing; every image test needs this and none of them should re-invent
+    /// the deadline.
+    fn headless_pump_image_until_ready(server: &mut HeadlessServer) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
+            if matches!(
+                headless_image_preview_state(server),
+                crate::fm::FmImagePreviewState::Ready { .. }
+            ) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for the image decode; state {:?}",
+                headless_image_preview_state(server)
+            );
+            std::thread::yield_now();
+        }
+    }
+
     /// Build a server whose single foreground app client has a writer and the
     /// given cell size, with a workspace present so `Mode::Terminal` is real.
     fn headless_graphics_server(
@@ -7630,12 +7675,307 @@ next_tab = ""
         );
 
         assert!(
-            !frame.graphics.is_empty(),
-            "a ready file manager image must reach the client as graphics"
+            places_an_image(&frame.graphics),
+            "a ready file manager image must reach the client as a placement, \
+             not merely as some kitty graphics traffic"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // The preview keeps its image while a menu is open over it.
+    //
+    // Found live, and the log named it exactly: the graphics encoder refuses to
+    // emit anything unless the app is in terminal mode, and it clears the
+    // uploaded image on the way out. Opening the right-click menu switches the
+    // mode, so the picture the menu is floating over disappears underneath it.
+    //
+    // The gate is right for pane graphics — a terminal app's images must not
+    // paint over a modal. It is wrong for the file manager preview, which herdr
+    // draws itself and keeps on screen while the menu is up.
+    //
+    // TP-FMR-IMAGE-HL-06
+    #[test]
+    fn fm_image_survives_a_context_menu_opening_over_it() {
+        let frame_area = ratatui::layout::Rect::new(0, 0, 115, 20);
+        let (mut server, client_rx) =
+            headless_graphics_server(crate::kitty_graphics::HostCellSize {
+                width_px: 8,
+                height_px: 16,
+            });
+        let root = headless_server_showing_one_png(&mut server, "image-menu", frame_area);
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
+            if matches!(
+                headless_image_preview_state(&server),
+                crate::fm::FmImagePreviewState::Ready { .. }
+            ) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for the decode"
+            );
+            std::thread::yield_now();
+        }
+
+        server.render_and_stream();
+        let first = read_server_frame(
+            client_rx
+                .recv_timeout(Duration::from_millis(500))
+                .expect("first frame"),
         );
         assert!(
-            frame.graphics.windows(3).any(|window| window == b"\x1b_G"),
-            "the payload must be a kitty graphics command"
+            places_an_image(&first.graphics),
+            "baseline: the image reaches the client before the menu opens"
+        );
+        while client_rx.try_recv().is_ok() {}
+
+        // Right-clicking a row puts the app in menu mode. Everything else about
+        // the surface is unchanged: the same preview panel is still on screen,
+        // with the menu drawn above it.
+        server.app.state.mode = crate::app::Mode::ContextMenu;
+        let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
+        server.render_and_stream();
+
+        let with_menu = read_server_frame(
+            client_rx
+                .recv_timeout(Duration::from_millis(500))
+                .expect("a frame while the menu is open"),
+        );
+        assert!(
+            !deletes_an_image(&with_menu.graphics),
+            "opening a menu over the preview must not take the image away"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // A full-screen overlay takes the image away.
+    //
+    // The mirror image of TP-FMR-IMAGE-HL-06, and the reason that fix cannot
+    // simply drop the gate. Terminal images are not cells in the frame buffer,
+    // so a settings page drawn over the preview overwrites the text under the
+    // picture without touching the picture: it would hang over the page.
+    // A missing image is a much smaller failure than one floating over
+    // unrelated content.
+    //
+    // TP-FMR-IMAGE-HL-07
+    #[test]
+    fn full_screen_overlay_takes_the_fm_image_away() {
+        let frame_area = ratatui::layout::Rect::new(0, 0, 115, 20);
+        let (mut server, client_rx) =
+            headless_graphics_server(crate::kitty_graphics::HostCellSize {
+                width_px: 8,
+                height_px: 16,
+            });
+        let root = headless_server_showing_one_png(&mut server, "image-fullscreen", frame_area);
+        headless_pump_image_until_ready(&mut server);
+
+        server.render_and_stream();
+        let first = read_server_frame(
+            client_rx
+                .recv_timeout(Duration::from_millis(500))
+                .expect("first frame"),
+        );
+        assert!(
+            places_an_image(&first.graphics),
+            "baseline: the image is on screen before the overlay opens"
+        );
+        while client_rx.try_recv().is_ok() {}
+
+        server.app.state.mode = crate::app::Mode::Settings;
+        let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
+        server.render_and_stream();
+
+        let covered = read_server_frame(
+            client_rx
+                .recv_timeout(Duration::from_millis(500))
+                .expect("a frame while the settings page is open"),
+        );
+        assert!(
+            deletes_an_image(&covered.graphics),
+            "an overlay that covers the whole frame must take the image with \
+             it; an image is not a cell, so text drawn over it leaves the \
+             picture hanging on top of the page"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // Modes that cover nothing keep the image.
+    //
+    // `Prefix` and `Navigate` are not terminal mode either, so the old gate
+    // silently dropped the preview for them too — the same bug wearing
+    // different clothes, and the reason the fix is a classification rather than
+    // a special case for menus.
+    //
+    // TP-FMR-IMAGE-HL-08
+    #[test]
+    fn transient_modes_that_cover_nothing_keep_the_fm_image() {
+        let frame_area = ratatui::layout::Rect::new(0, 0, 115, 20);
+        let (mut server, client_rx) =
+            headless_graphics_server(crate::kitty_graphics::HostCellSize {
+                width_px: 8,
+                height_px: 16,
+            });
+        let root = headless_server_showing_one_png(&mut server, "image-transient", frame_area);
+        headless_pump_image_until_ready(&mut server);
+        server.render_and_stream();
+        while client_rx.try_recv().is_ok() {}
+
+        for mode in [crate::app::Mode::Prefix, crate::app::Mode::Navigate] {
+            server.app.state.mode = mode;
+            let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
+            server.render_and_stream();
+            let frame = read_server_frame(
+                client_rx
+                    .recv_timeout(Duration::from_millis(500))
+                    .unwrap_or_else(|_| panic!("a frame in {mode:?}")),
+            );
+            assert!(
+                !deletes_an_image(&frame.graphics),
+                "{mode:?} covers nothing, so the preview keeps its image"
+            );
+            while client_rx.try_recv().is_ok() {}
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // An open-but-backgrounded Files tab does not claim the placement pass.
+    //
+    // `TP-FTAB-INPUT-02` in graphics form: reading "is the file manager open"
+    // rather than "does it own the stage" hands the pass to a surface nobody is
+    // looking at, and the visible terminal loses its own images.
+    //
+    // TP-FMR-IMAGE-HL-09
+    #[test]
+    fn backgrounded_files_tab_does_not_claim_the_placement_pass() {
+        let frame_area = ratatui::layout::Rect::new(0, 0, 115, 20);
+        let (mut server, client_rx) =
+            headless_graphics_server(crate::kitty_graphics::HostCellSize {
+                width_px: 8,
+                height_px: 16,
+            });
+        let root = headless_server_showing_one_png(&mut server, "image-bg", frame_area);
+        headless_pump_image_until_ready(&mut server);
+        server.render_and_stream();
+        let first = read_server_frame(
+            client_rx
+                .recv_timeout(Duration::from_millis(500))
+                .expect("first frame"),
+        );
+        assert!(places_an_image(&first.graphics), "baseline");
+        while client_rx.try_recv().is_ok() {}
+
+        // Files stays open; the terminal workspace takes the stage.
+        server.app.state.show_terminal_workspace();
+        assert!(
+            server.app.state.file_manager.is_some(),
+            "the Files tab is still open, which is exactly the trap"
+        );
+        let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
+        server.render_and_stream();
+
+        let backgrounded = read_server_frame(
+            client_rx
+                .recv_timeout(Duration::from_millis(500))
+                .expect("a frame on the terminal workspace"),
+        );
+        assert!(
+            deletes_an_image(&backgrounded.graphics),
+            "a backgrounded Files tab must not leave its preview over the \
+             terminal the user is actually looking at"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // An image still reaches the client after the user leaves the Files
+    // surface and comes back.
+    //
+    // Reported from a live run: the preview drew correctly, then opening a file
+    // in a new tab and returning left the panel blank for the rest of the
+    // session. Backgrounding the surface is an ordinary thing to do, so a
+    // preview that only survives until the first tab switch is barely a
+    // preview.
+    //
+    // TP-FMR-IMAGE-HL-05
+    #[test]
+    fn fm_image_graphics_return_after_leaving_and_reentering_the_files_surface() {
+        let frame_area = ratatui::layout::Rect::new(0, 0, 115, 20);
+        let (mut server, client_rx) =
+            headless_graphics_server(crate::kitty_graphics::HostCellSize {
+                width_px: 8,
+                height_px: 16,
+            });
+        let root = headless_server_showing_one_png(&mut server, "image-return", frame_area);
+        let files_instance = server
+            .app
+            .state
+            .stage
+            .app_tab_instances()
+            .next()
+            .expect("the open Files surface owns a strip entry");
+
+        let pump_until_ready = |server: &mut HeadlessServer| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
+                if matches!(
+                    headless_image_preview_state(server),
+                    crate::fm::FmImagePreviewState::Ready { .. }
+                ) {
+                    return;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "timed out waiting for the image decode; state {:?}",
+                    headless_image_preview_state(server)
+                );
+                std::thread::yield_now();
+            }
+        };
+
+        pump_until_ready(&mut server);
+        server.render_and_stream();
+        let first = read_server_frame(
+            client_rx
+                .recv_timeout(Duration::from_millis(500))
+                .expect("first frame"),
+        );
+        assert!(
+            places_an_image(&first.graphics),
+            "baseline: the image must reach the client before any tab switch"
+        );
+
+        // Leave Files for the terminal workspace, exactly as opening a file in
+        // a new tab does.
+        server.app.state.show_terminal_workspace();
+        server.render_and_stream();
+        while client_rx.try_recv().is_ok() {}
+
+        // Come back.
+        assert!(
+            server.app.state.activate_stage_instance(files_instance),
+            "the resident Files instance stays activatable"
+        );
+        crate::ui::compute_view(&mut server.app.state, frame_area);
+        pump_until_ready(&mut server);
+        server.render_and_stream();
+
+        let returned = read_server_frame(
+            client_rx
+                .recv_timeout(Duration::from_millis(500))
+                .expect("a frame after returning to Files"),
+        );
+        assert!(
+            places_an_image(&returned.graphics),
+            "the image must be placed again after returning to Files, not only \
+             on the first visit"
         );
 
         let _ = fs::remove_dir_all(root);

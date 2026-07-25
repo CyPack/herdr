@@ -368,7 +368,22 @@ pub(crate) fn encode_local_pane_graphics(
     cell_size: HostCellSize,
     cache: &mut HostGraphicsCache,
 ) -> Vec<u8> {
-    let mode_ok = app.mode == Mode::Terminal;
+    // Two surfaces, two rules.
+    //
+    // Pane graphics belong to a terminal application, and that application must
+    // not paint over herdr's own chrome — hence terminal mode, unchanged.
+    //
+    // The file manager preview is herdr's own drawing. `Compositor` renders the
+    // base layer in every mode, so the preview panel is on screen while a menu
+    // floats above it; suppressing the image there deletes the picture the menu
+    // was opened on top of. It is only genuinely hidden when the overlay covers
+    // the whole frame.
+    let files_on_stage = app.staged_file_manager().is_some();
+    let mode_ok = if files_on_stage {
+        !app.overlay_hides_stage_surface()
+    } else {
+        app.mode == Mode::Terminal
+    };
     let cell_ok = cell_size.is_known();
     tracing::debug!(
         mode_ok,
@@ -407,7 +422,10 @@ pub(crate) fn encode_local_pane_graphics(
         Vec::new()
     };
     let uploaded_images = cache.images.clone();
-    let placements = if app.file_manager.is_some() {
+    // Stage ownership, not "is the file manager open anywhere". An open Files
+    // tab the user has switched away from must not claim the placement pass and
+    // leave the visible terminal without its images.
+    let placements = if files_on_stage {
         collect_file_manager_image_placement(app, cell_size, &uploaded_images)
             .into_iter()
             .collect()
@@ -423,10 +441,7 @@ pub(crate) fn encode_local_pane_graphics(
         pane_id: PaneId::from_raw(FILE_MANAGER_PREVIEW_PANE_RAW),
         image_id: FILE_MANAGER_PREVIEW_IMAGE_ID,
     };
-    if app.file_manager.is_some()
-        && placements.is_empty()
-        && cache.sources.contains_key(&file_manager_source)
-    {
+    if files_on_stage && placements.is_empty() && cache.sources.contains_key(&file_manager_source) {
         bytes.extend(cache.clear_bytes());
     }
     let view_changed = cache.update_view(view_key);
@@ -728,7 +743,10 @@ impl HostGraphicsCache {
 }
 
 fn active_view_key(app: &AppState) -> Option<HostViewKey> {
-    if app.file_manager.is_some() {
+    // Keyed on stage ownership so the cache invalidates when the surface the
+    // images belong to changes, rather than when a background tab happens to
+    // exist.
+    if app.staged_file_manager().is_some() {
         let workspace_index = app.active.unwrap_or(usize::MAX);
         let tab_index = app
             .active

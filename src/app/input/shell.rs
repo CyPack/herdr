@@ -145,6 +145,54 @@ impl AppState {
         }
     }
 
+    /// Does the current mode's overlay hide the stage surface underneath it?
+    ///
+    /// A separate question from [`Self::blocking_overlay_active`], which is
+    /// about input routing and therefore groups a small anchored menu with a
+    /// full-screen settings page. For drawing they are opposites: the menu
+    /// floats above the surface, the settings page replaces it.
+    ///
+    /// The distinction only matters for host graphics. Terminal images are not
+    /// cells in the frame buffer, so a full-screen overlay overwrites the text
+    /// under an image without touching the image itself — the picture would
+    /// hang over the settings page. An anchored overlay covers a small part of
+    /// the surface, and taking the picture away for it is the bug this answers.
+    ///
+    /// Each arm follows what `OverlayLayer` actually renders: an overlay drawn
+    /// into `frame.area()` hides the surface; one drawn into `terminal_area`,
+    /// or into its own anchored box, does not.
+    ///
+    /// Exhaustive on purpose, like its neighbour: a new mode has to pick a side
+    /// rather than inherit one silently.
+    pub(crate) fn overlay_hides_stage_surface(&self) -> bool {
+        match self.mode {
+            Mode::Terminal
+            | Mode::Prefix
+            | Mode::Navigate
+            | Mode::Copy
+            | Mode::Resize
+            | Mode::ContextMenu
+            | Mode::ConfirmClose
+            | Mode::ConfirmFileDelete => false,
+            Mode::Onboarding
+            | Mode::ReleaseNotes
+            | Mode::ProductAnnouncement
+            | Mode::AttachFile
+            | Mode::RenameWorkspace
+            | Mode::RenameTab
+            | Mode::RenamePane
+            | Mode::RenameFile
+            | Mode::NewLinkedWorktree
+            | Mode::OpenExistingWorktree
+            | Mode::ConfirmRemoveWorktree
+            | Mode::Settings
+            | Mode::GlobalMenu
+            | Mode::KeybindHelp
+            | Mode::Navigator
+            | Mode::AgentReferencePicker => true,
+        }
+    }
+
     pub(crate) fn begin_sidebar_resize(&mut self, pointer: Position) -> bool {
         let Some(total) = self.current_sidebar_resize_total() else {
             return false;
