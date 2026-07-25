@@ -453,6 +453,7 @@ fn set_pdf_state(
     state: &mut crate::app::state::AppState,
     key: &ImagePreviewKey,
     next: FmPdfPreviewState,
+    total_pages: Option<usize>,
 ) -> bool {
     let Some(file_manager) = state.file_manager.as_mut() else {
         return false;
@@ -466,8 +467,15 @@ fn set_pdf_state(
     {
         return false;
     }
+    // The document length is learned by rendering a page but belongs to the
+    // document, so it is recorded outside the page state and survives the next
+    // page turn.
+    let learned_total = total_pages.filter(|total| preview.total_pages != Some(*total));
+    if let Some(total) = learned_total {
+        preview.total_pages = Some(total);
+    }
     if preview.state == next {
-        return false;
+        return learned_total.is_some();
     }
     preview.state = next;
     true
@@ -484,6 +492,7 @@ fn set_loading_state(state: &mut crate::app::state::AppState, key: &ImagePreview
             state,
             key,
             FmPdfPreviewState::Loading { target: key.target },
+            None,
         ),
     }
 }
@@ -510,9 +519,9 @@ fn set_ready_state(
             key,
             FmPdfPreviewState::Ready {
                 target: key.target,
-                total_pages,
                 prepared,
             },
+            Some(total_pages),
         ),
     }
 }
@@ -538,6 +547,7 @@ fn set_failed_state(
                 target: key.target,
                 error,
             },
+            None,
         ),
     }
 }
@@ -1127,6 +1137,196 @@ mod tests {
             !app.sync_image_preview_worker(),
             "the committed Ready target remains stable"
         );
+    }
+
+    fn current_pdf_preview(app: &crate::app::App) -> &crate::fm::FmPdfPreview {
+        match &app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open file manager")
+            .preview
+        {
+            FmPreview::File(FmFilePreview::Pdf(preview)) => preview,
+            other => panic!("expected pdf preview, got {other:?}"),
+        }
+    }
+
+    /// An app whose file manager is previewing a PDF, with a processor that
+    /// reports which page it was asked for instead of rendering one.
+    fn pdf_preview_app(
+        total_pages: usize,
+    ) -> (
+        crate::app::App,
+        TempDir,
+        mpsc::Receiver<Option<usize>>,
+        mpsc::Sender<()>,
+    ) {
+        let temp = TempDir::new("pdf-page-turn");
+        std::fs::write(temp.root.join("manual.pdf"), b"%PDF-1.7\n").expect("write pdf fixture");
+        let mut app = test_app();
+        app.image_preview_cell_size = HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        app.state.mobile_width_threshold = 0;
+        app.state.sidebar_collapsed = true;
+        app.state
+            .try_open_file_manager_with(|_| Some(FmState::new(&temp.root)))
+            .expect("Files activation");
+
+        let (started_tx, started_rx) = mpsc::channel::<Option<usize>>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        app.image_preview_worker = ImagePreviewWorker::with_processor(
+            app.render_notify.clone(),
+            move |_path, _target, page| {
+                started_tx
+                    .send(page)
+                    .map_err(|_| RasterFailure::Pdf(PdfPreviewError::Unreadable))?;
+                release_rx
+                    .recv_timeout(Duration::from_secs(2))
+                    .map_err(|_| RasterFailure::Pdf(PdfPreviewError::Unreadable))?;
+                let page = page.unwrap_or(0);
+                let marker = u8::try_from(page % 256).expect("page marker");
+                Ok(RasterOutput::PdfPage {
+                    total_pages,
+                    prepared: PreparedImagePreview {
+                        width: 1,
+                        height: 1,
+                        data_fingerprint: u64::try_from(page).expect("page fingerprint"),
+                        rgba: vec![marker, marker, marker, 0xff],
+                    },
+                })
+            },
+        );
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 90, 16));
+        (app, temp, started_rx, release_tx)
+    }
+
+    // TP-FPDF-25: turning a page submits a render for the new page, and the
+    // document length learned from the first render outlives it. Held inside
+    // the ready state the length was lost on the first turn, so the forward
+    // bound disappeared and a second turn was refused while the first was still
+    // rasterising — a reader could only move one page per completed render.
+    #[test]
+    fn turning_a_page_rasterises_it_without_forgetting_the_document_length() {
+        let (mut app, _fixture, started_rx, release_tx) = pdf_preview_app(10);
+
+        assert!(app.sync_image_preview_worker(), "the first page is queued");
+        assert_eq!(
+            started_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("first page job starts"),
+            Some(0)
+        );
+        release_tx.send(()).expect("finish the first page");
+        wait_for_worker_result_generation(&app, 1);
+        assert!(app.sync_image_preview_worker(), "the first page is ready");
+        assert_eq!(current_pdf_preview(&app).total_pages, Some(10));
+
+        assert!(app
+            .state
+            .file_manager
+            .as_mut()
+            .expect("open FM")
+            .turn_pdf_page(crate::fm::PdfPageStep::Next));
+        assert!(
+            app.sync_image_preview_worker(),
+            "the turned-to page is queued"
+        );
+        assert_eq!(
+            started_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("second page job starts"),
+            Some(1),
+            "the worker is asked for the page the reader turned to"
+        );
+
+        let preview = current_pdf_preview(&app);
+        assert_eq!(preview.page, 1);
+        assert_eq!(
+            preview.total_pages,
+            Some(10),
+            "the document length survives a page turn that is still rasterising"
+        );
+        assert!(matches!(preview.state, FmPdfPreviewState::Loading { .. }));
+
+        assert!(
+            app.state
+                .file_manager
+                .as_mut()
+                .expect("open FM")
+                .turn_pdf_page(crate::fm::PdfPageStep::Next),
+            "a further turn does not wait for the pending render"
+        );
+        assert_eq!(current_pdf_preview(&app).page, 2);
+        release_tx.send(()).expect("release the pending page");
+    }
+
+    // TP-FPDF-26: a render that lands after the reader has turned the page
+    // belongs to a view nobody is looking at, and installing it would show the
+    // wrong page with no further event to correct it.
+    #[test]
+    fn a_page_render_that_lands_after_a_turn_is_rejected() {
+        let (mut app, _fixture, started_rx, release_tx) = pdf_preview_app(10);
+
+        assert!(app.sync_image_preview_worker(), "the first page is queued");
+        assert_eq!(
+            started_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("first page job starts"),
+            Some(0)
+        );
+        release_tx.send(()).expect("finish the first page");
+        wait_for_worker_result_generation(&app, 1);
+        assert!(app.sync_image_preview_worker(), "the first page is ready");
+
+        // Turn to page 1 and queue its render, then answer with the page-0
+        // result the reader has already moved past.
+        assert!(app
+            .state
+            .file_manager
+            .as_mut()
+            .expect("open FM")
+            .turn_pdf_page(crate::fm::PdfPageStep::Next));
+        assert!(app.sync_image_preview_worker(), "page one is queued");
+        assert_eq!(
+            started_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("second page job starts"),
+            Some(1)
+        );
+
+        let stale_key = ImagePreviewKey::pdf_page(
+            &current_pdf_preview(&app).source_path.clone(),
+            current_pdf_preview(&app).generation,
+            match current_pdf_preview(&app).state {
+                FmPdfPreviewState::Loading { target } => target,
+                ref other => panic!("expected a loading page, got {other:?}"),
+            },
+            0,
+        );
+        assert!(
+            !set_ready_state(
+                &mut app.state,
+                &stale_key,
+                RasterOutput::PdfPage {
+                    total_pages: 10,
+                    prepared: PreparedImagePreview {
+                        width: 1,
+                        height: 1,
+                        data_fingerprint: 0,
+                        rgba: vec![0, 0, 0, 0xff],
+                    },
+                },
+            ),
+            "a completed render for the previous page must not be installed"
+        );
+        assert!(matches!(
+            current_pdf_preview(&app).state,
+            FmPdfPreviewState::Loading { .. }
+        ));
+        release_tx.send(()).expect("release the pending page");
     }
 
     #[test]

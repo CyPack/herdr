@@ -311,6 +311,16 @@ pub enum FmImagePreviewState {
     Unsupported,
 }
 
+/// One step through a paged preview.
+///
+/// Named rather than a signed delta: every caller means exactly one page, and a
+/// delta invites callers to invent jumps whose bounds nobody has checked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PdfPageStep {
+    Previous,
+    Next,
+}
+
 /// A selected PDF and the page currently being shown from it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FmPdfPreview {
@@ -320,6 +330,14 @@ pub struct FmPdfPreview {
     /// one when it draws, and that is the only place the two conventions meet —
     /// which is the documented way page navigation goes wrong.
     pub page: usize,
+    /// How many pages the document has, once a render has reported it.
+    ///
+    /// Document-level rather than part of `Ready`, because it describes the
+    /// file and not whichever page is currently on screen. Held inside `Ready`
+    /// it was forgotten by the first page turn — which put the preview back
+    /// into rasterising — so the forward bound vanished and a reader holding
+    /// the arrow down stopped after one page.
+    pub total_pages: Option<usize>,
     pub state: FmPdfPreviewState,
 }
 
@@ -332,7 +350,6 @@ pub enum FmPdfPreviewState {
     /// Current pixels for `page`, ready for client-local Kitty placement.
     Ready {
         target: ImagePreviewTarget,
-        total_pages: usize,
         prepared: PreparedImagePreview,
     },
     /// Stable failure for the current page and target.
@@ -648,6 +665,26 @@ fn prepare_preview(
                 state: FmImagePreviewState::Unsupported,
             }))
         }
+        // Formats with their own reader are classified here too, and left for
+        // the bounded worker exactly as the deferred path leaves them. Reading
+        // them as text instead is not a smaller answer but a wrong one: a PDF
+        // opened onto at file-manager start showed its own raw bytes until the
+        // cursor moved away and came back through the deferred path.
+        Some((path, false)) if crate::fm::sheet_preview::is_readable_sheet_path(&path) => {
+            FmPreview::File(FmFilePreview::PendingSheet {
+                source_path: path,
+                generation,
+            })
+        }
+        Some((path, false)) if crate::fm::pdf_preview::is_pdf_path(&path) => {
+            FmPreview::File(FmFilePreview::Pdf(FmPdfPreview {
+                source_path: path,
+                generation,
+                page: 0,
+                total_pages: None,
+                state: FmPdfPreviewState::Pending,
+            }))
+        }
         Some((path, false)) => match read_text_preview(&path, TextPreviewLimits::default()) {
             Ok(mut preview) => {
                 if let Some(previous) = previous_text.filter(|previous| {
@@ -692,6 +729,7 @@ fn prepare_deferred_file_preview(path: PathBuf, generation: u64) -> FmPreview {
             source_path: path,
             generation,
             page: 0,
+            total_pages: None,
             state: FmPdfPreviewState::Pending,
         }))
     } else {
@@ -1622,6 +1660,42 @@ impl FmState {
         }
     }
 
+    /// Turn the previewed PDF one page, reporting whether anything moved.
+    ///
+    /// Neither direction wraps. The lower bound is known without reading
+    /// anything; the upper bound is the rendered page's own `total_pages`, so
+    /// before a page has been rendered forward is refused rather than guessed —
+    /// a guess past the end resolves to `PageOutOfRange` and turns navigation
+    /// into an error message.
+    ///
+    /// Nothing else is touched: `sync_image_preview_worker` rebuilds its key
+    /// from `page` every turn, so changing the page here is already the whole
+    /// request. Resetting the state as well would make two places responsible
+    /// for the same transition.
+    pub(crate) fn turn_pdf_page(&mut self, step: PdfPageStep) -> bool {
+        let FmPreview::File(FmFilePreview::Pdf(preview)) = &mut self.preview else {
+            return false;
+        };
+        let next = match step {
+            PdfPageStep::Previous => match preview.page.checked_sub(1) {
+                Some(page) => page,
+                None => return false,
+            },
+            PdfPageStep::Next => {
+                let Some(total_pages) = preview.total_pages else {
+                    return false;
+                };
+                let next = preview.page.saturating_add(1);
+                if next >= total_pages {
+                    return false;
+                }
+                next
+            }
+        };
+        preview.page = next;
+        true
+    }
+
     fn install_resident_directory_operation_projection(
         &mut self,
         col_idx: usize,
@@ -2157,6 +2231,160 @@ mod tests {
             })
             .collect();
         state
+    }
+
+    fn pdf_preview_state(
+        page: usize,
+        total_pages: Option<usize>,
+        state: FmPdfPreviewState,
+    ) -> FmState {
+        let mut fm = FmState::test_empty("/virtual");
+        fm.preview = FmPreview::File(FmFilePreview::Pdf(FmPdfPreview {
+            source_path: PathBuf::from("/virtual/manual.pdf"),
+            generation: 1,
+            page,
+            total_pages,
+            state,
+        }));
+        fm
+    }
+
+    fn rendered_page() -> FmPdfPreviewState {
+        FmPdfPreviewState::Ready {
+            target: crate::fm::image_preview::ImagePreviewTarget {
+                width_px: 40,
+                height_px: 40,
+            },
+            prepared: crate::fm::image_preview::PreparedImagePreview {
+                width: 1,
+                height: 1,
+                data_fingerprint: 7,
+                rgba: vec![0, 0, 0, 255],
+            },
+        }
+    }
+
+    fn previewed_page(fm: &FmState) -> usize {
+        match &fm.preview {
+            FmPreview::File(FmFilePreview::Pdf(preview)) => preview.page,
+            other => panic!("expected a pdf preview, found {other:?}"),
+        }
+    }
+
+    // TP-FPDF-27/TP-FSH-15: opening the file manager onto a workbook or a PDF
+    // classifies it the same way moving the cursor onto one does. The immediate
+    // path used to fall through to the text reader, so a PDF selected at open
+    // time was shown as its own raw bytes until the cursor moved away and back.
+    #[test]
+    fn opening_onto_a_document_prepares_it_as_that_document() {
+        let td = TempDir::new("open-onto-document");
+        fs::write(td.root.join("manual.pdf"), b"%PDF-1.7\n").expect("write pdf fixture");
+        let pdf = FmState::new(&td.root);
+        assert!(
+            matches!(
+                pdf.preview,
+                FmPreview::File(FmFilePreview::Pdf(FmPdfPreview {
+                    state: FmPdfPreviewState::Pending,
+                    ..
+                }))
+            ),
+            "a pdf opened onto must be a pdf preview, found {:?}",
+            pdf.preview
+        );
+
+        let td = TempDir::new("open-onto-workbook");
+        fs::write(
+            td.root.join("book.xlsx"),
+            sheet_preview::xlsx_fixture(&[("Sheet1", &[&["a"]])]),
+        )
+        .expect("write workbook fixture");
+        let workbook = FmState::new(&td.root);
+        assert!(
+            matches!(
+                workbook.preview,
+                FmPreview::File(FmFilePreview::PendingSheet { .. })
+            ),
+            "a workbook opened onto must be a workbook preview, found {:?}",
+            workbook.preview
+        );
+    }
+
+    // TP-FPDF-09: neither direction wraps. Wrapping would silently move a
+    // reader holding the key down to the opposite end of the document, and
+    // there is no event afterwards that tells them it happened.
+    #[test]
+    fn turning_back_from_the_first_page_is_refused() {
+        let mut fm = pdf_preview_state(0, Some(10), rendered_page());
+        assert!(!fm.turn_pdf_page(PdfPageStep::Previous));
+        assert_eq!(previewed_page(&fm), 0);
+    }
+
+    // TP-FPDF-10: the forward bound is the rendered page's own total.
+    #[test]
+    fn turning_forward_from_the_last_page_is_refused() {
+        let mut fm = pdf_preview_state(9, Some(10), rendered_page());
+        assert!(!fm.turn_pdf_page(PdfPageStep::Next));
+        assert_eq!(previewed_page(&fm), 9);
+    }
+
+    // TP-FPDF-11: the happy path moves exactly one page in each direction.
+    #[test]
+    fn turning_pages_moves_one_page_at_a_time() {
+        let mut fm = pdf_preview_state(4, Some(10), rendered_page());
+        assert!(fm.turn_pdf_page(PdfPageStep::Next));
+        assert_eq!(previewed_page(&fm), 5);
+        assert!(fm.turn_pdf_page(PdfPageStep::Previous));
+        assert_eq!(previewed_page(&fm), 4);
+    }
+
+    // TP-FPDF-12: with no rendered page there is no known total, so forward is
+    // refused rather than guessed — a guess lands on `PageOutOfRange` and turns
+    // navigation into an error message. Backward stays available because the
+    // lower bound is known without rendering anything.
+    #[test]
+    fn turning_forward_without_a_known_total_is_refused() {
+        let mut pending = pdf_preview_state(0, None, FmPdfPreviewState::Pending);
+        assert!(!pending.turn_pdf_page(PdfPageStep::Next));
+        assert_eq!(previewed_page(&pending), 0);
+
+        let mut loading = pdf_preview_state(3, None, FmPdfPreviewState::Pending);
+        assert!(loading.turn_pdf_page(PdfPageStep::Previous));
+        assert_eq!(previewed_page(&loading), 2);
+    }
+
+    // TP-FPDF-13: how long the document is survives turning a page. The length
+    // belongs to the document, not to whichever page happens to be rendered, so
+    // a reader holding the arrow down keeps moving instead of stopping dead the
+    // moment the first turn puts the preview back into rasterising.
+    #[test]
+    fn turning_pages_does_not_forget_how_long_the_document_is() {
+        let mut fm = pdf_preview_state(0, Some(10), rendered_page());
+        assert!(fm.turn_pdf_page(PdfPageStep::Next));
+
+        let FmPreview::File(FmFilePreview::Pdf(preview)) = &mut fm.preview else {
+            panic!("expected a pdf preview");
+        };
+        preview.state = FmPdfPreviewState::Loading {
+            target: crate::fm::image_preview::ImagePreviewTarget {
+                width_px: 40,
+                height_px: 40,
+            },
+        };
+
+        assert!(
+            fm.turn_pdf_page(PdfPageStep::Next),
+            "a second turn must not wait for the first page to finish rasterising"
+        );
+        assert_eq!(previewed_page(&fm), 2);
+    }
+
+    // TP-FPDF-14: a preview that is not a PDF has no page to turn.
+    #[test]
+    fn turning_a_page_without_a_pdf_preview_is_inert() {
+        let mut fm = FmState::test_empty("/virtual");
+        assert!(!fm.turn_pdf_page(PdfPageStep::Next));
+        assert!(!fm.turn_pdf_page(PdfPageStep::Previous));
+        assert_eq!(fm.preview, FmPreview::None);
     }
 
     // TP-MTIME-01/02: file kind must not outrank fresher filesystem evidence.

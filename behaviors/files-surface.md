@@ -118,6 +118,7 @@ a separate product (`docs/patterns/document-rendering.md` DR12/DA9).
 | TP-FSH-12 | A workbook result whose generation no longer matches is dropped, leaving pending state intact. | A slow read lands after the user moved on and overwrites the preview of a different file (DR7). | `a_stale_workbook_result_cannot_replace_the_current_preview` |
 | TP-FSH-13 | An oversized workbook is refused before the parser is handed anything. | The cheap outer gate disappears and the inner row/column ceilings become the only defence against a file that expands enormously. | `oversized_workbook_is_refused_before_parsing` |
 | TP-FSH-14 | The header names the active sheet and says how many others exist. | A multi-sheet workbook silently presents its first sheet as the whole file. | `sheet_header_names_the_active_sheet_and_counts_the_rest` |
+| TP-FSH-15 | Opening the file manager onto a workbook classifies it as one. | The immediate path fell through to the text reader, so a workbook selected at open time was read as text until the cursor moved away and back. | `opening_onto_a_document_prepares_it_as_that_document` |
 
 ## PDF preview — rasterised natively, one page at a time
 
@@ -141,6 +142,44 @@ Kitty delivery path applies unchanged rather than growing a parallel one.
 | TP-FPDF-06 | The page is rendered to fit the requested target, preserving aspect ratio. | Kitty scales an image to exactly fill the cell box it is given, so a portrait page stretches across a wide pane unless the fit is computed here. | `the_page_is_rendered_to_fit_the_requested_target` |
 | TP-FPDF-07 | PDFs route to the native rasteriser; document formats with no reader stay metadata. | The unreachable-provider defect returns for PDFs specifically. | `pdfs_route_to_the_native_rasteriser` |
 | TP-FPDF-08 | Two different pages of the same size do not share a data fingerprint. | The encoder decides from the fingerprint whether the picture on screen is still current; deriving it from anything but the pixels means the second page is treated as already drawn and never sent. | `renders_the_requested_page_and_reports_the_document_length` |
+
+## PDF page navigation — bounded, never wrapping
+
+`PageDown`/`PageUp` and the two arrows in the `< N / M >` indicator move through
+the document. The arrows are ASCII because the file manager's existing
+single-cell click targets are (`FileManagerRowAction::label`), and because
+`◀`/`▶` are East Asian Ambiguous width: hosts disagree on whether they occupy
+one cell or two, which would move the glyph out from under its own hit target.
+
+`PageDown`/`PageUp` rather than the arrow keys: `Left`/`Right` already move
+between Trail columns, so taking them would mean selecting a PDF stops the file
+manager from navigating directories.
+
+Turning a page is only a change of `page`. `sync_image_preview_worker` rebuilds
+its key from it every turn, so the request follows without a second authority
+deciding when to re-render.
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-FPDF-09 | Turning back from the first page is refused, never wrapped. | Holding the arrow down silently jumps to the far end of the document with no event to tell the reader it happened. | `turning_back_from_the_first_page_is_refused` |
+| TP-FPDF-10 | Turning forward from the last page is refused, never wrapped. | Same, in the other direction; and stepping past the end resolves to `PageOutOfRange`, turning navigation into an error message. | `turning_forward_from_the_last_page_is_refused` |
+| TP-FPDF-11 | Each step moves exactly one page. | The reader loses their place in a document they are reading sequentially. | `turning_pages_moves_one_page_at_a_time` |
+| TP-FPDF-12 | With no page rendered yet, forward is refused rather than guessed; backward stays available. | The upper bound is unknown before a render, so guessing it lands on `PageOutOfRange`. The lower bound is known without reading anything. | `turning_forward_without_a_known_total_is_refused` |
+| TP-FPDF-13 | The document length survives a page turn. | Held inside the ready state it was lost the moment a turn put the preview back into rasterising, so the forward bound vanished and the reader could only move one page per completed render. | `turning_pages_does_not_forget_how_long_the_document_is` |
+| TP-FPDF-14 | A preview that is not a PDF has no page to turn. | Page navigation leaks into text, workbook and image previews. | `turning_a_page_without_a_pdf_preview_is_inert` |
+| TP-FPDF-15 | The indicator numbers pages from one while the state stays zero-based. | The two conventions meet in more than one place and every page is shown off by one. | `pdf_page_indicator_numbers_pages_from_one` |
+| TP-FPDF-16 | An arrow with nowhere to go is neither drawn nor clickable. | A dim-but-clickable arrow reads as a frozen application the moment someone clicks it and nothing happens. | `pdf_page_indicator_omits_the_arrow_it_cannot_follow` |
+| TP-FPDF-17 | Each hit target covers exactly the cell its arrow is drawn in. | A wider zone turns the empty half of the status line into a hidden button; an offset one clicks the wrong thing. | `pdf_page_indicator_zones_sit_on_their_own_glyph` |
+| TP-FPDF-18 | A hit target never lands outside the row it was measured against. | A rect that overhangs the row places a click target on top of a neighbouring widget. | `pdf_page_indicator_zones_stay_inside_a_narrow_row` |
+| TP-FPDF-19 | A document with no pages produces no indicator. | An empty document draws arrows that point at nothing. | `pdf_page_indicator_needs_at_least_one_page` |
+| TP-FPDF-20 | The arrows reach the screen in the cells their hit targets claim. | Render and input agree on a value that does not match what was drawn, and every click lands one cell off. | `rendered_page_indicator_arrows_land_on_their_hit_targets` |
+| TP-FPDF-21 | `PageDown`/`PageUp` turn the previewed PDF's pages. | The only keyboard route through a document disappears. | `page_keys_turn_the_previewed_pdf` |
+| TP-FPDF-22 | The same keys over any other preview change nothing, including the Trail cursor. | The new binding leaks into unrelated previews. | `page_keys_are_inert_without_a_pdf_preview` |
+| TP-FPDF-23 | Clicking an arrow turns the page it points at. | The indicator is a PDF preview's only mouse affordance; without it a mouse-first file manager has no page navigation. | `clicking_the_page_indicator_arrows_turns_the_pdf` |
+| TP-FPDF-24 | The rest of the indicator row is not a button. | The empty half of the status line silently turns pages. | `clicking_beside_the_page_indicator_leaves_the_page_alone` |
+| TP-FPDF-25 | Turning a page submits a render for that page, and the length learned earlier outlives it. | Either the new page never renders, or the forward bound is forgotten and a second turn is refused while the first is still rasterising. | `turning_a_page_rasterises_it_without_forgetting_the_document_length` |
+| TP-FPDF-26 | A render that lands after a turn is rejected. | The wrong page is installed with no further event to correct it. | `a_page_render_that_lands_after_a_turn_is_rejected` |
+| TP-FPDF-27 | Opening the file manager onto a PDF or a workbook classifies it the same way moving the cursor onto one does. | The immediate path fell through to the text reader, so a PDF selected at open time was shown as its own raw bytes until the cursor moved away and back. | `opening_onto_a_document_prepares_it_as_that_document` |
 
 ## Visual snapshots
 

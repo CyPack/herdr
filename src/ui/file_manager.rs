@@ -1073,6 +1073,105 @@ pub(super) fn sheet_preview_lines(
     lines
 }
 
+/// The page indicator: what it reads as, and where its two arrows can be
+/// clicked.
+///
+/// One value serves both the drawing and the hit test, because the arrows are
+/// positioned by the width of a number that changes as the reader moves through
+/// the document. Measuring that twice is how the click target and the glyph
+/// drift apart on page 10 of a 100-page file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PdfPageIndicator {
+    /// The full indicator line, starting at the row's first cell.
+    pub(crate) text: String,
+    pub(crate) previous: Option<Rect>,
+    pub(crate) next: Option<Rect>,
+}
+
+/// Leading indent, matching the other preview-panel status lines.
+const PDF_INDICATOR_INDENT: usize = 2;
+
+/// Lay out the page indicator for `page` (zero-based) of `total_pages`.
+///
+/// The arrows are drawn as ASCII, matching the file manager's existing
+/// single-cell click targets (`FileManagerRowAction::label`). `◀`/`▶` are East
+/// Asian Ambiguous width: hosts disagree on whether they occupy one cell or
+/// two, which would move the glyph out from under its own hit target.
+///
+/// An arrow with nowhere to go is neither drawn nor made clickable, and its
+/// cell is left blank so the number does not shift as the reader moves between
+/// the first, middle and last pages.
+pub(crate) fn pdf_page_indicator(
+    row: Rect,
+    page: usize,
+    total_pages: usize,
+) -> Option<PdfPageIndicator> {
+    if total_pages == 0 || row.height == 0 {
+        return None;
+    }
+    let has_previous = page > 0;
+    let has_next = page.saturating_add(1) < total_pages;
+    let counter = format!("{} / {total_pages}", page.saturating_add(1));
+
+    let previous_offset = PDF_INDICATOR_INDENT;
+    let counter_offset = previous_offset + 2;
+    let next_offset = counter_offset + counter.chars().count() + 1;
+
+    let mut text = " ".repeat(previous_offset);
+    text.push(if has_previous { '<' } else { ' ' });
+    text.push(' ');
+    text.push_str(&counter);
+    text.push(' ');
+    text.push(if has_next { '>' } else { ' ' });
+
+    // A zone is published only when the whole glyph cell is inside the row it
+    // was measured against; a partially visible arrow is not a target.
+    let zone = |offset: usize, present: bool| -> Option<Rect> {
+        if !present {
+            return None;
+        }
+        let offset = u16::try_from(offset).ok()?;
+        (offset < row.width).then(|| Rect::new(row.x.saturating_add(offset), row.y, 1, 1))
+    };
+
+    Some(PdfPageIndicator {
+        text,
+        previous: zone(previous_offset, has_previous),
+        next: zone(next_offset, has_next),
+    })
+}
+
+/// The bottom row of a preview panel, where its status line lives.
+pub(crate) fn preview_status_row(area: Rect) -> Rect {
+    Rect {
+        x: area.x,
+        y: area.y.saturating_add(area.height.saturating_sub(1)),
+        width: area.width,
+        height: 1,
+    }
+}
+
+/// The clickable page indicator for a previewed PDF, if one is on screen.
+///
+/// The single authority for "is there an indicator, and where are its arrows":
+/// the renderer draws what this returns and input hit-tests what this returns.
+/// Deriving the answer separately on the input side is how a click keeps
+/// working after the thing it points at has stopped being drawn — most visibly
+/// when Kitty graphics are off and there is no page to turn at all.
+pub(crate) fn pdf_page_indicator_for(
+    app: &AppState,
+    area: Rect,
+    preview: &crate::fm::FmPdfPreview,
+) -> Option<PdfPageIndicator> {
+    if area.width == 0 || area.height == 0 || !app.kitty_graphics_enabled {
+        return None;
+    }
+    if !matches!(preview.state, crate::fm::FmPdfPreviewState::Ready { .. }) {
+        return None;
+    }
+    pdf_page_indicator(preview_status_row(area), preview.page, preview.total_pages?)
+}
+
 /// Draw whatever a PDF page cannot say in pixels.
 ///
 /// Nothing is drawn while a page is rasterising, for the same reason the image
@@ -1094,13 +1193,10 @@ pub(super) fn render_pdf_preview_status(
         match &preview.state {
             crate::fm::FmPdfPreviewState::Pending
             | crate::fm::FmPdfPreviewState::Loading { .. } => None,
-            crate::fm::FmPdfPreviewState::Ready { total_pages, .. } => Some((
-                // One-based here and only here: the state stays zero-based, and
-                // mixing the two conventions anywhere else is the documented
-                // way page navigation ends up off by one.
-                format!("  page {} of {total_pages}", preview.page + 1),
-                styles.empty,
-            )),
+            crate::fm::FmPdfPreviewState::Ready { .. } => {
+                pdf_page_indicator_for(app, area, preview)
+                    .map(|indicator| (indicator.text, styles.empty))
+            }
             crate::fm::FmPdfPreviewState::Unavailable { error, .. } => {
                 Some((format!("  {error}"), styles.warning))
             }
@@ -1110,13 +1206,7 @@ pub(super) fn render_pdf_preview_status(
         return;
     };
     let label = truncate_end(&label, area.width as usize);
-    let indicator_area = Rect {
-        x: area.x,
-        y: area.y.saturating_add(area.height.saturating_sub(1)),
-        width: area.width,
-        height: 1,
-    };
-    frame.render_widget(Paragraph::new(label).style(style), indicator_area);
+    frame.render_widget(Paragraph::new(label).style(style), preview_status_row(area));
 }
 
 pub(super) fn render_image_preview_status(
@@ -1487,6 +1577,167 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn indicator_row() -> Rect {
+        Rect::new(4, 9, 40, 1)
+    }
+
+    /// The character the indicator draws at `offset` cells from the row start.
+    fn glyph_at(indicator: &PdfPageIndicator, offset: usize) -> Option<char> {
+        indicator.text.chars().nth(offset)
+    }
+
+    // TP-FPDF-15: the reader-facing number is one-based while the state stays
+    // zero-based, and this is the only place the two conventions meet.
+    #[test]
+    fn pdf_page_indicator_numbers_pages_from_one() {
+        let indicator = pdf_page_indicator(indicator_row(), 2, 10).expect("indicator for a page");
+        assert!(
+            indicator.text.contains("3 / 10"),
+            "unexpected indicator text: {:?}",
+            indicator.text
+        );
+    }
+
+    // TP-FPDF-16: an arrow that cannot be followed is not drawn and produces no
+    // hit target. A dim-but-clickable arrow reads as a frozen application the
+    // moment someone clicks it and nothing happens.
+    #[test]
+    fn pdf_page_indicator_omits_the_arrow_it_cannot_follow() {
+        let first = pdf_page_indicator(indicator_row(), 0, 10).expect("indicator on first page");
+        assert!(first.previous.is_none());
+        assert!(first.next.is_some());
+        assert!(!first.text.contains('<'), "text was {:?}", first.text);
+
+        let last = pdf_page_indicator(indicator_row(), 9, 10).expect("indicator on last page");
+        assert!(last.next.is_none());
+        assert!(last.previous.is_some());
+        assert!(!last.text.contains('>'), "text was {:?}", last.text);
+
+        let single = pdf_page_indicator(indicator_row(), 0, 1).expect("indicator for one page");
+        assert!(single.previous.is_none());
+        assert!(single.next.is_none());
+    }
+
+    // TP-FPDF-17: each hit target covers exactly the cell its arrow is drawn in.
+    // Zones wider than the glyph turn the empty half of the panel into a hidden
+    // button; zones offset from it click the wrong thing entirely.
+    #[test]
+    fn pdf_page_indicator_zones_sit_on_their_own_glyph() {
+        let row = indicator_row();
+        let indicator = pdf_page_indicator(row, 4, 10).expect("indicator mid-document");
+        let previous = indicator.previous.expect("previous zone mid-document");
+        let next = indicator.next.expect("next zone mid-document");
+
+        for (zone, glyph) in [(previous, '<'), (next, '>')] {
+            assert_eq!(zone.height, 1);
+            assert_eq!(zone.width, 1);
+            assert_eq!(zone.y, row.y);
+            let offset = usize::from(zone.x - row.x);
+            assert_eq!(glyph_at(&indicator, offset), Some(glyph));
+        }
+        assert!(previous.x < next.x);
+    }
+
+    // TP-FPDF-18: a zone never lands outside the row it was measured against.
+    // A rect that overhangs the row places a click target on top of whatever
+    // the neighbouring widget drew there.
+    #[test]
+    fn pdf_page_indicator_zones_stay_inside_a_narrow_row() {
+        for width in 0..24u16 {
+            let row = Rect::new(4, 9, width, 1);
+            let Some(indicator) = pdf_page_indicator(row, 4, 10) else {
+                continue;
+            };
+            for zone in [indicator.previous, indicator.next].into_iter().flatten() {
+                assert!(
+                    zone.x >= row.x && zone.x + zone.width <= row.x + row.width,
+                    "zone {zone:?} escaped row {row:?}"
+                );
+            }
+        }
+    }
+
+    // TP-FPDF-20: the arrows are drawn in the cells their hit targets claim.
+    // The renderer and input read the same value, and this checks that value
+    // against what actually reached the screen — a rect that agrees with a
+    // string but not with the buffer is still a click on the wrong cell.
+    #[test]
+    fn rendered_page_indicator_arrows_land_on_their_hit_targets() {
+        let td = TempDir::new("pdf-indicator-render");
+        td.file("manual.pdf");
+        let mut fm = FmState::new(&td.root);
+        let source_path = td.root.join("manual.pdf");
+        fm.preview = crate::fm::FmPreview::File(FmFilePreview::Pdf(crate::fm::FmPdfPreview {
+            source_path,
+            generation: 1,
+            page: 4,
+            total_pages: Some(10),
+            state: crate::fm::FmPdfPreviewState::Ready {
+                target: ImagePreviewTarget {
+                    width_px: 40,
+                    height_px: 40,
+                },
+                prepared: PreparedImagePreview {
+                    width: 1,
+                    height: 1,
+                    data_fingerprint: 5,
+                    rgba: vec![0, 0, 0, 255],
+                },
+            },
+        }));
+        let mut app = AppState::test_new();
+        app.mobile_width_threshold = 0;
+        app.sidebar_collapsed = true;
+        app.try_open_file_manager_with(|_| Some(fm))
+            .expect("Files activation");
+        app.kitty_graphics_enabled = true;
+
+        let (width, height) = (90u16, 16u16);
+        crate::ui::compute_view(&mut app, Rect::new(0, 0, width, height));
+        let content = app
+            .view
+            .file_manager_trail
+            .detail_panel
+            .as_ref()
+            .expect("Trail detail panel")
+            .content_rect;
+        let preview = match &app.file_manager.as_ref().expect("open FM").preview {
+            crate::fm::FmPreview::File(FmFilePreview::Pdf(preview)) => preview.clone(),
+            other => panic!("expected a pdf preview, found {other:?}"),
+        };
+        let indicator =
+            pdf_page_indicator_for(&app, content, &preview).expect("indicator for a ready page");
+
+        // Drawn into the same rect production uses (`ui.rs` renders the file
+        // manager into `terminal_area`), so the buffer and the projected
+        // geometry describe one screen rather than two.
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test backend");
+        terminal
+            .draw(|frame| render_file_manager(&app, frame, app.view.terminal_area))
+            .expect("draw the file manager");
+        let buffer = terminal.backend().buffer().clone();
+        for (zone, glyph) in [
+            (indicator.previous.expect("previous zone"), "<"),
+            (indicator.next.expect("next zone"), ">"),
+        ] {
+            assert_eq!(
+                buffer[(zone.x, zone.y)].symbol(),
+                glyph,
+                "cell {zone:?} should hold {glyph}"
+            );
+        }
+        let row = (0..width)
+            .map(|x| buffer[(x, indicator.next.expect("next zone").y)].symbol())
+            .collect::<String>();
+        assert!(row.contains("5 / 10"), "indicator row was {row:?}");
+    }
+
+    // TP-FPDF-19: a document with no pages has nothing to indicate.
+    #[test]
+    fn pdf_page_indicator_needs_at_least_one_page() {
+        assert!(pdf_page_indicator(indicator_row(), 0, 0).is_none());
+    }
 
     fn sheet_cell(text: &str, numeric: bool) -> SheetCell {
         SheetCell {

@@ -123,7 +123,7 @@ pub(crate) fn file_manager_image_target(
 /// A PDF page and an image are the same thing to everything downstream: both
 /// resolve to RGBA sized to this exact rect, so both answer here rather than
 /// growing a parallel geometry path with its own rounding.
-fn file_manager_trail_image_content_area(
+pub(crate) fn file_manager_trail_image_content_area(
     snapshot: &crate::ui::TrailViewSnapshot,
     file_manager: &crate::fm::FmState,
 ) -> Option<Rect> {

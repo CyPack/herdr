@@ -13,6 +13,7 @@ use crate::app::state::{
     FileManagerLocationNavigationRequest, FileManagerRowAction, MenuListState,
 };
 use crate::app::{App, Mode};
+use crate::fm::PdfPageStep;
 
 const FILE_MANAGER_VERTICAL_WHEEL_BURST_WINDOW: std::time::Duration =
     std::time::Duration::from_millis(2);
@@ -302,6 +303,16 @@ pub(crate) enum AttachmentPickerKeyDispatch {
     Refresh(crate::fm::FmCurrentRefreshRequest),
 }
 
+/// Turn the previewed PDF one page, reporting whether anything moved.
+///
+/// The bounds live in the model; input only names the direction.
+fn turn_previewed_pdf_page(state: &mut AppState, step: PdfPageStep) -> bool {
+    state
+        .file_manager
+        .as_mut()
+        .is_some_and(|file_manager| file_manager.turn_pdf_page(step))
+}
+
 /// Handle one key while the file manager is open. `Esc` requests cancellation
 /// for a running file operation and otherwise closes the file manager; `q`
 /// always closes it. The arrow keys and `hjkl` move the cursor or navigate
@@ -455,6 +466,20 @@ pub(super) fn handle_file_manager_key(
                 return FileManagerKeyDispatch::Inert;
             };
             if !moved && !focus_locations_from_trail_root(state) {
+                return FileManagerKeyDispatch::Inert;
+            }
+        }
+        // PageDown/PageUp rather than the arrows: Left/Right already move
+        // between Trail columns, so taking them would mean selecting a PDF
+        // stops the file manager from navigating directories. Over any other
+        // preview these keys stay inert.
+        (KeyCode::PageDown, KeyModifiers::NONE) => {
+            if !turn_previewed_pdf_page(state, PdfPageStep::Next) {
+                return FileManagerKeyDispatch::Inert;
+            }
+        }
+        (KeyCode::PageUp, KeyModifiers::NONE) => {
+            if !turn_previewed_pdf_page(state, PdfPageStep::Previous) {
                 return FileManagerKeyDispatch::Inert;
             }
         }
@@ -943,6 +968,39 @@ impl App {
         focused
     }
 
+    /// Which page-turn a press at this cell lands on, if any.
+    ///
+    /// Both the arrow positions and the question of whether an indicator is on
+    /// screen at all come from `pdf_page_indicator_for`, the same call the
+    /// renderer draws from. Deriving them here instead is how a click keeps
+    /// turning pages after the indicator has stopped being drawn.
+    fn pdf_page_indicator_step_at(&self, column: u16, row: u16) -> Option<PdfPageStep> {
+        let file_manager = self.state.file_manager.as_ref()?;
+        let content_area = crate::kitty_graphics::file_manager_trail_image_content_area(
+            &self.state.view.file_manager_trail,
+            file_manager,
+        )?;
+        let crate::fm::FmPreview::File(crate::fm::FmFilePreview::Pdf(preview)) =
+            &file_manager.preview
+        else {
+            return None;
+        };
+        let indicator = crate::ui::pdf_page_indicator_for(&self.state, content_area, preview)?;
+        if indicator
+            .previous
+            .is_some_and(|zone| rect_contains(zone, column, row))
+        {
+            return Some(PdfPageStep::Previous);
+        }
+        if indicator
+            .next
+            .is_some_and(|zone| rect_contains(zone, column, row))
+        {
+            return Some(PdfPageStep::Next);
+        }
+        None
+    }
+
     /// Route native-FM center-content mouse input before the hidden terminal
     /// pane path. Row actions carry stable path identity but remain side-effect
     /// free until their operation modules provide explicit execution authority.
@@ -1247,6 +1305,20 @@ impl App {
             let _ = focus_file_manager_trail(&mut self.state);
             return FileManagerMouseDispatch::Consumed;
         }
+        // The page indicator sits inside the detail panel, where no Trail row
+        // or divider can be, so it is answered before the resize capture that
+        // otherwise claims every rowless left press.
+        if trail_frame_is_live
+            && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+            && mouse.modifiers.is_empty()
+        {
+            if let Some(step) = self.pdf_page_indicator_step_at(mouse.column, mouse.row) {
+                let turned = turn_previewed_pdf_page(&mut self.state, step);
+                self.file_manager_mouse_render_override = Some(turned);
+                return FileManagerMouseDispatch::Consumed;
+            }
+        }
+
         if trail_row_target.is_none()
             && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
             && mouse.modifiers.is_empty()
@@ -4399,6 +4471,115 @@ mod tests {
         app
     }
 
+    /// A runtime app showing a rendered PDF page, with the real projected
+    /// geometry `compute_view` produces rather than a hand-built frame — the
+    /// indicator's position depends on the detail panel's exact content rect.
+    fn runtime_app_with_pdf_preview(
+        page: usize,
+        total_pages: usize,
+    ) -> (crate::app::App, TempDir, crate::ui::PdfPageIndicator) {
+        let td = TempDir::new("pdf-indicator");
+        td.file("manual.pdf");
+        let source_path = td.root.join("manual.pdf");
+        let mut file_manager = FmState::new(&td.root);
+        file_manager.preview_generation = 1;
+        file_manager.preview =
+            crate::fm::FmPreview::File(crate::fm::FmFilePreview::Pdf(crate::fm::FmPdfPreview {
+                source_path: source_path.clone(),
+                generation: 1,
+                page,
+                total_pages: Some(total_pages),
+                state: crate::fm::FmPdfPreviewState::Pending,
+            }));
+        file_manager.sync_trail_bridge_for_test();
+
+        let mut app = super::super::app_for_mouse_test();
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+        app.state.kitty_graphics_enabled = true;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 120, 30));
+        let content = app
+            .state
+            .view
+            .file_manager_trail
+            .detail_panel
+            .as_ref()
+            .expect("Trail detail panel")
+            .content_rect;
+
+        let preview = app
+            .state
+            .file_manager
+            .as_mut()
+            .and_then(|file_manager| match &mut file_manager.preview {
+                crate::fm::FmPreview::File(crate::fm::FmFilePreview::Pdf(preview)) => Some(preview),
+                _ => None,
+            })
+            .expect("mutable pdf preview");
+        preview.state = crate::fm::FmPdfPreviewState::Ready {
+            target: crate::fm::ImagePreviewTarget {
+                width_px: u32::from(content.width) * 8,
+                height_px: u32::from(content.height) * 16,
+            },
+            prepared: crate::fm::PreparedImagePreview {
+                width: 8,
+                height: 8,
+                data_fingerprint: 0x99,
+                rgba: vec![0x99; 8 * 8 * 4],
+            },
+        };
+        let preview = preview.clone();
+        let indicator = crate::ui::pdf_page_indicator_for(&app.state, content, &preview)
+            .expect("indicator for a rendered page");
+        (app, td, indicator)
+    }
+
+    // TP-FPDF-23: clicking an arrow turns the page it points at. The indicator
+    // is the only mouse affordance a PDF preview has, so a mouse-first file
+    // manager that cannot turn pages with the mouse has no page navigation.
+    #[test]
+    fn clicking_the_page_indicator_arrows_turns_the_pdf() {
+        let (mut app, _fixture, indicator) = runtime_app_with_pdf_preview(4, 10);
+        let previous = indicator.previous.expect("previous arrow mid-document");
+        let next = indicator.next.expect("next arrow mid-document");
+
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            next.x,
+            next.y,
+        ));
+        assert_eq!(previewed_pdf_page(&app.state), 5);
+
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            previous.x,
+            previous.y,
+        ));
+        assert_eq!(previewed_pdf_page(&app.state), 4);
+    }
+
+    // TP-FPDF-24: the rest of the indicator row is not a button. Without this
+    // the empty half of the status line silently turns pages.
+    #[test]
+    fn clicking_beside_the_page_indicator_leaves_the_page_alone() {
+        let (mut app, _fixture, indicator) = runtime_app_with_pdf_preview(4, 10);
+        let next = indicator.next.expect("next arrow mid-document");
+
+        for column in [next.x.saturating_add(1), next.x.saturating_add(4)] {
+            app.handle_file_manager_mouse(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                column,
+                next.y,
+            ));
+            assert_eq!(
+                previewed_pdf_page(&app.state),
+                4,
+                "column {column} must not be a page-turn target"
+            );
+        }
+    }
+
     fn trail_row_by_path(app: &crate::app::App, path: &std::path::Path) -> crate::ui::TrailRowView {
         app.state
             .view
@@ -4556,6 +4737,75 @@ mod tests {
                 disabled_reason: None,
             }),
         });
+    }
+
+    /// The temp directory is returned alongside the state so the fixture is
+    /// removed when the test ends rather than leaked for the run's lifetime.
+    fn app_with_pdf_preview(page: usize, total_pages: usize) -> (AppState, TempDir) {
+        let td = TempDir::new("pdf-pages");
+        td.file("manual.pdf");
+        let mut app = app_with_fm(FmState::new(&td.root));
+        let file_manager = app.file_manager.as_mut().expect("open FM");
+        let source_path = file_manager.cwd.join("manual.pdf");
+        file_manager.preview =
+            crate::fm::FmPreview::File(crate::fm::FmFilePreview::Pdf(crate::fm::FmPdfPreview {
+                source_path,
+                generation: 1,
+                page,
+                total_pages: Some(total_pages),
+                state: crate::fm::FmPdfPreviewState::Ready {
+                    target: crate::fm::ImagePreviewTarget {
+                        width_px: 40,
+                        height_px: 40,
+                    },
+                    prepared: crate::fm::PreparedImagePreview {
+                        width: 1,
+                        height: 1,
+                        data_fingerprint: 3,
+                        rgba: vec![0, 0, 0, 255],
+                    },
+                },
+            }));
+        (app, td)
+    }
+
+    fn previewed_pdf_page(app: &AppState) -> usize {
+        match &app.file_manager.as_ref().expect("open FM").preview {
+            crate::fm::FmPreview::File(crate::fm::FmFilePreview::Pdf(preview)) => preview.page,
+            other => panic!("expected a pdf preview, found {other:?}"),
+        }
+    }
+
+    // TP-FPDF-21: PageDown/PageUp turn the previewed PDF's pages. They are
+    // chosen over the arrows because Left/Right already move between Trail
+    // columns: taking them would mean a selected PDF makes the file manager
+    // stop navigating directories.
+    #[test]
+    fn page_keys_turn_the_previewed_pdf() {
+        let (mut app, _fixture) = app_with_pdf_preview(0, 3);
+
+        handle_file_manager_key(&mut app, key(KeyCode::PageDown));
+        assert_eq!(previewed_pdf_page(&app), 1);
+        handle_file_manager_key(&mut app, key(KeyCode::PageUp));
+        assert_eq!(previewed_pdf_page(&app), 0);
+    }
+
+    // TP-FPDF-22: the same keys over a non-PDF preview change nothing at all,
+    // including the Trail cursor they must never be confused with.
+    #[test]
+    fn page_keys_are_inert_without_a_pdf_preview() {
+        let td = TempDir::new("pdf-pages-inert");
+        td.file("a.txt");
+        td.file("b.txt");
+        let mut app = app_with_fm(FmState::new(&td.root));
+        let before = app.file_manager.as_ref().expect("open FM").clone();
+
+        handle_file_manager_key(&mut app, key(KeyCode::PageDown));
+        handle_file_manager_key(&mut app, key(KeyCode::PageUp));
+
+        let after = app.file_manager.as_ref().expect("open FM");
+        assert_eq!(after.cursor, before.cursor);
+        assert_eq!(after.preview, before.preview);
     }
 
     // TP-A3.5: j/k (and arrows) move the cursor within the list.
