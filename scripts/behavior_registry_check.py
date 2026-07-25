@@ -35,8 +35,14 @@ SOURCE_SUFFIXES = {".rs", ".ts"}
 # `TP-FLF-MOUSE-01`, `TP-C4.1`, and the `TP-DCLICK-01/02/04` run form all
 # appear in the tree today; the pattern has to accept every one of them.
 _MARKER = re.compile(
-    r"\bTP-[A-Z][A-Z0-9]*(?:\.[0-9]+)?(?:-[A-Za-z0-9]+)*(?:/[A-Za-z0-9]+)*"
+    r"\bTP-[A-Z][A-Z0-9]*(?:\.[0-9]+)?(?:-[A-Za-z0-9]+)*"
+    r"(?:\.\.[0-9]+)?"
+    r"(?:/(?:TP-)?[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)*"
 )
+# The canonical pattern matches a *prefix*, so a marker like `TP-Act.1` would
+# quietly reduce to `TP-A` and merge unrelated behaviors into one invented id.
+# Reading the whole token first is what makes that visible instead of silent.
+_MARKER_TOKEN = re.compile(r"\bTP-[A-Za-z0-9][A-Za-z0-9._/-]*")
 _TABLE_ROW = re.compile(r"^\|(?P<cells>.+)\|\s*$")
 # Rust test names are identifiers; Playwright test names are sentences.
 _BACKTICKED = re.compile(r"`([A-Za-z0-9_][A-Za-z0-9_ -]*)`")
@@ -44,20 +50,83 @@ _RUST_FN = re.compile(r"\bfn\s+([A-Za-z0-9_]+)")
 _SPEC_TEST = re.compile(r"\btest\(\s*['\"]([A-Za-z0-9_ -]+)['\"]")
 
 
+def _iter_marker_tokens(text: str):
+    """Yield each whole ``TP-`` token, without trailing sentence punctuation."""
+    for match in _MARKER_TOKEN.finditer(text):
+        token = match.group(0).rstrip("./-")
+        if token:
+            yield token
+
+
+def _is_canonical(token: str) -> bool:
+    """True when the canonical pattern consumes the token completely."""
+    match = _MARKER.match(token)
+    return match is not None and match.group(0) == token
+
+
+def find_malformed_markers(text: str) -> set[str]:
+    """Return tokens that look like markers but do not follow the convention.
+
+    These are worse than an unknown id: the canonical pattern still matches a
+    prefix of them, so without this check they are silently renamed rather than
+    reported, and the trail from a registry row back to the code is lost.
+    """
+    return {token for token in _iter_marker_tokens(text) if not _is_canonical(token)}
+
+
 def expand_marker_ids(text: str) -> set[str]:
     """Return every behavior id a chunk of text refers to.
 
     A run such as ``TP-DCLICK-01/02/04`` names three sibling behaviors; each
-    trailing element replaces the last segment of the base id.
+    trailing element replaces the last segment of the base id. Malformed tokens
+    are skipped here and reported by :func:`find_malformed_markers` instead, so
+    a typo can never masquerade as a shorter, legitimate-looking id.
     """
     ids: set[str] = set()
-    for raw in _MARKER.findall(text):
+    for raw in _iter_marker_tokens(text):
+        if not _is_canonical(raw):
+            continue
         base, *rest = raw.split("/")
-        ids.add(base)
-        head = base.rsplit("-", 1)[0] if "-" in base else base
+        ids.update(_expand_range(base))
         for tail in rest:
-            ids.add(f"{head}-{tail}")
+            ids.update(_expand_range(_resolve_sibling(base, tail)))
     return ids
+
+
+def _resolve_sibling(base: str, tail: str) -> str:
+    """Resolve one element of a ``base/tail`` run into a full behavior id.
+
+    Three forms occur in the tree, and telling them apart matters because
+    guessing wrong invents an id that no source marker will ever carry:
+
+    - ``TP-FLF-BOUNDED-01/TP-FLF-BLOCKED-01`` — the sibling is written in full.
+    - ``TP-FLF-STEP-01/RENDER-01`` — subfamily plus number, so it replaces both
+      trailing segments; the sibling is ``TP-FLF-RENDER-01``.
+    - ``TP-C6.4-THEME/EMPTY-ERROR`` — one dashed name, replacing the last
+      segment only.
+    """
+    if tail.startswith("TP-"):
+        return tail
+    segments = tail.split("-")
+    # A numeric final segment means the tail carries its own position, so it
+    # aligns segment-for-segment with the end of the base.
+    replace = len(segments) if segments[-1].isdigit() else 1
+    head = base.split("-")
+    if len(head) <= replace:
+        return tail
+    return "-".join(head[: len(head) - replace] + segments)
+
+
+def _expand_range(entry_id: str) -> set[str]:
+    """Expand ``TP-FIP-ICON-01..05`` into every id the run names."""
+    head, sep, last = entry_id.rpartition("-")
+    if not sep or ".." not in last:
+        return {entry_id}
+    start, _, stop = last.partition("..")
+    if not (start.isdigit() and stop.isdigit()) or int(stop) < int(start):
+        return {entry_id}
+    width = len(start)
+    return {f"{head}-{n:0{width}d}" for n in range(int(start), int(stop) + 1)}
 
 
 def _iter_source_files(root: Path):
@@ -135,11 +204,22 @@ def check(root: Path) -> list[str]:
 
     source_markers: set[str] = set()
     defined_fns: set[str] = set()
+    malformed: dict[str, str] = {}
     for path in _iter_source_files(root):
         text = _read(path)
         source_markers |= expand_marker_ids(text)
+        for token in find_malformed_markers(text):
+            malformed.setdefault(token, str(path.relative_to(root)))
         defined_fns |= set(_RUST_FN.findall(text))
         defined_fns |= set(_SPEC_TEST.findall(text))
+
+    # C6: a marker that does not follow `TP-<FAMILY>-<NN>` cannot be traced
+    # from the registry back to the code, and its prefix collides with real ids.
+    for token in sorted(malformed):
+        errors.append(
+            f"{token} ({malformed[token]}): malformed marker; "
+            "use TP-<FAMILY>-<NN> so the id is not truncated"
+        )
 
     for entry_id in sorted(entries):
         entry = entries[entry_id]

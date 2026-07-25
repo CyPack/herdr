@@ -2942,7 +2942,7 @@ mod tests {
 
     #[test]
     fn inert_mouse_move_declines_render() {
-        // TP-2B: a hover move with no blocking overlay (plain terminal / native
+        // TP-REPAINT-2B: a hover move with no blocking overlay (plain terminal / native
         // file-manager surface) changes nothing herdr draws, so the router must
         // not request a render for it.
         let mut app = app_for_mouse_test();
@@ -2966,7 +2966,7 @@ mod tests {
 
     #[test]
     fn mouse_move_over_blocking_overlay_requests_render() {
-        // TP-2D: while a hover-sensitive overlay owns the pointer a move can
+        // TP-REPAINT-2D: while a hover-sensitive overlay owns the pointer a move can
         // change its highlight, so the router must keep requesting a render.
         let mut app = app_for_mouse_test();
         app.state.context_menu = Some(ContextMenuState {
@@ -2997,7 +2997,7 @@ mod tests {
 
     #[test]
     fn non_move_mouse_events_always_request_render() {
-        // TP-2C / TP-2F: generic press, release, drag, and wheel input repaint.
+        // TP-REPAINT-2C / TP-REPAINT-2F: generic press, release, drag, and wheel input repaint.
         // Native-FM vertical wheel duplicates have their own exact typed
         // override; this fixture deliberately has no live Files row target.
         for kind in [
@@ -3018,7 +3018,7 @@ mod tests {
 
     #[test]
     fn keyboard_and_paste_always_request_render() {
-        // TP-2E: non-mouse interaction (keys, paste) is low-frequency and always
+        // TP-REPAINT-2E: non-mouse interaction (keys, paste) is low-frequency and always
         // repaints, unchanged by the move gate.
         let mut app = app_for_mouse_test();
         let key_rendered =

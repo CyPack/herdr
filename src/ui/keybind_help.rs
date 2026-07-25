@@ -443,7 +443,7 @@ mod tests {
         );
     }
 
-    // TP-Act.5: the file manager action is discoverable in the keybind help.
+    // TP-ACT-5: the file manager action is discoverable in the keybind help.
     #[test]
     fn help_lists_the_file_manager_action() {
         let app = AppState::test_new();

@@ -1250,7 +1250,7 @@ impl Default for AdvancedConfig {
 mod tests {
     use super::*;
 
-    // TP-Act.default: the default keybinds bind prefix+f to the file manager.
+    // TP-ACT-DEFAULT: the default keybinds bind prefix+f to the file manager.
     #[test]
     fn default_binds_prefix_f_to_file_manager() {
         assert_eq!(

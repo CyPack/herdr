@@ -283,7 +283,7 @@ impl crate::app::App {
     }
 
     /// A stale activation is consumed loudly: the picker closes with zero
-    /// bytes prepared and the failure stays visible (TP-FIP-5.5).
+    /// bytes prepared and the failure stays visible (TP-FIP-REF-19).
     fn fail_agent_reference_activation(&mut self) {
         self.state.close_agent_reference_picker();
         self.show_file_manager_agent_handoff_failure("agent handoff authority changed");
@@ -452,7 +452,7 @@ mod tests {
         assert_eq!(toast.context, "no live agent to receive references");
     }
 
-    // TP-FIP-5.5: a target pane closed while the picker is open renders
+    // TP-FIP-REF-19: a target pane closed while the picker is open renders
     // disabled on the next recompute instead of silently disappearing.
     #[tokio::test]
     async fn target_pane_closed_while_picker_open_disables_row_on_recompute() {
@@ -491,7 +491,7 @@ mod tests {
         );
     }
 
-    // TP-FIP-5.5: activating a target that disappeared after open fails
+    // TP-FIP-REF-19: activating a target that disappeared after open fails
     // closed with zero bytes and one visible failure.
     #[tokio::test]
     async fn activation_of_disappeared_target_fails_closed_with_visible_failure() {
@@ -530,7 +530,7 @@ mod tests {
         );
     }
 
-    // TP-FIP-5.5: a terminal that stopped being an agent between open and
+    // TP-FIP-REF-19: a terminal that stopped being an agent between open and
     // activation prepares nothing — zero bytes ever cross.
     #[tokio::test]
     async fn terminal_identity_change_between_open_and_activation_sends_zero_bytes() {

@@ -1647,7 +1647,7 @@ mod tests {
     }
 
     // Loaded Trail columns render root-to-active context without legacy titles.
-    // TP-A2.2.1/2/3: a directory selection renders parent, current, and child
+    // TP-A2.2-1/2/3: a directory selection renders parent, current, and child
     // context side by side. Both the cwd in its parent and the selected child
     // in the current directory are visibly highlighted.
 
@@ -1708,10 +1708,10 @@ mod tests {
     // preview inside its Miller column; it does not wrap into extra rows or
     // write beyond the frame width.
 
-    // TP-A2.2.4/N1: at the frozen preferred-width breakpoint, the two
+    // TP-A2.2-4 (N1): at the frozen preferred-width breakpoint, the two
     // one-cell dividers leave all three complete content columns readable.
 
-    // TP-A2.2.4: current wins a one-column frame; the inline preview appears
+    // TP-A2.2-4: current wins a one-column frame; the inline preview appears
     // only when both frozen 16-cell minima plus one divider fit.
 
     // TP-A3.2-VIEWPORT: CURRENT consumes the persistent viewport anchor rather
@@ -2455,7 +2455,7 @@ mod tests {
     }
 
     // Filesystem root does not synthesize an ancestor Trail column.
-    // TP-A2.2.5: the filesystem root has no logical ancestor. The bounded
+    // TP-A2.2-5: the filesystem root has no logical ancestor. The bounded
     // snapshot must not synthesize a fake parent column.
     #[test]
     fn filesystem_root_does_not_synthesize_parent_column() {
@@ -2472,7 +2472,7 @@ mod tests {
     }
 
     // Cursor movement refreshes the selected directory's loaded Trail column.
-    // TP-A2.2.3: moving the cursor refreshes the directory preview; stale child
+    // TP-A2.2-3: moving the cursor refreshes the directory preview; stale child
     // contents from the previous selection must not survive.
     #[test]
     fn cursor_movement_refreshes_directory_preview() {
@@ -2733,7 +2733,7 @@ mod tests {
     // TP-N4.1-SELECTION-STATE: CURRENT paints exactly one cursor-focus style,
     // independently from any explicit multi-selection background.
 
-    // TP-A2.4/C6.4: a valid empty directory renders its distinct placeholder
+    // TP-A2.4 / TP-C6.4: a valid empty directory renders its distinct placeholder
     // without being conflated with an unreadable cwd.
 
     // TP-A2.5: a name wider than the area is truncated with an ellipsis and never

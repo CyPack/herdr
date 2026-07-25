@@ -51,7 +51,7 @@ Format and rules: [`README.md`](README.md).
 
 | ID | Behavior | Breaks if lost | Verified by |
 |---|---|---|---|
-| TP-FIP-5 | Written in the source as `TP-FIP-5.5`: a target pane closed while the picker is open renders as unavailable, and activating a target that disappeared after open fails closed with zero bytes and a visible failure. | A pane that closed mid-picker still receives bytes. | `activation_of_disappeared_target_fails_closed_with_visible_failure`, `fail_agent_reference_activation`, `target_pane_closed_while_picker_open_disables_row_on_recompute`, `terminal_identity_change_between_open_and_activation_sends_zero_bytes` |
+| TP-FIP-REF-19 | A target pane closed while the picker is open renders as unavailable, and activating a target that disappeared after open fails closed with zero bytes and a visible failure. | A pane that closed mid-picker still receives bytes. | `activation_of_disappeared_target_fails_closed_with_visible_failure`, `fail_agent_reference_activation`, `target_pane_closed_while_picker_open_disables_row_on_recompute`, `terminal_identity_change_between_open_and_activation_sends_zero_bytes` |
 | TP-FIP-REF-01 | Opening the agent reference picker performs no runtime work. | Merely opening a picker spawns processes or mutates panes. | `reference_action_opens_picker_from_live_agents_projection`, `sync_file_manager_agent_handoff` |
 | TP-FIP-REF-02 | Selecting a row in the picker performs no runtime work; delivery alone crosses the App-owned send boundary. | Browsing the picker starts sending before the user confirms. | `current_focused_agent_is_first_and_preselected` |
 | TP-FIP-REF-03 | A non-agent focused terminal does not trigger an implicit chat split for the reference action: no split request, no send request, no new pane or terminal. | Referencing a file in a plain shell silently launches an agent the user never asked for. | `non_agent_focus_prepares_no_claude_split_for_reference_action`, `send_agent_on_non_agent_terminal_prepares_no_authority` |
@@ -89,7 +89,6 @@ Format and rules: [`README.md`](README.md).
   a crafted filename from emitting escape sequences into the host terminal.
 - `TP-FIP-REF-05` and `-07` forbid a submit byte. Any upstream change to how
   terminal input is encoded or flushed touches this promise.
-- ⚠️ `TP-FIP-5` is written as `TP-FIP-5.5` in the source and does not follow
-  the family's `TP-FIP-<AREA>-<NN>` shape, so the checker records the truncated
-  form. Renaming it to `TP-FIP-REF-19` would tidy the family; that is a
-  deliberate follow-up, not a silent fix.
+- `TP-FIP-REF-19` was written as `TP-FIP-5.5` until 2026-07-25. The checker
+  silently truncated it to `TP-FIP-5`, which is why the checker now rejects any
+  marker that does not follow `TP-<FAMILY>-<NN>` outright.

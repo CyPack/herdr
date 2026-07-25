@@ -112,6 +112,13 @@ python3 -m scripts.behavior_registry_check
 A failure here reads directly as *"the merge removed a test that pinned one of
 our behaviors."* Restore the behavior, not the registry row.
 
+**Before resolving any conflict in a file upstream also owns, read
+`behaviors/shared-surfaces.md`.** Those 48 behaviors are the only ones a
+three-way merge can take silently, and the "Breaks if lost" column is what
+decides whether a resolution is acceptable. `src/app/state.rs`, `src/ui.rs`,
+`src/app/input/sidebar.rs`, `src/client/mod.rs` and `src/ui/panes.rs` carry the
+densest concentration.
+
 Then the fork's own surfaces:
 
 ```bash

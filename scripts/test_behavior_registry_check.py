@@ -47,6 +47,38 @@ class ExpandMarkerIdsTests(unittest.TestCase):
     def test_prose_without_markers_yields_nothing(self) -> None:
         self.assertEqual(expand_marker_ids("// nothing to see"), set())
 
+    def test_numeric_range_expands_to_every_member(self) -> None:
+        # `TP-FIP-ICON-01..05` is the tree's compact form for one test that
+        # pins a whole numbered run. Reading only the first id would leave the
+        # rest of the run unbound while looking perfectly healthy.
+        self.assertEqual(
+            expand_marker_ids("// TP-FIP-ICON-01..03: icons"),
+            {"TP-FIP-ICON-01", "TP-FIP-ICON-02", "TP-FIP-ICON-03"},
+        )
+
+    def test_slash_run_accepts_a_dashed_tail(self) -> None:
+        # `EMPTY-ERROR` is one name that happens to contain a dash, so it
+        # replaces only the final segment.
+        self.assertEqual(
+            expand_marker_ids("// TP-C6.4-THEME/EMPTY-ERROR: states"),
+            {"TP-C6.4-THEME", "TP-C6.4-EMPTY-ERROR"},
+        )
+
+    def test_slash_tail_ending_in_a_number_names_a_sibling_subfamily(self) -> None:
+        # `RENDER-01` is subfamily plus number, so it replaces both trailing
+        # segments: the sibling is `TP-FLF-RENDER-01`, which exists on its own
+        # in the tree. Treating it as a suffix would invent `TP-FLF-STEP-RENDER`.
+        self.assertEqual(
+            expand_marker_ids("// TP-FLF-STEP-01/RENDER-01: reconciliation"),
+            {"TP-FLF-STEP-01", "TP-FLF-RENDER-01"},
+        )
+
+    def test_slash_run_accepts_a_fully_written_sibling(self) -> None:
+        self.assertEqual(
+            expand_marker_ids("// TP-FLF-BOUNDED-01/TP-FLF-BLOCKED-01: bounds"),
+            {"TP-FLF-BOUNDED-01", "TP-FLF-BLOCKED-01"},
+        )
+
 
 class CheckTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -206,6 +238,61 @@ class CheckTests(unittest.TestCase):
             "src/fm.rs",
             "/// TP-FM-01 defines the complete mapping.\n"
             "// TP-FM-01-FAILURES: keeps focus\nfn keeps_focus() {}\n",
+        )
+        self._ledger()
+        self.assertEqual(check(self.root), [])
+
+    # C6 — a marker the reader cannot trace back is not coverage.
+    def test_malformed_marker_is_reported_instead_of_truncated(self) -> None:
+        # `TP-Act.1` is not `TP-A`. Truncating it silently merges unrelated
+        # behaviors into one invented id, so the registry row no longer leads
+        # back to any single piece of code.
+        _write(self.root, "behaviors/fm.md", _registry(_row("TP-FM-01", "`keeps_focus`")))
+        _write(
+            self.root,
+            "src/fm.rs",
+            "// TP-FM-01: keeps focus\nfn keeps_focus() {}\n"
+            "// TP-Act.1: toggles the surface\nfn toggles() {}\n",
+        )
+        self._ledger()
+        errors = check(self.root)
+        self.assertTrue(any("TP-Act.1" in e and "malformed" in e.lower() for e in errors), errors)
+        # And it must not leak in under the truncated name.
+        self.assertFalse(any("TP-A " in e or "TP-A:" in e for e in errors), errors)
+
+    def test_dotted_family_with_dotted_child_is_reported(self) -> None:
+        # `TP-FIP-5.5` reads like a child of `TP-FIP-5`, but the convention is
+        # `TP-<FAMILY>-<NN>`; the parser sees `TP-FIP-5` and loses the `.5`.
+        _write(self.root, "behaviors/fm.md", _registry(_row("TP-FM-01", "`keeps_focus`")))
+        _write(
+            self.root,
+            "src/fm.rs",
+            "// TP-FM-01: keeps focus\nfn keeps_focus() {}\n"
+            "// TP-FIP-5.5: sends the path\nfn sends_path() {}\n",
+        )
+        self._ledger()
+        errors = check(self.root)
+        self.assertTrue(any("TP-FIP-5.5" in e and "malformed" in e.lower() for e in errors), errors)
+
+    def test_canonical_marker_shapes_are_not_reported_as_malformed(self) -> None:
+        # The tree already uses three legal shapes; flagging any of them would
+        # make the new check unusable.
+        _write(
+            self.root,
+            "behaviors/fm.md",
+            _registry(
+                _row("TP-FM-01", "`a`"),
+                _row("TP-C4.1", "`b`"),
+                _row("TP-DCLICK-01", "`c`"),
+                _row("TP-DCLICK-02", "`c`"),
+            ),
+        )
+        _write(
+            self.root,
+            "src/fm.rs",
+            "// TP-FM-01: one\nfn a() {}\n"
+            "// TP-C4.1: two\nfn b() {}\n"
+            "// TP-DCLICK-01/02: three. See TP-FM-01.\nfn c() {}\n",
         )
         self._ledger()
         self.assertEqual(check(self.root), [])

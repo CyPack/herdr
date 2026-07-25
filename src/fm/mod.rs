@@ -4034,7 +4034,7 @@ mod tests {
     }
 
     // Prepared context remains render-independent for operations and detail.
-    // TP-A2.2.2/3: Miller context is loaded into pure state before render. The
+    // TP-A2.2-2/3: Miller context is loaded into pure state before render. The
     // parent cursor identifies cwd and a selected directory exposes its child
     // entries without filesystem access from the renderer.
     #[test]
@@ -4058,7 +4058,7 @@ mod tests {
     }
 
     // Selected-file detail classification remains explicit.
-    // TP-A2.2.3: a selected file is explicitly classified; it is not confused
+    // TP-A2.2-3: a selected file is explicitly classified; it is not confused
     // with an empty directory preview.
     #[test]
     fn miller_context_classifies_file_preview() {
@@ -4280,7 +4280,7 @@ mod tests {
     }
 
     // Filesystem root has no parent operation context.
-    // TP-A2.2.5: filesystem root has no parent context.
+    // TP-A2.2-5: filesystem root has no parent context.
     #[test]
     fn miller_context_at_root_has_no_parent() {
         let st = FmState::new("/");

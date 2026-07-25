@@ -10,15 +10,18 @@ prose — what the behavior is and what breaks if it is lost.
 
 | ID | Verified by |
 |---|---|
-| TP-A | `default_binds_prefix_f_to_file_manager`, `help_lists_the_file_manager_action`, `open_file_manager_uses_active_workspace_cwd`, `prefix_f_key_toggles_file_manager`, `toggle_file_manager_action_opens_and_leaves_navigate_mode`, `toggle_file_manager_opens_and_closes` |
-| TP-A2.2 | `current_row_actions_follow_miller_geometry_at_all_breakpoints`, `cursor_movement_refreshes_directory_preview`, `filesystem_root_does_not_synthesize_parent_column`, `image_preview_has_explicit_non_kitty_fallback_and_ready_content_is_clear`, `miller_context_at_root_has_no_parent`, `miller_context_classifies_file_preview`, `miller_context_loads_parent_cursor_and_directory_preview`, `multi_selection_rows_are_distinct_from_cursor_focus`, `windowed_render_rejects_stale_current_and_preview_generation` |
+| TP-A2.2 | `multi_selection_rows_are_distinct_from_cursor_focus` |
+| TP-A2.2-1 | `windowed_render_rejects_stale_current_and_preview_generation` |
+| TP-A2.2-2 | `miller_context_loads_parent_cursor_and_directory_preview`, `windowed_render_rejects_stale_current_and_preview_generation` |
+| TP-A2.2-3 | `cursor_movement_refreshes_directory_preview`, `miller_context_classifies_file_preview`, `miller_context_loads_parent_cursor_and_directory_preview`, `windowed_render_rejects_stale_current_and_preview_generation` |
+| TP-A2.2-4 | `current_row_actions_follow_miller_geometry_at_all_breakpoints`, `image_preview_has_explicit_non_kitty_fallback_and_ready_content_is_clear` |
+| TP-A2.2-5 | `filesystem_root_does_not_synthesize_parent_column`, `miller_context_at_root_has_no_parent` |
 | TP-A2.3 | `multi_selection_rows_are_distinct_from_cursor_focus` |
 | TP-A2.4 | `long_name_is_truncated_to_width` |
 | TP-A2.5 | `long_name_is_truncated_to_width` |
 | TP-A2.6 | `closed_file_manager_renders_nothing` |
 | TP-A3.1 | `enter_directory_appends_segment_and_focuses_child` |
 | TP-A3.2 | `enter_on_file_is_noop` |
-| TP-A3.2-VIEWPORT | `compute_view_normalizes_file_manager_viewport_after_resize`, `current_row_actions_follow_miller_geometry_at_all_breakpoints`, `enter_and_leave_normalize_viewport_for_new_directory`, `viewport_follows_cursor_and_clamps_at_both_edges`, `viewport_handles_zero_rows_reload_shrink_and_empty_list` |
 | TP-A3.3 | `leave_ascends_to_parent` |
 | TP-A3.3-DISPATCH | `file_double_click_stays_selected_without_entering`, `rapid_clicks_on_different_rows_do_not_activate_directory`, `repeated_directory_click_preserves_prepared_branch_without_entering`, `single_click_selects_current_row_and_refreshes_preview`, `wheel_moves_cursor_within_bounds_only_over_current_rows` |
 | TP-A3.3-DISPATCH-STALE | `stale_row_index_is_consumed_without_selecting_another_entry` |
@@ -54,14 +57,10 @@ prose — what the behavior is and what breaks if it is lost.
 | TP-C2.1-NARROW | `current_row_actions_progressively_hide_and_preserve_name_cell` |
 | TP-C2.1-UNICODE-RENDER | `closed_file_manager_renders_nothing` |
 | TP-C2.1-VIEWPORT | `current_row_actions_apply_viewport_and_clamp_to_list_end` |
-| TP-C2.1-VIEWSTATE | `compute_view_snapshots_and_clears_file_manager_row_areas` |
 | TP-C2.2-NON-TARGETS | `row_action_dispatch_preserves_names_and_fails_closed_for_non_targets` |
 | TP-C2.2-ROW-DISPATCH | `row_left_click_dispatches_exact_tags_without_side_effects` |
 | TP-C2.2-STALE-IDENTITY | `row_action_dispatch_rejects_reordered_and_unrecognized_targets` |
-| TP-C3.1-CONTEXT-MODEL | `file_context_kind_exposes_deterministic_labels`, `file_context_menu_requires_explicit_prepared_selection`, `invalid_or_in_flight_file_context_menu_fails_closed`, `multiple_file_context_menu_disables_single_target_actions`, `single_file_context_menu_has_stable_order_and_read_only_authority` |
 | TP-C3.2-POPUP-GEOMETRY | `right_click_applies_exact_selection_policy_before_opening_file_menu`, `right_click_file_menu_fails_closed_for_stale_and_non_targets`, `right_click_popup_is_bounded_at_all_miller_breakpoints`, `right_click_row_action_cell_opens_the_same_file_context` |
-| TP-C3.2-POPUP-LIFECYCLE | `disabled_and_stale_file_context_actions_fail_closed`, `disabled_file_context_items_have_distinct_highlight_safe_style`, `file_context_menu_keyboard_owns_focus_and_emits_exact_intent`, `file_context_menu_mouse_hover_click_outside_and_close_lifecycle` |
-| TP-C3.3-PLUGIN-SURFACE | `file_context_menu_appends_plugins_and_serializes_exact_path_intent`, `file_context_menu_hides_plugins_for_non_utf8_paths`, `file_context_menu_plugin_action_is_typed_and_disable_race_fails_closed`, `file_manifest_actions_are_enabled_filtered_and_deterministic`, `manifest_rejects_unknown_file_action_context`, `plugin_context_merge_preserves_exact_file_paths`, `plugin_file_action_context_round_trips_exact_paths`, `plugin_file_context_menu_uses_display_width_for_unicode_title` |
 | TP-C4.1-COPY | `file_operation_copy_cancel_between_commits_rolls_back_published_items`, `file_operation_copy_cancellation_is_idempotent_and_cleans_staging`, `file_operation_copy_commits_files_directories_and_metadata`, `file_operation_copy_failure_cleans_staging_without_partial_publish`, `file_operation_copy_publish_is_atomic_no_replace` |
 | TP-C4.1-LIFECYCLE | `app_consumes_revalidated_context_copy_intent`, `app_copy_action_prepares_exact_selection_without_filesystem_work`, `app_paste_is_single_lane_and_completion_reloads_matching_destination`, `app_reopen_rejects_prior_destination_projection`, `file_operation_worker_cancel_is_idempotent_and_terminal`, `file_operation_worker_converts_panics_and_accepts_next_generation`, `file_operation_worker_is_single_lane_and_generation_safe`, `top_level_mouse_dispatches_header_copy_to_clipboard_controller` |
 | TP-C4.1-MOVE | `file_operation_move_cross_filesystem_commits_copy_before_source_removal`, `file_operation_move_fallback_failure_never_removes_source`, `file_operation_move_same_filesystem_renames_without_copy_residue`, `file_operation_move_source_removal_failure_is_explicit_and_recoverable` |
@@ -72,7 +71,6 @@ prose — what the behavior is and what breaks if it is lost.
 | TP-C4.1-PREFLIGHT-SOURCE | `file_operation_preflight_rejects_untrusted_source_types` |
 | TP-C4.1-PREFLIGHT-TOCTOU | `file_operation_plan_revalidation_rejects_replacement_and_new_collision` |
 | TP-C4.1-WATCHER | `app_paste_is_single_lane_and_completion_reloads_matching_destination` |
-| TP-C4.2-CONFIRM | `context_delete_opens_the_same_confirmation_model`, `delete_confirmation_ignores_modified_destructive_shortcuts`, `delete_confirmation_mouse_buttons_are_bounded_and_fail_closed`, `delete_confirmation_rejects_empty_and_inflight_authority`, `file_delete_choose_action_renders_distinct_safe_choices`, `file_delete_permanent_stage_renders_irreversible_warning`, `header_delete_opens_exact_confirmation_without_mutation`, `permanent_delete_requires_second_confirmation`, `stale_or_reopened_confirmation_cannot_emit_delete_request`, `trash_confirmation_emits_request_while_cancel_is_side_effect_free` |
 | TP-C4.2-DELETE | `app_permanent_delete_runs_in_worker_and_reloads_matching_directory`, `delete_execution_rejects_replaced_path_before_mutation`, `permanent_delete_removes_files_trees_and_symlinks_without_following` |
 | TP-C4.2-GATES | `real_trash_backend_isolated_child_preserves_symlink_target` |
 | TP-C4.2-RECOVERY | `app_delete_worker_panic_marks_every_item_failed`, `app_permanent_delete_runs_in_worker_and_reloads_matching_directory`, `delete_cancellation_preserves_completed_and_not_started_evidence`, `delete_partial_result_projects_ordered_per_item_recovery_state` |
@@ -90,18 +88,10 @@ prose — what the behavior is and what breaks if it is lost.
 | TP-C5-AUTHORITY | `context_send_agent_converges_on_typed_current_authority`, `row_send_agent_prepares_exact_path_and_focused_terminal_identity`, `send_agent_authority_fails_closed_without_current_single_path` |
 | TP-C5-SEND | `existing_agent_handoff_backpressure_is_consumed_without_hot_retry`, `existing_agent_handoff_fails_closed_after_agent_identity_is_lost`, `existing_agent_handoff_rejects_stale_path_and_missing_runtime`, `existing_agent_receives_exact_path_bytes_with_no_submit` |
 | TP-C5-SPLIT | `send_agent_on_non_agent_terminal_prepares_no_authority` |
-| TP-C6 | `long_name_is_truncated_to_width` |
-| TP-C6.1-GEOMETRY | `stale_file_locations_rail_hit_area_is_inert_after_model_refresh` |
-| TP-C6.1-LIFECYCLE | `file_locations_preparation_uses_live_home_and_pin_state`, `location_navigation_opens_exact_directory_and_rejects_stale_targets` |
-| TP-C6.1-MODEL | `file_locations_model_is_bounded_across_all_sections`, `file_locations_model_orders_sections_and_deduplicates_path_authority`, `file_locations_preparation_uses_live_home_and_pin_state` |
-| TP-C6.1-NAV | `clicking_file_locations_rail_item_prepares_exact_typed_navigation_request`, `location_navigation_opens_exact_directory_and_rejects_stale_targets`, `stale_file_locations_rail_hit_area_is_inert_after_model_refresh` |
-| TP-C6.3-AUTHORITY | `context_open_converges_on_existing_navigation_authority_once`, `file_manager_plugin_intent_uses_existing_command_runtime_once`, `row_delete_converges_on_shared_typed_confirmation_authority`, `unsupported_context_action_is_consumed_without_side_effects` |
 | TP-C6.3-CATALOG | `file_manager_action_catalog_matches_supported_dispatch_seams` |
-| TP-C6.3-LIFECYCLE | `close_file_manager_clears_pending_action_authority`, `unsupported_context_action_is_consumed_without_side_effects` |
-| TP-C6.4-EMPTY | `image_preview_has_explicit_non_kitty_fallback_and_ready_content_is_clear` |
-| TP-C6.4-EMPTY-ERROR | `current_directory_status_distinguishes_available_missing_and_unavailable`, `directory_error_kind_classification_is_platform_independent`, `missing_current_path_has_defined_recovery`, `operation_status_line_renders_lifecycle_counts_and_exact_recovery_path`, `read_only_current_directory_renders_warning_status_line` |
+| TP-C6.4 | `long_name_is_truncated_to_width` |
+| TP-C6.4-EMPTY-ERROR | `current_directory_status_distinguishes_available_missing_and_unavailable`, `directory_error_kind_classification_is_platform_independent`, `image_preview_has_explicit_non_kitty_fallback_and_ready_content_is_clear`, `missing_current_path_has_defined_recovery`, `operation_status_line_renders_lifecycle_counts_and_exact_recovery_path`, `read_only_current_directory_renders_warning_status_line` |
 | TP-C6.4-THEME | `image_preview_has_explicit_non_kitty_fallback_and_ready_content_is_clear`, `open_file_manager_fills_only_its_canvas_with_palette_background`, `read_only_current_directory_renders_warning_status_line` |
-| TP-C6.4-VISUAL | `native_fm_composes_sidebar_breakpoints_and_status_across_full_frames`, `native_fm_context_and_delete_modal_compose_above_status_surface` |
 | TP-DCLICK-01 | `directory_click_previews_exact_ancestor_branch_without_entering`, `directory_primary_click_keeps_vertical_navigation_in_the_owner_column`, `exact_directory_focus_preserves_branch_and_rejects_stale_identity`, `flf_mouse_directory_click_preserves_parent_focus_contract`, `plain_click_focuses_exact_live_row_in_every_visible_column`, `rapid_clicks_on_different_rows_do_not_activate_directory`, `repeated_directory_click_preserves_prepared_branch_without_entering`, `repeated_directory_click_requires_right_to_enter_prepared_child` |
 | TP-DCLICK-02 | `directory_primary_click_keeps_vertical_navigation_in_the_owner_column` |
 | TP-DCLICK-03 | `directory_primary_click_requires_right_to_focus_the_prepared_child`, `repeated_directory_click_requires_right_to_enter_prepared_child` |
@@ -117,7 +107,6 @@ prose — what the behavior is and what breaks if it is lost.
 | TP-FCL-GEO-01 | `fcl_geometry_wide_and_standard_regions_are_bounded_and_disjoint` |
 | TP-FCL-GEO-02 | `fcl_geometry_compact_boundary_is_exact_and_deterministic` |
 | TP-FCL-GEO-03 | `fcl_geometry_tiny_frames_and_unicode_rows_publish_only_complete_targets` |
-| TP-FCL-INPUT-01 | `clicking_file_locations_rail_item_prepares_exact_typed_navigation_request`, `fcl_input_fresh_row_click_and_vertical_rail_scroll_are_content_owned`, `headless_raw_mouse_locations_navigation_loads_exact_trail` |
 | TP-FCL-INPUT-02 | `fcl_input_trail_horizontal_scroll_never_moves_the_locations_rail` |
 | TP-FCL-INPUT-03 | `fcl_input_gaps_modifiers_compact_and_stale_rows_are_inert` |
 | TP-FCL-IO-01 | `fcl_io_location_request_is_async_and_generation_safe`, `fcl_io_submit_is_non_blocking_while_processor_is_blocked` |
@@ -128,8 +117,6 @@ prose — what the behavior is and what breaks if it is lost.
 | TP-FCL-IO-06 | `fcl_io_miller_and_current_refresh_share_worker_lane` |
 | TP-FCL-RENDER-01 | `fcl_render_prepared_locations_with_origin_pending_and_failure_states` |
 | TP-FCL-RENDER-02 | `fcl_render_prepared_locations_with_origin_pending_and_failure_states` |
-| TP-FCL-SHELL-01 | `fcl_shell_files_activation_preserves_spaces_sidebar_projection`, `legacy_files_tab_value_keeps_visible_spaces_wheel_interaction`, `legacy_files_tab_value_renders_spaces_tracker_not_locations` |
-| TP-FCL-SHELL-02 | `fcl_shell_files_activation_preserves_projects_sidebar_owner` |
 | TP-FFO-ACTION-01 | `ffo_rail_owner_disables_every_file_action_with_owner_precedence` |
 | TP-FFO-ACTION-02 | `ffo_prepared_enabled_header_action_fails_closed_after_rail_takes_focus` |
 | TP-FFO-ACTION-03 | `ffo_rail_owner_rejects_direct_copy_without_side_effects`, `ffo_rail_owner_rejects_direct_delete_without_side_effects`, `ffo_rail_owner_rejects_direct_paste_before_worker_or_filesystem`, `ffo_rail_owner_rejects_direct_rename_open_and_submit`, `ffo_rail_owner_rejects_injected_bulk_rename_before_worker_or_filesystem`, `ffo_rail_owner_rejects_injected_rename_before_worker_or_filesystem`, `header_left_click_dispatches_currently_enabled_exact_tags_without_filesystem_effects` |
@@ -146,6 +133,9 @@ prose — what the behavior is and what breaks if it is lost.
 | TP-FFO-VIS-04 | `ffo_rail_and_trail_active_rows_share_the_same_cursor_style` |
 | TP-FFO-WHEEL-01 | `ffo_clamped_trail_wheel_transfers_owner_and_requests_one_render` |
 | TP-FFO-WHEEL-02 | `ffo_clamped_trail_wheel_transfers_owner_and_requests_one_render` |
+| TP-FIP-ICON-03 | `classify_covers_all_six_entry_kinds`, `snapshot_prepares_canonical_entry_kinds`, `supports_agent_reference`, `visual_class_kind_wins_over_extension` |
+| TP-FIP-ICON-04 | `classify_covers_all_six_entry_kinds`, `snapshot_prepares_canonical_entry_kinds`, `supports_agent_reference`, `visual_class_kind_wins_over_extension` |
+| TP-FIP-ICON-05 | `classify_covers_all_six_entry_kinds`, `snapshot_prepares_canonical_entry_kinds`, `supports_agent_reference`, `visual_class_kind_wins_over_extension` |
 | TP-FM1.3-HSCROLL | `horizontal_wheel_is_bounded_for_single_trail_column_and_preserves_focus` |
 | TP-FM1.3-HSCROLL-AUTHORITY | `horizontal_wheel_fails_closed_without_fresh_files_authority` |
 | TP-FM1.3-HSCROLL-MODIFIERS | `non_shift_modified_wheel_is_consumed_without_moving_any_axis` |
@@ -177,21 +167,16 @@ prose — what the behavior is and what breaks if it is lost.
 | TP-FMN-IO-03 | `keyboard_enter_activates_cursor_directory_off_input_loop`, `keyboard_enter_emits_exact_trail_intent_without_input_loop_mutation`, `missing_directory_preview_preserves_cursor_and_resident_branch` |
 | TP-FMN-IO-04 | `directory_preview_after_horizontal_focus_change_is_rejected` |
 | TP-FMN-NAV-01 | `repeated_up_over_directories_moves_one_row_without_child_focus_transfer`, `vertical_directory_landing_preserves_owner_focus_and_open_branch` |
-| TP-FMN-NAV-02 | `vertical_directory_landing_preserves_owner_focus_and_open_branch` |
-| TP-FMN-NAV-03 | `clamped_shift_vertical_move_is_inert_and_preserves_selection`, `shift_vertical_over_directory_extends_selection_without_branching` |
+| TP-FMN-NAV-02 | `repeated_up_over_directories_moves_one_row_without_child_focus_transfer`, `vertical_directory_landing_preserves_owner_focus_and_open_branch` |
+| TP-FMN-NAV-03 | `clamped_shift_vertical_move_is_inert_and_preserves_selection`, `repeated_up_over_directories_moves_one_row_without_child_focus_transfer`, `shift_vertical_over_directory_extends_selection_without_branching` |
 | TP-FMN-NAV-04 | `cursor_only_parent_move_projects_new_highlight_without_stale_child` |
 | TP-FMN-NAV-05 | `explicit_keyboard_activation_enters_exact_cursor_directory`, `keyboard_enter_activates_cursor_directory_off_input_loop` |
 | TP-FMN-NAV-06 | `fmstate_directory_cursor_does_not_activate_child_on_open`, `miller_resize_projection_tracks_active_owner_after_commit` |
 | TP-FMN-NAV-07 | `auto_follow_tracks_active_column_instead_of_deepest_preview` |
-| TP-FMN-NAV-08 | `compute_view_auto_follow_tracks_active_trail_owner` |
 | TP-FMN-RENDER-01 | `clamped_keyboard_vertical_move_declines_render`, `clamped_shift_vertical_move_is_inert_and_preserves_selection`, `clamped_vertical_wheel_declines_render`, `cursor_only_parent_move_projects_new_highlight_without_stale_child` |
 | TP-FMN-WHEEL-01 | `vertical_wheel_microburst_collapses_exact_host_triplet`, `vertical_wheel_microburst_moves_one_row_end_to_end` |
 | TP-FMN-WHEEL-02 | `vertical_wheel_filter_preserves_distinct_intent`, `vertical_wheel_microburst_moves_one_row_end_to_end` |
 | TP-FMN-WHEEL-03 | `plain_wheel_moves_one_ancestor_row_without_child_focus_transfer` |
-| TP-FMP-CLIENT-01 | `fmp_client_input_precedes_semantic_frame_backlog` |
-| TP-FMP-CLIENT-02 | `fmp_client_semantic_frame_burst_keeps_only_newest_snapshot` |
-| TP-FMP-CLIENT-03 | `fmp_client_terminal_frames_remain_lossless_and_ordered` |
-| TP-FMP-CLIENT-04 | `fmp_client_input_quantum_yields_to_ordered_control` |
 | TP-FMP-FILE-01 | `resident_file_selection_projects_without_filesystem_reads` |
 | TP-FMP-FILE-01b | `resident_file_selection_projects_without_filesystem_reads` |
 | TP-FMP-FILE-02 | `root_file_selection_is_disk_free_and_has_no_parent` |
@@ -200,30 +185,16 @@ prose — what the behavior is and what breaks if it is lost.
 | TP-FMP-SCALE-02 | `fmp_scale_100k_directory_snapshot_meets_reference_budget` |
 | TP-FMP-TRAIL-01 | `resident_ancestor_activation_rebranches_without_filesystem_reads` |
 | TP-FMP-TRAIL-03 | `fmp_trail_activation_completion_after_close_reopen_is_rejected` |
-| TP-FMR-SIDEBAR-HL-01 | `headless_raw_mouse_locations_navigation_loads_exact_trail` |
-| TP-M1.1-GEOMETRY | `focused_agent_attachment_action_is_exact_agent_only_and_responsive` |
-| TP-M1.1-KEYBIND | `default_binds_prefix_a_to_agent_attachment_picker_without_conflict` |
-| TP-M1.1-RENDER | `agent_attachment_action_render_is_bounded_ascii_and_no_color_safe` |
-| TP-M1.2-AUTHORITY | `attachment_picker_accepts_one_regular_file_and_disables_other_targets` |
-| TP-M1.2-CANCEL | `attachment_picker_escape_restores_valid_focus_without_delivery` |
 | TP-M1.2-MOUSE | `attachment_picker_mouse_selects_only_fresh_unmodified_current_row` |
-| TP-M1.2-OPEN | `opening_attachment_picker_binds_exact_target_and_workspace_cwd` |
 | TP-M1.2-OVERLAY | `attachment_picker_clear_overlay_is_responsive_and_blocks_background_input` |
-| TP-M1.2-TINY | `attachment_picker_tiny_area_declines_with_visible_reason` |
-| TP-M1.2-UNAVAILABLE | `attachment_picker_unavailable_target_is_visible_and_non_mutating` |
 | TP-M1.3-BUSY | `attachment_delivery_backpressure_is_visible_without_hot_retry` |
 | TP-M1.3-IDENTITY | `attachment_delivery_rejects_changed_focus_and_missing_runtime` |
 | TP-M1.3-LIMIT | `attachment_payload_rejects_more_than_one_mib_including_enter` |
 | TP-M1.3-PREPARE | `attachment_picker_enter_prepares_one_typed_request_without_delivery` |
 | TP-M1.3-SEND | `attachment_delivery_sends_one_literal_path_and_closes_on_success` |
 | TP-M1.3-STALE | `attachment_delivery_rejects_lost_agent_and_vanished_file` |
-| TP-M2.1-FAILURE | `worktree_action_list_error_preserves_agent_resources_and_clears_only_request` |
-| TP-M2.1-GEOMETRY | `focused_agent_worktree_action_is_capability_gated_and_disjoint` |
 | TP-M2.1-INPUT | `worktree_action_click_revalidates_exact_workspace_pane_and_terminal` |
-| TP-M2.1-RENDER | `focused_agent_worktree_action_render_is_ascii_and_no_color_safe` |
-| TP-M2.1-ROUTE | `focused_agent_worktree_action_routes_to_existing_open_dialog_without_new_authority` |
 | TP-N2.1-PATH | `leave_at_root_preserves_complete_state`, `leave_focus_scrolls_into_bounded_viewport`, `leave_focus_survives_parent_reorder_and_deletion`, `leave_focuses_child_preview_and_clears_selection`, `leave_focuses_exact_parent_and_preserves_valid_child_focus`, `leave_missing_or_hidden_child_uses_top_fallback` |
-| TP-N3.1-LIFECYCLE | `compute_view_refreshes_and_clears_file_manager_action_bar_content` |
 | TP-N3.2-AUTHORITY | `disabled_header_action_is_consumed_without_side_effects` |
 | TP-N3.2-RENDER | `disabled_header_action_uses_distinct_style` |
 | TP-N4.1-SELECTION-STATE | `directory_navigation_clears_selection_but_file_enter_preserves_it`, `hidden_toggle_prunes_invisible_selection_and_anchor`, `keyboard_toggle_range_and_cursor_only_movement_share_selection_model`, `long_name_is_truncated_to_width`, `mouse_plain_control_shift_and_combined_gestures_are_exact`, `multi_selection_rows_are_distinct_from_cursor_focus`, `multi_selection_starts_empty_and_cursor_moves_independently`, `plain_selection_and_cursor_focus_follow_close_reopen_lifecycle`, `plain_selection_replaces_paths_and_establishes_anchor`, `range_selection_fails_closed_for_missing_stale_and_duplicate_identity`, `range_selection_is_inclusive_and_direction_independent`, `reload_reconciles_multi_selection_by_live_path_identity`, `reopened_file_manager_starts_with_empty_multi_selection`, `row_selection_snapshot_carries_stable_path_identity`, `stale_and_unrecognized_selection_gestures_fail_closed`, `toggle_selection_deduplicates_removes_and_updates_anchor` |

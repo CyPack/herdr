@@ -3424,7 +3424,7 @@ navigate_pane_down = "ctrl+j"
         assert!(state.request_project_chat_tab.is_some());
     }
 
-    // TP-Act.1: toggle_file_manager opens then closes the file manager.
+    // TP-ACT-1: toggle_file_manager opens then closes the file manager.
     #[test]
     fn toggle_file_manager_opens_and_closes() {
         let mut state = state_with_workspaces(&["ws"]);
@@ -3441,7 +3441,7 @@ navigate_pane_down = "ctrl+j"
         );
     }
 
-    // TP-Act.2: opening the file manager uses the active workspace's directory.
+    // TP-ACT-2: opening the file manager uses the active workspace's directory.
     #[test]
     fn open_file_manager_uses_active_workspace_cwd() {
         let mut state = state_with_workspaces(&["ws"]);
@@ -3458,7 +3458,7 @@ navigate_pane_down = "ctrl+j"
         );
     }
 
-    // TP-Act.4: dispatching the ToggleFileManager action toggles the file
+    // TP-ACT-4: dispatching the ToggleFileManager action toggles the file
     // manager and leaves navigate mode.
     #[test]
     fn toggle_file_manager_action_opens_and_leaves_navigate_mode() {
@@ -3477,7 +3477,7 @@ navigate_pane_down = "ctrl+j"
         assert!(state.file_manager.is_none(), "action toggles it closed");
     }
 
-    // TP-Act.3: the bound key (default prefix+f) drives the toggle end-to-end
+    // TP-ACT-3: the bound key (default prefix+f) drives the toggle end-to-end
     // through the navigate-key handler (enum + mapping + dispatch wiring).
     #[test]
     fn prefix_f_key_toggles_file_manager() {
