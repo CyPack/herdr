@@ -7902,6 +7902,13 @@
                 "null"
               ]
             },
+            "file_extensions": {
+              "description": "Which file extensions this action handles, normalized and lowercase.\n\nEmpty means every file. Every manifest written before this field\nexisted omits it, so reading empty as \"nothing\" would silently disable\nevery installed plugin.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
             "platforms": {
               "items": {
                 "$ref": "#/schemas/success_response/$defs/PluginPlatform"
@@ -8140,6 +8147,13 @@
                 "string",
                 "null"
               ]
+            },
+            "file_extensions": {
+              "description": "Which file extensions this action handles. Empty means every file; see\n[`PluginActionInfo::file_extensions`].",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             },
             "id": {
               "type": "string"

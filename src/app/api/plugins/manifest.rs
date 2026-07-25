@@ -56,6 +56,8 @@ struct RawPluginManifestAction {
     #[serde(default)]
     contexts: Vec<crate::api::schema::PluginActionContext>,
     #[serde(default)]
+    file_extensions: Vec<String>,
+    #[serde(default)]
     platforms: Option<Vec<RawPlatform>>,
     command: Vec<String>,
 }
@@ -396,11 +398,23 @@ fn normalize_manifest_action(
         .filter(|description| !description.is_empty());
     let platforms = normalize_platforms(action.platforms)?;
     let command = normalize_command(action.command)?;
+    // Authors write `xlsx`, `.xlsx` and `XLSX` interchangeably. All three are
+    // accepted and stored in one form, so matching stays a single rule; an
+    // entry that normalizes to nothing is dropped rather than kept as an
+    // extension no file can have.
+    let mut file_extensions = action
+        .file_extensions
+        .iter()
+        .filter_map(|extension| crate::api::schema::normalize_plugin_file_extension(extension))
+        .collect::<Vec<_>>();
+    file_extensions.sort();
+    file_extensions.dedup();
     Ok(PluginManifestAction {
         id,
         title,
         description,
         contexts: action.contexts,
+        file_extensions,
         platforms,
         command,
     })

@@ -51,7 +51,7 @@ mod sidebar;
 mod terminal;
 
 pub(crate) use self::{
-    file_manager::handle_preview_viewer_key,
+    file_manager::{handle_preview_viewer_key, open_preview_viewer},
     modal::{
         handle_global_menu_key, handle_keybind_help_key, handle_navigator_key,
         insert_keybind_help_query_text, insert_navigator_search_text, insert_rename_input_text,

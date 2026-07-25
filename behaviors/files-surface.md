@@ -181,6 +181,44 @@ deciding when to re-render.
 | TP-FPDF-26 | A render that lands after a turn is rejected. | The wrong page is installed with no further event to correct it. | `a_page_render_that_lands_after_a_turn_is_rejected` |
 | TP-FPDF-27 | Opening the file manager onto a PDF or a workbook classifies it the same way moving the cursor onto one does. | The immediate path fell through to the text reader, so a PDF selected at open time was shown as its own raw bytes until the cursor moved away and back. | `opening_onto_a_document_prepares_it_as_that_document` |
 
+## Opening a file: which action is offered
+
+A plugin action may name the extensions it handles. Naming none means every
+file, because every manifest written before the field existed omits it — and
+reading empty as "nothing" would silently disable every installed plugin.
+
+An action that does not handle the selection is **absent** from the menu, not
+disabled. A greyed-out entry says "not right now"; this one does not apply to
+these files at all. Offering it anyway is what launched the spreadsheet editor
+on a PDF and left an empty tab with nothing to explain it.
+
+Built-in `Open` only descends into directories, so a picture needs its own
+entry: `Enlarge` opens the full-frame viewer. The menu decides from the file
+name, which is all a pure projection has; the execution path checks the live
+preview again, so a name that promises a picture herdr cannot decode is refused
+there rather than opening the viewer onto an empty frame.
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-FOPEN-01 | An action naming extensions matches only those files. | The reported defect: a spreadsheet plugin offered on a PDF, launching an editor that cannot read it. | `an_action_that_names_extensions_matches_only_those_files` |
+| TP-FOPEN-02 | An action naming no extensions matches every file. | Every installed plugin goes silently offline. | `an_action_without_extensions_matches_every_file` |
+| TP-FOPEN-03 | Extension comparison ignores case. | `.XLSX` downloads make the plugin look like it randomly fails to appear. | `extension_matching_ignores_case` |
+| TP-FOPEN-04 | Every path in the selection must match. | The wrong program runs on the files that did not match. | `a_partly_matching_selection_does_not_match` |
+| TP-FOPEN-05 | A file with no extension matches only an unrestricted action. | Either a panic on the way to the answer, or an action offered where it cannot apply. | `a_file_without_an_extension_matches_only_an_unrestricted_action` |
+| TP-FOPEN-06 | The last dotted segment is the extension. | `archive.tar.gz` classification drifts between callers. | `a_multi_dotted_name_matches_its_last_segment` |
+| TP-FOPEN-07 | An empty selection matches nothing. | "All paths match" is vacuously true for an empty list, so every action would be offered with no file to run on. | `an_empty_selection_matches_nothing` |
+| TP-FOPEN-08 | A spreadsheet action is absent from a PDF's menu and present on a workbook's. | The defect returns, or the fix over-corrects and hides the action where it belongs. | `a_plugin_action_is_offered_only_for_the_extensions_it_handles` |
+| TP-FOPEN-09 | An unrestricted action stays in every file's menu. | Backward compatibility for every manifest on disk today. | `a_plugin_action_without_extensions_is_offered_on_every_file` |
+| TP-FOPEN-10 | A partly-matching selection is not offered the action. | The defect, one selection wider. | `a_plugin_action_is_withheld_from_a_partly_matching_selection` |
+| TP-FOPEN-11 | `.XLSX`, `xlsx` and ` csv ` all reduce to one stored form; empties are dropped. | Matching needs three rules instead of one, and a stray empty string becomes an extension no file has. | `plugin_manifest_normalizes_action_file_extensions` |
+| TP-FOPEN-12 | A manifest without the field still parses. | Every installed plugin fails to load. | `plugin_manifest_without_file_extensions_still_parses` |
+| TP-FOPEN-13 | A file with a picture offers `Enlarge`. | A PDF or image has no working entry in the menu at all. | `a_picture_offers_enlarge` |
+| TP-FOPEN-14 | A file drawn from cells disables `Enlarge` with a reason. | An entry that looks available and does nothing reads as a frozen application. | `a_file_without_a_picture_disables_enlarge_with_a_reason` |
+| TP-FOPEN-15 | A multiple selection disables `Enlarge`. | The viewer shows one file; which one is left ambiguous. | `a_multiple_selection_disables_enlarge` |
+| TP-FOPEN-16 | Choosing `Enlarge` opens the viewer on that file. | The entry exists and does nothing, which is worse than not offering it. | `context_enlarge_opens_the_viewer_on_the_named_file` |
+| TP-FOPEN-17 | The execution path re-checks the live preview. | A name that promises a picture herdr cannot show opens the viewer onto an empty frame. | `context_enlarge_refuses_a_file_with_no_picture` |
+| TP-FOPEN-18 | An intent naming a file that is no longer selected opens nothing. | A menu opened before the cursor moved enlarges whatever happens to be selected now. | `context_enlarge_ignores_an_intent_for_a_different_file` |
+
 ## Enlarged preview viewer
 
 `Enter`, or a click on the picture, opens the raster preview to fill the frame.

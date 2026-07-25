@@ -505,6 +505,7 @@ mod tests {
                     title: "Open link".into(),
                     description: None,
                     contexts: Vec::new(),
+                    file_extensions: Vec::new(),
                     platforms: None,
                     command: vec!["sh".into(), "-c".into(), ":".into()],
                 }],

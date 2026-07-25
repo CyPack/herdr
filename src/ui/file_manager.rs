@@ -2633,6 +2633,7 @@ mod tests {
             FileManagerContextMenuAction::ALL.map(|action| action.label().to_string()),
             [
                 "Open".to_string(),
+                "Enlarge".to_string(),
                 "Copy".to_string(),
                 "Rename".to_string(),
                 "Delete".to_string(),

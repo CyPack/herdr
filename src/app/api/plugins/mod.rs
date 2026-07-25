@@ -756,6 +756,7 @@ fn manifest_action_info(
         title: action.title.clone(),
         description: action.description.clone(),
         contexts: action.contexts.clone(),
+        file_extensions: action.file_extensions.clone(),
         command: action.command.clone(),
         platforms: effective_platforms(&action.platforms, plugin_platforms).clone(),
     }
@@ -1067,6 +1068,73 @@ platforms = ["linux", "macos", "windows"]
             panic!("expected plugin list response: {list}");
         };
         assert!(plugins.is_empty());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    // TP-FOPEN-11: the three spellings authors reasonably use for an
+    // extension all reduce to one stored form, and an entry that reduces to
+    // nothing is dropped. Storing them as written would make matching try
+    // three rules instead of one, and an empty string kept as an extension
+    // matches no file — which would hide the action with no way to see why.
+    #[test]
+    fn plugin_manifest_normalizes_action_file_extensions() {
+        let root = unique_temp_path("plugin-file-extensions");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.sheets"
+name = "Sheets"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "open"
+title = "Open in New Tab"
+contexts = ["file"]
+file_extensions = [".XLSX", "xlsx", " csv ", "", "  ", ".Tsv"]
+command = ["true"]
+"#,
+        );
+
+        let plugin = load_plugin_manifest(&root.display().to_string(), true)
+            .expect("a manifest naming file extensions should be valid");
+        assert_eq!(
+            plugin.actions[0].file_extensions,
+            ["csv", "tsv", "xlsx"],
+            "extensions are lowercased, undotted, de-duplicated and sorted"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    // TP-FOPEN-12: a manifest written before the field existed still parses,
+    // and its action keeps matching every file. Every installed plugin is one
+    // of these, so a parse failure here would take them all offline.
+    #[test]
+    fn plugin_manifest_without_file_extensions_still_parses() {
+        let root = unique_temp_path("plugin-no-file-extensions");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.legacy"
+name = "Legacy"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "open"
+title = "Open"
+contexts = ["file"]
+command = ["true"]
+"#,
+        );
+
+        let plugin = load_plugin_manifest(&root.display().to_string(), true)
+            .expect("a manifest without the new field should still be valid");
+        assert!(plugin.actions[0].file_extensions.is_empty());
 
         let _ = std::fs::remove_dir_all(root);
     }

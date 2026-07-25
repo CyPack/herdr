@@ -594,6 +594,7 @@ impl crate::app::App {
         changed |= self.consume_file_manager_rename_request();
         changed |= self.consume_file_manager_bulk_rename_request();
         changed |= self.consume_file_manager_context_open();
+        changed |= self.consume_file_manager_context_enlarge();
         changed |= self.consume_file_manager_context_rename();
         changed |= self.consume_file_manager_context_delete();
         changed |= self.consume_file_manager_context_copy();
@@ -1033,6 +1034,42 @@ impl crate::app::App {
             if let Some(request) = request {
                 let _ = self.execute_file_manager_navigation(request);
             }
+        }
+        true
+    }
+
+    /// Open the viewer on the selection the Enlarge entry named.
+    ///
+    /// The menu decides from the file name, which is all a pure projection
+    /// has. This gate checks the live preview instead: a name that promises a
+    /// picture herdr cannot decode is refused here rather than opening the
+    /// viewer onto an empty frame. The two disagree exactly when the name lies,
+    /// and only one of them can see that.
+    fn consume_file_manager_context_enlarge(&mut self) -> bool {
+        use crate::app::state::FileManagerContextMenuAction;
+
+        let is_enlarge = self
+            .state
+            .request_file_manager_context_action
+            .as_ref()
+            .is_some_and(|intent| intent.action == FileManagerContextMenuAction::Enlarge);
+        if !is_enlarge {
+            return false;
+        }
+        let Some(intent) = self.state.request_file_manager_context_action.take() else {
+            return false;
+        };
+        // The viewer shows the current selection, so the intent has to still
+        // name it. A menu opened before the cursor moved must not enlarge the
+        // file that happens to be selected now.
+        let selection_matches = self
+            .state
+            .file_manager
+            .as_ref()
+            .and_then(|file_manager| file_manager.trail_snapshots.detail())
+            .is_some_and(|detail| intent.paths == [detail.path.clone()]);
+        if selection_matches {
+            let _ = crate::app::input::open_preview_viewer(&mut self.state);
         }
         true
     }
@@ -2117,6 +2154,82 @@ mod tests {
             directory
         );
         assert!(!app.sync_file_operation_worker());
+    }
+
+    /// An app whose file manager has `name` selected inside a fresh temp dir.
+    fn app_with_selected_file(tag: &str, name: &str, bytes: &[u8]) -> (crate::app::App, TempDir) {
+        let td = TempDir::new(tag);
+        let path = td.root.join(name);
+        fs::write(&path, bytes).expect("write selection fixture");
+        let mut file_manager = crate::fm::FmState::new(&td.root);
+        let entry_idx = file_manager
+            .entries
+            .iter()
+            .position(|entry| entry.path == path)
+            .expect("selection row");
+        assert!(file_manager.replace_selection(entry_idx));
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+        (app, td)
+    }
+
+    // TP-FOPEN-16: choosing Enlarge opens the viewer. Without this the menu
+    // entry exists and does nothing, which is worse than not offering it.
+    #[test]
+    fn context_enlarge_opens_the_viewer_on_the_named_file() {
+        let (mut app, td) = app_with_selected_file("context-enlarge", "photo.png", b"not-a-png");
+        let path = td.root.join("photo.png");
+        app.state.request_file_manager_context_action = Some(FileManagerContextActionIntent {
+            action: FileManagerContextMenuAction::Enlarge,
+            paths: vec![path.clone()],
+        });
+
+        assert!(app.sync_file_operation_worker());
+        assert!(app.state.request_file_manager_context_action.is_none());
+        assert_eq!(app.state.mode, crate::app::state::Mode::PreviewViewer);
+        assert_eq!(
+            app.state
+                .preview_viewer
+                .as_ref()
+                .map(|viewer| viewer.source_path.clone()),
+            Some(path)
+        );
+    }
+
+    // TP-FOPEN-17: the execution path keeps its own gate. The menu decides
+    // from the file name, which is all a pure projection has; here the live
+    // preview is checked, so a name that promises a picture herdr cannot show
+    // is refused rather than opening the viewer onto an empty frame.
+    #[test]
+    fn context_enlarge_refuses_a_file_with_no_picture() {
+        let (mut app, td) = app_with_selected_file("context-enlarge-text", "notes.txt", b"hello");
+        app.state.request_file_manager_context_action = Some(FileManagerContextActionIntent {
+            action: FileManagerContextMenuAction::Enlarge,
+            paths: vec![td.root.join("notes.txt")],
+        });
+
+        assert!(app.sync_file_operation_worker());
+        assert!(app.state.request_file_manager_context_action.is_none());
+        assert!(app.state.preview_viewer.is_none());
+        assert_ne!(app.state.mode, crate::app::state::Mode::PreviewViewer);
+    }
+
+    // TP-FOPEN-18: an intent naming a file that is no longer selected is
+    // consumed without opening anything. A menu opened before the cursor moved
+    // must not enlarge whatever happens to be selected now.
+    #[test]
+    fn context_enlarge_ignores_an_intent_for_a_different_file() {
+        let (mut app, td) = app_with_selected_file("context-enlarge-stale", "photo.png", b"x");
+        app.state.request_file_manager_context_action = Some(FileManagerContextActionIntent {
+            action: FileManagerContextMenuAction::Enlarge,
+            paths: vec![td.root.join("other.png")],
+        });
+
+        assert!(app.sync_file_operation_worker());
+        assert!(app.state.request_file_manager_context_action.is_none());
+        assert!(app.state.preview_viewer.is_none());
     }
 
     // TP-C6.3-AUTHORITY/LIFECYCLE: an unsupported action cannot remain queued

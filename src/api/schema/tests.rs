@@ -905,6 +905,7 @@ fn plugin_link_list_unlink_round_trip() {
             title: "Bootstrap worktree".into(),
             description: None,
             contexts: vec![PluginActionContext::Workspace],
+            file_extensions: Vec::new(),
             platforms: None,
             command: vec!["bun".into(), "run".into(), "bootstrap.ts".into()],
         }],
@@ -1240,6 +1241,7 @@ fn plugin_action_list_and_invoke_round_trips() {
         title: "Assign Issue".into(),
         description: Some("Open the issue assignment UI".into()),
         contexts: vec![PluginActionContext::Workspace, PluginActionContext::Pane],
+        file_extensions: Vec::new(),
         command: vec!["assign".into(), "--issue".into()],
         platforms: Some(vec![PluginPlatform::Linux, PluginPlatform::Macos]),
     };

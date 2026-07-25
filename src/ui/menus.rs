@@ -463,13 +463,15 @@ mod tests {
             disabled_highlight.palette.overlay0,
             "highlighted disabled Open remains dim"
         );
+        // Row 2 is Enlarge, which a multiple selection also disables; Copy is
+        // the first enabled row at 3.
         assert_eq!(
-            glyph_fg(&buffer, menu_rect.y + 2, "C"),
+            glyph_fg(&buffer, menu_rect.y + 3, "C"),
             disabled_highlight.palette.text,
             "enabled Copy uses normal text while not highlighted"
         );
 
-        let enabled_highlight = multiple_file_menu(1);
+        let enabled_highlight = multiple_file_menu(2);
         let buffer = render_menu(&enabled_highlight);
         assert_eq!(
             glyph_fg(&buffer, menu_rect.y + 1, "O"),
@@ -477,7 +479,7 @@ mod tests {
             "non-highlighted disabled Open remains dim"
         );
         assert_eq!(
-            glyph_fg(&buffer, menu_rect.y + 2, "C"),
+            glyph_fg(&buffer, menu_rect.y + 3, "C"),
             panel_contrast_fg(&enabled_highlight.palette),
             "highlighted enabled Copy keeps selected contrast"
         );

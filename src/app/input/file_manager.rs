@@ -9972,7 +9972,7 @@ mod tests {
                 assert!(popup.x >= screen.x && popup.y >= screen.y);
                 assert!(popup.right() <= screen.right());
                 assert!(popup.bottom() <= screen.bottom());
-                assert_eq!(popup.height, 8, "six complete rows plus borders");
+                assert_eq!(popup.height, 9, "seven complete rows plus borders");
 
                 app.state.context_menu = None;
                 app.state.mode = Mode::Terminal;
@@ -10115,6 +10115,9 @@ mod tests {
             "menu navigation cannot move the FM cursor"
         );
 
+        // One more row: Enlarge is at index 1 and a text file cannot be
+        // enlarged, so Copy — the entry this test activates — is at index 2.
+        app.route_client_input(b"\x1b[B".to_vec());
         app.route_client_input(b"\r".to_vec());
         assert!(app.state.context_menu.is_none());
         assert_ne!(app.state.mode, Mode::ContextMenu);
@@ -10177,17 +10180,17 @@ command = ["inspect"]
         let ContextMenuKind::File { model } = &menu.kind else {
             panic!("expected file menu")
         };
-        assert_eq!(model.items.len(), 7);
-        assert_eq!(model.items[6].label, "Inspect file");
+        assert_eq!(model.items.len(), 8);
+        assert_eq!(model.items[7].label, "Inspect file");
         assert_eq!(
-            model.items[6].action,
+            model.items[7].action,
             FileManagerContextMenuAction::Plugin {
                 plugin_id: "example.files".into(),
                 action_id: "inspect".into(),
             }
         );
 
-        for _ in 0..6 {
+        for _ in 0..7 {
             app.route_client_input(b"\x1b[B".to_vec());
         }
         app.route_client_input(b"\r".to_vec());
@@ -10218,7 +10221,7 @@ command = ["inspect"]
             .get_mut("example.files")
             .expect("installed plugin")
             .enabled = false;
-        for _ in 0..6 {
+        for _ in 0..7 {
             app.route_client_input(b"\x1b[B".to_vec());
         }
         app.route_client_input(b"\r".to_vec());
@@ -10249,6 +10252,9 @@ command = ["inspect"]
         assert!(app.state.context_menu.is_some(), "disabled Open stays open");
         assert!(app.state.request_file_manager_context_action.is_none());
 
+        // Two rows down: Enlarge sits between Open and Copy and is disabled
+        // for a text file, so Copy is the next enabled entry.
+        app.route_client_input(b"\x1b[B".to_vec());
         app.route_client_input(b"\x1b[B".to_vec());
         app.state
             .file_manager
@@ -10315,7 +10321,9 @@ command = ["inspect"]
         let popup = app.state.context_menu_rect().expect("popup");
         let item_x = popup.x + 1;
         let open_y = popup.y + 1;
-        let copy_y = popup.y + 2;
+        // Enlarge sits at +2 and is disabled for a multiple selection, so
+        // Copy — the first enabled row — is at +3.
+        let copy_y = popup.y + 3;
 
         app.handle_mouse(mouse(MouseEventKind::Moved, item_x, copy_y));
         assert_eq!(
@@ -10325,7 +10333,7 @@ command = ["inspect"]
                 .expect("hovered menu")
                 .list
                 .highlighted,
-            1
+            2
         );
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),

@@ -224,6 +224,97 @@ mod tests {
             plugin_managed_path_component("example/a")
         );
     }
+
+    fn action_for(file_extensions: &[&str]) -> PluginActionInfo {
+        PluginActionInfo {
+            plugin_id: "example.plugin".to_owned(),
+            action_id: "open".to_owned(),
+            title: "Open in New Tab".to_owned(),
+            description: None,
+            contexts: vec![PluginActionContext::File],
+            file_extensions: file_extensions
+                .iter()
+                .map(|extension| (*extension).to_owned())
+                .collect(),
+            command: vec!["/bin/true".to_owned()],
+            platforms: None,
+        }
+    }
+
+    fn paths(names: &[&str]) -> Vec<std::path::PathBuf> {
+        names.iter().map(std::path::PathBuf::from).collect()
+    }
+
+    // TP-FOPEN-01: an action that names its extensions is offered only for
+    // those files. Without this the spreadsheet plugin was offered on a PDF,
+    // and choosing it launched the spreadsheet editor on a file it cannot
+    // read — an empty tab with nothing to explain it.
+    #[test]
+    fn an_action_that_names_extensions_matches_only_those_files() {
+        let action = action_for(&["xlsx", "csv"]);
+        assert!(action.matches_paths(&paths(["/tmp/report.xlsx"].as_slice())));
+        assert!(action.matches_paths(&paths(["/tmp/data.csv"].as_slice())));
+        assert!(!action.matches_paths(&paths(["/tmp/manual.pdf"].as_slice())));
+        assert!(!action.matches_paths(&paths(["/tmp/photo.png"].as_slice())));
+    }
+
+    // TP-FOPEN-02: an action that names no extensions still matches every
+    // file. Every manifest installed today omits the field, so reading an
+    // empty list as "nothing" would silently disable every existing plugin —
+    // a second defect rather than a fix.
+    #[test]
+    fn an_action_without_extensions_matches_every_file() {
+        let action = action_for(&[]);
+        assert!(action.matches_paths(&paths(["/tmp/manual.pdf"].as_slice())));
+        assert!(action.matches_paths(&paths(["/tmp/Makefile"].as_slice())));
+        assert!(action.matches_paths(&paths(["/tmp/a.xlsx", "/tmp/b.png"].as_slice())));
+    }
+
+    // TP-FOPEN-03: extension comparison ignores case. Downloaded files arrive
+    // named `.XLSX` often enough that a case-sensitive match would look like
+    // the plugin randomly failing to appear.
+    #[test]
+    fn extension_matching_ignores_case() {
+        let action = action_for(&["xlsx"]);
+        assert!(action.matches_paths(&paths(["/tmp/REPORT.XLSX"].as_slice())));
+        assert!(action.matches_paths(&paths(["/tmp/Report.Xlsx"].as_slice())));
+    }
+
+    // TP-FOPEN-04: every path in the selection has to match. Offering the
+    // action on a partly-matching selection runs the wrong program on the
+    // files that did not match, which is the original defect in miniature.
+    #[test]
+    fn a_partly_matching_selection_does_not_match() {
+        let action = action_for(&["xlsx"]);
+        assert!(action.matches_paths(&paths(["/tmp/a.xlsx", "/tmp/b.xlsx"].as_slice())));
+        assert!(!action.matches_paths(&paths(["/tmp/a.xlsx", "/tmp/b.pdf"].as_slice())));
+    }
+
+    // TP-FOPEN-05: a file with no extension matches nothing that named one,
+    // and does not panic on the way to that answer.
+    #[test]
+    fn a_file_without_an_extension_matches_only_an_unrestricted_action() {
+        assert!(!action_for(&["xlsx"]).matches_paths(&paths(["/tmp/Makefile"].as_slice())));
+        assert!(action_for(&[]).matches_paths(&paths(["/tmp/Makefile"].as_slice())));
+    }
+
+    // TP-FOPEN-06: the last dotted segment is the extension, matching
+    // `Path::extension`. Recorded rather than assumed: `archive.tar.gz` is a
+    // `gz`, and an action naming `tar` is not offered on it.
+    #[test]
+    fn a_multi_dotted_name_matches_its_last_segment() {
+        assert!(action_for(&["gz"]).matches_paths(&paths(["/tmp/archive.tar.gz"].as_slice())));
+        assert!(!action_for(&["tar"]).matches_paths(&paths(["/tmp/archive.tar.gz"].as_slice())));
+    }
+
+    // TP-FOPEN-07: an empty selection matches nothing. There is no file to
+    // run the action on, and "every path matches" is vacuously true for an
+    // empty list — the trap this closes.
+    #[test]
+    fn an_empty_selection_matches_nothing() {
+        assert!(!action_for(&["xlsx"]).matches_paths(&[]));
+        assert!(!action_for(&[]).matches_paths(&[]));
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -248,6 +339,10 @@ pub struct PluginManifestAction {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub contexts: Vec<PluginActionContext>,
+    /// Which file extensions this action handles. Empty means every file; see
+    /// [`PluginActionInfo::file_extensions`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub file_extensions: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub platforms: Option<Vec<PluginPlatform>>,
     pub command: Vec<String>,
@@ -409,6 +504,13 @@ pub struct PluginActionInfo {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub contexts: Vec<PluginActionContext>,
+    /// Which file extensions this action handles, normalized and lowercase.
+    ///
+    /// Empty means every file. Every manifest written before this field
+    /// existed omits it, so reading empty as "nothing" would silently disable
+    /// every installed plugin.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub file_extensions: Vec<String>,
     pub command: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub platforms: Option<Vec<PluginPlatform>>,
@@ -418,6 +520,43 @@ impl PluginActionInfo {
     pub fn qualified_id(&self) -> String {
         format!("{}.{}", self.plugin_id, self.action_id)
     }
+
+    /// Whether this action handles every path in the selection.
+    ///
+    /// Every path, not any: offering an action on a partly-matching selection
+    /// runs the wrong program on the files that did not match, which is the
+    /// defect this field exists to prevent. An empty selection matches
+    /// nothing — "all paths match" is vacuously true for an empty list, and
+    /// there is no file to act on.
+    pub fn matches_paths(&self, paths: &[std::path::PathBuf]) -> bool {
+        if paths.is_empty() {
+            return false;
+        }
+        if self.file_extensions.is_empty() {
+            return true;
+        }
+        paths.iter().all(|path| {
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    let extension = extension.to_ascii_lowercase();
+                    self.file_extensions
+                        .iter()
+                        .any(|handled| handled == &extension)
+                })
+        })
+    }
+}
+
+/// Reduce a manifest-written extension to the one form matching compares.
+///
+/// Authors reasonably write `xlsx`, `.xlsx` and `XLSX`; accepting all three
+/// and storing one keeps the match a single rule rather than three. An entry
+/// that normalizes to nothing is dropped, so a stray empty string cannot
+/// become an extension that matches nothing and quietly hides the action.
+pub fn normalize_plugin_file_extension(extension: &str) -> Option<String> {
+    let extension = extension.trim().trim_start_matches('.').trim();
+    (!extension.is_empty()).then(|| extension.to_ascii_lowercase())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -976,6 +976,12 @@ pub enum FileManagerContextMenuTargetKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileManagerContextMenuAction {
     Open,
+    /// Open the selection's picture in the full-frame viewer.
+    ///
+    /// The built-in `Open` only descends into directories, so without this a
+    /// PDF or an image has no working menu entry at all — and a plugin that
+    /// does not handle the type is now correctly absent from the menu.
+    Enlarge,
     Copy,
     Rename,
     Delete,
@@ -988,8 +994,9 @@ pub enum FileManagerContextMenuAction {
 }
 
 impl FileManagerContextMenuAction {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Open,
+        Self::Enlarge,
         Self::Copy,
         Self::Rename,
         Self::Delete,
@@ -1000,6 +1007,7 @@ impl FileManagerContextMenuAction {
     pub fn label(&self) -> &str {
         match self {
             Self::Open => "Open",
+            Self::Enlarge => "Enlarge",
             Self::Copy => "Copy",
             Self::Rename => "Rename",
             Self::Delete => "Delete",
@@ -1093,6 +1101,7 @@ impl FileManagerContextMenuModel {
                     && matches!(
                         &action,
                         FileManagerContextMenuAction::Open
+                            | FileManagerContextMenuAction::Enlarge
                             | FileManagerContextMenuAction::Rename
                             | FileManagerContextMenuAction::SendAgent
                     )
@@ -1105,6 +1114,23 @@ impl FileManagerContextMenuModel {
                         | FileManagerContextMenuAction::SendAgent => copy_reason,
                         FileManagerContextMenuAction::Rename
                         | FileManagerContextMenuAction::Delete => write_reason,
+                        // Decided from the name, which is the only evidence
+                        // this projection has and the same evidence the
+                        // preview classifier uses. The viewer checks the live
+                        // preview again before it opens, so a name that
+                        // promises a picture herdr cannot decode is refused
+                        // there rather than opening onto an empty frame.
+                        FileManagerContextMenuAction::Enlarge => selection
+                            .paths
+                            .first()
+                            .filter(|path| {
+                                crate::fm::entry_kind::path_looks_like_image(path)
+                                    || crate::fm::pdf_preview::is_pdf_path(path)
+                            })
+                            .map_or(
+                                Some(FileManagerActionDisabledReason::UnsupportedSelection),
+                                |_| copy_reason,
+                            ),
                         FileManagerContextMenuAction::Compress => {
                             Some(FileManagerActionDisabledReason::UnsupportedAction)
                         }
@@ -1131,6 +1157,12 @@ impl FileManagerContextMenuModel {
                         .contexts
                         .contains(&crate::api::schema::PluginActionContext::File)
                 })
+                // An action that does not handle this selection is absent, not
+                // disabled. A greyed-out entry says "not right now"; this one
+                // does not apply to these files at all, and offering it ran
+                // the wrong program — a spreadsheet editor on a PDF, which
+                // opened an empty tab with nothing to explain it.
+                .filter(|action| action.matches_paths(&selection.paths))
                 .collect::<Vec<_>>();
             plugin_actions.sort_by_key(|action| action.qualified_id());
             plugin_actions.dedup_by(|left, right| left.qualified_id() == right.qualified_id());
@@ -4029,12 +4061,20 @@ mod tests {
             assert_eq!(model.target_kind, expected_kind);
             assert_eq!(model.paths, vec![path]);
             assert!(model.items.iter().all(|item| {
-                if item.action == FileManagerContextMenuAction::Compress {
-                    !item.enabled
-                        && item.disabled_reason
-                            == Some(FileManagerActionDisabledReason::UnsupportedAction)
-                } else {
-                    item.enabled
+                match item.action {
+                    FileManagerContextMenuAction::Compress => {
+                        !item.enabled
+                            && item.disabled_reason
+                                == Some(FileManagerActionDisabledReason::UnsupportedAction)
+                    }
+                    // Neither fixture name promises a picture, so Enlarge is
+                    // correctly unavailable for both.
+                    FileManagerContextMenuAction::Enlarge => {
+                        !item.enabled
+                            && item.disabled_reason
+                                == Some(FileManagerActionDisabledReason::UnsupportedSelection)
+                    }
+                    _ => item.enabled,
                 }
             }));
         }
@@ -4060,6 +4100,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 FileManagerContextMenuAction::Open,
+                FileManagerContextMenuAction::Enlarge,
                 FileManagerContextMenuAction::Copy,
                 FileManagerContextMenuAction::Rename,
                 FileManagerContextMenuAction::Delete,
@@ -4075,6 +4116,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "Open",
+                "Enlarge",
                 "Copy",
                 "Rename",
                 "Delete",
@@ -4218,6 +4260,7 @@ mod tests {
             menu.items(),
             vec![
                 "Open",
+                "Enlarge",
                 "Copy",
                 "Rename",
                 "Delete",
@@ -4239,9 +4282,188 @@ mod tests {
             title: title.into(),
             description: None,
             contexts,
+            file_extensions: Vec::new(),
             command: vec!["inspect".into()],
             platforms: None,
         }
+    }
+
+    fn plugin_file_action_for(
+        plugin_id: &str,
+        title: &str,
+        file_extensions: &[&str],
+    ) -> crate::api::schema::PluginActionInfo {
+        crate::api::schema::PluginActionInfo {
+            file_extensions: file_extensions
+                .iter()
+                .map(|extension| (*extension).to_owned())
+                .collect(),
+            ..plugin_file_action(
+                plugin_id,
+                "open",
+                title,
+                vec![crate::api::schema::PluginActionContext::File],
+            )
+        }
+    }
+
+    fn menu_labels(
+        selection: Vec<PathBuf>,
+        candidates: &[crate::api::schema::PluginActionInfo],
+    ) -> Vec<String> {
+        let action_bar = file_action_bar_model(
+            if selection.len() == 1 {
+                FileManagerActionBarSelectionKind::File
+            } else {
+                FileManagerActionBarSelectionKind::Multiple
+            },
+            selection,
+            None,
+            None,
+        );
+        FileManagerContextMenuModel::from_action_bar_with_plugins(&action_bar, candidates)
+            .expect("file context model")
+            .items
+            .into_iter()
+            .map(|item| item.label)
+            .collect()
+    }
+
+    fn menu_item(
+        selection: Vec<PathBuf>,
+        action: FileManagerContextMenuAction,
+    ) -> FileManagerContextMenuItem {
+        let action_bar = file_action_bar_model(
+            if selection.len() == 1 {
+                FileManagerActionBarSelectionKind::File
+            } else {
+                FileManagerActionBarSelectionKind::Multiple
+            },
+            selection,
+            None,
+            None,
+        );
+        FileManagerContextMenuModel::from_action_bar(&action_bar)
+            .expect("file context model")
+            .items
+            .into_iter()
+            .find(|item| item.action == action)
+            .expect("the menu must offer this action")
+    }
+
+    // TP-FOPEN-13: a file with a picture offers Enlarge. Without it a PDF or
+    // an image has no working entry in the menu at all: the built-in Open only
+    // descends into directories, and a plugin that does not handle the type is
+    // now correctly absent.
+    #[test]
+    fn a_picture_offers_enlarge() {
+        for name in ["manual.pdf", "photo.png", "scan.TIFF"] {
+            let item = menu_item(
+                vec![PathBuf::from(format!("/prepared/{name}"))],
+                FileManagerContextMenuAction::Enlarge,
+            );
+            assert!(item.enabled, "{name} should offer Enlarge: {item:?}");
+        }
+    }
+
+    // TP-FOPEN-14: a file drawn from cells has nothing to enlarge, so the
+    // entry is disabled with a reason rather than enabled and inert. An entry
+    // that looks available and does nothing reads as a frozen application.
+    #[test]
+    fn a_file_without_a_picture_disables_enlarge_with_a_reason() {
+        for name in ["notes.txt", "report.xlsx", "Makefile"] {
+            let item = menu_item(
+                vec![PathBuf::from(format!("/prepared/{name}"))],
+                FileManagerContextMenuAction::Enlarge,
+            );
+            assert!(!item.enabled, "{name} should not offer Enlarge: {item:?}");
+            assert_eq!(
+                item.disabled_reason,
+                Some(FileManagerActionDisabledReason::UnsupportedSelection),
+                "{name} should say why"
+            );
+        }
+    }
+
+    // TP-FOPEN-15: the viewer shows one file, so a multiple selection has no
+    // unambiguous answer and says so.
+    #[test]
+    fn a_multiple_selection_disables_enlarge() {
+        let item = menu_item(
+            vec![
+                PathBuf::from("/prepared/a.png"),
+                PathBuf::from("/prepared/b.png"),
+            ],
+            FileManagerContextMenuAction::Enlarge,
+        );
+        assert!(!item.enabled);
+        assert_eq!(
+            item.disabled_reason,
+            Some(FileManagerActionDisabledReason::MultipleSelection)
+        );
+    }
+
+    // TP-FOPEN-08: an action that handles only spreadsheets is not offered on
+    // a PDF. This is the reported defect: the spreadsheet plugin was offered
+    // on every file, and choosing it launched the spreadsheet editor on a
+    // document it cannot read, leaving an empty tab with nothing to explain
+    // it. The action is absent rather than disabled — a greyed-out entry would
+    // suggest a temporary condition, when the action simply does not apply.
+    #[test]
+    fn a_plugin_action_is_offered_only_for_the_extensions_it_handles() {
+        let sheets = plugin_file_action_for("cypack.sheets", "Open in New Tab", &["xlsx", "csv"]);
+
+        let on_pdf = menu_labels(
+            vec![PathBuf::from("/prepared/manual.pdf")],
+            std::slice::from_ref(&sheets),
+        );
+        assert!(
+            !on_pdf.iter().any(|label| label == "Open in New Tab"),
+            "a spreadsheet action must not be offered on a pdf: {on_pdf:?}"
+        );
+
+        let on_workbook = menu_labels(vec![PathBuf::from("/prepared/report.xlsx")], &[sheets]);
+        assert!(
+            on_workbook.iter().any(|label| label == "Open in New Tab"),
+            "the same action must still be offered on a workbook: {on_workbook:?}"
+        );
+    }
+
+    // TP-FOPEN-09: an action that names no extensions is still offered on
+    // every file. Every manifest installed today omits the field, so treating
+    // an empty list as "nothing" would silently disable every existing plugin.
+    #[test]
+    fn a_plugin_action_without_extensions_is_offered_on_every_file() {
+        let generic = plugin_file_action_for("example.tool", "Inspect", &[]);
+        for name in ["manual.pdf", "report.xlsx", "Makefile"] {
+            let labels = menu_labels(
+                vec![PathBuf::from(format!("/prepared/{name}"))],
+                std::slice::from_ref(&generic),
+            );
+            assert!(
+                labels.iter().any(|label| label == "Inspect"),
+                "{name} should still offer an unrestricted action: {labels:?}"
+            );
+        }
+    }
+
+    // TP-FOPEN-10: a selection where only some files match does not offer the
+    // action. Offering it there runs the wrong program on the files that did
+    // not match — the reported defect, one selection wider.
+    #[test]
+    fn a_plugin_action_is_withheld_from_a_partly_matching_selection() {
+        let sheets = plugin_file_action_for("cypack.sheets", "Open in New Tab", &["xlsx"]);
+        let labels = menu_labels(
+            vec![
+                PathBuf::from("/prepared/a.xlsx"),
+                PathBuf::from("/prepared/b.pdf"),
+            ],
+            &[sheets],
+        );
+        assert!(
+            !labels.iter().any(|label| label == "Open in New Tab"),
+            "a partly matching selection must not offer the action: {labels:?}"
+        );
     }
 
     // TP-C3.3-PLUGIN-SURFACE: plugin actions append after built-ins in stable
@@ -4286,9 +4508,9 @@ mod tests {
                 .expect("file context model");
 
         assert_eq!(model.paths, paths);
-        assert_eq!(model.items.len(), 8);
+        assert_eq!(model.items.len(), 9);
         assert_eq!(
-            model.items[6..]
+            model.items[7..]
                 .iter()
                 .map(|item| item.label.as_str())
                 .collect::<Vec<_>>(),
@@ -4298,11 +4520,11 @@ mod tests {
             plugin_id: "alpha.files".into(),
             action_id: "inspect".into(),
         };
-        assert_eq!(model.items[6].action, plugin_action);
-        assert!(model.items[6].enabled);
+        assert_eq!(model.items[7].action, plugin_action);
+        assert!(model.items[7].enabled);
 
         let intent = FileManagerContextActionIntent {
-            action: model.items[6].action.clone(),
+            action: model.items[7].action.clone(),
             paths: model.paths.clone(),
         };
         let params = intent
