@@ -144,10 +144,9 @@ impl DefaultColorOscTracker {
 }
 
 fn is_default_color_set_osc(body: &[u8]) -> bool {
-    matches!(
-        parse_default_color_event(body),
-        Some(DefaultColorEvent::Set(_))
-    )
+    parse_default_color_events(body)
+        .iter()
+        .any(|event| matches!(event, DefaultColorEvent::Set(_)))
 }
 
 #[derive(Debug, Default)]
@@ -233,11 +232,23 @@ impl DefaultColorEventTracker {
     }
 
     fn finalize(&mut self, end_offset: usize) {
-        if let Some(event) = parse_default_color_event(&self.body) {
-            self.pending
-                .push(DefaultColorTrackedEvent { end_offset, event });
-        }
+        self.pending.extend(
+            parse_default_color_events(&self.body)
+                .into_iter()
+                .map(|event| DefaultColorTrackedEvent { end_offset, event }),
+        );
         self.body.clear();
+    }
+
+    pub(super) fn in_progress_event(&self) -> Option<DefaultColorEvent> {
+        if !matches!(
+            self.state,
+            DefaultColorOscTrackerState::OscBody | DefaultColorOscTrackerState::OscEscape
+        ) {
+            return None;
+        }
+        let mut events = parse_default_color_events(&self.body);
+        (events.len() == 1).then(|| events.remove(0))
     }
 
     pub(super) fn drain_pending(&mut self) -> Vec<DefaultColorTrackedEvent> {
@@ -245,15 +256,19 @@ impl DefaultColorEventTracker {
     }
 }
 
-fn parse_default_color_event(body: &[u8]) -> Option<DefaultColorEvent> {
-    match body {
+fn parse_default_color_events(body: &[u8]) -> Vec<DefaultColorEvent> {
+    let single = match body {
         b"10;?" => Some(DefaultColorEvent::Query(DefaultColorQuery::Foreground)),
         b"11;?" => Some(DefaultColorEvent::Query(DefaultColorQuery::Background)),
         b"12;?" => Some(DefaultColorEvent::Query(DefaultColorQuery::Cursor)),
         b"110" | b"110;" => Some(DefaultColorEvent::Reset(DefaultColorQuery::Foreground)),
         b"111" | b"111;" => Some(DefaultColorEvent::Reset(DefaultColorQuery::Background)),
-        _ => parse_palette_color_query(body).or_else(|| parse_default_color_set_event(body)),
+        _ => parse_palette_color_query(body),
+    };
+    if let Some(event) = single {
+        return vec![event];
     }
+    parse_default_color_set_events(body)
 }
 
 fn parse_palette_color_query(body: &[u8]) -> Option<DefaultColorEvent> {
@@ -270,15 +285,33 @@ fn parse_palette_color_query(body: &[u8]) -> Option<DefaultColorEvent> {
         .map(DefaultColorEvent::PaletteQuery)
 }
 
-fn parse_default_color_set_event(body: &[u8]) -> Option<DefaultColorEvent> {
-    let separator = body.iter().position(|byte| *byte == b';')?;
-    let query = match &body[..separator] {
-        b"10" => DefaultColorQuery::Foreground,
-        b"11" => DefaultColorQuery::Background,
-        _ => return None,
+fn parse_default_color_set_events(body: &[u8]) -> Vec<DefaultColorEvent> {
+    let Some(separator) = body.iter().position(|byte| *byte == b';') else {
+        return Vec::new();
     };
-    let value = &body[separator + 1..];
-    (!value.is_empty() && value != b"?").then_some(DefaultColorEvent::Set(query))
+    let start = match &body[..separator] {
+        b"10" => 10,
+        b"11" => 11,
+        b"12" => 12,
+        _ => return Vec::new(),
+    };
+    body[separator + 1..]
+        .split(|byte| *byte == b';')
+        .filter(|value| !value.is_empty())
+        .enumerate()
+        .filter_map(|(offset, value)| {
+            if value == b"?" {
+                return None;
+            }
+            let query = match start + offset {
+                10 => DefaultColorQuery::Foreground,
+                11 => DefaultColorQuery::Background,
+                12 => DefaultColorQuery::Cursor,
+                _ => return None,
+            };
+            Some(DefaultColorEvent::Set(query))
+        })
+        .collect()
 }
 
 /// 256 KiB of base64 ≈ 192 KiB of text — enough for real source-file copies
@@ -363,84 +396,13 @@ impl Osc52Forwarder {
     }
 }
 
-/// Reconstructs cwd-reporting OSC sequences from child output. Shell
-/// integrations commonly use OSC 7 (`file://...`), while Windows Terminal
-/// documents OSC 9;9 for the same practical purpose.
-#[derive(Debug, Default)]
-pub(super) struct CwdOscTracker {
-    state: Osc52ForwarderState,
-    body: Vec<u8>,
-    pending: Vec<PathBuf>,
-}
-
-impl CwdOscTracker {
-    pub(super) fn observe(&mut self, bytes: &[u8]) {
-        for &byte in bytes {
-            match self.state {
-                Osc52ForwarderState::Ground => {
-                    if byte == 0x1b {
-                        self.state = Osc52ForwarderState::Escape;
-                    }
-                }
-                Osc52ForwarderState::Escape => {
-                    if byte == b']' {
-                        self.body.clear();
-                        self.state = Osc52ForwarderState::OscBody;
-                    } else if byte == 0x1b {
-                        self.state = Osc52ForwarderState::Escape;
-                    } else {
-                        self.state = Osc52ForwarderState::Ground;
-                    }
-                }
-                Osc52ForwarderState::OscBody => match byte {
-                    0x07 => {
-                        self.finalize();
-                        self.state = Osc52ForwarderState::Ground;
-                    }
-                    0x1b => self.state = Osc52ForwarderState::OscEscape,
-                    _ => self.body.push(byte),
-                },
-                Osc52ForwarderState::OscEscape => {
-                    if byte == b'\\' {
-                        self.finalize();
-                        self.state = Osc52ForwarderState::Ground;
-                    } else {
-                        self.body.push(0x1b);
-                        self.body.push(byte);
-                        self.state = Osc52ForwarderState::OscBody;
-                    }
-                }
-            }
-
-            if self.body.len() > 4096 {
-                self.body.clear();
-                self.state = Osc52ForwarderState::Ground;
-            }
-        }
+pub(super) fn parse_reported_cwd(value: &[u8]) -> Option<PathBuf> {
+    let value = std::str::from_utf8(value).ok()?.trim();
+    if value.starts_with("file://") {
+        return parse_file_uri_cwd(value);
     }
-
-    fn finalize(&mut self) {
-        if let Some(cwd) = parse_cwd_osc(&self.body) {
-            self.pending.push(cwd);
-        }
-        self.body.clear();
-    }
-
-    pub(super) fn drain_latest(&mut self) -> Option<PathBuf> {
-        self.pending.drain(..).next_back()
-    }
-}
-
-fn parse_cwd_osc(body: &[u8]) -> Option<PathBuf> {
-    let body = std::str::from_utf8(body).ok()?;
-    if let Some(uri) = body.strip_prefix("7;") {
-        return parse_file_uri_cwd(uri);
-    }
-    if let Some(path) = body.strip_prefix("9;9;") {
-        let path = path.trim().trim_matches('"');
-        return (!path.is_empty()).then(|| PathBuf::from(path));
-    }
-    None
+    let path = value.trim_matches('"');
+    (!path.is_empty()).then(|| PathBuf::from(path))
 }
 
 /// Maximum retained string length for agent OSC title and progress payloads.
@@ -1044,44 +1006,26 @@ mod tests {
     }
 
     #[test]
-    fn cwd_osc_tracker_detects_split_osc7_sequence() {
-        let mut tracker = CwdOscTracker::default();
-
-        tracker.observe(b"\x1b]7;file:///tmp/herdr%20repo");
-        assert_eq!(tracker.drain_latest(), None);
-        tracker.observe(b"\x07");
-
+    fn reported_cwd_parses_file_uri_and_bare_paths() {
         assert_eq!(
-            tracker.drain_latest(),
+            parse_reported_cwd(b"file:///tmp/herdr%20repo"),
             Some(std::path::PathBuf::from("/tmp/herdr repo"))
         );
-    }
-
-    #[test]
-    fn cwd_osc_tracker_detects_windows_terminal_cwd_sequence() {
-        let mut tracker = CwdOscTracker::default();
-
-        tracker.observe(b"\x1b]9;9;C:\\Users\\herdr\\src\\herdr\x1b\\");
-
         assert_eq!(
-            tracker.drain_latest(),
+            parse_reported_cwd(b"C:\\Users\\herdr\\src\\herdr"),
             Some(std::path::PathBuf::from("C:\\Users\\herdr\\src\\herdr"))
         );
-    }
-
-    // The quoted form is what Windows Terminal's documented shell integration
-    // snippet emits. Herdr's own injected prompt integration deliberately
-    // emits the path unquoted; see WINDOWS_POWERSHELL_SHELL_INTEGRATION_COMMAND.
-    #[test]
-    fn cwd_osc_tracker_detects_quoted_powershell_prompt_cwd_sequence() {
-        let mut tracker = CwdOscTracker::default();
-
-        tracker.observe(b"PS C:\\my proj> \x1b]9;9;\"C:\\my proj\"\x1b\\");
-
         assert_eq!(
-            tracker.drain_latest(),
+            parse_reported_cwd(b"\"C:\\my proj\""),
             Some(std::path::PathBuf::from("C:\\my proj"))
         );
+    }
+
+    #[test]
+    fn reported_cwd_rejects_invalid_or_empty_values() {
+        assert_eq!(parse_reported_cwd(b""), None);
+        assert_eq!(parse_reported_cwd(b"\xff"), None);
+        assert_eq!(parse_reported_cwd(b"file://remote/tmp"), None);
     }
 
     // -----------------------------------------------------------------------
@@ -1354,6 +1298,25 @@ mod tests {
                 DefaultColorEvent::PaletteQuery(0),
                 DefaultColorEvent::Set(DefaultColorQuery::Foreground),
                 DefaultColorEvent::Reset(DefaultColorQuery::Background),
+            ]
+        );
+    }
+
+    #[test]
+    fn default_color_event_tracker_tracks_each_multi_value_set() {
+        let mut tracker = DefaultColorEventTracker::default();
+
+        tracker.observe(
+            b"\x1b]10;rgb:11/22/33;rgb:44/55/66\x1b\\\x1b]10;?;rgb:77/88/99\x1b\\\x1b]10;;rgb:aa/bb/cc\x1b\\",
+        );
+
+        assert_eq!(
+            tracked_default_color_events(tracker.drain_pending()),
+            vec![
+                DefaultColorEvent::Set(DefaultColorQuery::Foreground),
+                DefaultColorEvent::Set(DefaultColorQuery::Background),
+                DefaultColorEvent::Set(DefaultColorQuery::Background),
+                DefaultColorEvent::Set(DefaultColorQuery::Foreground),
             ]
         );
     }

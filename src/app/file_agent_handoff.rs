@@ -126,12 +126,15 @@ impl crate::app::App {
             Err(TerminalInputSendError::RuntimeUnavailable) => {
                 self.show_file_manager_agent_handoff_failure("agent runtime is unavailable");
             }
-            Err(TerminalInputSendError::SendFailed { busy, .. }) => {
+            Err(TerminalInputSendError::SendFailed { message, busy }) => {
                 let context = if busy {
                     "agent input is busy"
                 } else {
                     "agent runtime is unavailable"
                 };
+                // The toast stays short; the runtime's own message is the part
+                // that explains WHY the send failed, so keep it in the log.
+                tracing::warn!(busy, err = %message, "file-manager agent handoff send failed");
                 self.show_file_manager_agent_handoff_failure(context);
             }
         }
@@ -178,12 +181,15 @@ impl crate::app::App {
             Err(TerminalInputSendError::RuntimeUnavailable) => {
                 self.show_agent_attachment_delivery_failure("agent runtime is unavailable");
             }
-            Err(TerminalInputSendError::SendFailed { busy, .. }) => {
+            Err(TerminalInputSendError::SendFailed { message, busy }) => {
                 let context = if busy {
                     "agent input is busy"
                 } else {
                     "agent runtime is unavailable"
                 };
+                // The toast stays short; the runtime's own message is the part
+                // that explains WHY the send failed, so keep it in the log.
+                tracing::warn!(busy, err = %message, "file-manager agent handoff send failed");
                 self.show_agent_attachment_delivery_failure(context);
             }
         }

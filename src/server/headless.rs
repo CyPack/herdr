@@ -2807,6 +2807,23 @@ impl HeadlessServer {
                     .collect();
                 self.handle_client_input_events(client_id, events)
             }
+            ServerEvent::ClientPasteRejected {
+                client_id,
+                size,
+                max,
+            } => {
+                self.send_to_client(
+                    client_id,
+                    ServerMessage::Notify {
+                        kind: protocol::NotifyKind::Toast,
+                        message: "Paste rejected".to_owned(),
+                        body: Some(format!(
+                            "Input message is {size} bytes; Herdr's limit is {max} bytes"
+                        )),
+                    },
+                );
+                false
+            }
             ServerEvent::ClientClipboardImage {
                 client_id,
                 extension,
@@ -3394,6 +3411,7 @@ impl HeadlessServer {
             && crate::kitty_graphics::has_visible_pane_graphics(
                 &self.app.state,
                 &self.app.terminal_runtimes,
+                self.app.state.view.tab_surface(),
                 *cell_size,
             )
         {
@@ -3680,6 +3698,7 @@ impl HeadlessServer {
                     .extend(crate::kitty_graphics::encode_local_pane_graphics(
                         &self.app.state,
                         &self.app.terminal_runtimes,
+                        self.app.state.view.tab_surface(),
                         cell_size,
                         &mut next_graphics_cache,
                     ));
@@ -4262,6 +4281,7 @@ pub fn run_server() -> io::Result<()> {
             "herdr server started"
         );
         print_ready_message(&api::socket_path(), &client_socket_path());
+        server.app.run_plugin_startup_hooks();
 
         server.run().await
     });
@@ -4364,6 +4384,7 @@ fn run_handoff_import_server(socket_path: &Path, token: &str) -> io::Result<()> 
         }
         info!("handoff import server started");
         print_ready_message(&api::socket_path(), &client_socket_path());
+        server.app.run_plugin_startup_hooks();
         server.run().await
     });
 
@@ -7402,16 +7423,28 @@ next_tab = ""
         );
     }
 
-    #[test]
-    fn render_and_stream_uses_each_client_terminal_size() {
+    #[tokio::test]
+    async fn render_and_stream_uses_each_client_terminal_size() {
         let mut server = test_headless_server();
-        server.app.state.workspaces = vec![crate::workspace::Workspace::test_new("test")];
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        let active_pane = workspace.tabs[0].root_pane;
+        let background_tab = workspace.test_add_tab(Some("background"));
+        let background_pane = workspace.tabs[background_tab].root_pane;
+        workspace.tabs[0].runtimes.insert(
+            active_pane,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"active"),
+        );
+        workspace.tabs[background_tab].runtimes.insert(
+            background_pane,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"background"),
+        );
+        server.app.state.workspaces = vec![workspace];
         server.app.state.active = Some(0);
         server.app.state.selected = 0;
         server.app.state.mode = crate::app::Mode::Terminal;
 
         let (desktop_tx, _desktop_control_rx, desktop_rx) = test_client_writer();
-        let (phone_tx, _phone_control_rx, phone_rx) = test_client_writer();
+        let (mobile_tx, _mobile_control_rx, mobile_rx) = test_client_writer();
 
         server.clients.insert(
             1,
@@ -7428,13 +7461,13 @@ next_tab = ""
         server.clients.insert(
             2,
             ClientConnection::new(
-                (80, 24),
+                (44, 20),
                 crate::kitty_graphics::HostCellSize::default(),
                 crate::terminal_theme::TerminalTheme::default(),
                 None,
                 2,
                 RenderEncoding::SemanticFrame,
-                Some(phone_tx),
+                Some(mobile_tx),
             ),
         );
         server.foreground_client_id = Some(1);
@@ -7444,10 +7477,44 @@ next_tab = ""
         server.render_and_stream();
 
         let desktop_frame = read_server_frame(desktop_rx.recv().expect("desktop frame"));
-        let phone_frame = read_server_frame(phone_rx.recv().expect("phone frame"));
+        let mobile_frame = read_server_frame(mobile_rx.recv().expect("mobile frame"));
 
         assert_eq!((desktop_frame.width, desktop_frame.height), (120, 40));
-        assert_eq!((phone_frame.width, phone_frame.height), (80, 24));
+        assert_eq!((mobile_frame.width, mobile_frame.height), (44, 20));
+        let mobile_text = frame_text(&mobile_frame);
+        let mut mobile_rows = mobile_text.lines();
+        let mobile_header = mobile_rows.by_ref().take(2).collect::<String>();
+        let mobile_surface = mobile_rows.collect::<String>();
+        assert!(mobile_header.contains("test"), "header: {mobile_header:?}");
+        assert!(
+            mobile_surface.contains("active"),
+            "surface: {mobile_surface:?}"
+        );
+        assert!(!mobile_surface.contains("background"));
+
+        let foreground_terminal_area = Rect::new(26, 1, 94, 39);
+        let expected_pane_size = (
+            foreground_terminal_area.height,
+            foreground_terminal_area.width.saturating_sub(1),
+        );
+        assert_eq!(
+            server.app.state.view.layout,
+            crate::app::state::ViewLayout::Desktop
+        );
+        assert_eq!(server.app.state.view.mobile_header_rect, Rect::default());
+        assert_eq!(
+            server.app.state.view.terminal_area,
+            foreground_terminal_area
+        );
+        assert_eq!(
+            server.app.state.workspaces[0].tabs[0].runtimes[&active_pane].current_size(),
+            expected_pane_size
+        );
+        assert_eq!(
+            server.app.state.workspaces[0].tabs[background_tab].runtimes[&background_pane]
+                .current_size(),
+            expected_pane_size
+        );
     }
 
     #[tokio::test]
@@ -9044,6 +9111,78 @@ next_tab = ""
                 .is_err(),
             "background client should not receive client-local notifications"
         );
+    }
+
+    #[test]
+    fn oversized_paste_rejection_notifies_only_the_sending_client() {
+        let mut server = test_headless_server();
+        let (sender_writer, sender_control_rx, _sender_render_rx) = test_client_writer();
+        let (foreground_writer, foreground_control_rx, _foreground_render_rx) =
+            test_client_writer();
+
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (120, 40),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(sender_writer),
+            ),
+        );
+        server.clients.insert(
+            2,
+            ClientConnection::new(
+                (80, 24),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                2,
+                RenderEncoding::SemanticFrame,
+                Some(foreground_writer),
+            ),
+        );
+        server.foreground_client_id = Some(2);
+        server.sync_foreground_client_state();
+
+        assert!(
+            !server.handle_server_event(ServerEvent::ClientPasteRejected {
+                client_id: 1,
+                size: 5_000_012,
+                max: 1_048_576,
+            })
+        );
+
+        match read_server_message(
+            sender_control_rx
+                .recv_timeout(Duration::from_millis(100))
+                .expect("sending client rejection notification"),
+        ) {
+            ServerMessage::Notify {
+                kind,
+                message,
+                body,
+            } => {
+                assert_eq!(kind, protocol::NotifyKind::Toast);
+                assert_eq!(message, "Paste rejected");
+                assert_eq!(
+                    body.as_deref(),
+                    Some("Input message is 5000012 bytes; Herdr's limit is 1048576 bytes")
+                );
+            }
+            other => panic!("expected paste rejection notification, got {other:?}"),
+        }
+        assert!(
+            foreground_control_rx
+                .recv_timeout(Duration::from_millis(50))
+                .is_err(),
+            "foreground client must not receive another client's rejection"
+        );
+        assert_eq!(server.foreground_client_id, Some(2));
+        assert_eq!(server.clients.len(), 2);
+        assert!(server.app.state.toast.is_none());
     }
 
     #[test]

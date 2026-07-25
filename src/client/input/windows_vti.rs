@@ -191,10 +191,18 @@ struct WindowsInputMapper {
     win32_input: WindowsWin32InputModeFramer,
 }
 
-#[derive(Default)]
 struct WindowsInputPump {
     framer: crate::raw_input::RawInputFramer,
     paste_from_win32_key_records: bool,
+}
+
+impl Default for WindowsInputPump {
+    fn default() -> Self {
+        Self {
+            framer: crate::raw_input::RawInputFramer::for_host_input(),
+            paste_from_win32_key_records: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

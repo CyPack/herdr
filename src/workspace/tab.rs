@@ -584,7 +584,14 @@ impl Tab {
         terminals: &HashMap<TerminalId, TerminalState>,
         terminal_runtimes: &TerminalRuntimeRegistry,
     ) -> Option<PathBuf> {
-        self.foreground_cwd_for_pane(pane_id, terminal_runtimes)
-            .or_else(|| self.cwd_for_pane(pane_id, terminals, terminal_runtimes))
+        let terminal_id = self.terminal_id(pane_id)?;
+        terminal_runtimes
+            .get(terminal_id)
+            .and_then(|runtime| runtime.follow_cwd())
+            .or_else(|| {
+                terminals
+                    .get(terminal_id)
+                    .map(|terminal| terminal.cwd.clone())
+            })
     }
 }

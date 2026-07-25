@@ -53,7 +53,7 @@ mod terminal;
 pub(crate) use self::{
     modal::{
         handle_global_menu_key, handle_keybind_help_key, handle_navigator_key,
-        insert_navigator_search_text, insert_rename_input_text,
+        insert_navigator_search_text, insert_rename_input_text, open_new_workspace_dialog,
     },
     navigate::{
         terminal_direct_indexed_navigation_action, terminal_direct_non_indexed_navigation_action,
@@ -603,6 +603,9 @@ impl App {
             }
             if let Some(action) = self.state.handle_mouse(&mut self.terminal_runtimes, mouse) {
                 match action {
+                    MouseAction::NewWorkspace => {
+                        self.begin_tui_workspace_create("tui.mouse.workspace.create")
+                    }
                     MouseAction::Settings(action) => match action {
                         SettingsAction::SaveTheme(name) => self.save_theme(&name),
                         SettingsAction::SaveSound(enabled) => self.save_sound(enabled),
@@ -661,6 +664,15 @@ impl App {
                         self.save_projects_actives_only(enabled);
                     }
                 }
+            }
+            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                && self
+                    .state
+                    .selection
+                    .as_ref()
+                    .is_none_or(crate::selection::Selection::is_in_progress)
+            {
+                self.selection_highlight_clear_deadline = None;
             }
         }
         if previous_settings_section != crate::app::state::SettingsSection::Integrations
@@ -789,11 +801,6 @@ impl App {
     }
 
     fn handle_pane_double_click(&mut self, mouse: MouseEvent) -> bool {
-        if !self.state.copy_on_select {
-            self.last_pane_click = None;
-            return false;
-        }
-
         // A pane press stops being a double-click candidate once it becomes
         // a drag or completes as a real text selection.
         match mouse.kind {

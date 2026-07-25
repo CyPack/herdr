@@ -376,6 +376,7 @@ mod tests {
                 enabled: true,
                 platforms: None,
                 build: Vec::new(),
+                startup: Vec::new(),
                 actions: vec![crate::api::schema::PluginManifestAction {
                     id: "open".into(),
                     title: "Open link".into(),
@@ -548,7 +549,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn copy_on_select_disabled_ignores_drag_and_double_click_selection() {
+    async fn copy_on_select_disabled_keeps_drag_selection_without_copying() {
         let (mut app, info) = app_with_screen_bytes(b"alpha beta");
         app.state.copy_on_select = false;
         let row = info.inner_rect.y;
@@ -561,18 +562,109 @@ mod tests {
             row,
         ));
         app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), end_col, row));
+        assert_visible_selection(&app);
+        assert!(!app
+            .state
+            .selection
+            .as_ref()
+            .is_some_and(crate::selection::Selection::is_finalized));
+
         app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), end_col, row));
 
-        assert!(app.state.selection.is_none());
+        assert_visible_selection(&app);
+        assert_eq!(
+            app.state
+                .selection
+                .as_ref()
+                .map(crate::selection::Selection::ordered_cells),
+            Some(((0, 0), (0, 4)))
+        );
+        assert!(app
+            .state
+            .selection
+            .as_ref()
+            .is_some_and(crate::selection::Selection::is_finalized));
         assert!(app.state.selection_autoscroll.is_none());
-        assert!(app.event_rx.try_recv().is_err());
-
-        double_click(&mut app, start_col, row);
-
-        assert!(app.state.selection.is_none());
-        assert!(app.last_pane_click.is_none());
+        assert!(app.selection_autoscroll_deadline.is_none());
         assert!(app.selection_highlight_clear_deadline.is_none());
         assert!(app.event_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn copy_on_select_disabled_keeps_explicit_double_click_copy() {
+        let (mut app, info) = app_with_screen_bytes(b"alpha beta");
+        app.state.copy_on_select = false;
+        let col = info.inner_rect.x + 2;
+        let row = info.inner_rect.y;
+
+        double_click(&mut app, col, row);
+
+        assert_eq!(clipboard_write_content(&mut app), b"alpha");
+        assert_visible_selection(&app);
+        assert!(app.selection_highlight_clear_deadline.is_some());
+        assert!(app.event_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn new_drag_cancels_stale_double_click_highlight_deadline() {
+        let (mut app, info) = app_with_screen_bytes(b"alpha beta");
+        app.state.copy_on_select = false;
+        let row = info.inner_rect.y;
+        let word_col = info.inner_rect.x + 2;
+
+        double_click(&mut app, word_col, row);
+        assert_eq!(clipboard_write_content(&mut app), b"alpha");
+        let stale_deadline = app
+            .selection_highlight_clear_deadline
+            .expect("double-click highlight deadline");
+
+        let start_col = info.inner_rect.x + 6;
+        let end_col = info.inner_rect.x + 9;
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            start_col,
+            row,
+        ));
+        assert!(app.selection_highlight_clear_deadline.is_none());
+        app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), end_col, row));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), end_col, row));
+
+        assert_visible_selection(&app);
+        assert!(!app
+            .clear_due_selection_highlight(stale_deadline + std::time::Duration::from_millis(1)));
+        assert_visible_selection(&app);
+        assert!(app.event_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn ignored_left_down_keeps_double_click_highlight_deadline() {
+        let (mut app, info) = app_with_screen_bytes(b"alpha beta");
+        let col = info.inner_rect.x + 2;
+        let row = info.inner_rect.y;
+
+        double_click(&mut app, col, row);
+        assert_eq!(clipboard_write_content(&mut app), b"alpha");
+        let deadline = app
+            .selection_highlight_clear_deadline
+            .expect("double-click highlight deadline");
+        app.state.toast = Some(crate::app::state::ToastNotification {
+            kind: crate::app::state::ToastKind::Finished,
+            title: "finished".into(),
+            context: "missing".into(),
+            position: None,
+            target: Some(crate::app::state::ToastTarget {
+                workspace_id: "missing".into(),
+                pane_id: info.id,
+            }),
+        });
+        app.state.view.toast_hit_area = Rect::new(0, 0, 1, 1);
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 0, 0));
+
+        assert_visible_selection(&app);
+        assert_eq!(app.selection_highlight_clear_deadline, Some(deadline));
+        assert!(app.clear_due_selection_highlight(deadline + std::time::Duration::from_millis(1)));
+        assert!(app.state.selection.is_none());
     }
 
     #[tokio::test]

@@ -50,6 +50,7 @@ website-build:
 # Test bundled agent integration assets
 integration-assets-test:
     bun test src/integration/assets/herdr-agent-state.test.ts
+    bun test src/integration/assets/opencode/herdr-agent-state.test.ts
 
 # Run plugin marketplace Worker tests
 plugin-marketplace-test:

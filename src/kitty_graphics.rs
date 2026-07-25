@@ -342,7 +342,13 @@ pub(crate) fn paint_local_pane_graphics(
     let cache = LOCAL_HOST_GRAPHICS.get_or_init(|| Mutex::new(HostGraphicsCache::default()));
     let mut bytes = Vec::new();
     if let Ok(mut cache) = cache.lock() {
-        bytes = encode_local_pane_graphics(app, terminal_runtimes, cell_size, &mut cache);
+        bytes = encode_local_pane_graphics(
+            app,
+            terminal_runtimes,
+            app.view.tab_surface(),
+            cell_size,
+            &mut cache,
+        );
     }
     if bytes.is_empty() {
         return Ok(());
@@ -358,6 +364,7 @@ pub(crate) fn paint_local_pane_graphics(
 pub(crate) fn encode_local_pane_graphics(
     app: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
+    surface: crate::ui::TabSurfaceView<'_>,
     cell_size: HostCellSize,
     cache: &mut HostGraphicsCache,
 ) -> Vec<u8> {
@@ -369,7 +376,7 @@ pub(crate) fn encode_local_pane_graphics(
         cell_width_px = cell_size.width_px,
         cell_height_px = cell_size.height_px,
         active = ?app.active,
-        pane_infos_len = app.view.pane_infos.len(),
+        pane_infos_len = surface.pane_infos.len(),
         "paint_local_pane_graphics entry"
     );
     if !mode_ok || !cell_ok {
@@ -405,7 +412,7 @@ pub(crate) fn encode_local_pane_graphics(
             .into_iter()
             .collect()
     } else {
-        collect_visible_placements(app, terminal_runtimes, cell_size, &uploaded_images)
+        collect_visible_placements(app, terminal_runtimes, surface, cell_size, &uploaded_images)
     };
     tracing::debug!(
         placements_collected = placements.len(),
@@ -444,6 +451,7 @@ pub(crate) fn encode_local_pane_graphics(
 pub(crate) fn has_visible_pane_graphics(
     app: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
+    surface: crate::ui::TabSurfaceView<'_>,
     cell_size: HostCellSize,
 ) -> bool {
     if app.mode != Mode::Terminal || !cell_size.is_known() {
@@ -462,7 +470,7 @@ pub(crate) fn has_visible_pane_graphics(
         return false;
     }
 
-    for info in &app.view.pane_infos {
+    for info in surface.pane_infos {
         let empty_uploaded = HashMap::new();
         if app.pane_graphics_layers.get(&info.id).is_some_and(|layer| {
             let host_placement =
@@ -745,6 +753,7 @@ fn active_view_key(app: &AppState) -> Option<HostViewKey> {
 fn collect_visible_placements(
     app: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
+    surface: crate::ui::TabSurfaceView<'_>,
     cell_size: HostCellSize,
     uploaded_images: &HashMap<u32, ImageSignature>,
 ) -> Vec<HostPlacement> {
@@ -768,11 +777,11 @@ fn collect_visible_placements(
     tracing::debug!(
         ws_idx,
         terminal_runtimes_len = terminal_runtimes.len(),
-        pane_infos_len = app.view.pane_infos.len(),
+        pane_infos_len = surface.pane_infos.len(),
         "collect_visible_placements: starting iteration"
     );
     let mut placements = Vec::new();
-    for info in &app.view.pane_infos {
+    for info in surface.pane_infos {
         if let Some(layer) = app.pane_graphics_layers.get(&info.id) {
             placements.push(pane_graphics_host_placement(
                 info,
@@ -1634,7 +1643,8 @@ mod tests {
         assert_eq!(uncached.area, content);
         assert!(!uncached.placement.data.is_empty());
 
-        let first_bytes = encode_local_pane_graphics(&app, &runtimes, cells, &mut cache);
+        let first_bytes =
+            encode_local_pane_graphics(&app, &runtimes, app.view.tab_surface(), cells, &mut cache);
         let first_text = String::from_utf8_lossy(&first_bytes);
         assert!(first_text.contains("a=t,t=d,f=32,s=80,v=64"));
         assert!(first_text.contains("a=p"));
@@ -1655,7 +1665,8 @@ mod tests {
             "cached frame must not clone the prepared RGBA allocation"
         );
         assert!(
-            encode_local_pane_graphics(&app, &runtimes, cells, &mut cache).is_empty(),
+            encode_local_pane_graphics(&app, &runtimes, app.view.tab_surface(), cells, &mut cache)
+                .is_empty(),
             "unchanged FM frame is fully deduplicated"
         );
 
@@ -1677,14 +1688,16 @@ mod tests {
                 rgba: vec![0x22; 80 * 64 * 4],
             },
         };
-        let replacement = encode_local_pane_graphics(&app, &runtimes, cells, &mut cache);
+        let replacement =
+            encode_local_pane_graphics(&app, &runtimes, app.view.tab_surface(), cells, &mut cache);
         let replacement = String::from_utf8_lossy(&replacement);
         assert!(replacement.contains("a=d,d=I"));
         assert!(replacement.contains("a=t"));
         assert!(replacement.contains("a=p"));
 
         app.file_manager = None;
-        let cleanup = encode_local_pane_graphics(&app, &runtimes, cells, &mut cache);
+        let cleanup =
+            encode_local_pane_graphics(&app, &runtimes, app.view.tab_surface(), cells, &mut cache);
         let cleanup = String::from_utf8_lossy(&cleanup);
         assert!(cleanup.contains("a=d,d=I"));
         assert!(cache.is_empty());

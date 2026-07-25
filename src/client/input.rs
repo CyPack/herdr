@@ -66,7 +66,7 @@ fn unix_stdin_reader_loop(
     let stdin = io::stdin();
     let mut reader = stdin.lock();
     let mut scratch = [0u8; 4096];
-    let mut framer = crate::raw_input::RawInputByteFramer::default();
+    let mut framer = crate::raw_input::RawInputByteFramer::for_host_input();
     if host_color_query_sent {
         framer.host_color_query_sent();
         framer.enable_host_color_scheme_change_tracking();
@@ -164,19 +164,17 @@ fn windows_crossterm_reader_loop(
     event_tx: mpsc::Sender<ClientLoopEvent>,
     should_quit: &Arc<AtomicBool>,
 ) {
-    let mut framer = crate::raw_input::RawInputFramer::default();
-    let mut raw_sequence_pending = false;
+    let mut framer = crate::raw_input::RawInputFramer::for_host_input();
 
     while !should_quit.load(Ordering::Acquire) {
         match crossterm::event::poll(Duration::from_millis(10)) {
             Ok(true) => {}
             Ok(false) => {
-                if raw_sequence_pending {
+                if framer.has_pending_input() {
                     tracing::debug!("windows input raw sequence timed out; flushing");
                     if !send_windows_raw_events(framer.flush_timeout(), &event_tx) {
                         return;
                     }
-                    raw_sequence_pending = false;
                 }
                 continue;
             }
@@ -188,15 +186,14 @@ fn windows_crossterm_reader_loop(
             Err(_) => break,
         };
 
+        let raw_sequence_pending = framer.has_pending_input();
         if let Some(bytes) = windows_key_raw_bytes(&event, raw_sequence_pending) {
             tracing::debug!(
                 bytes = ?bytes,
                 pending_before = raw_sequence_pending,
                 "windows input routed through raw framer"
             );
-            let events = framer.push(&bytes);
-            raw_sequence_pending = events.is_empty();
-            if !send_windows_raw_events(events, &event_tx) {
+            if !send_windows_raw_events(framer.push(&bytes), &event_tx) {
                 return;
             }
             continue;
@@ -207,7 +204,6 @@ fn windows_crossterm_reader_loop(
             if !send_windows_raw_events(framer.flush_timeout(), &event_tx) {
                 return;
             }
-            raw_sequence_pending = false;
         }
 
         if windows_event_is_control_key(&event) {
@@ -225,7 +221,7 @@ fn windows_crossterm_reader_loop(
         }
     }
 
-    if raw_sequence_pending {
+    if framer.has_pending_input() {
         let _ = send_windows_raw_events(framer.flush_timeout(), &event_tx);
     }
 }
@@ -401,6 +397,18 @@ mod tests {
     fn raw_input_idle_flush_timeout_keeps_escape_responsive() {
         let timeout_ms = std::hint::black_box(crate::raw_input::RAW_INPUT_IDLE_FLUSH_TIMEOUT_MS);
         assert!(timeout_ms <= 20);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn windows_repeated_escape_keeps_second_escape_pending() {
+        let mut framer = crate::raw_input::RawInputFramer::for_host_input();
+
+        let events = framer.push(b"\x1b\x1b");
+
+        assert_eq!(events.len(), 1);
+        assert!(framer.has_pending_input());
+        assert_eq!(framer.flush_timeout().len(), 1);
     }
 
     #[test]
