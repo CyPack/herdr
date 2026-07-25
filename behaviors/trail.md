@@ -1,0 +1,83 @@
+# Trail (Miller columns) — registered behaviors
+
+Fork feature. The Trail is the accumulating column view that replaced the
+original Miller/preview model, and it is the single path authority the rest of
+the file manager consumes. Upstream has nothing like it, so every contract
+below is ours to keep alive across syncs.
+
+Two themes run through the whole family and explain most of the entries:
+
+- **Exact path, never index.** Authority comes from a stable path identity, so
+  a directory that reorders or refreshes underneath the user cannot redirect an
+  action to a different row. The delete-the-wrong-file class of bug lives here.
+- **One authority, not two.** Geometry, paint, input and the watcher all read
+  the same published snapshot. Wherever a legacy projection still exists, the
+  contract is that it cannot grant, revoke or redirect authority.
+
+Format and rules: [`README.md`](README.md).
+
+## Viewport and horizontal scrolling
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-TRAIL-FSCROLL-01 | One horizontal event moves the viewport by one third of the leading logical column rather than a whole column. | Horizontal scrolling jumps a full column per notch, which overshoots on wide columns. | `fractional_scroll_uses_each_leading_columns_own_width` |
+| TP-TRAIL-FSCROLL-02 | Fractional scrolling keeps the leading column partially visible instead of clipping it away. | The column being scrolled past vanishes, so the user loses their positional anchor. | `fractional_scroll_uses_each_leading_columns_own_width` |
+| TP-TRAIL-FSCROLL-06 | Only stage-contained hit geometry is published while fractionally scrolled. | Clicks land on rows drawn outside the stage, so hit targets disagree with what is painted. | `fractional_scroll_uses_each_leading_columns_own_width` |
+| TP-TRAIL-HSCROLL | Shift-wheel horizontal input is normalized byte-for-byte from the host report. | Horizontal gestures behave differently per terminal. | `fcl_input_trail_horizontal_scroll_never_moves_the_locations_rail` |
+| TP-TRAIL-HSCROLL-01 | A deep trail opens with the viewport auto-following the active end, and the user can scroll back to still-live ancestor columns; the chosen origin survives the next pure projection. | Opening a deep path shows the wrong columns, or scrolling back snaps forward again on the next frame. | `shift_wheel_scrolls_deep_trail_left_and_persists_render_origin` |
+| TP-TRAIL-HSCROLL-BRANCH | A manually positioned viewport does not turn its rightmost visible column into a navigation boundary; reactivating a real directory there preserves the loaded branch and rearms active-end following. | Scrolling back and clicking a directory silently truncates the loaded branch. | `rightmost_visible_directory_click_waits_for_right_to_reveal_hidden_child_column` |
+| TP-TRAIL-WHEEL-FALLBACK | Plain-wheel horizontal input is normalized byte-for-byte from the host report. | Hosts that report gestures differently produce inconsistent scrolling. | `fcl_input_trail_horizontal_scroll_never_moves_the_locations_rail` |
+| TP-TRAIL-WHEEL-FALLBACK-01 | Some hosts report a horizontal gesture as an unmodified vertical wheel event; a wheel over a live column's empty body still reaches the fractional horizontal reducer without stealing vertical intent. | Horizontal scrolling stops working entirely on those terminals. | `plain_wheel_over_empty_trail_body_uses_fractional_horizontal_fallback` |
+
+## Snapshot bridge — the single path authority
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-TRAIL-T7-BRIDGE-01 | Exact-path selection is read from the deepest MARKED column, not the final column, which is empty after a folder branch. This is the single path authority FmState consumes. | Selection reads empty after entering a folder, so every path-consuming action targets nothing. | `selected_path_uses_deepest_marked_column` |
+| TP-TRAIL-T7-BRIDGE-02 | The bridge resolves the trail's deepest exact path back to its loaded FileEntry without consulting a legacy cursor. | Two sources of truth for the selected entry, which drift apart and produce actions on the wrong file. | `selected_entry_resolves_deepest_exact_path` |
+| TP-TRAIL-T7-BRIDGE-03 | FmState owns one index-aligned trail/snapshot bridge immediately after opening, and `selected()` returns the trail's exact path. | The first interaction after opening acts on a stale or absent selection. | `fmstate_owns_aligned_trail_bridge_on_open` |
+| TP-TRAIL-T7-BRIDGE-04 | Cursor movement rebuilds exact-path trail selection while explicit bulk authority stays independent. | Moving the cursor silently clears or rewrites a multi-selection the user built deliberately. | `cursor_move_rebuilds_trail_selection_without_bulk_authority` |
+| TP-TRAIL-T7-BRIDGE-05 | Rebuilding after a hidden-files toggle updates the bridge's future directory-read policy, not only its currently cloned entries. | Hidden files reappear or stay hidden inconsistently as columns reload. | `hidden_toggle_propagates_to_future_trail_branches` |
+| TP-TRAIL-T7-BRIDGE-06 | Legacy directory navigation may move cwd, but the canonical trail keeps its root and accumulates the exact ancestor chain across enter/leave. | The ancestor chain collapses on navigation, so the Miller columns stop reflecting the real path. | `trail_bridge_accumulates_across_enter_and_leave` |
+
+## Lifecycle and row-anchored authority
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-TRAIL-T7-CHAR-01 | The Stage-owned Files instance generation is the lifecycle authority even under adversarial workspace/tab/pane identities; close retires the generation and reopen allocates a new one. | A delayed frame from a closed Files instance acts on a reopened one, because model generations repeat after reopen. | `files_lifecycle_advances_generation_under_adversarial_identity_state`, `prepared_refresh_cannot_apply_after_files_close_reopen` |
+| TP-TRAIL-T7-CHAR-02 | A row's send-to-agent tag binds one exact current path to the focused agent terminal identity without sending bytes, spawning a process or mutating the filesystem; the payload is exactly the literal UTF-8 path bytes with no added CR, LF, prefix or whitespace, and never a retry. Bulk authority or an in-flight operation cannot manufacture that authority. | Shell metacharacters in a filename stop being data, a path is sent twice, or a bulk selection sends the wrong single path. | `existing_agent_receives_exact_path_bytes_with_no_submit`, `row_send_agent_prepares_exact_path_and_focused_terminal_identity`, `send_agent_authority_fails_closed_without_current_single_path` |
+| TP-TRAIL-T7-CHAR-03 | Row-anchored actions derive authority from stable path identity: Space toggles the focused identity, Shift plus vertical navigation extends from a stable anchor, plain movement does not rewrite the explicit set, a reordered path at a still-valid index is rejected, and Rename/Delete converge on one typed exact-path intent that fails closed while a bulk selection or another operation is active. | A row action targets whatever now sits at that index, which is the classic delete-the-wrong-file bug after a directory refresh. | `keyboard_toggle_range_and_cursor_only_movement_share_selection_model`, `row_delete_converges_on_shared_typed_confirmation_authority`, `row_rename_opens_exact_file_modal_without_filesystem_work`, `row_rename_rejects_bulk_selection_and_inflight_operation`, `row_selection_snapshot_carries_stable_path_identity` |
+| TP-TRAIL-T7-CHAR-04 | A watcher-driven rename removes the exact selected path from both cursor and multi-selection authority, then falls back to the old safe row without keeping a stale anchor. | Selection keeps pointing at a path that no longer exists, and the next action operates on a ghost. | `watcher_rename_prunes_selected_path_and_keeps_cursor_safe` |
+
+## Input routing
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-TRAIL-T7-INPUT-01 | A delayed frame from a closed Files instance cannot act on a reopened instance, even when cwd and row paths match. | Input from a previous session lands in the new one, acting on coincidentally identical paths. | `stale_trail_frame_cannot_activate_reopened_files_instance` |
+| TP-TRAIL-T7-INPUT-02 | Production input resolves the immutable Trail row even when every legacy hit projection is absent; a left press selects the exact absolute entry, an ancestor click revalidates the path and prepares the sibling branch while focus stays on the clicked row, a right click activates the exact owner before opening the menu, and remembered geometry whose path no longer matches is consumed without mutation. | Clicks act through stale legacy geometry, so the wrong row is selected or focus jumps out of the clicked column. | `current_plain_click_uses_typed_miller_target_without_legacy_rows`, `directory_click_previews_exact_ancestor_branch_without_entering`, `mouse_activation_uses_exact_trail_row_without_legacy_geometry`, `right_click_live_non_current_row_opens_exact_context_menu`, `single_click_selects_current_row_and_refreshes_preview`, `stale_trail_row_path_is_inert` |
+| TP-TRAIL-T7-INPUT-03 | Keyboard and wheel change the Trail's single active-column focus without legacy navigation: Enter opens the selected branch, Backspace moves to the exact parent with no filesystem I/O, Left/Right move focus only, one accepted wheel detent moves exactly one row in its owning column, and a bounded off-loop directory preview completion cannot transfer focus to the child. | Navigation emits legacy directory requests, or an async preview steals focus mid-gesture. | `enter_and_backspace_navigate_directories`, `keyboard_enter_emits_exact_trail_intent_without_input_loop_mutation`, `keyboard_navigation_uses_active_trail_column`, `plain_wheel_clamps_hovered_parent_trail_selection`, `plain_wheel_moves_one_ancestor_row_without_child_focus_transfer`, `plain_wheel_moves_only_hovered_child_trail_selection` |
+| TP-TRAIL-T7-INPUT-04 | Right-click and Ctrl-selection derive exact operation identity from the live Trail row rect and path; clearing retired row geometry cannot grant, revoke or redirect that authority. | Context actions target rows resolved from stale geometry. | `trail_row_hit_drives_explicit_bulk_selection`, `trail_row_hit_drives_operation_identity_without_legacy_geometry` |
+| TP-TRAIL-T7-INPUT-05 | An accessible sidebar target replaces the navigation model through the deep-link seam: the live Files instance is preserved and the new trail starts at the exact target with no implicit first-row selection. Stale targets, unrecognized modifiers, non-row regions, modified right-clicks and zero geometry all fail closed. | A deep link silently selects row zero of the target directory, or a stale target mutates live state. | `location_navigation_opens_fresh_trail_root_and_preserves_generation`, `right_click_file_menu_fails_closed_for_stale_and_non_targets`, `stale_and_unrecognized_selection_gestures_fail_closed` |
+| TP-TRAIL-T7-INPUT-06 | The accepted file activation reconciles the transitional operation projection to the exact owning directory. | File operations run against the wrong directory after activating a file in an ancestor column. | `mouse_activation_uses_exact_trail_row_without_legacy_geometry` |
+
+## Render, image placement and the watcher
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-TRAIL-T7-IMAGE-01 | Image decode size is owned by the committed Trail detail panel, never by the retired Miller preview column. | Images decode at the wrong size, wasting work and producing a mismatched placement. | `image_worker_targets_exact_trail_detail_panel_content_rect` |
+| TP-TRAIL-T7-IMAGE-02 | Host placement and decode target share the live Trail detail content rect; a valid legacy preview rect cannot authorize pixels outside that panel. | Image pixels paint outside the detail panel and corrupt neighbouring chrome. | `file_manager_ready_image_placement_uses_trail_detail_content_rect` |
+| TP-TRAIL-T7-RENDER-01 | `compute_view` publishes exact Trail geometry for the live Native Files frame and retires it with the surface. | Hit geometry outlives the surface, so clicks resolve against a panel that is no longer drawn. | `compute_view_publishes_live_trail_snapshot_and_clears_it_outside_files` |
+| TP-TRAIL-T7-RENDER-02 | The production render consumes the exact Trail snapshot published by `compute_view`. | Paint and hit-testing derive from different snapshots, so what is clicked is not what is shown. | `production_render_consumes_exact_trail_snapshot_without_legacy_placeholders` |
+| TP-TRAIL-T7-RENDER-04 | Trail paint is deterministic and mutates neither FmState nor the geometry it consumes; on a narrow stage it preserves one complete column, omits the optional side panel, and clamps geometry without panicking when half the stage is below the panel floor. | Rendering mutates state (breaking the pure-render contract) or panics at small terminal sizes. | `narrow_detail_stage_omits_panel_without_panicking`, `production_trail_render_is_byte_identical_and_state_pure` |
+| TP-TRAIL-T7-RENDER-05 | Descending through a nonzero child keeps every exact ancestor highlight visible and never substitutes row zero. | Ancestor columns show the first row as selected, so the visible path stops matching the real one. | `vis-02 trail retains exact ancestor highlights`, `write_visual_fixtures` |
+| TP-TRAIL-T7-WATCH-01 | Watcher ownership follows the single active Trail column rather than the operation projection's cwd; a child-column event refreshes that exact snapshot without collapsing the already loaded ancestor branch. | A filesystem event in a child directory collapses the whole loaded branch. | `watcher_targets_and_refreshes_active_trail_column_without_collapsing_branch` |
+
+---
+
+## Notes for the next sync
+
+- If a conflict resolution makes any of these read from an index, a cwd or a
+  legacy projection instead of the published Trail snapshot, it is wrong even
+  when it compiles and the suite is green.
+- `TP-TRAIL-T7-CHAR-02` also constrains the bytes sent to an agent. Treat any
+  upstream change to terminal input encoding as touching this contract.
