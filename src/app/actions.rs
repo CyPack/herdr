@@ -402,14 +402,10 @@ impl AppState {
         self.request_file_manager_location_navigation = None;
         self.file_manager_locations.activate_direct(direct_root);
         self.file_manager = Some(prepared);
-        // The hidden terminal surface loses its projected hit geometry (and
-        // with it the cursor placement and agent frame actions) in the same
-        // transaction, so no stale rectangle can act between this switch and
-        // the next compute.
-        self.view.pane_infos = Vec::new();
-        self.view.split_borders = Vec::new();
-        self.view.agent_attachment_action_area = None;
-        self.view.agent_worktree_action_area = None;
+        // The hidden terminal surface loses its projected hit geometry in the
+        // same transaction, so no stale rectangle can act between this switch
+        // and the next compute.
+        self.retire_terminal_view_geometry();
         Ok(())
     }
 
@@ -544,16 +540,7 @@ impl AppState {
         }
         self.stage.close_files();
         self.file_manager = None;
-        // The hidden Files surface loses its projected stage geometry in the
-        // same transaction, so no stale row/header rectangle can act between
-        // this close and the next compute.
-        self.view.file_manager_locations = Default::default();
-        self.view.file_manager_miller = Default::default();
-        self.view.file_manager_trail = Default::default();
-        self.view.file_manager_row_areas = Vec::new();
-        self.view.file_manager_row_action_areas = Vec::new();
-        self.view.file_manager_header_action_areas = Vec::new();
-        self.view.file_manager_action_bar = None;
+        self.retire_file_manager_view_geometry();
         if matches!(
             self.context_menu.as_ref().map(|menu| &menu.kind),
             Some(ContextMenuKind::File { .. })
@@ -567,30 +554,117 @@ impl AppState {
         }
     }
 
+    /// The file manager **while it owns the stage**.
+    ///
+    /// An inactive Files tab keeps every bit of its state but owns no stage
+    /// geometry, so view projections read through here instead of the field.
+    /// Reading `file_manager` directly would let a hidden Files tab keep its
+    /// rows clickable underneath the terminal surface
+    /// (SF4.3-01, TP-FTAB-INPUT-02).
+    ///
+    /// There is no `&mut` counterpart on purpose: taking `&mut self` here would
+    /// borrow the whole state, and the two projections that need a mutable file
+    /// manager also hold a disjoint borrow. They read
+    /// [`crate::ui::surface_host::StageState::surface_view`] first and then
+    /// borrow the field, which keeps the same rule with a narrower borrow.
+    pub(crate) fn staged_file_manager(&self) -> Option<&crate::fm::FmState> {
+        match self.stage.surface_view() {
+            crate::ui::surface_host::StageSurfaceView::NativeFiles => self.file_manager.as_ref(),
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace => None,
+        }
+    }
+
+    /// Drop the Files surface's projected stage geometry.
+    ///
+    /// Shared by the close path and the tab-switch path: in both cases the
+    /// surface stops owning the stage, and no stale row, header or action-bar
+    /// rectangle may act between that transition and the next compute.
+    fn retire_file_manager_view_geometry(&mut self) {
+        self.view.file_manager_locations = Default::default();
+        self.view.file_manager_miller = Default::default();
+        self.view.file_manager_trail = Default::default();
+        self.view.file_manager_row_areas = Vec::new();
+        self.view.file_manager_row_action_areas = Vec::new();
+        self.view.file_manager_header_action_areas = Vec::new();
+        self.view.file_manager_action_bar = None;
+    }
+
+    /// Drop the terminal surface's projected hit geometry, including the
+    /// cursor placement and agent frame actions derived from it.
+    fn retire_terminal_view_geometry(&mut self) {
+        self.view.pane_infos = Vec::new();
+        self.view.split_borders = Vec::new();
+        self.view.agent_attachment_action_area = None;
+        self.view.agent_worktree_action_area = None;
+    }
+
+    /// TP-FTAB-INPUT-01: switch the stage back to the terminal workspace while
+    /// every resident app instance stays in the tab strip. Unlike
+    /// `close_file_manager` this keeps the Files tab alive and its state
+    /// intact, which is what makes it a tab rather than a mode.
+    pub(crate) fn show_terminal_workspace(&mut self) {
+        if self.stage.show_terminal_workspace() {
+            self.retire_file_manager_view_geometry();
+        }
+    }
+
+    /// TP-FTAB-INPUT-03/04: activate the stage instance a strip entry names.
+    /// A non-resident identity is inert, so geometry retained across a close
+    /// cannot bring a retired surface back.
+    pub(crate) fn activate_stage_instance(
+        &mut self,
+        instance: crate::ui::surface_host::AppInstanceId,
+    ) -> bool {
+        if !self.stage.activate_instance(instance) {
+            return false;
+        }
+        self.retire_terminal_view_geometry();
+        true
+    }
+
     /// Activate one built-in dock app: Files opens (or keeps) its singleton
     /// surface, Terminal restores the terminal stage. Shared by the dock
     /// left-click and the popover activation so both paths stay identical.
     pub(crate) fn activate_dock_app(&mut self, app: crate::ui::surface_host::BuiltInAppId) {
         match app {
-            crate::ui::surface_host::BuiltInAppId::Files => {
-                if self.file_manager.is_none() {
-                    self.open_file_manager();
+            // TP-FTAB-DOCK-01: an open Files tab may be backgrounded, so
+            // "a file manager exists" no longer means "Files owns the stage".
+            // Raise the resident instance; only open a new one when none is.
+            crate::ui::surface_host::BuiltInAppId::Files => match self.resident_files_instance() {
+                Some(instance) => {
+                    self.activate_stage_instance(instance);
                 }
-            }
-            crate::ui::surface_host::BuiltInAppId::Terminal => {
-                if self.file_manager.is_some() {
-                    self.close_file_manager();
-                }
-            }
+                None => self.open_file_manager(),
+            },
+            // TP-FTAB-DOCK-02: leaving Files through the shell backgrounds it.
+            // Closing here would discard the tab's state on an ordinary
+            // sidebar click.
+            crate::ui::surface_host::BuiltInAppId::Terminal => self.show_terminal_workspace(),
         }
     }
 
-    /// Toggle the native file manager open/closed.
+    /// The resident Files instance, active or backgrounded.
+    fn resident_files_instance(&self) -> Option<crate::ui::surface_host::AppInstanceId> {
+        self.stage
+            .app_tab_instances()
+            .find(|instance| instance.app() == crate::ui::surface_host::BuiltInAppId::Files)
+    }
+
+    /// Raise, dismiss, or open the native file manager.
+    ///
+    /// TP-FTAB-DOCK-03: there are three states, not two. Dismissing the active
+    /// Files surface stays a close, but toggling into a backgrounded Files tab
+    /// raises it — closing would throw away the directory left open there.
     pub(crate) fn toggle_file_manager(&mut self) {
-        if self.file_manager.is_some() {
+        if self.stage.surface_view() == crate::ui::surface_host::StageSurfaceView::NativeFiles {
             self.close_file_manager();
-        } else {
-            self.open_file_manager();
+            return;
+        }
+        match self.resident_files_instance() {
+            Some(instance) => {
+                self.activate_stage_instance(instance);
+            }
+            None => self.open_file_manager(),
         }
     }
 
@@ -3531,6 +3605,120 @@ mod tests {
         state
     }
 
+    struct StageFixtureRoot(std::path::PathBuf);
+
+    impl Drop for StageFixtureRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn backgroundable_files_fixture(name: &str) -> (AppState, StageFixtureRoot) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "herdr-bg-files-{}-{}-{}",
+            name,
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).expect("create background files fixture root");
+        std::fs::write(root.join("00.txt"), b"x").expect("fixture entry");
+        (app_with_workspaces(&["one"]), StageFixtureRoot(root))
+    }
+
+    fn open_files_at(state: &mut AppState, root: &StageFixtureRoot) {
+        state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root.0)))
+            .expect("Files activation");
+    }
+
+    // TP-FTAB-DOCK-01: once Files can be open but backgrounded, "is a file
+    // manager open" stops meaning "Files owns the stage". The launcher must
+    // return to the resident instance; testing `file_manager.is_some()` would
+    // make the sidebar entry silently do nothing.
+    #[test]
+    fn dock_files_activation_returns_to_a_backgrounded_files_tab() {
+        let (mut state, root) = backgroundable_files_fixture("dock-return");
+        open_files_at(&mut state, &root);
+        let instance = state
+            .stage
+            .app_tab_instances()
+            .next()
+            .expect("resident Files instance");
+
+        state.show_terminal_workspace();
+        assert_eq!(
+            state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace,
+            "control: Files is backgrounded, not closed"
+        );
+
+        state.activate_dock_app(crate::ui::surface_host::BuiltInAppId::Files);
+
+        assert_eq!(
+            state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::NativeFiles
+        );
+        assert_eq!(
+            state.stage.app_tab_instances().next(),
+            Some(instance),
+            "the launcher must return to the resident instance, not open a second one"
+        );
+    }
+
+    // TP-FTAB-DOCK-02: leaving Files through the shell must background it, not
+    // destroy it. A sidebar click that discarded the Files tab's state would
+    // not be tab behavior.
+    #[test]
+    fn dock_terminal_activation_backgrounds_files_instead_of_closing_it() {
+        let (mut state, root) = backgroundable_files_fixture("dock-background");
+        open_files_at(&mut state, &root);
+
+        state.activate_dock_app(crate::ui::surface_host::BuiltInAppId::Terminal);
+
+        assert_eq!(
+            state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace
+        );
+        assert!(
+            state.file_manager.is_some(),
+            "the Files tab keeps its state while backgrounded"
+        );
+        assert_eq!(state.stage.app_tab_instances().count(), 1);
+    }
+
+    // TP-FTAB-DOCK-03: the toggle has three states now, not two. Dismissing an
+    // active Files surface stays a close, but toggling into a backgrounded tab
+    // must raise it — closing it would throw away the directory the user left
+    // open there.
+    #[test]
+    fn toggle_raises_a_backgrounded_files_tab_and_still_dismisses_an_active_one() {
+        let (mut state, root) = backgroundable_files_fixture("toggle");
+        open_files_at(&mut state, &root);
+        let instance = state
+            .stage
+            .app_tab_instances()
+            .next()
+            .expect("resident Files instance");
+        state.show_terminal_workspace();
+
+        state.toggle_file_manager();
+        assert_eq!(
+            state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::NativeFiles,
+            "toggling into a backgrounded tab raises it"
+        );
+        assert_eq!(state.stage.app_tab_instances().next(), Some(instance));
+
+        state.toggle_file_manager();
+        assert!(
+            state.file_manager.is_none(),
+            "toggling the active Files surface still dismisses it"
+        );
+        assert_eq!(state.stage.app_tab_instances().count(), 0);
+    }
+
     fn insert_test_pane_graphics_layer(state: &mut AppState, pane_id: PaneId) {
         state.pane_graphics_layers.insert(
             pane_id,
@@ -3716,7 +3904,14 @@ mod tests {
             state.stage.surface_view(),
             crate::ui::surface_host::StageSurfaceView::TerminalWorkspace
         );
-        assert!(state.file_manager.is_none());
+        // Re-baselined 2026-07-25 (TP-FTAB-DOCK-02): the dock's Terminal entry
+        // backgrounds the Files tab rather than closing it. The sidebar
+        // ownership this test characterizes is unchanged.
+        assert!(
+            state.file_manager.is_some(),
+            "the Files tab keeps its state while backgrounded"
+        );
+        assert_eq!(state.stage.app_tab_instances().count(), 1);
         assert_eq!(
             state.sidebar_tab,
             crate::app::state::SidebarTab::Projects,

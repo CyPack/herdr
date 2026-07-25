@@ -57,7 +57,9 @@ fn layout_stage_tab_hit_areas(
             });
             continue;
         }
-        let width = stage_tab_width(*instance).min(right.saturating_sub(x)).max(1);
+        let width = stage_tab_width(*instance)
+            .min(right.saturating_sub(x))
+            .max(1);
         areas.push(StageTabHitArea {
             rect: Rect::new(x, y, width, 1),
             instance: *instance,
@@ -585,7 +587,10 @@ mod tests {
 
         crate::ui::compute_view(&mut app, area);
         let terminal_content = app.view.terminal_area;
-        assert!(terminal_content.height > 0, "control: terminal content area");
+        assert!(
+            terminal_content.height > 0,
+            "control: terminal content area"
+        );
 
         open_files(&mut app, &root);
         crate::ui::compute_view(&mut app, area);
@@ -734,7 +739,14 @@ mod tests {
         app.workspaces = vec![ws];
         app.active = Some(0);
         app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
-        let view = compute_tab_bar_view(&app.workspaces[0], &[], app.view.tab_bar_rect, 0, true, false);
+        let view = compute_tab_bar_view(
+            &app.workspaces[0],
+            &[],
+            app.view.tab_bar_rect,
+            0,
+            true,
+            false,
+        );
         app.view.tab_hit_areas = view.tab_hit_areas;
 
         let backend = TestBackend::new(30, 1);
@@ -761,7 +773,14 @@ mod tests {
         app.workspaces = vec![ws];
         app.active = Some(0);
         app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
-        let view = compute_tab_bar_view(&app.workspaces[0], &[], app.view.tab_bar_rect, 0, true, false);
+        let view = compute_tab_bar_view(
+            &app.workspaces[0],
+            &[],
+            app.view.tab_bar_rect,
+            0,
+            true,
+            false,
+        );
         app.view.tab_hit_areas = view.tab_hit_areas;
 
         let backend = TestBackend::new(30, 1);
@@ -807,7 +826,14 @@ mod tests {
         app.active = Some(0);
         app.workspaces = vec![ws];
         app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
-        let view = compute_tab_bar_view(&app.workspaces[0], &[], app.view.tab_bar_rect, 0, true, false);
+        let view = compute_tab_bar_view(
+            &app.workspaces[0],
+            &[],
+            app.view.tab_bar_rect,
+            0,
+            true,
+            false,
+        );
         app.view.tab_hit_areas = view.tab_hit_areas;
 
         let backend = TestBackend::new(30, 1);

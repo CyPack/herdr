@@ -352,7 +352,7 @@ fn compute_view_internal(
         rows: file_manager_row_areas,
         actions: file_manager_row_action_areas,
     } = sync_file_manager_view(app, &file_manager_trail);
-    let file_manager_action_bar = app.file_manager.as_ref().map(|file_manager| {
+    let file_manager_action_bar = app.staged_file_manager().map(|file_manager| {
         compute_file_manager_action_bar_model(
             file_manager,
             &app.file_manager_clipboard,
@@ -362,7 +362,7 @@ fn compute_view_internal(
             app.file_manager_locations.focus,
         )
     });
-    let file_manager_header_action_areas = if app.file_manager.is_some() {
+    let file_manager_header_action_areas = if app.staged_file_manager().is_some() {
         compute_file_manager_header_action_areas(terminal_area)
     } else {
         Vec::new()
@@ -539,7 +539,7 @@ fn compute_mobile_view(
         rows: file_manager_row_areas,
         actions: file_manager_row_action_areas,
     } = sync_file_manager_view(app, &file_manager_trail);
-    let file_manager_action_bar = app.file_manager.as_ref().map(|file_manager| {
+    let file_manager_action_bar = app.staged_file_manager().map(|file_manager| {
         compute_file_manager_action_bar_model(
             file_manager,
             &app.file_manager_clipboard,
@@ -549,7 +549,7 @@ fn compute_mobile_view(
             app.file_manager_locations.focus,
         )
     });
-    let file_manager_header_action_areas = if app.file_manager.is_some() {
+    let file_manager_header_action_areas = if app.staged_file_manager().is_some() {
         compute_file_manager_header_action_areas(terminal_area)
     } else {
         Vec::new()
@@ -607,7 +607,7 @@ fn compute_mobile_view(
         sidebar_rect: Rect::default(),
         workspace_card_areas: Vec::new(),
         sidebar_tab_hit_areas: Vec::new(),
-                stage_tab_hit_areas: Vec::new(),
+        stage_tab_hit_areas: Vec::new(),
         project_row_areas: Vec::new(),
         app_dock_entry_areas: Vec::new(),
         file_manager_locations,
@@ -636,7 +636,7 @@ fn compute_mobile_view(
 }
 
 fn sync_file_manager_view(app: &AppState, snapshot: &TrailViewSnapshot) -> FileManagerRowGeometry {
-    let Some(file_manager) = app.file_manager.as_ref() else {
+    let Some(file_manager) = app.staged_file_manager() else {
         return FileManagerRowGeometry::default();
     };
     let Some(column) = snapshot
@@ -671,8 +671,12 @@ fn sync_miller_view(app: &mut AppState, viewport_area: Rect) -> MillerViewSnapsh
     let Some(files_generation) = app.stage.active_instance_generation() else {
         return MillerViewSnapshot::default();
     };
+    // Surface ownership is read first so the file-manager borrow below stays a
+    // disjoint field borrow (see `staged_file_manager_mut` for the rule).
+    let files_surface_active =
+        app.stage.surface_view() == surface_host::StageSurfaceView::NativeFiles;
     let resize_preview = app.shell_interaction.miller_resize_preview();
-    let Some(file_manager) = app.file_manager.as_mut() else {
+    let Some(file_manager) = app.file_manager.as_mut().filter(|_| files_surface_active) else {
         return MillerViewSnapshot::default();
     };
     let trail_directories = file_manager
@@ -718,7 +722,9 @@ fn sync_trail_view(app: &mut AppState, viewport_area: Rect) -> TrailViewSnapshot
     let Some(files_generation) = app.stage.active_instance_generation() else {
         return TrailViewSnapshot::default();
     };
-    let Some(file_manager) = app.file_manager.as_mut() else {
+    let files_surface_active =
+        app.stage.surface_view() == surface_host::StageSurfaceView::NativeFiles;
+    let Some(file_manager) = app.file_manager.as_mut().filter(|_| files_surface_active) else {
         return TrailViewSnapshot::default();
     };
     let preferred_widths = file_manager.miller.preferred_widths_for(

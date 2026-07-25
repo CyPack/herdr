@@ -2334,7 +2334,15 @@ mod tests {
             app.state.stage.surface_view(),
             StageSurfaceView::TerminalWorkspace
         );
-        assert!(app.state.file_manager.is_none());
+        // Re-baselined 2026-07-25 (TP-FTAB-DOCK-02): leaving Files through the
+        // shell backgrounds the tab instead of closing it, so its state
+        // survives. What this test guards — the terminal stage is restored and
+        // no terminal identity moves — is unchanged.
+        assert!(
+            app.state.file_manager.is_some(),
+            "the Files tab keeps its state while backgrounded"
+        );
+        assert_eq!(app.state.stage.app_tab_instances().count(), 1);
         let terminals_after: std::collections::HashSet<_> =
             app.state.terminals.keys().cloned().collect();
         assert_eq!(terminals_before, terminals_after);
@@ -2480,7 +2488,15 @@ mod tests {
             app.state.stage.surface_view(),
             StageSurfaceView::TerminalWorkspace
         );
-        assert!(app.state.file_manager.is_none());
+        // Re-baselined 2026-07-25 (TP-FTAB-DOCK-02): leaving Files through the
+        // shell backgrounds the tab instead of closing it, so its state
+        // survives. What this test guards — the terminal stage is restored and
+        // no terminal identity moves — is unchanged.
+        assert!(
+            app.state.file_manager.is_some(),
+            "the Files tab keeps its state while backgrounded"
+        );
+        assert_eq!(app.state.stage.app_tab_instances().count(), 1);
         let terminals_after: std::collections::HashSet<_> =
             app.state.terminals.keys().cloned().collect();
         assert_eq!(terminals_before, terminals_after);

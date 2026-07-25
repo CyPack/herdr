@@ -544,6 +544,14 @@ impl AppState {
                     self.scroll_tabs_right();
                     return None;
                 }
+                // TP-FTAB-INPUT-03/04: a strip entry activates the exact
+                // instance its geometry names. A retired identity is inert and
+                // is consumed without touching the terminal surface.
+                if let Some(instance) = self.stage_tab_at(mouse.column, mouse.row) {
+                    self.activate_stage_instance(instance);
+                    self.mode = Mode::Terminal;
+                    return None;
+                }
                 if let (Some(ws_idx), Some(tab_idx)) =
                     (self.active, self.tab_at(mouse.column, mouse.row))
                 {
@@ -1435,6 +1443,26 @@ impl AppState {
                     && col < area.x + area.width)
                     .then_some(idx)
             })
+    }
+
+    /// The stage instance whose strip entry covers this cell.
+    ///
+    /// Returns the instance identity rather than a position, so a caller can
+    /// only ever act on the instance the geometry was published for.
+    pub(super) fn stage_tab_at(
+        &self,
+        col: u16,
+        row: u16,
+    ) -> Option<crate::ui::surface_host::AppInstanceId> {
+        self.view.stage_tab_hit_areas.iter().find_map(|entry| {
+            let area = entry.rect;
+            (area.width > 0
+                && row >= area.y
+                && row < area.y + area.height
+                && col >= area.x
+                && col < area.x + area.width)
+                .then_some(entry.instance)
+        })
     }
 
     pub(super) fn on_tab_bar(&self, col: u16, row: u16) -> bool {
@@ -3970,6 +3998,210 @@ mod tests {
             tab_bar.y,
         ));
         assert_eq!(app.state.workspaces[0].active_tab, 0);
+    }
+
+    struct StripFixtureRoot(std::path::PathBuf);
+
+    impl Drop for StripFixtureRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn files_strip_fixture(name: &str) -> (crate::app::App, StripFixtureRoot) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "herdr-strip-{}-{}-{}",
+            name,
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).expect("create strip fixture root");
+        std::fs::write(root.join("00.txt"), b"x").expect("strip fixture entry");
+
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("one");
+        ws.test_add_tab(Some("two"));
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        (app, StripFixtureRoot(root))
+    }
+
+    fn open_files_surface(app: &mut crate::app::App, root: &StripFixtureRoot) {
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root.0)))
+            .expect("Files activation");
+    }
+
+    const STRIP_AREA: Rect = Rect {
+        x: 0,
+        y: 0,
+        width: 106,
+        height: 20,
+    };
+
+    // TP-FTAB-INPUT-01: clicking a terminal tab while Files owns the stage
+    // switches surfaces; it must NOT close Files. A click that destroyed the
+    // other tab would not be tab behavior at all.
+    #[test]
+    fn clicking_a_terminal_tab_leaves_files_open_as_an_inactive_entry() {
+        let (mut app, root) = files_strip_fixture("switch-back");
+        open_files_surface(&mut app, &root);
+        crate::ui::compute_view(&mut app.state, STRIP_AREA);
+        assert_eq!(
+            app.state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::NativeFiles,
+            "control: Files owns the stage"
+        );
+
+        let second_tab = app.state.view.tab_hit_areas[1];
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            second_tab.x + 1,
+            second_tab.y,
+        ));
+        app.handle_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            second_tab.x + 1,
+            second_tab.y,
+        ));
+
+        assert_eq!(
+            app.state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace,
+            "the clicked terminal tab must own the stage"
+        );
+        assert_eq!(app.state.workspaces[0].active_tab, 1);
+        assert!(
+            app.state.file_manager.is_some(),
+            "switching tabs must not close Files"
+        );
+
+        crate::ui::compute_view(&mut app.state, STRIP_AREA);
+        assert_eq!(
+            app.state.view.stage_tab_hit_areas.len(),
+            1,
+            "the Files entry stays in the strip while inactive"
+        );
+    }
+
+    // TP-FTAB-INPUT-02: an inactive Files tab owns no projected geometry. The
+    // surface guard has to be the active surface, not "is a file manager open",
+    // or a hidden Files tab keeps rows clickable under the terminal.
+    #[test]
+    fn inactive_files_tab_projects_no_stage_geometry() {
+        let (mut app, root) = files_strip_fixture("hidden-geometry");
+        open_files_surface(&mut app, &root);
+        crate::ui::compute_view(&mut app.state, STRIP_AREA);
+        assert!(
+            !app.state.view.file_manager_row_areas.is_empty(),
+            "control: the active Files surface projects row geometry"
+        );
+
+        let first_tab = app.state.view.tab_hit_areas[0];
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            first_tab.x + 1,
+            first_tab.y,
+        ));
+        app.handle_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            first_tab.x + 1,
+            first_tab.y,
+        ));
+        crate::ui::compute_view(&mut app.state, STRIP_AREA);
+
+        assert!(
+            app.state.view.file_manager_row_areas.is_empty(),
+            "a hidden Files tab must project no row geometry"
+        );
+        assert!(app.state.view.file_manager_row_action_areas.is_empty());
+        assert!(app.state.view.file_manager_header_action_areas.is_empty());
+        assert!(
+            !app.state.view.pane_infos.is_empty(),
+            "the terminal surface reclaims its pane geometry in the same frame"
+        );
+    }
+
+    // TP-FTAB-INPUT-03: the Files entry activates its own instance, and the
+    // switch itself retires the terminal projection — the same contract the
+    // launcher path already carries, now reachable from the strip.
+    #[test]
+    fn clicking_the_files_entry_activates_it_and_retires_terminal_geometry() {
+        let (mut app, root) = files_strip_fixture("activate");
+        open_files_surface(&mut app, &root);
+        crate::ui::compute_view(&mut app.state, STRIP_AREA);
+
+        let first_tab = app.state.view.tab_hit_areas[0];
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            first_tab.x + 1,
+            first_tab.y,
+        ));
+        app.handle_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            first_tab.x + 1,
+            first_tab.y,
+        ));
+        crate::ui::compute_view(&mut app.state, STRIP_AREA);
+        assert!(!app.state.view.pane_infos.is_empty(), "control: terminal");
+
+        let files_entry = app.state.view.stage_tab_hit_areas[0].rect;
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            files_entry.x + 1,
+            files_entry.y,
+        ));
+        app.handle_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            files_entry.x + 1,
+            files_entry.y,
+        ));
+
+        assert_eq!(
+            app.state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::NativeFiles
+        );
+        assert!(
+            app.state.view.pane_infos.is_empty(),
+            "the switch itself must retire stale pane hit geometry"
+        );
+    }
+
+    // TP-FTAB-INPUT-04: strip geometry is inert once its instance is gone. A
+    // rect retained across a close must not activate whatever now occupies it.
+    #[test]
+    fn stage_entry_geometry_is_inert_after_its_instance_closes() {
+        let (mut app, root) = files_strip_fixture("stale");
+        open_files_surface(&mut app, &root);
+        crate::ui::compute_view(&mut app.state, STRIP_AREA);
+        let stale_entry = app.state.view.stage_tab_hit_areas[0].rect;
+
+        app.state.close_file_manager();
+        crate::ui::compute_view(&mut app.state, STRIP_AREA);
+        let retained_tab = app.state.workspaces[0].active_tab;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            stale_entry.x + 1,
+            stale_entry.y,
+        ));
+        app.handle_mouse(mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            stale_entry.x + 1,
+            stale_entry.y,
+        ));
+
+        assert_eq!(
+            app.state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace,
+            "a retired entry cannot bring its surface back"
+        );
+        assert!(app.state.file_manager.is_none());
+        assert_eq!(app.state.workspaces[0].active_tab, retained_tab);
     }
 
     #[test]

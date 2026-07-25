@@ -185,6 +185,44 @@ impl StageState {
         Ok(())
     }
 
+    /// Return the stage to the terminal workspace, keeping every resident app
+    /// instance in the tab strip.
+    ///
+    /// This is the tab-switch transition and is deliberately distinct from
+    /// [`Self::close_files`], which retires the instance: clicking a terminal
+    /// tab must leave the Files tab there to click back to.
+    ///
+    /// Returns whether the active surface actually changed, so the caller
+    /// retires projected geometry only on a real transition.
+    pub(crate) fn show_terminal_workspace(&mut self) -> bool {
+        let Some(terminal) = self
+            .instances()
+            .find(|instance| instance.id.app == BuiltInAppId::Terminal)
+            .map(|instance| instance.id)
+        else {
+            return false;
+        };
+        if self.active == terminal {
+            return false;
+        }
+        self.previous = Some(self.active);
+        self.active = terminal;
+        true
+    }
+
+    /// Activate a resident instance by its stable identity.
+    ///
+    /// An identity that is no longer resident is inert: strip geometry retained
+    /// across a close must never activate whatever occupies those cells now.
+    pub(crate) fn activate_instance(&mut self, id: AppInstanceId) -> bool {
+        if self.instance(id).is_none() || self.active == id {
+            return false;
+        }
+        self.previous = Some(self.active);
+        self.active = id;
+        true
+    }
+
     pub(crate) fn close_files(&mut self) {
         let Some(files_index) = self
             .instances()
@@ -572,6 +610,89 @@ mod tests {
         assert!(
             state.view.file_manager_action_bar.is_none(),
             "the close itself must retire the stale Files action bar"
+        );
+    }
+
+    // TP-FTAB-INPUT-05: repeated tab switching is a new lifecycle path into
+    // the same transition. Its failure mode is the worst one available here —
+    // a terminal runtime torn down behind a tab the user expects to come back
+    // to — and it is silent, so it is asserted directly rather than inferred.
+    #[tokio::test]
+    async fn tab_switching_between_surfaces_preserves_every_terminal_runtime() {
+        struct FixtureRoot(std::path::PathBuf);
+
+        impl Drop for FixtureRoot {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let root = std::env::temp_dir().join(format!("herdr-tab-switch-{}", std::process::id()));
+        let _fixture_root = FixtureRoot(root.clone());
+        std::fs::create_dir_all(&root).expect("create tab switch fixture root");
+
+        let mut state = AppState::test_new();
+        let workspace = Workspace::test_new("switching");
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace
+            .terminal_id(pane_id)
+            .expect("root pane terminal identity")
+            .clone();
+        state.workspaces = vec![workspace];
+        state.active = Some(0);
+        state.selected = 0;
+
+        let mut terminal_runtimes = TerminalRuntimeRegistry::new();
+        assert!(terminal_runtimes
+            .insert(
+                terminal_id.clone(),
+                TerminalRuntime::test_with_screen_bytes(100, 30, b"SURVIVES_TAB_SWITCHING"),
+            )
+            .is_none());
+        let runtime_count = terminal_runtimes.len();
+
+        state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .expect("Files activation");
+        let files_instance = state
+            .stage
+            .app_tab_instances()
+            .next()
+            .expect("an open Files instance owns a strip entry");
+
+        for round in 0..3 {
+            state.show_terminal_workspace();
+            assert_eq!(
+                state.stage.surface_view(),
+                StageSurfaceView::TerminalWorkspace
+            );
+            assert!(
+                state.file_manager.is_some(),
+                "round {round}: switching away must not close Files"
+            );
+            assert_eq!(
+                state.stage.app_tab_instances().count(),
+                1,
+                "round {round}: the Files entry stays resident in the strip"
+            );
+
+            assert!(
+                state.activate_stage_instance(files_instance),
+                "round {round}: the resident instance stays activatable by identity"
+            );
+            assert_eq!(state.stage.surface_view(), StageSurfaceView::NativeFiles);
+
+            assert_eq!(terminal_runtimes.len(), runtime_count, "round {round}");
+        }
+
+        terminal_runtimes
+            .get(&terminal_id)
+            .expect("tab switching must keep the original terminal runtime")
+            .test_process_pty_bytes(b"still-usable");
+        assert_eq!(
+            state.workspaces[0].terminal_id(pane_id),
+            Some(&terminal_id),
+            "tab switching must not rebind pane/terminal identity"
         );
     }
 

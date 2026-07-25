@@ -684,7 +684,13 @@ impl App {
                     MouseAction::FocusWorkspace { ws_idx } => {
                         self.focus_workspace_idx_via_api(ws_idx)
                     }
-                    MouseAction::FocusTab { tab_idx } => self.focus_tab_idx_via_api(tab_idx),
+                    MouseAction::FocusTab { tab_idx } => {
+                        // TP-FTAB-INPUT-01: focusing a terminal tab returns the
+                        // stage to the terminal workspace. Every resident app
+                        // instance stays in the strip to switch back to.
+                        self.state.show_terminal_workspace();
+                        self.focus_tab_idx_via_api(tab_idx)
+                    }
                     MouseAction::FocusPane { ws_idx, pane_id } => {
                         self.focus_pane_internal_via_api(ws_idx, pane_id)
                     }
