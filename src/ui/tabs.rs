@@ -5,6 +5,7 @@ use ratatui::{
     Frame,
 };
 
+use super::surface_host::{AppInstanceId, StageTabHitArea};
 use super::text::display_width_u16;
 use super::widgets::panel_contrast_fg;
 use crate::app::AppState;
@@ -17,9 +18,53 @@ const TAB_SCROLL_BUTTON_WIDTH: u16 = 3;
 pub(crate) struct TabBarView {
     pub scroll: usize,
     pub tab_hit_areas: Vec<Rect>,
+    /// Stage app entries sharing the strip with the terminal tabs. Kept in
+    /// their own vector because `tab_hit_areas` is index-aligned with
+    /// `ws.tabs`; appending here would make a stage click resolve as a
+    /// terminal tab index.
+    pub stage_tab_hit_areas: Vec<StageTabHitArea>,
     pub scroll_left_hit_area: Rect,
     pub scroll_right_hit_area: Rect,
     pub new_tab_hit_area: Rect,
+}
+
+fn stage_tab_width(instance: AppInstanceId) -> u16 {
+    display_width_u16(instance.app().tab_label())
+        .saturating_add(4)
+        .max(MIN_TAB_WIDTH)
+}
+
+/// Horizontal cells the stage entries take out of the strip, gaps included.
+fn stage_tabs_reserved_width(stage_tabs: &[AppInstanceId]) -> u16 {
+    stage_tabs.iter().fold(0u16, |total, instance| {
+        total.saturating_add(stage_tab_width(*instance).saturating_add(1))
+    })
+}
+
+fn layout_stage_tab_hit_areas(
+    stage_tabs: &[AppInstanceId],
+    start_x: u16,
+    right: u16,
+    y: u16,
+) -> Vec<StageTabHitArea> {
+    let mut areas = Vec::with_capacity(stage_tabs.len());
+    let mut x = start_x;
+    for instance in stage_tabs {
+        if x >= right {
+            areas.push(StageTabHitArea {
+                rect: Rect::default(),
+                instance: *instance,
+            });
+            continue;
+        }
+        let width = stage_tab_width(*instance).min(right.saturating_sub(x)).max(1);
+        areas.push(StageTabHitArea {
+            rect: Rect::new(x, y, width, 1),
+            instance: *instance,
+        });
+        x = x.saturating_add(width.saturating_add(1));
+    }
+    areas
 }
 
 fn tab_width(ws: &crate::workspace::Workspace, tab_idx: usize) -> u16 {
@@ -109,6 +154,7 @@ fn max_tab_scroll(ws: &crate::workspace::Workspace, area: Rect) -> usize {
 
 pub(crate) fn compute_tab_bar_view(
     ws: &crate::workspace::Workspace,
+    stage_tabs: &[AppInstanceId],
     area: Rect,
     current_scroll: usize,
     follow_active: bool,
@@ -118,33 +164,58 @@ pub(crate) fn compute_tab_bar_view(
         return TabBarView::default();
     }
 
+    let area_right = area.x + area.width;
+    // Stage entries are reserved out of the strip up front so terminal tab
+    // layout, scrolling and overflow arithmetic never have to know about them.
+    let stage_reserved = stage_tabs_reserved_width(stage_tabs);
+
     if !mouse_chrome {
-        let max_scroll = max_tab_scroll(ws, area);
+        let tabs_area = Rect::new(
+            area.x,
+            area.y,
+            area.width.saturating_sub(stage_reserved),
+            area.height,
+        );
+        let max_scroll = max_tab_scroll(ws, tabs_area);
         let scroll = if follow_active {
-            centered_tab_scroll(ws, area).min(max_scroll)
+            centered_tab_scroll(ws, tabs_area).min(max_scroll)
         } else {
             current_scroll.min(max_scroll)
         };
+        let tab_hit_areas = layout_tab_hit_areas(ws, tabs_area, scroll);
+        let stage_x = trailing_tab_controls_x(&tab_hit_areas, area.x);
         return TabBarView {
             scroll,
-            tab_hit_areas: layout_tab_hit_areas(ws, area, scroll),
+            stage_tab_hit_areas: layout_stage_tab_hit_areas(
+                stage_tabs, stage_x, area_right, area.y,
+            ),
+            tab_hit_areas,
             scroll_left_hit_area: Rect::default(),
             scroll_right_hit_area: Rect::default(),
             new_tab_hit_area: Rect::default(),
         };
     }
 
-    let area_right = area.x + area.width;
     let all_tabs_area = Rect::new(
         area.x,
         area.y,
-        area.width.saturating_sub(NEW_TAB_WIDTH),
+        area.width
+            .saturating_sub(NEW_TAB_WIDTH)
+            .saturating_sub(stage_reserved),
         area.height,
     );
     let all_tabs = layout_tab_hit_areas(ws, all_tabs_area, 0);
     let overflow = all_tabs.iter().any(|rect| rect.width == 0);
     if !overflow {
-        let new_tab_x = trailing_tab_controls_x(&all_tabs, area.x);
+        let stage_x = trailing_tab_controls_x(&all_tabs, area.x);
+        let stage_tab_hit_areas =
+            layout_stage_tab_hit_areas(stage_tabs, stage_x, area_right, area.y);
+        let new_tab_x = stage_tab_hit_areas
+            .iter()
+            .rev()
+            .find(|entry| entry.rect.width > 0)
+            .map(|entry| entry.rect.x + entry.rect.width + 1)
+            .unwrap_or(stage_x);
         let new_tab_hit_area = Rect::new(
             new_tab_x,
             area.y,
@@ -154,6 +225,7 @@ pub(crate) fn compute_tab_bar_view(
         return TabBarView {
             scroll: 0,
             tab_hit_areas: all_tabs,
+            stage_tab_hit_areas,
             scroll_left_hit_area: Rect::default(),
             scroll_right_hit_area: Rect::default(),
             new_tab_hit_area,
@@ -162,7 +234,9 @@ pub(crate) fn compute_tab_bar_view(
 
     let left_hit_area = Rect::new(area.x, area.y, TAB_SCROLL_BUTTON_WIDTH.min(area.width), 1);
     let tab_area_x = left_hit_area.x + left_hit_area.width;
-    let reserved_trailing_width = NEW_TAB_WIDTH.saturating_add(TAB_SCROLL_BUTTON_WIDTH);
+    let reserved_trailing_width = NEW_TAB_WIDTH
+        .saturating_add(TAB_SCROLL_BUTTON_WIDTH)
+        .saturating_add(stage_reserved);
     let tab_area_right = area_right.saturating_sub(reserved_trailing_width);
     let tab_area = Rect::new(
         tab_area_x,
@@ -178,7 +252,14 @@ pub(crate) fn compute_tab_bar_view(
         current_scroll.min(max_scroll)
     };
     let tab_hit_areas = layout_tab_hit_areas(ws, tab_area, scroll);
-    let trailing_x = trailing_tab_controls_x(&tab_hit_areas, tab_area_x).min(tab_area_right);
+    let stage_x = trailing_tab_controls_x(&tab_hit_areas, tab_area_x).min(tab_area_right);
+    let stage_tab_hit_areas = layout_stage_tab_hit_areas(stage_tabs, stage_x, area_right, area.y);
+    let trailing_x = stage_tab_hit_areas
+        .iter()
+        .rev()
+        .find(|entry| entry.rect.width > 0)
+        .map(|entry| entry.rect.x + entry.rect.width + 1)
+        .unwrap_or(stage_x);
     let right_hit_area = Rect::new(
         trailing_x,
         area.y,
@@ -198,6 +279,7 @@ pub(crate) fn compute_tab_bar_view(
     TabBarView {
         scroll,
         tab_hit_areas,
+        stage_tab_hit_areas,
         scroll_left_hit_area: left_hit_area,
         scroll_right_hit_area: right_hit_area,
         new_tab_hit_area,
@@ -313,6 +395,12 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         );
     }
 
+    // TP-FTAB-ENTRY-03: the strip has exactly one active entry. A terminal tab
+    // painting as active while a stage app owns the content would tell the user
+    // their keystrokes go somewhere they do not.
+    let terminal_surface_active =
+        app.stage.surface_view() == super::surface_host::StageSurfaceView::TerminalWorkspace;
+
     for (idx, tab) in ws.tabs.iter().enumerate() {
         let Some(rect) = app.view.tab_hit_areas.get(idx).copied() else {
             break;
@@ -320,7 +408,7 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         if rect.width == 0 {
             continue;
         }
-        let active = idx == ws.active_tab;
+        let active = terminal_surface_active && idx == ws.active_tab;
         let style = if active {
             let base = Style::default().fg(panel_contrast_fg(p)).bg(p.accent);
             if tab.is_auto_named() {
@@ -340,6 +428,27 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         let name = tab_chrome_label(ws, idx);
         let text = format!(" {:width$}", name, width = width.saturating_sub(1));
         frame.render_widget(Paragraph::new(text).style(style), rect);
+    }
+
+    for entry in &app.view.stage_tab_hit_areas {
+        if entry.rect.width == 0 {
+            continue;
+        }
+        let style = if app.stage.is_active_instance(entry.instance) {
+            Style::default()
+                .fg(panel_contrast_fg(p))
+                .bg(p.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(p.overlay1).bg(p.surface0)
+        };
+        let width = entry.rect.width as usize;
+        let text = format!(
+            " {:width$}",
+            entry.instance.app().tab_label(),
+            width = width.saturating_sub(1)
+        );
+        frame.render_widget(Paragraph::new(text).style(style), entry.rect);
     }
 
     if let Some(crate::app::state::DragState {
@@ -408,6 +517,212 @@ mod tests {
             .to_string()
     }
 
+    struct FixtureRoot(std::path::PathBuf);
+
+    impl Drop for FixtureRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A workspace plus a populated directory, ready to open Files over.
+    fn stage_fixture(name: &str) -> (AppState, FixtureRoot) {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "herdr-files-tab-{}-{}-{}",
+            name,
+            std::process::id(),
+            COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).expect("create files tab fixture root");
+        std::fs::write(root.join("00.txt"), b"x").expect("fixture entry");
+
+        let mut app = AppState::test_new();
+        app.workspaces = vec![Workspace::test_new(name)];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mobile_width_threshold = 0;
+        (app, FixtureRoot(root))
+    }
+
+    fn open_files(app: &mut AppState, root: &FixtureRoot) {
+        app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root.0)))
+            .expect("Files activation");
+    }
+
+    // TP-FTAB-CHROME-01: the tab strip is shell chrome, not terminal-app
+    // chrome. Files opens as a peer in the same content area, so hiding the
+    // strip would make it read as leaving the workspace rather than switching
+    // to another tab.
+    #[test]
+    fn tab_strip_stays_present_while_the_files_surface_owns_the_stage() {
+        let (mut app, root) = stage_fixture("chrome");
+        let area = Rect::new(0, 0, 80, 24);
+
+        crate::ui::compute_view(&mut app, area);
+        let terminal_surface_strip = app.view.tab_bar_rect;
+        assert_eq!(
+            terminal_surface_strip.height, 1,
+            "control: the terminal surface carves out a one-row tab strip"
+        );
+
+        open_files(&mut app, &root);
+        crate::ui::compute_view(&mut app, area);
+
+        assert_eq!(
+            app.view.tab_bar_rect, terminal_surface_strip,
+            "the Files surface must keep the identical tab strip"
+        );
+    }
+
+    // TP-FTAB-CHROME-02: both surfaces receive the same content rect. An
+    // off-by-one here hides the last Files row, which is invisible in a
+    // screenshot and only shows up as "the bottom entry is unreachable".
+    #[test]
+    fn both_surfaces_receive_the_same_content_area() {
+        let (mut app, root) = stage_fixture("content");
+        let area = Rect::new(0, 0, 80, 24);
+
+        crate::ui::compute_view(&mut app, area);
+        let terminal_content = app.view.terminal_area;
+        assert!(terminal_content.height > 0, "control: terminal content area");
+
+        open_files(&mut app, &root);
+        crate::ui::compute_view(&mut app, area);
+
+        assert_eq!(
+            app.view.terminal_area, terminal_content,
+            "Files must own exactly the same content rect the terminal surface owns"
+        );
+    }
+
+    // TP-FTAB-ENTRY-01: Files occupies its own entry in the strip, disjoint
+    // from every terminal tab rect, and `tab_hit_areas` stays index-aligned
+    // with `ws.tabs`. Appending the entry to that vector instead would make a
+    // stage click resolve as a terminal tab index.
+    #[test]
+    fn files_appears_as_a_peer_entry_disjoint_from_terminal_tabs() {
+        let (mut app, root) = stage_fixture("entry");
+        app.workspaces[0].test_add_tab(None);
+        let area = Rect::new(0, 0, 80, 24);
+
+        crate::ui::compute_view(&mut app, area);
+        assert!(
+            app.view.stage_tab_hit_areas.is_empty(),
+            "control: no stage app is open, so the strip carries terminal tabs only"
+        );
+
+        open_files(&mut app, &root);
+        crate::ui::compute_view(&mut app, area);
+
+        assert_eq!(
+            app.view.tab_hit_areas.len(),
+            app.workspaces[0].tabs.len(),
+            "terminal hit areas must stay index-aligned with ws.tabs"
+        );
+        assert_eq!(
+            app.view.stage_tab_hit_areas.len(),
+            1,
+            "one open Files instance is one strip entry"
+        );
+        let files_rect = app.view.stage_tab_hit_areas[0].rect;
+        assert!(files_rect.width > 0 && files_rect.height == 1);
+        for (idx, tab_rect) in app.view.tab_hit_areas.iter().enumerate() {
+            assert!(
+                tab_rect.width == 0
+                    || files_rect.x >= tab_rect.x + tab_rect.width
+                    || tab_rect.x >= files_rect.x + files_rect.width,
+                "the Files entry overlaps terminal tab {idx}: {tab_rect:?} vs {files_rect:?}"
+            );
+        }
+    }
+
+    // TP-FTAB-ENTRY-02: the entry carries the instance's stable lifecycle
+    // identity, not a position. A rect retained across close and reopen must
+    // not authorize the new instance, which is why the generation must change.
+    #[test]
+    fn reopened_files_entry_carries_a_new_instance_generation() {
+        let (mut app, root) = stage_fixture("generation");
+        let area = Rect::new(0, 0, 80, 24);
+
+        open_files(&mut app, &root);
+        crate::ui::compute_view(&mut app, area);
+        let first = app.view.stage_tab_hit_areas[0].instance;
+
+        app.close_file_manager();
+        crate::ui::compute_view(&mut app, area);
+        assert!(
+            app.view.stage_tab_hit_areas.is_empty(),
+            "closing Files retires its strip entry in the same frame"
+        );
+
+        open_files(&mut app, &root);
+        crate::ui::compute_view(&mut app, area);
+        let second = app.view.stage_tab_hit_areas[0].instance;
+
+        assert_ne!(
+            first, second,
+            "a reopened instance must not reuse the closed instance's identity"
+        );
+    }
+
+    // TP-FTAB-ENTRY-03: the strip has exactly one active entry. While Files
+    // owns the stage, a terminal tab that still paints as active would tell
+    // the user their keystrokes go somewhere they do not.
+    #[test]
+    fn only_the_owning_surface_paints_an_active_strip_entry() {
+        let (mut app, root) = stage_fixture("active");
+        let area = Rect::new(0, 0, 80, 24);
+        open_files(&mut app, &root);
+        crate::ui::compute_view(&mut app, area);
+
+        let backend = TestBackend::new(area.width, area.height);
+        let mut terminal = Terminal::new(backend).expect("strip terminal");
+        terminal
+            .draw(|frame| render_tab_bar(&app, frame, app.view.tab_bar_rect))
+            .expect("strip render");
+        let buffer = terminal.backend().buffer();
+
+        let terminal_tab = app.view.tab_hit_areas[0];
+        assert_ne!(
+            buffer[(terminal_tab.x + 1, terminal_tab.y)].style().bg,
+            Some(app.palette.accent),
+            "no terminal tab may paint as active while Files owns the stage"
+        );
+        let files_entry = app.view.stage_tab_hit_areas[0].rect;
+        assert_eq!(
+            buffer[(files_entry.x + 1, files_entry.y)].style().bg,
+            Some(app.palette.accent),
+            "the Files entry paints as the one active strip entry"
+        );
+    }
+
+    // TP-FTAB-ENTRY-04: `hide_tab_bar_when_single_tab` hides chrome that shows
+    // one entry. With Files open there are two, so hiding the strip would make
+    // the Files tab unreachable by mouse.
+    #[test]
+    fn single_terminal_tab_plus_files_keeps_the_strip_visible() {
+        let (mut app, root) = stage_fixture("hide-rule");
+        app.hide_tab_bar_when_single_tab = true;
+        let area = Rect::new(0, 0, 80, 24);
+
+        crate::ui::compute_view(&mut app, area);
+        assert_eq!(
+            app.view.tab_bar_rect,
+            Rect::default(),
+            "control: one terminal tab and no stage app hides the strip"
+        );
+
+        open_files(&mut app, &root);
+        crate::ui::compute_view(&mut app, area);
+
+        assert_eq!(
+            app.view.tab_bar_rect.height, 1,
+            "a second strip entry must bring the strip back"
+        );
+        assert_eq!(app.view.stage_tab_hit_areas.len(), 1);
+    }
+
     #[test]
     fn tab_bar_marks_zoomed_tabs_without_renaming_them() {
         let mut app = AppState::test_new();
@@ -419,7 +734,7 @@ mod tests {
         app.workspaces = vec![ws];
         app.active = Some(0);
         app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
-        let view = compute_tab_bar_view(&app.workspaces[0], app.view.tab_bar_rect, 0, true, false);
+        let view = compute_tab_bar_view(&app.workspaces[0], &[], app.view.tab_bar_rect, 0, true, false);
         app.view.tab_hit_areas = view.tab_hit_areas;
 
         let backend = TestBackend::new(30, 1);
@@ -446,7 +761,7 @@ mod tests {
         app.workspaces = vec![ws];
         app.active = Some(0);
         app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
-        let view = compute_tab_bar_view(&app.workspaces[0], app.view.tab_bar_rect, 0, true, false);
+        let view = compute_tab_bar_view(&app.workspaces[0], &[], app.view.tab_bar_rect, 0, true, false);
         app.view.tab_hit_areas = view.tab_hit_areas;
 
         let backend = TestBackend::new(30, 1);
@@ -492,7 +807,7 @@ mod tests {
         app.active = Some(0);
         app.workspaces = vec![ws];
         app.view.tab_bar_rect = Rect::new(0, 0, 30, 1);
-        let view = compute_tab_bar_view(&app.workspaces[0], app.view.tab_bar_rect, 0, true, false);
+        let view = compute_tab_bar_view(&app.workspaces[0], &[], app.view.tab_bar_rect, 0, true, false);
         app.view.tab_hit_areas = view.tab_hit_areas;
 
         let backend = TestBackend::new(30, 1);

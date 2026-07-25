@@ -1495,6 +1495,11 @@ pub struct ViewState {
     pub agent_attachment_picker_row_areas: Vec<FileManagerRowArea>,
     pub tab_bar_rect: Rect,
     pub tab_hit_areas: Vec<Rect>,
+    /// Stage app entries sharing the tab strip with the terminal tabs. Held
+    /// apart from `tab_hit_areas` because that vector is index-aligned with
+    /// `ws.tabs`; each entry carries its instance identity so a rect retained
+    /// across close and reopen cannot authorize the new instance.
+    pub stage_tab_hit_areas: Vec<crate::ui::surface_host::StageTabHitArea>,
     pub tab_scroll_left_hit_area: Rect,
     pub tab_scroll_right_hit_area: Rect,
     pub new_tab_hit_area: Rect,
@@ -2842,6 +2847,7 @@ impl AppState {
                 agent_attachment_picker_row_areas: Vec::new(),
                 tab_bar_rect: Rect::default(),
                 tab_hit_areas: Vec::new(),
+                stage_tab_hit_areas: Vec::new(),
                 tab_scroll_left_hit_area: Rect::default(),
                 tab_scroll_right_hit_area: Rect::default(),
                 new_tab_hit_area: Rect::default(),

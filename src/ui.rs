@@ -239,7 +239,11 @@ fn desktop_tab_bar_and_terminal_area(
     ws: &crate::workspace::Workspace,
     main_area: Rect,
 ) -> (Rect, Rect) {
-    let hide_single_tab_bar = app.hide_tab_bar_when_single_tab && ws.tabs.len() == 1;
+    // TP-FTAB-ENTRY-04: the rule hides chrome that shows a single entry. An
+    // open stage app is a second entry, so the strip must come back or the
+    // Files tab would be unreachable by mouse.
+    let strip_entries = ws.tabs.len() + app.stage.app_tab_instances().count();
+    let hide_single_tab_bar = app.hide_tab_bar_when_single_tab && strip_entries == 1;
     if !hide_single_tab_bar && main_area.height > 1 {
         let [tab_bar_rect, terminal_area] =
             Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(main_area);
@@ -329,19 +333,18 @@ fn compute_view_internal(
     let sidebar_area = shell_view.regions.get(RegionId::LeftPanel);
     let main_area = shell_view.regions.get(RegionId::CenterContent);
 
-    // Exactly one stage surface owns the center. The tab bar is
-    // terminal-app chrome: while NativeFiles is active the Files surface
-    // owns the COMPLETE WorkspaceStage and no tab-bar row is carved out.
+    // Exactly one stage surface owns the center's CONTENT. The tab strip is
+    // shell chrome above it, not terminal-app chrome: both surfaces carve out
+    // the identical strip and receive the identical content rect, so opening
+    // Files switches tabs inside the workspace instead of replacing it.
+    // TP-FTAB-CHROME-01/02.
     let terminal_surface_active =
         app.stage.surface_view() == surface_host::StageSurfaceView::TerminalWorkspace;
-    let (tab_bar_rect, terminal_area) = if terminal_surface_active {
-        app.active
-            .and_then(|i| app.workspaces.get(i))
-            .map(|ws| desktop_tab_bar_and_terminal_area(app, ws, main_area))
-            .unwrap_or((Rect::default(), main_area))
-    } else {
-        (Rect::default(), main_area)
-    };
+    let (tab_bar_rect, terminal_area) = app
+        .active
+        .and_then(|i| app.workspaces.get(i))
+        .map(|ws| desktop_tab_bar_and_terminal_area(app, ws, main_area))
+        .unwrap_or((Rect::default(), main_area));
     let file_manager_locations = sync_file_manager_locations_view(app, terminal_area);
     let file_manager_miller = sync_miller_view(app, file_manager_locations.layout.trail);
     let file_manager_trail = sync_trail_view(app, file_manager_locations.layout.trail);
@@ -410,12 +413,14 @@ fn compute_view_internal(
             sidebar::compute_project_row_areas(app, list_rect)
         };
 
+    let stage_tabs: Vec<_> = app.stage.app_tab_instances().collect();
     let tab_bar_view = app
         .active
         .and_then(|ws_idx| app.workspaces.get(ws_idx))
         .map(|ws| {
             compute_tab_bar_view(
                 ws,
+                &stage_tabs,
                 tab_bar_rect,
                 app.tab_scroll,
                 app.tab_scroll_follow_active,
@@ -494,6 +499,7 @@ fn compute_view_internal(
         agent_attachment_picker_row_areas,
         tab_bar_rect,
         tab_hit_areas: tab_bar_view.tab_hit_areas,
+        stage_tab_hit_areas: tab_bar_view.stage_tab_hit_areas,
         tab_scroll_left_hit_area: tab_bar_view.scroll_left_hit_area,
         tab_scroll_right_hit_area: tab_bar_view.scroll_right_hit_area,
         new_tab_hit_area: tab_bar_view.new_tab_hit_area,
@@ -601,6 +607,7 @@ fn compute_mobile_view(
         sidebar_rect: Rect::default(),
         workspace_card_areas: Vec::new(),
         sidebar_tab_hit_areas: Vec::new(),
+                stage_tab_hit_areas: Vec::new(),
         project_row_areas: Vec::new(),
         app_dock_entry_areas: Vec::new(),
         file_manager_locations,
@@ -1179,16 +1186,19 @@ mod tests {
             .expect("Files activation");
         app.file_manager.as_mut().expect("open fm").cursor = 8;
 
-        // Desktop: Files owns the full stage (no tab-bar carve-out since
-        // SF6.1) -> height 7 = FM header 1, panel title 1, status 1, list 4.
-        compute_view(&mut app, Rect::new(0, 0, 100, 7));
+        // Desktop: Files is a peer tab, so the shell tab strip takes one row
+        // (TP-FTAB-CHROME-01; before 2026-07-25 Files reclaimed it) -> height 8
+        // = tab strip 1, FM header 1, panel title 1, status 1, list 4. The
+        // heights below grew by that one row so the list sizes under test are
+        // unchanged.
+        compute_view(&mut app, Rect::new(0, 0, 100, 8));
         assert_eq!(
             app.file_manager.as_ref().expect("open fm").viewport_start,
             5
         );
 
         // Expanding to nine list rows clamps the old start to max_start=1.
-        compute_view(&mut app, Rect::new(0, 0, 100, 12));
+        compute_view(&mut app, Rect::new(0, 0, 100, 13));
         assert_eq!(
             app.file_manager.as_ref().expect("open fm").viewport_start,
             1
@@ -1281,8 +1291,11 @@ mod tests {
         app.file_manager.as_mut().expect("open fm").cursor = 4;
 
         // Preserve the characterized Trail viewport after FCL-3 adds the
-        // 24-cell content rail and one-cell separator inside CenterContent.
-        compute_view(&mut app, Rect::new(0, 0, 125, 6));
+        // 24-cell content rail and one-cell separator inside CenterContent,
+        // and after TP-FTAB-CHROME-01 gives the shell tab strip one row of the
+        // stage: the height grew from 6 to 7 so the four visible Trail lines
+        // under test are unchanged.
+        compute_view(&mut app, Rect::new(0, 0, 125, 7));
         assert_eq!(
             app.view
                 .file_manager_row_areas
@@ -2073,14 +2086,16 @@ mod tests {
 
         let area = Rect::new(0, 0, 100, 30);
 
-        // Control: with the terminal surface active the tab-bar chrome is a
-        // real, non-empty region the Files surface must later reclaim.
+        // Control: with the terminal surface active the tab strip is a real,
+        // non-empty region, and the Files surface must keep it rather than
+        // reclaim it.
         app.close_file_manager();
         compute_view_with_runtime_registry(&mut app, &terminal_runtimes, area);
         assert!(
             !app.view.tab_bar_rect.is_empty(),
             "control: the terminal surface owns a visible tab bar"
         );
+        let terminal_surface_strip = app.view.tab_bar_rect;
 
         app.try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
             .expect("Files reactivation");
@@ -2090,14 +2105,25 @@ mod tests {
             .shell
             .regions
             .get(crate::ui::shell::RegionId::WorkspaceStage);
+        // Re-baselined 2026-07-25 (TP-FTAB-CHROME-01/02). Until then the tab
+        // strip was terminal-app chrome and Files reclaimed its row, owning the
+        // COMPLETE WorkspaceStage. Files is now a peer tab in that same strip,
+        // so it owns the stage BELOW the strip and the strip itself is
+        // byte-identical to the terminal surface's. The surface-exclusivity
+        // contract is unchanged: only the content below the strip switches.
         assert_eq!(
-            app.view.terminal_area, stage,
-            "active NativeFiles must own exactly the WorkspaceStage"
+            app.view.tab_bar_rect, terminal_surface_strip,
+            "the Files surface must keep the identical tab strip, not reclaim it"
         );
         assert_eq!(
-            app.view.tab_bar_rect,
-            Rect::default(),
-            "the terminal-app tab bar is not part of the Files surface"
+            app.view.terminal_area,
+            Rect::new(
+                stage.x,
+                stage.y.saturating_add(1),
+                stage.width,
+                stage.height.saturating_sub(1)
+            ),
+            "active NativeFiles must own exactly the WorkspaceStage below the tab strip"
         );
         assert!(
             !app.view.sidebar_rect.is_empty(),
@@ -2124,7 +2150,8 @@ mod tests {
             "Files rendering must preserve the exact terminal runtime"
         );
 
-        // Collapsed sidebar: the wider stage stays fully owned by Files.
+        // Collapsed sidebar: the wider stage stays owned by Files below the
+        // strip. Collapsing changes the stage's width, never the strip's row.
         app.sidebar_collapsed = true;
         compute_view_with_runtime_registry(&mut app, &terminal_runtimes, area);
         let collapsed_stage = app
@@ -2133,7 +2160,15 @@ mod tests {
             .regions
             .get(crate::ui::shell::RegionId::WorkspaceStage);
         assert!(collapsed_stage.width > stage.width);
-        assert_eq!(app.view.terminal_area, collapsed_stage);
+        assert_eq!(
+            app.view.terminal_area,
+            Rect::new(
+                collapsed_stage.x,
+                collapsed_stage.y.saturating_add(1),
+                collapsed_stage.width,
+                collapsed_stage.height.saturating_sub(1)
+            )
+        );
         app.sidebar_collapsed = false;
 
         // Tiny terminal: degenerate geometry stays bounded and panic-free.

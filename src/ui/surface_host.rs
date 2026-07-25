@@ -1,3 +1,5 @@
+use ratatui::layout::Rect;
+
 const MAX_BUILT_IN_INSTANCES: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -11,6 +13,14 @@ impl BuiltInAppId {
         match self {
             Self::Terminal => 0,
             Self::Files => 1,
+        }
+    }
+
+    /// Label shown when the app owns an entry in the workspace tab strip.
+    pub(crate) const fn tab_label(self) -> &'static str {
+        match self {
+            Self::Terminal => "Terminal",
+            Self::Files => "Files",
         }
     }
 
@@ -49,6 +59,23 @@ pub(crate) enum StageSurfaceView {
 pub(crate) struct AppInstanceId {
     app: BuiltInAppId,
     generation: u32,
+}
+
+impl AppInstanceId {
+    pub(crate) const fn app(self) -> BuiltInAppId {
+        self.app
+    }
+}
+
+/// Hit geometry for one stage app's entry in the workspace tab strip.
+///
+/// The entry carries the instance's stable lifecycle identity rather than a
+/// position. That is what makes a rect retained across a close and reopen inert
+/// instead of authorizing the new instance that happens to sit there now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StageTabHitArea {
+    pub rect: Rect,
+    pub instance: AppInstanceId,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,6 +139,23 @@ impl StageState {
             Some(AppSurfaceRef::NativeFiles) => StageSurfaceView::NativeFiles,
             Some(AppSurfaceRef::TerminalWorkspace) | None => StageSurfaceView::TerminalWorkspace,
         }
+    }
+
+    /// Instances that own their own entry in the workspace tab strip, in
+    /// stable insertion order.
+    ///
+    /// The terminal workspace is deliberately absent: it is already represented
+    /// there by the workspace's own tabs, so including it would draw a second,
+    /// competing entry for the same surface.
+    pub(crate) fn app_tab_instances(&self) -> impl Iterator<Item = AppInstanceId> + '_ {
+        self.instances()
+            .filter(|instance| instance.id.app != BuiltInAppId::Terminal)
+            .map(|instance| instance.id)
+    }
+
+    /// Whether `id` is the instance currently owning the stage.
+    pub(crate) fn is_active_instance(&self, id: AppInstanceId) -> bool {
+        self.active == id
     }
 
     pub(crate) fn activate_files(&mut self) -> Result<(), StageStateError> {
