@@ -119,6 +119,29 @@ a separate product (`docs/patterns/document-rendering.md` DR12/DA9).
 | TP-FSH-13 | An oversized workbook is refused before the parser is handed anything. | The cheap outer gate disappears and the inner row/column ceilings become the only defence against a file that expands enormously. | `oversized_workbook_is_refused_before_parsing` |
 | TP-FSH-14 | The header names the active sheet and says how many others exist. | A multi-sheet workbook silently presents its first sheet as the whole file. | `sheet_header_names_the_active_sheet_and_counts_the_rest` |
 
+## PDF preview — rasterised natively, one page at a time
+
+`pdf` sat in the same unreachable optional-plugin branch workbooks did, so it
+showed "(metadata only)" for every document. It is now rendered in-process with
+`hayro`: pure Rust, no external binary to locate and no library to ship beside
+the executable, which is what made the project's earlier rejection of PDF
+preview obsolete — that rejection was about shipping `pdfium`, not about the
+feature.
+
+A page resolves to the same `PreparedImagePreview` an image does, so the entire
+Kitty delivery path applies unchanged rather than growing a parallel one.
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-FPDF-01 | Only the requested page is rasterised, and the document's real length is reported with it. | Opening a long PDF costs time proportional to its length for a panel that shows one page; and without the count there is nothing to drive page navigation. | `renders_the_requested_page_and_reports_the_document_length` |
+| TP-FPDF-02 | A page is composited onto white before it leaves the reader. | A PDF page carries no background of its own, so the terminal's dark background shows through and dark body text becomes unreadable — while opaque boxes stay legible, which is what makes the bug misleading rather than obvious. | `a_blank_page_is_composited_onto_white_not_left_transparent` |
+| TP-FPDF-03 | A page index past the end is refused with both the index and the total. | Page navigation walks off the end into a panic or a blank panel instead of stopping. | `a_page_past_the_end_is_refused_with_both_numbers` |
+| TP-FPDF-04 | Damaged, non-PDF and encrypted input fails as a typed error, never a panic. | `hayro` is experimental and explicitly does not support encrypted documents; a downloaded PDF would take the process down from a directory listing. | `damaged_and_non_pdf_input_fails_without_panicking` |
+| TP-FPDF-05 | Encoded size, empty target and projected pixel count are all refused before rendering. | A single page can expand to an arbitrary raster, and the cost is paid before anything notices. | `size_and_target_gates_refuse_before_rendering` |
+| TP-FPDF-06 | The page is rendered to fit the requested target, preserving aspect ratio. | Kitty scales an image to exactly fill the cell box it is given, so a portrait page stretches across a wide pane unless the fit is computed here. | `the_page_is_rendered_to_fit_the_requested_target` |
+| TP-FPDF-07 | PDFs route to the native rasteriser; document formats with no reader stay metadata. | The unreachable-provider defect returns for PDFs specifically. | `pdfs_route_to_the_native_rasteriser` |
+| TP-FPDF-08 | Two different pages of the same size do not share a data fingerprint. | The encoder decides from the fingerprint whether the picture on screen is still current; deriving it from anything but the pixels means the second page is treated as already drawn and never sent. | `renders_the_requested_page_and_reports_the_document_length` |
+
 ## Visual snapshots
 
 | ID | Behavior | Breaks if lost | Verified by |

@@ -51,6 +51,8 @@ pub(crate) enum PreviewCapability {
     /// kind, not degree: a spreadsheet resolves to a grid herdr can draw, while
     /// `.docx` and friends still have no reader and remain metadata.
     NativeSheet,
+    /// A PDF herdr rasterises itself, one page at a time.
+    NativePdf,
     MetadataOnly {
         reason: PreviewReason,
     },
@@ -118,6 +120,9 @@ pub(crate) fn preview_capability(
     if super::sheet_preview::is_readable_sheet_path(path) {
         return PreviewCapability::NativeSheet;
     }
+    if super::pdf_preview::is_pdf_path(path) {
+        return PreviewCapability::NativePdf;
+    }
 
     let name = path
         .file_name()
@@ -138,7 +143,7 @@ pub(crate) fn preview_capability(
     // reader behind a provider that is never supplied.
     if matches_extension(
         extension.as_deref(),
-        &["pdf", "doc", "docx", "odt", "rtf", "ppt", "pptx", "odp"],
+        &["doc", "docx", "odt", "rtf", "ppt", "pptx", "odp"],
     ) {
         return plugin_or_fallback(
             providers.documents.as_ref(),
@@ -256,9 +261,7 @@ mod tests {
             (
                 "manual.pdf",
                 FileEntryKind::RegularFile,
-                PreviewCapability::MetadataOnly {
-                    reason: PreviewReason::DocumentMetadata,
-                },
+                PreviewCapability::NativePdf,
             ),
             (
                 "report.docx",
@@ -379,6 +382,31 @@ mod tests {
         }
     }
 
+    /// TP-FPDF-07: a PDF routes to the native rasteriser, while the document
+    /// formats that still have no reader stay metadata.
+    #[test]
+    fn pdfs_route_to_the_native_rasteriser() {
+        let providers = PreviewProviderSet::default();
+        for name in ["manual.pdf", "SCAN.PDF"] {
+            assert_eq!(
+                preview_capability(Path::new(name), FileEntryKind::RegularFile, &providers),
+                PreviewCapability::NativePdf,
+                "{name} must reach the native PDF reader"
+            );
+        }
+        assert_eq!(
+            preview_capability(
+                Path::new("report.docx"),
+                FileEntryKind::RegularFile,
+                &providers
+            ),
+            PreviewCapability::MetadataOnly {
+                reason: PreviewReason::DocumentMetadata,
+            },
+            "a format with no reader must stay honest metadata"
+        );
+    }
+
     #[test]
     fn preview_capability_uses_only_explicit_supported_plugin_providers() {
         let providers = PreviewProviderSet {
@@ -402,9 +430,11 @@ mod tests {
                 fallback: PreviewFallback::NativeText,
             }
         );
+        // `report.docx` rather than a PDF: PDFs are read natively now, so they
+        // never reach the provider branch this assertion is about.
         assert_eq!(
             preview_capability(
-                Path::new("manual.pdf"),
+                Path::new("report.docx"),
                 FileEntryKind::RegularFile,
                 &providers
             ),

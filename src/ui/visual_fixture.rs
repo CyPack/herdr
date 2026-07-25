@@ -200,6 +200,7 @@ mod tests {
                         | crate::fm::FmFilePreview::Image(_)
                         | crate::fm::FmFilePreview::PendingSheet { .. }
                         | crate::fm::FmFilePreview::Sheet(_)
+                        | crate::fm::FmFilePreview::Pdf(_)
                         | crate::fm::FmFilePreview::Unavailable(_)
                         | crate::fm::FmFilePreview::SheetUnavailable(_),
                     ) => None,

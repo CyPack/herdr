@@ -5,9 +5,10 @@ use std::thread::JoinHandle;
 use tokio::sync::Notify;
 
 use crate::fm::image_preview::{read_image_preview, ImagePreviewLimits};
+use crate::fm::pdf_preview::{read_pdf_page_preview, PdfPreviewError, PdfPreviewLimits};
 use crate::fm::{
-    FmFilePreview, FmImagePreviewState, FmPreview, ImagePreviewError, ImagePreviewTarget,
-    PreparedImagePreview,
+    FmFilePreview, FmImagePreviewState, FmPdfPreviewState, FmPreview, ImagePreviewError,
+    ImagePreviewTarget, PreparedImagePreview,
 };
 use crate::kitty_graphics::file_manager_image_target;
 
@@ -16,16 +17,55 @@ struct ImagePreviewKey {
     path: PathBuf,
     model_generation: u64,
     target: ImagePreviewTarget,
+    /// Which page to rasterise, for the documents that have pages.
+    ///
+    /// Part of the key rather than a side channel: turning a page has to
+    /// invalidate the slot exactly as changing file or panel size does, or the
+    /// worker would consider the new request identical to the one already
+    /// running and never start it.
+    page: Option<usize>,
 }
 
 impl ImagePreviewKey {
-    fn new(path: &Path, model_generation: u64, target: ImagePreviewTarget) -> Self {
+    fn image(path: &Path, model_generation: u64, target: ImagePreviewTarget) -> Self {
         Self {
             path: path.to_path_buf(),
             model_generation,
             target,
+            page: None,
         }
     }
+
+    fn pdf_page(
+        path: &Path,
+        model_generation: u64,
+        target: ImagePreviewTarget,
+        page: usize,
+    ) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            model_generation,
+            target,
+            page: Some(page),
+        }
+    }
+}
+
+/// Ready pixels, and what the page track additionally learned while producing
+/// them.
+#[derive(Debug)]
+enum RasterOutput {
+    Image(PreparedImagePreview),
+    PdfPage {
+        total_pages: usize,
+        prepared: PreparedImagePreview,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RasterFailure {
+    Image(ImagePreviewError),
+    Pdf(PdfPreviewError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,7 +112,7 @@ struct ImagePreviewRequest {
 struct ImagePreviewResult {
     generation: u64,
     key: ImagePreviewKey,
-    output: Result<PreparedImagePreview, ImagePreviewError>,
+    output: Result<RasterOutput, RasterFailure>,
 }
 
 #[derive(Debug, Default)]
@@ -124,14 +164,22 @@ pub(super) struct ImagePreviewWorker {
 
 impl ImagePreviewWorker {
     pub(super) fn new(wake: Arc<Notify>) -> Self {
-        Self::with_processor(wake, |path, target| {
-            read_image_preview(path, target, ImagePreviewLimits::default())
+        Self::with_processor(wake, |path, target, page| match page {
+            None => read_image_preview(path, target, ImagePreviewLimits::default())
+                .map(RasterOutput::Image)
+                .map_err(RasterFailure::Image),
+            Some(page) => read_pdf_page_preview(path, page, target, PdfPreviewLimits::default())
+                .map(|rendered| RasterOutput::PdfPage {
+                    total_pages: rendered.total_pages,
+                    prepared: rendered.image,
+                })
+                .map_err(RasterFailure::Pdf),
         })
     }
 
     fn with_processor<F>(wake: Arc<Notify>, processor: F) -> Self
     where
-        F: Fn(&Path, ImagePreviewTarget) -> Result<PreparedImagePreview, ImagePreviewError>
+        F: Fn(&Path, ImagePreviewTarget, Option<usize>) -> Result<RasterOutput, RasterFailure>
             + Send
             + 'static,
     {
@@ -146,10 +194,15 @@ impl ImagePreviewWorker {
                 wake: wake.clone(),
             };
             while let Some(request) = take_next_image_request(&worker_shared) {
+                let panicked = if request.key.page.is_some() {
+                    RasterFailure::Pdf(PdfPreviewError::RendererPanicked)
+                } else {
+                    RasterFailure::Image(ImagePreviewError::DecoderPanicked)
+                };
                 let output = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    processor(&request.key.path, request.key.target)
+                    processor(&request.key.path, request.key.target, request.key.page)
                 }))
-                .unwrap_or(Err(ImagePreviewError::DecoderPanicked));
+                .unwrap_or(Err(panicked));
                 let result = ImagePreviewResult {
                     generation: request.generation,
                     key: request.key,
@@ -275,41 +328,48 @@ impl super::App {
         }
 
         let target = self.state.file_manager.as_ref().and_then(|file_manager| {
-            let FmPreview::File(FmFilePreview::Image(preview)) = &file_manager.preview else {
-                return None;
+            let target = || {
+                file_manager_image_target(
+                    &self.state.view.file_manager_trail,
+                    file_manager,
+                    self.image_preview_cell_size,
+                )
             };
-            // A format with no decoder is settled before any work starts, and
-            // must stay settled: handing it to the worker would read the file
-            // only to rediscover what its extension already said, and would
-            // then overwrite a stated limitation with a decode failure.
-            if matches!(preview.state, FmImagePreviewState::Unsupported) {
-                return None;
+            match &file_manager.preview {
+                FmPreview::File(FmFilePreview::Image(preview)) => {
+                    // A format with no decoder is settled before any work
+                    // starts, and must stay settled: handing it to the worker
+                    // would read the file only to rediscover what its extension
+                    // already said, and would then overwrite a stated
+                    // limitation with a decode failure.
+                    if matches!(preview.state, FmImagePreviewState::Unsupported) {
+                        return None;
+                    }
+                    Some(ImagePreviewKey::image(
+                        &preview.source_path,
+                        preview.generation,
+                        target()?,
+                    ))
+                }
+                FmPreview::File(FmFilePreview::Pdf(preview)) => Some(ImagePreviewKey::pdf_page(
+                    &preview.source_path,
+                    preview.generation,
+                    target()?,
+                    preview.page,
+                )),
+                _ => None,
             }
-            let target = file_manager_image_target(
-                &self.state.view.file_manager_trail,
-                file_manager,
-                self.image_preview_cell_size,
-            )?;
-            Some(ImagePreviewKey::new(
-                &preview.source_path,
-                preview.generation,
-                target,
-            ))
         });
 
         match self.image_preview_worker.sync_target(target.clone()) {
             ImagePreviewSync::Started { .. } => {
                 return target.is_some_and(|key| {
                     crate::render_prof::event("fm.image_target.refresh");
-                    set_image_state(
-                        &mut self.state,
-                        &key,
-                        FmImagePreviewState::Loading { target: key.target },
-                    )
+                    set_loading_state(&mut self.state, &key)
                 });
             }
             ImagePreviewSync::Stopped => {
-                return set_pending_image_state(&mut self.state);
+                return set_pending_raster_state(&mut self.state);
             }
             ImagePreviewSync::Unchanged => {}
         }
@@ -319,45 +379,48 @@ impl super::App {
         if drained.disconnected {
             tracing::warn!("fm: image preview worker stopped; using explicit failure fallback");
             if let Some(key) = target.as_ref() {
-                changed |= set_image_state(
+                changed |= set_failed_state(
                     &mut self.state,
                     key,
-                    FmImagePreviewState::Unavailable {
-                        target: key.target,
-                        error: ImagePreviewError::DecodeFailed,
+                    if key.page.is_some() {
+                        RasterFailure::Pdf(PdfPreviewError::Unreadable)
+                    } else {
+                        RasterFailure::Image(ImagePreviewError::DecodeFailed)
                     },
                 );
             }
         }
         if let Some(result) = drained.current {
-            let state = match result.output {
-                Ok(prepared) => FmImagePreviewState::Ready {
-                    target: result.key.target,
-                    prepared,
-                },
-                Err(error) => FmImagePreviewState::Unavailable {
-                    target: result.key.target,
-                    error,
-                },
+            changed |= match result.output {
+                Ok(output) => set_ready_state(&mut self.state, &result.key, output),
+                Err(failure) => set_failed_state(&mut self.state, &result.key, failure),
             };
-            changed |= set_image_state(&mut self.state, &result.key, state);
         }
         changed
     }
 }
 
-fn set_pending_image_state(state: &mut crate::app::state::AppState) -> bool {
+fn set_pending_raster_state(state: &mut crate::app::state::AppState) -> bool {
     let Some(file_manager) = state.file_manager.as_mut() else {
         return false;
     };
-    let FmPreview::File(FmFilePreview::Image(preview)) = &mut file_manager.preview else {
-        return false;
-    };
-    if preview.state == FmImagePreviewState::Pending {
-        return false;
+    match &mut file_manager.preview {
+        FmPreview::File(FmFilePreview::Image(preview)) => {
+            if preview.state == FmImagePreviewState::Pending {
+                return false;
+            }
+            preview.state = FmImagePreviewState::Pending;
+            true
+        }
+        FmPreview::File(FmFilePreview::Pdf(preview)) => {
+            if preview.state == FmPdfPreviewState::Pending {
+                return false;
+            }
+            preview.state = FmPdfPreviewState::Pending;
+            true
+        }
+        _ => false,
     }
-    preview.state = FmImagePreviewState::Pending;
-    true
 }
 
 fn set_image_state(
@@ -379,6 +442,104 @@ fn set_image_state(
     }
     preview.state = next;
     true
+}
+
+/// Install a PDF page state, if the selection still wants this exact page.
+///
+/// The page is checked alongside the path and generation: a render that lands
+/// after the reader turned the page belongs to a view nobody is looking at, and
+/// installing it would show the wrong page with no further event to correct it.
+fn set_pdf_state(
+    state: &mut crate::app::state::AppState,
+    key: &ImagePreviewKey,
+    next: FmPdfPreviewState,
+) -> bool {
+    let Some(file_manager) = state.file_manager.as_mut() else {
+        return false;
+    };
+    let FmPreview::File(FmFilePreview::Pdf(preview)) = &mut file_manager.preview else {
+        return false;
+    };
+    if preview.source_path != key.path
+        || preview.generation != key.model_generation
+        || Some(preview.page) != key.page
+    {
+        return false;
+    }
+    if preview.state == next {
+        return false;
+    }
+    preview.state = next;
+    true
+}
+
+fn set_loading_state(state: &mut crate::app::state::AppState, key: &ImagePreviewKey) -> bool {
+    match key.page {
+        None => set_image_state(
+            state,
+            key,
+            FmImagePreviewState::Loading { target: key.target },
+        ),
+        Some(_) => set_pdf_state(
+            state,
+            key,
+            FmPdfPreviewState::Loading { target: key.target },
+        ),
+    }
+}
+
+fn set_ready_state(
+    state: &mut crate::app::state::AppState,
+    key: &ImagePreviewKey,
+    output: RasterOutput,
+) -> bool {
+    match output {
+        RasterOutput::Image(prepared) => set_image_state(
+            state,
+            key,
+            FmImagePreviewState::Ready {
+                target: key.target,
+                prepared,
+            },
+        ),
+        RasterOutput::PdfPage {
+            total_pages,
+            prepared,
+        } => set_pdf_state(
+            state,
+            key,
+            FmPdfPreviewState::Ready {
+                target: key.target,
+                total_pages,
+                prepared,
+            },
+        ),
+    }
+}
+
+fn set_failed_state(
+    state: &mut crate::app::state::AppState,
+    key: &ImagePreviewKey,
+    failure: RasterFailure,
+) -> bool {
+    match failure {
+        RasterFailure::Image(error) => set_image_state(
+            state,
+            key,
+            FmImagePreviewState::Unavailable {
+                target: key.target,
+                error,
+            },
+        ),
+        RasterFailure::Pdf(error) => set_pdf_state(
+            state,
+            key,
+            FmPdfPreviewState::Unavailable {
+                target: key.target,
+                error,
+            },
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -404,7 +565,7 @@ mod tests {
     }
 
     fn key(path: &str, model_generation: u64, target: ImagePreviewTarget) -> ImagePreviewKey {
-        ImagePreviewKey::new(Path::new(path), model_generation, target)
+        ImagePreviewKey::image(Path::new(path), model_generation, target)
     }
 
     #[test]
@@ -458,7 +619,7 @@ mod tests {
     fn image_worker_converts_processor_panic_to_typed_failure_and_stays_alive() {
         let mut worker = ImagePreviewWorker::with_processor(
             Arc::new(Notify::new()),
-            |_path, _target| -> Result<PreparedImagePreview, ImagePreviewError> {
+            |_path, _target, _page| -> Result<RasterOutput, RasterFailure> {
                 panic!("simulated image processor panic")
             },
         );
@@ -477,7 +638,10 @@ mod tests {
             );
             if let Some(result) = drained.current {
                 assert_eq!(result.key, current_key);
-                assert_eq!(result.output, Err(ImagePreviewError::DecoderPanicked));
+                assert!(matches!(
+                    result.output,
+                    Err(RasterFailure::Image(ImagePreviewError::DecoderPanicked))
+                ));
                 break;
             }
             assert!(
@@ -492,21 +656,23 @@ mod tests {
     fn image_worker_profile_counts_submitted_completed_and_rejected() {
         let (started_tx, started_rx) = mpsc::channel::<ImagePreviewTarget>();
         let (release_tx, release_rx) = mpsc::channel::<()>();
-        let mut worker =
-            ImagePreviewWorker::with_processor(Arc::new(Notify::new()), move |_path, target| {
+        let mut worker = ImagePreviewWorker::with_processor(
+            Arc::new(Notify::new()),
+            move |_path, target, _page| {
                 started_tx
                     .send(target)
-                    .map_err(|_| ImagePreviewError::DecodeFailed)?;
+                    .map_err(|_| RasterFailure::Image(ImagePreviewError::DecodeFailed))?;
                 release_rx
                     .recv_timeout(Duration::from_secs(2))
-                    .map_err(|_| ImagePreviewError::DecodeFailed)?;
-                Ok(PreparedImagePreview {
+                    .map_err(|_| RasterFailure::Image(ImagePreviewError::DecodeFailed))?;
+                Ok(RasterOutput::Image(PreparedImagePreview {
                     width: 1,
                     height: 1,
                     data_fingerprint: u64::from(target.width_px),
                     rgba: vec![0, 0, 0, 0xff],
-                })
-            });
+                }))
+            },
+        );
         let first_target = target(80, 40);
         let second_target = target(40, 20);
 
@@ -981,24 +1147,26 @@ mod tests {
 
         let (started_tx, started_rx) = mpsc::channel::<ImagePreviewTarget>();
         let (release_tx, release_rx) = mpsc::channel::<()>();
-        app.image_preview_worker =
-            ImagePreviewWorker::with_processor(app.render_notify.clone(), move |_path, target| {
+        app.image_preview_worker = ImagePreviewWorker::with_processor(
+            app.render_notify.clone(),
+            move |_path, target, _page| {
                 started_tx
                     .send(target)
-                    .map_err(|_| ImagePreviewError::DecodeFailed)?;
+                    .map_err(|_| RasterFailure::Image(ImagePreviewError::DecodeFailed))?;
                 release_rx
                     .recv_timeout(Duration::from_secs(2))
-                    .map_err(|_| ImagePreviewError::DecodeFailed)?;
+                    .map_err(|_| RasterFailure::Image(ImagePreviewError::DecodeFailed))?;
                 let marker = u8::try_from(target.width_px % 256).expect("target marker");
-                Ok(PreparedImagePreview {
+                Ok(RasterOutput::Image(PreparedImagePreview {
                     width: 1,
                     height: 1,
                     data_fingerprint: u64::from(target.width_px)
                         .wrapping_shl(32)
                         .wrapping_add(u64::from(target.height_px)),
                     rgba: vec![marker, marker, marker, 0xff],
-                })
-            });
+                }))
+            },
+        );
 
         let frame = Rect::new(0, 0, 90, 16);
         crate::ui::compute_view(&mut app.state, frame);

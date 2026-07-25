@@ -20,6 +20,7 @@ pub(crate) mod image_preview;
 pub(crate) mod miller;
 mod natsort;
 pub(crate) mod operations;
+pub(crate) mod pdf_preview;
 pub(crate) mod preview_capability;
 pub(crate) mod rename;
 pub(crate) mod sheet_preview;
@@ -265,6 +266,8 @@ pub enum FmFilePreview {
     Sheet(SheetPreview),
     /// Stable preparation failure; TP-B1.2 defines the complete UI mapping.
     Unavailable(TextPreviewError),
+    /// A PDF, rasterised one page at a time.
+    Pdf(FmPdfPreview),
     /// Stable workbook preparation failure.
     ///
     /// Separate from `Unavailable` because the two carry different error types
@@ -306,6 +309,37 @@ pub enum FmImagePreviewState {
     /// was falling through to the text reader, which produced an image icon
     /// above the words "text preview source is binary".
     Unsupported,
+}
+
+/// A selected PDF and the page currently being shown from it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FmPdfPreview {
+    pub source_path: PathBuf,
+    pub generation: u64,
+    /// Zero-based, matching every other index in this model. The indicator adds
+    /// one when it draws, and that is the only place the two conventions meet —
+    /// which is the documented way page navigation goes wrong.
+    pub page: usize,
+    pub state: FmPdfPreviewState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FmPdfPreviewState {
+    /// No drawable geometry or cell size has been published yet.
+    Pending,
+    /// This page is being rasterised for this exact pixel box.
+    Loading { target: ImagePreviewTarget },
+    /// Current pixels for `page`, ready for client-local Kitty placement.
+    Ready {
+        target: ImagePreviewTarget,
+        total_pages: usize,
+        prepared: PreparedImagePreview,
+    },
+    /// Stable failure for the current page and target.
+    Unavailable {
+        target: ImagePreviewTarget,
+        error: pdf_preview::PdfPreviewError,
+    },
 }
 
 /// Read the immediate children of `dir` in strict mixed modification-time
@@ -653,6 +687,13 @@ fn prepare_deferred_file_preview(path: PathBuf, generation: u64) -> FmPreview {
             source_path: path,
             generation,
         })
+    } else if crate::fm::pdf_preview::is_pdf_path(&path) {
+        FmPreview::File(FmFilePreview::Pdf(FmPdfPreview {
+            source_path: path,
+            generation,
+            page: 0,
+            state: FmPdfPreviewState::Pending,
+        }))
     } else {
         FmPreview::File(FmFilePreview::PendingText {
             source_path: path,
@@ -791,6 +832,7 @@ impl FmState {
                 | FmFilePreview::Image(_)
                 | FmFilePreview::PendingSheet { .. }
                 | FmFilePreview::Sheet(_)
+                | FmFilePreview::Pdf(_)
                 | FmFilePreview::Unavailable(_)
                 | FmFilePreview::SheetUnavailable(_),
             ) => None,

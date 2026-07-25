@@ -43,6 +43,9 @@ pub(crate) enum TrailDetailPreview {
     /// Exact workbook target is queued in the bounded preview worker.
     PendingSheet,
     Sheet(SheetPreview),
+    /// A recognised PDF; page pixels travel the Kitty-graphics track, exactly
+    /// as an image's do.
+    Pdf,
     MetadataOnly(String),
     Unpreviewable(String),
 }
@@ -375,6 +378,7 @@ impl TrailSnapshots {
                             FmFilePreview::Sheet(preview) => {
                                 TrailDetailPreview::Sheet(preview.clone())
                             }
+                            FmFilePreview::Pdf(_) => TrailDetailPreview::Pdf,
                             FmFilePreview::Unavailable(error) => {
                                 TrailDetailPreview::Unpreviewable(error.to_string())
                             }
@@ -743,6 +747,7 @@ fn prepare_trail_detail(path: &Path, kind: FileEntryKind) -> TrailDetail {
     let preview = match preview_capability(path, kind, &PreviewProviderSet::default()) {
         PreviewCapability::NativeImage => TrailDetailPreview::Image,
         PreviewCapability::NativeSheet => TrailDetailPreview::PendingSheet,
+        PreviewCapability::NativePdf => TrailDetailPreview::Pdf,
         PreviewCapability::NativeText => TrailDetailPreview::PendingText,
         PreviewCapability::MetadataOnly { reason } => {
             TrailDetailPreview::MetadataOnly(reason.label().to_owned())

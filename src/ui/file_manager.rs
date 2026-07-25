@@ -996,6 +996,9 @@ fn render_file_preview(app: &AppState, frame: &mut Frame, area: Rect, preview: &
                 .collect();
             frame.render_widget(Paragraph::new(lines), content_area);
         }
+        FmFilePreview::Pdf(preview) => {
+            render_pdf_preview_status(app, frame, content_area, preview);
+        }
         FmFilePreview::SheetUnavailable(error) => {
             let label = truncate_end(&format!("  {error}"), content_area.width as usize);
             frame.render_widget(Paragraph::new(label).style(styles.warning), content_area);
@@ -1068,6 +1071,52 @@ pub(super) fn sheet_preview_lines(
         lines.push(truncate_end("  (preview truncated)", max_width));
     }
     lines
+}
+
+/// Draw whatever a PDF page cannot say in pixels.
+///
+/// Nothing is drawn while a page is rasterising, for the same reason the image
+/// path draws nothing: at typical speeds the label appears and vanishes inside
+/// one glance, which reads as flicker rather than progress.
+pub(super) fn render_pdf_preview_status(
+    app: &AppState,
+    frame: &mut Frame,
+    area: Rect,
+    preview: &crate::fm::FmPdfPreview,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let styles = file_manager_visual_styles(&app.palette);
+    let label_and_style = if !app.kitty_graphics_enabled {
+        Some(("  (Kitty graphics req.)".to_owned(), styles.empty))
+    } else {
+        match &preview.state {
+            crate::fm::FmPdfPreviewState::Pending
+            | crate::fm::FmPdfPreviewState::Loading { .. } => None,
+            crate::fm::FmPdfPreviewState::Ready { total_pages, .. } => Some((
+                // One-based here and only here: the state stays zero-based, and
+                // mixing the two conventions anywhere else is the documented
+                // way page navigation ends up off by one.
+                format!("  page {} of {total_pages}", preview.page + 1),
+                styles.empty,
+            )),
+            crate::fm::FmPdfPreviewState::Unavailable { error, .. } => {
+                Some((format!("  {error}"), styles.warning))
+            }
+        }
+    };
+    let Some((label, style)) = label_and_style else {
+        return;
+    };
+    let label = truncate_end(&label, area.width as usize);
+    let indicator_area = Rect {
+        x: area.x,
+        y: area.y.saturating_add(area.height.saturating_sub(1)),
+        width: area.width,
+        height: 1,
+    };
+    frame.render_widget(Paragraph::new(label).style(style), indicator_area);
 }
 
 pub(super) fn render_image_preview_status(

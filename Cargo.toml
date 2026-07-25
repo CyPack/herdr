@@ -58,6 +58,7 @@ syntect = { version = "5.3.0", default-features = false, features = ["default-sy
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico", "tiff"] }
 trash = { version = "5.2.6", default-features = false, features = ["coinit_multithreaded"] }
 calamine = "0.36.0"
+hayro = "0.7.1"
 
 [patch.crates-io]
 portable-pty = { path = "vendor/portable-pty" }

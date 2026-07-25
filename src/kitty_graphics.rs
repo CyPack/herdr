@@ -118,23 +118,28 @@ pub(crate) fn file_manager_image_target(
     .map(|(_, target)| target)
 }
 
+/// The panel rect a raster preview may draw into, if one is selected.
+///
+/// A PDF page and an image are the same thing to everything downstream: both
+/// resolve to RGBA sized to this exact rect, so both answer here rather than
+/// growing a parallel geometry path with its own rounding.
 fn file_manager_trail_image_content_area(
     snapshot: &crate::ui::TrailViewSnapshot,
     file_manager: &crate::fm::FmState,
 ) -> Option<Rect> {
     let detail = file_manager.trail_snapshots.detail()?;
-    if !matches!(
-        &detail.preview,
-        crate::fm::trail_snapshots::TrailDetailPreview::Image
-    ) {
-        return None;
-    }
-    let crate::fm::FmPreview::File(crate::fm::FmFilePreview::Image(preview)) =
-        &file_manager.preview
-    else {
-        return None;
+    let source_path = match (&detail.preview, &file_manager.preview) {
+        (
+            crate::fm::trail_snapshots::TrailDetailPreview::Image,
+            crate::fm::FmPreview::File(crate::fm::FmFilePreview::Image(preview)),
+        ) => &preview.source_path,
+        (
+            crate::fm::trail_snapshots::TrailDetailPreview::Pdf,
+            crate::fm::FmPreview::File(crate::fm::FmFilePreview::Pdf(preview)),
+        ) => &preview.source_path,
+        _ => return None,
     };
-    if preview.source_path != detail.path {
+    if source_path != &detail.path {
         return None;
     }
     snapshot
@@ -234,13 +239,23 @@ fn collect_file_manager_image_placement(
     uploaded_images: &HashMap<u32, ImageSignature>,
 ) -> Option<HostPlacement> {
     let file_manager = app.file_manager.as_ref()?;
-    let crate::fm::FmPreview::File(crate::fm::FmFilePreview::Image(preview)) =
-        &file_manager.preview
-    else {
-        return None;
-    };
-    let crate::fm::FmImagePreviewState::Ready { target, prepared } = &preview.state else {
-        return None;
+    // Whichever track produced them, ready pixels are ready pixels.
+    let (target, prepared) = match &file_manager.preview {
+        crate::fm::FmPreview::File(crate::fm::FmFilePreview::Image(preview)) => {
+            match &preview.state {
+                crate::fm::FmImagePreviewState::Ready { target, prepared } => (target, prepared),
+                _ => return None,
+            }
+        }
+        crate::fm::FmPreview::File(crate::fm::FmFilePreview::Pdf(preview)) => {
+            match &preview.state {
+                crate::fm::FmPdfPreviewState::Ready {
+                    target, prepared, ..
+                } => (target, prepared),
+                _ => return None,
+            }
+        }
+        _ => return None,
     };
     let content_area =
         file_manager_trail_image_content_area(&app.view.file_manager_trail, file_manager)?;

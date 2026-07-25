@@ -769,6 +769,7 @@ fn render_trail_detail_panel(
     }
     let mut lines = Vec::new();
     let mut live_image_preview = None;
+    let mut live_pdf_preview = None;
     match &detail.preview {
         crate::fm::trail_snapshots::TrailDetailPreview::PendingText => {
             lines.push(Line::from(format!("kind: {:?}", detail.kind)));
@@ -810,6 +811,21 @@ fn render_trail_detail_panel(
                 lines.push(Line::from(text));
             }
         }
+        crate::fm::trail_snapshots::TrailDetailPreview::Pdf => {
+            live_pdf_preview = app.file_manager.as_ref().and_then(|fm| match &fm.preview {
+                crate::fm::FmPreview::File(crate::fm::FmFilePreview::Pdf(preview))
+                    if preview.source_path == detail.path =>
+                {
+                    Some(preview)
+                }
+                crate::fm::FmPreview::None
+                | crate::fm::FmPreview::Directory(_)
+                | crate::fm::FmPreview::File(_) => None,
+            });
+            if live_pdf_preview.is_none() {
+                lines.push(Line::from("(pdf preview)"));
+            }
+        }
         crate::fm::trail_snapshots::TrailDetailPreview::MetadataOnly(reason) => {
             lines.push(Line::from(format!("kind: {:?}", detail.kind)));
             lines.push(Line::from(""));
@@ -825,6 +841,9 @@ fn render_trail_detail_panel(
     frame.render_widget(Paragraph::new(lines), panel.content_rect);
     if let Some(preview) = live_image_preview {
         super::render_image_preview_status(app, frame, panel.content_rect, preview);
+    }
+    if let Some(preview) = live_pdf_preview {
+        super::render_pdf_preview_status(app, frame, panel.content_rect, preview);
     }
 }
 
@@ -1708,11 +1727,13 @@ mod tests {
     #[test]
     fn panel_render_shows_explicit_metadata_only_reason() {
         let td = TempDir::new("panel-metadata");
-        fs::write(td.root.join("manual.pdf"), b"%PDF fixture").expect("file");
+        // `.docx` rather than `.pdf`: PDFs are rasterised natively now, so they
+        // no longer reach the metadata-only state this test is about.
+        fs::write(td.root.join("report.docx"), b"docx fixture").expect("file");
         let mut trail = TrailState::new(&td.root);
         let mut snaps = TrailSnapshots::new(false);
         snaps.sync(&trail);
-        let document = td.root.join("manual.pdf");
+        let document = td.root.join("report.docx");
         assert_eq!(
             snaps.activate_entry(&mut trail, 0, 0, &document),
             crate::fm::trail_snapshots::TrailActivateOutcome::SelectedFile
