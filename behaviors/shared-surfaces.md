@@ -79,6 +79,23 @@ The Locations rail is fork work living inside upstream's sidebar. Ownership is t
 | TP-FMR-SIDEBAR-HL-02 | The headless scheduled loop consumes the prepared request into the existing Files generation rather than creating a second authority. Pinned together with -01 and -03. | A remote-driven navigation lands in a generation nothing else is reading. | `headless_raw_mouse_locations_navigation_loads_exact_trail` |
 | TP-FMR-SIDEBAR-HL-03 | The resulting Trail is the exact requested one, verified across the real client boundary rather than in-process. Pinned together with -01 and -02. | The remote path resolves to a near-miss directory and only a live client would reveal it. | `headless_raw_mouse_locations_navigation_loads_exact_trail` |
 
+## Image preview in server mode
+
+The file manager's image preview is driven by a bounded worker that only advances
+when something drives it, and it decodes against a cell size only the client knows.
+Both halves live in the server loop, and both were missing — so a preview that
+worked perfectly in the local TUI showed nothing at all over a socket. These rows
+exist because that failure was completely silent: no error, no warning, just a
+panel that stayed empty.
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-FMR-IMAGE-HL-01 | The headless scheduled loop drives the image preview worker, exactly as the monolithic loop does. | Server-mode image previews never leave `Pending`: the decode is never started, so the panel stays empty forever with nothing reported. | `headless_scheduler_syncs_the_image_preview_worker` |
+| TP-FMR-IMAGE-HL-02 | The foreground client's resolved cell size is published to the image preview from the same decision that resolves host graphics, not from a second policy. | The preview decodes against a cell size of zero, derives no target and renders nothing — a second silent blocker that survives even after the scheduler call is restored. | `headless_publishes_foreground_cell_size_to_the_image_preview` |
+| TP-FMR-IMAGE-HL-03 | A ready file-manager image reaches the client as kitty graphics inside the streamed frame. | The decode succeeds but the pixels never cross the socket, so every earlier link can be green while the user still sees nothing. | `server_frame_carries_fm_image_graphics_when_ready` |
+| TP-FMR-IMAGE-HL-04 | A client whose cell size is unknown receives no graphics and no panic; the size is never guessed. | A guessed cell size is worse than none: kitty scales to exactly fill the given cell box, so the image is silently stretched instead of simply absent. | `unknown_cell_size_client_gets_no_graphics_and_no_panic` |
+| TP-SRV-SCHED-PARITY-01 | The headless and monolithic schedulers make the same set of `sync_*`/`refresh_*` calls, apart from an explicit in-source difference list; closing a gap forces that list to be updated. | The two loops drift apart again and a feature works locally but not over a socket, with no test failing until a human notices. | `scheduler_parity_headless_vs_monolithic` |
+
 ## Pane bottom-border actions and the attachment picker
 
 Fork affordances drawn into upstream's pane chrome. Geometry that upstream reflows is the risk; every row insists the action stays bounded, exact and no-color safe.

@@ -134,7 +134,11 @@ pub struct App {
         Option<file_operation_worker::FileOperationReconcileBaseline>,
     file_preview_worker: file_preview_worker::FilePreviewWorker,
     image_preview_worker: image_preview_worker::ImagePreviewWorker,
-    image_preview_cell_size: crate::kitty_graphics::HostCellSize,
+    /// Cell size the image preview decodes against.
+    ///
+    /// Written by whichever loop owns presentation: the monolithic render loop
+    /// locally, and the foreground client's resolved size in server mode.
+    pub(crate) image_preview_cell_size: crate::kitty_graphics::HostCellSize,
     pub(crate) last_terminal_size: Option<(u16, u16)>,
     pub(crate) config_diagnostic_deadline: Option<Instant>,
     pub(crate) toast_deadline: Option<Instant>,

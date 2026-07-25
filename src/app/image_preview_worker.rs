@@ -265,7 +265,11 @@ impl super::App {
         self.image_preview_worker.slot.generation
     }
 
-    pub(super) fn sync_image_preview_worker(&mut self) -> bool {
+    /// Drive the bounded image preview worker one step.
+    ///
+    /// `pub(crate)` rather than `pub(super)`: the headless server schedules this
+    /// too, and `crate::server` is not a descendant of `crate::app`.
+    pub(crate) fn sync_image_preview_worker(&mut self) -> bool {
         if self.state.view.file_manager_miller.resize_preview_active {
             return false;
         }

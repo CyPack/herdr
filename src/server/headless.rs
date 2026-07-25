@@ -997,11 +997,23 @@ impl HeadlessServer {
         }
     }
 
+    /// Publish one resolved host cell size to everything that decodes against
+    /// it: host graphics placement and the file manager's image preview.
+    ///
+    /// These are deliberately written together. They drifted apart once
+    /// already — the image preview kept a cell size of zero in server mode, so
+    /// it derived no decode target and silently showed nothing — and a single
+    /// assignment site is what stops that from recurring.
+    fn publish_host_cell_size(&mut self, cell_size: crate::kitty_graphics::HostCellSize) {
+        self.app.state.host_cell_size = cell_size;
+        self.app.image_preview_cell_size = cell_size;
+    }
+
     fn sync_foreground_client_state(&mut self) {
         let Some(client_id) = self.foreground_client_id else {
             self.effective_size = (MIN_COLS, MIN_ROWS);
             self.app.state.outer_terminal_focus = None;
-            self.app.state.host_cell_size = crate::kitty_graphics::HostCellSize::default();
+            self.publish_host_cell_size(crate::kitty_graphics::HostCellSize::default());
             let server_keybindings = self.server_keybindings.clone();
             apply_keybindings(&mut self.app, &server_keybindings);
             self.sync_visible_server_config_diagnostic(false);
@@ -1011,7 +1023,7 @@ impl HeadlessServer {
             self.foreground_client_id = None;
             self.effective_size = (MIN_COLS, MIN_ROWS);
             self.app.state.outer_terminal_focus = None;
-            self.app.state.host_cell_size = crate::kitty_graphics::HostCellSize::default();
+            self.publish_host_cell_size(crate::kitty_graphics::HostCellSize::default());
             let server_keybindings = self.server_keybindings.clone();
             apply_keybindings(&mut self.app, &server_keybindings);
             self.sync_visible_server_config_diagnostic(false);
@@ -1038,7 +1050,7 @@ impl HeadlessServer {
 
         self.effective_size = terminal_size;
         self.app.state.outer_terminal_focus = outer_terminal_focus;
-        self.app.state.host_cell_size = host_cell_size;
+        self.publish_host_cell_size(host_cell_size);
         apply_keybindings(&mut self.app, &keybindings);
         self.sync_visible_server_config_diagnostic(uses_local_keybindings);
         if outer_terminal_focus == Some(true) {
@@ -3911,6 +3923,10 @@ impl HeadlessServer {
         changed |= self.app.sync_file_manager_io_results();
         changed |= self.app.sync_file_manager_location_request();
         changed |= self.app.sync_file_preview_worker();
+        // The monolithic loop pairs these two (`src/app/mod.rs`): text and
+        // image previews are both bounded workers and neither advances
+        // without being driven.
+        changed |= self.app.sync_image_preview_worker();
         self.app.sync_headless_animation_timer(now);
         changed |= self.app.refresh_projects_if_due(now);
         changed |= self.app.refresh_tab_branches_if_due(now);
@@ -7391,6 +7407,436 @@ next_tab = ""
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    /// Build a directory holding one PNG and open Files on it, with the Trail
+    /// laid out so the detail panel exists.
+    ///
+    /// Returns the directory so the caller can remove it; every image test
+    /// needs the same four steps and they are easy to get subtly wrong.
+    fn headless_server_showing_one_png(
+        server: &mut HeadlessServer,
+        label: &str,
+        frame: ratatui::layout::Rect,
+    ) -> std::path::PathBuf {
+        use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
+
+        let root = std::env::temp_dir().join(format!(
+            "headless-{}-{}-{}",
+            label,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&root).expect("create image fixture directory");
+
+        let rgba = RgbaImage::from_fn(160, 80, |x, y| {
+            Rgba([
+                u8::try_from(x % 256).expect("x channel"),
+                u8::try_from(y % 256).expect("y channel"),
+                0x7f,
+                0xff,
+            ])
+        });
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(rgba)
+            .write_to(&mut encoded, ImageFormat::Png)
+            .expect("encode PNG fixture");
+        fs::write(root.join("sample.png"), encoded.into_inner()).expect("write PNG fixture");
+
+        // `FmState::new` reads the directory and resolves the preview on this
+        // thread, so there is no background IO to wait for here. Calling
+        // `wait_file_manager_io_for_test` instead blocks forever: it is an
+        // unbounded condvar wait for a generation nothing ever enqueues.
+        server
+            .app
+            .state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root)))
+            .expect("open Files on the image fixture");
+        crate::ui::compute_view(&mut server.app.state, frame);
+
+        root
+    }
+
+    fn headless_image_preview_state(server: &HeadlessServer) -> &crate::fm::FmImagePreviewState {
+        match &server
+            .app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open Files state")
+            .preview
+        {
+            crate::fm::FmPreview::File(crate::fm::FmFilePreview::Image(preview)) => &preview.state,
+            other => panic!("expected an image preview, got {other:?}"),
+        }
+    }
+
+    // The headless scheduler must drive the image preview worker.
+    //
+    // This is the root cause of "images never appear in server mode". The cell
+    // size is set by hand here so that this test fails for exactly one reason:
+    // the scheduler does not call the worker. TP-FMR-IMAGE-HL-02 covers the
+    // other half.
+    //
+    // TP-FMR-IMAGE-HL-01
+    #[test]
+    fn headless_scheduler_syncs_the_image_preview_worker() {
+        let frame = ratatui::layout::Rect::new(0, 0, 115, 16);
+        let mut server = test_headless_server();
+        server.app.image_preview_cell_size = crate::kitty_graphics::HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        let root = headless_server_showing_one_png(&mut server, "image-sched", frame);
+
+        assert!(
+            server.handle_scheduled_tasks_headless(Instant::now(), false),
+            "starting the image decode changes what the frame shows"
+        );
+        assert!(
+            matches!(
+                headless_image_preview_state(&server),
+                crate::fm::FmImagePreviewState::Loading { .. }
+            ),
+            "the headless scheduler must reach the image preview worker, \
+             otherwise server-mode previews stay Pending forever; got {:?}",
+            headless_image_preview_state(&server)
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // The server must publish the foreground client's cell size.
+    //
+    // Deliberately separate from TP-FMR-IMAGE-HL-01: a scheduler that runs
+    // against a cell size of zero derives no target and still shows nothing.
+    // If one of these could pass while the other fails silently, the split has
+    // failed.
+    //
+    // TP-FMR-IMAGE-HL-02
+    #[test]
+    fn headless_publishes_foreground_cell_size_to_the_image_preview() {
+        let mut server = test_headless_server();
+        server.app.state.kitty_graphics_enabled = true;
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (115, 16),
+                crate::kitty_graphics::HostCellSize {
+                    width_px: 9,
+                    height_px: 18,
+                },
+                crate::terminal_theme::TerminalTheme::default(),
+                Some(true),
+                1,
+                RenderEncoding::SemanticFrame,
+                None,
+            ),
+        );
+        server.foreground_client_id = Some(1);
+
+        server.sync_foreground_client_state();
+
+        assert_eq!(
+            server.app.image_preview_cell_size,
+            crate::kitty_graphics::HostCellSize {
+                width_px: 9,
+                height_px: 18,
+            },
+            "the image preview decodes against the cell size of the client \
+             actually looking at it, matching host_cell_size rather than \
+             inventing a second policy"
+        );
+        assert_eq!(
+            server.app.image_preview_cell_size, server.app.state.host_cell_size,
+            "one resolved cell size, not two"
+        );
+    }
+
+    /// Build a server whose single foreground app client has a writer and the
+    /// given cell size, with a workspace present so `Mode::Terminal` is real.
+    fn headless_graphics_server(
+        cell_size: crate::kitty_graphics::HostCellSize,
+    ) -> (HeadlessServer, std::sync::mpsc::Receiver<Vec<u8>>) {
+        let mut server = test_headless_server();
+        server.app.state.workspaces = vec![crate::workspace::Workspace::test_new("test")];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+        server.app.state.kitty_graphics_enabled = true;
+
+        let (client_tx, _client_control_rx, client_rx) = test_client_writer();
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (115, 20),
+                cell_size,
+                crate::terminal_theme::TerminalTheme::default(),
+                Some(true),
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(client_tx),
+            ),
+        );
+        server.foreground_client_id = Some(1);
+        server.sync_foreground_client_state();
+
+        (server, client_rx)
+    }
+
+    // End-to-end: the whole chain, from the scheduler driving the decode to
+    // the encoder placing the result in a client frame. TP-FMR-IMAGE-HL-01 and
+    // -02 each prove one link; this proves they are actually connected.
+    //
+    // TP-FMR-IMAGE-HL-03
+    #[test]
+    fn server_frame_carries_fm_image_graphics_when_ready() {
+        let frame_area = ratatui::layout::Rect::new(0, 0, 115, 20);
+        let (mut server, client_rx) =
+            headless_graphics_server(crate::kitty_graphics::HostCellSize {
+                width_px: 8,
+                height_px: 16,
+            });
+        let root = headless_server_showing_one_png(&mut server, "image-e2e", frame_area);
+
+        // Decoding happens on a worker thread, so pump the scheduler until the
+        // pixels land rather than assuming one round is enough.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
+            if matches!(
+                headless_image_preview_state(&server),
+                crate::fm::FmImagePreviewState::Ready { .. }
+            ) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for the server-mode image decode; state {:?}",
+                headless_image_preview_state(&server)
+            );
+            std::thread::yield_now();
+        }
+
+        server.render_and_stream();
+        let frame = read_server_frame(
+            client_rx
+                .recv_timeout(Duration::from_millis(500))
+                .expect("a frame reaches the client"),
+        );
+
+        assert!(
+            !frame.graphics.is_empty(),
+            "a ready file manager image must reach the client as graphics"
+        );
+        assert!(
+            frame.graphics.windows(3).any(|window| window == b"\x1b_G"),
+            "the payload must be a kitty graphics command"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // A client that never reported its cell size gets no graphics and no
+    // panic.
+    //
+    // The fail-safe matters more than it looks: kitty scales to exactly fill
+    // whatever cell box it is given, so guessing a cell size would stretch the
+    // image rather than degrade gracefully. Sending nothing is the honest
+    // outcome.
+    //
+    // TP-FMR-IMAGE-HL-04
+    #[test]
+    fn unknown_cell_size_client_gets_no_graphics_and_no_panic() {
+        let frame_area = ratatui::layout::Rect::new(0, 0, 115, 20);
+        let (mut server, client_rx) =
+            headless_graphics_server(crate::kitty_graphics::HostCellSize::default());
+        let root = headless_server_showing_one_png(&mut server, "image-nocell", frame_area);
+
+        assert_eq!(
+            server.app.image_preview_cell_size,
+            crate::kitty_graphics::HostCellSize::default(),
+            "an unknown client cell size must not be replaced by a guess"
+        );
+
+        for _ in 0..5 {
+            let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
+        }
+        server.render_and_stream();
+
+        let frame = read_server_frame(
+            client_rx
+                .recv_timeout(Duration::from_millis(500))
+                .expect("a frame still reaches the client"),
+        );
+        assert!(
+            frame.graphics.is_empty(),
+            "no cell size means no placement, not a stretched one"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Collect the `sync_*` / `refresh_*` calls a scheduler body makes.
+    ///
+    /// Reads source text rather than instrumenting the call, because the thing
+    /// being guarded is precisely that a call is *absent* — and an absent call
+    /// leaves no runtime trace to observe.
+    fn scheduler_calls(source: &str, signature: &str) -> std::collections::BTreeSet<String> {
+        let start = source
+            .find(signature)
+            .unwrap_or_else(|| panic!("scheduler signature not found: {signature}"));
+        let mut closed = false;
+        let mut statements: Vec<&str> = Vec::new();
+        for line in source[start..].lines().skip(1) {
+            // Both schedulers are methods in an `impl` block, so their body
+            // ends at the first four-space closing brace.
+            if line == "    }" {
+                closed = true;
+                break;
+            }
+            let code = line.split("//").next().unwrap_or("").trim();
+            if !code.is_empty() {
+                statements.push(code);
+            }
+        }
+        assert!(closed, "scheduler body never closed: {signature}");
+
+        // Flatten to one stream and close the gaps around `.`, because
+        // rustfmt wraps long chains: `self.app\n    .refresh_x(...)`. A
+        // line-by-line scan reports those as missing when they are present.
+        let body = statements.join(" ").replace(" .", ".").replace(". ", ".");
+
+        // The monolithic loop calls `self.sync_x()`; the headless one goes
+        // through `self.app.sync_x()`. Both spellings mean the same step, so
+        // both must be recognised — matching only `self.` silently yields an
+        // empty set for the headless side.
+        let mut calls = std::collections::BTreeSet::new();
+        for prefix in ["self.app.", "self."] {
+            let mut rest = body.as_str();
+            while let Some(at) = rest.find(prefix) {
+                let after = &rest[at + prefix.len()..];
+                let end = after
+                    .find(|c: char| !c.is_alphanumeric() && c != '_')
+                    .unwrap_or(after.len());
+                let name = &after[..end];
+                if after[end..].starts_with('(')
+                    && (name.starts_with("sync_") || name.starts_with("refresh_"))
+                {
+                    calls.insert(name.to_string());
+                }
+                rest = after;
+            }
+        }
+        calls
+    }
+
+    // The two schedulers must agree, and every difference must be named.
+    //
+    // The image-preview markers fix one missing call; this makes the whole
+    // class visible. The headless scheduler drifted from the monolithic one
+    // silently, and nothing failed until someone noticed a preview that stayed
+    // blank in server mode.
+    //
+    // Closing a gap makes this test fail until the gap is removed from the
+    // list. That is deliberate: the list must describe the tree, not excuse it.
+    //
+    // TP-SRV-SCHED-PARITY-01
+    #[test]
+    fn scheduler_parity_headless_vs_monolithic() {
+        const MONOLITHIC_SOURCE: &str = include_str!("../app/runtime.rs");
+        const HEADLESS_SOURCE: &str = include_str!("headless.rs");
+
+        // The headless server has no terminal of its own, so its animation
+        // timer is a different function rather than a missing one.
+        const RENAMED: [(&str, &str); 1] =
+            [("sync_animation_timer", "sync_headless_animation_timer")];
+
+        // Calls the headless scheduler still does not make. Each is a real
+        // server-mode gap tracked as its own work item; naming them here keeps
+        // them visible instead of letting them rot unnoticed the way the image
+        // preview did.
+        const KNOWN_HEADLESS_GAPS: [&str; 7] = [
+            "sync_agent_attachment_delivery",
+            "sync_agent_reference_picker",
+            "sync_file_manager_agent_handoff",
+            "sync_file_manager_agent_handoff_send",
+            "sync_file_manager_plugin_action",
+            "sync_file_manager_watcher_at",
+            "sync_file_operation_worker",
+        ];
+
+        let monolithic = scheduler_calls(
+            MONOLITHIC_SOURCE,
+            "pub(crate) fn handle_scheduled_tasks(&mut self",
+        );
+        let headless = scheduler_calls(
+            HEADLESS_SOURCE,
+            "fn handle_scheduled_tasks_headless(&mut self",
+        );
+        assert!(
+            !monolithic.is_empty() && !headless.is_empty(),
+            "call extraction found nothing, so this test would pass vacuously"
+        );
+
+        let mut expected_in_headless: std::collections::BTreeSet<String> = monolithic
+            .iter()
+            .filter(|call| !KNOWN_HEADLESS_GAPS.contains(&call.as_str()))
+            .map(|call| {
+                RENAMED
+                    .iter()
+                    .find(|(from, _)| from == call)
+                    .map_or_else(|| call.clone(), |(_, to)| (*to).to_string())
+            })
+            .collect();
+        // A headless-only call is a difference too, and must be justified the
+        // same way; today there are none beyond the rename.
+        expected_in_headless.extend(
+            headless
+                .iter()
+                .filter(|call| {
+                    RENAMED.iter().any(|(_, to)| *to == call.as_str())
+                        && !monolithic.contains(*call)
+                })
+                .cloned(),
+        );
+
+        let missing: Vec<_> = expected_in_headless.difference(&headless).collect();
+        assert!(
+            missing.is_empty(),
+            "the headless scheduler is missing calls the monolithic loop makes, \
+             and they are not in the named difference list: {missing:?}"
+        );
+
+        let unexpected: Vec<_> = headless.difference(&expected_in_headless).collect();
+        assert!(
+            unexpected.is_empty(),
+            "the headless scheduler makes calls the monolithic loop does not, \
+             which needs a stated reason: {unexpected:?}"
+        );
+
+        let closed: Vec<_> = KNOWN_HEADLESS_GAPS
+            .iter()
+            .filter(|gap| headless.contains(**gap))
+            .collect();
+        assert!(
+            closed.is_empty(),
+            "these gaps are closed — remove them from KNOWN_HEADLESS_GAPS so the \
+             list keeps describing the tree: {closed:?}"
+        );
+
+        let vanished: Vec<_> = KNOWN_HEADLESS_GAPS
+            .iter()
+            .filter(|gap| !monolithic.contains(**gap))
+            .collect();
+        assert!(
+            vanished.is_empty(),
+            "these gaps no longer exist in the monolithic loop either, so the \
+             entry is stale: {vanished:?}"
+        );
     }
 
     #[test]
