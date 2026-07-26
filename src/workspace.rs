@@ -226,12 +226,19 @@ impl Workspace {
     /// display the user never touched would still be dragged onto the tab
     /// another display just opened.
     pub(crate) fn set_viewer(&mut self, viewer: Option<ClientId>) {
+        let previous = self.viewer;
         self.viewer = viewer;
         if let Some(client) = viewer {
             let default_tab = self.default_tab;
             self.active_tab_by_client
                 .entry(client)
                 .or_insert(default_tab);
+        }
+        // Pane focus is per client too, and it lives one level down in each
+        // tab's layout. Two displays on one tab would otherwise steal each
+        // other's focused pane, and a keystroke would land in the wrong one.
+        for tab in &mut self.tabs {
+            tab.layout.swap_focus_viewer(previous, viewer);
         }
     }
 
@@ -241,6 +248,9 @@ impl Workspace {
     /// viewer when a tab negotiates its size.
     pub(crate) fn forget_client(&mut self, client: ClientId) {
         self.active_tab_by_client.remove(&client);
+        for tab in &mut self.tabs {
+            tab.layout.forget_client(client);
+        }
     }
 
     #[cfg(test)]
@@ -1886,6 +1896,73 @@ mod per_client_tab_focus_tests {
         // Reading with no viewer at all resolves the same way.
         workspace.set_viewer(None);
         assert_eq!(workspace.active_tab_index(), 1);
+    }
+
+    // TP-MCF-PANE-01
+    #[test]
+    fn two_clients_on_one_tab_focus_different_panes() {
+        let mut workspace = Workspace::test_new("fixture");
+        let first_pane = workspace.tabs[0].root_pane;
+        let second_pane = workspace.test_split(Direction::Horizontal);
+
+        workspace.set_viewer(Some(1));
+        workspace.tabs[0].layout.focus_pane(first_pane);
+        workspace.set_viewer(Some(2));
+        workspace.tabs[0].layout.focus_pane(second_pane);
+
+        workspace.set_viewer(Some(1));
+        assert_eq!(
+            workspace.tabs[0].layout.focused(),
+            first_pane,
+            "a keystroke from the first display must reach the pane that display focused"
+        );
+        workspace.set_viewer(Some(2));
+        assert_eq!(workspace.tabs[0].layout.focused(), second_pane);
+    }
+
+    // TP-MCF-PANE-02
+    #[test]
+    fn a_client_whose_focused_pane_was_closed_falls_back_instead_of_focusing_nothing() {
+        let mut workspace = Workspace::test_new("fixture");
+        let first_pane = workspace.tabs[0].root_pane;
+        let second_pane = workspace.test_split(Direction::Horizontal);
+
+        workspace.set_viewer(Some(1));
+        workspace.tabs[0].layout.focus_pane(first_pane);
+        workspace.set_viewer(Some(2));
+        workspace.tabs[0].layout.focus_pane(second_pane);
+
+        // The second display closes the pane the first one is focused on.
+        assert!(!workspace.close_pane(first_pane));
+
+        workspace.set_viewer(Some(1));
+        let focused = workspace.tabs[0].layout.focused();
+        assert!(
+            workspace.tabs[0].layout.pane_ids().contains(&focused),
+            "a display must never resolve to a pane that left the tree"
+        );
+    }
+
+    // TP-MCF-PANE-03
+    #[test]
+    fn a_departed_client_leaves_no_pane_focus_behind() {
+        let mut workspace = Workspace::test_new("fixture");
+        let second_pane = workspace.test_split(Direction::Horizontal);
+        workspace.set_viewer(Some(2));
+        workspace.tabs[0].layout.focus_pane(second_pane);
+        workspace.set_viewer(None);
+
+        workspace.forget_client(2);
+        assert!(
+            !workspace.tabs[0].layout.has_client_focus(2),
+            "a departed display must not keep a focused pane in every tab"
+        );
+
+        // Re-attaching under the same id resolves to a pane that exists rather
+        // than inheriting whatever the previous connection left behind.
+        workspace.set_viewer(Some(2));
+        let focused = workspace.tabs[0].layout.focused();
+        assert!(workspace.tabs[0].layout.pane_ids().contains(&focused));
     }
 
     // TP-MCF-TAB-06

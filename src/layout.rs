@@ -83,7 +83,19 @@ pub enum Node {
 /// BSP tiling layout. Tracks a tree of splits and a focused pane.
 pub struct TileLayout {
     root: Node,
+    /// The focused pane for the client currently being served.
+    ///
+    /// This is a resolved register, not storage: the viewer window swaps a
+    /// client's focus in on the way in and saves it back on the way out. It
+    /// stays a plain field because it is read in dozens of places, and every
+    /// one of them means "the pane the display being served has focused".
     focus: PaneId,
+    /// Per-client focused pane. Client-local presentation state, never
+    /// persisted.
+    focus_by_client: std::collections::HashMap<crate::app::state::ClientId, PaneId>,
+    /// The focus a client adopts before it has moved, and the value resolved
+    /// when no client is acting.
+    default_focus: PaneId,
 }
 
 impl TileLayout {
@@ -95,6 +107,8 @@ impl TileLayout {
             Self {
                 root: Node::Pane(root_id),
                 focus: root_id,
+                focus_by_client: std::collections::HashMap::new(),
+                default_focus: root_id,
             },
             root_id,
         )
@@ -188,7 +202,58 @@ impl TileLayout {
     pub fn focus_pane(&mut self, id: PaneId) {
         if self.pane_ids().contains(&id) {
             self.focus = id;
+            self.default_focus = id;
         }
+    }
+
+    /// Swaps the focused pane between two clients' views.
+    ///
+    /// `Workspace::set_viewer` is the only caller. A stored focus is validated
+    /// against the current tree: a display can be looking at a pane another
+    /// display has since closed, and resolving to a pane that no longer exists
+    /// would focus nothing at all.
+    pub(crate) fn swap_focus_viewer(
+        &mut self,
+        previous: Option<crate::app::state::ClientId>,
+        viewer: Option<crate::app::state::ClientId>,
+    ) {
+        match previous {
+            Some(previous) => {
+                self.focus_by_client.insert(previous, self.focus);
+            }
+            None => self.default_focus = self.focus,
+        }
+
+        let panes = self.pane_ids();
+        if !panes.contains(&self.default_focus) {
+            self.default_focus = self.focus;
+        }
+        let default_focus = self.default_focus;
+        let candidate = match viewer {
+            Some(client) => *self.focus_by_client.entry(client).or_insert(default_focus),
+            None => default_focus,
+        };
+        self.focus = if panes.contains(&candidate) {
+            candidate
+        } else {
+            // The display's pane is gone. Fall back rather than focusing a
+            // pane that is not in the tree, and record the fallback so the
+            // stale id cannot come back on the next swap.
+            if let Some(client) = viewer {
+                self.focus_by_client.insert(client, default_focus);
+            }
+            default_focus
+        };
+    }
+
+    /// Drops a departed client's focus.
+    pub(crate) fn forget_client(&mut self, client: crate::app::state::ClientId) {
+        self.focus_by_client.remove(&client);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_client_focus(&self, client: crate::app::state::ClientId) -> bool {
+        self.focus_by_client.contains_key(&client)
     }
 
     /// Swap two pane ids in the layout tree while preserving split shape and
@@ -270,7 +335,14 @@ impl TileLayout {
     /// Reconstruct a layout from a saved tree.
     /// Reconstruct a layout from a saved tree.
     pub fn from_saved(root: Node, focus: PaneId) -> Self {
-        Self { root, focus }
+        // A restored layout has no clients yet, so the saved focus becomes the
+        // one every display adopts as it attaches.
+        Self {
+            root,
+            focus,
+            focus_by_client: std::collections::HashMap::new(),
+            default_focus: focus,
+        }
     }
 }
 
