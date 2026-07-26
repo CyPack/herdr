@@ -3635,9 +3635,64 @@ impl HeadlessServer {
         }
     }
 
+    /// The size each tab is negotiated to, keyed by the client whose render
+    /// pass applies it.
+    ///
+    /// A tab is sized to the smallest display watching it, taken component by
+    /// component, so a tab watched by exactly one display keeps that display's
+    /// full size and only a shared tab has to compromise. Exactly one client
+    /// owns the resize for a tab, so two displays cannot fight over it within
+    /// one frame, and a tab nobody watches is left alone.
+    ///
+    /// Direct terminal attaches are not counted: they render one terminal
+    /// rather than a tab, and their size is owned separately.
+    ///
+    /// TP-MCF-SIZE-01
+    fn negotiated_tab_sizes(&mut self) -> HashMap<u64, (u16, u16)> {
+        let candidates: Vec<(u64, (u16, u16))> = self
+            .clients
+            .iter()
+            .filter(|(_, client)| client.writer.is_some() && client.is_full_app_client())
+            .map(|(&client_id, client)| (client_id, client.terminal_size))
+            .collect();
+
+        // tab index -> (negotiated cols, negotiated rows, owning client)
+        let mut per_tab: HashMap<usize, (u16, u16, u64)> = HashMap::new();
+        for (client_id, (cols, rows)) in candidates {
+            let previous = self.app.state.enter_viewer(Some(client_id));
+            let tab = self
+                .app
+                .state
+                .active
+                .and_then(|idx| self.app.state.workspaces.get(idx))
+                .map(|workspace| workspace.active_tab_index());
+            self.app.state.restore_viewer(previous);
+            let Some(tab) = tab else {
+                continue;
+            };
+
+            per_tab
+                .entry(tab)
+                .and_modify(|(best_cols, best_rows, owner)| {
+                    *best_cols = (*best_cols).min(cols);
+                    *best_rows = (*best_rows).min(rows);
+                    // The lowest id owns the resize so the choice does not
+                    // depend on client iteration order.
+                    *owner = (*owner).min(client_id);
+                })
+                .or_insert((cols, rows, client_id));
+        }
+
+        per_tab
+            .into_values()
+            .map(|(cols, rows, owner)| (owner, (cols, rows)))
+            .collect()
+    }
+
     fn render_and_stream(&mut self) {
         let full_started = crate::render_prof::timer();
         let render_targets = render_targets(&self.clients, self.foreground_client_id);
+        let negotiated_tab_sizes = self.negotiated_tab_sizes();
 
         if render_targets.is_empty() {
             let (cols, rows) = self.effective_size;
@@ -3663,7 +3718,9 @@ impl HeadlessServer {
 
         let mut broken_clients: Vec<u64> = Vec::new();
         let mut deferred_frame = false;
-        for (client_id, (cols, rows), cell_size, is_foreground, mode) in render_targets {
+        // Pane size no longer follows the foreground client: it follows the
+        // set of displays watching each tab. TP-MCF-SIZE-01
+        for (client_id, (cols, rows), cell_size, _is_foreground, mode) in render_targets {
             let area = Rect::new(0, 0, cols, rows);
             let is_app_client = matches!(mode, ClientConnectionMode::App);
             let mut frame = match mode {
@@ -3679,12 +3736,27 @@ impl HeadlessServer {
                         } else {
                             crate::kitty_graphics::HostCellSize::default()
                         };
+                    // Resize this client's tab first when it owns the size,
+                    // then draw at the client's own area without resizing
+                    // again. Splitting the two is what lets a tab be sized to
+                    // the smallest display watching it while every display
+                    // still draws at its own dimensions.
+                    if let Some((resize_cols, resize_rows)) =
+                        negotiated_tab_sizes.get(&client_id).copied()
+                    {
+                        crate::ui::compute_view_with_cell_size(
+                            &mut self.app.state,
+                            &self.app.terminal_runtimes,
+                            Rect::new(0, 0, resize_cols, resize_rows),
+                            render_cell_size,
+                        );
+                    }
                     let (buffer, cursor) =
                         crate::server::render_stream::render_virtual_with_runtime_registry(
                             &mut self.app.state,
                             &self.app.terminal_runtimes,
                             area,
-                            is_foreground,
+                            false,
                             render_cell_size,
                         );
                     crate::render_prof::duration_since(
@@ -8600,10 +8672,6 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
         assert!(!mobile_surface.contains("background"));
 
         let foreground_terminal_area = Rect::new(26, 1, 94, 39);
-        let expected_pane_size = (
-            foreground_terminal_area.height,
-            foreground_terminal_area.width.saturating_sub(1),
-        );
         assert_eq!(
             server.app.state.view.layout,
             crate::app::state::ViewLayout::Desktop
@@ -8613,14 +8681,111 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
             server.app.state.view.terminal_area,
             foreground_terminal_area
         );
-        assert_eq!(
-            server.app.state.workspaces[0].tabs[0].runtimes[&active_pane].current_size(),
-            expected_pane_size
+
+        // Both displays adopted the same tab, so it is sized to the smaller of
+        // them rather than to whichever one is in the foreground. This
+        // replaces the retired contract, where the latest active client drove
+        // one shared size and the other display was letterboxed or clipped
+        // depending on which one had been touched last.
+        //
+        // TP-MCF-SIZE-02
+        let (active_rows, active_cols) =
+            server.app.state.workspaces[0].tabs[0].runtimes[&active_pane].current_size();
+        assert!(
+            active_rows <= 20 && active_cols <= 44,
+            "a tab both displays watch must fit the smaller one, got {active_rows}x{active_cols}"
         );
-        assert_eq!(
+
+        // Nobody is watching the background tab, so it keeps following the
+        // sweep rather than being pinned by an absent viewer.
+        let (background_rows, background_cols) =
             server.app.state.workspaces[0].tabs[background_tab].runtimes[&background_pane]
-                .current_size(),
-            expected_pane_size
+                .current_size();
+        assert!(
+            background_rows > 0 && background_cols > 0,
+            "an unwatched tab still gets a usable size"
+        );
+    }
+
+    // TP-MCF-SIZE-01
+    #[tokio::test]
+    async fn each_display_sizes_the_tab_it_alone_is_watching() {
+        let mut server = test_headless_server();
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        let first_pane = workspace.tabs[0].root_pane;
+        let second_tab = workspace.test_add_tab(Some("second"));
+        let second_pane = workspace.tabs[second_tab].root_pane;
+        workspace.tabs[0].runtimes.insert(
+            first_pane,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"first"),
+        );
+        workspace.tabs[second_tab].runtimes.insert(
+            second_pane,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"second"),
+        );
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+
+        let (wide_tx, _wide_control_rx, _wide_rx) = test_client_writer();
+        let (narrow_tx, _narrow_control_rx, _narrow_rx) = test_client_writer();
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (200, 50),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(wide_tx),
+            ),
+        );
+        server.clients.insert(
+            2,
+            ClientConnection::new(
+                (60, 20),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                2,
+                RenderEncoding::SemanticFrame,
+                Some(narrow_tx),
+            ),
+        );
+        server.foreground_client_id = Some(1);
+
+        // Both displays attach and adopt the tab the session is on. Doing this
+        // before the switch matters: a display takes its own tab the first
+        // time it is seen, so moving one of them beforehand would hand the
+        // other the same tab through the default.
+        server.render_and_stream();
+
+        // Now put the narrow display on its own tab. Each tab is watched by
+        // exactly one display, which is the case that must cost nothing.
+        let previous = server.app.state.enter_viewer(Some(2));
+        server.app.state.workspaces[0].set_active_tab(second_tab);
+        server.app.state.restore_viewer(previous);
+
+        server.render_and_stream();
+
+        let (wide_rows, wide_cols) =
+            server.app.state.workspaces[0].tabs[0].runtimes[&first_pane].current_size();
+        let (narrow_rows, narrow_cols) =
+            server.app.state.workspaces[0].tabs[second_tab].runtimes[&second_pane].current_size();
+
+        assert!(
+            wide_cols > 60,
+            "the tab only the wide display watches keeps the wide width, got {wide_cols}"
+        );
+        assert!(
+            wide_rows > 20,
+            "the tab only the wide display watches keeps the wide height, got {wide_rows}"
+        );
+        assert!(
+            narrow_cols <= 60 && narrow_rows <= 20,
+            "the tab only the narrow display watches fits the narrow display, got {narrow_rows}x{narrow_cols}"
         );
     }
 

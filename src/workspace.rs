@@ -253,6 +253,20 @@ impl Workspace {
         self.default_tab
     }
 
+    /// Whether any client is looking at `tab_idx`.
+    ///
+    /// A watched tab is sized by its own viewer's render pass, so another
+    /// display's background sweep has to leave it alone. Without this the last
+    /// render in a frame would resize every tab to its own display, and two
+    /// displays on different tabs would each undo the other.
+    ///
+    /// TP-MCF-SIZE-01
+    pub(crate) fn tab_is_watched(&self, tab_idx: usize) -> bool {
+        self.active_tab_by_client
+            .values()
+            .any(|index| *index == tab_idx)
+    }
+
     /// Finds the tab that owns `root_pane`, falling back to `fallback`.
     fn index_of_root_pane(&self, root_pane: Option<PaneId>, fallback: usize) -> usize {
         root_pane

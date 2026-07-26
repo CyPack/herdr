@@ -221,6 +221,12 @@ fn resize_background_tab_panes_to_area(
             if app.active == Some(ws_idx) && tab_idx == ws.active_tab_index() {
                 continue;
             }
+            // Another display is watching this tab, so its own render pass
+            // owns the size. Sweeping it here would make the last render in
+            // the frame resize every tab to its own display. TP-MCF-SIZE-01
+            if ws.tab_is_watched(tab_idx) {
+                continue;
+            }
             resize_tab_surface(app, terminal_runtimes, tab, terminal_area, cell_size);
         }
     }
@@ -236,6 +242,12 @@ fn resize_background_tab_panes_for_desktop(
         let (_, terminal_area) = desktop_tab_bar_and_terminal_area(app, ws, main_area);
         for (tab_idx, tab) in ws.tabs.iter().enumerate() {
             if app.active == Some(ws_idx) && tab_idx == ws.active_tab_index() {
+                continue;
+            }
+            // Another display is watching this tab, so its own render pass
+            // owns the size. Sweeping it here would make the last render in
+            // the frame resize every tab to its own display. TP-MCF-SIZE-01
+            if ws.tab_is_watched(tab_idx) {
                 continue;
             }
             resize_tab_surface(app, terminal_runtimes, tab, terminal_area, cell_size);
