@@ -65,6 +65,33 @@ impl App {
 
     /// Persist the Projects-tab default agent picked in the new-chat selector
     /// so later plain "+" clicks (and restarts) keep using it.
+    /// Persist the send picker's pinned devices.
+    ///
+    /// Written as a TOML array of the tailnet DNS names, in the reader's order.
+    /// The config file is the right home rather than session state: a pin is a
+    /// standing preference that should survive a session being discarded.
+    pub(super) fn save_tailscale_pinned_devices(&mut self, pinned: &[String]) {
+        let quoted = pinned
+            .iter()
+            // A tailnet name cannot contain a quote or a backslash, but the
+            // value is written into a config file the user also edits by hand,
+            // and building TOML by concatenation without escaping is how a
+            // config file stops parsing.
+            .map(|target| format!("\"{}\"", target.replace('\\', "\\\\").replace('"', "\\\"")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if self.update_config_file("tailscale pinned devices", |content| {
+            crate::config::upsert_section_value(
+                content,
+                "tailscale",
+                "pinned_devices",
+                &format!("[{quoted}]"),
+            )
+        }) {
+            self.apply_config_from_disk(false);
+        }
+    }
+
     pub(super) fn save_default_chat_agent(&mut self, agent: &str) {
         if self.update_config_file("default chat agent", |content| {
             crate::config::upsert_section_value(

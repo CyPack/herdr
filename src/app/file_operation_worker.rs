@@ -589,12 +589,13 @@ impl crate::app::App {
     /// Consume C3's revalidated C4 intents and reconcile one worker terminal
     /// result. C5 context actions remain queued for their owning module
     /// instead of being silently discarded.
-    pub(super) fn sync_file_operation_worker(&mut self) -> bool {
+    pub(crate) fn sync_file_operation_worker(&mut self) -> bool {
         let mut changed = self.consume_file_manager_delete_request();
         changed |= self.consume_file_manager_rename_request();
         changed |= self.consume_file_manager_bulk_rename_request();
         changed |= self.consume_file_manager_context_open();
         changed |= self.consume_file_manager_context_enlarge();
+        changed |= self.consume_file_manager_context_send_tailscale();
         changed |= self.consume_file_manager_context_rename();
         changed |= self.consume_file_manager_context_delete();
         changed |= self.consume_file_manager_context_copy();
@@ -1071,6 +1072,30 @@ impl crate::app::App {
         if selection_matches {
             let _ = crate::app::input::open_preview_viewer(&mut self.state);
         }
+        true
+    }
+
+    /// Open the Taildrop picker on the selection the menu named.
+    ///
+    /// Unlike Enlarge, the paths come from the intent and are not re-read from
+    /// the current selection: several files can be sent at once, and the
+    /// picker's own copy is what the send will use. Re-deriving it here would
+    /// let the two disagree.
+    fn consume_file_manager_context_send_tailscale(&mut self) -> bool {
+        use crate::app::state::FileManagerContextMenuAction;
+
+        let is_send = self
+            .state
+            .request_file_manager_context_action
+            .as_ref()
+            .is_some_and(|intent| intent.action == FileManagerContextMenuAction::SendTailscale);
+        if !is_send {
+            return false;
+        }
+        let Some(intent) = self.state.request_file_manager_context_action.take() else {
+            return false;
+        };
+        let _ = crate::app::input::open_tailscale_send(&mut self.state, intent.paths);
         true
     }
 
@@ -2195,6 +2220,37 @@ mod tests {
                 .as_ref()
                 .map(|viewer| viewer.source_path.clone()),
             Some(path)
+        );
+    }
+
+    // TP-FSEND-TS-17: choosing Send with Tailscale opens the picker on the
+    // exact files the menu named. This is the seam the user actually reported
+    // as broken — the entry existed and nothing appeared — and every layer
+    // beside it was green, so the check belongs on the seam itself.
+    //
+    // Deliberately says nothing about the device list: whether a tailnet
+    // answers is a property of the machine running the test, while opening the
+    // picker is a property of herdr. A failed lookup still opens it, carrying
+    // the reason.
+    #[test]
+    fn context_send_tailscale_opens_the_picker_on_the_named_files() {
+        let (mut app, td) =
+            app_with_selected_file("context-tailscale", "report.pdf", b"%PDF-1.7\n");
+        let path = td.root.join("report.pdf");
+        app.state.request_file_manager_context_action = Some(FileManagerContextActionIntent {
+            action: FileManagerContextMenuAction::SendTailscale,
+            paths: vec![path.clone()],
+        });
+
+        assert!(app.sync_file_operation_worker());
+        assert!(app.state.request_file_manager_context_action.is_none());
+        assert_eq!(app.state.mode, crate::app::state::Mode::TailscaleSend);
+        let picker = app.state.tailscale_send.as_ref().expect("picker is open");
+        assert_eq!(picker.paths, vec![path]);
+        // Either devices or a reason, never a silent empty box.
+        assert!(
+            !picker.devices.is_empty() || picker.status.is_some(),
+            "an empty picker must say why"
         );
     }
 

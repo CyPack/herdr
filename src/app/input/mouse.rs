@@ -27,6 +27,8 @@ use super::{
 
 pub(super) enum MouseAction {
     AgentReferencePickerActivate,
+    /// A device row in the Taildrop picker was clicked: highlight it and send.
+    TailscaleSendActivate,
     NewWorkspace,
     Settings(SettingsAction),
     FocusWorkspace {
@@ -222,6 +224,44 @@ impl AppState {
                     });
                 if !inside_popup {
                     self.close_agent_reference_picker();
+                }
+            }
+            return None;
+        }
+
+        // The Taildrop picker is a topmost blocking overlay, and follows the
+        // reference picker beside it: a row click highlights that machine and
+        // sends to it, a click outside the box closes without sending, and
+        // every other gesture is consumed rather than reaching the file manager
+        // underneath.
+        //
+        // One deliberate difference: a click selects *and* sends, matching the
+        // Enter key. Selecting on the first click and sending on a second would
+        // make the two paths disagree, and the row highlight already says which
+        // machine the click landed on.
+        if self.mode == Mode::TailscaleSend {
+            if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                let area = self.view.terminal_area;
+                let count = self
+                    .tailscale_send
+                    .as_ref()
+                    .map_or(0, |picker| picker.devices.len());
+                if let Some(index) = crate::ui::device_row_at(area, count, mouse.column, mouse.row)
+                {
+                    if let Some(picker) = self.tailscale_send.as_mut() {
+                        picker.selected = index;
+                    }
+                    return Some(MouseAction::TailscaleSendActivate);
+                }
+                let inside =
+                    crate::ui::tailscale_send_popup_rect(area, count).is_some_and(|popup| {
+                        mouse.column >= popup.x
+                            && mouse.column < popup.right()
+                            && mouse.row >= popup.y
+                            && mouse.row < popup.bottom()
+                    });
+                if !inside {
+                    let _ = super::file_manager::close_tailscale_send(self);
                 }
             }
             return None;

@@ -2639,6 +2639,10 @@ mod tests {
                 "Delete".to_string(),
                 "Compress".to_string(),
                 "Add Reference to Agent...".to_string(),
+                // Ends with an ellipsis for the same reason as the entry above
+                // it: both open something that asks a question rather than
+                // acting on the click.
+                "Send with Tailscale...".to_string(),
             ]
         );
 

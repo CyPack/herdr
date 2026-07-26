@@ -142,6 +142,7 @@ impl AppState {
             | Mode::KeybindHelp
             | Mode::Navigator
             | Mode::PreviewViewer
+            | Mode::TailscaleSend
             | Mode::AgentReferencePicker => true,
         }
     }
@@ -179,6 +180,12 @@ impl AppState {
             // surface-hiding overlay would suppress the placement pass and the
             // viewer would open onto an empty frame.
             | Mode::PreviewViewer
+            // Drawn as its own centred box over the file manager, like the
+            // delete confirmation beside it. The rule for this match is
+            // mechanical — it follows what the overlay actually paints, not
+            // what would be convenient — and an anchored box does not replace
+            // the surface.
+            | Mode::TailscaleSend
             | Mode::ConfirmFileDelete => false,
             Mode::Onboarding
             | Mode::ReleaseNotes

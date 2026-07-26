@@ -632,6 +632,8 @@ impl App {
             file_manager_clipboard: Vec::new(),
             file_icon_profile: crate::fm::entry_kind::IconProfile::Nerd,
             preview_viewer: None,
+            tailscale_pinned_devices: config.tailscale.pinned_devices.clone(),
+            tailscale_send: None,
             file_manager_operation: None,
             file_manager_delete_confirmation: None,
             file_manager_rename: None,
@@ -2026,6 +2028,11 @@ impl App {
             }
             Mode::PreviewViewer => {
                 input::handle_preview_viewer_key(&mut self.state, key_event);
+            }
+            Mode::TailscaleSend => {
+                if let Some(pinned) = input::handle_tailscale_send_key(&mut self.state, key_event) {
+                    self.save_tailscale_pinned_devices(&pinned);
+                }
             }
             Mode::AttachFile => {
                 self.route_agent_attachment_picker_key(key_event);

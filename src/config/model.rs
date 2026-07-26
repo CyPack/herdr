@@ -365,6 +365,18 @@ pub struct Config {
     pub remote: RemoteConfig,
     pub projects: ProjectsConfig,
     pub preview: PreviewConfig,
+    pub tailscale: TailscaleConfig,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct TailscaleConfig {
+    /// Devices the user put at the top of the send picker, in their order.
+    ///
+    /// Stored as the tailnet DNS name rather than the host name, because host
+    /// names repeat and a pin has to name one machine. Order is the reader's:
+    /// the first entry sorts above the second.
+    pub pinned_devices: Vec<String>,
 }
 
 /// `[preview]` — how the wired browser preview places itself when a chat tab

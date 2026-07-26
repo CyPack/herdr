@@ -51,7 +51,10 @@ mod sidebar;
 mod terminal;
 
 pub(crate) use self::{
-    file_manager::{handle_preview_viewer_key, open_preview_viewer},
+    file_manager::{
+        handle_preview_viewer_key, handle_tailscale_send_key, open_preview_viewer,
+        open_tailscale_send,
+    },
     modal::{
         handle_global_menu_key, handle_keybind_help_key, handle_navigator_key,
         insert_keybind_help_query_text, insert_navigator_search_text, insert_rename_input_text,
@@ -292,6 +295,11 @@ impl App {
                 }
                 Mode::PreviewViewer => {
                     handle_preview_viewer_key(&mut self.state, key_event);
+                }
+                Mode::TailscaleSend => {
+                    if let Some(pinned) = handle_tailscale_send_key(&mut self.state, key_event) {
+                        self.save_tailscale_pinned_devices(&pinned);
+                    }
                 }
                 Mode::Terminal => unreachable!(),
                 Mode::AttachFile => unreachable!(),
@@ -717,6 +725,9 @@ impl App {
                     MouseAction::ConfirmCloseAccept => self.confirm_close_accept_via_api(),
                     MouseAction::AgentReferencePickerActivate => {
                         let _ = self.activate_agent_reference_picker_selection();
+                    }
+                    MouseAction::TailscaleSendActivate => {
+                        let _ = file_manager::send_to_selected_device(&mut self.state);
                     }
                     MouseAction::ContextMenu { menu, idx } => {
                         self.apply_context_menu_action_via_api(menu, idx)

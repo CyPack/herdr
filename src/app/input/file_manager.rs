@@ -340,6 +340,215 @@ pub(crate) fn open_preview_viewer(state: &mut AppState) -> bool {
     true
 }
 
+/// Queue the editor action for the file whose text preview was clicked.
+///
+/// The click produces the SAME plugin intent the context menu's "Edit in New
+/// Tab" row produces, so both travel one dispatch seam and cannot drift. Only
+/// a text preview answers: a picture click already enlarges, and a workbook
+/// already has its own editor action.
+///
+/// When several installed actions match the extension, the lowest qualified id
+/// wins — the same deterministic order the context menu lists them in, so the
+/// click opens what the menu shows first.
+pub(crate) fn queue_text_preview_editor(state: &mut AppState) -> bool {
+    let Some(file_manager) = state.file_manager.as_ref() else {
+        return false;
+    };
+    let crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(preview)) = &file_manager.preview
+    else {
+        return false;
+    };
+    let path = preview.source_path.clone();
+
+    let actions = crate::app::api::plugins::file_manifest_actions(&state.installed_plugins);
+    let paths = [path.clone()];
+    // `file_manifest_actions` answers sorted by qualified id, so the first
+    // match here is the first entry the context menu would show.
+    let Some(action) = actions.iter().find(|action| {
+        action
+            .contexts
+            .contains(&crate::api::schema::PluginActionContext::File)
+            && action.matches_paths(&paths)
+    }) else {
+        // No editor for this type: swallow the click. Nothing happening is
+        // honest; queuing an intent nothing can run fails out of sight.
+        return false;
+    };
+
+    state.request_file_manager_context_action =
+        Some(crate::app::state::FileManagerContextActionIntent {
+            action: crate::app::state::FileManagerContextMenuAction::Plugin {
+                plugin_id: action.plugin_id.clone(),
+                action_id: action.action_id.clone(),
+            },
+            paths: vec![path],
+        });
+    true
+}
+
+/// Open the Taildrop destination picker on `paths`.
+///
+/// The device list is read here, once, rather than while the picker is up: the
+/// tailnet does not change between opening a menu and choosing from it, and a
+/// list that reshuffled underneath the highlight would move the selection out
+/// from under the reader mid-press.
+///
+/// A failed read still opens the picker, carrying the reason. Refusing to open
+/// would leave the menu entry doing nothing at all, which reads as herdr being
+/// broken rather than tailscale being unavailable.
+pub(crate) fn open_tailscale_send(state: &mut AppState, paths: Vec<std::path::PathBuf>) -> bool {
+    let loaded = crate::tailscale::load_devices();
+    open_tailscale_send_with(state, paths, loaded)
+}
+
+/// The half of [`open_tailscale_send`] that does not touch the tailnet.
+///
+/// Split so the picker's state and drawing can be tested against a device list
+/// the test chose. Running `tailscale` inside a test would make the result
+/// depend on the machine it runs on, which is exactly the kind of test that
+/// passes everywhere except where it matters.
+pub(crate) fn open_tailscale_send_with(
+    state: &mut AppState,
+    paths: Vec<std::path::PathBuf>,
+    loaded: Result<Vec<crate::tailscale::TailscaleDevice>, String>,
+) -> bool {
+    if paths.is_empty() {
+        return false;
+    }
+    let pinned = state.tailscale_pinned_devices.clone();
+    let loaded = loaded.map(|mut devices| {
+        crate::tailscale::sort_devices(&mut devices, &pinned);
+        devices
+    });
+    let (devices, status) = match loaded {
+        Ok(devices) if devices.is_empty() => (
+            Vec::new(),
+            // An empty tailnet and a failed read look the same on screen unless
+            // one of them says so.
+            Some("  no other devices on this tailnet".to_owned()),
+        ),
+        Ok(devices) => (devices, None),
+        Err(reason) => (Vec::new(), Some(format!("  {reason}"))),
+    };
+    state.tailscale_send = Some(crate::app::state::TailscaleSendState {
+        paths,
+        devices,
+        selected: 0,
+        status,
+        sending: false,
+        sent_targets: Vec::new(),
+    });
+    state.enter_overlay_mode(Mode::TailscaleSend);
+    true
+}
+
+/// Close the picker and hand focus back to whoever had it.
+pub(crate) fn close_tailscale_send(state: &mut AppState) -> bool {
+    if state.tailscale_send.take().is_none() {
+        return false;
+    }
+    super::leave_modal(state);
+    true
+}
+
+/// Send to the highlighted device, reporting the outcome on the status line.
+///
+/// The picker stays open afterwards on purpose. Closing on success would take
+/// the confirmation away with it, and the reader would be left without the one
+/// piece of information they were waiting for.
+pub(crate) fn send_to_selected_device(state: &mut AppState) -> bool {
+    let Some(picker) = state.tailscale_send.as_mut() else {
+        return false;
+    };
+    if picker.sending {
+        return false;
+    }
+    let Some(device) = picker.selected_device().cloned() else {
+        return false;
+    };
+
+    picker.sending = true;
+    let paths = picker.paths.clone();
+    let outcome = crate::tailscale::send(&paths, &device.target);
+    let Some(picker) = state.tailscale_send.as_mut() else {
+        return false;
+    };
+    picker.sending = false;
+    // Only a success earns the row its mark. A failed send marked ✓ is worse
+    // than no mark: it tells the reader to stop trying exactly when they
+    // should try again.
+    if outcome.is_ok() && !picker.sent_targets.contains(&device.target) {
+        picker.sent_targets.push(device.target.clone());
+    }
+    picker.status = Some(format!(
+        "  {}",
+        crate::tailscale::send_outcome(&paths, &device.label, outcome.err().as_deref())
+    ));
+    true
+}
+
+/// Handle one key while the picker is open.
+///
+/// Everything unrecognised is swallowed: this is a blocking overlay, and a key
+/// that fell through to the file manager underneath would move a selection the
+/// reader cannot see.
+/// Returns the new pin list when this key changed it, so the caller — which
+/// owns config writing — can persist it. Returning it rather than writing here
+/// keeps this function testable without a config file.
+pub(crate) fn handle_tailscale_send_key(
+    state: &mut AppState,
+    key: KeyEvent,
+) -> Option<Vec<String>> {
+    match (key.code, key.modifiers) {
+        (KeyCode::Esc | KeyCode::Char('q'), KeyModifiers::NONE) => {
+            let _ = close_tailscale_send(state);
+        }
+        (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
+            if let Some(picker) = state.tailscale_send.as_mut() {
+                let _ = picker.move_selection(true);
+            }
+        }
+        (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) => {
+            if let Some(picker) = state.tailscale_send.as_mut() {
+                let _ = picker.move_selection(false);
+            }
+        }
+        (KeyCode::Enter, KeyModifiers::NONE) => {
+            let _ = send_to_selected_device(state);
+        }
+        (KeyCode::Char('p'), KeyModifiers::NONE) => {
+            return toggle_pin_on_selected_device(state);
+        }
+        _ => {}
+    }
+    None
+}
+
+/// Pin or unpin the highlighted machine, and follow it to its new row.
+///
+/// The highlight moves with the device rather than staying on the row index:
+/// pinning sends the machine to the top, and a highlight left behind would sit
+/// on a different machine than the one the reader just acted on — with `Enter`
+/// one keystroke away.
+///
+/// Returns the new pin list when it changed, so the caller can persist it.
+/// Writing the config file is not done here: this function is the decision and
+/// stays testable without touching disk.
+pub(crate) fn toggle_pin_on_selected_device(state: &mut AppState) -> Option<Vec<String>> {
+    let picker = state.tailscale_send.as_mut()?;
+    let device = picker.selected_device()?.clone();
+    let pinned = crate::tailscale::toggle_pin(&state.tailscale_pinned_devices, &device.target);
+
+    crate::tailscale::sort_devices(&mut picker.devices, &pinned);
+    picker.selected = picker
+        .devices
+        .iter()
+        .position(|candidate| candidate.target == device.target)
+        .unwrap_or(0);
+    state.tailscale_pinned_devices = pinned.clone();
+    Some(pinned)
+}
+
 /// Close the viewer and hand focus back to whoever had it.
 pub(crate) fn close_preview_viewer(state: &mut AppState) -> bool {
     if state.preview_viewer.take().is_none() {
@@ -1400,6 +1609,22 @@ impl App {
             if crate::kitty_graphics::file_manager_raster_content_area(&self.state)
                 .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
                 && open_preview_viewer(&mut self.state)
+            {
+                return FileManagerMouseDispatch::Consumed;
+            }
+            // Clicking a text preview opens the file in the editor tab — the
+            // panel counterpart of the picture click above. Queued as the same
+            // plugin intent the context menu emits; consumed only when it
+            // actually queued, so a click on a preview with no editor still
+            // falls through to the resize capture below.
+            if self
+                .state
+                .view
+                .file_manager_trail
+                .detail_panel
+                .as_ref()
+                .is_some_and(|panel| rect_contains(panel.content_rect, mouse.column, mouse.row))
+                && queue_text_preview_editor(&mut self.state)
             {
                 return FileManagerMouseDispatch::Consumed;
             }
@@ -4693,6 +4918,130 @@ mod tests {
                 "column {column} must not be a page-turn target"
             );
         }
+    }
+
+    // TP-FEDIT-01: clicking a text preview opens the file in the editor tab.
+    // The preview is where the reader's eyes already are; a picture click
+    // enlarges, and a text click answering with nothing makes the two panels
+    // feel like different programs. The click queues the SAME plugin intent
+    // the context menu's "Edit in New Tab" produces, so one dispatch seam
+    // serves both paths.
+    #[test]
+    fn clicking_a_text_preview_queues_the_editor_action() {
+        let td = TempDir::new("text-preview-edit");
+        let source_path = td.root.join("notes.md");
+        fs::write(&source_path, b"# baslik\n").expect("write fixture");
+        let mut file_manager = FmState::new(&td.root);
+        file_manager.preview_generation = 1;
+        file_manager.preview =
+            crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(crate::fm::TextPreview {
+                source_path: source_path.clone(),
+                content: "# baslik\n".to_owned(),
+                truncated: false,
+                highlighted: None,
+            }));
+        file_manager.sync_trail_bridge_for_test();
+
+        let plugin_td = TempDir::new("text-preview-edit-manifest");
+        let manifest = plugin_td.root.join("herdr-plugin.toml");
+        fs::write(
+            &manifest,
+            r#"
+id = "example.edit"
+name = "Example Edit"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+
+[[actions]]
+id = "edit"
+title = "Edit in New Tab"
+contexts = ["file"]
+file_extensions = ["md", "txt"]
+command = ["edit"]
+"#,
+        )
+        .expect("write plugin manifest");
+        let plugin =
+            crate::app::api::plugins::load_plugin_manifest(&manifest.display().to_string(), true)
+                .expect("valid plugin manifest");
+
+        let mut app = super::super::app_for_mouse_test();
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+        app.state
+            .installed_plugins
+            .insert(plugin.plugin_id.clone(), plugin);
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 120, 30));
+        let content = app
+            .state
+            .view
+            .file_manager_trail
+            .detail_panel
+            .as_ref()
+            .expect("detail panel")
+            .content_rect;
+
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            content.x + 2,
+            content.y + 1,
+        ));
+        let intent = app
+            .state
+            .request_file_manager_context_action
+            .as_ref()
+            .expect("a text preview click queues the editor intent");
+        assert_eq!(
+            intent.action,
+            FileManagerContextMenuAction::Plugin {
+                plugin_id: "example.edit".into(),
+                action_id: "edit".into(),
+            }
+        );
+        assert_eq!(intent.paths, vec![source_path]);
+    }
+
+    // TP-FEDIT-02: a text preview with no matching plugin action swallows the
+    // click rather than queuing an intent that cannot run. Nothing happening
+    // is honest; an intent for an absent editor fails somewhere the reader
+    // cannot see.
+    #[test]
+    fn clicking_a_text_preview_without_an_editor_queues_nothing() {
+        let td = TempDir::new("text-preview-noedit");
+        let source_path = td.root.join("notes.md");
+        fs::write(&source_path, b"# baslik\n").expect("write fixture");
+        let mut file_manager = FmState::new(&td.root);
+        file_manager.preview_generation = 1;
+        file_manager.preview =
+            crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(crate::fm::TextPreview {
+                source_path,
+                content: "# baslik\n".to_owned(),
+                truncated: false,
+                highlighted: None,
+            }));
+        file_manager.sync_trail_bridge_for_test();
+
+        let mut app = super::super::app_for_mouse_test();
+        app.state
+            .try_open_file_manager_with(|_| Some(file_manager))
+            .expect("Files activation");
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 120, 30));
+        let content = app
+            .state
+            .view
+            .file_manager_trail
+            .detail_panel
+            .as_ref()
+            .expect("detail panel")
+            .content_rect;
+
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            content.x + 2,
+            content.y + 1,
+        ));
+        assert!(app.state.request_file_manager_context_action.is_none());
     }
 
     fn trail_row_by_path(app: &crate::app::App, path: &std::path::Path) -> crate::ui::TrailRowView {
@@ -9972,7 +10321,7 @@ mod tests {
                 assert!(popup.x >= screen.x && popup.y >= screen.y);
                 assert!(popup.right() <= screen.right());
                 assert!(popup.bottom() <= screen.bottom());
-                assert_eq!(popup.height, 9, "seven complete rows plus borders");
+                assert_eq!(popup.height, 10, "eight complete rows plus borders");
 
                 app.state.context_menu = None;
                 app.state.mode = Mode::Terminal;
@@ -10075,6 +10424,99 @@ mod tests {
             panic!("expected file menu")
         };
         assert_eq!(model.paths, vec![expected]);
+    }
+
+    // TP-FSEND-TS-23: the WHOLE reported path — right-click opens the menu,
+    // Enter on "Send with Tailscale..." emits the intent, and the worker tick
+    // opens the picker. The layers were each green in isolation while the user
+    // saw the menu close and nothing appear, so the only honest test is the
+    // uncut journey.
+    #[test]
+    fn menu_enter_on_send_with_tailscale_opens_the_picker() {
+        let td = TempDir::new("file-context-tailscale-full");
+        td.file("photo.png");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let row = trail_row_by_path(&app, &td.root.join("photo.png"));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            row.name_rect.x,
+            row.name_rect.y,
+        ));
+        let menu = app.state.context_menu.as_ref().expect("file menu");
+        let ContextMenuKind::File { model } = &menu.kind else {
+            panic!("expected file menu")
+        };
+        let send_idx = model
+            .items
+            .iter()
+            .position(|item| item.action == FileManagerContextMenuAction::SendTailscale)
+            .expect("Send with Tailscale is in the menu");
+        assert!(
+            model.items[send_idx].enabled,
+            "a plain file must be sendable: {:?}",
+            model.items[send_idx]
+        );
+
+        for _ in 0..send_idx {
+            app.route_client_input(b"\x1b[B".to_vec());
+        }
+        app.route_client_input(b"\r".to_vec());
+        assert!(
+            app.state.request_file_manager_context_action.is_some(),
+            "the menu row must emit an intent"
+        );
+
+        assert!(app.sync_file_operation_worker());
+        assert_eq!(app.state.mode, Mode::TailscaleSend, "the picker must open");
+        assert_eq!(
+            app.state
+                .tailscale_send
+                .as_ref()
+                .expect("picker state")
+                .paths,
+            vec![td.root.join("photo.png")]
+        );
+    }
+
+    // TP-FSEND-TS-24: the same journey by mouse — the click the user actually
+    // made. Keyboard and mouse take different routes to the same dispatch, and
+    // only the keyboard route was covered.
+    #[test]
+    fn menu_click_on_send_with_tailscale_opens_the_picker() {
+        let td = TempDir::new("file-context-tailscale-click");
+        td.file("photo.png");
+        let mut app = runtime_app_with_fm(FmState::new(&td.root));
+        let row = trail_row_by_path(&app, &td.root.join("photo.png"));
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            row.name_rect.x,
+            row.name_rect.y,
+        ));
+        let menu = app.state.context_menu.as_ref().expect("file menu");
+        let ContextMenuKind::File { model } = &menu.kind else {
+            panic!("expected file menu")
+        };
+        let send_idx = model
+            .items
+            .iter()
+            .position(|item| item.action == FileManagerContextMenuAction::SendTailscale)
+            .expect("Send with Tailscale is in the menu");
+
+        // The same geometry the hit test uses: one border cell in, one row per
+        // item.
+        let popup = app.state.context_menu_rect().expect("menu rect");
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            popup.x + 1,
+            popup.y + 1 + send_idx as u16,
+        ));
+        assert!(
+            app.state.request_file_manager_context_action.is_some(),
+            "the clicked row must emit an intent"
+        );
+
+        assert!(app.sync_file_operation_worker());
+        assert_eq!(app.state.mode, Mode::TailscaleSend, "the picker must open");
     }
 
     // TP-C3.2-POPUP-LIFECYCLE: ContextMenu keyboard routing owns focus even
@@ -10180,17 +10622,21 @@ command = ["inspect"]
         let ContextMenuKind::File { model } = &menu.kind else {
             panic!("expected file menu")
         };
-        assert_eq!(model.items.len(), 8);
-        assert_eq!(model.items[7].label, "Inspect file");
+        // Eight built-ins, then the plugin entry last. Both the count and the
+        // number of Down presses moved when Send with Tailscale joined the
+        // built-ins; what is being asserted — that the plugin entry is last and
+        // keyboard-reachable — is unchanged.
+        assert_eq!(model.items.len(), 9);
+        assert_eq!(model.items[8].label, "Inspect file");
         assert_eq!(
-            model.items[7].action,
+            model.items[8].action,
             FileManagerContextMenuAction::Plugin {
                 plugin_id: "example.files".into(),
                 action_id: "inspect".into(),
             }
         );
 
-        for _ in 0..7 {
+        for _ in 0..8 {
             app.route_client_input(b"\x1b[B".to_vec());
         }
         app.route_client_input(b"\r".to_vec());
@@ -10221,7 +10667,10 @@ command = ["inspect"]
             .get_mut("example.files")
             .expect("installed plugin")
             .enabled = false;
-        for _ in 0..7 {
+        // Same shift as above: the plugin entry now sits one row further down.
+        // Stopping at seven would land on Send with Tailscale and this test
+        // would pass for the wrong reason.
+        for _ in 0..8 {
             app.route_client_input(b"\x1b[B".to_vec());
         }
         app.route_client_input(b"\r".to_vec());

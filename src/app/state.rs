@@ -987,6 +987,12 @@ pub enum FileManagerContextMenuAction {
     Delete,
     Compress,
     SendAgent,
+    /// Hand the selection to another machine on the tailnet.
+    ///
+    /// Built in rather than left to a plugin because the destination has to be
+    /// chosen, and a plugin action has nowhere to ask: it runs headless and
+    /// cannot put a picker on the screen.
+    SendTailscale,
     Plugin {
         plugin_id: String,
         action_id: String,
@@ -994,7 +1000,7 @@ pub enum FileManagerContextMenuAction {
 }
 
 impl FileManagerContextMenuAction {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Open,
         Self::Enlarge,
         Self::Copy,
@@ -1002,6 +1008,7 @@ impl FileManagerContextMenuAction {
         Self::Delete,
         Self::Compress,
         Self::SendAgent,
+        Self::SendTailscale,
     ];
 
     pub fn label(&self) -> &str {
@@ -1013,6 +1020,7 @@ impl FileManagerContextMenuAction {
             Self::Delete => "Delete",
             Self::Compress => "Compress",
             Self::SendAgent => "Add Reference to Agent...",
+            Self::SendTailscale => "Send with Tailscale...",
             Self::Plugin { action_id, .. } => action_id,
         }
     }
@@ -1133,6 +1141,24 @@ impl FileManagerContextMenuModel {
                             ),
                         FileManagerContextMenuAction::Compress => {
                             Some(FileManagerActionDisabledReason::UnsupportedAction)
+                        }
+                        // Taildrop takes files. A folder is offered but
+                        // disabled rather than hidden: the entry is the answer
+                        // to "can I send this?", and a menu that silently drops
+                        // it leaves the reader unsure whether the feature
+                        // exists at all. Several files at once are fine —
+                        // `tailscale file cp` takes a list.
+                        FileManagerContextMenuAction::SendTailscale => {
+                            if selection.paths.is_empty()
+                                || matches!(
+                                    target_kind,
+                                    FileManagerContextMenuTargetKind::Directory
+                                )
+                            {
+                                Some(FileManagerActionDisabledReason::UnsupportedSelection)
+                            } else {
+                                copy_reason
+                            }
                         }
                         FileManagerContextMenuAction::Plugin { .. } => {
                             Some(FileManagerActionDisabledReason::UnsupportedSelection)
@@ -1559,6 +1585,62 @@ pub struct PreviewViewerState {
     pub source_path: std::path::PathBuf,
 }
 
+/// The device picker for sending the selection over Taildrop.
+///
+/// The selection is copied in when the picker opens rather than read back from
+/// the file manager on send. The two can drift: a directory refresh, or the
+/// reader moving the cursor with the picker up, would otherwise send a
+/// different file from the one the menu was opened on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TailscaleSendState {
+    pub paths: Vec<std::path::PathBuf>,
+    /// Empty when the tailnet has no other machines, or when loading failed —
+    /// `status` says which.
+    pub devices: Vec<crate::tailscale::TailscaleDevice>,
+    pub selected: usize,
+    /// The one line under the list: what went wrong, or what was sent where.
+    /// `None` before anything has happened.
+    pub status: Option<String>,
+    /// True while a send is running. Kept so a second Enter cannot start a
+    /// second send on top of the first.
+    pub sending: bool,
+    /// Devices this picker has successfully sent to, by target name.
+    ///
+    /// Drawn as a mark on the row. The status line alone was not enough: it
+    /// names the last outcome, and a reader who is not sure whether the press
+    /// registered presses again — the same file went out several times before
+    /// this field existed.
+    pub sent_targets: Vec<String>,
+}
+
+impl TailscaleSendState {
+    /// Move the highlight, stopping at the ends rather than wrapping.
+    ///
+    /// Wrapping in a destination list is a hazard: holding Down past the last
+    /// device silently lands back on the first, and the reader presses Enter on
+    /// a machine they did not mean to pick.
+    pub fn move_selection(&mut self, forward: bool) -> bool {
+        if self.devices.is_empty() {
+            return false;
+        }
+        let last = self.devices.len() - 1;
+        let next = if forward {
+            self.selected.saturating_add(1).min(last)
+        } else {
+            self.selected.saturating_sub(1)
+        };
+        if next == self.selected {
+            return false;
+        }
+        self.selected = next;
+        true
+    }
+
+    pub fn selected_device(&self) -> Option<&crate::tailscale::TailscaleDevice> {
+        self.devices.get(self.selected)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Onboarding,
@@ -1586,6 +1668,7 @@ pub enum Mode {
     Navigator,
     AgentReferencePicker,
     PreviewViewer,
+    TailscaleSend,
 }
 
 impl Mode {
@@ -2309,6 +2392,17 @@ pub struct AppState {
     /// enlarging is a bigger decode rather than an upscale of the panel-sized
     /// one.
     pub preview_viewer: Option<PreviewViewerState>,
+    /// Devices the user pinned to the top of the send picker, in their order.
+    ///
+    /// Held on the state rather than read from config at open time so the
+    /// picker and the file that persists it cannot disagree mid-session.
+    pub tailscale_pinned_devices: Vec<String>,
+    /// The Taildrop destination picker, while it is open.
+    ///
+    /// Client presentation: the tailnet is not herdr's session state, and the
+    /// picker holds only what it needs to ask the question and report the
+    /// answer.
+    pub tailscale_send: Option<TailscaleSendState>,
     /// Exact native-FM identities awaiting an explicit destructive choice.
     /// Opening or rendering this modal never performs filesystem work.
     pub file_manager_delete_confirmation: Option<FileManagerDeleteConfirmation>,
@@ -2820,6 +2914,8 @@ impl AppState {
             file_manager_clipboard: Vec::new(),
             file_icon_profile: crate::fm::entry_kind::IconProfile::Nerd,
             preview_viewer: None,
+            tailscale_pinned_devices: Vec::new(),
+            tailscale_send: None,
             file_manager_operation: None,
             file_manager_delete_confirmation: None,
             file_manager_rename: None,
@@ -4074,6 +4170,18 @@ mod tests {
                             && item.disabled_reason
                                 == Some(FileManagerActionDisabledReason::UnsupportedSelection)
                     }
+                    // Taildrop takes files, so the directory half of this
+                    // fixture must find the entry present and disabled while
+                    // the file half finds it usable.
+                    FileManagerContextMenuAction::SendTailscale => {
+                        if matches!(expected_kind, FileManagerContextMenuTargetKind::Directory) {
+                            !item.enabled
+                                && item.disabled_reason
+                                    == Some(FileManagerActionDisabledReason::UnsupportedSelection)
+                        } else {
+                            item.enabled
+                        }
+                    }
                     _ => item.enabled,
                 }
             }));
@@ -4106,6 +4214,7 @@ mod tests {
                 FileManagerContextMenuAction::Delete,
                 FileManagerContextMenuAction::Compress,
                 FileManagerContextMenuAction::SendAgent,
+                FileManagerContextMenuAction::SendTailscale,
             ]
         );
         assert_eq!(
@@ -4122,12 +4231,16 @@ mod tests {
                 "Delete",
                 "Compress",
                 "Add Reference to Agent...",
+                "Send with Tailscale...",
             ]
         );
         for action in [
             FileManagerContextMenuAction::Open,
             FileManagerContextMenuAction::Copy,
             FileManagerContextMenuAction::SendAgent,
+            // A readable file can always be sent; the read-only target in this
+            // fixture blocks only the actions that write into the directory.
+            FileManagerContextMenuAction::SendTailscale,
         ] {
             assert!(file_context_item(&model, action).enabled);
         }
@@ -4266,6 +4379,7 @@ mod tests {
                 "Delete",
                 "Compress",
                 "Add Reference to Agent...",
+                "Send with Tailscale...",
             ]
         );
     }
@@ -4508,9 +4622,12 @@ mod tests {
                 .expect("file context model");
 
         assert_eq!(model.paths, paths);
-        assert_eq!(model.items.len(), 9);
+        // Eight built-in entries, then the plugin ones. The index moved when
+        // Send with Tailscale joined the built-ins; the shape being asserted —
+        // plugins come last, in sorted order — is unchanged.
+        assert_eq!(model.items.len(), 10);
         assert_eq!(
-            model.items[7..]
+            model.items[8..]
                 .iter()
                 .map(|item| item.label.as_str())
                 .collect::<Vec<_>>(),
@@ -4520,11 +4637,11 @@ mod tests {
             plugin_id: "alpha.files".into(),
             action_id: "inspect".into(),
         };
-        assert_eq!(model.items[7].action, plugin_action);
-        assert!(model.items[7].enabled);
+        assert_eq!(model.items[8].action, plugin_action);
+        assert!(model.items[8].enabled);
 
         let intent = FileManagerContextActionIntent {
-            action: model.items[7].action.clone(),
+            action: model.items[8].action.clone(),
             paths: model.paths.clone(),
         };
         let params = intent

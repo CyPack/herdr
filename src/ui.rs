@@ -25,6 +25,7 @@ mod status;
 pub(crate) mod surface_host;
 mod tab_surface;
 mod tabs;
+mod tailscale_send;
 mod text;
 #[cfg(test)]
 pub(crate) mod visual_fixture;
@@ -99,6 +100,9 @@ pub(crate) use self::tab_surface::{
     compute_tab_surface, render_tab_surface, resize_tab_surface, TabSurfaceLayout,
 };
 use self::tabs::render_tab_bar;
+pub(crate) use self::tailscale_send::{
+    device_row_at, render_tailscale_send, tailscale_send_popup_rect,
+};
 pub(crate) use self::text::display_width_u16;
 pub(crate) use self::{
     dialogs::{
@@ -923,6 +927,7 @@ impl compose::Component for OverlayLayer {
             Mode::Settings => render_settings_overlay(app, frame, frame.area()),
             Mode::AgentReferencePicker => render_agent_reference_picker(app, frame),
             Mode::PreviewViewer => render_preview_viewer(app, frame, frame.area()),
+            Mode::TailscaleSend => render_tailscale_send(app, frame, terminal_area),
             Mode::RenameWorkspace | Mode::RenameTab | Mode::RenamePane | Mode::RenameFile => {
                 render_rename_overlay(app, frame, frame.area())
             }
