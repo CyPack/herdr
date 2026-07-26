@@ -256,6 +256,18 @@ pub struct HeadlessServer {
     next_client_id: u64,
     /// The client currently driving the shared pane runtime size, theme, and input keybindings.
     foreground_client_id: Option<u64>,
+    /// Which client the shared `view` currently describes, and at what size.
+    ///
+    /// Hit geometry has to belong to the client whose pointer event is being
+    /// routed, but recomputing it per event would put a layout pass on the
+    /// serial input loop for every pointer motion. Tracking the owner makes
+    /// the recompute happen only when the geometry actually belongs to
+    /// someone else.
+    view_owner: Option<(u64, (u16, u16))>,
+    /// Counts geometry recomputes driven by pointer input, so a test can pin
+    /// that the skip actually skips.
+    #[cfg(test)]
+    view_recomputes_for_input: usize,
     /// Server-owned keybindings, restored when foreground clients use server mode.
     server_keybindings: crate::config::LiveKeybindConfig,
     /// Full server config warning shown to clients that use server keybindings.
@@ -452,6 +464,9 @@ impl HeadlessServer {
             #[cfg(unix)]
             next_client_id: 1,
             foreground_client_id: None,
+            view_owner: None,
+            #[cfg(test)]
+            view_recomputes_for_input: 0,
             server_keybindings,
             server_config_diagnostic,
             server_config_diagnostic_without_keybindings,
@@ -2654,19 +2669,33 @@ impl HeadlessServer {
             .iter()
             .any(|event| matches!(event, crate::raw_input::RawInputEvent::Mouse(_)))
         {
-            if let Some((cols, rows)) = self
+            if let Some(size) = self
                 .clients
                 .get(&client_id)
                 .filter(|client| client.is_full_app_client())
                 .map(|client| client.terminal_size)
             {
-                let previous_viewer = self.app.state.enter_viewer(Some(client_id));
-                crate::ui::compute_view_without_resizing_panes(
-                    &mut self.app.state,
-                    &self.app.terminal_runtimes,
-                    Rect::new(0, 0, cols, rows),
-                );
-                self.app.state.restore_viewer(previous_viewer);
+                // Only when the geometry belongs to someone else. A pointer
+                // burst from one display recomputes once and then rides the
+                // ownership, and the foreground display -- whose geometry the
+                // last frame already left in place -- never pays at all.
+                // Without this the serial input loop carries a layout pass per
+                // pointer motion, which is the cost the inert-motion render
+                // gate was added to avoid.
+                if self.view_owner != Some((client_id, size)) {
+                    let previous_viewer = self.app.state.enter_viewer(Some(client_id));
+                    crate::ui::compute_view_without_resizing_panes(
+                        &mut self.app.state,
+                        &self.app.terminal_runtimes,
+                        Rect::new(0, 0, size.0, size.1),
+                    );
+                    self.app.state.restore_viewer(previous_viewer);
+                    self.view_owner = Some((client_id, size));
+                    #[cfg(test)]
+                    {
+                        self.view_recomputes_for_input += 1;
+                    }
+                }
             }
         }
         let render_requested = self.app.route_client_events_from(client_id, events, false);
@@ -3770,24 +3799,33 @@ impl HeadlessServer {
                     // again. Splitting the two is what lets a tab be sized to
                     // the smallest display watching it while every display
                     // still draws at its own dimensions.
-                    if let Some((resize_cols, resize_rows)) =
-                        negotiated_tab_sizes.get(&client_id).copied()
-                    {
-                        crate::ui::compute_view_with_cell_size(
-                            &mut self.app.state,
-                            &self.app.terminal_runtimes,
-                            Rect::new(0, 0, resize_cols, resize_rows),
-                            render_cell_size,
-                        );
+                    let negotiated = negotiated_tab_sizes.get(&client_id).copied();
+                    // A tab only this display is watching negotiates to this
+                    // display's own size, so the resize can happen inside the
+                    // render pass exactly as it always did. The separate pass
+                    // is only for a shared tab, where the negotiated size is
+                    // not the size being drawn -- that is the one case herdr
+                    // cannot express with a single area.
+                    let resize_while_rendering = negotiated == Some((cols, rows));
+                    if let Some((resize_cols, resize_rows)) = negotiated {
+                        if !resize_while_rendering {
+                            crate::ui::compute_view_with_cell_size(
+                                &mut self.app.state,
+                                &self.app.terminal_runtimes,
+                                Rect::new(0, 0, resize_cols, resize_rows),
+                                render_cell_size,
+                            );
+                        }
                     }
                     let (buffer, cursor) =
                         crate::server::render_stream::render_virtual_with_runtime_registry(
                             &mut self.app.state,
                             &self.app.terminal_runtimes,
                             area,
-                            false,
+                            resize_while_rendering,
                             render_cell_size,
                         );
+                    self.view_owner = Some((client_id, (cols, rows)));
                     crate::render_prof::duration_since(
                         "full_render.render_virtual",
                         render_started,
@@ -4685,6 +4723,9 @@ mod tests {
             #[cfg(unix)]
             next_client_id: 1,
             foreground_client_id: None,
+            view_owner: None,
+            #[cfg(test)]
+            view_recomputes_for_input: 0,
             server_keybindings,
             server_config_diagnostic: None,
             server_config_diagnostic_without_keybindings: None,
@@ -8733,6 +8774,80 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
         assert!(
             background_rows > 0 && background_cols > 0,
             "an unwatched tab still gets a usable size"
+        );
+    }
+
+    fn pointer_move(column: u16, row: u16) -> crate::raw_input::RawInputEvent {
+        crate::raw_input::RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Moved,
+            column,
+            row,
+            modifiers: crossterm::event::KeyModifiers::empty(),
+        })
+    }
+
+    /// Correct hit geometry must not cost a layout pass per pointer motion.
+    /// The input loop is serial, so that cost lands directly on input latency
+    /// — which is what the inert-motion render gate exists to avoid.
+    ///
+    /// TP-MCF-VIEW-02
+    #[tokio::test]
+    async fn a_pointer_burst_recomputes_geometry_once_and_the_foreground_never_pays() {
+        let mut server = test_headless_server();
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        workspace.test_add_tab(Some("second"));
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+
+        let (wide_tx, _wide_control_rx, _wide_rx) = test_client_writer();
+        let (narrow_tx, _narrow_control_rx, _narrow_rx) = test_client_writer();
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (200, 50),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(wide_tx),
+            ),
+        );
+        server.clients.insert(
+            2,
+            ClientConnection::new(
+                (60, 20),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                2,
+                RenderEncoding::SemanticFrame,
+                Some(narrow_tx),
+            ),
+        );
+        server.foreground_client_id = Some(1);
+        server.render_and_stream();
+
+        // The frame leaves the geometry with the display that drew last, which
+        // is the foreground one. Its own pointer motion needs no recompute.
+        server.view_recomputes_for_input = 0;
+        for step in 0..8 {
+            server.handle_client_input_events(1, vec![pointer_move(step + 1, 1)]);
+        }
+        assert_eq!(
+            server.view_recomputes_for_input, 0,
+            "the foreground display's pointer motion must be free"
+        );
+
+        // Another display pays once for the burst, not once per motion.
+        for step in 0..8 {
+            server.handle_client_input_events(2, vec![pointer_move(step + 1, 1)]);
+        }
+        assert_eq!(
+            server.view_recomputes_for_input, 1,
+            "a pointer burst from one display recomputes once and then rides the ownership"
         );
     }
 
