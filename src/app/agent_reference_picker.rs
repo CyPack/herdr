@@ -250,7 +250,7 @@ impl crate::app::App {
     /// re-derived from the current workspace/pane/terminal bindings, bounded
     /// `O(rows)`. A vanished pane renders disabled instead of silently
     /// working; identities and ordering never change after open.
-    pub(super) fn sync_agent_reference_picker(&mut self) -> bool {
+    pub(crate) fn sync_agent_reference_picker(&mut self) -> bool {
         let Some(picker) = self.state.agent_reference_picker.take() else {
             return false;
         };

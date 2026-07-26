@@ -3920,9 +3920,23 @@ impl HeadlessServer {
     fn handle_scheduled_tasks_headless(&mut self, now: Instant, geometry_dirty: bool) -> bool {
         let mut changed = false;
 
+        // Same set, same order as the monolithic loop (`App::handle_scheduled_
+        // tasks`); the parity test compares the two by name. These are the
+        // consumers of queued user intents — context-menu actions, agent
+        // handoffs, the reference picker — and skipping any of them in server
+        // mode means a menu entry that closes the menu and then silently does
+        // nothing, which is exactly how the missing file-operation sync was
+        // found: "Send with Tailscale" queued its intent and no one ever read
+        // it.
+        changed |= self.app.sync_file_operation_worker();
+        changed |= self.app.sync_file_manager_agent_handoff();
+        changed |= self.app.sync_file_manager_agent_handoff_send();
+        changed |= self.app.sync_agent_attachment_delivery();
+        changed |= self.app.sync_agent_reference_picker();
         changed |= self.app.sync_file_manager_plugin_action();
         changed |= self.app.sync_file_manager_io_results();
         changed |= self.app.sync_file_manager_location_request();
+        changed |= self.app.sync_file_manager_watcher_at(now);
         changed |= self.app.sync_file_preview_worker();
         // The monolithic loop pairs these two (`src/app/mod.rs`): text and
         // image previews are both bounded workers and neither advances
@@ -7510,6 +7524,61 @@ next_tab = ""
         let _ = fs::remove_dir_all(root);
     }
 
+    // The headless scheduler must consume queued context-menu intents.
+    //
+    // The failure this reproduces was reported from live use: right-click →
+    // "Send with Tailscale" in server mode closed the menu and nothing
+    // appeared. The menu had queued the intent correctly; the headless
+    // scheduler simply never called `sync_file_operation_worker`, so no queued
+    // context action — this one, Enlarge, delete, copy — ever ran in server
+    // mode. The monolithic twin of this journey passed the whole time, which
+    // is why the seam gets its own headless test.
+    //
+    // TP-FSEND-TS-25
+    #[test]
+    fn headless_scheduler_consumes_context_menu_intents() {
+        let frame = ratatui::layout::Rect::new(0, 0, 115, 16);
+        let mut server = test_headless_server();
+        let root = headless_server_showing_one_png(&mut server, "tailscale-sched", frame);
+
+        let path = root.join("sample.png");
+        server.app.state.request_file_manager_context_action =
+            Some(crate::app::state::FileManagerContextActionIntent {
+                action: crate::app::state::FileManagerContextMenuAction::SendTailscale,
+                paths: vec![path.clone()],
+            });
+
+        assert!(
+            server.handle_scheduled_tasks_headless(Instant::now(), false),
+            "consuming the intent changes what the frame shows"
+        );
+        assert!(
+            server
+                .app
+                .state
+                .request_file_manager_context_action
+                .is_none(),
+            "the intent must be consumed, not left queued forever"
+        );
+        assert_eq!(
+            server.app.state.mode,
+            crate::app::state::Mode::TailscaleSend,
+            "the picker must open in server mode exactly as it does monolithic"
+        );
+        assert_eq!(
+            server
+                .app
+                .state
+                .tailscale_send
+                .as_ref()
+                .expect("picker state")
+                .paths,
+            vec![path]
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     // The server must publish the foreground client's cell size.
     //
     // Deliberately separate from TP-FMR-IMAGE-HL-01: a scheduler that runs
@@ -8096,18 +8165,12 @@ next_tab = ""
         const RENAMED: [(&str, &str); 1] =
             [("sync_animation_timer", "sync_headless_animation_timer")];
 
-        // Calls the headless scheduler still does not make. Each is a real
-        // server-mode gap tracked as its own work item; naming them here keeps
-        // them visible instead of letting them rot unnoticed the way the image
-        // preview did.
-        const KNOWN_HEADLESS_GAPS: [&str; 6] = [
-            "sync_agent_attachment_delivery",
-            "sync_agent_reference_picker",
-            "sync_file_manager_agent_handoff",
-            "sync_file_manager_agent_handoff_send",
-            "sync_file_manager_watcher_at",
-            "sync_file_operation_worker",
-        ];
+        // Calls the headless scheduler still does not make. Emptied on
+        // 2026-07-26: the six named gaps stopped being theoretical when a user
+        // right-clicked "Send with Tailscale" in server mode and nothing
+        // happened — the menu queued the intent and no scheduler call ever
+        // consumed it. Every intent-consuming sync now runs in both loops.
+        const KNOWN_HEADLESS_GAPS: [&str; 0] = [];
 
         let monolithic = scheduler_calls(
             MONOLITHIC_SOURCE,

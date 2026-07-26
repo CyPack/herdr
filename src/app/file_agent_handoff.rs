@@ -67,7 +67,7 @@ impl crate::app::App {
         self.open_agent_reference_picker(paths)
     }
 
-    pub(super) fn sync_file_manager_agent_handoff(&mut self) -> bool {
+    pub(crate) fn sync_file_manager_agent_handoff(&mut self) -> bool {
         let is_send_agent = self
             .state
             .request_file_manager_context_action
@@ -101,7 +101,7 @@ impl crate::app::App {
         })
     }
 
-    pub(super) fn sync_file_manager_agent_handoff_send(&mut self) -> bool {
+    pub(crate) fn sync_file_manager_agent_handoff_send(&mut self) -> bool {
         let Some(request) = self.state.request_file_manager_agent_handoff.take() else {
             return false;
         };
@@ -141,7 +141,7 @@ impl crate::app::App {
         true
     }
 
-    pub(super) fn sync_agent_attachment_delivery(&mut self) -> bool {
+    pub(crate) fn sync_agent_attachment_delivery(&mut self) -> bool {
         let Some(request) = self.state.request_agent_attachment_delivery.take() else {
             return false;
         };
