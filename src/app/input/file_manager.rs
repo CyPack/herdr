@@ -628,9 +628,10 @@ pub(super) fn handle_file_manager_key(
         return FileManagerKeyDispatch::CancelOperation;
     }
     match (key.code, key.modifiers) {
-        // Esc and q no longer close the file manager (TP-A3.7 retired on
-        // explicit request: pressing Esc to close an editor popup was landing
-        // here a beat later and silently killing the whole surface). Esc
+        // Esc and q no longer close the file manager (the older close-on-esc
+        // contract was retired on explicit request: pressing Esc to close an
+        // editor popup was landing here a beat later and silently killing the
+        // whole surface — see TP-A3.8 in behaviors/). Esc
         // keeps a local job — dropping the explicit multi-selection — and q
         // is swallowed so it cannot fall through to anything destructive.
         // The surface closes from the tab/sidebar, never from a stray key.
@@ -5024,6 +5025,79 @@ command = ["edit"]
         assert_eq!(intent.paths, vec![source_path]);
     }
 
+    // TP-FEDIT-03: a PDF page is a preview like any other. Clicking it answers
+    // with the plugin viewer when one claims `pdf` — the same popup a picture
+    // and a workbook get — and only falls back to the built-in enlarge overlay
+    // when nothing matches. Without this the one file type herdr renders as
+    // pixels AND paginates was the one type the click could not open.
+    #[test]
+    fn clicking_a_pdf_preview_queues_the_viewer_action() {
+        let (mut app, _fixture, indicator) = runtime_app_with_pdf_preview(4, 10);
+
+        let plugin_td = TempDir::new("pdf-preview-view-manifest");
+        let manifest = plugin_td.root.join("herdr-plugin.toml");
+        fs::write(
+            &manifest,
+            r#"
+id = "example.view"
+name = "Example View"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+
+[[actions]]
+id = "a-view-here"
+title = "View Here"
+contexts = ["file"]
+file_extensions = ["pdf", "png"]
+command = ["view"]
+"#,
+        )
+        .expect("write plugin manifest");
+        let plugin =
+            crate::app::api::plugins::load_plugin_manifest(&manifest.display().to_string(), true)
+                .expect("valid plugin manifest");
+        app.state
+            .installed_plugins
+            .insert(plugin.plugin_id.clone(), plugin);
+
+        let content = crate::kitty_graphics::file_manager_raster_content_area(&app.state)
+            .expect("raster content area");
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            content.x,
+            content.y,
+        ));
+
+        let intent = app
+            .state
+            .request_file_manager_context_action
+            .as_ref()
+            .expect("a pdf preview click queues the viewer intent");
+        assert_eq!(
+            intent.action,
+            FileManagerContextMenuAction::Plugin {
+                plugin_id: "example.view".into(),
+                action_id: "a-view-here".into(),
+            }
+        );
+        assert!(
+            app.state.preview_viewer.is_none(),
+            "the plugin popup answers instead of the built-in overlay"
+        );
+
+        // The arrows keep their meaning: a page turn is not a request to open
+        // the document somewhere else.
+        app.state.request_file_manager_context_action = None;
+        let next = indicator.next.expect("next arrow mid-document");
+        app.handle_file_manager_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            next.x,
+            next.y,
+        ));
+        assert!(app.state.request_file_manager_context_action.is_none());
+        assert_eq!(previewed_pdf_page(&app.state), 5);
+    }
+
     // TP-FEDIT-02: a text preview with no matching plugin action swallows the
     // click rather than queuing an intent that cannot run. Nothing happening
     // is honest; an intent for an absent editor fails somewhere the reader
@@ -5591,9 +5665,9 @@ command = ["edit"]
         assert_eq!(restored.preview_generation, before.preview_generation + 2);
     }
 
-    // TP-A3.8: Esc and q must NOT close the file manager. The old contract
-    // (TP-A3.7) made Esc close the surface, so the Esc that closed an editor
-    // popup could land here a beat later and silently kill the file manager.
+    // TP-A3.8: Esc and q must NOT close the file manager. The retired contract
+    // made Esc close the surface, so the Esc that closed an editor popup could
+    // land here a beat later and silently kill the file manager.
     // Esc keeps a local job — clearing the explicit multi-selection.
     #[test]
     fn esc_and_q_do_not_close() {

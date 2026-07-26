@@ -354,6 +354,8 @@ pass and the viewer would open onto an empty frame.
 | TP-FVIEW-09 | Resizing while the viewer is open produces a new decode target. | The classic graphics bug: a picture left placed against geometry that no longer exists. | `resizing_while_the_viewer_is_open_retargets_the_picture` |
 | TP-FVIEW-10 | Closing restores the panel's decode target exactly. | The file manager keeps decoding at full-frame size for a panel-sized hole. | `closing_the_viewer_returns_the_target_to_the_panel` |
 | TP-FVIEW-11 | Clicking the picture enlarges it; the indicator's arrows still turn pages. | The arrows sit inside the same rect, so without the ordering they would open the viewer instead of turning the page. | `clicking_the_picture_opens_the_viewer_but_the_arrows_still_turn_pages` |
+| TP-FEDIT-03 | A PDF preview click queues the plugin viewer action, exactly as text, workbook and picture previews do; the page arrows keep their meaning. | The one file type herdr both rasterises and paginates is the one type the preview click cannot open. | `clicking_a_pdf_preview_queues_the_viewer_action` |
+| TP-FPOPUP-01 | A popup pane's pictures are placed (pane layer and terminal kitty images alike), inside the popup's own frame; while a popup is up it OWNS the picture layer and the surface underneath places nothing. | The popup is not a member of the tab surface, so a `herdr view` opened over the file manager shows its page counter and no page — and the preview underneath paints straight across the popup. | `a_popup_pane_owns_the_picture_layer_over_the_file_manager` |
 
 ## Visual snapshots
 

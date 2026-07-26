@@ -460,7 +460,15 @@ pub(crate) fn encode_local_pane_graphics(
     // Stage ownership, not "is the file manager open anywhere". An open Files
     // tab the user has switched away from must not claim the placement pass and
     // leave the visible terminal without its images.
-    let placements = if files_on_stage {
+    // A popup pane floats over whatever is on the stage and covers the panel it
+    // was opened from, so while it is up it owns the picture layer — the same
+    // ownership the input and render paths already give it. Placing the surface
+    // underneath as well would paint that image across the popup.
+    let placements = if let Some(popup) =
+        collect_popup_pane_placements(app, terminal_runtimes, cell_size, &uploaded_images, true)
+    {
+        popup
+    } else if files_on_stage {
         collect_file_manager_image_placement(app, cell_size, &uploaded_images)
             .into_iter()
             .collect()
@@ -518,6 +526,16 @@ pub(crate) fn has_visible_pane_graphics(
         .is_none()
     {
         return false;
+    }
+
+    // While a popup is up it owns the picture layer, so it alone decides
+    // whether anything is on screen — matching the placement pass exactly.
+    if let Some(popup) =
+        collect_popup_pane_placements(app, terminal_runtimes, cell_size, &HashMap::new(), false)
+    {
+        return popup
+            .iter()
+            .any(|placement| clipped_placement(placement).is_some());
     }
 
     for info in surface.pane_infos {
@@ -803,6 +821,70 @@ fn active_view_key(app: &AppState) -> Option<HostViewKey> {
     })
 }
 
+/// Pictures drawn by the popup pane, when one is up.
+///
+/// The popup floats above everything and is not a member of the tab surface,
+/// so the pane loop below never sees it. Without this a `herdr view` — or any
+/// program drawing with the kitty protocol — inside a popup showed its text
+/// and nothing else: the file it was opened on was the one thing missing.
+///
+/// `None` means no popup, which is different from a popup that happens to be
+/// drawing nothing: while one is up it OWNS the picture layer, and the
+/// surface underneath must place nothing, or that image would paint straight
+/// across the popup it is supposed to be behind.
+fn collect_popup_pane_placements(
+    app: &AppState,
+    terminal_runtimes: &TerminalRuntimeRegistry,
+    cell_size: HostCellSize,
+    uploaded_images: &HashMap<u32, ImageSignature>,
+    include_data: bool,
+) -> Option<Vec<HostPlacement>> {
+    let popup = app.popup_pane.as_ref()?;
+    // The same geometry the popup is drawn with, from the same helper, so the
+    // picture cannot land anywhere other than inside its frame.
+    let (_outer, inner) = crate::ui::popup_pane_rects(app, app.view.terminal_area)?;
+    let mut placements = Vec::new();
+    if let Some(layer) = app.pane_graphics_layers.get(&popup.pane_id) {
+        placements.push(pane_graphics_host_placement_at(
+            popup.pane_id,
+            inner,
+            cell_size,
+            layer,
+            uploaded_images,
+            include_data,
+        ));
+    }
+    let Some(runtime) = terminal_runtimes.get(&popup.terminal_id) else {
+        return Some(placements);
+    };
+    let scrollback_offset = runtime
+        .scroll_metrics()
+        .map(|m| m.offset_from_bottom as u32)
+        .unwrap_or(0);
+    for placement in runtime.kitty_image_placements_with_data_filter(|descriptor| {
+        if !include_data {
+            return false;
+        }
+        let format_code = kitty_format_code(descriptor.format);
+        let signature = image_signature_from_descriptor(descriptor, format_code);
+        let host_id = host_image_id_for_signature(popup.pane_id, signature);
+        uploaded_images.get(&host_id).copied() != Some(signature)
+    }) {
+        placements.push(HostPlacement {
+            pane_id: popup.pane_id,
+            area: inner,
+            cell_size,
+            source_key: HostSourceKey::Terminal {
+                pane_id: popup.pane_id,
+                image_id: placement.image_id,
+            },
+            placement,
+            scrollback_offset,
+        });
+    }
+    Some(placements)
+}
+
 fn collect_visible_placements(
     app: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
@@ -889,6 +971,29 @@ fn pane_graphics_host_placement(
     uploaded_images: &HashMap<u32, ImageSignature>,
     include_data: bool,
 ) -> HostPlacement {
+    pane_graphics_host_placement_at(
+        info.id,
+        info.inner_rect,
+        cell_size,
+        layer,
+        uploaded_images,
+        include_data,
+    )
+}
+
+/// The pane-layer placement for one pane identified by id and rect.
+///
+/// Split out from [`pane_graphics_host_placement`] because the popup pane is
+/// not a member of the tab surface — it has no `PaneInfo` — yet it draws into
+/// a rect and owns pictures exactly like any other pane.
+fn pane_graphics_host_placement_at(
+    pane_id: PaneId,
+    inner_rect: Rect,
+    cell_size: HostCellSize,
+    layer: &crate::app::state::PaneGraphicsLayer,
+    uploaded_images: &HashMap<u32, ImageSignature>,
+    include_data: bool,
+) -> HostPlacement {
     let format = pane_graphics_kitty_format(layer.format);
     let format_code = kitty_format_code(format);
     let signature = ImageSignature {
@@ -898,7 +1003,7 @@ fn pane_graphics_host_placement(
         data_len: layer.data.len(),
         data_fingerprint: layer.data_fingerprint,
     };
-    let host_id = pane_graphics_host_image_id(info.id, signature);
+    let host_id = pane_graphics_host_image_id(pane_id, signature);
     let data = if !include_data || uploaded_images.get(&host_id).copied() == Some(signature) {
         Vec::new()
     } else {
@@ -906,21 +1011,21 @@ fn pane_graphics_host_placement(
     };
     let render = layer.render;
     let grid_cols = if render.grid_cols == 0 {
-        u32::from(info.inner_rect.width)
+        u32::from(inner_rect.width)
     } else {
         render.grid_cols
     };
     let grid_rows = if render.grid_rows == 0 {
-        u32::from(info.inner_rect.height)
+        u32::from(inner_rect.height)
     } else {
         render.grid_rows
     };
 
     HostPlacement {
-        pane_id: info.id,
-        area: info.inner_rect,
+        pane_id,
+        area: inner_rect,
         cell_size,
-        source_key: HostSourceKey::PaneLayer { pane_id: info.id },
+        source_key: HostSourceKey::PaneLayer { pane_id },
         scrollback_offset: 0,
         placement: KittyImagePlacement {
             image_id: 1,
@@ -2085,6 +2190,126 @@ mod tests {
         assert_eq!(clipped.cols, 8);
         assert_eq!(clipped.rows, 3);
         assert_eq!(placement.placement.data.len(), 80 * 30 * 4);
+    }
+
+    // TP-FPOPUP-01: a popup pane draws pictures. It is not a member of the tab
+    // surface, so the placement pass used to skip it entirely — a `herdr view`
+    // opened over the file manager showed its page counter and no page, which
+    // is the one thing the reader clicked for. While the popup is up it also
+    // OWNS the layer: the file manager's own preview sits underneath it, and
+    // placing that too would paint the old picture across the popup.
+    #[test]
+    fn a_popup_pane_owns_the_picture_layer_over_the_file_manager() {
+        let cells = HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        let frame = Rect::new(0, 0, 120, 30);
+        let mut app = app_with_selected_image(frame);
+        app.kitty_graphics_enabled = true;
+
+        // The file manager's own preview is placed while nothing floats above.
+        let preview_path = app
+            .file_manager
+            .as_ref()
+            .and_then(|file_manager| file_manager.trail_snapshots.detail())
+            .expect("selected detail")
+            .path
+            .clone();
+        let content = app
+            .view
+            .file_manager_trail
+            .detail_panel
+            .as_ref()
+            .expect("Trail detail panel")
+            .content_rect;
+        let preview = app
+            .file_manager
+            .as_mut()
+            .and_then(|fm| match &mut fm.preview {
+                FmPreview::File(FmFilePreview::Image(preview)) => Some(preview),
+                _ => None,
+            })
+            .expect("mutable image preview");
+        preview.state = FmImagePreviewState::Ready {
+            target: ImagePreviewTarget {
+                width_px: u32::from(content.width) * cells.width_px,
+                height_px: u32::from(content.height) * cells.height_px,
+            },
+            prepared: PreparedImagePreview {
+                width: 80,
+                height: 64,
+                data_fingerprint: 0x2222,
+                rgba: vec![0x22; 80 * 64 * 4],
+            },
+        };
+        assert!(
+            collect_file_manager_image_placement(&app, cells, &HashMap::new()).is_some(),
+            "the file manager preview is placed while nothing floats over it"
+        );
+        assert_eq!(
+            preview_path.file_name().and_then(|name| name.to_str()),
+            Some("preview.png")
+        );
+
+        // A popup opens over it, carrying a picture of its own.
+        let popup_pane = PaneId::from_raw(4242);
+        app.popup_pane = Some(crate::app::state::PopupPaneState {
+            pane_id: popup_pane,
+            terminal_id: crate::terminal::TerminalId::alloc(),
+            width: None,
+            height: None,
+        });
+        app.pane_graphics_layers.insert(
+            popup_pane,
+            crate::app::state::PaneGraphicsLayer::new(
+                crate::api::schema::PaneGraphicsFormat::Rgba,
+                40,
+                20,
+                vec![0x33; 40 * 20 * 4],
+                crate::api::schema::PaneGraphicsPlacementParams::default(),
+            ),
+        );
+        crate::ui::compute_view(&mut app, frame);
+
+        let runtimes = TerminalRuntimeRegistry::new();
+        let placements =
+            collect_popup_pane_placements(&app, &runtimes, cells, &HashMap::new(), true)
+                .expect("a popup owns the placement pass");
+        let placement = placements
+            .iter()
+            .find(|placement| placement.pane_id == popup_pane)
+            .expect("the popup's own picture is placed");
+        let (_inner_outer, inner) =
+            crate::ui::popup_pane_rects(&app, app.view.terminal_area).expect("popup geometry");
+        assert_eq!(
+            placement.area, inner,
+            "the picture lands inside the popup's frame"
+        );
+        assert!(
+            clipped_placement(placement).is_some(),
+            "the popup's picture is on screen"
+        );
+
+        let mut cache = HostGraphicsCache::default();
+        let bytes =
+            encode_local_pane_graphics(&app, &runtimes, app.view.tab_surface(), cells, &mut cache);
+        assert!(
+            !bytes.is_empty(),
+            "the popup's picture reaches the host terminal"
+        );
+        assert!(
+            cache.sources.keys().all(|source| !matches!(
+                source,
+                HostSourceKey::Terminal { pane_id, .. }
+                    if *pane_id == PaneId::from_raw(FILE_MANAGER_PREVIEW_PANE_RAW)
+            )),
+            "the file manager preview underneath is not painted across the popup"
+        );
+        assert!(
+            has_visible_pane_graphics(&app, &runtimes, app.view.tab_surface(), cells),
+            "the retained-frame fast path must know the popup has a picture on screen"
+        );
     }
 
     #[test]
