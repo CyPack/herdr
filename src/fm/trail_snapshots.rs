@@ -720,6 +720,20 @@ impl TrailSnapshots {
             return false;
         }
 
+        // The row the USER is looking at. A vertical cursor override wins over
+        // the activated selection (LAW 2), and a refresh answers "what changed
+        // on disk" — it is not a navigation and may not move this focus. Both
+        // the restored cursor and the detail panel below follow it.
+        let focused = trail
+            .cursor_path_in_col(col_idx)
+            .and_then(|path| snapshot.entries().iter().find(|entry| entry.path == path))
+            .cloned();
+        let cursor_override = trail
+            .cursor_override()
+            .filter(|(cursor_col, _)| *cursor_col == col_idx)
+            .map(|(_, path)| path.to_path_buf())
+            .filter(|path| snapshot.entries().iter().any(|entry| &entry.path == path));
+
         let Some(selected_path) = trail_col.selected.clone() else {
             if col_idx < trail.deepest() {
                 let _ = trail.clear_selection_at(col_idx);
@@ -761,7 +775,19 @@ impl TrailSnapshots {
             return false;
         }
         self.cols.truncate(col_idx + 1);
-        self.detail = Some(prepare_trail_detail(&selected.path, selected.kind));
+        // Re-marking the selection clears the vertical cursor override, so a
+        // refresh two seconds after a click would drag the highlight back to
+        // the activated row — the top of a freshly opened column. Restore the
+        // override the user established, but only while the row it names is
+        // still on disk.
+        if let Some(cursor_path) = cursor_override {
+            let _ = trail.move_cursor_to(col_idx, &cursor_path);
+        }
+        // The detail panel belongs to the FOCUSED row, exactly as it does
+        // after a plain cursor move; directories have no detail.
+        self.detail = focused
+            .filter(|entry| !entry.is_dir())
+            .map(|entry| prepare_trail_detail(&entry.path, entry.kind));
         true
     }
 }

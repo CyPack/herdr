@@ -1458,11 +1458,12 @@ impl FmState {
         }
 
         if col_idx == self.trail.deepest() {
-            let selected = self
-                .trail
-                .cols()
-                .get(col_idx)
-                .and_then(|col| col.selected.as_deref());
+            // The focused row, not the activated one: a vertical cursor
+            // override wins and the selection is only its fallback (LAW 2).
+            // Reading the selection directly made every refresh yank the
+            // highlight back to the activated row, so clicking a row and
+            // waiting two seconds returned the focus to the top of the column.
+            let selected = self.trail.cursor_path_in_col(col_idx);
             let selected_index = selected.and_then(|path| {
                 self.trail_snapshots
                     .cols()

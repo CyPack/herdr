@@ -1905,4 +1905,70 @@ mod tests {
         );
         assert!(state.cursor < state.entries.len());
     }
+
+    // TP-FMW-REFRESH-05: clicking a row moves the vertical cursor override,
+    // which outranks the activated selection as the focus authority (LAW 2).
+    // The two-second reconcile rebuilt the projection from the SELECTION and
+    // re-marked it — which clears the override — so a couple of seconds after
+    // every click the highlight and the detail panel snapped back to the
+    // activated row, the top of a freshly opened column. A refresh answers
+    // "what changed on disk"; it is not a navigation.
+    #[test]
+    fn a_reconcile_refresh_leaves_the_clicked_row_focused() {
+        let td = TempDir::new("reconcile-focus");
+        for name in ["a.txt", "b.txt", "c.txt", "d.txt"] {
+            std::fs::write(td.root.join(name), b"x").expect("write reconcile entry");
+        }
+
+        let mut app = test_app();
+        app.state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
+            .expect("Files activation");
+        let now = Instant::now();
+        assert!(
+            !app.sync_file_manager_watcher_at(now),
+            "arming the watcher performs no refresh of its own"
+        );
+
+        // The user clicks the third row: focus moves, the activated selection
+        // deliberately stays where it was.
+        let target = {
+            let file_manager = app.state.file_manager.as_mut().expect("file manager open");
+            let target = file_manager.entries[2].path.clone();
+            assert!(
+                !file_manager.focus_trail_entry(0, 2, &target).is_rejected(),
+                "the click focuses the clicked row"
+            );
+            assert!(file_manager.replace_selection(2), "the click selects it");
+            assert_eq!(file_manager.cursor, 2);
+            target
+        };
+
+        // Two seconds later the periodic reconcile refreshes the column.
+        let _ = app.sync_file_manager_watcher_at(now + WATCH_RECONCILE_INTERVAL);
+
+        let file_manager = app.state.file_manager.as_ref().expect("file manager open");
+        assert_eq!(
+            file_manager.cursor, 2,
+            "a periodic refresh may not move the focused row"
+        );
+        assert_eq!(
+            file_manager.selected().map(|entry| entry.path.as_path()),
+            Some(target.as_path()),
+            "the clicked row stays focused"
+        );
+        assert_eq!(
+            file_manager.trail.cursor_path_in_col(0),
+            Some(target.as_path()),
+            "the trail cursor authority still names the clicked row"
+        );
+        assert_eq!(
+            file_manager
+                .trail_snapshots
+                .detail()
+                .map(|detail| detail.path.as_path()),
+            Some(target.as_path()),
+            "the detail panel follows the focused row, not the activated one"
+        );
+    }
 }
