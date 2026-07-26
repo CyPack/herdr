@@ -715,7 +715,7 @@ impl App {
         if ws.tabs.is_empty() {
             return None;
         }
-        Some((ws.active_tab as isize + delta).rem_euclid(ws.tabs.len() as isize) as usize)
+        Some((ws.active_tab_index() as isize + delta).rem_euclid(ws.tabs.len() as isize) as usize)
     }
 
     fn agent_entry_target(&self, idx: usize) -> Option<(usize, crate::layout::PaneId)> {

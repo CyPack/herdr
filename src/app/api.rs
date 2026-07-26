@@ -445,7 +445,7 @@ impl App {
         }
 
         if was_overlay_active {
-            ws.active_tab = overlay.tab_idx;
+            ws.set_active_tab(overlay.tab_idx);
         }
         let tab = &mut ws.tabs[overlay.tab_idx];
         if tab.panes.contains_key(&overlay.previous_focus) {
@@ -825,7 +825,7 @@ impl App {
                 },
             });
             if let Some(tab_id) =
-                self.public_tab_id(ws_idx, self.state.workspaces[ws_idx].active_tab)
+                self.public_tab_id(ws_idx, self.state.workspaces[ws_idx].active_tab_index())
             {
                 self.emit_event(crate::api::schema::EventEnvelope {
                     event: crate::api::schema::EventKind::TabFocused,
@@ -1843,7 +1843,7 @@ mod tests {
         });
 
         let overlay_tab = &app.state.workspaces[0].tabs[0];
-        assert_eq!(app.state.workspaces[0].active_tab, new_tab);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), new_tab);
         assert_eq!(overlay_tab.layout.focused(), previous_focus);
         assert!(overlay_tab.zoomed);
         assert!(app.overlay_panes.is_empty());
@@ -2043,7 +2043,7 @@ mod tests {
         });
 
         let tab = &app.state.workspaces[0].tabs[0];
-        assert_eq!(app.state.workspaces[0].active_tab, 0);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 0);
         assert_eq!(tab.layout.focused(), previous_focus);
         assert!(tab.zoomed);
         assert!(app.overlay_panes.is_empty());
@@ -2062,7 +2062,7 @@ mod tests {
         });
 
         let tab = &app.state.workspaces[0].tabs[0];
-        assert_eq!(app.state.workspaces[0].active_tab, 0);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 0);
         assert_eq!(tab.layout.focused(), previous_focus);
         assert!(!tab.zoomed);
         assert!(app.overlay_panes.is_empty());

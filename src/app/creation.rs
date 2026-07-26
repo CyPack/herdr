@@ -334,7 +334,7 @@ impl App {
             workspace_id: self.public_workspace_id(ws_idx),
             number: tab.number,
             label: ws.tab_display_name(tab_idx)?,
-            focused: self.state.active == Some(ws_idx) && ws.active_tab == tab_idx,
+            focused: self.state.active == Some(ws_idx) && ws.active_tab_index() == tab_idx,
             pane_count: tab.panes.len(),
             agent_status: pane_agent_status(agg_state, seen),
         })
@@ -435,7 +435,7 @@ impl App {
                 viewport_rows: metrics.viewport_rows as u64,
             });
         let focused = self.state.active == Some(ws_idx)
-            && ws.active_tab == tab_idx
+            && ws.active_tab_index() == tab_idx
             && ws
                 .focused_pane_id()
                 .is_some_and(|focused| focused == pane_id);
@@ -497,9 +497,11 @@ impl App {
             focused: self.state.active == Some(index),
             pane_count: ws.public_pane_numbers.len(),
             tab_count: ws.tabs.len(),
-            active_tab_id: self.public_tab_id(index, ws.active_tab).unwrap_or_else(|| {
-                crate::workspace::public_tab_id_for_number(&ws.id, ws.active_tab + 1)
-            }),
+            active_tab_id: self
+                .public_tab_id(index, ws.active_tab_index())
+                .unwrap_or_else(|| {
+                    crate::workspace::public_tab_id_for_number(&ws.id, ws.active_tab_index() + 1)
+                }),
             agent_status: pane_agent_status(agg_state, seen),
             tokens: ws.metadata_tokens.values(),
             worktree: ws

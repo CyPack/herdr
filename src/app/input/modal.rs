@@ -549,7 +549,7 @@ pub(super) fn apply_rename_action(state: &mut AppState, action: ModalAction) {
                     if let Some(ws_idx) = state.active {
                         if let Some(ws) = state.workspaces.get_mut(ws_idx) {
                             let workspace_id = ws.id.clone();
-                            let active_tab = ws.active_tab;
+                            let active_tab = ws.active_tab_index();
                             let keep_auto_name = ws
                                 .tabs
                                 .get(active_tab)
@@ -1176,7 +1176,7 @@ impl App {
                     cancel_rename_modal(&mut self.state);
                     return;
                 };
-                let tab_idx = self.state.workspaces[ws_idx].active_tab;
+                let tab_idx = self.state.workspaces[ws_idx].active_tab_index();
                 let keep_auto_name = self.state.workspaces[ws_idx]
                     .tabs
                     .get(tab_idx)

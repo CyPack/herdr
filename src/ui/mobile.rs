@@ -376,12 +376,16 @@ fn render_header_status(
 
 fn mobile_tab_status(ws: &crate::workspace::Workspace) -> String {
     let tab_label = ws
-        .tab_display_name(ws.active_tab)
-        .unwrap_or_else(|| (ws.active_tab + 1).to_string());
+        .tab_display_name(ws.active_tab_index())
+        .unwrap_or_else(|| (ws.active_tab_index() + 1).to_string());
     if ws.tabs.len() <= 1 {
         format!("tab {tab_label}")
     } else {
-        format!("tab {tab_label} · {}/{}", ws.active_tab + 1, ws.tabs.len())
+        format!(
+            "tab {tab_label} · {}/{}",
+            ws.active_tab_index() + 1,
+            ws.tabs.len()
+        )
     }
 }
 
@@ -502,7 +506,7 @@ fn render_mobile_switcher_content(
         let focused_agent = app.active.and_then(|ws_idx| {
             let ws = app.workspaces.get(ws_idx)?;
             ws.focused_pane_id()
-                .map(|pane_id| (ws_idx, ws.active_tab, pane_id))
+                .map(|pane_id| (ws_idx, ws.active_tab_index(), pane_id))
         });
         let title = app
             .agent_view_override
@@ -685,7 +689,7 @@ fn render_mobile_switcher_content(
         );
         doc_y += 1;
         for (idx, tab) in ws.tabs.iter().enumerate() {
-            let active = idx == ws.active_tab;
+            let active = idx == ws.active_tab_index();
             let bg = mobile_item_bg(false, active, p);
             let display_name = ws
                 .tab_display_name(idx)
@@ -1399,7 +1403,7 @@ mod tests {
         let removed_tab = workspace.test_add_tab(None);
         workspace.test_add_tab(None);
         assert!(workspace.close_tab(removed_tab));
-        workspace.active_tab = 1;
+        workspace.set_active_tab(1);
 
         assert_eq!(mobile_tab_status(&workspace), "tab 2 · 2/2");
     }

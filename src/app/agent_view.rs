@@ -340,7 +340,7 @@ fn context_value(app: &AppState, context: AgentViewContext) -> Option<EvalValue>
     match context {
         AgentViewContext::CurrentWorkspaceId => Some(EvalValue::String(workspace.id.clone())),
         AgentViewContext::CurrentTabId => {
-            let tab_number = workspace.public_tab_number(workspace.active_tab)?;
+            let tab_number = workspace.public_tab_number(workspace.active_tab_index())?;
             Some(EvalValue::String(
                 crate::workspace::public_tab_id_for_number(&workspace.id, tab_number),
             ))

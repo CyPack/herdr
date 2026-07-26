@@ -1618,7 +1618,7 @@ fn render_projects_list(app: &AppState, frame: &mut Frame, area: Rect) {
                         && app
                             .workspaces
                             .get(ws_idx)
-                            .is_some_and(|ws| ws.active_tab == tab_idx)
+                            .is_some_and(|ws| ws.active_tab_index() == tab_idx)
                 });
                 let indent = if focused {
                     " ▸ "
@@ -2993,7 +2993,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let tab_b = ws.test_add_tab(Some("beta"));
         ws.tabs[0].resumed_session_id = Some("sess-a".to_string());
         ws.tabs[tab_b].resumed_session_id = Some("sess-b".to_string());
-        ws.active_tab = 0;
+        ws.set_active_tab(0);
         app.workspaces = vec![ws];
         app.active = Some(0);
 

@@ -152,7 +152,7 @@ impl App {
             self.emit_workspace_open_events(ws_idx);
         }
 
-        let tab_idx = self.state.workspaces[ws_idx].active_tab;
+        let tab_idx = self.state.workspaces[ws_idx].active_tab_index();
         let worktree = self.worktree_info_for_entry(&source, entry);
         self.emit_worktree_opened_event(ws_idx, worktree.clone(), already_open.is_some());
         encode_success(

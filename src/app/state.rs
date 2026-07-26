@@ -2726,6 +2726,19 @@ impl AppState {
         }
     }
 
+    /// Drops every view a departed client held.
+    ///
+    /// A slot left behind keeps an index that tab removals still have to
+    /// maintain, and it would still count as a viewer when a tab negotiates
+    /// its size against the displays actually watching it.
+    ///
+    /// TP-MCF-TAB-02
+    pub(crate) fn forget_client(&mut self, client: ClientId) {
+        for workspace in &mut self.workspaces {
+            workspace.forget_client(client);
+        }
+    }
+
     pub(crate) fn mark_session_dirty(&mut self) {
         self.session_dirty = true;
     }
@@ -3820,8 +3833,8 @@ mod tests {
         state.assert_invariants_for_test();
 
         let ws = &mut state.workspaces[0];
-        let active_public = ws.tabs[ws.active_tab].number;
-        assert_ne!(ws.active_tab + 1, active_public);
+        let active_public = ws.tabs[ws.active_tab_index()].number;
+        assert_ne!(ws.active_tab_index() + 1, active_public);
         let new_pane = ws.test_split(ratatui::layout::Direction::Horizontal);
         assert!(ws.public_pane_number(new_pane).is_some());
         state.ensure_test_terminals();

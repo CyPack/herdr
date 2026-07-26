@@ -495,7 +495,8 @@ mod tests {
             "no duplicate tab spawned"
         );
         assert_eq!(
-            app.state.workspaces[0].active_tab, tab_idx,
+            app.state.workspaces[0].active_tab_index(),
+            tab_idx,
             "wired tab focused"
         );
         let _ = std::fs::remove_dir_all(dir);
@@ -532,7 +533,7 @@ mod tests {
         let tab = &ws.tabs[1];
         assert_eq!(tab.resumed_session_id.as_deref(), Some("sess-9"));
         assert_eq!(app.state.active, Some(1), "focus follows the new tab");
-        assert_eq!(ws.active_tab, 1);
+        assert_eq!(ws.active_tab_index(), 1);
         let terminal_id = tab.panes[&tab.root_pane].attached_terminal_id.clone();
         let terminal = app
             .state

@@ -20,7 +20,7 @@ impl App {
             .map(|ws_idx| self.public_workspace_id(ws_idx));
         let focused_tab_id = self.state.active.and_then(|ws_idx| {
             let ws = self.state.workspaces.get(ws_idx)?;
-            self.public_tab_id(ws_idx, ws.active_tab)
+            self.public_tab_id(ws_idx, ws.active_tab_index())
         });
         let focused_pane_id = self.state.active.and_then(|ws_idx| {
             let ws = self.state.workspaces.get(ws_idx)?;

@@ -418,7 +418,10 @@ fn restore_workspace(
             public_pane_numbers,
             next_public_pane_number,
             next_public_tab_number,
-            active_tab: snap.active_tab.min(tabs.len().saturating_sub(1)),
+            // A restored session has no clients yet, so the persisted tab
+            // becomes the default every display adopts as it attaches.
+            default_tab: snap.active_tab.min(tabs.len().saturating_sub(1)),
+            active_tab_by_client: HashMap::new(),
             viewer: None,
             tabs,
             #[cfg(test)]
@@ -1628,7 +1631,7 @@ mod tests {
         );
 
         let workspace = workspaces.first().expect("workspace should restore");
-        assert_eq!(workspace.active_tab, 3);
+        assert_eq!(workspace.active_tab_index(), 3);
         assert_eq!(workspace.tabs[3].number, 5);
         let agent_pane = workspace.tabs[3].root_pane;
         let terminal_id = &workspace.tabs[3].panes[&agent_pane].attached_terminal_id;

@@ -1099,10 +1099,10 @@ impl AppState {
                     MouseEventKind::ScrollUp => {
                         if let Some(ws) = self.active.and_then(|i| self.workspaces.get(i)) {
                             if !ws.tabs.is_empty() {
-                                let prev = if ws.active_tab == 0 {
+                                let prev = if ws.active_tab_index() == 0 {
                                     ws.tabs.len() - 1
                                 } else {
-                                    ws.active_tab - 1
+                                    ws.active_tab_index() - 1
                                 };
                                 return Some(MouseAction::FocusTab { tab_idx: prev });
                             }
@@ -1111,7 +1111,7 @@ impl AppState {
                     MouseEventKind::ScrollDown => {
                         if let Some(ws) = self.active.and_then(|i| self.workspaces.get(i)) {
                             if !ws.tabs.is_empty() {
-                                let next = (ws.active_tab + 1) % ws.tabs.len();
+                                let next = (ws.active_tab_index() + 1) % ws.tabs.len();
                                 return Some(MouseAction::FocusTab { tab_idx: next });
                             }
                         }
@@ -4024,20 +4024,20 @@ mod tests {
         let tab_bar = app.state.view.tab_bar_rect;
 
         app.handle_mouse(mouse(MouseEventKind::ScrollDown, tab_bar.x + 1, tab_bar.y));
-        assert_eq!(app.state.workspaces[0].active_tab, 1);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 1);
 
         app.handle_mouse(mouse(MouseEventKind::ScrollUp, tab_bar.x + 1, tab_bar.y));
-        assert_eq!(app.state.workspaces[0].active_tab, 0);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 0);
 
         app.handle_mouse(mouse(MouseEventKind::ScrollUp, tab_bar.x + 1, tab_bar.y));
-        assert_eq!(app.state.workspaces[0].active_tab, 2);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 2);
 
         app.handle_mouse(mouse(
             MouseEventKind::ScrollDown,
             tab_bar.x + tab_bar.width.saturating_sub(1),
             tab_bar.y,
         ));
-        assert_eq!(app.state.workspaces[0].active_tab, 0);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 0);
     }
 
     struct StripFixtureRoot(std::path::PathBuf);
@@ -4114,7 +4114,7 @@ mod tests {
             crate::ui::surface_host::StageSurfaceView::TerminalWorkspace,
             "the clicked terminal tab must own the stage"
         );
-        assert_eq!(app.state.workspaces[0].active_tab, 1);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 1);
         assert!(
             app.state.file_manager.is_some(),
             "switching tabs must not close Files"
@@ -4222,7 +4222,7 @@ mod tests {
 
         app.state.close_file_manager();
         crate::ui::compute_view(&mut app.state, STRIP_AREA);
-        let retained_tab = app.state.workspaces[0].active_tab;
+        let retained_tab = app.state.workspaces[0].active_tab_index();
 
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -4241,7 +4241,7 @@ mod tests {
             "a retired entry cannot bring its surface back"
         );
         assert!(app.state.file_manager.is_none());
-        assert_eq!(app.state.workspaces[0].active_tab, retained_tab);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), retained_tab);
     }
 
     #[test]
@@ -4263,7 +4263,7 @@ mod tests {
             second_tab.y,
         ));
 
-        assert_eq!(app.state.workspaces[0].active_tab, 0);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 0);
         let menu = app.state.context_menu.as_ref().expect("tab context menu");
         assert_eq!(
             menu.kind,
@@ -4439,14 +4439,14 @@ mod tests {
             tab_bar.x + tab_bar.width.saturating_sub(2),
             tab_bar.y,
         ));
-        assert_eq!(app.state.workspaces[0].active_tab, 1);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 1);
 
         app.handle_mouse(mouse(
             MouseEventKind::ScrollDown,
             tab_bar.x + tab_bar.width.saturating_sub(2),
             tab_bar.y,
         ));
-        assert_eq!(app.state.workspaces[0].active_tab, 2);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 2);
     }
 
     #[test]
@@ -4468,7 +4468,7 @@ mod tests {
             terminal.y + 1,
         ));
 
-        assert_eq!(app.state.workspaces[0].active_tab, 0);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 0);
     }
 
     #[test]
@@ -4578,7 +4578,7 @@ mod tests {
             viewport.x + 2,
             viewport.y + 4,
         ));
-        assert_eq!(app.state.workspaces[0].active_tab, 2);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 2);
     }
 
     #[test]
@@ -4893,5 +4893,99 @@ mod tests {
         };
 
         assert_eq!(wheel_routing(input_state), WheelRouting::HostScroll);
+    }
+}
+
+#[cfg(test)]
+mod per_client_tab_routing_tests {
+    use super::super::{app_for_mouse_test, mouse};
+    use crate::app::Mode;
+    use crate::workspace::Workspace;
+    use crossterm::event::MouseEventKind;
+    use ratatui::layout::Rect;
+
+    fn scroll_tab_bar(app: &mut crate::app::App, client: u64, kind: MouseEventKind) {
+        let tab_bar = app.state.view.tab_bar_rect;
+        app.route_client_events_from(
+            client,
+            vec![crate::raw_input::RawInputEvent::Mouse(mouse(
+                kind,
+                tab_bar.x + 1,
+                tab_bar.y,
+            ))],
+            false,
+        );
+    }
+
+    fn tab_seen_by(app: &mut crate::app::App, client: u64) -> usize {
+        let previous = app.state.enter_viewer(Some(client));
+        let index = app.state.workspaces[0].active_tab_index();
+        app.state.restore_viewer(previous);
+        index
+    }
+
+    // TP-MCF-TAB-05
+    #[test]
+    fn one_display_switching_tabs_leaves_the_other_display_where_it_was() {
+        let mut app = app_for_mouse_test();
+        let mut workspace = Workspace::test_new("fixture");
+        workspace.test_add_tab(Some("two"));
+        workspace.test_add_tab(Some("three"));
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+
+        // Both displays are attached and looking at the first tab.
+        assert_eq!(tab_seen_by(&mut app, 1), 0);
+        assert_eq!(tab_seen_by(&mut app, 2), 0);
+
+        // The second display walks forward twice. The first display is not
+        // touched at all — this is the whole point of the feature.
+        scroll_tab_bar(&mut app, 2, MouseEventKind::ScrollDown);
+        scroll_tab_bar(&mut app, 2, MouseEventKind::ScrollDown);
+
+        assert_eq!(
+            tab_seen_by(&mut app, 2),
+            2,
+            "the display that scrolled moves"
+        );
+        assert_eq!(
+            tab_seen_by(&mut app, 1),
+            0,
+            "the display nobody touched must not follow the one that moved"
+        );
+
+        // And it works in both directions: the untouched display can still
+        // drive itself afterwards.
+        scroll_tab_bar(&mut app, 1, MouseEventKind::ScrollDown);
+        assert_eq!(tab_seen_by(&mut app, 1), 1);
+        assert_eq!(tab_seen_by(&mut app, 2), 2, "still independent");
+    }
+
+    // TP-MCF-TAB-07
+    #[test]
+    fn a_display_that_detaches_does_not_move_the_one_that_stays() {
+        let mut app = app_for_mouse_test();
+        let mut workspace = Workspace::test_new("fixture");
+        workspace.test_add_tab(Some("two"));
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+
+        assert_eq!(tab_seen_by(&mut app, 1), 0);
+        scroll_tab_bar(&mut app, 2, MouseEventKind::ScrollDown);
+        assert_eq!(tab_seen_by(&mut app, 2), 1);
+
+        app.state.forget_client(2);
+
+        assert_eq!(
+            tab_seen_by(&mut app, 1),
+            0,
+            "closing one terminal must not move the remaining one"
+        );
     }
 }

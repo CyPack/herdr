@@ -143,3 +143,25 @@ The client's event lanes. Upstream owns the loop; the fork's rule is that a burs
   2026-07-25 — their markers did not follow `TP-<FAMILY>-<NN>` and the checker
   truncated them into `TP-A` and dropped `TP-2B..2F` entirely. Both families sit in
   upstream-owned files, which is exactly the bucket where invisibility costs most.
+
+## Per-client focus
+
+One session, several displays. Upstream keeps a single active tab per workspace, so
+every one of these rows sits in a region a sync can revert to "one tab for everyone".
+That revert compiles, passes upstream's tests, and destroys the reason this fork's
+users keep several terminals open at once — the failure is invisible until two
+displays are attached at the same time.
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-MCF-CTX-01 | Entering a viewer returns the previous one, and restoring it puts that one back, so windows nest. | A render pass that wraps an input routing call loses its own view, and draws the wrong client's tab. | `entering_a_viewer_returns_the_previous_one_for_restoration` |
+| TP-MCF-CTX-02 | The viewer installed on `AppState` reaches every workspace. | Workspace accessors resolve for nobody, so every display silently falls back to the shared default. | `the_viewer_context_reaches_every_workspace` |
+| TP-MCF-CTX-03 | Routing one client's input opens that client's view and puts the previous one back on the single exit path. | A tab switch is recorded against the wrong display, or a view leaks past the event that installed it. | `routing_a_client_scopes_the_viewer_and_puts_the_previous_one_back` |
+| TP-MCF-CTX-04 | A workspace created inside an open viewer window carries no viewer until the next one, and resolves the default meanwhile. | A workspace created mid-event either panics on an absent client or adopts a tab index that does not exist yet. | `a_workspace_created_inside_a_viewer_window_falls_back_to_the_default` |
+| TP-MCF-TAB-01 | Two clients hold different active tabs in one workspace at the same time. | The session collapses back to one focused tab for every display: the last click drags every other terminal onto its tab. | `two_clients_hold_different_active_tabs_at_the_same_time` |
+| TP-MCF-TAB-02 | A departed client's tab is dropped, and the clients that stay do not move. | Closing one terminal jumps the remaining terminals to a different tab, and the departed client keeps a slot that later tab removals must maintain. | `losing_one_client_leaves_the_others_where_they_were` · `a_display_that_detaches_does_not_move_the_one_that_stays` |
+| TP-MCF-TAB-03 | Closing a tab moves only the display that closed it; the others keep looking at the same tab, not the same index. | Every other display silently shifts to a neighbouring tab whenever anyone closes one. | `closing_a_tab_moves_only_its_own_viewer_and_keeps_the_others_on_the_same_tab` |
+| TP-MCF-TAB-04 | A client with no tab of its own adopts the workspace default, which tracks the most recent explicit switch. | A newly attached display opens on tab one instead of where the session is actually being worked, and a restored session opens on the wrong tab. | `a_client_without_a_slot_adopts_the_workspace_default` |
+| TP-MCF-TAB-05 | Switching tabs on one display through the real input path leaves an untouched display where it was. | The end-to-end path regresses even while the storage stays per-client, because the switch was recorded outside any viewer window. | `one_display_switching_tabs_leaves_the_other_display_where_it_was` |
+| TP-MCF-TAB-06 | One client holds a separate tab in each workspace. | Switching workspace and coming back lands on the wrong tab, so a display loses its place whenever the user looks elsewhere. | `one_client_holds_a_separate_tab_in_each_workspace` |
+| TP-MCF-TAB-07 | A display that detaches does not move the display that stays. | Closing a second terminal yanks the first one onto another tab. | `a_display_that_detaches_does_not_move_the_one_that_stays` |

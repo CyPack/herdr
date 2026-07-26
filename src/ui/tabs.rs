@@ -108,13 +108,13 @@ fn layout_tab_hit_areas(ws: &crate::workspace::Workspace, area: Rect, scroll: us
 }
 
 fn centered_tab_scroll(ws: &crate::workspace::Workspace, area: Rect) -> usize {
-    let mut best_scroll = ws.active_tab;
+    let mut best_scroll = ws.active_tab_index();
     let mut best_distance = u16::MAX;
     let viewport_center = area.x.saturating_mul(2).saturating_add(area.width);
 
-    for scroll in 0..=ws.active_tab {
+    for scroll in 0..=ws.active_tab_index() {
         let rects = layout_tab_hit_areas(ws, area, scroll);
-        let Some(active_rect) = rects.get(ws.active_tab).copied() else {
+        let Some(active_rect) = rects.get(ws.active_tab_index()).copied() else {
             continue;
         };
         if active_rect.width == 0 {
@@ -389,7 +389,7 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
         if rect.width == 0 {
             continue;
         }
-        let active = terminal_surface_active && idx == ws.active_tab;
+        let active = terminal_surface_active && idx == ws.active_tab_index();
         let style = if active {
             let base = Style::default().fg(panel_contrast_fg(p)).bg(p.accent);
             if tab.is_auto_named() {
@@ -633,7 +633,7 @@ mod tests {
                 app.workspaces[0].test_add_tab(None);
             }
             let last = app.workspaces[0].tabs.len() - 1;
-            app.workspaces[0].active_tab = last;
+            app.workspaces[0].set_active_tab(last);
             let area = Rect::new(0, 0, 80, 24);
             open_files(&mut app, &root);
             crate::ui::compute_view(&mut app, area);

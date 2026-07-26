@@ -3075,7 +3075,7 @@ mod tests {
         let source = app.state.workspaces[0].tabs[0].root_pane;
         let target_tab = app.state.workspaces[0].test_add_tab(Some("target"));
         let previously_focused = app.state.workspaces[0].tabs[target_tab].root_pane;
-        app.state.workspaces[0].active_tab = target_tab;
+        app.state.workspaces[0].set_active_tab(target_tab);
         let explicit_target =
             app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
         app.state.workspaces[0].tabs[target_tab]
@@ -3662,7 +3662,7 @@ mod tests {
         };
         assert_eq!(pane.pane_id, target_public);
         assert_eq!(app.state.active, Some(1));
-        assert_eq!(app.state.workspaces[1].active_tab, target_tab_idx);
+        assert_eq!(app.state.workspaces[1].active_tab_index(), target_tab_idx);
         assert_eq!(app.state.workspaces[1].focused_pane_id(), Some(target_pane));
         assert_eq!(app.state.mode, Mode::Terminal);
     }

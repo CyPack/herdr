@@ -1463,7 +1463,7 @@ impl AppState {
         }
         self.workspaces[ws_idx]
             .find_tab_index_for_pane(pane_id)
-            .is_some_and(|tab_idx| tab_idx == self.workspaces[ws_idx].active_tab)
+            .is_some_and(|tab_idx| tab_idx == self.workspaces[ws_idx].active_tab_index())
     }
 
     pub fn switch_workspace(&mut self, idx: usize) {
@@ -1476,7 +1476,7 @@ impl AppState {
             self.mark_session_dirty();
             self.ensure_workspace_visible(idx);
             if let Some(ws) = self.workspaces.get_mut(idx) {
-                let active_tab = ws.active_tab;
+                let active_tab = ws.active_tab_index();
                 ws.switch_tab(active_tab);
                 let tab_id =
                     public_tab_id_for_index(ws, active_tab).unwrap_or_else(|| workspace_id.clone());
@@ -1767,7 +1767,7 @@ impl AppState {
     pub fn next_tab(&mut self) {
         if let Some(ws) = self.active.and_then(|i| self.workspaces.get(i)) {
             if !ws.tabs.is_empty() {
-                let next = (ws.active_tab + 1) % ws.tabs.len();
+                let next = (ws.active_tab_index() + 1) % ws.tabs.len();
                 self.switch_tab(next);
             }
         }
@@ -1777,10 +1777,10 @@ impl AppState {
     pub fn previous_tab(&mut self) {
         if let Some(ws) = self.active.and_then(|i| self.workspaces.get(i)) {
             if !ws.tabs.is_empty() {
-                let prev = if ws.active_tab == 0 {
+                let prev = if ws.active_tab_index() == 0 {
                     ws.tabs.len() - 1
                 } else {
-                    ws.active_tab - 1
+                    ws.active_tab_index() - 1
                 };
                 self.switch_tab(prev);
             }
@@ -2390,19 +2390,19 @@ impl AppState {
             let terminal_ids = self
                 .workspaces
                 .get(ws_idx)
-                .map(|ws| self.terminal_ids_for_tab(ws_idx, ws.active_tab))
+                .map(|ws| self.terminal_ids_for_tab(ws_idx, ws.active_tab_index()))
                 .unwrap_or_default();
             let pane_ids = self
                 .workspaces
                 .get(ws_idx)
-                .map(|ws| self.pane_ids_for_tab(ws_idx, ws.active_tab))
+                .map(|ws| self.pane_ids_for_tab(ws_idx, ws.active_tab_index()))
                 .unwrap_or_default();
             let Some(ws) = self.workspaces.get_mut(ws_idx) else {
                 return false;
             };
             let workspace_id = ws.id.clone();
-            let closing_tab_id =
-                public_tab_id_for_index(ws, ws.active_tab).unwrap_or_else(|| workspace_id.clone());
+            let closing_tab_id = public_tab_id_for_index(ws, ws.active_tab_index())
+                .unwrap_or_else(|| workspace_id.clone());
             ws.close_active_tab();
             self.remove_plugin_pane_records(pane_ids);
             self.remove_unattached_terminal_ids(terminal_ids);
@@ -4925,7 +4925,7 @@ mod tests {
         state.previous_agent();
 
         let last_idx = state.workspaces[0].tabs.len() - 1;
-        assert_eq!(state.workspaces[0].active_tab, last_idx);
+        assert_eq!(state.workspaces[0].active_tab_index(), last_idx);
         assert!(state.agent_panel_scroll > 0);
         state.assert_invariants_for_test();
     }
@@ -4982,13 +4982,13 @@ mod tests {
         state.last_pane();
 
         assert_eq!(state.active, Some(0));
-        assert_eq!(state.workspaces[0].active_tab, 0);
+        assert_eq!(state.workspaces[0].active_tab_index(), 0);
         assert_eq!(state.workspaces[0].focused_pane_id(), Some(first_root));
 
         state.last_pane();
 
         assert_eq!(state.active, Some(1));
-        assert_eq!(state.workspaces[1].active_tab, second_tab);
+        assert_eq!(state.workspaces[1].active_tab_index(), second_tab);
         assert_eq!(state.workspaces[1].focused_pane_id(), Some(second_tab_root));
     }
 
@@ -5004,13 +5004,13 @@ mod tests {
         state.last_pane();
 
         assert_eq!(state.active, Some(0));
-        assert_eq!(state.workspaces[0].active_tab, 0);
+        assert_eq!(state.workspaces[0].active_tab_index(), 0);
         assert_eq!(state.workspaces[0].focused_pane_id(), Some(first_root));
 
         state.last_pane();
 
         assert_eq!(state.active, Some(0));
-        assert_eq!(state.workspaces[0].active_tab, first_second_tab);
+        assert_eq!(state.workspaces[0].active_tab_index(), first_second_tab);
         assert_eq!(
             state.workspaces[0].focused_pane_id(),
             Some(first_second_root)
@@ -5020,7 +5020,7 @@ mod tests {
         state.last_pane();
 
         assert_eq!(state.active, Some(0));
-        assert_eq!(state.workspaces[0].active_tab, first_second_tab);
+        assert_eq!(state.workspaces[0].active_tab_index(), first_second_tab);
         assert_eq!(
             state.workspaces[0].focused_pane_id(),
             Some(first_second_root)
@@ -5049,7 +5049,7 @@ mod tests {
         state.last_pane();
 
         assert_eq!(state.active, Some(1));
-        assert_eq!(state.workspaces[1].active_tab, second_tab);
+        assert_eq!(state.workspaces[1].active_tab_index(), second_tab);
         assert_eq!(state.workspaces[1].focused_pane_id(), Some(second_tab_root));
         assert_ne!(second_first_root, second_tab_root);
     }

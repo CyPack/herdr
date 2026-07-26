@@ -516,7 +516,7 @@ fn capture_workspace(
             .iter()
             .map(|tab| capture_tab(tab, terminals, terminal_runtimes))
             .collect(),
-        active_tab: ws.active_tab,
+        active_tab: ws.default_tab(),
     }
 }
 

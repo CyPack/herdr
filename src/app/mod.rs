@@ -4482,7 +4482,7 @@ mod tests {
         );
         assert_eq!(response["result"]["pane"]["focused"], false);
         assert_eq!(app.state.active, Some(0));
-        assert_eq!(app.state.workspaces[0].active_tab, 0);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 0);
         assert_eq!(
             app.state.workspaces[0].tabs[0].layout.focused(),
             active_pane
@@ -4501,7 +4501,7 @@ mod tests {
             3
         );
         app.state.last_pane();
-        assert_eq!(app.state.workspaces[0].active_tab, background_tab);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), background_tab);
         assert_eq!(
             app.state.workspaces[0].tabs[background_tab]
                 .layout
@@ -4556,7 +4556,7 @@ mod tests {
         assert_eq!(response["result"]["pane"]["tab_id"], target_tab_id);
         assert_eq!(response["result"]["pane"]["focused"], true);
         assert_eq!(app.state.active, Some(0));
-        assert_eq!(app.state.workspaces[0].active_tab, background_tab);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), background_tab);
 
         let runtimes: Vec<_> = app.terminal_runtimes.drain().collect();
         for (_terminal_id, runtime) in runtimes {
@@ -5391,7 +5391,7 @@ last_pane = "prefix+tab"
 
         assert_eq!(app.state.mode, Mode::Terminal);
         assert_eq!(app.state.active, Some(0));
-        assert_eq!(app.state.workspaces[0].active_tab, first_second_tab);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), first_second_tab);
         assert_eq!(
             app.state.workspaces[0].focused_pane_id(),
             Some(first_second_root)

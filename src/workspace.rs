@@ -7,6 +7,7 @@ use std::sync::Arc;
 use ratatui::layout::Direction;
 use tokio::sync::{mpsc, Notify};
 
+use crate::app::state::ClientId;
 use crate::events::AppEvent;
 use crate::layout::PaneId;
 #[cfg(test)]
@@ -164,7 +165,19 @@ pub struct Workspace {
     pub(crate) next_public_pane_number: usize,
     pub(crate) next_public_tab_number: usize,
     pub tabs: Vec<Tab>,
-    pub active_tab: usize,
+    /// The tab each client is looking at.
+    ///
+    /// A client with no entry adopts [`Workspace::default_tab`]. Client-local
+    /// presentation state: never persisted, never session truth.
+    pub(crate) active_tab_by_client: HashMap<ClientId, usize>,
+    /// The tab a client adopts before it has chosen one, and the tab resolved
+    /// when no client is acting — restore, an API call that names no client,
+    /// and the render path taken with nothing attached.
+    ///
+    /// It tracks the most recent explicit switch, so a display attaching later
+    /// lands where the session was last driven, and a restored session opens
+    /// there too.
+    pub(crate) default_tab: usize,
     /// Whose view this workspace resolves right now.
     ///
     /// Mirrored down from `AppState` by its viewer window; `AppState::set_viewer`
@@ -172,7 +185,7 @@ pub struct Workspace {
     /// back to the workspace default.
     ///
     /// Client-local presentation state: never persisted.
-    pub(crate) viewer: Option<crate::app::state::ClientId>,
+    pub(crate) viewer: Option<ClientId>,
     #[cfg(test)]
     pub(crate) test_runtimes: HashMap<PaneId, TerminalRuntime>,
 }
@@ -195,29 +208,88 @@ impl DerefMut for Workspace {
 
 impl Workspace {
     /// The client whose view this workspace resolves right now.
-    // Mirrored in by production and only read back by the tests that pin the
-    // context contract; the per-client tab resolution reads it next.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn viewer(&self) -> Option<crate::app::state::ClientId> {
+    pub(crate) fn viewer(&self) -> Option<ClientId> {
         self.viewer
     }
 
-    /// Installs the acting client's view.
+    /// Installs the acting client's view, and gives a client its own tab the
+    /// first time it is seen.
     ///
     /// `AppState::set_viewer` is the only caller; going through it keeps one
     /// writer for a value every workspace has to agree on.
-    pub(crate) fn set_viewer(&mut self, viewer: Option<crate::app::state::ClientId>) {
+    ///
+    /// The adoption matters more than it looks. Without it a display that has
+    /// not switched tabs yet owns no tab of its own, so it keeps resolving
+    /// through the default — and the default follows whichever display
+    /// switched last. That is precisely the behaviour this feature removes: a
+    /// display the user never touched would still be dragged onto the tab
+    /// another display just opened.
+    pub(crate) fn set_viewer(&mut self, viewer: Option<ClientId>) {
         self.viewer = viewer;
+        if let Some(client) = viewer {
+            let default_tab = self.default_tab;
+            self.active_tab_by_client
+                .entry(client)
+                .or_insert(default_tab);
+        }
+    }
+
+    /// Drops a departed client's tab.
+    ///
+    /// A slot left behind would keep a stale index and would still count as a
+    /// viewer when a tab negotiates its size.
+    pub(crate) fn forget_client(&mut self, client: ClientId) {
+        self.active_tab_by_client.remove(&client);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_client_tab(&self, client: ClientId) -> bool {
+        self.active_tab_by_client.contains_key(&client)
+    }
+
+    /// The tab a client adopts before it has chosen one.
+    pub fn default_tab(&self) -> usize {
+        self.default_tab
+    }
+
+    /// Finds the tab that owns `root_pane`, falling back to `fallback`.
+    fn index_of_root_pane(&self, root_pane: Option<PaneId>, fallback: usize) -> usize {
+        root_pane
+            .and_then(|root_pane| self.tabs.iter().position(|tab| tab.root_pane == root_pane))
+            .unwrap_or(fallback)
+    }
+
+    /// Rewrites one tab index after the tab at `removed_idx` was removed.
+    ///
+    /// A view above the removed tab follows its tab down by one so it keeps
+    /// looking at the same tab; a view that was on the removed tab falls back
+    /// to the one before it.
+    fn index_after_removal(index: usize, removed_idx: usize, tab_count: usize) -> usize {
+        if tab_count == 0 {
+            0
+        } else if index >= tab_count {
+            tab_count - 1
+        } else if removed_idx <= index && index > 0 {
+            index - 1
+        } else {
+            index
+        }
+    }
+
+    /// Applies a tab removal to every view — each client's tab and the default.
+    ///
+    /// Called after the tab has already left `tabs`.
+    fn apply_tab_removal(&mut self, removed_idx: usize) {
+        let tab_count = self.tabs.len();
+        self.default_tab = Self::index_after_removal(self.default_tab, removed_idx, tab_count);
+        for index in self.active_tab_by_client.values_mut() {
+            *index = Self::index_after_removal(*index, removed_idx, tab_count);
+        }
     }
 
     fn adjust_active_tab_after_removal(&mut self, removed_idx: usize) {
-        if self.tabs.is_empty() {
-            self.active_tab = 0;
-        } else if self.active_tab >= self.tabs.len() {
-            self.active_tab = self.tabs.len() - 1;
-        } else if removed_idx <= self.active_tab && self.active_tab > 0 {
-            self.active_tab -= 1;
-        }
+        self.apply_tab_removal(removed_idx);
     }
 
     pub(crate) fn from_existing_pane(
@@ -248,7 +320,8 @@ impl Workspace {
             next_public_pane_number: 2,
             next_public_tab_number: 2,
             tabs: vec![tab],
-            active_tab: 0,
+            active_tab_by_client: HashMap::new(),
+            default_tab: 0,
             viewer: None,
             #[cfg(test)]
             test_runtimes: HashMap::new(),
@@ -432,7 +505,8 @@ impl Workspace {
                 next_public_pane_number: 2,
                 next_public_tab_number: 2,
                 tabs: vec![tab],
-                active_tab: 0,
+                active_tab_by_client: HashMap::new(),
+                default_tab: 0,
                 viewer: None,
                 #[cfg(test)]
                 test_runtimes: HashMap::new(),
@@ -443,19 +517,41 @@ impl Workspace {
     }
 
     pub fn active_tab(&self) -> Option<&Tab> {
-        self.tabs.get(self.active_tab)
+        self.tabs.get(self.active_tab_index())
     }
 
+    /// The tab the current viewer is on.
+    ///
+    /// This is the one authority. Reading the storage directly opts out of the
+    /// per-client rule, which is why `active_tab_by_client` and `default_tab`
+    /// carry no public accessor of their own beyond
+    /// [`Workspace::default_tab`], whose name says it resolves for nobody.
+    ///
+    /// TP-MCF-TAB-01
     pub fn active_tab_index(&self) -> usize {
-        self.active_tab
+        self.viewer
+            .and_then(|client| self.active_tab_by_client.get(&client).copied())
+            .unwrap_or(self.default_tab)
+    }
+
+    /// Moves the current viewer to `idx`.
+    ///
+    /// The default advances too, so a display that attaches later lands on the
+    /// tab the session was most recently driven to instead of tab zero.
+    pub fn set_active_tab(&mut self, idx: usize) {
+        self.default_tab = idx;
+        if let Some(client) = self.viewer {
+            self.active_tab_by_client.insert(client, idx);
+        }
     }
 
     pub fn active_tab_mut(&mut self) -> Option<&mut Tab> {
-        self.tabs.get_mut(self.active_tab)
+        let index = self.active_tab_index();
+        self.tabs.get_mut(index)
     }
 
     pub fn active_tab_display_name(&self) -> Option<String> {
-        self.tab_display_name(self.active_tab)
+        self.tab_display_name(self.active_tab_index())
     }
 
     pub fn tab_display_name(&self, tab_idx: usize) -> Option<String> {
@@ -469,7 +565,7 @@ impl Workspace {
 
     pub fn switch_tab(&mut self, idx: usize) {
         if idx < self.tabs.len() {
-            self.active_tab = idx;
+            self.set_active_tab(idx);
             if let Some(tab) = self.tabs.get_mut(idx) {
                 for pane in tab.panes.values_mut() {
                     pane.seen = true;
@@ -592,11 +688,7 @@ impl Workspace {
         for pane_id in tab.panes.keys() {
             self.unregister_pane(*pane_id);
         }
-        if self.active_tab >= self.tabs.len() {
-            self.active_tab = self.tabs.len() - 1;
-        } else if idx <= self.active_tab && self.active_tab > 0 {
-            self.active_tab -= 1;
-        }
+        self.apply_tab_removal(idx);
         true
     }
 
@@ -616,18 +708,29 @@ impl Workspace {
             return false;
         }
 
-        let active_root_pane = self.tabs.get(self.active_tab).map(|tab| tab.root_pane);
+        // Reordering must not move anyone to a different tab, so every view is
+        // captured by tab identity and re-resolved after the move.
+        let default_root = self.tabs.get(self.default_tab).map(|tab| tab.root_pane);
+        let client_roots: Vec<(ClientId, Option<PaneId>)> = self
+            .active_tab_by_client
+            .iter()
+            .map(|(client, index)| (*client, self.tabs.get(*index).map(|tab| tab.root_pane)))
+            .collect();
+
         let tab = self.tabs.remove(source_idx);
         self.tabs.insert(target_idx, tab);
-        self.active_tab = active_root_pane
-            .and_then(|root_pane| self.tabs.iter().position(|tab| tab.root_pane == root_pane))
-            .unwrap_or(target_idx);
+
+        self.default_tab = self.index_of_root_pane(default_root, target_idx);
+        for (client, root_pane) in client_roots {
+            let index = self.index_of_root_pane(root_pane, target_idx);
+            self.active_tab_by_client.insert(client, index);
+        }
         true
     }
 
     #[cfg(test)]
     pub fn close_active_tab(&mut self) -> bool {
-        self.close_tab(self.active_tab)
+        self.close_tab(self.active_tab_index())
     }
 
     #[cfg(test)]
@@ -938,11 +1041,7 @@ impl Workspace {
             }
             self.tabs.remove(tab_idx);
             self.unregister_pane(pane_id);
-            if self.active_tab >= self.tabs.len() {
-                self.active_tab = self.tabs.len() - 1;
-            } else if tab_idx <= self.active_tab && self.active_tab > 0 {
-                self.active_tab -= 1;
-            }
+            self.apply_tab_removal(tab_idx);
             return false;
         }
 
@@ -1176,11 +1275,7 @@ impl Workspace {
             }
             self.tabs.remove(tab_idx);
             self.unregister_pane(pane_id);
-            if self.active_tab >= self.tabs.len() {
-                self.active_tab = self.tabs.len() - 1;
-            } else if tab_idx <= self.active_tab && self.active_tab > 0 {
-                self.active_tab -= 1;
-            }
+            self.apply_tab_removal(tab_idx);
             return false;
         }
 
@@ -1260,7 +1355,8 @@ impl Workspace {
             next_public_pane_number: 2,
             next_public_tab_number: 2,
             tabs: vec![tab],
-            active_tab: 0,
+            active_tab_by_client: HashMap::new(),
+            default_tab: 0,
             viewer: None,
             test_runtimes: HashMap::new(),
         }
@@ -1326,8 +1422,8 @@ impl Workspace {
         );
 
         assert_ne!(
-            ws.active_tab + 1,
-            ws.tabs[ws.active_tab].number,
+            ws.active_tab_index() + 1,
+            ws.tabs[ws.active_tab_index()].number,
             "adversarial active tab must distinguish position from public tab number"
         );
         assert_ne!(
@@ -1346,12 +1442,25 @@ impl Workspace {
             self.id
         );
         assert!(
-            self.active_tab < self.tabs.len(),
-            "workspace {} active_tab {} out of bounds for {} tabs",
+            self.default_tab < self.tabs.len(),
+            "workspace {} default_tab {} out of bounds for {} tabs",
             self.id,
-            self.active_tab,
+            self.default_tab,
             self.tabs.len()
         );
+        // Every client's view must be in bounds too. An index left behind by a
+        // tab removal would panic the moment that display rendered, and it
+        // would do so only on that display.
+        for (client, index) in &self.active_tab_by_client {
+            assert!(
+                *index < self.tabs.len(),
+                "workspace {} tab {} for client {} out of bounds for {} tabs",
+                self.id,
+                index,
+                client,
+                self.tabs.len()
+            );
+        }
 
         let mut tab_numbers = std::collections::HashSet::new();
         let mut max_tab_number = 0usize;
@@ -1575,8 +1684,8 @@ mod tests {
         let mut ws = Workspace::test_adversarial_identity_state();
         ws.assert_invariants_for_test();
 
-        let active_public = ws.tabs[ws.active_tab].number;
-        assert_ne!(ws.active_tab + 1, active_public);
+        let active_public = ws.tabs[ws.active_tab_index()].number;
+        assert_ne!(ws.active_tab_index() + 1, active_public);
         let divergent_pane = ws
             .public_pane_numbers
             .iter()
@@ -1591,7 +1700,7 @@ mod tests {
 
         let new_pane = ws.test_split(Direction::Vertical);
         assert!(ws.public_pane_number(new_pane).is_some());
-        assert!(ws.move_tab(ws.active_tab, ws.tabs.len()));
+        assert!(ws.move_tab(ws.active_tab_index(), ws.tabs.len()));
         ws.assert_invariants_for_test();
     }
 
@@ -1655,7 +1764,132 @@ mod tests {
         assert_eq!(ws.tabs[1].number, 3);
         assert_eq!(ws.tabs[2].number, 1);
         assert_eq!(ws.tabs[2].root_pane, moved_root);
-        assert_eq!(ws.tabs[ws.active_tab].root_pane, active_root);
+        assert_eq!(ws.tabs[ws.active_tab_index()].root_pane, active_root);
         ws.assert_invariants_for_test();
+    }
+}
+
+#[cfg(test)]
+mod per_client_tab_focus_tests {
+    use super::*;
+
+    /// Builds a workspace whose tabs are named, so an assertion can name the
+    /// tab a display is on instead of the index it happens to sit at.
+    /// `test_new` names the workspace, not its first tab, so that one is named
+    /// here.
+    fn workspace_with_tabs(names: &[&str]) -> Workspace {
+        let mut workspace = Workspace::test_new("fixture");
+        workspace.tabs[0].custom_name = Some(names[0].to_string());
+        for name in &names[1..] {
+            workspace.test_add_tab(Some(name));
+        }
+        workspace
+    }
+
+    fn tab_name_seen_by(workspace: &mut Workspace, client: ClientId) -> String {
+        workspace.set_viewer(Some(client));
+        let index = workspace.active_tab_index();
+        workspace.tabs[index]
+            .custom_name
+            .clone()
+            .unwrap_or_else(|| index.to_string())
+    }
+
+    // TP-MCF-TAB-01
+    #[test]
+    fn two_clients_hold_different_active_tabs_at_the_same_time() {
+        let mut workspace = workspace_with_tabs(&["left", "right"]);
+
+        workspace.set_viewer(Some(1));
+        workspace.set_active_tab(0);
+        workspace.set_viewer(Some(2));
+        workspace.set_active_tab(1);
+
+        assert_eq!(tab_name_seen_by(&mut workspace, 1), "left");
+        assert_eq!(
+            tab_name_seen_by(&mut workspace, 2),
+            "right",
+            "the second display keeps its own tab while the first keeps its own"
+        );
+    }
+
+    // TP-MCF-TAB-02
+    #[test]
+    fn losing_one_client_leaves_the_others_where_they_were() {
+        let mut workspace = workspace_with_tabs(&["left", "right"]);
+        workspace.set_viewer(Some(1));
+        workspace.set_active_tab(0);
+        workspace.set_viewer(Some(2));
+        workspace.set_active_tab(1);
+
+        workspace.forget_client(2);
+
+        assert_eq!(
+            tab_name_seen_by(&mut workspace, 1),
+            "left",
+            "a display that detaches must not drag the remaining one with it"
+        );
+        assert!(
+            !workspace.has_client_tab(2),
+            "the departed client must not keep a slot"
+        );
+    }
+
+    // TP-MCF-TAB-03
+    #[test]
+    fn closing_a_tab_moves_only_its_own_viewer_and_keeps_the_others_on_the_same_tab() {
+        let mut workspace = workspace_with_tabs(&["first", "second", "third"]);
+        workspace.set_viewer(Some(1));
+        workspace.set_active_tab(1);
+        workspace.set_viewer(Some(2));
+        workspace.set_active_tab(2);
+
+        // Client 1 closes the tab it is looking at. Indices below it shift, so
+        // client 2 has to follow its tab rather than its index.
+        workspace.set_viewer(Some(1));
+        workspace.close_active_tab();
+
+        assert_eq!(
+            tab_name_seen_by(&mut workspace, 2),
+            "third",
+            "the other display stays on the same tab, not the same index"
+        );
+        assert_eq!(tab_name_seen_by(&mut workspace, 1), "first");
+    }
+
+    // TP-MCF-TAB-04
+    #[test]
+    fn a_client_without_a_slot_adopts_the_workspace_default() {
+        let mut workspace = workspace_with_tabs(&["left", "right"]);
+        workspace.set_viewer(Some(1));
+        workspace.set_active_tab(1);
+
+        // A display that has never chosen lands on the most recent explicit
+        // choice, which is also what a restored session shows.
+        assert_eq!(workspace.default_tab(), 1);
+        assert_eq!(tab_name_seen_by(&mut workspace, 7), "right");
+
+        // Reading with no viewer at all resolves the same way.
+        workspace.set_viewer(None);
+        assert_eq!(workspace.active_tab_index(), 1);
+    }
+
+    // TP-MCF-TAB-06
+    #[test]
+    fn one_client_holds_a_separate_tab_in_each_workspace() {
+        let mut left = workspace_with_tabs(&["a1", "a2"]);
+        let mut right = workspace_with_tabs(&["b1", "b2"]);
+
+        left.set_viewer(Some(1));
+        left.set_active_tab(1);
+        right.set_viewer(Some(1));
+        right.set_active_tab(0);
+
+        assert_eq!(tab_name_seen_by(&mut left, 1), "a2");
+        assert_eq!(
+            tab_name_seen_by(&mut right, 1),
+            "b1",
+            "each workspace remembers the tab this display left it on"
+        );
     }
 }

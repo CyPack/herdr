@@ -885,7 +885,7 @@ mod tests {
 
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 16));
 
-        assert_eq!(app.state.workspaces[0].active_tab, 1);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 1);
         assert_eq!(
             app.state.workspaces[0].tabs[1].layout.focused(),
             second_pane
@@ -1064,7 +1064,7 @@ mod tests {
 
         assert_eq!(app.state.active, Some(1));
         assert_eq!(app.state.selected, 1);
-        assert_eq!(app.state.workspaces[1].active_tab, 0);
+        assert_eq!(app.state.workspaces[1].active_tab_index(), 0);
         assert_eq!(
             app.state.workspaces[1].tabs[0].layout.focused(),
             second_pane
@@ -1241,7 +1241,7 @@ mod tests {
             body.y + 1,
         ));
 
-        assert_eq!(app.state.workspaces[0].active_tab, second_tab);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), second_tab);
         assert_eq!(
             app.state.workspaces[0].tabs[second_tab].layout.focused(),
             second_pane
@@ -1289,7 +1289,7 @@ mod tests {
             detail_area.y + 1,
         ));
 
-        assert_eq!(app.state.workspaces[0].active_tab, 1);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 1);
         assert_eq!(
             app.state.workspaces[0].tabs[1].layout.focused(),
             second_pane
@@ -1615,7 +1615,7 @@ mod tests {
 
         assert_eq!(app.state.tab_scroll, 1);
         assert!(!app.state.tab_scroll_follow_active);
-        assert_eq!(app.state.workspaces[0].active_tab, 0);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 0);
         assert_eq!(app.state.view.tab_hit_areas[0].width, 0);
         assert!(app.state.workspaces[0].tabs[0].custom_name.is_none());
         assert_eq!(
@@ -1656,7 +1656,7 @@ mod tests {
             target.y,
         ));
 
-        assert_eq!(app.state.workspaces[0].active_tab, last_idx);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), last_idx);
         assert_eq!(app.state.tab_scroll, clamped_scroll);
         assert!(app.state.view.tab_hit_areas[last_idx].width > 0);
     }
@@ -1718,7 +1718,7 @@ mod tests {
         assert_eq!(app.state.workspaces[0].tabs[1].number, 3);
         assert_eq!(app.state.workspaces[0].tabs[2].number, 1);
         assert_eq!(app.state.workspaces[0].tabs[2].root_pane, moved_root);
-        assert_eq!(app.state.workspaces[0].active_tab, 2);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 2);
     }
 
     fn temp_git_repo(branch: &str) -> std::path::PathBuf {
@@ -3037,7 +3037,7 @@ mod tests {
             Some(1),
             "focus jumps to the wired tab's workspace"
         );
-        assert_eq!(app.state.workspaces[1].active_tab, tab_idx);
+        assert_eq!(app.state.workspaces[1].active_tab_index(), tab_idx);
         assert_eq!(app.state.mode, Mode::Terminal);
     }
 
@@ -3078,7 +3078,7 @@ mod tests {
 
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 16));
 
-        assert_eq!(app.state.workspaces[0].active_tab, 1);
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 1);
         assert_eq!(
             app.state.workspaces[0].tabs[1].layout.focused(),
             second_pane

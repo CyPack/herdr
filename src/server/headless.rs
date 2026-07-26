@@ -1421,6 +1421,7 @@ impl HeadlessServer {
     fn remove_client(&mut self, client_id: u64) -> bool {
         let was_foreground = self.foreground_client_id == Some(client_id);
         self.app.clear_input_source(client_id);
+        self.app.state.forget_client(client_id);
         self.send_client_graphics_cleanup(client_id);
         let removed = self.clients.remove(&client_id);
         if let Some(removed) = removed {
