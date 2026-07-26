@@ -2370,6 +2370,22 @@ pub struct AppState {
     /// Client-local presentation state: never persisted, never sent over the
     /// wire as session truth.
     pub(super) viewer: Option<ClientId>,
+    /// The workspace each client is in.
+    ///
+    /// `active` above is the *resolved* value for the current viewer, not
+    /// storage: the viewer window swaps a client's workspace in on the way in
+    /// and saves it back on the way out. Keeping `active` as the resolved
+    /// register is deliberate — it is read in several hundred places, and
+    /// every one of them means "the workspace the display being served is in".
+    ///
+    /// Client-local presentation state: never persisted.
+    pub(super) active_by_client: std::collections::HashMap<ClientId, Option<usize>>,
+    /// The workspace a client adopts before it has chosen one, and the value
+    /// resolved when no client is acting.
+    ///
+    /// Tracks the most recent actual switch, so a display attaching later
+    /// lands where the session is being driven.
+    pub(super) default_active: Option<usize>,
     pub(crate) previous_pane_focus: Option<PaneFocusTarget>,
     pub selected: usize,
     pub mode: Mode,
@@ -2720,6 +2736,42 @@ impl AppState {
     /// workspace has one tab, so the default it falls back to is the same tab
     /// the viewer would have resolved to.
     fn set_viewer(&mut self, viewer: Option<ClientId>) {
+        // Save the outgoing view before installing the incoming one. `active`
+        // is a register, not storage, so this is a context switch rather than
+        // a plain assignment.
+        match self.viewer {
+            Some(previous) => {
+                let changed =
+                    self.active_by_client.insert(previous, self.active) != Some(self.active);
+                if changed {
+                    // A display actually moved, so that is where the session is
+                    // being driven and where a display attaching later lands.
+                    self.default_active = self.active;
+                }
+            }
+            None => self.default_active = self.active,
+        }
+
+        self.active = match viewer {
+            Some(client) => {
+                let default_active = self.default_active;
+                let slot = self
+                    .active_by_client
+                    .entry(client)
+                    .or_insert(default_active);
+                // `None` is the absence of a choice, not a choice. A client
+                // that attached before the session had any workspace would
+                // otherwise resolve to no workspace forever, including after
+                // one was created — and a workspace-less render resizes live
+                // panes to a fallback area.
+                if slot.is_none() {
+                    *slot = default_active;
+                }
+                *slot
+            }
+            None => self.default_active,
+        };
+
         self.viewer = viewer;
         for workspace in &mut self.workspaces {
             workspace.set_viewer(viewer);
@@ -2734,6 +2786,7 @@ impl AppState {
     ///
     /// TP-MCF-TAB-02
     pub(crate) fn forget_client(&mut self, client: ClientId) {
+        self.active_by_client.remove(&client);
         for workspace in &mut self.workspaces {
             workspace.forget_client(client);
         }
@@ -2979,6 +3032,8 @@ impl AppState {
             workspaces: Vec::new(),
             active: None,
             viewer: None,
+            active_by_client: std::collections::HashMap::new(),
+            default_active: None,
             previous_pane_focus: None,
             selected: 0,
             mode: Mode::Navigate,
@@ -4821,6 +4876,97 @@ mod viewer_context_tests {
         for workspace in &state.workspaces {
             assert_eq!(workspace.viewer(), None);
         }
+    }
+
+    // TP-MCF-WS-01
+    #[test]
+    fn two_clients_stay_in_different_workspaces() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("left"));
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("right"));
+        state.active = Some(0);
+
+        // Both displays attach on the workspace the session is on.
+        state.enter_viewer(Some(1));
+        state.restore_viewer(None);
+        state.enter_viewer(Some(2));
+        // The second display moves to the other workspace.
+        state.active = Some(1);
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(1));
+        assert_eq!(
+            state.active,
+            Some(0),
+            "the display nobody moved must stay in its own workspace"
+        );
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(2));
+        assert_eq!(
+            state.active,
+            Some(1),
+            "the display that moved keeps its move"
+        );
+        state.restore_viewer(None);
+    }
+
+    // TP-MCF-WS-02
+    #[test]
+    fn a_client_that_never_moved_adopts_the_workspace_the_session_is_driven_to() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("left"));
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("right"));
+        state.active = Some(0);
+
+        state.enter_viewer(Some(1));
+        state.active = Some(1);
+        state.restore_viewer(None);
+
+        // A display attaching afterwards lands where the session is being
+        // driven, not on workspace zero.
+        state.enter_viewer(Some(9));
+        assert_eq!(state.active, Some(1));
+        state.restore_viewer(None);
+
+        // And a departed display leaves nothing behind.
+        state.forget_client(1);
+        assert!(!state.active_by_client.contains_key(&1));
+    }
+
+    // TP-MCF-WS-03
+    #[test]
+    fn a_client_that_attached_before_any_workspace_existed_follows_the_first_one() {
+        let mut state = AppState::test_new();
+        assert_eq!(state.active, None, "the session has no workspace yet");
+
+        // The display attaches and renders before the session has a workspace.
+        state.enter_viewer(Some(1));
+        state.restore_viewer(None);
+
+        // The session then creates one, outside any viewer window, the way the
+        // API and startup paths do.
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("first"));
+        state.active = Some(0);
+
+        state.enter_viewer(Some(1));
+        assert_eq!(
+            state.active,
+            Some(0),
+            "an empty slot is the absence of a choice; the display must follow \
+             the session instead of resolving to no workspace forever"
+        );
+        state.restore_viewer(None);
     }
 
     // TP-MCF-CTX-04

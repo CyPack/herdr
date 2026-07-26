@@ -622,6 +622,8 @@ impl App {
             workspaces,
             active,
             viewer: None,
+            active_by_client: std::collections::HashMap::new(),
+            default_active: active,
             previous_pane_focus: None,
             selected,
             mode,
