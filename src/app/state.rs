@@ -2341,6 +2341,13 @@ pub(crate) struct PaneFocusTarget {
     pub pane_id: PaneId,
 }
 
+/// Identifies one connected client.
+///
+/// This shares the input-source id space, where `0` is the local/monolithic
+/// path, so the id a client's input already carries is the same id its view
+/// resolves through.
+pub type ClientId = u64;
+
 /// All application state — pure data, no channels or async runtime.
 /// Testable without PTYs or a tokio runtime.
 pub struct AppState {
@@ -2352,6 +2359,17 @@ pub struct AppState {
     pub(crate) public_pane_id_aliases: std::collections::HashMap<String, PaneId>,
     pub workspaces: Vec<Workspace>,
     pub active: Option<usize>,
+    /// Whose view the workspace accessors resolve right now.
+    ///
+    /// Set for the duration of one client's input routing and one client's
+    /// render pass, and `None` outside those windows — restore, an API call
+    /// that names no client, and the render path taken when nothing is
+    /// attached. Accessors fall back to the workspace default there, which is
+    /// the value a newly attaching client adopts.
+    ///
+    /// Client-local presentation state: never persisted, never sent over the
+    /// wire as session truth.
+    pub(super) viewer: Option<ClientId>,
     pub(crate) previous_pane_focus: Option<PaneFocusTarget>,
     pub selected: usize,
     pub mode: Mode,
@@ -2664,6 +2682,50 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// The client whose view is currently being resolved, if any.
+    // The window is written by production and only read back by the tests that
+    // pin the context contract; the per-client tab resolution reads it next.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn viewer(&self) -> Option<ClientId> {
+        self.viewer
+    }
+
+    /// Enters `viewer`'s view and returns the previous one so the caller can
+    /// put it back.
+    ///
+    /// Callers must pair this with [`AppState::restore_viewer`] on every exit
+    /// path. The pairing is kept structural — one wrapper enters, calls an
+    /// inner function that owns all the early returns, and restores — so an
+    /// early return cannot leave another client's view installed.
+    pub(crate) fn enter_viewer(&mut self, viewer: Option<ClientId>) -> Option<ClientId> {
+        let previous = self.viewer;
+        self.set_viewer(viewer);
+        previous
+    }
+
+    /// Puts back the viewer returned by [`AppState::enter_viewer`].
+    pub(crate) fn restore_viewer(&mut self, previous: Option<ClientId>) {
+        self.set_viewer(previous);
+    }
+
+    /// Mirrors the viewer into every workspace.
+    ///
+    /// `Workspace` owns the per-client tab map but has no path back to
+    /// `AppState`, so the id is pushed down instead of being threaded through
+    /// every accessor call site. This is the only writer; the field is private
+    /// on both sides so no other code can install a view.
+    ///
+    /// A workspace created *during* a viewer window keeps `None` until the next
+    /// window opens. That is correct rather than merely tolerable: a brand-new
+    /// workspace has one tab, so the default it falls back to is the same tab
+    /// the viewer would have resolved to.
+    fn set_viewer(&mut self, viewer: Option<ClientId>) {
+        self.viewer = viewer;
+        for workspace in &mut self.workspaces {
+            workspace.set_viewer(viewer);
+        }
+    }
+
     pub(crate) fn mark_session_dirty(&mut self) {
         self.session_dirty = true;
     }
@@ -2903,6 +2965,7 @@ impl AppState {
             public_pane_id_aliases: std::collections::HashMap::new(),
             workspaces: Vec::new(),
             active: None,
+            viewer: None,
             previous_pane_focus: None,
             selected: 0,
             mode: Mode::Navigate,
@@ -4693,5 +4756,82 @@ mod tests {
         }
         .plugin_invocation_params()
         .is_none());
+    }
+}
+
+#[cfg(test)]
+mod viewer_context_tests {
+    use super::*;
+
+    // TP-MCF-CTX-01
+    #[test]
+    fn entering_a_viewer_returns_the_previous_one_for_restoration() {
+        let mut state = AppState::test_new();
+        assert_eq!(state.viewer(), None, "a fresh state has no viewer");
+
+        let previous = state.enter_viewer(Some(7));
+        assert_eq!(previous, None);
+        assert_eq!(state.viewer(), Some(7));
+
+        let nested_previous = state.enter_viewer(Some(9));
+        assert_eq!(nested_previous, Some(7));
+        assert_eq!(state.viewer(), Some(9));
+
+        state.restore_viewer(nested_previous);
+        assert_eq!(state.viewer(), Some(7));
+
+        state.restore_viewer(previous);
+        assert_eq!(state.viewer(), None);
+    }
+
+    // TP-MCF-CTX-02
+    #[test]
+    fn the_viewer_context_reaches_every_workspace() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("first"));
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("second"));
+
+        state.enter_viewer(Some(4));
+        for workspace in &state.workspaces {
+            assert_eq!(
+                workspace.viewer(),
+                Some(4),
+                "workspace accessors resolve through the mirrored viewer"
+            );
+        }
+
+        state.restore_viewer(None);
+        for workspace in &state.workspaces {
+            assert_eq!(workspace.viewer(), None);
+        }
+    }
+
+    // TP-MCF-CTX-04
+    #[test]
+    fn a_workspace_created_inside_a_viewer_window_falls_back_to_the_default() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("before"));
+        state.enter_viewer(Some(2));
+
+        // Mirroring runs when the window opens, so a workspace added while it
+        // is open carries no viewer until the next window. That is safe rather
+        // than merely tolerated: a brand-new workspace has one tab, so the
+        // default it falls back to is the tab the viewer would have resolved.
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("during"));
+        assert_eq!(state.workspaces[0].viewer(), Some(2));
+        assert_eq!(state.workspaces[1].viewer(), None);
+
+        // The next window reconciles it.
+        state.restore_viewer(None);
+        state.enter_viewer(Some(2));
+        assert_eq!(state.workspaces[1].viewer(), Some(2));
     }
 }

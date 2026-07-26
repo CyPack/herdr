@@ -3667,6 +3667,10 @@ impl HeadlessServer {
             let is_app_client = matches!(mode, ClientConnectionMode::App);
             let mut frame = match mode {
                 ClientConnectionMode::App => {
+                    // Render resolves this client's view for the whole arm.
+                    // The arm has no early exit, so the single restore below
+                    // always runs. TP-MCF-CTX-03
+                    let previous_viewer = self.app.state.enter_viewer(Some(client_id));
                     let render_started = crate::render_prof::timer();
                     let render_cell_size =
                         if self.app.state.kitty_graphics_enabled && cell_size.is_known() {
@@ -3702,6 +3706,7 @@ impl HeadlessServer {
                         &hyperlinks,
                     );
                     crate::render_prof::duration_since("full_render.frame_build", frame_started);
+                    self.app.state.restore_viewer(previous_viewer);
                     frame
                 }
                 ClientConnectionMode::TerminalAttach { terminal_id }

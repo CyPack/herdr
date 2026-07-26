@@ -165,6 +165,14 @@ pub struct Workspace {
     pub(crate) next_public_tab_number: usize,
     pub tabs: Vec<Tab>,
     pub active_tab: usize,
+    /// Whose view this workspace resolves right now.
+    ///
+    /// Mirrored down from `AppState` by its viewer window; `AppState::set_viewer`
+    /// is the only writer. `None` means no client is acting, and accessors fall
+    /// back to the workspace default.
+    ///
+    /// Client-local presentation state: never persisted.
+    pub(crate) viewer: Option<crate::app::state::ClientId>,
     #[cfg(test)]
     pub(crate) test_runtimes: HashMap<PaneId, TerminalRuntime>,
 }
@@ -186,6 +194,22 @@ impl DerefMut for Workspace {
 }
 
 impl Workspace {
+    /// The client whose view this workspace resolves right now.
+    // Mirrored in by production and only read back by the tests that pin the
+    // context contract; the per-client tab resolution reads it next.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn viewer(&self) -> Option<crate::app::state::ClientId> {
+        self.viewer
+    }
+
+    /// Installs the acting client's view.
+    ///
+    /// `AppState::set_viewer` is the only caller; going through it keeps one
+    /// writer for a value every workspace has to agree on.
+    pub(crate) fn set_viewer(&mut self, viewer: Option<crate::app::state::ClientId>) {
+        self.viewer = viewer;
+    }
+
     fn adjust_active_tab_after_removal(&mut self, removed_idx: usize) {
         if self.tabs.is_empty() {
             self.active_tab = 0;
@@ -225,6 +249,7 @@ impl Workspace {
             next_public_tab_number: 2,
             tabs: vec![tab],
             active_tab: 0,
+            viewer: None,
             #[cfg(test)]
             test_runtimes: HashMap::new(),
         }
@@ -408,6 +433,7 @@ impl Workspace {
                 next_public_tab_number: 2,
                 tabs: vec![tab],
                 active_tab: 0,
+                viewer: None,
                 #[cfg(test)]
                 test_runtimes: HashMap::new(),
             },
@@ -1235,6 +1261,7 @@ impl Workspace {
             next_public_tab_number: 2,
             tabs: vec![tab],
             active_tab: 0,
+            viewer: None,
             test_runtimes: HashMap::new(),
         }
     }

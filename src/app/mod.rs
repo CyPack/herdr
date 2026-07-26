@@ -621,6 +621,7 @@ impl App {
             public_pane_id_aliases: std::collections::HashMap::new(),
             workspaces,
             active,
+            viewer: None,
             previous_pane_focus: None,
             selected,
             mode,
@@ -1809,7 +1810,28 @@ impl App {
         self.route_client_events_from(LOCAL_INPUT_SOURCE, events, apply_host_terminal_theme)
     }
 
+    /// Routes one client's input with that client's view installed.
+    ///
+    /// The viewer window opens here and closes on the single exit path, so
+    /// every early return inside the routing body still puts the previous view
+    /// back. `source_id` is the client id; the local/monolithic path passes
+    /// `LOCAL_INPUT_SOURCE`.
+    ///
+    /// TP-MCF-CTX-03
     pub(crate) fn route_client_events_from(
+        &mut self,
+        source_id: InputSourceId,
+        events: Vec<crate::raw_input::RawInputEvent>,
+        apply_host_terminal_theme: bool,
+    ) -> bool {
+        let previous_viewer = self.state.enter_viewer(Some(source_id));
+        let render_needed =
+            self.route_client_events_in_viewer(source_id, events, apply_host_terminal_theme);
+        self.state.restore_viewer(previous_viewer);
+        render_needed
+    }
+
+    fn route_client_events_in_viewer(
         &mut self,
         source_id: InputSourceId,
         events: Vec<crate::raw_input::RawInputEvent>,
@@ -5682,6 +5704,37 @@ last_pane = "prefix+tab"
         );
         assert!(pressed_rx.try_recv().is_err());
         assert!(other_rx.try_recv().is_err());
+    }
+
+    // TP-MCF-CTX-03
+    #[tokio::test]
+    async fn routing_a_client_scopes_the_viewer_and_puts_the_previous_one_back() {
+        let mut app = test_app();
+        app.state.workspaces = vec![Workspace::test_new("test")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+
+        assert_eq!(app.state.viewer(), None, "no client is acting yet");
+
+        app.route_client_events_from(3, Vec::new(), false);
+        assert_eq!(
+            app.state.viewer(),
+            None,
+            "routing must not leave its client's view installed"
+        );
+
+        // Restoring the saved value, rather than clearing to `None`, is what
+        // keeps a nested window honest: the render pass that wraps a routing
+        // call still owns its own view afterwards.
+        let outer = app.state.enter_viewer(Some(9));
+        app.route_client_events_from(3, Vec::new(), false);
+        assert_eq!(
+            app.state.viewer(),
+            Some(9),
+            "the enclosing viewer survives an inner routing window"
+        );
+        app.state.restore_viewer(outer);
+        assert_eq!(app.state.viewer(), None);
     }
 
     #[tokio::test]
