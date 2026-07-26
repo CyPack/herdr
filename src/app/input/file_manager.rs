@@ -340,25 +340,35 @@ pub(crate) fn open_preview_viewer(state: &mut AppState) -> bool {
     true
 }
 
-/// Queue the editor action for the file whose text preview was clicked.
+/// Queue the first matching plugin action for the file whose preview was
+/// clicked — the editor for a text file, the popup spreadsheet for a
+/// workbook, the popup viewer for a picture or PDF.
 ///
-/// The click produces the SAME plugin intent the context menu's "Edit in New
-/// Tab" row produces, so both travel one dispatch seam and cannot drift. Only
-/// a text preview answers: a picture click already enlarges, and a workbook
-/// already has its own editor action.
-///
-/// When several installed actions match the extension, the lowest qualified id
-/// wins — the same deterministic order the context menu lists them in, so the
-/// click opens what the menu shows first.
+/// The click produces the SAME plugin intent the context menu emits, so both
+/// travel one dispatch seam and cannot drift. When several installed actions
+/// match the extension, the lowest qualified id wins — the same deterministic
+/// order the context menu lists them in, so the click opens what the menu
+/// shows first. Plugins choose their preview-click answer by naming an action
+/// that sorts first.
 pub(crate) fn queue_text_preview_editor(state: &mut AppState) -> bool {
     let Some(file_manager) = state.file_manager.as_ref() else {
         return false;
     };
-    let crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(preview)) = &file_manager.preview
-    else {
-        return false;
+    let path = match &file_manager.preview {
+        crate::fm::FmPreview::File(crate::fm::FmFilePreview::Text(preview)) => {
+            preview.source_path.clone()
+        }
+        crate::fm::FmPreview::File(crate::fm::FmFilePreview::Sheet(preview)) => {
+            preview.source_path.clone()
+        }
+        crate::fm::FmPreview::File(crate::fm::FmFilePreview::Image(preview)) => {
+            preview.source_path.clone()
+        }
+        crate::fm::FmPreview::File(crate::fm::FmFilePreview::Pdf(preview)) => {
+            preview.source_path.clone()
+        }
+        _ => return false,
     };
-    let path = preview.source_path.clone();
 
     let actions = crate::app::api::plugins::file_manifest_actions(&state.installed_plugins);
     let paths = [path.clone()];
@@ -1612,11 +1622,15 @@ impl App {
                 self.file_manager_mouse_render_override = Some(turned);
                 return FileManagerMouseDispatch::Consumed;
             }
-            // Clicking the picture enlarges it. The indicator is answered
-            // first because its arrows sit inside the same rect.
+            // Clicking the picture opens it where the plugin says — a popup
+            // viewer when one is installed — and falls back to the built-in
+            // enlarge overlay when nothing matches, so every raster click
+            // still answers. The indicator is answered first because its
+            // arrows sit inside the same rect.
             if crate::kitty_graphics::file_manager_raster_content_area(&self.state)
                 .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
-                && open_preview_viewer(&mut self.state)
+                && (queue_text_preview_editor(&mut self.state)
+                    || open_preview_viewer(&mut self.state))
             {
                 return FileManagerMouseDispatch::Consumed;
             }
