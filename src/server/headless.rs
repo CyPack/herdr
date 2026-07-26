@@ -8736,6 +8736,107 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
         );
     }
 
+    /// Each display draws the tab it is on, at the same moment, in one frame
+    /// pass. This is the whole feature seen from the outside: five tabs on
+    /// five monitors, all live.
+    ///
+    /// TP-MCF-UI-01
+    #[tokio::test]
+    async fn every_display_draws_its_own_tab_in_the_same_frame() {
+        let mut server = test_headless_server();
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        let first_pane = workspace.tabs[0].root_pane;
+        let second_tab = workspace.test_add_tab(Some("second"));
+        let second_pane = workspace.tabs[second_tab].root_pane;
+        workspace.tabs[0].runtimes.insert(
+            first_pane,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"AGENT-ALPHA"),
+        );
+        workspace.tabs[second_tab].runtimes.insert(
+            second_pane,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"AGENT-BETA"),
+        );
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+
+        let (one_tx, _one_control_rx, one_rx) = test_client_writer();
+        let (two_tx, _two_control_rx, two_rx) = test_client_writer();
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (120, 40),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(one_tx),
+            ),
+        );
+        server.clients.insert(
+            2,
+            ClientConnection::new(
+                (120, 40),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                2,
+                RenderEncoding::SemanticFrame,
+                Some(two_tx),
+            ),
+        );
+        server.foreground_client_id = Some(1);
+
+        // Both displays attach on the same tab, then the second moves.
+        server.render_and_stream();
+        while one_rx.try_recv().is_ok() {}
+        while two_rx.try_recv().is_ok() {}
+
+        let previous = server.app.state.enter_viewer(Some(2));
+        server.app.state.workspaces[0].set_active_tab(second_tab);
+        server.app.state.restore_viewer(previous);
+
+        server.render_and_stream();
+
+        // The second display moved, so it gets a frame. The first display did
+        // not, so identical-frame suppression may send it nothing at all --
+        // and that silence is itself the proof it was not dragged along.
+        let two_text = frame_text(&read_server_frame(two_rx.recv().expect("second frame")));
+        assert!(
+            two_text.contains("AGENT-BETA"),
+            "the second display draws the tab it moved to: {two_text:?}"
+        );
+        assert!(
+            !two_text.contains("AGENT-ALPHA"),
+            "the second display must not still be showing the first display's agent"
+        );
+
+        match one_rx.try_recv() {
+            Ok(frame) => {
+                let one_text = frame_text(&read_server_frame(frame));
+                assert!(
+                    one_text.contains("AGENT-ALPHA"),
+                    "the first display keeps drawing its own agent: {one_text:?}"
+                );
+                assert!(
+                    !one_text.contains("AGENT-BETA"),
+                    "the first display must not be pulled onto the tab the second opened"
+                );
+            }
+            Err(_) => {
+                // No frame means nothing about that display changed. Confirm
+                // that from state as well, so an unrelated send failure cannot
+                // masquerade as a pass.
+                let previous = server.app.state.enter_viewer(Some(1));
+                let tab = server.app.state.workspaces[0].active_tab_index();
+                server.app.state.restore_viewer(previous);
+                assert_eq!(tab, 0, "the untouched display is still on its own tab");
+            }
+        }
+    }
+
     // TP-MCF-SIZE-01
     #[tokio::test]
     async fn each_display_sizes_the_tab_it_alone_is_watching() {
