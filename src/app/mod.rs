@@ -5201,9 +5201,11 @@ mod tests {
 
         app.route_client_input(b"q".to_vec());
 
+        // TP-A3.8: q no longer closes the surface — but it must still be
+        // OWNED by Files, or it would leak into the hidden terminal.
         assert!(
-            app.state.file_manager.is_none(),
-            "Files must own q ahead of the hidden terminal in headless mode"
+            app.state.file_manager.is_some(),
+            "Files stays open on q; the surface closes from the tab, not a key"
         );
         assert!(
             rx.try_recv().is_err(),

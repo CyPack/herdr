@@ -28,7 +28,7 @@ prose — what the behavior is and what breaks if it is lost.
 | TP-A3.4 | `leave_at_root_is_noop` |
 | TP-A3.5 | `jk_moves_cursor` |
 | TP-A3.6 | `enter_and_backspace_navigate_directories` |
-| TP-A3.7 | `esc_and_q_close` |
+| TP-A3.8 | `esc_and_q_do_not_close` |
 | TP-A4.3 | `reload_deleted_selection_uses_nearest_row_then_handles_empty_directory`, `reload_preserves_selected_path_and_refreshes_preview_context`, `reload_renamed_selection_falls_back_to_safe_row`, `toggle_hidden_preserves_selection_that_remains_visible` |
 | TP-B1.1-BOUNDED-READ | `bounded_text_preview_caps_one_long_line`, `bounded_text_preview_distinguishes_exact_limit_from_overflow`, `bounded_text_preview_never_splits_utf8_scalar`, `bounded_text_preview_preserves_exact_utf8_and_crlf`, `fmstate_prepares_selected_text_file_outside_render` |
 | TP-B1.2 | `display_name` |

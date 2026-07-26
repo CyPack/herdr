@@ -618,8 +618,16 @@ pub(super) fn handle_file_manager_key(
         return FileManagerKeyDispatch::CancelOperation;
     }
     match (key.code, key.modifiers) {
-        (KeyCode::Esc | KeyCode::Char('q'), _) => {
-            state.close_file_manager();
+        // Esc and q no longer close the file manager (TP-A3.7 retired on
+        // explicit request: pressing Esc to close an editor popup was landing
+        // here a beat later and silently killing the whole surface). Esc
+        // keeps a local job — dropping the explicit multi-selection — and q
+        // is swallowed so it cannot fall through to anything destructive.
+        // The surface closes from the tab/sidebar, never from a stray key.
+        (KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q'), _) => {
+            if let Some(fm) = state.file_manager.as_mut() {
+                fm.clear_multi_selection();
+            }
         }
         (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
             if let Some(fm) = state.file_manager.as_mut() {
@@ -5569,19 +5577,31 @@ command = ["edit"]
         assert_eq!(restored.preview_generation, before.preview_generation + 2);
     }
 
-    // TP-A3.7: Esc and q both close the file manager.
+    // TP-A3.8: Esc and q must NOT close the file manager. The old contract
+    // (TP-A3.7) made Esc close the surface, so the Esc that closed an editor
+    // popup could land here a beat later and silently kill the file manager.
+    // Esc keeps a local job — clearing the explicit multi-selection.
     #[test]
-    fn esc_and_q_close() {
+    fn esc_and_q_do_not_close() {
         let td = TempDir::new("close");
         td.file("a");
 
         let mut app = app_with_fm(FmState::new(&td.root));
+        if let Some(fm) = app.file_manager.as_mut() {
+            assert!(fm.replace_selection(0));
+        }
         handle_file_manager_key(&mut app, key(KeyCode::Esc));
-        assert!(app.file_manager.is_none(), "esc closes the file manager");
+        let fm = app.file_manager.as_ref().expect("esc keeps the surface");
+        assert!(
+            fm.multi_selection_paths().is_empty(),
+            "esc clears the explicit selection instead"
+        );
 
-        let mut app = app_with_fm(FmState::new(&td.root));
         handle_file_manager_key(&mut app, key(KeyCode::Char('q')));
-        assert!(app.file_manager.is_none(), "q closes the file manager");
+        assert!(
+            app.file_manager.is_some(),
+            "q keeps the file manager open too"
+        );
     }
 
     // TP-C4.4-CANCEL: Esc is the user cancellation route while an operation
@@ -8997,7 +9017,13 @@ command = ["edit"]
             vec![&selected_path]
         );
 
+        // TP-A3.8: Esc no longer closes the surface — it clears the explicit
+        // selection in place. The close half of the lifecycle goes through
+        // the state API, which is the only close route left.
         handle_file_manager_key(&mut app.state, key(KeyCode::Esc));
+        let fm = app.state.file_manager.as_ref().expect("esc keeps fm open");
+        assert!(fm.multi_selection_paths().is_empty());
+        app.state.close_file_manager();
         assert!(app.state.file_manager.is_none());
         app.state
             .try_open_file_manager_with(|_| Some(FmState::new(&td.root)))
