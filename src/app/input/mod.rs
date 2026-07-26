@@ -169,6 +169,14 @@ impl App {
             return None;
         }
 
+        // An open popup owns the keyboard outright, exactly as the monolithic
+        // loop's first check does. Without this, Esc pressed over the editor
+        // popup routed to the shell owner underneath — the file manager — and
+        // cleared ITS selection while the popup sat there unclosed.
+        if self.state.popup_pane.is_some() {
+            return self.handle_terminal_key_headless(key);
+        }
+
         match self.state.shell_key_input_owner() {
             ShellInputOwner::TopmostOverlay => {
                 self.handle_non_terminal_key_headless(key);
@@ -785,11 +793,30 @@ impl App {
     }
 
     fn handle_popup_mouse(&mut self, mouse: MouseEvent) {
-        let Some((_outer, inner)) =
+        let Some((outer, inner)) =
             crate::ui::popup_pane_rects(&self.state, self.state.view.terminal_area)
         else {
             return;
         };
+        let outside_popup = mouse.column < outer.x
+            || mouse.column >= outer.x.saturating_add(outer.width)
+            || mouse.row < outer.y
+            || mouse.row >= outer.y.saturating_add(outer.height);
+        if outside_popup {
+            // Clicking past the popup means "I am done here". The dismissal
+            // is delivered as Esc INTO the popup's own app rather than a
+            // kill from outside: the editors bind Esc to save-then-quit, so
+            // the popup closes with the last state safely on disk — closing
+            // the pane out from under them would race their final write.
+            if matches!(mouse.kind, MouseEventKind::Down(_)) {
+                if let Some(rt) = self.popup_runtime() {
+                    let _ = rt.try_send_bytes(bytes::Bytes::from_static(b"\x1b"));
+                } else {
+                    self.close_popup_pane();
+                }
+            }
+            return;
+        }
         if mouse.column < inner.x
             || mouse.column >= inner.x.saturating_add(inner.width)
             || mouse.row < inner.y
