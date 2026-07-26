@@ -247,12 +247,18 @@ pub struct SessionConfig {
     /// Resume supported AI-agent panes into their native conversation sessions
     /// when restoring a Herdr session. Default: true.
     pub resume_agents_on_restore: bool,
+    /// Let each attached display hold its own workspace, tab and focused pane
+    /// so several monitors can watch different tabs of one session at the same
+    /// time. Set to false to mirror one view onto every display, which is the
+    /// behaviour for pairing or a demo. Default: true.
+    pub per_display_focus: bool,
 }
 
 impl Default for SessionConfig {
     fn default() -> Self {
         Self {
             resume_agents_on_restore: true,
+            per_display_focus: true,
         }
     }
 }

@@ -2620,6 +2620,10 @@ pub struct AppState {
     pub pane_gaps: bool,
     pub show_agent_labels_on_pane_borders: bool,
     pub hide_tab_bar_when_single_tab: bool,
+    /// Whether each display holds its own workspace, tab and focused pane.
+    /// False mirrors one view onto every display, which is the behaviour
+    /// this feature replaced and the way back to it.
+    pub per_display_focus: bool,
     pub pane_history_persistence: bool,
     /// Expose the focused pane's cursor anchor to the outer terminal even when
     /// the pane requested `?25l`. See `[experimental] reveal_hidden_cursor_for_cjk_ime`.
@@ -2736,6 +2740,13 @@ impl AppState {
     /// workspace has one tab, so the default it falls back to is the same tab
     /// the viewer would have resolved to.
     fn set_viewer(&mut self, viewer: Option<ClientId>) {
+        // Mirror mode is the way back to one view on every display. Recording
+        // no viewer at all is what turns it off: with `viewer` left `None`,
+        // every accessor resolves the shared default, which is exactly the
+        // behaviour this feature replaced.
+        if !self.per_display_focus {
+            return;
+        }
         // Save the outgoing view before installing the incoming one. `active`
         // is a register, not storage, so this is a context switch rather than
         // a plain assignment.
@@ -3191,6 +3202,7 @@ impl AppState {
             pane_gaps: false,
             show_agent_labels_on_pane_borders: false,
             hide_tab_bar_when_single_tab: false,
+            per_display_focus: true,
             pane_history_persistence: false,
             reveal_hidden_cursor_for_cjk_ime: false,
             cjk_ime_agent_filter_configured: false,
@@ -4940,6 +4952,54 @@ mod viewer_context_tests {
         // And a departed display leaves nothing behind.
         state.forget_client(1);
         assert!(!state.active_by_client.contains_key(&1));
+    }
+
+    // TP-MCF-MODE-01
+    #[test]
+    fn mirror_mode_puts_every_display_back_on_one_view() {
+        let mut state = AppState::test_new();
+        state.per_display_focus = false;
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("left"));
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("right"));
+        state.active = Some(0);
+
+        // With mirroring on, one display moving moves the session, and every
+        // other display follows it -- the behaviour this feature replaced.
+        state.enter_viewer(Some(1));
+        state.active = Some(1);
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(2));
+        assert_eq!(
+            state.active,
+            Some(1),
+            "mirror mode must reproduce the shared view exactly"
+        );
+        assert_eq!(state.viewer(), None, "no per-display view is recorded");
+        assert!(state.active_by_client.is_empty());
+        state.restore_viewer(None);
+    }
+
+    // TP-MCF-MODE-02
+    #[test]
+    fn a_session_with_no_clients_resolves_the_default_without_panicking() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("only"));
+        state.active = Some(0);
+
+        // A display attaches, moves nothing, and leaves again.
+        state.enter_viewer(Some(1));
+        state.restore_viewer(None);
+        state.forget_client(1);
+
+        assert_eq!(state.active, Some(0));
+        assert_eq!(state.workspaces[0].active_tab_index(), 0);
     }
 
     // TP-MCF-WS-03

@@ -1082,6 +1082,12 @@
           "type": "boolean",
           "default": "true",
           "description": "Resume supported AI-agent panes into their native conversation sessions when restoring a Herdr session."
+        },
+        {
+          "key": "session.per_display_focus",
+          "type": "boolean",
+          "default": "true",
+          "description": "Let each attached display hold its own workspace, tab and focused pane so several monitors can watch different tabs of one session at the same time. Set to false to mirror one view onto every display."
         }
       ]
     },
