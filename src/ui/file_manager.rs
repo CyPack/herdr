@@ -1152,6 +1152,19 @@ pub(crate) fn preview_status_row(area: Rect) -> Rect {
 }
 
 /// The clickable page indicator for a previewed PDF, if one is on screen.
+/// What a picture panel says when the graphics protocol is switched off.
+///
+/// It names the exact config key rather than the capability, because the
+/// capability is not the thing the reader can act on. "Kitty graphics req."
+/// sent people looking for a missing terminal feature — the terminal was fine
+/// and the flag was off, which is a one-line edit they could not guess.
+///
+/// Measured against the panel, not guessed: a picture panel on an 80-column
+/// frame leaves 32 columns, so the key is written without a verb wrapper that
+/// would push it into the ellipsis. Truncated on a narrower panel it still
+/// begins with the key, which is the part worth searching for.
+pub(super) const KITTY_GRAPHICS_OFF_HINT: &str = "set experimental.kitty_graphics";
+
 ///
 /// The single authority for "is there an indicator, and where are its arrows":
 /// the renderer draws what this returns and input hit-tests what this returns.
@@ -1188,7 +1201,7 @@ pub(super) fn render_pdf_preview_status(
     }
     let styles = file_manager_visual_styles(&app.palette);
     let label_and_style = if !app.kitty_graphics_enabled {
-        Some(("  (Kitty graphics req.)".to_owned(), styles.empty))
+        Some((KITTY_GRAPHICS_OFF_HINT.to_owned(), styles.empty))
     } else {
         match &preview.state {
             crate::fm::FmPdfPreviewState::Pending
@@ -1220,7 +1233,7 @@ pub(super) fn render_image_preview_status(
     }
     let styles = file_manager_visual_styles(&app.palette);
     let label_and_style = if !app.kitty_graphics_enabled {
-        Some(("(Kitty graphics req.)", styles.warning))
+        Some((KITTY_GRAPHICS_OFF_HINT, styles.warning))
     } else {
         match &preview.state {
             // Nothing is drawn while a decode is in flight. Optimised, that
@@ -2161,8 +2174,11 @@ mod tests {
         fs::write(td.root.join("selected.png"), b"image candidate").expect("write image candidate");
         let mut fm = FmState::new(&td.root);
 
+        // TP-FIP-FORMAT-06: the fallback names the config key, not the
+        // capability. The terminal is usually fine and the flag is off, which
+        // is the only part the reader can act on.
         let fallback = render_rows(&app_with_fm(fm.clone()), 80, 6).join("\n");
-        assert!(fallback.contains("(Kitty graphics req.)"));
+        assert!(fallback.contains("experimental.kitty_graphics"));
 
         match &mut fm.preview {
             FmPreview::File(FmFilePreview::Image(preview)) => {
