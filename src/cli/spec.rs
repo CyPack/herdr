@@ -41,7 +41,8 @@ pub(super) fn command() -> Command {
         .subcommand(terminal_command())
         .subcommand(session_command())
         .subcommand(integration_command())
-        .subcommand(plugin_command());
+        .subcommand(plugin_command())
+        .subcommand(view_command());
     configure_help(command, true)
 }
 
@@ -310,6 +311,15 @@ fn notification_command() -> Command {
                 ]))
                 .arg(option("sound", "SOUND").value_parser(["none", "done", "request"])),
         )
+}
+
+fn view_command() -> Command {
+    Command::new("view")
+        .about("Show an image or PDF in this pane")
+        .override_usage("herdr view <PATH> [--page N]")
+        .arg(required("path", "PATH"))
+        .arg(option("page", "N"))
+        .after_help("Pages are one-based, matching what the viewer prints.")
 }
 
 fn agent_command() -> Command {

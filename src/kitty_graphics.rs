@@ -1263,6 +1263,21 @@ fn kitty_format_code(format: KittyImageFormat) -> u32 {
     }
 }
 
+/// Write a Kitty command whose payload is chunked base64, to any sink.
+///
+/// Shared with the standalone viewer: the chunking rule is the protocol's, not
+/// the file manager's, and writing it twice would mean two places to get the
+/// `m=` continuation flag wrong.
+pub(crate) fn encode_kitty_data_to(
+    out: &mut impl std::io::Write,
+    control: &str,
+    data: &[u8],
+) -> std::io::Result<()> {
+    let mut buffer = Vec::new();
+    encode_kitty_data(&mut buffer, control, data);
+    out.write_all(&buffer)
+}
+
 fn encode_kitty_data(out: &mut Vec<u8>, control: &str, data: &[u8]) {
     let mut chunks = data.chunks(KITTY_CHUNK_BYTES).peekable();
     let Some(first) = chunks.next() else {

@@ -219,6 +219,40 @@ there rather than opening the viewer onto an empty frame.
 | TP-FOPEN-17 | The execution path re-checks the live preview. | A name that promises a picture herdr cannot show opens the viewer onto an empty frame. | `context_enlarge_refuses_a_file_with_no_picture` |
 | TP-FOPEN-18 | An intent naming a file that is no longer selected opens nothing. | A menu opened before the cursor moved enlarges whatever happens to be selected now. | `context_enlarge_ignores_an_intent_for_a_different_file` |
 
+## Opening a file in its own tab (`herdr view`)
+
+`herdr view <PATH> [--page N]` shows one file in the pane it runs in, so a plugin
+action can open a picture in a tab the way the spreadsheet editor opens a workbook.
+No external tool and no new dependency: the readers, the cell-size probe and the
+Kitty emitter were already here.
+
+Two rules shape the whole layer:
+
+- **What to draw is pure.** `compute_frame` takes a path, a page and a cell grid
+  and returns a `ViewerFrame`. No terminal, no clock, no escape sequence — so the
+  interesting cases are unit tests rather than manual checks.
+- **A file herdr cannot read is a frame, not an error.** Exiting on a bad file
+  closes the tab the instant it opened, which reads as a crash. The reason goes in
+  the status line and the tab stays up.
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-FVIEW-TAB-01 | An image resolves to a frame with pixels and a status line naming it. | The feature does not exist. | `an_image_resolves_to_a_drawable_frame` |
+| TP-FVIEW-TAB-02 | An undecodable file still produces a frame carrying the reason. | The tab closes instantly and reads as a crash. | `an_undecodable_file_still_produces_a_frame_with_the_reason` |
+| TP-FVIEW-TAB-03 | A missing file is a frame, not an error. | Same, by a different route. | `a_missing_file_produces_a_frame_rather_than_an_error` |
+| TP-FVIEW-TAB-04 | A grid with no room for picture and status yields no frame. | A host image lands over the line meant to label it, and cells drawn under a Kitty placement do not erase it. | `a_grid_too_small_to_hold_the_status_line_yields_no_frame` |
+| TP-FVIEW-TAB-05 | An unknown cell size yields no frame. | A guessed grid places the picture in the wrong cells with nothing on screen to explain it. | `an_unknown_cell_size_yields_no_frame` |
+| TP-FVIEW-TAB-06 | The picture is centred and never overhangs its grid. | Kitty scales to exactly the cell box it is handed, so an overhanging box stretches the picture. | `the_picture_is_centred_and_stays_inside_the_grid` |
+| TP-FVIEW-TAB-07 | The same inputs give the same frame. | The layer's testability rests on this. | `computing_the_same_frame_twice_gives_the_same_answer` |
+| TP-FVIEW-TAB-08 | Page turning clamps at both ends and never wraps. | The two surfaces show one document; disagreeing makes a page turn mean different things depending on where the file was opened. | `turning_pages_clamps_at_both_ends_and_never_wraps` |
+| TP-FVIEW-TAB-09 | Without a known page count, forward is refused rather than guessed. | A guess past the end resolves to `PageOutOfRange`, turning navigation into an error message. | `turning_forward_without_a_page_count_is_refused` |
+| TP-FVIEW-TAB-10 | Leaving deletes every picture the process placed. | Kitty images outlive the alternate screen, so the reader gets their shell back with a picture hanging over it. | `leaving_deletes_the_pictures` |
+| TP-FVIEW-TAB-11 | A frame with no room still writes something. | A blank screen is indistinguishable from a hang. | `a_missing_frame_still_says_something` |
+| TP-FVIEW-TAB-12 | The status line is truncated to the terminal width. | A longer line wraps, scrolling the picture out of the box it was placed in. | `the_status_line_is_truncated_to_the_width` |
+| TP-FVIEW-TAB-13 | A bare path opens the first page. | The common invocation stops working. | `a_bare_path_opens_the_first_page` |
+| TP-FVIEW-TAB-14 | `--page` is one-based in and zero-based out. | The viewer prints "page 3"; asking the reader to type 2 for it is a trap. | `the_page_option_is_one_based_for_the_reader` |
+| TP-FVIEW-TAB-15 | Malformed arguments produce a message, never a panic. | A panic inside a pane prints a backtrace nobody asked for and the tab closes on it. | `malformed_arguments_are_refused_with_a_message` |
+
 ## Enlarged preview viewer
 
 `Enter`, or a click on the picture, opens the raster preview to fill the frame.
