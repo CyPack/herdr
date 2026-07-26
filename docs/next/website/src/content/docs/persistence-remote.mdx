@@ -102,6 +102,28 @@ Use `--session` with `--remote` to attach to a named session on the remote host:
 herdr --remote workbox --session agents
 ```
 
+## Several displays, one session
+
+Attach the same session from more than one terminal and each attachment keeps
+its own place in it: its own workspace, its own tab, and its own focused pane.
+Five tabs can be open on five monitors at once, all live, and clicking a tab on
+one monitor does not move any of the others.
+
+Sizing follows from that. A tab is sized to the smallest display watching it, so
+a tab only one display is watching keeps that display's full size and gives up
+nothing. Only a tab two displays are looking at has to fit both.
+
+A display that has just attached starts on the tab the session is being worked
+in, and becomes independent from the moment it is attached.
+
+To go back to one shared view on every display -- useful when pairing, or
+presenting -- turn the behaviour off:
+
+```toml
+[session]
+per_display_focus = false
+```
+
 ## Direct terminal attach
 
 Full Herdr attach opens the whole workspace UI. Direct attach opens one server-owned terminal in your current terminal.

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- Each attached display now keeps its own workspace, tab and focused pane, so several monitors can watch different tabs of one session at the same time. A tab is sized to the smallest display watching it, so a tab only one display is watching keeps that display's full size. Set `session.per_display_focus = false` to mirror one view onto every display instead.
+
 ### Changed
 - Relicensed Herdr from AGPL-3.0-or-later to Apache-2.0.
 
