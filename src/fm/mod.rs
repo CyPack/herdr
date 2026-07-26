@@ -1178,7 +1178,7 @@ impl FmState {
                     expected_path,
                 )
             } else {
-                self.install_trail_operation_projection(col_idx, entry_index, expected_path)
+                self.install_trail_operation_projection(col_idx, entry_index, expected_path, false)
             };
             if !projection_installed {
                 return trail_snapshots::TrailActivateOutcome::Rejected;
@@ -1206,7 +1206,7 @@ impl FmState {
         if outcome.is_rejected() {
             return outcome;
         }
-        if !self.install_trail_operation_projection(col_idx, entry_index, expected_path) {
+        if !self.install_trail_operation_projection(col_idx, entry_index, expected_path, false) {
             debug_assert!(false, "validated Trail focus projection must install");
             return trail_snapshots::TrailCursorMoveOutcome::Rejected;
         }
@@ -1247,7 +1247,7 @@ impl FmState {
         let Some(entry_index) = outcome.entry_index() else {
             return trail_snapshots::TrailCursorMoveOutcome::Rejected;
         };
-        if !self.install_trail_operation_projection(owner_col, entry_index, &expected_path) {
+        if !self.install_trail_operation_projection(owner_col, entry_index, &expected_path, false) {
             debug_assert!(false, "validated Trail cursor projection must install");
             return trail_snapshots::TrailCursorMoveOutcome::Rejected;
         }
@@ -1369,7 +1369,7 @@ impl FmState {
                 .entries()
                 .iter()
                 .position(|entry| entry.path == selected)?;
-            if !state.install_trail_operation_projection(col_idx, entry_index, &selected) {
+            if !state.install_trail_operation_projection(col_idx, entry_index, &selected, false) {
                 return None;
             }
         } else {
@@ -1417,7 +1417,7 @@ impl FmState {
         if outcome.entry_index() != Some(0) {
             return false;
         }
-        self.install_trail_operation_projection(active_col, 0, &first_path)
+        self.install_trail_operation_projection(active_col, 0, &first_path, false)
     }
 
     /// Exact directory owned by the single Trail focus authority.
@@ -1480,8 +1480,12 @@ impl FmState {
                     .get(selected_index)?
                     .path
                     .clone();
-                if !self.install_trail_operation_projection(col_idx, selected_index, &selected_path)
-                {
+                if !self.install_trail_operation_projection(
+                    col_idx,
+                    selected_index,
+                    &selected_path,
+                    true,
+                ) {
                     return None;
                 }
             } else {
@@ -1511,6 +1515,11 @@ impl FmState {
         col_idx: usize,
         entry_index: usize,
         expected_path: &Path,
+        // Only the watcher-refresh path passes true. A user activation must
+        // always install a fresh deferred preview — clicking a file is a
+        // request to read it — while a refresh caused by a sibling must not
+        // discard a picture of a file that did not change.
+        preserve_unchanged_selection: bool,
     ) -> bool {
         let Some(owner) = self.trail_snapshots.cols().get(col_idx) else {
             return false;
@@ -1522,6 +1531,29 @@ impl FmState {
             return false;
         }
         let entry_is_directory = entry.is_dir();
+        // Whether the refresh changed the entry that is selected. A refresh is
+        // usually ABOUT a sibling — an editor auto-saving its file every two
+        // seconds fires the watcher each time — and resetting the selection's
+        // preview for that made the selected picture blink on every save and
+        // yanked the cursor's viewport. Whole-entry equality: a changed mtime,
+        // kind, or name on the selected file itself still resets below, which
+        // is exactly when a re-decode is owed.
+        // Both halves are required. Entry equality alone also matches a FIRST
+        // activation — the cursor already sits on the row being activated and
+        // the entry is identical — where the preview still belongs to nothing
+        // and must be installed. The projection may only be kept when what is
+        // on screen is already a preview OF this file.
+        let selection_unchanged = preserve_unchanged_selection
+            && self.entries.get(self.cursor) == Some(entry)
+            && self.preview_is_of(expected_path, entry_is_directory);
+        let unchanged_preview = selection_unchanged.then(|| {
+            (
+                self.preview.clone(),
+                self.preview_generation,
+                self.preview_viewport_start,
+                self.viewport_start,
+            )
+        });
         // Selecting an already-loaded file must not enumerate the parent
         // directory on the serial server input loop. The owning column and its
         // resident parent already carry the exact entries, status, writability,
@@ -1546,8 +1578,36 @@ impl FmState {
         self.reconcile_multi_selection();
         self.cursor = entry_index;
         self.clamp_cursor();
-        self.viewport_start = 0;
         self.parent = parent;
+        if let Some((preview, generation, preview_viewport, viewport)) = unchanged_preview {
+            // The selected entry is byte-for-byte the one already projected:
+            // the picture on screen is still a correct picture of this file,
+            // and the scroll positions still describe it.
+            self.preview = preview;
+            self.preview_generation = generation;
+            self.preview_viewport_start = preview_viewport;
+            self.viewport_start = viewport;
+            // The refresh rebuilt the trail detail as pending, but text and
+            // workbook panels render from the DETAIL, not from `preview`.
+            // Leaving it pending wedges the panel on "(loading preview...)":
+            // the worker sees a loaded preview and never re-submits, so
+            // nothing ever resolves the pending detail again.
+            match &self.preview {
+                FmPreview::File(FmFilePreview::Text(preview)) => {
+                    let preview = preview.clone();
+                    self.trail_snapshots
+                        .apply_prepared_text_detail(expected_path, &Ok(preview));
+                }
+                FmPreview::File(FmFilePreview::Sheet(preview)) => {
+                    let preview = preview.clone();
+                    self.trail_snapshots
+                        .apply_prepared_sheet_detail(expected_path, &Ok(preview));
+                }
+                FmPreview::None | FmPreview::Directory(_) | FmPreview::File(_) => {}
+            }
+            return true;
+        }
+        self.viewport_start = 0;
         self.preview_viewport_start = 0;
         self.preview_generation = self.preview_generation.wrapping_add(1).max(1);
         let generation = self.preview_generation;
@@ -1776,6 +1836,32 @@ impl FmState {
         self.preview_generation = self.preview_generation.wrapping_add(1).max(1);
         self.preview = FmPreview::None;
         true
+    }
+
+    /// Whether the current preview already shows `path`.
+    ///
+    /// A directory's "preview" is its child listing or nothing; both count,
+    /// because neither goes stale when the directory row itself is unchanged.
+    /// The error variants carry no path and answer false: an error might have
+    /// been transient, and a refresh is a fine moment to retry.
+    fn preview_is_of(&self, path: &Path, entry_is_directory: bool) -> bool {
+        match &self.preview {
+            FmPreview::None | FmPreview::Directory(_) => entry_is_directory,
+            FmPreview::File(file) => {
+                let source = match file {
+                    FmFilePreview::PendingText { source_path, .. }
+                    | FmFilePreview::PendingSheet { source_path, .. } => source_path,
+                    FmFilePreview::Text(preview) => &preview.source_path,
+                    FmFilePreview::Image(preview) => &preview.source_path,
+                    FmFilePreview::Sheet(preview) => &preview.source_path,
+                    FmFilePreview::Pdf(preview) => &preview.source_path,
+                    FmFilePreview::Unavailable(_) | FmFilePreview::SheetUnavailable(_) => {
+                        return false;
+                    }
+                };
+                !entry_is_directory && source == path
+            }
+        }
     }
 
     fn install_trail_projection_without_selection(&mut self, col_idx: usize) -> Option<()> {
@@ -2197,6 +2283,170 @@ mod tests {
 
     fn names(entries: &[FileEntry]) -> Vec<&str> {
         entries.iter().map(|e| e.name.as_str()).collect()
+    }
+
+    // TP-FMW-REFRESH-01: a watcher refresh caused by a SIBLING file leaves the
+    // selection's preview and cursor alone. The live failure: an editor
+    // auto-saving notes.md every two seconds made the selected PNG's preview
+    // reset to Pending on every save — the picture blinked in and out — and
+    // the cursor was yanked to the trail selection. The refresh is real (the
+    // sibling's mtime changed), but the selected file did not change, and a
+    // preview of an unchanged file is still correct.
+    #[test]
+    fn sibling_change_refresh_keeps_the_selected_preview_and_cursor() {
+        let td = TempDir::new("refresh-sibling");
+        td.file("gorsel.png");
+        td.file("notlar.md");
+        let mut fm = FmState::new(&td.root);
+        let png_idx = fm
+            .entries
+            .iter()
+            .position(|entry| entry.name == "gorsel.png")
+            .expect("png row");
+        assert!(fm.replace_selection(png_idx));
+        fm.sync_trail_bridge_for_test();
+
+        let generation_before = fm.preview_generation;
+        let preview_before = fm.preview.clone();
+
+        // The sibling changes — exactly what an auto-saving editor does.
+        set_modified(&td.root.join("notlar.md"), fixed_time(2_000_000_000));
+
+        let changed = fm
+            .refresh_active_trail_col(&td.root)
+            .expect("refresh applies");
+        // The frame must update (the sibling's mtime column moved)...
+        assert!(changed, "a sibling mtime change is a visible change");
+        // ...but the selection stays on the same FILE. Its row index is
+        // allowed to move — entries sort by mtime, and the freshly saved
+        // sibling legitimately leapfrogs to the top — so the identity being
+        // protected is the path, never the row number.
+        assert_eq!(
+            fm.selected().map(|entry| entry.path.clone()),
+            Some(td.root.join("gorsel.png")),
+            "the selection must follow its file through the re-sort"
+        );
+        assert_eq!(
+            fm.preview_generation, generation_before,
+            "an unchanged selection keeps its preview generation"
+        );
+        assert_eq!(
+            fm.preview, preview_before,
+            "an unchanged selection keeps its preview — resetting it makes the picture blink"
+        );
+    }
+
+    // TP-FMW-REFRESH-03: the trail DETAIL panel survives a sibling refresh
+    // too. TP-FMW-REFRESH-01 protects `preview`, but text and workbook files
+    // render from `trail_snapshots.detail()`, which the refresh rebuilds as
+    // PendingText. Preserving only `preview` then wedges the panel: the
+    // worker sees a loaded Text preview and never re-submits, while the
+    // panel shows "(loading preview...)" forever.
+    #[test]
+    fn sibling_change_refresh_keeps_the_loaded_text_detail() {
+        let td = TempDir::new("refresh-detail");
+        fs::write(td.root.join("notlar.md"), b"# baslik\nicerik\n").expect("write md");
+        td.file("diger.txt");
+        let mut fm = FmState::new(&td.root);
+        let md_idx = fm
+            .entries
+            .iter()
+            .position(|entry| entry.name == "notlar.md")
+            .expect("md row");
+        assert!(fm.replace_selection(md_idx));
+        fm.sync_trail_bridge_for_test();
+
+        // Selecting through the legacy path reads the text immediately, so
+        // both the preview and the bridged detail are already loaded — the
+        // same steady state a live deferred load reaches.
+        assert!(matches!(
+            &fm.preview,
+            FmPreview::File(FmFilePreview::Text(_))
+        ));
+        assert!(matches!(
+            fm.trail_snapshots.detail().map(|detail| &detail.preview),
+            Some(trail_snapshots::TrailDetailPreview::Text(_))
+        ));
+
+        set_modified(&td.root.join("diger.txt"), fixed_time(2_000_000_000));
+        fm.refresh_active_trail_col(&td.root)
+            .expect("refresh applies");
+
+        assert!(
+            matches!(
+                fm.trail_snapshots.detail().map(|detail| &detail.preview),
+                Some(trail_snapshots::TrailDetailPreview::Text(_))
+            ),
+            "a sibling refresh must not reset a loaded text detail to loading"
+        );
+    }
+
+    // TP-FMW-REFRESH-04: a watcher refresh must not reshuffle the rows. The
+    // list sorts by mtime DESC, so a full re-sort on every disk event makes
+    // an auto-saved file leapfrog to row 0 every two seconds and drags the
+    // focus highlight to the top of the column with it. Surviving entries
+    // keep their previous relative order (with refreshed data); the full
+    // re-sort still happens on every user navigation.
+    #[test]
+    fn watcher_refresh_keeps_the_row_order_stable() {
+        let td = TempDir::new("refresh-order");
+        td.file("a.txt");
+        td.file("b.txt");
+        td.file("c.txt");
+        set_modified(&td.root.join("a.txt"), fixed_time(30));
+        set_modified(&td.root.join("b.txt"), fixed_time(20));
+        set_modified(&td.root.join("c.txt"), fixed_time(10));
+        let mut fm = FmState::new(&td.root);
+        assert_eq!(names(&fm.entries), ["a.txt", "b.txt", "c.txt"]);
+        assert!(fm.replace_selection(1));
+        fm.sync_trail_bridge_for_test();
+
+        // The bottom file is saved — a full re-sort would move it to row 0.
+        set_modified(&td.root.join("c.txt"), fixed_time(40));
+        fm.refresh_active_trail_col(&td.root)
+            .expect("refresh applies");
+
+        assert_eq!(
+            names(&fm.entries),
+            ["a.txt", "b.txt", "c.txt"],
+            "a watcher refresh keeps surviving rows where they were"
+        );
+        assert_eq!(
+            fm.selected().map(|entry| entry.path.clone()),
+            Some(td.root.join("b.txt"))
+        );
+        assert_eq!(fm.cursor, 1, "the focus row must not move");
+        // The refresh still carries the new data for the changed row.
+        let c_row = fm
+            .entries
+            .iter()
+            .find(|entry| entry.name == "c.txt")
+            .expect("c row");
+        assert_eq!(c_row.modified, Some(fixed_time(40)));
+    }
+
+    // TP-FMW-REFRESH-02: when the SELECTED file itself changes, the preview
+    // does reset. The guard above must not fossilise a stale picture: a file
+    // overwritten on disk while selected is exactly when a re-decode is owed.
+    #[test]
+    fn selected_change_refresh_resets_the_preview() {
+        let td = TempDir::new("refresh-selected");
+        td.file("gorsel.png");
+        let mut fm = FmState::new(&td.root);
+        assert!(fm.replace_selection(0));
+        fm.sync_trail_bridge_for_test();
+        let generation_before = fm.preview_generation;
+
+        set_modified(&td.root.join("gorsel.png"), fixed_time(2_000_000_100));
+
+        let changed = fm
+            .refresh_active_trail_col(&td.root)
+            .expect("refresh applies");
+        assert!(changed);
+        assert_ne!(
+            fm.preview_generation, generation_before,
+            "a changed selection must schedule a fresh preview"
+        );
     }
 
     fn fixed_time(seconds: u64) -> std::time::SystemTime {

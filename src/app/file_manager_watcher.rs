@@ -433,12 +433,12 @@ impl super::App {
     }
 
     #[cfg(not(test))]
-    pub(super) fn sync_file_manager_watcher_at(&mut self, now: std::time::Instant) -> bool {
+    pub(crate) fn sync_file_manager_watcher_at(&mut self, now: std::time::Instant) -> bool {
         self.schedule_file_manager_watcher_at(now)
     }
 
     #[cfg(test)]
-    pub(super) fn sync_file_manager_watcher_at(&mut self, now: std::time::Instant) -> bool {
+    pub(crate) fn sync_file_manager_watcher_at(&mut self, now: std::time::Instant) -> bool {
         if !self.schedule_file_manager_watcher_at(now) {
             return false;
         }
@@ -1023,21 +1023,29 @@ mod tests {
             Some(selected.as_path())
         );
         assert_eq!(refreshed.directory_generation, before.0 + 1);
-        assert_eq!(refreshed.preview_generation, before.1 + 1);
+        // Unchanged when the refresh was about a SIBLING: the selected file
+        // did not change, so its preview is kept rather than re-scheduled.
+        // Bumping here was the blink users saw — every auto-save next door
+        // reset the selected picture to Pending (TP-FMW-REFRESH-01).
+        assert_eq!(refreshed.preview_generation, before.1);
         assert_eq!(app.file_manager_watcher.reconcile_revision, before.2 + 1);
         assert!(refreshed.entries.iter().any(|entry| entry.path == inserted));
 
         assert!(!app.sync_file_manager_watcher_at(now));
         let stable = app.state.file_manager.as_ref().expect("file manager open");
         assert_eq!(stable.directory_generation, before.0 + 1);
-        assert_eq!(stable.preview_generation, before.1 + 1);
+        // Still the sibling-refresh value from above; the idle second sync
+        // must not move it either (TP-FMW-REFRESH-01).
+        assert_eq!(stable.preview_generation, before.1);
         assert_eq!(app.file_manager_watcher.reconcile_revision, before.2 + 1);
         drop(watch_tx);
     }
 
-    // MTIME-5: an mtime-only watcher refresh may move every vector index, but
-    // selected, bulk-selected, ancestor-child, and detail authority remain
-    // exact paths. The owned event advances each prepared generation once.
+    // MTIME-5: an mtime-only watcher refresh keeps every row where it was
+    // (TP-FMW-REFRESH-04 — a background refresh must not reshuffle the list
+    // under the cursor), while selected, bulk-selected, ancestor-child, and
+    // detail authority remain exact paths and the changed row carries its
+    // fresh mtime. The full mtime re-sort belongs to user navigation.
     #[test]
     fn grouped_miller_watcher_mtime_reorder_preserves_exact_paths() {
         let td = TempDir::new("grouped-mtime-reorder");
@@ -1136,9 +1144,19 @@ mod tests {
             .entries
             .iter()
             .position(|entry| entry.path == b)
-            .expect("reordered selected path");
-        assert_ne!(after_b_index, before_b_index);
-        assert_eq!(after_b_index, 0);
+            .expect("refreshed selected path");
+        // TP-FMW-REFRESH-04: b's fresh mtime would rank it first in a full
+        // re-sort, but a watcher refresh keeps surviving rows in place.
+        assert_eq!(after_b_index, before_b_index);
+        let refreshed_b = refreshed
+            .entries
+            .get(after_b_index)
+            .expect("refreshed b row");
+        assert_eq!(
+            refreshed_b.modified,
+            Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(400)),
+            "the row keeps its place but carries the refreshed data"
+        );
         assert_eq!(
             refreshed.selected().map(|entry| entry.path.as_path()),
             Some(before_selected.as_path())
@@ -1161,7 +1179,10 @@ mod tests {
             Some(before_detail.as_path())
         );
         assert_eq!(refreshed.directory_generation, before_generations.0 + 1);
-        assert_eq!(refreshed.preview_generation, before_generations.1 + 1);
+        // Same contract as above: an mtime re-order moves rows, not the
+        // selected file's bytes, so the preview generation holds
+        // (TP-FMW-REFRESH-01).
+        assert_eq!(refreshed.preview_generation, before_generations.1);
         assert!(!app.sync_file_manager_watcher_at(now));
         drop(watch_tx);
     }

@@ -253,6 +253,78 @@ Two rules shape the whole layer:
 | TP-FVIEW-TAB-14 | `--page` is one-based in and zero-based out. | The viewer prints "page 3"; asking the reader to type 2 for it is a trap. | `the_page_option_is_one_based_for_the_reader` |
 | TP-FVIEW-TAB-15 | Malformed arguments produce a message, never a panic. | A panic inside a pane prints a backtrace nobody asked for and the tab closes on it. | `malformed_arguments_are_refused_with_a_message` |
 
+## Sending a file over Tailscale
+
+Right-click a file in the manager and pick **Send with Tailscale...**; a centred
+picker lists the machines on the tailnet and `Enter`, or a click on a row, hands
+the selection to Taildrop.
+
+- **Built in rather than a plugin.** The destination has to be chosen, and a
+  plugin action runs headless — it has nowhere to ask.
+- **Identity is the DNS name, not the host name.** Host names repeat on a real
+  tailnet; sending to a repeated one is ambiguous, and picking the wrong machine
+  is not recoverable from herdr.
+- **Offline machines are listed, marked, and sorted last.** Taildrop queues for a
+  machine that is not up yet; hiding them answers "where is my laptop?" with
+  silence.
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-FSEND-TS-01 | The local machine is never a destination. | Taildrop refuses a send to itself, so the entry can only fail. | `the_local_machine_is_not_a_destination` |
+| TP-FSEND-TS-02 | Reachable devices are listed before unreachable ones. | The two machines that can receive are buried under thirteen that cannot. | `reachable_devices_are_listed_first` |
+| TP-FSEND-TS-03 | Machines sharing a host name fall back to their DNS label. | Two rows read the same and picking between them is guesswork. | `duplicate_host_names_are_disambiguated` |
+| TP-FSEND-TS-04 | The send target is the unique DNS name, without its trailing dot. | An ambiguous target sends to whichever machine tailscale resolves first. | `the_send_target_is_the_unique_name` |
+| TP-FSEND-TS-05 | A tailnet of one is an empty list, not a failure. | The reader goes looking for a fault that is not there. | `a_tailnet_of_one_is_empty_not_broken` |
+| TP-FSEND-TS-06 | Unreadable status output is a message, never a panic. | A panic while opening a menu takes herdr down with it. | `unreadable_status_is_refused_with_a_message` |
+| TP-FSEND-TS-07 | File names cannot be read as options. | A file named `-n` is an ordinary file; without `--` the send fails on something that was never a flag. | `file_names_cannot_be_read_as_options` |
+| TP-FSEND-TS-08 | The outcome names the files and stays one line. | "Sent" alone leaves the reader checking whether what went is what they meant. | `the_outcome_names_what_was_sent` |
+| TP-FSEND-TS-09 | A folder is refused in herdr's own words, before anything is spawned. | Taildrop handed a directory reports nothing useful and the send looks like it worked. | `folders_are_refused_with_a_reason` |
+| TP-FSEND-TS-10 | An offline device is marked in text, not by colour alone. | A monochrome terminal shows no difference and the reader cannot tell the file will wait. | `an_offline_device_is_marked_in_text` |
+| TP-FSEND-TS-11 | A frame with no room draws nothing rather than shrinking. | A clamped box overlaps its own border and lists devices nobody can act on. | `a_frame_with_no_room_draws_nothing` |
+| TP-FSEND-TS-12 | A long tailnet stops growing the box. | A box taller than the screen cannot be closed by eye. | `a_long_device_list_is_bounded` |
+| TP-FSEND-TS-13 | A click selects the row it landed on. | Recomputing geometry in the mouse path lands one row off and sends to the wrong machine. | `a_click_selects_the_row_it_landed_on` |
+| TP-FSEND-TS-14 | The title names the file being sent. | A picker saying only "Send" leaves the reader guessing which file is going. | `the_title_names_what_is_being_sent` |
+| TP-FSEND-TS-15 | The device names reach the frame buffer. | An overlay wired to a rect nothing is drawn into looks exactly like a broken feature. | `the_device_names_are_drawn_into_the_frame` |
+| TP-FSEND-TS-16 | An empty tailnet says so on screen. | An empty box and a failed lookup are indistinguishable unless one is spelled out. | `an_empty_tailnet_says_so_on_screen` |
+| TP-FSEND-TS-17 | Choosing the menu entry opens the picker on the named files. | The entry exists and appears to do nothing. | `context_send_tailscale_opens_the_picker_on_the_named_files` |
+| TP-FSEND-TS-18 | The picker survives a full frame, not just its own draw call. | The stage underneath paints over it and the feature is invisible. | `the_picker_is_visible_in_a_full_frame` |
+| TP-FSEND-TS-19 | A pinned device outranks an online one. | A pinned laptop that is asleep drops below strangers and the pin is worthless. | `a_pinned_device_outranks_an_online_one` |
+| TP-FSEND-TS-20 | Pins keep the order they were added in. | Re-sorting them alphabetically defeats the point of choosing an order. | `pins_keep_the_order_they_were_added_in` |
+| TP-FSEND-TS-21 | Pinning toggles, and a new pin lands last. | Pushing new pins to the front moves the reader's top slot every time. | `pinning_toggles_and_appends` |
+| TP-FSEND-TS-22 | Pinned and online are two marks in two columns. | Folding them into one glyph makes the list lie about one of them. | `pinned_and_online_are_marked_independently` |
+| TP-FSEND-TS-23 | The uncut journey: right-click, Enter on the entry, worker tick, picker open. | The layers pass in isolation while the user watches the menu close on nothing. | `menu_enter_on_send_with_tailscale_opens_the_picker` |
+| TP-FSEND-TS-24 | The same journey by mouse click. | Keyboard and mouse take different routes to the same dispatch; only one was covered. | `menu_click_on_send_with_tailscale_opens_the_picker` |
+| TP-FSEND-TS-25 | The headless scheduler consumes queued context-menu intents. | In server mode every context action queues an intent nothing reads: the menu closes and nothing happens — the reported bug. | `headless_scheduler_consumes_context_menu_intents`, `scheduler_parity_headless_vs_monolithic` |
+| TP-FSEND-TS-26 | The hit test agrees with the rendered cells, not with its own layout. | Layout and render sharing a mistake passes a self-consistent test while every click selects the machine above the cursor. | `a_click_lands_on_the_device_that_is_drawn_there` |
+| TP-FSEND-TS-27 | A successful send marks its row with ✓; a failed one does not. | The status line names only the last outcome, so an unsure reader presses again and the file goes out several times. | `a_successful_send_marks_the_device_row` |
+
+## Editing text from the preview
+
+Clicking a text preview opens the file in the editor tab, through the same
+plugin intent the context menu's "Edit in New Tab" row emits — one dispatch
+seam serves both paths. The editor itself is a plugin concern; the fresh config
+shipped with the edit plugin turns on auto-save (2s), hot exit, and the menu
+bar with clickable Undo/Redo.
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-FEDIT-01 | Clicking a text preview queues the editor action for that exact file. | The panel the reader's eyes are on answers a click with nothing, while the picture panel next to it enlarges. | `clicking_a_text_preview_queues_the_editor_action` |
+| TP-FEDIT-02 | A text preview with no matching editor swallows the click. | An intent nothing can run fails somewhere the reader cannot see. | `clicking_a_text_preview_without_an_editor_queues_nothing` |
+
+## Watcher refreshes and the selection
+
+The directory watcher fires for every change in the watched directory — most
+often a SIBLING of the selection, because an auto-saving editor touches its
+file every couple of seconds. A refresh must repaint what changed without
+disturbing what did not.
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-FMW-REFRESH-01 | A refresh caused by a sibling keeps the selection's preview, generation, and viewports; the selection follows its file through the mtime re-sort by path, never by row number. | The selected picture blinks to Pending on every auto-save next door, and the cursor visits whichever row number the file used to occupy. | `sibling_change_refresh_keeps_the_selected_preview_and_cursor` |
+| TP-FMW-REFRESH-02 | A refresh in which the selected file itself changed does reset the preview. | The guard above fossilises a stale picture of a file that was rewritten on disk. | `selected_change_refresh_resets_the_preview` |
+| TP-FMW-REFRESH-03 | A sibling refresh keeps the loaded trail DETAIL, not just the preview: a loaded text/workbook detail is re-applied after the refresh rebuilds it as pending. | Text and sheet panels render from the detail; preserving only the preview wedges them on "(loading preview...)" forever, because the worker sees a loaded preview and never re-submits. | `sibling_change_refresh_keeps_the_loaded_text_detail` |
+| TP-FMW-REFRESH-04 | A watcher refresh keeps surviving rows in their previous relative order (with refreshed data); genuinely new paths append at the end. The full mtime re-sort happens only on user navigation. | Every auto-save leapfrogs the saved file to row 0, the rows reshuffle under the cursor every two seconds, and the focus highlight rides to the top of the column. | `watcher_refresh_keeps_the_row_order_stable`, `watcher_refresh_keeps_selection_by_path` |
+
 ## Enlarged preview viewer
 
 `Enter`, or a click on the picture, opens the raster preview to fill the frame.

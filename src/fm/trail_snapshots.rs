@@ -671,7 +671,33 @@ impl TrailSnapshots {
         else {
             return false;
         };
-        self.cols[col_idx] = TrailColSnapshot::read(&directory, self.show_hidden);
+        let mut refreshed = TrailColSnapshot::read(&directory, self.show_hidden);
+        // A refresh answers "what changed on disk", not "re-rank the rows".
+        // The list sorts by mtime DESC, so re-sorting here made every
+        // auto-save leapfrog the saved file to row 0 — the rows reshuffled
+        // under the cursor every two seconds and the focus highlight rode to
+        // the top. Surviving rows keep their previous relative order while
+        // carrying the refreshed data; genuinely new rows keep their fresh
+        // sort order after them. Every user navigation still re-sorts fully.
+        if let Some(previous) = self.cols.get(col_idx) {
+            let previous_rank: std::collections::HashMap<&Path, usize> = previous
+                .entries()
+                .iter()
+                .enumerate()
+                .map(|(rank, entry)| (entry.path.as_path(), rank))
+                .collect();
+            // New paths rank at the end (usize::MAX), and the stable sort
+            // keeps their fresh relative order among themselves — so an
+            // editor's transient `.tmp` save file blinks in at the bottom of
+            // the list instead of shoving every row down from the top.
+            refreshed.snapshot.entries.sort_by_key(|entry| {
+                previous_rank
+                    .get(entry.path.as_path())
+                    .copied()
+                    .unwrap_or(usize::MAX)
+            });
+        }
+        self.cols[col_idx] = refreshed;
         true
     }
 
@@ -917,7 +943,13 @@ mod tests {
             Some(keep.as_path()),
             "selection is exact-path and survives the refresh"
         );
-        assert_eq!(entry_names(&snaps.cols()[0]), vec!["new.txt", "keep.txt"]);
+        // TP-FMW-REFRESH-04: a watcher refresh keeps surviving rows in their
+        // previous order and appends genuinely new paths at the END, even
+        // though a fresh mtime sort would rank new.txt first. Rows only
+        // re-rank on user navigation; a background refresh reshuffling the
+        // list is what dragged the focus highlight to the top every time an
+        // editor auto-saved.
+        assert_eq!(entry_names(&snaps.cols()[0]), vec!["keep.txt", "new.txt"]);
     }
 
     // Bounded: past MAX_TRAIL_DEPTH the trail slides and the snapshots stay
