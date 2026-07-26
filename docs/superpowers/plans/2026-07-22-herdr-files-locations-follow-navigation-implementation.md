@@ -29,7 +29,7 @@
 
 ## Verified Current-Owner Map
 
-Graph evidence on 2026-07-22 resolved 24,078 nodes and 129,027 edges for home-ayaz-projects-herdr.
+Graph evidence on 2026-07-22 resolved 24,078 nodes and 129,027 edges for <canonical-project-id>.
 
 | Seam | Current owner | Planned change |
 |---|---|---|
@@ -701,7 +701,7 @@ Add a dedicated ignored exporter that writes only vis-26-files-locations-follow-
 Extend files-locations.spec.ts with exactly one new case. First generate into the ignored generated directory:
 
 ~~~bash
-HERDR_VISUAL_FIXTURE_DIR=/home/ayaz/projects/herdr/tests/visual/fixtures/generated cargo nextest run --locked --run-ignored only -E 'test(write_locations_follow_visual_fixture)' --status-level all --success-output immediate
+HERDR_VISUAL_FIXTURE_DIR=~/projects/herdr/tests/visual/fixtures/generated cargo nextest run --locked --run-ignored only -E 'test(write_locations_follow_visual_fixture)' --status-level all --success-output immediate
 ~~~
 
 - [ ] **Step 6: Inspect before creating the PNG**
@@ -792,7 +792,7 @@ Extend .local/herdr-files-v1-profile.sh locally so run prints the saved report a
 The user command remains one line:
 
 ~~~bash
-cd /home/ayaz/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-files-v1-profile.sh run
+cd ~/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-files-v1-profile.sh run
 ~~~
 
 Do not stage .local paths.
@@ -845,7 +845,7 @@ export PATH="$HOME/.local/bin:$PATH"
 cargo nextest run --locked -E 'test(/flf_/)' --no-fail-fast --status-level fail --final-status-level fail --failure-output final --success-output never
 cd tests/visual
 npx playwright test
-cd /home/ayaz/projects/herdr
+cd ~/projects/herdr
 just check
 ~~~
 

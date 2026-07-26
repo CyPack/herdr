@@ -29,7 +29,7 @@ Result: **3,443 passed, 1 skipped** (named `path_beta_real_host_probe`), run ID
 
 ## Graph freshness
 
-`index_status(project="home-ayaz-projects-herdr")` = 21,064 nodes / 98,009
+`index_status(project="<canonical-project-id>")` = 21,064 nodes / 98,009
 edges. The 2026-07-18 planning session verified `MillerPathSegment.focused_child`,
 `sync_file_manager_agent_handoff_send` (payload `\r` at
 `src/app/file_agent_handoff.rs:172`), `StageState::activate_files`/`close_files`,

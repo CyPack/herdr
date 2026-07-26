@@ -1,0 +1,282 @@
+{
+  "map": "document-rendering",
+  "updated": "2026-07-24",
+  "repo_head": "b48bd903",
+  "branch": "feat/native-fm",
+  "scope": "PNG/XLSX/PDF terminalde render + (ertelenmis) edit — herdr ic gercegi + dis ekosistem",
+  "related_docs": [
+    "docs/analysis/2026-07-24-document-render-internal-state.md",
+    "docs/analysis/2026-07-24-document-render-ecosystem.md",
+    "docs/analysis/2026-07-24-architecture-seams.md",
+    "docs/references/document-rendering.md",
+    "docs/patterns/document-rendering.md"
+  ],
+  "layers": [
+    "L0-policy",
+    "L1-capability",
+    "L2-worker",
+    "L3-encode",
+    "L4-transport",
+    "L5-ecosystem"
+  ],
+  "nodes": [
+    {
+      "id": "policy-no-native-parser",
+      "layer": "L0",
+      "claim": "PDF/office icin native render'da parser/process CALISTIRILMAZ; hedeflenen yol opsiyonel plugin + metadata fallback",
+      "evidence": [
+        { "type": "source_code", "ref": ".codex/evidence/files-preview-capability-test-points.md:11", "confidence": 0.95 },
+        { "type": "source_code", "ref": ".codex/evidence/files-visibility-preview-plugin-research.md:186-193", "confidence": 0.9 }
+      ],
+      "status": "verified",
+      "note": "Native XLSX/PDF render bu karari ACIKCA revize etmeyi gerektirir"
+    },
+    {
+      "id": "policy-dependency-gate",
+      "layer": "L0",
+      "claim": "Yeni Rust bagimliligi ancak kanitli ihtiyacla; kabul icin build-script taramasi + lisans matrisi + advisory + Windows cross-check + derleme maliyeti olcumu sunulur",
+      "evidence": [
+        { "type": "source_code", "ref": ".codex/evidence/b2-image-dependency.md:5-78", "confidence": 0.95 },
+        { "type": "source_code", "ref": ".codex/NEXT-SESSION-PROMPT.md:373-374", "confidence": 0.95 },
+        { "type": "source_code", "ref": "CLAUDE.md (Code Conventions)", "confidence": 0.9 }
+      ],
+      "status": "verified",
+      "note": "image crate 12 paket icin bu tam olcum yapildi — emsal budur"
+    },
+    {
+      "id": "capability-pure",
+      "layer": "L1",
+      "claim": "preview_capability() saf fonksiyondur: filesystem/PATH/config/process okumaz, navigasyonu mutasyona ugratmaz",
+      "evidence": [
+        { "type": "source_code", "ref": "src/fm/preview_capability.rs:1-5 (modul doc) + :74-174", "confidence": 0.98 }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "capability-document-slot",
+      "layer": "L1",
+      "claim": "pdf/doc/docx/odt/rtf/xls/xlsx/ods/ppt/pptx/odp uzantilari OptionalPlugin{documents} yoluna baglidir",
+      "evidence": [
+        { "type": "source_code", "ref": "src/fm/preview_capability.rs:126-136", "confidence": 0.98 }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "capability-plugin-dead",
+      "layer": "L1",
+      "claim": "OptionalPlugin dali URETIMDE ERISILEMEZ: tek uretim cagrisi PreviewProviderSet::default() (tum alanlar None) verir, dolayisiyla PDF/XLSX DAIMA MetadataOnly'ye duser",
+      "evidence": [
+        { "type": "source_code", "ref": "src/fm/trail_snapshots.rs:704", "confidence": 0.95 },
+        { "type": "source_code", "ref": "src/fm/preview_capability.rs:66-72 (default = tum None) + :180-196 (plugin_or_fallback)", "confidence": 0.95 },
+        { "type": "source_code", "ref": ".codex/TASKS.md:527 — FMR-5 P5 plugin adapter hala [ ]", "confidence": 0.9 }
+      ],
+      "status": "verified",
+      "cross_verified_by": ["belge-ic analizi", "mimari-seam analizi F1", "ekosistem analizi"],
+      "note": "SIFIR-BAGIMLILIK SERIDININ 1 NUMARALI HEDEFI"
+    },
+    {
+      "id": "worker-bounded-generation",
+      "layer": "L2",
+      "claim": "Onizleme isçileri tek-yuvali, sinirli, en-son-kazanir; kimlik uclusu (path, model_generation, target) her asamada yeniden dogrulanir; bayat sonuc REDDEDILIR",
+      "evidence": [
+        { "type": "source_code", "ref": "src/app/image_preview_worker.rs:44-63 (Slot::sync/accepts)", "confidence": 0.95 },
+        { "type": "source_code", "ref": "src/app/file_preview_worker.rs:75-88 (generation + accepts)", "confidence": 0.95 },
+        { "type": "source_code", "ref": "src/app/image_preview_worker.rs:352-371 (set_image_state uclu kimlik)", "confidence": 0.95 }
+      ],
+      "status": "verified",
+      "note": "Yeni belge turleri BU worker desenine takilmali; paralel yol acilmamali"
+    },
+    {
+      "id": "worker-panic-barrier",
+      "layer": "L2",
+      "claim": "Decoder panigi catch_unwind ile tipli hataya donusur, isçiyi oldurmez",
+      "evidence": [
+        { "type": "source_code", "ref": "src/fm/image_preview.rs:412-419", "confidence": 0.95 },
+        { "type": "source_code", "ref": "src/app/image_preview_worker.rs:149-152", "confidence": 0.95 }
+      ],
+      "status": "verified",
+      "note": "Ucuncu-taraf belge parser'lari icin KRITIK — kopyalanmali"
+    },
+    {
+      "id": "decode-limits-5layer",
+      "layer": "L2",
+      "claim": "Gorsel decode 5 bagimsiz kapiyla sinirlanir: 64MB encoded, 32768px kenar, 64Mpx, 256MB decoded, 64MB RGBA cikti",
+      "evidence": [
+        { "type": "source_code", "ref": "src/fm/image_preview.rs:11-15", "confidence": 0.98 },
+        { "type": "source_code", "ref": ".codex/evidence/b2-image-dependency.md:69-78 (image::Limits best-effort uyarisi)", "confidence": 0.9 }
+      ],
+      "status": "verified",
+      "note": "yazi'nin tek-kapili image_alloc modelinden daha titiz — referans desen"
+    },
+    {
+      "id": "encode-kitty-only",
+      "layer": "L3",
+      "claim": "Tek grafik protokolu Kitty'dir; Sixel ve iTerm2 YOK. Vendored libghostty-vt sixel ayristirmaz",
+      "evidence": [
+        { "type": "source_code", "ref": "src/kitty_graphics.rs (2075 satir, tek grafik modulu)", "confidence": 0.95 },
+        { "type": "executable", "ref": "find vendor -ipath '*sixel*' -> bos", "confidence": 0.95 }
+      ],
+      "status": "verified",
+      "note": "ratatui-image'a gecmek 4 protokolun 3'unu olu koda cevirirdi"
+    },
+    {
+      "id": "encode-chunk-compliant",
+      "layer": "L3",
+      "claim": "KITTY_CHUNK_BYTES = 3072 protokole uygundur: 4096 alti ve 4'un kati",
+      "evidence": [
+        { "type": "source_code", "ref": "src/kitty_graphics.rs:21", "confidence": 0.98 },
+        { "type": "official", "ref": "kitty graphics-protocol.rst — chunk <=4096, 4'un kati", "confidence": 0.95 }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "encode-single-image-assumption",
+      "layer": "L3",
+      "claim": "FM gorsel yolu TEK gorsel varsayar: IMAGE_ID=1, PLACEMENT_ID=1, sanal pane u32::MAX",
+      "evidence": [
+        { "type": "source_code", "ref": "src/kitty_graphics.rs:23-25 + :186-190", "confidence": 0.95 }
+      ],
+      "status": "verified",
+      "risk": "HIGH",
+      "note": "Ikinci escaman piksel yuzeyi (or. iki PDF sayfasi) kimlik alani semasi gerektirir"
+    },
+    {
+      "id": "encode-source-agnostic",
+      "layer": "L3",
+      "claim": "encode_graphics_update kaynak-agnostiktir: &[HostPlacement] alir, baytlarin nereden geldigini umursamaz",
+      "evidence": [
+        { "type": "source_code", "ref": "src/kitty_graphics.rs:479-594", "confidence": 0.9 },
+        { "type": "source_code", "ref": ".local/prd/native-file-manager-DECISION.md:45", "confidence": 0.85 }
+      ],
+      "status": "verified",
+      "note": "PDF sayfa raster'i YENI TRANSPORT OLMADAN beslenebilir"
+    },
+    {
+      "id": "transport-opaque-graphics",
+      "layer": "L4",
+      "claim": "Grafik baytlari FrameData.graphics: Vec<u8> alaninda OPAK olarak tasinir; yeni piksel-tabanli belge yuzeyi PROTOCOL_VERSION bump'i GEREKTIRMEZ",
+      "evidence": [
+        { "type": "source_code", "ref": "src/protocol/wire.rs:460-472 + :16 (PROTOCOL_VERSION=16)", "confidence": 0.98 },
+        { "type": "source_code", "ref": "src/protocol/wire.rs:617-621 (ServerMessage::Graphics)", "confidence": 0.95 }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "transport-splice-atomic",
+      "layer": "L4",
+      "claim": "ANSI kodlayici grafige DOKUNMAZ; grafik, kodlanmis akisa senkron-cikis sonlandiricisindan hemen once splice edilir -> metin+gorsel tek atomik kare",
+      "evidence": [
+        { "type": "source_code", "ref": "src/server/render_stream.rs:61-73 + :128-140 (insert_graphics_before_sync_end)", "confidence": 0.95 },
+        { "type": "source_code", "ref": "src/protocol/render_ansi.rs — 'graphics' yalniz :802 test fixture'inda", "confidence": 0.95 }
+      ],
+      "status": "verified",
+      "note": "Render safligi korunur: grafikler render'in CIKTISI degil KARDESI"
+    },
+    {
+      "id": "transport-silent-drop",
+      "layer": "L4",
+      "claim": "32 MiB MAX_GRAPHICS_FRAME_SIZE asiminda kare SESSIZCE dusurulur (yalniz warn!), kullaniciya sinyal gitmez",
+      "evidence": [
+        { "type": "source_code", "ref": "src/server/headless.rs:3466-3475", "confidence": 0.95 }
+      ],
+      "status": "verified",
+      "risk": "MEDIUM",
+      "note": "Yuksek cozunurluklu PDF sayfasi = sebepsiz bos kutu"
+    },
+    {
+      "id": "gate-experimental-default-off",
+      "layer": "L4",
+      "claim": "experimental.kitty_graphics VARSAYILAN FALSE; kapaliyken ekranda yalniz '(Kitty graphics req.)' metni cikar",
+      "evidence": [
+        { "type": "source_code", "ref": "src/config/model.rs:1017-1018 + test :1879-1881", "confidence": 0.98 },
+        { "type": "source_code", "ref": "src/ui/file_manager.rs:1000-1001 + test :1669-1697", "confidence": 0.95 },
+        { "type": "source_code", "ref": "src/client/mod.rs:1308-1309 (direct_attach'ta da kapali)", "confidence": 0.95 }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "eco-calamine-read",
+      "layer": "L5",
+      "claim": "XLSX okuma icin calamine 0.36.0 (MIT, saf Rust, 10.19M indirme, 2026-07-06) dogru secimdir; worksheet_formula() formul METNINI, worksheet_range() Excel'in onbellek DEGERINI verir",
+      "evidence": [
+        { "type": "official-registry", "ref": "https://crates.io/api/v1/crates/calamine", "confidence": 0.95 },
+        { "type": "official-docs", "ref": "https://docs.rs/calamine/latest/calamine/", "confidence": 0.9 }
+      ],
+      "status": "verified",
+      "note": "Formul MOTORU gerekmez — metin + onbellek degeri yan yana gosterilir"
+    },
+    {
+      "id": "eco-no-formula-engine",
+      "layer": "L5",
+      "claim": "Formul motoru yazmak ayri bir urundur (ayristirici + AST + bagimlilik grafigi + topolojik yeniden hesap + dongu tespiti + 60 fonksiyonluk stdlib)",
+      "evidence": [
+        { "type": "source-repo", "ref": "https://github.com/SamuelSchlesinger/tshts — 60+ fonksiyon envanteri", "confidence": 0.9 }
+      ],
+      "status": "verified",
+      "decision": "YAPMA"
+    },
+    {
+      "id": "eco-no-native-pdf-raster",
+      "layer": "L5",
+      "claim": "Native Rust PDF rasterlestirme yapilmamali; pdfium-render harici binary/DLL gerektirir ve tek-binary dagitim modelini bozar. yazi (10k+ yildiz) bile harici pdftoppm kullanir",
+      "evidence": [
+        { "type": "official-registry", "ref": "https://crates.io/api/v1/crates/pdfium-render (v0.9.3)", "confidence": 0.9 },
+        { "type": "source-code", "ref": "refpool/yazi-src/yazi-plugin/preset/plugins/pdf.lua — pdftoppm -f N -l N -singlefile", "confidence": 1.0 }
+      ],
+      "status": "verified",
+      "decision": "YAPMA (P3)"
+    },
+    {
+      "id": "eco-ratatui-image-learn-not-adopt",
+      "layer": "L5",
+      "claim": "ratatui-image bagimlilik olarak EKLENMEMELI (sixel/iTerm2 olu kod + windows 0.58 vs windows-sys 0.61.2 ikili binding) ama capability sondaj deseni (query_with_timeout + cap_parser) KOPYALANMALI",
+      "evidence": [
+        { "type": "source-code", "ref": "refpool/ratatui-image/src/picker.rs:94,441-482,560-598 + cap_parser.rs:140-261", "confidence": 1.0 },
+        { "type": "source-code", "ref": "refpool/ratatui-image/Cargo.toml (windows 0.58)", "confidence": 1.0 }
+      ],
+      "status": "verified",
+      "decision": "OGREN, GECME"
+    },
+    {
+      "id": "eco-viewer-without-edit-is-valuable",
+      "layer": "L5",
+      "claim": "Duzenleme olmadan da yuksek degerli tablo goruntuleyici mumkundur: csvlens regex arama+filtre, dondurulmus kolon, satir/kolon/hucre secimi, kopyalama sunar ve hucre editi YOKTUR",
+      "evidence": [
+        { "type": "source-repo", "ref": "https://github.com/YS-L/csvlens", "confidence": 0.9 }
+      ],
+      "status": "verified",
+      "note": "2026-07-24 'sadece goruntuleme' kararinin dayanagi"
+    }
+  ],
+  "open": [
+    {
+      "id": "V1-test-gates-unverified",
+      "claim": "Sureklilik belgelerindeki test sonuclari (3683/3683 vb.) bu turda CALISTIRILMADI; dort kaynak korelasyonlu",
+      "confidence": 0.6,
+      "closes_when": "just check veya alt receteler bir kez gercekten kosulur"
+    },
+    {
+      "id": "V2-real-host-pixel",
+      "claim": "Gercek Kitty/Ghostty host'ta piksel gorundugu canli dogrulanmadi (ilgili test #[ignore])",
+      "confidence": 0.6,
+      "closes_when": "kitty_graphics.rs:1553 path_beta_real_host_probe manuel host'ta kosulur"
+    },
+    {
+      "id": "V3-umya-fidelity",
+      "claim": "umya-spreadsheet oku-yaz turunda formul/grafik/pivot/makro korunumu BELGELENMEMIS",
+      "confidence": 0.75,
+      "closes_when": "POC: yaz-oku-karsilastir ile kayip olcumu yapilir"
+    },
+    {
+      "id": "V4-windows-kitty",
+      "claim": "Windows'ta Kitty grafik durumu herdr'in kendi dokumaninda 'unverified'",
+      "confidence": 0.8,
+      "closes_when": "Windows VM'de canli dogrulama"
+    }
+  ],
+  "termination": {
+    "V_total": 4,
+    "rule": "V=0 | V K=2 tur sabit | butce | risk-esigi",
+    "note": "Dort acik node da EXECUTABLE kanit gerektirir; salt-okuma turunda kapatilamazdi"
+  }
+}

@@ -2,11 +2,11 @@
 
 ## Source Integrity
 
-- Source: `/home/ayaz/.claude/projects/-home-ayaz-projects-herdr/f53c720f-f795-4778-970b-d227714ffb1a.jsonl`
+- Source: `~/.claude/projects/-<canonical-project-id>/f53c720f-f795-4778-970b-d227714ffb1a.jsonl`
 - Size: 3,356,050 bytes
 - SHA-256: `368fb0a5045d1435c64679c8d0dea2a4283d58891231c91bb6e30350b69c2d30`
 - Embedded session ID: matches filename.
-- Dominant cwd: `/home/ayaz/projects/herdr` (843 records).
+- Dominant cwd: `~/projects/herdr` (843 records).
 - Time span: `2026-07-14T00:19:57.328Z`–`2026-07-14T02:41:40.076Z`.
 - Record counts: 509 assistant, 247 user/tool-result, 72 attachment, 31 file-history snapshots, plus session metadata.
 
@@ -68,7 +68,7 @@ The raw transcript is not copied here. This file records derived claims that wer
 - `.local/prd/native-fm/NEXT-SESSION-PROMPT.md`
 - `~/.claude/scripts/herdr-isolated-test-trigger.sh`
 - `~/.claude/settings.json` hook entry and backup
-- `~/.claude/projects/-home-ayaz-projects-herdr/memory/herdr-isolated-dev-test.md`
+- `~/.claude/projects/-<canonical-project-id>/memory/herdr-isolated-dev-test.md`
 - `~/.claude/skills/rust-dev/lessons/edge-cases.md`
 
 ## Continuity Warning

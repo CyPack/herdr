@@ -24,7 +24,7 @@ authority and remain visible beside the status.
 | Surface | Evidence | Classification |
 |---|---|---|
 | Git commits | source and commit chain persisted after reboot | not `/tmp` loss |
-| Plain `herdr` | `/home/ayaz/.local/bin/herdr`, dated 2026-07-12 | older installed build |
+| Plain `herdr` | `~/.local/bin/herdr`, dated 2026-07-12 | older installed build |
 | Repository debug | `target/debug/herdr`, dated 2026-07-18 at investigation start | current source build |
 | Live processes | installed and debug client/server processes both existed | no process was touched |
 

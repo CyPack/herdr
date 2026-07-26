@@ -161,7 +161,7 @@ proxy/process restart:
 
 ```bash
 CBM_WORKERS=1 codebase-memory-mcp cli index_repository \
-  '{"repo_path":"/home/ayaz/projects/herdr","mode":"fast","persistence":false}'
+  '{"repo_path":"<path-to-checkout>","mode":"fast","persistence":false}'
 ```
 
 The fresh graph store is 20,340 nodes / 93,429 edges. CLI `search_graph`

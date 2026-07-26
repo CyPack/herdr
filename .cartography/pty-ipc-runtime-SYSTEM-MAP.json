@@ -1,0 +1,790 @@
+{
+  "map": "pty-ipc-runtime",
+  "updated": "2026-07-26",
+  "repo_head": "8ded0e79",
+  "branch": "feat/native-fm",
+  "scope": "herdr'in uc cekirdek bagimliligi (portable-pty + interprocess + tokio) icin prior-art evidence graph: PTY yasam dongusu ve IPC protokol pattern'leri. 17 klonlu repo, hepsi codebase-memory-mcp'de indeksli. herdr koduna DEGISIKLIK YAPILMADI - bu bir harita.",
+  "related_docs": [
+    "docs/references/pty-ipc-runtime.md",
+    "docs/patterns/pty-ipc-runtime.md",
+    "docs/references/README.md",
+    "docs/analysis/2026-07-26-pty-ipc-gap-analysis.md",
+    "~/.cartography/pools/pty-ipc/taxonomy.json"
+  ],
+  "layers": [
+    "L0-pool-integrity",
+    "L1-pty-lifecycle",
+    "L2-ipc-protocol",
+    "L3-scale-decision"
+  ],
+  "pool": {
+    "root": "~/.cartography/refpool/",
+    "selection_method": "crates.io reverse_dependencies kesisimi: PTY ailesi (portable-pty|pty-process|expectrl|rexpect|ptyprocess|termwiz = 609 ters-bagimli) INTERSECT IPC ailesi (interprocess|parity-tokio-ipc|ipc-channel = 228) = 15 crate; + kanonik buyukler (zellij, sshx)",
+    "indexed_projects": [
+      {
+        "repo": "oly",
+        "sha": "741ba42",
+        "project": "home-ayaz-.cartography-refpool-oly",
+        "nodes": 3163,
+        "edges": 10422,
+        "independent": true
+      },
+      {
+        "repo": "orbt",
+        "sha": "186c11c",
+        "project": "home-ayaz-.cartography-refpool-orbt",
+        "nodes": 1245,
+        "edges": 4292,
+        "independent": "influenced"
+      },
+      {
+        "repo": "running-process",
+        "sha": "da50923",
+        "project": "home-ayaz-.cartography-refpool-running-process",
+        "nodes": 10360,
+        "edges": 50893,
+        "independent": true
+      },
+      {
+        "repo": "tenex",
+        "sha": "fda7d37",
+        "project": "home-ayaz-.cartography-refpool-tenex",
+        "nodes": 2920,
+        "edges": 11386,
+        "independent": true
+      },
+      {
+        "repo": "zellij",
+        "sha": "812ad86",
+        "project": "home-ayaz-.cartography-refpool-zellij",
+        "nodes": 14625,
+        "edges": 90245,
+        "independent": true
+      },
+      {
+        "repo": "sshx",
+        "sha": "dd42496",
+        "project": "home-ayaz-.cartography-refpool-sshx",
+        "nodes": 888,
+        "edges": 2445,
+        "independent": true
+      },
+      {
+        "repo": "kode-bridge",
+        "sha": "de31d0f",
+        "project": "home-ayaz-.cartography-refpool-kode-bridge",
+        "nodes": 1113,
+        "edges": 2686,
+        "independent": true
+      },
+      {
+        "repo": "mprocs",
+        "sha": "d1966e7",
+        "project": "home-ayaz-.cartography-refpool-mprocs",
+        "nodes": 2350,
+        "edges": 9508,
+        "independent": true
+      },
+      {
+        "repo": "tui-term",
+        "sha": "e1ebdd0",
+        "project": "home-ayaz-.cartography-refpool-tui-term",
+        "nodes": 498,
+        "edges": 1258,
+        "independent": true
+      },
+      {
+        "repo": "ptywright",
+        "sha": "0586657",
+        "project": "home-ayaz-.cartography-refpool-ptywright",
+        "nodes": 2166,
+        "edges": 9470,
+        "independent": true
+      },
+      {
+        "repo": "shell-compose",
+        "sha": "914d874",
+        "project": "home-ayaz-.cartography-refpool-shell-compose",
+        "nodes": 260,
+        "edges": 585,
+        "independent": true
+      },
+      {
+        "repo": "zwire-host",
+        "sha": "af77c51",
+        "project": "home-ayaz-.cartography-refpool-zwire-host",
+        "nodes": 579,
+        "edges": 2229,
+        "independent": true
+      },
+      {
+        "repo": "skim",
+        "sha": "cbfb7fa",
+        "project": "home-ayaz-.cartography-refpool-skim",
+        "nodes": 3508,
+        "edges": 15858,
+        "independent": true
+      },
+      {
+        "repo": "gwm-cli",
+        "sha": "7212406",
+        "project": "home-ayaz-.cartography-refpool-gwm-cli",
+        "nodes": 6106,
+        "edges": 33520,
+        "independent": true
+      },
+      {
+        "repo": "bohay",
+        "sha": "9d16cac",
+        "project": "home-ayaz-.cartography-refpool-bohay",
+        "nodes": 2675,
+        "edges": 13648,
+        "independent": true
+      },
+      {
+        "repo": "fresh-editor",
+        "sha": "4610966",
+        "project": "home-ayaz-.cartography-refpool-fresh-editor",
+        "nodes": 30767,
+        "edges": 145937,
+        "independent": true
+      },
+      {
+        "repo": "zynk",
+        "sha": "3d10a90",
+        "project": "home-ayaz-.cartography-refpool-zynk",
+        "nodes": 14109,
+        "edges": 77606,
+        "independent": false
+      }
+    ],
+    "total_nodes": 97332,
+    "total_edges": 481989,
+    "classification": {
+      "root": "~/.cartography/pools/pty-ipc/",
+      "files": [
+        "taxonomy.json",
+        "sources.json",
+        "pattern-index.json",
+        "classifications/P01-P17.json"
+      ],
+      "schema_sibling": "~/.cartography/pools/ratatui/taxonomy.json",
+      "category_families": 9,
+      "sources": 17,
+      "claims": 60,
+      "review_status": {
+        "verified": 17,
+        "shallow": 0
+      },
+      "validation": "taxonomy disi kategori YOK; 19/19 PI pattern ornekli",
+      "license_gate": {
+        "code-reusable-with-attribution": 13,
+        "design-reference-only": 3,
+        "derivative-of-herdr": 1,
+        "rule": "herdr AGPL-3.0-or-later + TICARI ikili lisans -> copyleft kaynaklardan KOD KOPYALANMAZ (orbt/bohay/fresh-editor)"
+      },
+      "symbol_classification": {
+        "engine": "scripts/classify_symbols.py",
+        "roles_schema": "roles.json v2",
+        "symbols": 125473,
+        "components": 1163,
+        "structural_roles": 11,
+        "domain_roles": 24,
+        "artifacts": [
+          "symbols/<repo>.json",
+          "components/<repo>.json",
+          "graph-summary.json"
+        ]
+      },
+      "index_mode": "full",
+      "graph": {
+        "nodes": 137620,
+        "edges": 612211
+      },
+      "validation_gate": "scripts/validate_pool.py -> TEMIZ (exit 0)",
+      "pipeline_skill": "~/.claude/skills/prior-art-pool/SKILL.md"
+    }
+  },
+  "nodes": [
+    {
+      "id": "pool-zynk-is-herdr-fork",
+      "layer": "L0",
+      "claim": "zynk BAGIMSIZ prior-art DEGILDIR; herdr'in yeniden markalanmis fork'udur - bir pattern'in dogrulanmasinda ikinci bagimsiz kaynak olarak SAYILMAZ (sahte konsensus riski)",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "refpool/zynk/README.md:251-252 - 'zynk is a fork of herdr ... keeps herdr's terminal-multiplexer foundation'",
+          "confidence": 0.98
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/zynk/CLAUDE.md:67 - 'Don't reintroduce the upstream name herdr in active source/docs (ADR 0010 7 CI gate)'",
+          "confidence": 0.95
+        },
+        {
+          "type": "executable",
+          "ref": "comm -12 <(zynk/src find *.rs) <(herdr/src find *.rs) = 187 ortak / 214 toplam",
+          "confidence": 1.0
+        }
+      ],
+      "status": "verified",
+      "note": "Havuza dahil TUTULDU - degeri prior-art degil FORK-DIFF: ayni kod tabaninin divergent evrimi"
+    },
+    {
+      "id": "pool-orbt-influenced-not-fork",
+      "layer": "L0",
+      "claim": "orbt kod-fork DEGIL ama tasarim etkisi beyan ediyor ('herdr heritage'); uygulamasi bagimsiz (kendi orbt-protocol/orbt-core crate'leri)",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "refpool/orbt/CLAUDE.md:14 - 'terminal multiplexer (tmux/zellij heritage) with a first-class agent runtime (herdr heritage)'",
+          "confidence": 0.9
+        },
+        {
+          "type": "executable",
+          "ref": "orbt/crates/ agaci herdr src/ ile ortusmuyor (orbt-protocol, orbt-core, orbitd ayri crate'ler)",
+          "confidence": 0.9
+        }
+      ],
+      "status": "verified",
+      "note": "Bagimsizlik derecesi 'influenced' - tasarim fikirlerinde korelasyon olabilir, kod kanitinda yok"
+    },
+    {
+      "id": "PI1-slave-drop-after-spawn",
+      "layer": "L1",
+      "claim": "spawn_command sonrasi drop(pair.slave) ZORUNLU; slave fd acik kaldigi surece child olse bile master'dan EOF gelmez ve reader sonsuza kadar bloke olur",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "refpool/orbt/crates/orbt/src/daemon/pty.rs:53",
+          "confidence": 0.95
+        },
+        {
+          "type": "official",
+          "ref": "vendor/portable-pty/examples/bash.rs:26 + narrow.rs + whoami_async.rs (upstream orneklerinin TAMAMI icerir)",
+          "confidence": 0.95
+        }
+      ],
+      "status": "verified",
+      "note": "En yuksek etkili tek satir; atlanirsa session 'canli' gorunur ama olu"
+    },
+    {
+      "id": "PI2-blocking-io-off-runtime",
+      "layer": "L1",
+      "claim": "portable-pty reader/writer SENKRON std::io'dur; tokio::spawn icinde calistirmak runtime worker'i bloke eder. Dogru yol: spawn_blocking + mpsc/broadcast kopru (blocking_send/blocking_recv)",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "refpool/orbt/crates/orbt/src/daemon/pty.rs:73 (reader), :108 (writer)",
+          "confidence": 0.95
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/running-process/crates/running-process/src/broker/backend_sdk/frame_client.rs:15 - yorumda acik uyari: 'spawn_blocking will block the runtime worker thread'",
+          "confidence": 0.9
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/sshx/crates/sshx/src/terminal/windows.rs:56 - ConPTY spawn'i da spawn_blocking'e aliniyor",
+          "confidence": 0.85
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "PI3-master-shared-for-resize",
+      "layer": "L1",
+      "claim": "master handle reader klonlandiktan sonra dusurulmemeli; resize + fd omru icin paylasimli ve Sync olmali. Option ile sarmak kapanista take() ile fd birakmayi saglar",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "refpool/oly/src/session/pty.rs:26-29 - parking_lot::Mutex<Option<Box<dyn MasterPty+Send>>> + gerekce yorumu",
+          "confidence": 0.9
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/orbt/crates/orbt/src/daemon/pty.rs:12,66 - Arc<Mutex<Box<dyn MasterPty+Send>>>",
+          "confidence": 0.9
+        }
+      ],
+      "status": "verified",
+      "note": "Iki bagimsiz varyant ayni kisiti farkli tipte cozuyor -> kisit gercek"
+    },
+    {
+      "id": "PI4-output-batch-window",
+      "layer": "L1",
+      "claim": "PTY read loop'u ~8ms penceresinde okumalari birlestirip tek PaneOutput yayar; aksi halde 'cat huge_file' saniyede yuzlerce event uretir",
+      "evidence": [
+        {
+          "type": "design_doc",
+          "ref": "refpool/orbt/CLAUDE.md 9.6",
+          "confidence": 0.7
+        }
+      ],
+      "status": "open",
+      "note": "TEK KAYNAK + design_doc tier -> theta-kurali karsilanmadi. V'ye sayilir"
+    },
+    {
+      "id": "PI5-nonblocking-reap-then-release",
+      "layer": "L1",
+      "claim": "Child olumu uc ayri adimdir: try_wait (gozlem) / kill (zorlama) / release_resources (fd take + writer'i KAPALI kanalla degistir). Writer'i kapali kanalla degistirmek sonraki yazmalarin hizli hata vermesini saglar",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "refpool/oly/src/session/pty.rs:70-98 (release_resources/kill/try_wait) + store.rs:192,911",
+          "confidence": 0.9
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/tenex/src/mux/server/session.rs:407 (kill), :480 (try_wait)",
+          "confidence": 0.85
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "PI6-detached-capability-responder",
+      "layer": "L1",
+      "claim": "Detach modunda daemon terminal capability query'lerine SECICI cevap vermeli: CPR/DSR/OSC10-11 cevaplanir; DA1/DA2/XTVERSION/DECRPM/kitty-keyboard cevaplanMAZ (kullanici girdisiyle karisir, cikti akisini bozar)",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "refpool/oly/src/session/pty.rs:522-594 (extract_query_responses_no_client) + :540-561 gerekce yorumu",
+          "confidence": 0.9
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/orbt/crates/orbt/src/daemon/pty.rs:81-92 - yalniz DA1'e cevap veriyor (farkli kume secimi)",
+          "confidence": 0.8
+        }
+      ],
+      "status": "verified",
+      "note": "Iki proje CEVAP KUMESINDE ayrisiyor -> bu bir tasarim karari; herdr kendi kumesini secmeli"
+    },
+    {
+      "id": "PI7-cross-chunk-escape-buffer",
+      "layer": "L1",
+      "claim": "Escape dizileri read() sinirinda bolunur; Windows ConPTY herhangi bir byte'ta boler ve bastaki ESC'i tamamen dusurebilir (bare '[35;1R' formlari). Filtre stateful olmali: tamamlanmamis kuyruk pending olarak tasinir",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "refpool/oly/src/session/pty.rs:467-494 (EscapeFilter), :619-747 (filter_cpr_chunk_bytes bare/split varyantlari), :751-782 (APC/DCS kismi tespiti)",
+          "confidence": 0.9
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/oly/src/session/pty.rs:1199-1207,1334-1338 - split-query ve invalid-UTF8 testleri davranisi cividir",
+          "confidence": 0.9
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "PI8-writer-backpressure-typed",
+      "layer": "L1",
+      "claim": "Girdi yazimi try_send ile yapilir; Full (tuketici yavas - gecici) ve Closed (session olu - kalici) AYRI ele alinir",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "refpool/oly/src/session/pty.rs:33-42",
+          "confidence": 0.85
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/orbt/crates/orbt/src/daemon/pty.rs:31 - mpsc::channel(64) sinirli kanal",
+          "confidence": 0.8
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "PI9-pty-env-contract",
+      "layer": "L1",
+      "claim": "PTY child'ina spawn aninda sabit env verilir: TERM=xterm-256color, COLORTERM=truecolor + PANE kimligi; pane-id env'i agent tespitinin process'i pane'ine baglamasini saglar",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "refpool/orbt/crates/orbt/src/daemon/pty.rs:45-47",
+          "confidence": 0.85
+        },
+        {
+          "type": "design_doc",
+          "ref": "refpool/orbt/CLAUDE.md 10.2 - 'ORBT_PANE_ID: Set by orbitd on every PTY child - agent detection reads this'",
+          "confidence": 0.85
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "PI10-pty-backend-trait",
+      "layer": "L1",
+      "claim": "Platform farki (unix openpty / Windows ConPTY / portable-pty passthrough) tek trait arkasina alinir; test icin mock varyanti ayni yuzeyden gelir",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "refpool/running-process/crates/running-process/src/pty/backend.rs:38-42 (trait), :125,:217,:360 (uc impl)",
+          "confidence": 0.9
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/oly/src/session/pty.rs:111-153 - RuntimeChild enum + #[cfg(test)] Mock varyanti",
+          "confidence": 0.85
+        }
+      ],
+      "status": "verified",
+      "note": "YAGNI guard: tek backend varsa trait yalniz dolayliik katar"
+    },
+    {
+      "id": "PI11-raw-openpty-escape-hatch",
+      "layer": "L1",
+      "claim": "portable-pty sart degil: nix::pty::openpty + login_tty + ioctl(TIOCSWINSZ) ile PTY dogrudan yonetilebilir; maliyeti Windows'u kendin cozmen",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "refpool/sshx/crates/sshx/src/terminal/unix.rs:11,55,109-122 - openpty + TIOCGWINSZ + TIOCSWINSZ, her unsafe blogu SAFETY yorumlu",
+          "confidence": 0.9
+        }
+      ],
+      "status": "verified",
+      "note": "herdr icin ALTERNATIF DEGIL - herdr zaten portable-pty'yi vendorlayip patch'liyor; bilgi amacli"
+    },
+    {
+      "id": "PI12-length-prefixed-frame",
+      "layer": "L2",
+      "claim": "Unix socket/named pipe byte STREAM'dir; mesaj sinirini protokol koyar. Kanonik cerceve: u32 LE uzunluk + payload (payload formatindan bagimsiz)",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "refpool/zellij/zellij-utils/src/ipc.rs:399-419 (sync read/write), :496-508 (async)",
+          "confidence": 0.95
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/orbt/crates/orbt-protocol/src/encoding.rs:14-27",
+          "confidence": 0.95
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/bohay/src/ipc/api.rs:72-80 - KARSI-ORNEK: newline-delimited JSON (gecerli alternatif framing)",
+          "confidence": 0.8
+        }
+      ],
+      "status": "verified",
+      "note": "Uc bagimsiz kaynak; ikisi ayni cozumde, ucuncu bilincli alternatif"
+    },
+    {
+      "id": "PI13-frame-size-cap",
+      "layer": "L2",
+      "claim": "Length prefix okunduktan sonra o kadar byte TAHSIS edilir; cap yoksa bozuk/kotu niyetli u32 (<=4GiB) uzaktan OOM demektir. Cap hem decode hem ENCODE tarafinda kontrol edilir",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "refpool/orbt/crates/orbt-protocol/src/encoding.rs:9 (MAX_MSG_BYTES=4MiB), :17-19 (encode tarafinda reddediyor)",
+          "confidence": 0.95
+        },
+        {
+          "type": "design_doc",
+          "ref": "refpool/orbt/CLAUDE.md 8.2 - 'Reject larger - defends against OOM'; tipik PaneOutput <4KB, tam grid snapshot ~160KB",
+          "confidence": 0.85
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "PI14-runtime-dir-socket-path",
+      "layer": "L2",
+      "claim": "Socket yolu oncelikle /run/user/<uid>/ -> $XDG_RUNTIME_DIR/ -> $TMPDIR/<app>-<uid>.sock. /tmp'de SABIT ad yasak (cok-kullanicida cakisma + symlink saldirisi); TMPDIR fallback'inde uid ADIN ICINDE olmali",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "refpool/orbt/crates/orbt-protocol/src/socket.rs:8-35",
+          "confidence": 0.9
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/zellij/zellij-utils/src/consts.rs:284-288 - ZELLIJ_TMP_DIR = temp_dir()/zellij-<uid>; envs.rs:29 ZELLIJ_SOCKET_DIR override",
+          "confidence": 0.9
+        },
+        {
+          "type": "design_doc",
+          "ref": "refpool/orbt/CLAUDE.md 9.4 - 'F3 fix - DO NOT regress to /tmp'",
+          "confidence": 0.85
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "PI15-sun-path-length-guard",
+      "layer": "L2",
+      "claim": "sockaddr_un.sun_path sabit boyutlu: macOS/BSD 104, Linux/Android/Solaris 108 byte. Uzun session adi + derin runtime dizini bu siniri asar ve bind sessizce tuhaf sekilde basarisiz olur",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "refpool/zellij/zellij-utils/src/consts.rs:276-280 (unix), :326 (Windows dali 256)",
+          "confidence": 0.95
+        }
+      ],
+      "status": "verified",
+      "note": "herdr icin YUKSEK ILGI: socket adina session/worktree adi (kullanici girdisi) karisiyor"
+    },
+    {
+      "id": "PI16-peer-credential-policy",
+      "layer": "L2",
+      "claim": "Kabul edilen her baglantida peer kimligi (UID/Windows SID) okunur ve TIPLI bir politikaya gore kabul/ret edilir (AllowAny | OwnerOnly). Politika Hello frame'i OKUNMADAN ONCE uygulanir; macOS LOCAL_PEERCRED pid alani tasimadigi icin pid capraz-kontrolu orada YAPILAMAZ",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "refpool/running-process/crates/running-process/src/broker/server/connection.rs:24-56 (PeerCredentialPolicy enum + current_user/geteuid), :470 (stream.peer_creds())",
+          "confidence": 0.95
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/running-process/crates/running-process/src/broker/server/control_socket.rs:63-235 - politika her giris noktasina parametre",
+          "confidence": 0.9
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/running-process/crates/running-process/src/broker/server/hello_handler.rs:400 - macOS LOCAL_PEERCRED pid alani yok notu",
+          "confidence": 0.9
+        },
+        {
+          "type": "executable",
+          "ref": "refpool/running-process/crates/running-process/tests/broker/peer_creds_drop.rs - davranis testle civilenmis",
+          "confidence": 0.85
+        }
+      ],
+      "status": "verified",
+      "note": "ILK TURDA orbt design_doc'una dayaniyordu ve open'di; kod dogrulamasi orbt'de peercred'in HIC OLMADIGINI gosterdi -> gercek kanit running-process'te bulundu"
+    },
+    {
+      "id": "PI17-hello-welcome-handshake",
+      "layer": "L2",
+      "claim": "Baglanti Hello{client_version,protocol_version,capabilities} -> Welcome{...,capabilities kesisimi, FullState} ile acilir; versiyon uyusmazliginda tipli hata + kapanis. Evrim: additive -> Capabilities bayragi, breaking -> PROTOCOL_VERSION bump",
+      "evidence": [
+        {
+          "type": "design_doc",
+          "ref": "refpool/orbt/CLAUDE.md 8.3-8.4",
+          "confidence": 0.8
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/orbt/crates/orbt-protocol/src/messages.rs (wire kontrati)",
+          "confidence": 0.85
+        },
+        {
+          "type": "source_code",
+          "ref": "herdr src/protocol/wire.rs::PROTOCOL_VERSION + AGENTS.md 'Code Conventions' (bump'i son yayinlanan tag'e gore degerlendir)",
+          "confidence": 0.95
+        }
+      ],
+      "status": "verified",
+      "note": "herdr'da ZATEN VAR - bu node karsilastirma tabani, ithalat degil"
+    },
+    {
+      "id": "PI18-protocol-crate-runtime-free",
+      "layer": "L2",
+      "claim": "Wire tipleri ve domain modeli tokio'suz ayri crate'lerde yasar; kutuphane crate'leri public API'de anyhow KULLANMAZ (thiserror ile tipli hata) cunku anyhow cagiranin ihtiyac duydugu tip bilgisini siler",
+      "evidence": [
+        {
+          "type": "design_doc",
+          "ref": "refpool/orbt/CLAUDE.md 5.2 ('MUST remain tokio-free'), 9.1 (hata katmanlama tablosu)",
+          "confidence": 0.85
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/orbt/crates/orbt-protocol/Cargo.toml - tokio bagimliligi yok (yapisal kanit)",
+          "confidence": 0.9
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "PI19-stale-socket-liveness-reclaim",
+      "layer": "L2",
+      "claim": "Stale socket kurtarma IKI adimlidir: dosya var mi VE sunucu gercekten olu mu. Sadece remove_file yapmak canli bir sunucunun soketini koparir",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "refpool/fresh-editor/crates/fresh-editor/src/server/ipc/mod.rs:115-138 (cleanup_if_stale + PID dosyasi ile canlilik) + main.rs:2647,2984,3144,3278",
+          "confidence": 0.9
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/bohay/src/ipc/api.rs:56 - KARSI-ORNEK, eksikligi itiraf ediyor: 'proper detection arrives with the M2 server'",
+          "confidence": 0.85
+        }
+      ],
+      "status": "verified",
+      "note": "Pozitif ornek + bilincli-borc karsi-ornegi ayni pattern'i iki yonden dogruluyor"
+    },
+    {
+      "id": "scale-matrix-herdr-is-S3",
+      "layer": "L3",
+      "claim": "Olcek matrisi S0-S4: herdr S3'tedir (daemon + cok client + detach/attach) ve S4'e (remote/SSH) bakiyor; zellij ve sshx bir ust basamagin referansi olarak havuzda tutuluyor",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "herdr src/remote.rs + src/remote/ + src/client/ + src/server/ (S3 yapisi canli)",
+          "confidence": 0.9
+        },
+        {
+          "type": "executable",
+          "ref": "havuz LOC/bagimlilik envanteri: S0=tui-term(3.5k LOC), S1=mprocs/skim, S2=oly/shell-compose, S3=orbt, S4=zellij(296k)/sshx",
+          "confidence": 0.85
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "lossy-broadcast-needs-resync",
+      "layer": "L3",
+      "claim": "tokio broadcast::send abone geri kalirsa TASARIMI GEREGI veri duser; kurtarma protokolde olmali (Lagged -> RequestFullState -> tam durum). Resync yolu YOKSA bu bir bug'a doner",
+      "evidence": [
+        {
+          "type": "design_doc",
+          "ref": "refpool/orbt/CLAUDE.md 11.2 - kabul edilmis takas olarak listelenmis",
+          "confidence": 0.8
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/orbt/crates/orbt-protocol/src/messages.rs - ClientMessage::RequestFullState varyanti mevcut",
+          "confidence": 0.85
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "design-doc-drift-orbt-peercred",
+      "layer": "L0",
+      "claim": "design_doc tier'i TEK BASINA asla verified yapmaz: orbt CLAUDE.md 8.3/9.4 'Server checks SO_PEERCRED UID on every accepted connection' diyor ama kod tabaninda peercred|getpeereid|ucred|peer_cred HIC GECMIYOR - tek eslesme ssh.rs:204 remote_uid, o da SSH uzerinden 'id -u' calistiran ilgisiz bir fonksiyon. Belge aspirational",
+      "evidence": [
+        {
+          "type": "executable",
+          "ref": "grep -rn --include='*.rs' -iE 'peercred|getpeereid|SO_PEER|peer_cred|ucred' refpool/orbt/ -> BOS",
+          "confidence": 1.0
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/orbt/crates/orbt/src/ssh.rs:204-235 - remote_uid: SSH exec 'id -u', peer-credential ile ilgisiz",
+          "confidence": 0.95
+        },
+        {
+          "type": "design_doc",
+          "ref": "refpool/orbt/CLAUDE.md 8.3, 9.4 - dogrulanmamis iddia",
+          "confidence": 0.9
+        }
+      ],
+      "status": "verified",
+      "note": "Metodolojik ders: havuzdaki her design_doc satiri codebase-memory-mcp veya grep ile koda cozulmeli"
+    },
+    {
+      "id": "herdr-gap-analysis-done",
+      "layer": "L3",
+      "claim": "19 PI pattern herdr'da tarandi: 11 VAR (6'si havuzdan ILERIDE: PI1/PI3/PI12/PI13/PI15/PI19), 6 KISMI, 2 YOK (PI16 peer-cred = tek net guvenlik gap'i, PI4 batch = olculmeli)",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "docs/analysis/2026-07-26-pty-ipc-gap-analysis.md - her PI icin satir-kanitli tablo",
+          "confidence": 0.9
+        },
+        {
+          "type": "executable",
+          "ref": "grep/search_graph taramalari herdr@8ded0e79 uzerinde kosuldu",
+          "confidence": 0.95
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "FINDING-sun-path-guard-misses-api-socket",
+      "layer": "L2",
+      "claim": "PI15 sun_path guard'i src/remote/unix.rs'de var (hash fallback + test) ama session.rs::api_socket_path_for bu guard'dan GECMIYOR: /home/<user>/.config/herdr/sessions/<name>/herdr.sock = 106 + len(user) byte; MAX_SESSION_NAME_LEN=64 ile macOS 104 her halukarda, Linux 108 len(user)>=2 ise asilir",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "src/session.rs:13 (MAX_SESSION_NAME_LEN=64), :169-171 (api_socket_path_for), src/config/io.rs:30-34,62-67 (config_dir)",
+          "confidence": 0.95
+        },
+        {
+          "type": "source_code",
+          "ref": "src/remote/unix.rs:1996 (104/108 sabiti), :3047 (fit testi) - guard'in VAR oldugu ama BASKA yolda oldugu kaniti",
+          "confidence": 0.95
+        },
+        {
+          "type": "executable",
+          "ref": "yol uzunlugu hesabi: 7+len(user)+24+64+11",
+          "confidence": 0.8
+        }
+      ],
+      "status": "open",
+      "note": "HESAP kaniti, calistirilmis bind DEGIL. Kapanis: api_socket_path_for icin remote/unix.rs:3047 eslenigi test yazilir"
+    },
+    {
+      "id": "pool-fully-classified-and-validated",
+      "layer": "L0",
+      "claim": "Havuz 17/17 full modda indeksli ve verified; 125.473 sembol rol taksonomisiyle siniflandirildi; makine kapisi (validate_pool.py) TEMIZ. Surec kanonik pipeline'a cevrildi (Skill prior-art-pool)",
+      "evidence": [
+        {
+          "type": "executable",
+          "ref": "scripts/validate_pool.py exit 0 · repo=17 claim=60 kategori=75",
+          "confidence": 0.95
+        },
+        {
+          "type": "executable",
+          "ref": "scripts/classify_symbols.py -> 125473 sembol / 1163 component / 24 alan rolu",
+          "confidence": 0.95
+        },
+        {
+          "type": "source_code",
+          "ref": "~/.claude/skills/prior-art-pool/SKILL.md (7 adimli pipeline)",
+          "confidence": 0.9
+        }
+      ],
+      "status": "verified"
+    },
+    {
+      "id": "FINDING-windows-namedpipe-no-access-barrier",
+      "layer": "L2",
+      "claim": "herdr Windows IPC yolunda erisim bariyeri YOK: restrict_socket_permissions windows dalinda no-op (ipc.rs:283-285), named pipe varsayilan DACL ile aciliyor ve adi socket yolundan turedigi icin tahmin edilebilir (ipc.rs:60-70); istemci baglandigi pipe'in sahibini DOGRULAMIYOR",
+      "evidence": [
+        {
+          "type": "source_code",
+          "ref": "herdr src/ipc.rs:283-285 (windows no-op), :60-70 (to_ns_name + varsayilan DACL)",
+          "confidence": 0.95
+        },
+        {
+          "type": "source_code",
+          "ref": "refpool/gwm-cli/src/daemon.rs:1420-1460 - ayni tehdidi adlandirip cozuyor (owner SID bagli kernel nesnesinden, fail-closed, D:P + OWNER RIGHTS DACL)",
+          "confidence": 0.95
+        }
+      ],
+      "status": "open",
+      "note": "Somurulebilirlik DOGRULANMADI (Windows'ta squat denemesi yok); interprocess 2.4.2 varsayilan DACL'i okunmadi. gwm-cli MIT -> kod atifla alinabilir"
+    }
+  ],
+  "open": [
+    {
+      "id": "PI4-batch-window-single-source",
+      "claim": "8ms output batch penceresi yalniz orbt design_doc'unda; ikinci bagimsiz kanit veya lokal olcum yok",
+      "confidence": 0.7,
+      "closes_when": "ikinci bagimsiz kaynak bulunur VEYA herdr'da olculur (yuksek-hacim cikti ile event/sn)"
+    },
+    {
+      "id": "FINDING-sun-path-api-socket-unproven",
+      "claim": "api_socket_path_for'da sun_path asimi hesapla gosterildi, calisma zamaninda DOGRULANMADI",
+      "confidence": 0.8,
+      "closes_when": "MAX_SESSION_NAME_LEN uzunlugunda adla api_socket_path_for cagrilip platform sinirina sigdigini iddia eden test yazilir (kirmizi=bug, yesil=bulgu kapanir)"
+    },
+    {
+      "id": "FINDING-windows-namedpipe-unproven",
+      "claim": "Windows named-pipe squat riski kod okumasiyla gosterildi, calisma zamaninda denenmedi",
+      "confidence": 0.75,
+      "closes_when": "interprocess 2.4.2 windows listener varsayilan DACL'i dogrulanir; daraltmiyorsa gwm-cli modeli uygulanir"
+    }
+  ],
+  "termination": {
+    "V_total": 3,
+    "rule": "V=0 | V K=2 tur sabit | butce | risk-esigi",
+    "note": "Havuz tarafinda GAP YOK (17/17 verified, kapi temiz). Kalan 3 acik node herdr KODUNA dokunmayi gerektiren dogrulamalar."
+  }
+}

@@ -1,7 +1,7 @@
 # Miller Trail UX Kontratı — KANONİK (kullanıcı direktifi, 2026-07-18; mouse-focus güncellemesi 2026-07-23)
 
 Kaynak: kullanıcının kendi referans implementasyonu **circet-miller**
-(`/home/ayaz/cc-dashboard-circet-data-platform/web/src/pages/sections/CircetMillerSection.tsx`,
+(`~/cc-dashboard-circet-data-platform/web/src/pages/sections/CircetMillerSection.tsx`,
 canlı: `http://127.0.0.1:8771/p/circet-miller`) + superfile/yazi ekran kanıtları.
 Kullanıcı sözü: **"millers ui ux i böyle çalışmak zorunda"** — bu dosya o zorunluluğun yasasıdır.
 Herdr FM'in mevcut sabit `parent/CURRENT/preview` + resident-cache modeli bu kontrata GÖRE YENİDEN

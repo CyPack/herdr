@@ -10,7 +10,7 @@ operations, pane hit-testing, swap/dock semantics and serialization decisions.
 ## Primary extraction: R033 ratatui-hypertile
 
 Use the indexed project
-`home-ayaz-.cartography-refpool-ratatui-hypertile`.
+`<canonical-project-id for the hypertile reference checkout>`.
 
 | Need | Evidence | Adaptation |
 |---|---|---|

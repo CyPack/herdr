@@ -44,7 +44,7 @@ GREEN commit: `fix: consume files shortcut navigation in headless mode`
 - Mark FMR-2A and its subtasks complete with RED/GREEN SHAs.
 - Regenerate `.codex/HANDOFF.md` OPEN_TASKS from both registries and require an
   exact diff.
-- Reindex `home-ayaz-projects-herdr` with `CBM_WORKERS=1`.
+- Reindex `<canonical-project-id>` with `CBM_WORKERS=1`.
 - Fetch, verify fast-forward ancestry, push only CyPack
   `feat/native-fm` and `master`, then verify both remote SHAs.
 

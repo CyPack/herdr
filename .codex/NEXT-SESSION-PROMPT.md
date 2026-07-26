@@ -36,7 +36,7 @@ text below. Stable Herdr/socket/config and `.superpowers/` remain out of scope.
 Run only:
 
 ~~~bash
-cd /home/ayaz/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run
+cd ~/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run
 ~~~
 
 ## Current Override — FMH Fully Gated Locally; Isolated E2E Next
@@ -129,7 +129,7 @@ stable socket, and follow the isolated runtime recipe. Custom-layout B-chain
 is separate and starts only from its own approved design/plan. Recount the
 7 + 89 unchecked registry tasks; do not infer priority from older text below.
 
-Continue `/home/ayaz/projects/herdr` on branch `feat/native-fm` from the
+Continue `~/projects/herdr` on branch `feat/native-fm` from the
 canonical Files Interaction Polish handoff. This is `mid_flight_adoption`.
 Do not restart the project, reimplement completed SF/FM work, infer state from
 chat memory, or begin with a lower-priority task.
@@ -159,14 +159,14 @@ out of scope.
 
 ## Mandatory Start Order — No Skips
 
-1. Read `/home/ayaz/projects/herdr/AGENTS.md` completely.
-2. Read `/home/ayaz/projects/herdr/CLAUDE.md` completely.
+1. Read `~/projects/herdr/AGENTS.md` completely.
+2. Read `~/projects/herdr/CLAUDE.md` completely.
 3. Use `$herdr-native-fm`.
 4. Before executing that skill, completely read:
    - `.codex/skills/herdr-native-fm/lessons/errors.md`
    - `.codex/skills/herdr-native-fm/lessons/golden-paths.md`
    - `.codex/skills/herdr-native-fm/lessons/edge-cases.md`
-   - `/home/ayaz/.codex/skills/_shared/common-errors.md`
+   - `~/.codex/skills/_shared/common-errors.md`
 5. Read these canonical files completely and in order:
    - `.codex/BOOTSTRAP.md`
    - `.codex/CURRENT.md`
@@ -235,7 +235,7 @@ Status assignment:
 Canonical project:
 
 ```text
-home-ayaz-projects-herdr
+<canonical-project-id>
 ```
 
 Required discovery order:
@@ -286,7 +286,7 @@ the long-lived channel is stale:
 
 ```bash
 CBM_WORKERS=1 codebase-memory-mcp cli index_repository \
-  '{"repo_path":"/home/ayaz/projects/herdr","project":"home-ayaz-projects-herdr","incremental":true}'
+  '{"repo_path":"<path-to-checkout>","project":"<canonical-project-id>","incremental":true}'
 ```
 
 Do not restart/kill the MCP proxy or any user process. Re-query changed recent

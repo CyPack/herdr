@@ -344,7 +344,7 @@ Safe sequential refresh:
 
 ```bash
 CBM_WORKERS=1 codebase-memory-mcp cli index_repository \
-  '{"repo_path":"/home/ayaz/projects/herdr","mode":"fast","persistence":false}'
+  '{"repo_path":"<path-to-checkout>","mode":"fast","persistence":false}'
 ```
 
 Result:

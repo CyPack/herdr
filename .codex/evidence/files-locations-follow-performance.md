@@ -204,7 +204,7 @@ normal run exit automatically calls report_latest: present
 The live user command remains one line:
 
 ```text
-cd /home/ayaz/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-files-v1-profile.sh run
+cd ~/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-files-v1-profile.sh run
 ```
 
 Live acceptance is deliberately not claimed here; it belongs to FLF Task 7

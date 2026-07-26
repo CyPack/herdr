@@ -19,7 +19,7 @@ the active dependency.
   untracked path and was not touched.
 - Codebase Memory was fresh at 21,304 nodes / 98,123 edges and returned
   `plain_wheel_over_empty_trail_body_uses_fractional_horizontal_fallback`.
-- The installed binary `/home/ayaz/.local/bin/herdr` is dated 2026-07-12 and
+- The installed binary `~/.local/bin/herdr` is dated 2026-07-12 and
   currently has live client/server processes.
 - The repository debug binary `target/debug/herdr` is dated 2026-07-18 and
   also has live client/server processes.

@@ -5,7 +5,7 @@
   "source_commit": null,
   "target_project": "herdr",
   "target_revision": null,
-  "target_graph_project": "home-ayaz-projects-herdr",
+  "target_graph_project": "<canonical-project-id>",
   "record_contract": [
     "layer_id",
     "layer_name",

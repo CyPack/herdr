@@ -1,0 +1,605 @@
+{
+  "goal": "Map the end-to-end latency chain from clicking the Projects-sidebar '+' (per-project NewChat row) to a usable Claude Code prompt in the new herdr tab, decomposed into sub-layers classified as algorithmic/architectural (herdr-fixable) vs external (claude CLI / MCP ecosystem), each anchored to file:line or URL evidence with a confidence-scored latency order-of-magnitude estimate.",
+  "created": "2026-07-12",
+  "ontology": {
+    "type": "end-to-end latency decomposition (causal pipeline: UI event -> client/server IPC -> in-process state machine -> OS process spawn -> external Node.js CLI cold start -> render feedback)",
+    "actors": [
+      "herdr user (mouse click on Projects sidebar '+' / NewChat row)",
+      "herdr TUI thin client process (crossterm stdin reader, src/client/mod.rs)",
+      "herdr headless server process (AppState + event loop owner, src/server/headless.rs)",
+      "claude CLI child process (Node.js v24, Anthropic, spawned via portable-pty)",
+      "user's globally-configured MCP servers (33 entries in ~/.claude.json on this machine)"
+    ],
+    "in_scope": [
+      "Projects sidebar '+'/NewChat row hit-test and request_project_chat_tab flag (src/app/input/mouse.rs, src/app/input/sidebar.rs)",
+      "client<->server socket round trip for mouse input (src/protocol/wire.rs, src/client/mod.rs, src/server/headless.rs)",
+      "headless event-loop consumption of the deferred tab-open request (src/server/headless.rs run()/handle_deferred_requests_headless)",
+      "PTY spawn path: Workspace::create_tab_argv_command -> Pane::spawn_argv_command -> spawn_command_builder -> portable-pty (src/workspace.rs, src/pane.rs, src/pty/backend.rs, vendor/portable-pty)",
+      "first-render/attach pipeline for the new tab (render_dirty/render_notify, PtyIoActor poll loop)",
+      "Projects-tab session-list poll intervals (src/app/projects.rs) insofar as they could delay first paint",
+      "agent-detection background task (src/detect, src/pane.rs spawn_basic_detection_task) and whether it gates usability",
+      "claude CLI (Node.js) cold-start + MCP server handshake as the external dominant-cost hypothesis (web research)"
+    ],
+    "out_of_scope": [
+      "actually launching/timing a live `claude --dangerously-skip-permissions` session in this repo (avoided: would consume the user's API/session budget and is not required to ground the claim; `claude --version` was used instead as a safe proxy for bare Node/CLI bootstrap cost)",
+      "starting or killing any herdr client/server process (read-only code analysis only, per session scope)",
+      "Windows-specific ClientInputEvents/windows_vti.rs path (repo is being analyzed from a Linux host; noted as an open question, not deeply traced)",
+      "code changes to herdr or to anthropics/claude-code (analysis only, no commits/PRs)"
+    ]
+  },
+  "nodes": {
+    "components": [
+      {
+        "id": "c1",
+        "name": "TUI thin client input reader",
+        "kind": "module",
+        "role": "Reads raw terminal mouse/key events via crossterm on a dedicated thread and forwards them to the server without local business logic. src/client/mod.rs (input thread ~L876, Unix send path ~L1467)."
+      },
+      {
+        "id": "c2",
+        "name": "Client<->server wire protocol",
+        "kind": "module",
+        "role": "Defines ClientMessage::Input/InputEvents and ClientInputEvent (incl. Mouse), and the raw_input conversion used server-side. src/protocol/wire.rs (L113, L253-301, L383)."
+      },
+      {
+        "id": "c3",
+        "name": "Headless server event loop",
+        "kind": "service",
+        "role": "Single-owner async loop (tokio multi-thread runtime) that drains client input, deferred requests, scheduled tasks, and drives rendering in a fixed step order each tick. src/server/headless.rs run() (L430-598), main.rs:744 confirms multi-thread runtime."
+      },
+      {
+        "id": "c4",
+        "name": "AppState Projects-sidebar mouse dispatch",
+        "kind": "module",
+        "role": "Hit-tests the click against laid-out Projects-tab rows and routes to toggle_projects_row_at, which for the NewChat row queues a chat-tab request (or opens an agent-selector menu on Shift). src/app/input/mouse.rs (L547-564, L1030-1051), src/app/input/sidebar.rs (L236-296)."
+      },
+      {
+        "id": "c5",
+        "name": "Deferred request flag: request_project_chat_tab",
+        "kind": "data",
+        "role": "Option<ProjectChatTabRequest> field on AppState; set synchronously by the mouse handler, consumed synchronously later in the same loop tick by the server. src/app/state.rs:1448."
+      },
+      {
+        "id": "c6",
+        "name": "Project chat tab launch planner",
+        "kind": "module",
+        "role": "Consumes the deferred request, builds argv/env for the chosen agent (claude --dangerously-skip-permissions [--resume <id>], ENABLE_BACKGROUND_TASKS=1), and decides which workspace/tab to spawn into. src/app/projects.rs (L19-48 project_chat_launch, L144-260 handle_project_chat_tab_request/open_project_chat_tab_with_argv)."
+      },
+      {
+        "id": "c7",
+        "name": "Workspace::create_tab_argv_command",
+        "kind": "module",
+        "role": "Allocates a new Tab in the target Workspace and delegates PTY creation to Tab::new_argv_command. src/workspace.rs (L471-553)."
+      },
+      {
+        "id": "c8",
+        "name": "Pane spawn (spawn_argv_command / spawn_command_builder)",
+        "kind": "module",
+        "role": "Builds the CommandBuilder for argv, then synchronously spawns the PTY, wires the PtyIoActor reader, and spawns the per-pane agent-detection task. src/pane.rs (L1610-1649, L1795-1921)."
+      },
+      {
+        "id": "c9",
+        "name": "portable-pty backend (vendored)",
+        "kind": "library",
+        "role": "openpty() + slave.spawn_command(cmd): a synchronous fork()+exec() on Unix (forced by a pre_exec closure, which disables the posix_spawn fast path in Rust std). src/pty/backend.rs (L17-40), vendor/portable-pty/src/unix.rs (L228-286)."
+      },
+      {
+        "id": "c10",
+        "name": "PtyIoActor (PTY reader thread)",
+        "kind": "process",
+        "role": "Non-blocking fd + poll(2)-based edge-triggered reader; wakes render_notify as soon as bytes arrive, no fixed-interval sleep-poll. src/pty/actor/unix.rs (L344, L436)."
+      },
+      {
+        "id": "c11",
+        "name": "Render/stream pipeline",
+        "kind": "module",
+        "role": "render_dirty/render_notify-driven render_and_stream() step of the event loop; narrow settle-delays (20ms kitty-graphics; Windows-only cursor-settle) exist but do not apply to a freshly spawned CLI's first text output on Linux. src/server/headless.rs (L519-541), src/pane/terminal.rs (L40-41, L1133-1150)."
+      },
+      {
+        "id": "c12",
+        "name": "claude CLI child process",
+        "kind": "process",
+        "role": "External Node.js v24 application (Anthropic's Claude Code, v2.1.207 installed on this machine) launched via argv `claude --dangerously-skip-permissions [--resume <id>]` with ENABLE_BACKGROUND_TASKS=1. Its own startup/readiness is outside herdr's control."
+      },
+      {
+        "id": "c13",
+        "name": "User's configured MCP servers",
+        "kind": "data",
+        "role": "33 entries in ~/.claude.json (globally configured, not project-scoped) that Claude Code connects to and tool-discovers at session startup by default."
+      },
+      {
+        "id": "c14",
+        "name": "Agent-detection background task",
+        "kind": "process",
+        "role": "Per-pane tokio task on its own tick (500ms unidentified / 300ms identified / 50ms pending-release), reads only a screen-content snapshot; decoupled from the parser/viewport and from rendering by design. src/pane.rs (L1928-1963), src/detect/mod.rs, CLAUDE.md 'Detection is decoupled' principle."
+      },
+      {
+        "id": "c15",
+        "name": "Projects-tab session-list poll",
+        "kind": "process",
+        "role": "Fingerprint-gated poll of the Claude session store to refresh the sidebar's chat list (2s baseline, hot-armed to 300ms for 10s right after a spawn). Governs when the new chat's title/marker appears in the LIST, not the new tab's own PTY rendering. src/app/projects.rs (L50-139)."
+      }
+    ],
+    "dependencies": [
+      {
+        "from": "c1",
+        "to": "c2",
+        "type": "calls",
+        "claim_ref": "cl2"
+      },
+      {
+        "from": "c2",
+        "to": "c3",
+        "type": "calls",
+        "claim_ref": "cl2"
+      },
+      {
+        "from": "c3",
+        "to": "c4",
+        "type": "calls",
+        "claim_ref": "cl2"
+      },
+      {
+        "from": "c4",
+        "to": "c5",
+        "type": "configures",
+        "claim_ref": "cl1"
+      },
+      {
+        "from": "c3",
+        "to": "c5",
+        "type": "reads",
+        "claim_ref": "cl4"
+      },
+      {
+        "from": "c5",
+        "to": "c6",
+        "type": "calls",
+        "claim_ref": "cl4"
+      },
+      {
+        "from": "c6",
+        "to": "c7",
+        "type": "calls",
+        "claim_ref": "cl9"
+      },
+      {
+        "from": "c7",
+        "to": "c8",
+        "type": "calls",
+        "claim_ref": "cl9"
+      },
+      {
+        "from": "c8",
+        "to": "c9",
+        "type": "calls",
+        "claim_ref": "cl5"
+      },
+      {
+        "from": "c9",
+        "to": "c12",
+        "type": "calls",
+        "claim_ref": "cl6"
+      },
+      {
+        "from": "c12",
+        "to": "c13",
+        "type": "requires",
+        "claim_ref": "cl11"
+      },
+      {
+        "from": "c8",
+        "to": "c10",
+        "type": "calls",
+        "claim_ref": "cl8"
+      },
+      {
+        "from": "c10",
+        "to": "c11",
+        "type": "calls",
+        "claim_ref": "cl8"
+      },
+      {
+        "from": "c3",
+        "to": "c11",
+        "type": "calls",
+        "claim_ref": "cl9"
+      },
+      {
+        "from": "c8",
+        "to": "c14",
+        "type": "calls",
+        "claim_ref": "cl10"
+      },
+      {
+        "from": "c14",
+        "to": "c10",
+        "type": "reads",
+        "claim_ref": "cl10"
+      },
+      {
+        "from": "c6",
+        "to": "c15",
+        "type": "configures",
+        "claim_ref": "cl_poll"
+      }
+    ],
+    "claims": [
+      {
+        "id": "cl1",
+        "component": "c4",
+        "claim": "A plain (non-Shift) left-click on a Projects-tab NewChat row synchronously sets AppState.request_project_chat_tab (session_id=None, default agent) in the same function call as the hit-test; Shift+click instead opens an agent-selector context menu without setting the flag.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "file:///home/ayaz/projects/herdr/src/app/input/sidebar.rs#L283-L293",
+            "confidence": 0.95
+          },
+          {
+            "type": "source_code",
+            "url": "file:///home/ayaz/projects/herdr/src/app/input/mouse.rs#L547-L564",
+            "confidence": 0.9
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl2",
+        "component": "c1",
+        "claim": "herdr is client-server: mouse events are read by the thin client and forwarded immediately (no debounce/batching timer on the Unix send path) as ClientMessage::Input/InputEvents over a local socket before any AppState mutation happens server-side, where they are parsed via ClientInputEvent::to_raw_input_event and dispatched through route_client_events -> handle_mouse.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "file:///home/ayaz/projects/herdr/src/client/mod.rs#L1467-L1470",
+            "confidence": 0.9
+          },
+          {
+            "type": "source_code",
+            "url": "file:///home/ayaz/projects/herdr/src/server/headless.rs#L2601-L2625",
+            "confidence": 0.9
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl4",
+        "component": "c5",
+        "claim": "The request_project_chat_tab flag is consumed by handle_deferred_requests_headless in the SAME event-loop iteration in which drain_server_events processed the click (steps 5 then 6 of the fixed-order loop body), before the loop's render/stream step -- i.e. no extra loop-tick or timer delay is added between 'flag set' and 'tab spawn begins'.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "file:///home/ayaz/projects/herdr/src/server/headless.rs#L445-L506",
+            "confidence": 0.92
+          },
+          {
+            "type": "source_code",
+            "url": "file:///home/ayaz/projects/herdr/src/server/headless.rs#L678-L681",
+            "confidence": 0.9
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl5",
+        "component": "c8",
+        "claim": "Pane::spawn_command_builder calls crate::pty::backend::spawn_with_portable_pty(...) directly (synchronously) inside the async server-loop's task -- it is NOT dispatched via tokio::task::spawn_blocking, so the fork()+exec() call briefly occupies the tokio worker thread running the owning event loop.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "file:///home/ayaz/projects/herdr/src/pane.rs#L1795-L1921",
+            "confidence": 0.92
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl6",
+        "component": "c9",
+        "claim": "The vendored portable-pty Unix backend spawns the child via std::process::Command with a pre_exec closure (session leader setup, TIOCSCTTY, fd cleanup); registering pre_exec forces Rust std onto the classic fork()+exec() path (posix_spawn cannot be used with an arbitrary pre_exec closure), which returns to the caller once fork()+exec() has been issued in the child, not once the child has finished initializing.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "file:///home/ayaz/projects/herdr/vendor/portable-pty/src/unix.rs#L228-L286",
+            "confidence": 0.9
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl6b",
+        "component": "c9",
+        "claim": "The actual wall-clock cost of this fork()+exec() call on this specific machine/repo build was not directly measured in this cartography session (no profiling/hyperfine run against the herdr binary, by scope: no herdr process start/stop was performed). Expected order of magnitude from general Linux fork/exec behavior is low-single-digit milliseconds, but this is an inference, not a measurement.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "file:///home/ayaz/projects/herdr/src/pty/backend.rs#L17-L40",
+            "confidence": 0.5
+          }
+        ],
+        "status": "open"
+      },
+      {
+        "id": "cl7",
+        "component": "c11",
+        "claim": "The only render-delay/debounce mechanisms on the PTY-bytes-processed path are KITTY_GRAPHICS_REDRAW_SETTLE (20ms, graphics-sequence-only) and a cursor-position-settle path that is compile-time disabled on non-Windows (CURSOR_POSITION_SETTLE_ENABLED = cfg!(windows)); ordinary text output from a freshly spawned CLI on Linux/macOS triggers immediate request_render with no delay.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "file:///home/ayaz/projects/herdr/src/pane/terminal.rs#L40-L41",
+            "confidence": 0.93
+          },
+          {
+            "type": "source_code",
+            "url": "file:///home/ayaz/projects/herdr/src/pane/terminal.rs#L1133-L1150",
+            "confidence": 0.9
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl8",
+        "component": "c10",
+        "claim": "PtyIoActor sets the master fd non-blocking and wakes via poll_pty_and_wake (poll(2)-based edge-triggered wait), not a fixed-interval sleep loop, so new child-process stdout is observed with near-zero added latency once written by the child.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "file:///home/ayaz/projects/herdr/src/pty/actor/unix.rs#L344",
+            "confidence": 0.9
+          },
+          {
+            "type": "source_code",
+            "url": "file:///home/ayaz/projects/herdr/src/pty/actor/unix.rs#L436",
+            "confidence": 0.88
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl9",
+        "component": "c6",
+        "claim": "open_project_chat_tab_with_argv switches to the new tab and sets Mode::Terminal synchronously, in the same call that creates the tab (before returning), so the FIRST render showing the new (still-empty) tab occurs in the same event-loop tick as the click -- this 'tab appeared' moment is distinct from and much earlier than 'Claude Code is usable'.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "file:///home/ayaz/projects/herdr/src/app/projects.rs#L242-L256",
+            "confidence": 0.92
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl10",
+        "component": "c14",
+        "claim": "Agent detection runs as an independent per-pane tokio task with its own tick cadence (500ms unidentified / 300ms identified / 50ms pending-release) that only reads a screen-content snapshot; per herdr's own architectural principle ('Detection is decoupled... never touches the parser or viewport state'), it does not gate keyboard input or PTY-output rendering for the pane -- a user can already type into the new tab before agent detection has classified it.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "file:///home/ayaz/projects/herdr/src/pane.rs#L1928-L1963",
+            "confidence": 0.9
+          },
+          {
+            "type": "spec",
+            "url": "file:///home/ayaz/projects/herdr/CLAUDE.md#Universal-Project-Rules-Principles",
+            "confidence": 0.9
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl11",
+        "component": "c12",
+        "claim": "Claude Code has been repeatedly and independently reported (multiple open/unresolved GitHub feature requests) to synchronously initialize and complete a tool-discovery handshake with ALL configured MCP servers before releasing the input prompt on interactive session start, adding 3-10+ seconds even with just 1-2 servers configured, with no shipped lazy-init mitigation for the reported cases; this specific machine has 33 MCP servers configured globally in ~/.claude.json (directly verified by reading the file in this session), which is well beyond the 1-2-server cases already reported to cost multiple seconds -- making Claude Code's own MCP-handshake cold start the most plausible dominant contributor to the user's 'too long until usable' complaint.",
+        "sources": [
+          {
+            "type": "github_issue",
+            "url": "https://github.com/anthropics/claude-code/issues/26666",
+            "confidence": 0.75
+          },
+          {
+            "type": "filesystem",
+            "url": "file:///home/ayaz/.claude.json#mcpServers (33 entries, read directly in this session)",
+            "confidence": 0.95
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl12",
+        "component": "c12",
+        "claim": "`claude --version` (which almost certainly short-circuits before MCP initialization) returns in ~0.109s wall-clock on this machine, showing that Node.js runtime bootstrap + basic Claude Code CLI startup by itself is fast -- consistent with the hypothesis that the MCP tool-discovery handshake (not general Node.js/module-load cold start) is the specific mechanism responsible for multi-second-to-tens-of-seconds delays reported elsewhere for real sessions.",
+        "sources": [
+          {
+            "type": "executable",
+            "url": "shell:///home/ayaz/projects/herdr $ time claude --version  ->  2.1.207 (Claude Code); 0.109s total",
+            "confidence": 0.95
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl13",
+        "component": "c12",
+        "claim": "Node.js 22.8.0 added a new JS API for compile cache, module.enableCompileCache() (and the NODE_COMPILE_CACHE environment variable), enabling on-disk code caching of all modules loaded after the API call -- a built-in alternative to third-party v8-compile-cache packages, aimed at tooling and library authors, offering better performance and ESM support. Separately, an earlier nodejs/node pull request shipped V8 code cache changes to speed up Node's own startup. Both are documented, low-risk Node.js startup-performance mechanisms, but they target the module-compile/code-cache slice of cold start (a much smaller effect than the seconds-scale MCP tool-discovery handshake blocking described in cl11) -- so they are a complementary, not primary, mitigation for the '+' button latency.",
+        "sources": [
+          {
+            "type": "official_docs",
+            "url": "https://nodejs.org/en/blog/release/v22.8.0",
+            "confidence": 0.9
+          },
+          {
+            "type": "source_code",
+            "url": "https://github.com/nodejs/node/pull/21405",
+            "confidence": 0.85
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl14",
+        "component": "c13",
+        "claim": "Claude Code exposes a `--strict-mcp-config` flag that lets a caller supply an alternate (or empty) MCP config file, which the community documents as a workaround to skip the default global MCP set at startup, though it is officially described as inconvenient / not a first-class lazy-load feature (the ideal behavior -- MCP readiness never blocking the first prompt -- remains an open, unshipped feature request as of the referenced issues).",
+        "sources": [
+          {
+            "type": "github_issue",
+            "url": "https://github.com/anthropics/claude-code/issues/26666",
+            "confidence": 0.75
+          },
+          {
+            "type": "web_research",
+            "url": "https://paddo.dev/blog/claude-code-hidden-mcp-flag/",
+            "confidence": 0.7
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl15",
+        "component": "c12",
+        "claim": "The exact wall-clock contribution of Layer 4 (this specific machine's `claude` cold start with 33 MCP servers configured) was NOT directly measured in this cartography session -- doing so would require actually launching a full `claude --dangerously-skip-permissions` session and timing it, which was deliberately avoided (out of this session's read-only/no-process-start scope and to avoid unnecessary API/session cost). The dominance estimate in cl11 is an evidence-based inference (cross-referenced external reports + local MCP-count fact), not a direct profiling measurement of THIS repo/environment.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "file:///home/ayaz/projects/herdr/src/app/projects.rs#L19-L48",
+            "confidence": 0.5
+          }
+        ],
+        "status": "open"
+      },
+      {
+        "id": "cl_poll",
+        "component": "c15",
+        "claim": "arm_projects_hot_poll() only shortens the Projects-tab session-LIST refresh interval (2s baseline -> 300ms for 10s) after a spawn, governing when the new chat's title/marker appears in the sidebar list; it does not gate or delay the new tab's own PTY attach/render/usability, which is driven independently by render_dirty/render_notify (cl7, cl8, cl9).",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "file:///home/ayaz/projects/herdr/src/app/projects.rs#L50-L123",
+            "confidence": 0.9
+          },
+          {
+            "type": "source_code",
+            "url": "file:///home/ayaz/projects/herdr/src/app/projects.rs#L204-L216",
+            "confidence": 0.88
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl_rollup",
+        "component": "c11",
+        "claim": "Aggregating cl1, cl4, cl5, cl7, cl8, cl9 (each directly grounded in source code with no discovered sleep/debounce/extra-tick on the critical path), herdr's OWN internal pipeline from click to 'new (empty) tab visible and PTY-attached' completes within a single event-loop iteration and is architecturally bounded to low-single-digit milliseconds (well under one render frame budget) under normal system load -- i.e. herdr's own code is very unlikely to be the dominant source of the reported 'too long until usable' delay; the delay the user perceives is attributable almost entirely to the external claude CLI/MCP cold start (cl11).",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "file:///home/ayaz/projects/herdr/src/server/headless.rs#L430-L598 (aggregate of cl1/cl4/cl5/cl7/cl8/cl9 file:lines)",
+            "confidence": 0.9
+          }
+        ],
+        "status": "verified"
+      }
+    ],
+    "verifications": [
+      {
+        "component": "c1",
+        "criterion": "Direct read of src/client/mod.rs L1440-L1491: the Unix Input send path writes to the socket immediately after receiving stdin bytes/events, with no sleep/interval/batch-timer between read and write.",
+        "oracle": "cross-check",
+        "status": "passing"
+      },
+      {
+        "component": "c2",
+        "criterion": "Direct read of src/protocol/wire.rs (ClientInputEvent enum + to_raw_input_event) and src/server/headless.rs L2601-2625 (ServerEvent::ClientInputEvents handling) confirms a lossless, synchronous mouse-event conversion path client->server.",
+        "oracle": "cross-check",
+        "status": "passing"
+      },
+      {
+        "component": "c3",
+        "criterion": "Direct read of src/server/headless.rs run() L430-598: confirms the fixed 8-step per-tick order (render_dirty check, internal events, API requests, client accept, server events, scheduled tasks, deferred requests, render) and multi-thread tokio runtime (main.rs:744).",
+        "oracle": "cross-check",
+        "status": "passing"
+      },
+      {
+        "component": "c4",
+        "criterion": "Direct read of src/app/input/mouse.rs L547-564 and src/app/input/sidebar.rs L236-296 confirms the NewChat-row click sets request_project_chat_tab synchronously with no I/O in the handler itself.",
+        "oracle": "cross-check",
+        "status": "passing"
+      },
+      {
+        "component": "c5",
+        "criterion": "Direct read of src/app/state.rs:1448 (field declaration) plus its two writers (sidebar.rs) and one reader (projects.rs handle_project_chat_tab_request) confirms single-consumer semantics with .take().",
+        "oracle": "cross-check",
+        "status": "passing"
+      },
+      {
+        "component": "c6",
+        "criterion": "Direct read of src/app/projects.rs L19-260: project_chat_launch's argv/env construction and open_project_chat_tab_with_argv's synchronous tab-switch-before-return matches the task's stated argv exactly (`claude --dangerously-skip-permissions [--resume <id>]`, ENABLE_BACKGROUND_TASKS=1).",
+        "oracle": "cross-check",
+        "status": "passing"
+      },
+      {
+        "component": "c7",
+        "criterion": "Direct read of src/workspace.rs L449-553 (create_tab_argv_command -> create_tab_with_runtime -> Tab::new_argv_command) confirms no async/await or blocking-pool dispatch is inserted at this layer.",
+        "oracle": "cross-check",
+        "status": "passing"
+      },
+      {
+        "component": "c8",
+        "criterion": "Direct read of src/pane.rs L1610-1921 confirms spawn_argv_command -> spawn_command_builder calls spawn_with_portable_pty synchronously (no spawn_blocking wrapper found via grep for 'spawn_blocking' near this call site).",
+        "oracle": "cross-check",
+        "status": "passing"
+      },
+      {
+        "component": "c9",
+        "criterion": "Direct read of src/pty/backend.rs L17-40 and vendor/portable-pty/src/unix.rs L228-341 confirms openpty()+spawn_command() -> std::process::Command with pre_exec (forces fork+exec, not posix_spawn). Actual wall-clock NOT profiled in this session (see cl6b, open).",
+        "oracle": "cross-check",
+        "status": "defined"
+      },
+      {
+        "component": "c10",
+        "criterion": "Direct read of src/pty/actor/unix.rs L335-462 confirms non-blocking fd + poll_pty_and_wake edge-triggered read loop (grep for 'poll' shows poll(2)-based wait, no fixed Duration::from_millis sleep-poll on the hot path).",
+        "oracle": "cross-check",
+        "status": "passing"
+      },
+      {
+        "component": "c11",
+        "criterion": "Direct read of src/server/headless.rs L519-541 (render step) and src/pane/terminal.rs L40-41/1133-1150 (render_delay policy) confirms no applicable delay for a freshly spawned pane's first text output on non-Windows.",
+        "oracle": "cross-check",
+        "status": "passing"
+      },
+      {
+        "component": "c12",
+        "criterion": "`time claude --version` executed directly in this session: 2.1.207 (Claude Code), 0.109s total wall time -- confirms base binary/Node bootstrap is fast; full interactive-session MCP-handshake cost was NOT measured (would require a live session, out of scope).",
+        "oracle": "executable",
+        "status": "passing"
+      },
+      {
+        "component": "c13",
+        "criterion": "Direct read of ~/.claude.json in this session: json.load + len(mcpServers) == 33 (config-file inspection, not a live connection test).",
+        "oracle": "dataset",
+        "status": "passing"
+      },
+      {
+        "component": "c14",
+        "criterion": "Direct read of src/pane.rs L540-630 (spawn_basic_detection_task) and CLAUDE.md's explicit 'Detection is decoupled' principle confirms detection cannot gate rendering/input by design; no test exercising 'can I type before detection completes' was run in this read-only session, but the architectural guarantee is documented and code-consistent.",
+        "oracle": "cross-check",
+        "status": "passing"
+      },
+      {
+        "component": "c15",
+        "criterion": "Direct read of src/app/projects.rs L50-139 confirms the hot-poll only affects refresh_projects_if_due (sidebar list refresh), never the newly-created tab's own render/attach path.",
+        "oracle": "cross-check",
+        "status": "passing"
+      }
+    ]
+  },
+  "open_questions": [
+    "Exact wall-clock cost of the fork()+exec() call in this repo/build was not profiled (cl6b, open, confidence 0.5) -- would require running/instrumenting the herdr binary, out of this session's read-only scope.",
+    "Exact wall-clock contribution of the claude CLI + 33-MCP-server cold start on THIS machine was not directly measured (cl15, open, confidence 0.5) -- would require timing a live `claude --dangerously-skip-permissions` session, deliberately avoided in this session (scope + API-cost caution). Recommended follow-up: `time claude --dangerously-skip-permissions -p \"hi\" --output-format text` (or equivalent) run by the user/maintainer outside this cartography session, ideally with `--strict-mcp-config <empty>` as an A/B comparison to directly quantify the MCP-handshake share of the delay.",
+    "The Windows-specific ClientMessage::InputEvents path (src/client/input/windows_vti.rs) and Windows cursor-position-settle render_delay were not deeply traced; this analysis focused on the Unix/Linux path consistent with the analysis host and CLAUDE.md's Linux-hosted maintainer workflow.",
+    "Whether default_chat_agent is configured as \"claude\" (vs codex/gemini/opencode) for this user/project was assumed from the task description's stated argv, not independently re-derived from a live config read in this session."
+  ],
+  "variant": {
+    "components_without_verification": 0,
+    "claims_below_theta": 2,
+    "unresolved_deps": 0,
+    "V": 2
+  }
+}

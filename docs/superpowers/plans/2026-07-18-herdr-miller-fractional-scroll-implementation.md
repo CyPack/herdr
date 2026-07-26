@@ -456,7 +456,7 @@ git commit -m "docs: record fractional miller scroll closure"
 Run only:
 
 ```bash
-CBM_WORKERS=1 codebase-memory-mcp cli index_repository '{"repo_path":"/home/ayaz/projects/herdr","project":"home-ayaz-projects-herdr","mode":"fast","persistence":false}'
+CBM_WORKERS=1 codebase-memory-mcp cli index_repository '{"repo_path":"<path-to-checkout>","project":"<canonical-project-id>","mode":"fast","persistence":false}'
 ```
 
 Require `ready`, record node/edge counts, and retrieve fresh snippets for

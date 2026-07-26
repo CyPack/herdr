@@ -105,7 +105,7 @@ commit boundary is frozen in the child plans.
 
 The planning checkpoint is `aca2243` on `feat/native-fm`. Codebase Memory was
 freshly queried at 19,534 nodes and 91,017 edges and proved current through
-`home-ayaz-projects-herdr.src.ui.file_manager.miller_layout` at
+`<canonical-project-id>.src.ui.file_manager.miller_layout` at
 `src/ui/file_manager.rs:122`.
 
 | Current surface | Evidence | Program consequence |

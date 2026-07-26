@@ -781,7 +781,7 @@ docs: record miller mtime closure
 
 ```bash
 CBM_WORKERS=1 codebase-memory-mcp cli index_repository \
-  '{"repo_path":"/home/ayaz/projects/herdr","project":"home-ayaz-projects-herdr","mode":"fast","persistence":false}'
+  '{"repo_path":"<path-to-checkout>","project":"<canonical-project-id>","mode":"fast","persistence":false}'
 ```
 
 Require `ready`, then re-read `FileEntry`, `sort_entries`,

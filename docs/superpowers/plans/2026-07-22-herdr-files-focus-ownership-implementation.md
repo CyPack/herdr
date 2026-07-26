@@ -793,7 +793,7 @@ Expected final focused suite: 10/10 after adding VIS-27, zero retry, zero diff. 
 - [ ] **Step 7.6: Commit only visual source and reviewed PNGs**
 
 ~~~bash
-cd /home/ayaz/projects/herdr
+cd ~/projects/herdr
 git status --short
 git add -- src/ui/visual_fixture.rs tests/visual/files-locations.spec.ts tests/visual/files-locations.spec.ts-snapshots/vis-26-files-locations-follow-focus-linux.png tests/visual/files-locations.spec.ts-snapshots/vis-27-files-locations-trail-focus-linux.png
 git diff --cached --name-only
@@ -818,7 +818,7 @@ Expected cached set: exactly four paths. Ignored generated JSON and Playwright r
 - Modify lessons as evidence warrants: `.codex/skills/herdr-native-fm/lessons/golden-paths.md`
 - Modify lessons as evidence warrants: `.codex/skills/herdr-native-fm/lessons/edge-cases.md`
 - Local-only verification: `.local/ISOLATED-DEV-TEST.md`, `.local/herdr-trail-test.sh`
-- External knowledge state: Codebase Memory project `home-ayaz-projects-herdr`
+- External knowledge state: Codebase Memory project `<canonical-project-id>`
 
 - [ ] **Step 8.1: Run the complete automated gate before documentation claims**
 
@@ -903,7 +903,7 @@ Update `.codex/CURRENT.md`, `.codex/TASKS.md`, `.codex/HANDOFF.md`, and active `
 
 For Codebase Memory:
 
-1. call `manage_adr(mode="get", project="home-ayaz-projects-herdr")` and retain the result before any reindex;
+1. call `manage_adr(mode="get", project="<canonical-project-id>")` and retain the result before any reindex;
 2. call `detect_changes` against the pre-FFO anchor, but distrust zero changes;
 3. prove freshness by resolving at least `focus_file_manager_trail` and `InactiveFocusOwner` through `search_graph`/`get_code_snippet`;
 4. if stale, reindex in the proven single-worker mode only after preserving ADR content, then restore/update it;

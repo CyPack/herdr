@@ -135,7 +135,7 @@ only and never grants action authority.
 
 Fresh Codebase Memory evidence at the design checkpoint:
 
-- project: `home-ayaz-projects-herdr`;
+- project: `<canonical-project-id>`;
 - graph: 23,556 nodes / 125,078 edges, status `ready`;
 - freshness: current `read_directory_snapshot`,
   `project_trail_view_inner`, and `render_trail_view` bodies were returned.

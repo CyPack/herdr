@@ -38,10 +38,10 @@ Skills and lessons applied:
 
 ## Fresh Codebase Memory Evidence
 
-- Project: `home-ayaz-projects-herdr`
+- Project: `<canonical-project-id>`
 - Status: 19,534 nodes / 91,017 edges
 - Freshness symbol:
-  `home-ayaz-projects-herdr.src.ui.file_manager.miller_layout`
+  `<canonical-project-id>.src.ui.file_manager.miller_layout`
 - Freshness source: `src/ui/file_manager.rs:122-159`
 - Signature: `(area: Rect) -> MillerLayout`
 - `ready` was not accepted without the current symbol and source location.

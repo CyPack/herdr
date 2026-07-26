@@ -239,7 +239,7 @@ Fresh CLI store before closure-doc indexing:
 - 24,308 nodes;
 - 129,842 edges;
 - exact snippet:
-  `home-ayaz-projects-herdr.src.app.input.file_manager.focus_file_manager_trail`;
+  `<canonical-project-id>.src.app.input.file_manager.focus_file_manager_trail`;
 - action snippet: `compute_file_manager_action_bar_model` with explicit
   `focus_owner` and `InactiveFocusOwner` precedence;
 - trace: `focus_file_manager_trail` calls pending-request retirement and
@@ -275,7 +275,7 @@ It never resolves `~/.config/herdr` or the stable socket.
 One-command launch:
 
 ~~~bash
-cd /home/ayaz/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run
+cd ~/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run
 ~~~
 
 Manual acceptance matrix:

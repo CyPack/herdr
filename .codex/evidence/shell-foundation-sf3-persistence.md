@@ -131,7 +131,7 @@ as freshness evidence. The supported sequential refresh completed with zero
 extraction errors:
 
 ```text
-CBM_WORKERS=1 codebase-memory-mcp cli index_repository '{"repo_path":"/home/ayaz/projects/herdr","mode":"fast","persistence":true}'
+CBM_WORKERS=1 codebase-memory-mcp cli index_repository '{"repo_path":"<path-to-checkout>","mode":"fast","persistence":true}'
 ```
 
 The persistent graph is now 20,291 nodes / 94,542 edges. CLI status, exact

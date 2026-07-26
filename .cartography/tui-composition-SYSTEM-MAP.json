@@ -1,0 +1,147 @@
+{
+  "goal": "Survey how advanced terminal apps (zellij, helix, lazygit, gitui, k9s, neovim/emacs, yazi, superfile, tui-realm, cursive, ratatui templates) achieve flexible panel/page/component composition, to distill portable patterns for herdr's goal of becoming a composable 'desktop-app shell in a terminal' (named regions, swappable component slots, addable pages, popups, pluggable panels).",
+  "created": "2026-07-13",
+  "ontology": {
+    "type": "Cross-project TUI composition-architecture survey (comparative, read-only research)",
+    "actors": [
+      "zellij (Rust multiplexer, layout tree + WASM plugins)",
+      "helix (Rust editor, Compositor + Component trait)",
+      "lazygit (Go, gocui, box-layout tree + Context stack)",
+      "gitui (Rust/ratatui, Component/DrawableComponent)",
+      "k9s (Go, tview, model.Stack + registry)",
+      "neovim (window/buffer/float API)",
+      "emacs (window/buffer/frame, child-frame)",
+      "yazi (Rust/Lua, ui.Layout + fixed native popup sequence)",
+      "superfile (Go/bubbletea, flat Elm model)",
+      "tui-realm (Rust crate, Application<ComponentId,Msg,UserEvent>)",
+      "cursive (Rust crate, View + StackView)",
+      "ratatui/templates component-generated (closest 'official' ratatui pattern)",
+      "herdr (this repo — BSP pane tree src/layout.rs + ad-hoc ui.rs overlay functions)"
+    ],
+    "in_scope": [
+      "layout composition model (tree vs fixed-region vs config-driven)",
+      "resize model",
+      "page/view modeling + switching",
+      "popup/overlay z-order and layering",
+      "pluggable/swappable component protocol (plugin API, component registry, compositor+trait)"
+    ],
+    "out_of_scope": [
+      "implementing any of this in herdr (research/report only, no code edits, no commits)",
+      "deep internals unrelated to composition (e.g. helix's rope/syntax-highlighting engine, zellij's session-resurrection format, k9s's k8s client internals)"
+    ]
+  },
+  "nodes": {
+    "components": [
+      {
+        "id": "c1",
+        "name": "zellij layout tree + Pane trait + floating z_indices layer",
+        "kind": "architecture",
+        "role": "Per-tab TiledPaneLayout recursive split tree (SplitDirection/SplitSize::Percent|Fixed, leaves hold a Run enum: Plugin|Command|EditFile|Cwd) + a SEPARATE Vec<FloatingPaneLayout> per tab (absolute x/y/w/h) with an explicit z_indices: Vec<PaneId> stack and a 'pinned' always-on-top flag. Stacked panes = a bool flag on a tree node (children_are_stacked), not a separate layer. Plugins (WASM) implement the same Pane trait as terminal panes and render by emitting ANSI text into a per-client vte::Parser-fed Grid — host is unaware of plugin UI structure, only the resulting character grid.",
+        "verification": "6 claims, all confidence >=0.9, direct source read (zellij-utils/src/input/layout.rs, zellij-server/src/panes/{floating_panes/mod.rs,plugin_pane.rs}, zellij-tile/src/lib.rs) + official docs cross-check (zellij.dev/documentation). 1 flagged unverified: WASM runtime (wasmtime vs wasmi, conflicting secondary sources, not resolved)."
+      },
+      {
+        "id": "c2",
+        "name": "helix Compositor (Vec<Box<dyn Component>>) + Component trait",
+        "kind": "architecture",
+        "role": "Flat Vec<Box<dyn Component>> layer stack (explicitly 'Cursive-inspired' per source comment). Component trait: render(area,frame,ctx) mandatory; handle_event->EventResult(Consumed|Ignored), cursor, required_size, id have defaults. Event routing: iterate layers top-to-bottom (rev), Consumed short-circuits+breaks, Ignored bubbles down; returned Callbacks run after and can mutate the Compositor (push/pop/remove). Render: every layer gets the FULL Rect, painted back-to-front in Vec order (no automatic sub-rect slicing — each Component clips itself). Generic composable wrappers: Overlay<T> (size-constraint/centering decorator, delegates all trait methods) and Popup<T> (bordered/anchored/scrollable/esc-to-close decorator).",
+        "verification": "verified — every claim traced to direct source read (helix-term/src/compositor.rs full 299 lines, ui/{overlay,popup,menu,prompt,picker,editor}.rs, application.rs, commands.rs) at confidence 0.95, independently corroborated by official docs/architecture.md. No unverified claims."
+      },
+      {
+        "id": "c3",
+        "name": "helix window-split Tree (n-ary, same-direction-flattening)",
+        "kind": "architecture",
+        "role": "helix-view/src/tree.rs: SlotMap-backed Tree{root,focus,area,nodes,stack}; Node{parent,content:View|Container}; Container{layout:Horizontal|Vertical, children:Vec<ViewId>}. NOT strict binary — Tree::split flattens consecutive same-direction splits into one container's children (i3/sway-style) rather than nesting a new binary split each time. Resize: iterative (not recursive-call) stack-based top-down area distribution, dividing evenly across children with the last child absorbing rounding remainder.",
+        "verification": "verified — direct source read (helix-view/src/tree.rs, view.rs) confidence 0.95, corroborated by official docs/architecture.md's View description."
+      },
+      {
+        "id": "c4",
+        "name": "lazygit box-layout tree (Window) + Context stack (swappable content)",
+        "kind": "architecture",
+        "role": "boxlayout.Box{Direction,Weight,Size,Children,ConditionalChildren} declarative tree rebuilt EVERY frame from live state (conditional/responsive layout), arranged into named Window regions. Decouples 'window' (screen region) from 'Context' (swappable content shown there): ContextKind enum (SIDE_CONTEXT, MAIN_CONTEXT, PERSISTENT_POPUP, TEMPORARY_POPUP, EXTRAS_CONTEXT, GLOBAL_CONTEXT, DISPLAY_CONTEXT). ContextMgr.ContextStack with push/pop/replace rules (push SIDE clears stack down to it; push MAIN removes other mains; TEMPORARY_POPUP gets replaced not stacked). Popup Rects computed via a SEPARATE content-sized/centered positioning pass, reapplied every layout() call, but reusing the same context-stack-driven focus/z-order machinery.",
+        "verification": "verified — direct source read (pkg/gui/layout.go, side_panels.go, context.go, types/context.go, controllers/helpers/{window_helper,window_arrangement_helper,confirmation_helper}.go, popup/popup_handler.go) confidence 0.95."
+      },
+      {
+        "id": "c5",
+        "name": "gitui Component/DrawableComponent (ratatui, hand-wired 'composition by code')",
+        "kind": "architecture",
+        "role": "Two traits: DrawableComponent{draw(f,rect)} + Component{commands,event->EventState,focus,focused,is_visible,hide,show}. Explicitly documented in source as 'composition by CODE not by DATA' — each parent hand-forwards draw/event/commands to children (no generic runtime-walked tree). accessors! macro generates components()/components_mut() from a hand-maintained field list. App = flat struct: 5 tabs (usize index + match in draw()) + ~30 named popup fields, all enumerated via setup_popups!/draw_popups! macros (unconditional draw() call per popup, each is a no-op when hidden). Event routing = first-responder chain over Vec<&mut dyn Component> in declared field order, stop at first Consumed. Separate small PopupStack (Vec<StackablePopupOpen>) tracks ESC-dismissal navigation order only, decoupled from visibility flags.",
+        "verification": "verified — direct source read (src/components/mod.rs, app.rs, popups/mod.rs, popup_stack.rs, tabs/status.rs) confidence 0.9-0.95. Highest direct relevance: also ratatui-based."
+      },
+      {
+        "id": "c6",
+        "name": "k9s model.Component + generic Stack + PageStack + registry-resolved command dispatch",
+        "kind": "architecture",
+        "role": "Universal model.Component interface (Primitive+Igniter+Hinter+Commander+Filterer+Viewer) every screen implements. Generic model.Stack (LIFO of Component) -> ui.Pages (wraps tview.Pages, listens to Stack, AddPage/RemovePage/SwitchToPage keyed by (name,pointer)) -> view.PageStack (app-facing, Start/Stop lifecycle + SetFocus on push/pop). Resource-kind->viewer is a REGISTRY (MetaViewers map[GVR]MetaViewer{viewerFn,enterFn}), not a hardcoded switch; drill-down (pod->containers->logs) uses the SAME push mechanism as top-level ':command' switches (App.inject->Content.Push). Command pipeline: typed alias -> GVR (alias table) -> registry lookup -> constructor -> push. Persistent chrome: one outer tview.Flex (header/status -> Content[[swappable PageStack body]] -> crumbs -> flash) built ONCE; only the Content slot swaps on navigation. Skins = pure color/appearance layer (StyleListener notify), verified to NOT affect layout/geometry.",
+        "verification": "verified — direct source read (internal/model/{types,stack}.go, internal/ui/{pages,app}.go, internal/view/{page_stack,registrar,types,command,app,browser,pod,help}.go, internal/config/styles.go) confidence 0.9-0.95. One sub-claim (exact alias.go Resolve() mechanics) at 0.7/open, not directly source-read."
+      },
+      {
+        "id": "c7",
+        "name": "neovim window/buffer decoupling + floating-window API (nvim_open_win)",
+        "kind": "architecture",
+        "role": "Strict buffer (content) vs window (viewport) separation; window tree grows by recursive rectangle bisection (:split/:vsplit). Floating windows: nvim_open_win(buf,enter,config) with relative(editor|win|cursor|mouse)/row/col/anchor/width/height/style=minimal/border/zindex (default zindex 50; builtin completion popup 100, msg scrollback 200, cmdline completion 250). Plugin-UI composition pattern (telescope/which-key/alpha, 3 independent source reads): create a scratch buffer (nofile) then EITHER open a float (telescope 3 floats for prompt/results/preview; which-key zindex=1000) OR swap the scratch buffer into the current normal/tiled window in place (alpha-nvim dashboard, no float at all) — same buffer-construction technique, placement mechanism is decoupled and interchangeable.",
+        "verification": "verified — official docs (runtime/doc/{windows,api}.txt) confidence 0.9-0.95 + 3 independent plugin source reads (telescope.nvim pickers.lua, which-key.nvim win.lua, alpha-nvim alpha.lua) confidence 0.9 each. zindex numeric defaults corroborated by 2 independent sources (github issue #18486 + which-key's own zindex=1000 usage)."
+      },
+      {
+        "id": "c8",
+        "name": "emacs buffer/window/frame + child-frame popup escape hatch",
+        "kind": "architecture",
+        "role": "Analogous 3-tier: buffer(data) -> window(viewport, internal split-tree per frame) -> frame(OS-level top-level window). display-buffer + action-alist centrally arbitrates buffer-to-window placement (packages don't call low-level window-open directly, unlike neovim). No single unified floating-window API: which-key.el documents 3 selectable popup backends (minibuffer, side-window via display-buffer, or a genuine child-frame for true floating overlays).",
+        "verification": "verified for buffer/window/frame model (GNU elisp manual, official, 0.9) + which-key.el README (official, 0.85) for the 3-backend claim; display-buffer arbitration corroborated by 2 independent community sources (karthinks.com, masteringemacs.org) at 0.7 each."
+      },
+      {
+        "id": "c9",
+        "name": "yazi Lua-scripted layout tree (ui.Layout) + fixed native popup sequence + Modal dynamic registry exception",
+        "kind": "architecture",
+        "role": "Tier 1: ui.Layout Lua binding wraps ratatui_core::layout::Layout directly; every UI piece (Root/Tab/Header/Status) follows an UNENFORCED Lua duck-type convention (new/layout/build/reflow/redraw); Lua composes trees of a CLOSED set of Rust UserData renderable primitives (Line/Text/List/Bar/Clear/Fill/Border/Input/Gauge/Table) matched by TypeId into a Renderable enum, then ratatui Widget::render is called. Host draw: Renderer::render() calls a named Lua global's .new(area)/.redraw(), flattens to elements, renders each. Tier 2: Root::render in Rust draws the Lua tree then unconditionally checks a HARDCODED FIXED-ORDER ~9-popup-kind if-chain (Preview/Modal/Tasks/Spot/Pick/Input/Confirm/Help/Cmp/Which), each a plain impl Widget in Rust, no Lua. EXCEPTION: mgr::Modal (one item in that fixed chain) bridges back to Lua with a genuine dynamic ordered registry (children_add(component,order)/children_remove(id), z-index sorted) — a real plugin-extensible popup-stack API, though unused by any bundled preset component in the vendored tree.",
+        "verification": "verified — direct local source read (~/.cartography/refpool/yazi-src: yazi-binding/src/elements/layout.rs, yazi-plugin/preset/components/{root,tab,modal}.lua, yazi-plugin/src/ui/utils.rs, yazi-widgets/src/renderable.rs, yazi-fm/src/{renderer,root}.rs, yazi-fm/src/{which,confirm}/*.rs, yazi-fm/src/mgr/modal.rs) confidence 0.9-0.95."
+      },
+      {
+        "id": "c10",
+        "name": "superfile flat Elm-model (bubbletea) — negative/confirming example",
+        "kind": "architecture",
+        "role": "Go/bubbletea+lipgloss+bubbles. Top-level model struct = flat god-model, one typed field per panel/modal (fileModel, sidebarModel, processBarModel, notifyModel, helpMenu, promptModal, zoxideModal, sortModal, ...), standard compile-time Elm composition, NO dynamic registry. Ships a hand-rolled generic rendering/border-compositor package whose own README admits it's ad-hoc ('can we move this into a good TUI library outside this repo?'). Confirms 'flat struct-per-panel' is the cross-ecosystem default absent a deliberate registry design (also seen in gitui c5), and that ad-hoc render-compositor utilities are a recurring pain point.",
+        "verification": "verified — direct local source read (~/.cartography/refpool/superfile-src: go.mod, src/internal/type.go, src/internal/ui/rendering/README.md) confidence 0.9-0.95."
+      },
+      {
+        "id": "c11",
+        "name": "tui-realm Application<ComponentId,Msg,UserEvent> registry",
+        "kind": "architecture",
+        "role": "Component trait: view(frame,area)/query/attr/state/perform(cmd)->CmdResult. AppComponent adds on(ev)->Option<Msg> (Elm-style). Application<ComponentId,Msg,UserEvent> wraps a View registry + subscriptions + event listener: mount(id,component,subs)/umount/remount/view(id,frame,area) [renders ONE named component into a caller-supplied Rect — layout still manual via ratatui's own Layout::split, not automatic]/query/attr/state(id)/active(id)/blur()/focus() for focus mgmt/tick(strategy)->Vec<Msg>. Popups are manual: mount under own ComponentId, conditionally call view() with an app-computed centered Rect — no built-in stack primitive.",
+        "verification": "verified — direct source read (crates/tuirealm/src/core/{component,application}.rs) confidence 0.95."
+      },
+      {
+        "id": "c12",
+        "name": "cursive View trait + StackView (true generic modal-aware popup stack)",
+        "kind": "architecture",
+        "role": "View trait: draw(printer) [only required], layout(size), on_event(Event)->EventResult, required_size, take_focus. StackView{layers:Vec<Child>}: each layer carries modal:bool + placement(Fullscreen|Floating(Position)) + shadow/backfill wrapper. on_event iterates front-to-back (topmost first), stops at first consumer AND separately stops at the first modal layer EVEN IF IT IGNORES the event (guarantees modal dialogs block input to everything behind). layout() lays out EVERY layer every frame (background stays live/correct even while covered). draw() paints back-to-front with per-layer offset/crop. take_focus only delegates to topmost layer.",
+        "verification": "verified — direct source read (cursive-core/src/view/view_trait.rs, cursive-core/src/views/stack_view.rs) confidence 0.95. Explicitly cited by helix's own source comment as helix's design inspiration (c2) — convergent evidence across two independent projects."
+      },
+      {
+        "id": "c13",
+        "name": "ratatui/templates component-generated — closest 'official' ratatui pattern",
+        "kind": "architecture",
+        "role": "ratatui.rs own docs (concepts/application-patterns) present TEA/Flux/Component patterns WITHOUT endorsing one, and explicitly point to tui-realm for TEA rather than reinventing it — confirms there is NO official dock/workbench/region-slot system in the ratatui ecosystem. The maintained ratatui/templates repo's component-generated variant is the closest reference impl: Component trait (register_action_handler/init/handle_key_event/handle_mouse_event/update(action)->Option<Action>/draw(frame,area) required) + App{components:Vec<Box<dyn Component>>, action_tx/rx: tokio mpsc<Action>} — flat Vec registry + a message-bus for cross-component communication; layout still manual per-component via ratatui Layout::split.",
+        "verification": "verified — direct source read (ratatui/templates component-generated/src/{components,app}.rs) confidence 0.95 + WebFetch of ratatui.rs/concepts/application-patterns (0.85, combined with WebSearch corroboration)."
+      },
+      {
+        "id": "c14",
+        "name": "herdr current state — BSP pane tree (src/layout.rs) + ad-hoc ui.rs overlay functions",
+        "kind": "baseline",
+        "role": "src/layout.rs: PaneId + a BSP-style split tree (Direction Horizontal/Vertical, f32 ratio) owning pane geometry — structurally analogous to zellij's TiledPaneLayout / helix's Tree, but WITHOUT a uniform 'Run'-like leaf enum (leaves are terminal panes only) and WITHOUT a separate floating/popup layer. src/ui.rs + src/ui/{dialogs,menus,sidebar,tabs,status,onboarding,settings,keybind_help,navigator,mobile,release_notes}.rs: each overlay/dialog/menu/sidebar-section is a hand-written render_X() free function called directly from a central render() dispatch — architecturally closest to gitui's c5 'composition by code, hand-wired, no generic trait' and superfile's c10 flat-field pattern, but WITHOUT even gitui's shared Component/DrawableComponent trait — no first-responder event chain, no registry, no page-stack.",
+        "verification": "verified — direct local source read (src/layout.rs, src/ui.rs module list + imports) confidence 0.9, this session."
+      }
+    ]
+  },
+  "open_questions": [
+    "zellij's exact WASM runtime (wasmtime vs wasmi) — conflicting secondary-source signal, not resolved from a primary Cargo.toml/deps read within this research's scope.",
+    "k9s's internal/config/alias.go Resolve() exact alias-table mechanics — only search-corroborated (0.7), not source-read.",
+    "yazi's Modal dynamic children_add/children_remove registry appears unused by any bundled preset component — whether third-party yazi plugins actually exercise it was not verified (existence of the API is verified; usage-in-the-wild is not).",
+    "How herdr's existing src/app/ input-dispatch module concretely maps to a Compositor-style event loop was flagged by the helix research agent as NOT verified against herdr's actual current event code — out of scope for this research pass, needed before any implementation."
+  ],
+  "variant": {
+    "components_without_verification": 0,
+    "claims_below_theta": 0,
+    "unresolved_deps": 4,
+    "V": 4
+  }
+}

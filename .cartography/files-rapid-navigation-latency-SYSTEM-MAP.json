@@ -2,7 +2,7 @@
   "goal": "Remove multi-second Files ancestor-click stalls while preserving locked Layout V1, exact Trail authority, bounded I/O, and lossless client controls.",
   "created": "2026-07-19",
   "project": {
-    "id": "home-ayaz-projects-herdr",
+    "id": "<canonical-project-id>",
     "branch": "feat/native-fm",
     "indexed_head": "80119b5d",
     "mcp_status": "ready",

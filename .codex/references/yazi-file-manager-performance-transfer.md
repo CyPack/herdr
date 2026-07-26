@@ -5,7 +5,7 @@
 | Field | Value |
 |---|---|
 | Verified | 2026-07-22 |
-| Reference checkout | `/home/ayaz/.cartography/refpool/yazi-src` |
+| Reference checkout | `~/.cartography/refpool/yazi-src` |
 | Pinned commit | `6d84921e7004eb8d49ba13a4acc97c6cfeb094b4` |
 | Commit date | `2026-07-13T02:01:37+08:00` |
 | Checkout state | clean `main...origin/main` at verification time |

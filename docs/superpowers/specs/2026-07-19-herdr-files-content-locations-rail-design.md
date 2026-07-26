@@ -201,7 +201,7 @@ tiny, and short-height areas are panic-free and publish no partial targets.
 
 Fresh Codebase Memory evidence at the design checkpoint:
 
-- project: `home-ayaz-projects-herdr`;
+- project: `<canonical-project-id>`;
 - graph: 23,656 nodes / 125,342 edges, status `ready`;
 - freshness: current mtime grouping symbols and current sidebar/navigation
   bodies were returned.

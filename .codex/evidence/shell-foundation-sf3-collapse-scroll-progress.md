@@ -100,7 +100,7 @@ The supported single-worker graph refresh completed with zero extraction
 errors:
 
 ```text
-CBM_WORKERS=1 codebase-memory-mcp cli index_repository '{"repo_path":"/home/ayaz/projects/herdr","mode":"fast","persistence":true}'
+CBM_WORKERS=1 codebase-memory-mcp cli index_repository '{"repo_path":"<path-to-checkout>","mode":"fast","persistence":true}'
 ```
 
 The fresh graph is 20,236 nodes / 94,402 edges. Exact graph search and source

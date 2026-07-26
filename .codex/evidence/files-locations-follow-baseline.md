@@ -35,7 +35,7 @@ evidence for the target implementation.
 
 ## Graph Evidence
 
-Codebase Memory project: `home-ayaz-projects-herdr`
+Codebase Memory project: `<canonical-project-id>`
 
 - Status: `ready`
 - Nodes: `24,078`

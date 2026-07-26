@@ -86,7 +86,7 @@ The built-in MCP transport became unavailable during fixture diagnosis. No
 proxy or user process was restarted. The documented single-worker fallback ran:
 
 ```text
-CBM_WORKERS=1 codebase-memory-mcp cli index_repository '{"repo_path":"/home/ayaz/projects/herdr","mode":"fast","persistence":true}'
+CBM_WORKERS=1 codebase-memory-mcp cli index_repository '{"repo_path":"<path-to-checkout>","mode":"fast","persistence":true}'
 ```
 
 It completed with zero extraction errors. The refreshed graph is 19,809 nodes

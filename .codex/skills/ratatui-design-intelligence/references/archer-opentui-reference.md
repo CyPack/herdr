@@ -4,7 +4,7 @@
 
 - Source: https://github.com/Inakitajes/archer
 - Commit: `fb97e50e1314d928adf64319b7ac098c1f2f6d67`
-- Graph project: `home-ayaz-.cartography-refpool-archer`
+- Graph project: `<canonical-project-id for the archer reference checkout>`
 - Form: complete terminal orchestration application
 - Stack: Bun, TypeScript, OpenTUI and OpenCode SDK
 - Direct Ratatui compatibility: none
@@ -16,10 +16,10 @@ component dependency bucket.
 
 The complete verified system, component and data-flow maps are:
 
-- `/home/ayaz/.cartography/pools/ratatui/discoveries/archer/ARCHER-SYSTEM-MAP.md`
-- `/home/ayaz/.cartography/pools/ratatui/discoveries/archer/component-catalog.json`
-- `/home/ayaz/.cartography/pools/ratatui/discoveries/archer/data-flow.json`
-- `/home/ayaz/.cartography/pools/ratatui/classifications/R073.json`
+- `~/.cartography/pools/ratatui/discoveries/archer/ARCHER-SYSTEM-MAP.md`
+- `~/.cartography/pools/ratatui/discoveries/archer/component-catalog.json`
+- `~/.cartography/pools/ratatui/discoveries/archer/data-flow.json`
+- `~/.cartography/pools/ratatui/classifications/R073.json`
 
 ## Why Herdr should mine it
 

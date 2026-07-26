@@ -2,14 +2,14 @@
 
 Follow this sequence before changing code.
 
-1. Read `/home/ayaz/projects/herdr/AGENTS.md` and `CLAUDE.md` completely. The active account is `CyPack`, so external-contributor guardrails apply.
+1. Read `~/projects/herdr/AGENTS.md` and `CLAUDE.md` completely. The active account is `CyPack`, so external-contributor guardrails apply.
 2. Read `.codex/CURRENT.md`, `.codex/TASKS.md`,
    `.codex/CHANGE-PIPELINE-TASKS.md`, and `.codex/HANDOFF.md` in that order.
    Recount every unchecked item and create the in-session task list without
    summarizing tasks away. `.codex/NEXT-SESSION-PROMPT.md` is the canonical
    copy/paste trigger.
 3. Load the project skill `$herdr-native-fm`. Load `rust-dev` plus its lessons before Rust edits.
-4. Call codebase-memory `index_status(project="home-ayaz-projects-herdr")`. Test freshness with `miller_layout` or another recent symbol. Use graph discovery before grep for code.
+4. Call codebase-memory `index_status(project="<canonical-project-id>")`. Test freshness with `miller_layout` or another recent symbol. Use graph discovery before grep for code.
 5. Run:
 
    ```bash

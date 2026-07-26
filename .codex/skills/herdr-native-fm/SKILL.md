@@ -1,6 +1,6 @@
 ---
 name: herdr-native-fm
-description: Resume and execute Herdr native file-manager and UI-composition work from the verified Codex handoff. Use for herdr native-FM, Miller columns, watcher, previews, file operations, UI-ARCH continuation, or when the user says to continue the recovered Claude session in /home/ayaz/projects/herdr.
+description: Resume and execute Herdr native file-manager and UI-composition work from the verified Codex handoff. Use for herdr native-FM, Miller columns, watcher, previews, file operations, UI-ARCH continuation, or when the user says to continue the recovered Claude session in ~/projects/herdr.
 ---
 
 # Herdr Native FM Continuation
@@ -9,7 +9,7 @@ Use the repository continuity package; do not reconstruct state from chat memory
 
 ## Start
 
-1. Read `/home/ayaz/projects/herdr/AGENTS.md` and `CLAUDE.md` completely.
+1. Read `~/projects/herdr/AGENTS.md` and `CLAUDE.md` completely.
 2. Read `.codex/BOOTSTRAP.md`, `.codex/CURRENT.md`, and `.codex/TASKS.md` in that order.
 3. Read `.codex/HANDOFF.md` when resuming across sessions or changing phases.
 4. Read only the relevant sections linked from `.codex/MEMORY.md`; use the evidence file when exact historical proof is needed.

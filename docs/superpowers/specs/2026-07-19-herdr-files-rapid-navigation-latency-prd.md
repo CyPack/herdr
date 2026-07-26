@@ -410,7 +410,7 @@ interaction is not sufficient.
 Use the durable local helper:
 
 ```bash
-cd /home/ayaz/projects/herdr
+cd ~/projects/herdr
 bash .local/herdr-files-v1-profile.sh run
 ```
 

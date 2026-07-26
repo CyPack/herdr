@@ -13,7 +13,7 @@
 | R073 | https://github.com/Inakitajes/archer | OpenTUI IDE-like orchestration shell, data-flow and page templates | behavior/architecture adaptation only; no source copying |
 
 Machine-readable claims live under
-`/home/ayaz/.cartography/pools/ratatui/classifications/` and are bound to
+`~/.cartography/pools/ratatui/classifications/` and are bound to
 immutable commit SHAs.
 
 R073 is intentionally in this pool even though it uses OpenTUI rather than

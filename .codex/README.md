@@ -13,7 +13,7 @@ herdr-codex
 Equivalent direct command:
 
 ```bash
-codex -C /home/ayaz/projects/herdr 'Use $herdr-native-fm. Read .codex/BOOTSTRAP.md and continue from .codex/CURRENT.md.'
+codex -C ~/projects/herdr 'Use $herdr-native-fm. Read .codex/BOOTSTRAP.md and continue from .codex/CURRENT.md.'
 ```
 
 ## Canonical Files

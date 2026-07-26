@@ -87,7 +87,7 @@
 >
 > Manual `TP-FFO-E2E-01` is honestly pending. Run only the cleanup-first
 > isolated helper:
-> `cd /home/ayaz/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run`.
+> `cd ~/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run`.
 > Verify Rail/Trail mouse-to-key ownership, one-step wheel, Right/Left column
 > laws, Rail-disabled actions, one filled active row/no origin underline,
 > smooth dense input, and zero throwaway residue. Stable Herdr/socket/config
@@ -329,7 +329,7 @@
 > until one common isolated/Chromium matrix runs across all four. Fresh graph
 > evidence is 21,304 nodes / 98,123 edges and resolves the current T7.9
 > fallback plus directory/sidebar/preview seams. Runtime provenance found the
-> installed `/home/ayaz/.local/bin/herdr` dated 2026-07-12 and the current
+> installed `~/.local/bin/herdr` dated 2026-07-12 and the current
 > `target/debug/herdr` dated 2026-07-18 both running: reboot did not lose Git
 > commits, but normal `herdr` starts the older installed behavior. Source
 > FMR-1 is closed through `b385ca3a` RED / `de136da5` VIS-13 baseline:
@@ -434,7 +434,7 @@
 > executable task is **FIP-1.1** (plan Task 6), then the plan order. The global
 > `rust-dev` skill symlink is broken on this machine and must be restored
 > before Rust implementation starts.
-> The canonical graph project is `home-ayaz-projects-herdr`; the final
+> The canonical graph project is `<canonical-project-id>`; the final
 > single-worker refresh and built-in MCP agree at 21,064 nodes / 98,009 edges.
 > Fresh graph search finds FIP-G.1 in all six canonical continuity modules,
 > `MillerPathSegment.focused_child` only at its field/constructor, and the
@@ -500,7 +500,7 @@
 
 ## Repository
 
-- Path: `/home/ayaz/projects/herdr`
+- Path: `~/projects/herdr`
 - Branch: `feat/native-fm`
 - Current verified SF4.1 product head: `f0f32075`
   (`feat: roll back failed files stage opens`). It closes the seventh of eight
@@ -1720,7 +1720,7 @@
   64/64; fmt and diff-check clean.
 - Isolated real PTY used cleared Herdr socket/identity variables, throwaway XDG,
   and `--no-session`: three Miller columns rendered; single click changed the
-  cursor; same-row directory double-click entered `/home/ayaz/2027 weeks`; 25
+  cursor; same-row directory double-click entered `~/2027 weeks`; 25
   wheel-down events moved the viewport to `WEEK_7…WEEK_27`; 40 wheel-up events
   returned to the top clamp. `q` then `prefix+q` exited with code 0; the unique
   temp tree and process were absent afterward.

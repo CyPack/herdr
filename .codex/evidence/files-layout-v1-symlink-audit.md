@@ -45,9 +45,9 @@ Live read-only audit:
 
 | Pointer | Target | Status |
 |---|---|---|
-| `~/.codex/claude-memory` | `~/.claude/projects/-home-ayaz/memory` | OK |
-| `~/.codex/shared-state` | `~/.claude/projects/-home-ayaz/memory/cli-state` | OK |
-| `~/.codex/handoffs/herdr/CURRENT.md` | `/home/ayaz/projects/herdr/.codex/CURRENT.md` | OK |
+| `~/.codex/claude-memory` | `~/.claude/projects/<user-scope>/memory` | OK |
+| `~/.codex/shared-state` | `~/.claude/projects/<user-scope>/memory/cli-state` | OK |
+| `~/.codex/handoffs/herdr/CURRENT.md` | `~/projects/herdr/.codex/CURRENT.md` | OK |
 | `~/.codex/skills/rust-dev` | `~/.claude/skills/rust-dev` | BROKEN |
 | `~/.codex/skills/mnm-laptop-mdate` | `~/.claude/skills/mnm-laptop-mdate` | BROKEN |
 | `~/.codex/skills/openwa-scheduled-send` | `~/.claude/skills/openwa-scheduled-send` | BROKEN |

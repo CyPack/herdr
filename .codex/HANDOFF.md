@@ -38,7 +38,7 @@ touch stable Herdr/socket/config, user sessions, or `.superpowers/`.
 After publication, give exactly this cleanup-first isolated launcher:
 
 ~~~bash
-cd /home/ayaz/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run
+cd ~/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run
 ~~~
 
 Verify file and directory primary-click focus, same-column Up/Down, Right
@@ -111,7 +111,7 @@ Physical `TP-FFO-E2E-01` remains pending and user-driven. After publication,
 give exactly this cleanup-first isolated launcher:
 
 ~~~bash
-cd /home/ayaz/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run
+cd ~/projects/herdr && HERDR_RENDER_PROF=1 ./.local/herdr-trail-test.sh run
 ~~~
 
 Verify Rail/Trail mouse-to-key ownership, one-step wheel including a clamped
@@ -386,7 +386,7 @@ unwrap temiz. `just` bu hostta kurulu değil; recipe eşdeğeri kapılar doğrud
 **CURRENT OVERRIDE — FMR-4/FMR-5 ACTIVE.** Kullanıcının reboot sonrası kaybolmuş
 görünen scroll/sidebar davranışı için Git ve runtime provenance doğrulandı:
 HEAD ve iki CyPack ref'i `6a972703`; commitler kalıcı. Ancak normal
-`/home/ayaz/.local/bin/herdr` 2026-07-12 tarihli, mevcut
+`~/.local/bin/herdr` 2026-07-12 tarihli, mevcut
 `target/debug/herdr` 2026-07-18 tarihli ve ikisinin de canlı client/server
 süreçleri var. Hiçbir süreç veya socket'e dokunulmadı. Dört scroll closure
 checkpoint'i `.codex/evidence/miller-scroll-version-lab/` altında aynı sekiz
@@ -612,7 +612,7 @@ drag-and-drop kapsam dışı.
 
 ## 1. DURUM ÖZETİ
 
-- Repo: `/home/ayaz/projects/herdr`
+- Repo: `~/projects/herdr`
 - Branch: `feat/native-fm`
 - Yerel başlangıç HEAD’i: `f097f6c7`
 - Yerel tasarım zinciri:
@@ -679,13 +679,13 @@ redesign açıkça kapsam dışıdır.
 
 Fresh agent aşağıdaki sırayı atlamadan uygular:
 
-1. `/home/ayaz/projects/herdr/AGENTS.md` dosyasını tamamen oku.
-2. `/home/ayaz/projects/herdr/CLAUDE.md` dosyasını tamamen oku.
+1. `~/projects/herdr/AGENTS.md` dosyasını tamamen oku.
+2. `~/projects/herdr/CLAUDE.md` dosyasını tamamen oku.
 3. `$herdr-native-fm` skill’ini kullan; skill çalıştırmadan önce:
    - `.codex/skills/herdr-native-fm/lessons/errors.md`
    - `.codex/skills/herdr-native-fm/lessons/golden-paths.md`
    - `.codex/skills/herdr-native-fm/lessons/edge-cases.md`
-   - `/home/ayaz/.codex/skills/_shared/common-errors.md`
+   - `~/.codex/skills/_shared/common-errors.md`
 4. Şu dosyaları sırayla ve tamamen oku:
    - `.codex/BOOTSTRAP.md`
    - `.codex/CURRENT.md`
@@ -705,7 +705,7 @@ Fresh agent aşağıdaki sırayı atlamadan uygular:
    - `git remote -v`
    - `git ls-remote origin refs/heads/feat/native-fm refs/heads/master`
 7. Codebase Memory’yi graph-first kullan:
-   - canonical project: `home-ayaz-projects-herdr`
+   - canonical project: `<canonical-project-id>`
    - `get_architecture`
    - `search_graph`
    - `trace_path`
@@ -729,7 +729,7 @@ Fresh agent aşağıdaki sırayı atlamadan uygular:
 ## 4. CODEBASE MCP — KANONİK HARİTA VE KÖK NEDEN
 
 Kanonik Codebase Memory project ID:
-`home-ayaz-projects-herdr`.
+`<canonical-project-id>`.
 
 2026-07-21 built-in MCP refresh status:
 
@@ -1266,14 +1266,14 @@ Skills:
 
 - `.codex/skills/herdr-native-fm/SKILL.md`
 - `.codex/skills/herdr-native-fm/lessons/`
-- `/home/ayaz/.codex/skills/session-handoff/SKILL.md`
-- `/home/ayaz/.codex/skills/superpowers/writing-plans/SKILL.md` or the
+- `~/.codex/skills/session-handoff/SKILL.md`
+- `~/.codex/skills/superpowers/writing-plans/SKILL.md` or the
   currently installed canonical equivalent exposed in the skill catalog
 - `rust-dev` plus lessons before Rust work
 
 MCP:
 
-- Codebase Memory project `home-ayaz-projects-herdr`
+- Codebase Memory project `<canonical-project-id>`
 - graph tools: `get_architecture`, `search_graph`, `trace_path`,
   `get_code_snippet`, `query_graph`, `index_repository`
 

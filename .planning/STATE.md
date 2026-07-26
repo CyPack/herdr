@@ -100,7 +100,7 @@
   lane: FMR-4/FMR-5 adoption verification and optional plugin adapter.
   Stable Herdr/socket and `.superpowers/` are untouched.
 - Current override: **FMR-4/FMR-5 plugin boundary active.** The reboot regression is
-  partly explained by executable drift: `/home/ayaz/.local/bin/herdr` is a
+  partly explained by executable drift: `~/.local/bin/herdr` is a
   2026-07-12 build while `target/debug/herdr` is the 2026-07-18 build carrying
   T7.7-T7.9. Both have live processes; neither was touched. Git HEAD and both
   CyPack refs remain `6a972703`, so fixes were not stored in `/tmp`.
@@ -155,7 +155,7 @@
   than yazi/superfile; S5/S7 remain trigger-gated.
 - Local design chain: `fc76f648` -> `f097f6c7`; both CyPack refs were still at
   `b7d4217c` before this handoff publication.
-- Canonical graph project: `home-ayaz-projects-herdr`; final single-worker CLI
+- Canonical graph project: `<canonical-project-id>`; final single-worker CLI
   refresh and built-in MCP agree at 21,064 nodes / 98,009 edges and find
   current FIP continuity plus `focused_child`/handoff send seams.
 - Fresh handoff gates: exact task copy 143/143, 55 unique test points,

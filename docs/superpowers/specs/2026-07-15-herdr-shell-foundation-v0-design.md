@@ -11,7 +11,7 @@
 - Product implementation status: not started; SF1 characterization is next
 - Delivery status: A0-A7 complete; I0-I5 manually evidenced by the approved
   three-plan package; current delivery phase is I6 characterization
-- Repository: `/home/ayaz/projects/herdr`
+- Repository: `~/projects/herdr`
 - Branch at design freeze: `feat/native-fm`
 - Design checkpoint parent: `11a5503`
 - Codebase Memory evidence: 19,534 nodes / 91,017 edges, with freshness proven

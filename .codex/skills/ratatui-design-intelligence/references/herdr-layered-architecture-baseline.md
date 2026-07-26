@@ -23,10 +23,10 @@ changes.
 
 Evidence stamp:
 
-- target repository: `/home/ayaz/projects/herdr`;
+- target repository: `~/projects/herdr`;
 - target branch at analysis time: `feat/native-fm`;
 - target commit: `a61cfb640c315cff89df772acf0b5dec4111319b`;
-- Codebase Memory project: `home-ayaz-projects-herdr`;
+- Codebase Memory project: `<canonical-project-id>`;
 - graph at final freshness check: 19,534 nodes / 91,017 edges;
 - freshness symbol: `src/app/worktrees.rs::install_focused_agent_worktree_launcher` from the current product head;
 - worktree: product paths clean; untracked research skill only;

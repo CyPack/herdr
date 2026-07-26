@@ -1,7 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo=/home/ayaz/projects/herdr
+# The repository root is derived from this script's own location
+# (<repo>/.codex/bin/herdr-codex), so the launcher carries no machine-specific
+# path and keeps working from any checkout. HERDR_REPO overrides it when the
+# script is deliberately run against a different tree.
+script_path=$(readlink -f "${BASH_SOURCE[0]}")
+repo=${HERDR_REPO:-$(cd "$(dirname "$script_path")/../.." && pwd)}
+
+if [ ! -d "$repo/.codex" ]; then
+  echo "herdr-codex: '$repo' does not look like a Herdr checkout" >&2
+  echo "set HERDR_REPO to the checkout you mean" >&2
+  exit 1
+fi
+
 cd "$repo"
 
 # The Codex skill trigger must remain literal; it is not a shell variable.

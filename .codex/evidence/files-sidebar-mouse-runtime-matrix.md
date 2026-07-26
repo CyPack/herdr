@@ -12,7 +12,7 @@ scheduled consumer -> FmState::open_trail_to`.
 
 The current source already completed that chain for plain primary clicks. The
 reboot-only field symptom was therefore executable drift, not lost Git state:
-plain `/home/ayaz/.local/bin/herdr` was the older 2026-07-12 build while the
+plain `~/.local/bin/herdr` was the older 2026-07-12 build while the
 repository debug binary carried the current 2026-07-18 source.
 
 The characterization did uncover one separate authority defect: a modified

@@ -932,7 +932,7 @@ acceptance.
 **Step 6 — Refresh graph and freeze map**
 
 ```bash
-CBM_WORKERS=1 codebase-memory-mcp cli index_repository '{"repo_path":"/home/ayaz/projects/herdr","project":"home-ayaz-projects-herdr","mode":"fast","persistence":false}'
+CBM_WORKERS=1 codebase-memory-mcp cli index_repository '{"repo_path":"<path-to-checkout>","project":"<canonical-project-id>","mode":"fast","persistence":false}'
 ```
 
 Expected: ready graph includes `FileManagerIoWorker`,

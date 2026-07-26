@@ -1,0 +1,436 @@
+{
+  "goal": "herdr (Rust/ratatui terminal multiplexer) kaynak kodunu inceleyip 5 somut file-manager kapasite sorusunu (Miller kolonlari, header buton, satir-sagi buton, context-menu, plugin altyapisi) dosya:satir kanitiyla cevaplamak.",
+  "created": "2026-07-13",
+  "ontology": {
+    "type": "TUI application capability audit (Rust/ratatui codebase)",
+    "actors": [
+      "herdr core render/input pipeline",
+      "TileLayout BSP engine",
+      "sidebar/tab hit-area system",
+      "context-menu system",
+      "plugin manifest/runtime system"
+    ],
+    "in_scope": [
+      "src/layout.rs (TileLayout, BSP splits)",
+      "src/ui/tabs.rs, src/ui/status.rs (header/tab-bar rendering + hit-areas)",
+      "src/app/state.rs (ViewState, ContextMenuKind, ProjectRowArea, WorkspaceCardArea)",
+      "src/ui/sidebar.rs, src/app/input/sidebar.rs (sidebar row layout + click dispatch)",
+      "src/ui/menus.rs (context menu rendering)",
+      "src/app/input/mouse.rs (MouseAction/DragTarget hit-testing)",
+      "src/plugin_command.rs, src/cli/plugin.rs, src/app/api/plugins/*, src/persist/plugin_registry.rs (plugin manifest + runtime)",
+      "tests/fixtures/plugin-smoke/herdr-plugin.toml (plugin manifest example)"
+    ],
+    "out_of_scope": [
+      "Windows VM validation workflow",
+      "release channel / CI workflow",
+      "libghostty-vt vendored terminal emulation internals",
+      "actual implementation of a Miller-column file manager (audit-only task)"
+    ]
+  },
+  "nodes": {
+    "components": [
+      {
+        "id": "c1",
+        "name": "TileLayout",
+        "kind": "module",
+        "role": "Binary space-partition (BSP) tree that owns pane geometry; every Split node has exactly 2 children (first/second), a Direction (Horizontal/Vertical), and an f32 ratio clamped 0.1-0.9. No native N-ary column primitive."
+      },
+      {
+        "id": "c2",
+        "name": "TabBarView / header hit-areas",
+        "kind": "module",
+        "role": "Computes a Vec<Rect> of clickable hit-areas per open tab plus scroll-left/scroll-right/new-tab buttons every frame; header is a dynamic N-item button system, not a fixed slot count."
+      },
+      {
+        "id": "c3",
+        "name": "ViewState",
+        "kind": "data",
+        "role": "Central per-frame hit-area registry (tab_hit_areas, sidebar_tab_hit_areas, project_row_areas, mobile_menu_hit_area, pane_infos, split_borders, etc.) consumed by the mouse-input layer."
+      },
+      {
+        "id": "c4",
+        "name": "ProjectRowArea / sidebar row hit-test",
+        "kind": "module",
+        "role": "Lays out one Rect per sidebar row (or MULTIPLE disjoint Rects for a single logical row, e.g. project-header + right-aligned '+' new-chat button) and dispatches clicks via exact (col,row) containment scan + ProjectRowKind match."
+      },
+      {
+        "id": "c5",
+        "name": "ContextMenuKind / right-click menu",
+        "kind": "module",
+        "role": "State-driven floating popup menu (Workspace/GitWorkspace/Tab/Pane/ProjectNewChat variants) whose item list changes based on selection/worktree state; rendered as an overlay Rect at click (x,y), not embedded in the header."
+      },
+      {
+        "id": "c6",
+        "name": "Plugin manifest system",
+        "kind": "module",
+        "role": "Parses herdr-plugin.toml declaring [[actions]] (id/title/contexts/command), [[events]] (event-hook triggers), [[panes]] (id/title/placement/command), [[link_handlers]]."
+      },
+      {
+        "id": "c7",
+        "name": "Plugin pane runtime (Overlay/Split/Tab/Zoomed)",
+        "kind": "module",
+        "role": "Realizes a manifest [[panes]] entry by spawning the plugin's own argv command as a real PTY-backed subprocess pane inserted into the host TileLayout BSP tree (split_pane_argv_command / spawn_overlay_argv_command)."
+      },
+      {
+        "id": "c8",
+        "name": "Plugin action contexts / dispatch surface",
+        "kind": "module",
+        "role": "manifest_actions() iterator exposes plugin [[actions]] (with PluginActionContext: Global/Workspace/Tab/Pane/Selection) ONLY through the JSON API/CLI layer; not referenced anywhere in the ratatui UI render/hit-test layer."
+      },
+      {
+        "id": "c9",
+        "name": "src/selection.rs (terminal text selection)",
+        "kind": "module",
+        "role": "Single-pane character/word text-selection for clipboard copy (Anchor/Dragging/Done phases) — NOT a multi-row/file selection or bulk-action model."
+      }
+    ],
+    "dependencies": [
+      {
+        "from": "c3",
+        "to": "c2",
+        "type": "reads",
+        "claim_ref": "cl4"
+      },
+      {
+        "from": "c3",
+        "to": "c4",
+        "type": "reads",
+        "claim_ref": "cl6"
+      },
+      {
+        "from": "c4",
+        "to": "c1",
+        "type": "configures",
+        "claim_ref": "cl2"
+      },
+      {
+        "from": "c5",
+        "to": "c3",
+        "type": "reads",
+        "claim_ref": "cl9"
+      },
+      {
+        "from": "c6",
+        "to": "c7",
+        "type": "configures",
+        "claim_ref": "cl12"
+      },
+      {
+        "from": "c6",
+        "to": "c8",
+        "type": "configures",
+        "claim_ref": "cl11"
+      },
+      {
+        "from": "c8",
+        "to": "c5",
+        "type": "requires",
+        "claim_ref": "cl13"
+      },
+      {
+        "from": "c9",
+        "to": "c4",
+        "type": "requires",
+        "claim_ref": "cl10"
+      }
+    ],
+    "claims": [
+      {
+        "id": "cl1",
+        "component": "c1",
+        "claim": "TileLayout is a strict binary space-partition tree: Node enum is Pane(PaneId) | Split{direction, ratio, first: Box<Node>, second: Box<Node>} — always exactly two children per split, ratio clamped to 0.1..0.9 by valid_split_ratio(). There is no native N-ary/Miller-column primitive in the engine.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "src/layout.rs:73-81",
+            "confidence": 0.95
+          },
+          {
+            "type": "source_code",
+            "url": "src/layout.rs:549-555",
+            "confidence": 0.95
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl2",
+        "component": "c1",
+        "claim": "Miller-columns-style N-parallel-column browsing (e.g. parent|current|preview or a deeper chain) IS achievable on top of TileLayout by chaining Horizontal binary splits — e.g. split A|BC then split BC into B|C yields 3 side-by-side columns. Demonstrated directly by the test fixture sample_layout(), which nests Horizontal/Vertical/Horizontal splits to produce 4 simultaneous panes with independent ratios.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "src/layout.rs:650-670",
+            "confidence": 0.9
+          },
+          {
+            "type": "source_code",
+            "url": "src/layout.rs:125-138 (split_focused_with_ratio)",
+            "confidence": 0.85
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl3",
+        "component": "c1",
+        "claim": "split_rect() computes each column's pixel width purely as round(area.width * ratio) with NO minimum-width floor beyond the 0.1-0.9 ratio clamp; with many chained columns on a narrow terminal, individual column widths can shrink to a few cells or less.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "src/layout.rs:621-640",
+            "confidence": 0.9
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl4",
+        "component": "c2",
+        "claim": "The header/tab-bar already computes an independent, mouse-clickable Vec<Rect> hit-area per open tab (TabBarView.tab_hit_areas) plus separate scroll-left, scroll-right, and new-tab button rects, all stored in ViewState and re-derived every frame by compute_tab_bar_view(). This proves the header supports an arbitrary, dynamically-sized set of functional buttons, not a hardcoded fixed count.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "src/ui/tabs.rs:16-23 (TabBarView struct)",
+            "confidence": 0.95
+          },
+          {
+            "type": "source_code",
+            "url": "src/app/state.rs:824-828 (ViewState tab_bar fields)",
+            "confidence": 0.95
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl5",
+        "component": "c2",
+        "claim": "layout_tab_hit_areas() lays out hit-rects in a loop bounded only by available pixel width (breaks when x >= right), i.e. the number of clickable header buttons is elastic, not capped by an enum/array size.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "src/ui/tabs.rs:42-61",
+            "confidence": 0.9
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl6",
+        "component": "c4",
+        "claim": "Row-right buttons are an EXISTING, live, shipped pattern: compute_project_row_areas() splits a single logical sidebar row (a Project header) into TWO disjoint Rects on the same row: a main name/collapse-chevron area and a fixed-width (3-cell) '+' new-chat button pinned to the row's right edge. Inline code comment explicitly states this is done 'to keep hit-test unambiguous'.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "src/ui/sidebar.rs:1246-1261",
+            "confidence": 0.97
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl7",
+        "component": "c4",
+        "claim": "Mouse dispatch for sidebar rows (project_row_kind_at + toggle_projects_row_at) does an exact (col,row) containment scan over Vec<ProjectRowArea> and match()es on ProjectRowKind::{Project, Chat, Empty, More, NewChat}, each triggering a distinct action — confirming the architecture is a generic list of (Rect, tag) hit-areas per row, trivially extensible to add more row-right action buttons (e.g. a rename/delete icon) by pushing an additional ProjectRowArea per row.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "src/app/input/sidebar.rs:283-394",
+            "confidence": 0.95
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl8",
+        "component": "c5",
+        "claim": "A full state-driven right-click context-menu system exists: ContextMenuKind enum (Workspace, GitWorkspace{is_linked_worktree, has_worktree_children, collapsed}, Tab, Pane, ProjectNewChat{has_workspace}) whose .items() label list is computed dynamically per-variant/per-state (e.g. GitWorkspace menu items differ for linked-worktree vs has-children-collapsed vs plain).",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "src/app/state.rs:1237-1266 (ContextMenuKind enum)",
+            "confidence": 0.95
+          },
+          {
+            "type": "source_code",
+            "url": "src/app/state.rs:1276-1300ish (ContextMenuState::items match)",
+            "confidence": 0.9
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl9",
+        "component": "c5",
+        "claim": "The context menu renders as a floating popup Rect positioned at the recorded click (x,y) via app.context_menu_rect(), drawn by render_context_menu() as a separate overlay widget — it is NOT integrated into the persistent header/tab-bar region. Today's 'context-aware UI' is popup-menu-on-click, not a Windows-Explorer-style toolbar strip that morphs in place based on selection.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "src/ui/menus.rs:286-315",
+            "confidence": 0.9
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl10",
+        "component": "c9",
+        "claim": "The only 'Selection' concept implemented in the codebase (src/selection.rs) is single-pane terminal TEXT selection (Anchor -> Dragging -> Done phases, screen-buffer row/col coordinates, OSC-52 clipboard copy) for copying terminal output — unrelated to a Finder-style multi-row/file selection with a bulk-action toolbar. No 'selected_rows'/'multi_select' style field was found on ViewState or AppState during this audit.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "src/selection.rs:1-45",
+            "confidence": 0.85
+          },
+          {
+            "type": "filesystem",
+            "url": "grep -n 'hit_area|struct ViewState' src/app/state.rs -> no multi-select/selected_rows field present in ViewState (lines 814-835 read in full)",
+            "confidence": 0.75
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl11",
+        "component": "c6",
+        "claim": "Plugin manifests (herdr-plugin.toml) declare [[actions]] (id, title, description?, contexts: Vec<PluginActionContext>, platforms?, command), [[events]] (on, command), [[panes]] (id, title, placement: PluginPanePlacement, command), and [[link_handlers]] (id, title, pattern regex, action). PluginActionContext = {Global, Workspace, Tab, Pane, Selection}. PluginPanePlacement = {Overlay(default), Split, Tab, Zoomed}.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "src/app/api/plugins/manifest.rs:10-31,40-72",
+            "confidence": 0.97
+          },
+          {
+            "type": "source_code",
+            "url": "src/api/schema/plugins.rs:339-347,423-433",
+            "confidence": 0.97
+          },
+          {
+            "type": "filesystem",
+            "url": "tests/fixtures/plugin-smoke/herdr-plugin.toml (live example manifest with actions/events/panes)",
+            "confidence": 0.9
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl12",
+        "component": "c7",
+        "claim": "A plugin pane is realized by spawning the plugin's own declared argv command as a REAL PTY-backed subprocess pane inserted directly into the host's TileLayout BSP tree (open_plugin_split_pane calls ws.split_pane_argv_command; open_plugin_overlay_pane calls spawn_overlay_argv_command). It becomes an ordinary layout pane like any terminal pane — it is NOT a native ratatui widget sharing herdr's own render tree, mouse hit-area registry, or ViewState.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "src/app/api/plugins/panes.rs:10-43 (open_plugin_overlay_pane)",
+            "confidence": 0.95
+          },
+          {
+            "type": "source_code",
+            "url": "src/app/api/plugins/panes.rs:45-100 (open_plugin_split_pane -> ws.split_pane_argv_command)",
+            "confidence": 0.95
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl13",
+        "component": "c8",
+        "claim": "Plugin-declared [[actions]] are exposed ONLY through the JSON API/CLI layer (manifest_actions() iterator feeding PluginActionList/PluginActionInvoke API methods). A recursive grep for PluginActionInfo | ContextMenuKind::Plugin | plugin_actions_for across src/ui/ (all 15 files), src/app/state.rs, and src/app/input/ returned ZERO matches. This means plugins today CANNOT contribute native header buttons, context-menu items, or sidebar rows to the herdr TUI itself — their only UI-adjacent surfaces are (a) an embedded subprocess pane (Overlay/Split/Tab/Zoomed) and (b) actions/link-handlers triggerable via external API/CLI, not rendered inline by herdr's own chrome.",
+        "sources": [
+          {
+            "type": "source_code",
+            "url": "src/app/api/plugins/mod.rs:628-656 (manifest_actions())",
+            "confidence": 0.92
+          },
+          {
+            "type": "filesystem",
+            "url": "grep -rln 'PluginActionInfo|ContextMenuKind::Plugin|plugin_actions_for' src/ui/ src/app/state.rs src/app/input/ -> 0 results (recursive, 15 ui files confirmed via find)",
+            "confidence": 0.9
+          }
+        ],
+        "status": "verified"
+      },
+      {
+        "id": "cl14",
+        "component": "c1",
+        "component_note": "supporting architectural constraint from project rules, not code",
+        "claim": "Project-level architecture guardrail (AGENTS.md, upstream/read-only) explicitly classifies 'sidebar, row, card, or widget' state as TUI/client presentation state (not shared server/runtime state), and instructs that new UI-surface behavior should not be added to the shared server/API protocol unless it's a genuinely shared runtime fact. This supports building a file manager as a core TUI/client-side Rust feature (extending ViewState/sidebar.rs/mouse.rs/layout.rs) rather than as a plugin (external subprocess) or as new server-protocol surface.",
+        "sources": [
+          {
+            "type": "spec",
+            "url": "CLAUDE.md (symlink to AGENTS.md) - 'Runtime/client boundary guardrail' section, examples list including 'Sidebar layout, token placement, colors, selection, modals, mouse/viewport state: TUI/client.'",
+            "confidence": 0.9
+          }
+        ],
+        "status": "verified"
+      }
+    ],
+    "verifications": [
+      {
+        "component": "c1",
+        "criterion": "Node enum has exactly 2 children per Split variant (Box<Node> first, second) with no Vec<Node>/N-ary variant",
+        "oracle": "cross-check",
+        "status": "passing"
+      },
+      {
+        "component": "c1",
+        "criterion": "cargo test unit tests in src/layout.rs (e.g. resize_pane_preserves_focus_and_reports_change, resize_outer_edges_shrink_focused_pane) exercise nested splits producing 3-4 simultaneous panes",
+        "oracle": "dataset",
+        "status": "passing"
+      },
+      {
+        "component": "c2",
+        "criterion": "TabBarView.tab_hit_areas.len() == ws.tabs.len() variable count, not fixed array",
+        "oracle": "cross-check",
+        "status": "passing"
+      },
+      {
+        "component": "c4",
+        "criterion": "compute_project_row_areas emits 2 ProjectRowArea entries (Project + NewChat) for a single header row when body.width >= 8",
+        "oracle": "cross-check",
+        "status": "passing"
+      },
+      {
+        "component": "c4",
+        "criterion": "unit tests compute_project_row_areas_expanded_lists_one_row_per_chat / _caps_chats_and_adds_more_row / _clips_to_body_height exist in src/ui/sidebar.rs test module",
+        "oracle": "dataset",
+        "status": "passing"
+      },
+      {
+        "component": "c5",
+        "criterion": "ContextMenuState::items() match arms return different &'static [&'static str] slices per GitWorkspace sub-state combination",
+        "oracle": "cross-check",
+        "status": "passing"
+      },
+      {
+        "component": "c6",
+        "criterion": "load_plugin_manifest() successfully parses tests/fixtures/plugin-smoke/herdr-plugin.toml (actions/events/panes/platforms) without validation error",
+        "oracle": "cross-check",
+        "status": "passing"
+      },
+      {
+        "component": "c7",
+        "criterion": "open_plugin_split_pane / open_plugin_overlay_pane call into TileLayout-affecting Workspace methods (split_pane_argv_command / spawn_overlay_argv_command)",
+        "oracle": "cross-check",
+        "status": "passing"
+      },
+      {
+        "component": "c8",
+        "criterion": "grep -rln 'PluginActionInfo' src/ui/ src/app/state.rs src/app/input/ returns 0 lines",
+        "oracle": "executable",
+        "status": "passing"
+      }
+    ]
+  },
+  "open_questions": [
+    "cargo test / cargo nextest for src/layout.rs and src/ui/sidebar.rs was NOT executed in this audit (read-only source inspection only, per task scope) — verifications marked 'passing' are source-code-level (test code exists and asserts the claimed behavior) not a fresh executed-and-observed run in this session.",
+    "Whether AppState already carries ANY generalized multi-row/file 'selection set' concept under a name not matched by the greps run (e.g. buried in a newer/renamed struct) was not exhaustively ruled out beyond the targeted greps for 'selected_rows'/'multi_select' and full read of ViewState (state.rs:814-835) and selection.rs.",
+    "Dynamic (auto-growing/shrinking) Miller-column navigation (ranger/nnn-style: opening a child auto-splits and closes off-path columns) is NOT implemented anywhere today — cl2 only establishes that the STATIC BSP-split mechanism can produce N side-by-side columns; the auto-navigate/auto-prune orchestration logic would be new code on top of TileLayout, not found as an existing component.",
+    "Remote/SSH mouse-event support (task #15 in the team's existing task list) was out of scope for this 5-question audit and was not investigated."
+  ],
+  "variant": {
+    "components_without_verification": 0,
+    "claims_below_theta": 0,
+    "unresolved_deps": 0,
+    "V": 0
+  }
+}

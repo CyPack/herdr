@@ -194,7 +194,7 @@ that `ready` alone was stale. No proxy or process was restarted. The documented
 single-worker command ran:
 
 ```text
-CBM_WORKERS=1 codebase-memory-mcp cli index_repository '{"repo_path":"/home/ayaz/projects/herdr","mode":"fast","persistence":true}'
+CBM_WORKERS=1 codebase-memory-mcp cli index_repository '{"repo_path":"<path-to-checkout>","mode":"fast","persistence":true}'
 ```
 
 It completed with zero extraction errors at 20,017 nodes / 91,917 edges. CLI

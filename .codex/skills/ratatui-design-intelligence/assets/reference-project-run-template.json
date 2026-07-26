@@ -24,9 +24,9 @@
   },
   "target": {
     "project": "herdr",
-    "repo_path": "/home/ayaz/projects/herdr",
+    "repo_path": "<path-to-herdr-checkout>",
     "revision": null,
-    "graph_project": "home-ayaz-projects-herdr",
+    "graph_project": "<canonical-project-id>",
     "page_or_feature": null,
     "product_code_changes_authorized": false,
     "stable_runtime_operations_authorized": false

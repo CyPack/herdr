@@ -101,7 +101,7 @@ Expected: all selected pass; full suite 3,443 passed + 1 skip. Record the exact 
 
 - [ ] **Step 2: Record graph freshness**
 
-Verify `index_status(project="home-ayaz-projects-herdr")` still reports 21,064/98,009 (or refresh with `CBM_WORKERS=1 codebase-memory-mcp cli index_repository '{"repo_path":"/home/ayaz/projects/herdr","mode":"fast","persistence":false}'`) and that `focused_child`, `sync_file_manager_agent_handoff_send`, and `activate_files` resolve from current source.
+Verify `index_status(project="<canonical-project-id>")` still reports 21,064/98,009 (or refresh with `CBM_WORKERS=1 codebase-memory-mcp cli index_repository '{"repo_path":"<path-to-checkout>","mode":"fast","persistence":false}'`) and that `focused_child`, `sync_file_manager_agent_handoff_send`, and `activate_files` resolve from current source.
 
 - [ ] **Step 3: Write `.codex/evidence/fip-baseline-freeze.md`** with run IDs, counts, and graph numbers; commit:
 
@@ -1139,7 +1139,7 @@ terminal_identity_change_between_open_and_activation_sends_zero_bytes
 - [ ] **Step 3 (6.3):** isolated PTY byte smoke (E2E-02): throwaway-XDG Herdr, deliver one reference to a test-owned agent-classified pane, capture PTY bytes, assert exact path bytes and zero `\r`/`\n`; plus the Task 9 mouse smoke re-run on the final build. Zero residue; stable socket untouched.
 - [ ] **Step 4 (6.4):** full gates — fmt, full nextest, Linux Clippy all-targets, canonical Windows MSVC bin Clippy (`LIBGHOSTTY_VT_SIMD=false`), Bun 5/5 + 12/12, Python 64/64, `git diff --check`, added-production-`unwrap()` scan.
 - [ ] **Step 5 (6.5):** render-purity double-draw byte-identical test for Files with icons; picker projection bound test; confirm zero new queue/cache/worker (`grep` new `VecDeque|HashMap` additions audit) and release p95 budgets unchanged via the existing `--release` perf gate.
-- [ ] **Step 6 (6.6):** `CBM_WORKERS=1 codebase-memory-mcp cli index_repository '{"repo_path":"/home/ayaz/projects/herdr","mode":"fast","persistence":false}'`; re-query `FileEntryKind`, `bind_focused_child`, `resolve_resident_selection`, `AgentReferenceRequest`, picker symbols, and changed handoff seams by exact snippet.
+- [ ] **Step 6 (6.6):** `CBM_WORKERS=1 codebase-memory-mcp cli index_repository '{"repo_path":"<path-to-checkout>","mode":"fast","persistence":false}'`; re-query `FileEntryKind`, `bind_focused_child`, `resolve_resident_selection`, `AgentReferenceRequest`, picker symbols, and changed handoff seams by exact snippet.
 - [ ] **Step 7 (6.7):** update all continuity files + lessons with exact fresh evidence.
 - [ ] **Step 8 (6.8):** `git fetch origin`; `merge-base --is-ancestor` both refs; push `origin HEAD:feat/native-fm` and `origin HEAD:master`; `git ls-remote` equality with local HEAD; tracked tree clean; `.superpowers/` untouched.
 
