@@ -2640,6 +2640,35 @@ impl HeadlessServer {
         let theme_changed = self.update_client_host_theme_from_events(client_id, &events);
         // Client-local theme reports were applied above; routing them again would update every
         // pane once per palette entry instead of once per captured batch.
+        // Hit geometry lives in one shared `view`, which the render loop
+        // rewrites once per client and therefore leaves holding whichever
+        // client drew last. That was harmless while only the foreground client
+        // sent input. Now that each display owns its own tab, input arrives
+        // from any of them, so a pointer event would otherwise be resolved
+        // against another display's layout — a different tab, at a different
+        // size. Recompute this client's geometry before routing.
+        //
+        // Panes are not resized here: sizing belongs to the render pass that
+        // negotiated it. TP-MCF-VIEW-01
+        if events
+            .iter()
+            .any(|event| matches!(event, crate::raw_input::RawInputEvent::Mouse(_)))
+        {
+            if let Some((cols, rows)) = self
+                .clients
+                .get(&client_id)
+                .filter(|client| client.is_full_app_client())
+                .map(|client| client.terminal_size)
+            {
+                let previous_viewer = self.app.state.enter_viewer(Some(client_id));
+                crate::ui::compute_view_without_resizing_panes(
+                    &mut self.app.state,
+                    &self.app.terminal_runtimes,
+                    Rect::new(0, 0, cols, rows),
+                );
+                self.app.state.restore_viewer(previous_viewer);
+            }
+        }
         let render_requested = self.app.route_client_events_from(client_id, events, false);
         if self.app.take_config_reloaded_from_disk() {
             self.reload_server_config(false);
@@ -11252,6 +11281,83 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
             "Found direct calls to self.app.handle_internal_event outside \
              handle_internal_event_with_forwarding (bypass risk):\n  {}",
             bypass_lines.join("\n  ")
+        );
+    }
+
+    /// Two displays of very different sizes, each on its own tab. The narrow
+    /// one sends a pointer event; the geometry it is resolved against must be
+    /// the narrow display's, not whatever the last render left behind.
+    ///
+    /// TP-MCF-VIEW-01
+    #[tokio::test]
+    async fn a_pointer_event_is_resolved_against_its_own_display() {
+        let mut server = test_headless_server();
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        let second_tab = workspace.test_add_tab(Some("second"));
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+
+        let (wide_tx, _wide_control_rx, _wide_rx) = test_client_writer();
+        let (narrow_tx, _narrow_control_rx, _narrow_rx) = test_client_writer();
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (200, 50),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(wide_tx),
+            ),
+        );
+        server.clients.insert(
+            2,
+            ClientConnection::new(
+                (60, 20),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                2,
+                RenderEncoding::SemanticFrame,
+                Some(narrow_tx),
+            ),
+        );
+        server.foreground_client_id = Some(1);
+
+        server.render_and_stream();
+        let previous = server.app.state.enter_viewer(Some(2));
+        server.app.state.workspaces[0].set_active_tab(second_tab);
+        server.app.state.restore_viewer(previous);
+        server.render_and_stream();
+
+        // After a frame the shared view belongs to whichever client drew last,
+        // which is the foreground one. Prove that first, so the assertion
+        // below is measuring the fix and not an accident of ordering.
+        let after_render_width = server.app.state.view.terminal_area.width;
+        assert!(
+            after_render_width > 60,
+            "the frame leaves the wide display's geometry behind, got {after_render_width}"
+        );
+
+        server.handle_client_input_events(
+            2,
+            vec![crate::raw_input::RawInputEvent::Mouse(
+                crossterm::event::MouseEvent {
+                    kind: crossterm::event::MouseEventKind::Moved,
+                    column: 1,
+                    row: 1,
+                    modifiers: crossterm::event::KeyModifiers::empty(),
+                },
+            )],
+        );
+
+        let resolved_width = server.app.state.view.terminal_area.width;
+        assert!(
+            resolved_width <= 60,
+            "the narrow display's pointer must be resolved against its own layout, got {resolved_width}"
         );
     }
 }
