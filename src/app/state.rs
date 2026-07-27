@@ -2369,7 +2369,8 @@ pub type ClientId = u64;
 macro_rules! client_surfaces {
     (
         inherited { $( $(#[$meta:meta])* $field:ident : $ty:ty ),+ $(,)? }
-        broadcast { $( $(#[$bmeta:meta])* $bfield:ident : $bty:ty ),+ $(,)? }
+        broadcast {
+$( $(#[$bmeta:meta])* $bfield:ident : $bty:ty ),+ $(,)? }
         private { $( $(#[$pmeta:meta])* $pfield:ident : $pty:ty ),+ $(,)? }
     ) => {
         /// Everything about *what this display is looking at*, parked while
@@ -2488,6 +2489,25 @@ client_surfaces! {
     stage: crate::ui::surface_host::StageState,
     }
     broadcast {
+    /// Which of Spaces, Projects and Files the left rail is showing.
+    ///
+    /// Its own comment already called it state that lives in the client
+    /// layer; it was simply kept in one place. One display switching to
+    /// Projects moved every display to Projects.
+    sidebar_tab: SidebarTab,
+    /// The highlighted row in the sidebar.
+    selected: usize,
+    /// Where each scrollable list sits. A scroll position is a statement
+    /// about one viewport, and the displays do not share a viewport.
+    workspace_scroll: usize,
+    agent_panel_scroll: usize,
+    projects_scroll: usize,
+    tab_scroll: usize,
+    tab_scroll_follow_active: bool,
+    mobile_switcher_scroll: usize,
+    /// Which tree rows this display has folded away.
+    collapsed_space_keys: std::collections::HashSet<String>,
+    collapsed_project_paths: std::collections::HashSet<std::path::PathBuf>,
     /// Which overlay, if any, owns this display's input.
     mode: Mode,
     /// The mode to return to when the overlay on top of it closes.
@@ -5386,6 +5406,49 @@ mod viewer_context_tests {
             Some(0),
             "an API workspace switch must not drag a display that is watching another"
         );
+        state.restore_viewer(None);
+    }
+
+    // TP-SUR-RAIL-01
+    #[test]
+    fn the_left_rail_and_its_scroll_belong_to_each_display() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("only"));
+        state.active = Some(0);
+
+        state.enter_viewer(Some(1));
+        state.restore_viewer(None);
+        state.enter_viewer(Some(2));
+        state.restore_viewer(None);
+
+        // One display goes to Projects, scrolls, and folds a row away.
+        state.enter_viewer(Some(1));
+        state.sidebar_tab = SidebarTab::Projects;
+        state.projects_scroll = 12;
+        state.selected = 3;
+        state.collapsed_space_keys.insert("space-a".to_string());
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(2));
+        assert_eq!(
+            state.sidebar_tab,
+            SidebarTab::Spaces,
+            "the other display must stay on the rail tab it was on"
+        );
+        assert_eq!(state.projects_scroll, 0, "a scroll is about one viewport");
+        assert_eq!(state.selected, 0);
+        assert!(
+            state.collapsed_space_keys.is_empty(),
+            "folding a row away is a choice about one screen"
+        );
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(1));
+        assert_eq!(state.sidebar_tab, SidebarTab::Projects);
+        assert_eq!(state.projects_scroll, 12);
+        assert_eq!(state.selected, 3);
         state.restore_viewer(None);
     }
 
