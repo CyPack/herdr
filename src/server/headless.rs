@@ -4079,14 +4079,20 @@ impl HeadlessServer {
         changed |= self.app.sync_agent_attachment_delivery();
         changed |= self.app.sync_agent_reference_picker();
         changed |= self.app.sync_file_manager_plugin_action();
-        changed |= self.app.sync_file_manager_io_results();
-        changed |= self.app.sync_file_manager_location_request();
-        changed |= self.app.sync_file_manager_watcher_at(now);
-        changed |= self.app.sync_file_preview_worker();
-        // The monolithic loop pairs these two (`src/app/mod.rs`): text and
-        // image previews are both bounded workers and neither advances
-        // without being driven.
-        changed |= self.app.sync_image_preview_worker();
+        // Each display browses its own directory, so the file workers run
+        // once per display, inside that display's view. TP-SUR-FM-02
+        changed |= self.app.for_each_display(|app| {
+            let mut changed = false;
+            changed |= app.sync_file_manager_io_results();
+            changed |= app.sync_file_manager_location_request();
+            changed |= app.sync_file_manager_watcher_at(now);
+            changed |= app.sync_file_preview_worker();
+            // The monolithic loop pairs these two (`src/app/mod.rs`): text and
+            // image previews are both bounded workers and neither advances
+            // without being driven.
+            changed |= app.sync_image_preview_worker();
+            changed
+        });
         self.app.sync_headless_animation_timer(now);
         changed |= self.app.refresh_projects_if_due(now);
         changed |= self.app.refresh_tab_branches_if_due(now);

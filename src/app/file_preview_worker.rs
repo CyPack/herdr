@@ -399,9 +399,12 @@ impl super::App {
     }
 
     pub(crate) fn sync_file_preview_worker(&mut self) -> bool {
-        // Any display's Files view, not the register's — see
-        // `AppState::files_generation_in_use`. TP-SUR-STAGE-03
-        let files_generation = self.state.files_generation_in_use();
+        // This display's Files view: the scheduled work runs inside it.
+        // TP-SUR-FM-02
+        let files_generation = (self.state.stage.surface_view()
+            == crate::ui::surface_host::StageSurfaceView::NativeFiles)
+            .then(|| self.state.stage.active_instance_generation())
+            .flatten();
         let target = files_generation.and_then(|files_generation| {
             self.state.file_manager.as_ref().and_then(|file_manager| {
                 let selected_path = file_manager.selected()?.path.clone();

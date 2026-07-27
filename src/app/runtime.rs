@@ -249,6 +249,24 @@ impl App {
         false
     }
 
+    /// Runs scheduled work once for every display, inside that display's view.
+    ///
+    /// The workers themselves are unchanged and know nothing about displays:
+    /// inside the window, `state.file_manager` is the browser of the display
+    /// being served, exactly as it is during that display's render and input.
+    /// This is the only place that has to know there is more than one.
+    ///
+    /// TP-SUR-FM-02
+    pub(crate) fn for_each_display(&mut self, mut body: impl FnMut(&mut Self) -> bool) -> bool {
+        let mut changed = false;
+        for display in self.state.displays_to_serve() {
+            let previous = self.state.enter_viewer(display);
+            changed |= body(self);
+            self.state.restore_viewer(previous);
+        }
+        changed
+    }
+
     pub(crate) fn handle_scheduled_tasks(&mut self, now: Instant, geometry_dirty: bool) -> bool {
         let mut changed = false;
         let mut resized = false;
@@ -259,11 +277,15 @@ impl App {
         changed |= self.sync_agent_attachment_delivery();
         changed |= self.sync_agent_reference_picker();
         changed |= self.sync_file_manager_plugin_action();
-        changed |= self.sync_file_manager_io_results();
-        changed |= self.sync_file_manager_location_request();
-        changed |= self.sync_file_manager_watcher_at(now);
-        changed |= self.sync_file_preview_worker();
-        changed |= self.sync_image_preview_worker();
+        changed |= self.for_each_display(|app| {
+            let mut changed = false;
+            changed |= app.sync_file_manager_io_results();
+            changed |= app.sync_file_manager_location_request();
+            changed |= app.sync_file_manager_watcher_at(now);
+            changed |= app.sync_file_preview_worker();
+            changed |= app.sync_image_preview_worker();
+            changed
+        });
         self.sync_animation_timer(now);
         changed |= self.refresh_projects_if_due(now);
         changed |= self.refresh_tab_branches_if_due(now);

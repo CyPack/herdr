@@ -3174,6 +3174,30 @@ impl AppState {
         }
     }
 
+    /// Every display the scheduled work has to be run for, in a stable order.
+    ///
+    /// Workers run outside every display's window, where the registers hold
+    /// the session's own view rather than any display's. That was fine while
+    /// there was one file browser; now there is one per display, and a worker
+    /// that only ever sees the registers refreshes a listing nobody is looking
+    /// at while the ones on screen go stale.
+    ///
+    /// `None` is the session itself, and it is the whole list when no display
+    /// has been served — every monolithic run, and every test that never
+    /// attaches one.
+    ///
+    /// TP-SUR-FM-02
+    pub(crate) fn displays_to_serve(&self) -> Vec<Option<ClientId>> {
+        if self.surfaces_by_client.is_empty() {
+            return vec![None];
+        }
+        let mut displays: Vec<ClientId> = self.surfaces_by_client.keys().copied().collect();
+        // Stable so a worker's turn does not depend on hash order, which would
+        // make which display wins a race change from run to run.
+        displays.sort_unstable();
+        displays.into_iter().map(Some).collect()
+    }
+
     /// The one display there is, if there is exactly one.
     ///
     /// Not "the display being served": this answers whether the session and a
