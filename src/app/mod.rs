@@ -623,7 +623,10 @@ impl App {
             active,
             viewer: None,
             surfaces_by_client: std::collections::HashMap::new(),
-            default_surfaces: state::ClientSurfaces { active },
+            default_surfaces: state::ClientSurfaces {
+                active,
+                ..Default::default()
+            },
             previous_pane_focus: None,
             selected,
             mode,

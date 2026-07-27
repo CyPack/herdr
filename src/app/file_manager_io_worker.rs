@@ -646,10 +646,17 @@ fn location_load_error(error: FmRootNavigationError) -> FileManagerLocationLoadE
 }
 
 impl super::App {
+    /// The Files instance any display is looking at.
+    ///
+    /// Workers run outside every display's window, where the registers hold
+    /// the session default rather than any one display's view. Asking the
+    /// register alone would stop the listing from refreshing the moment the
+    /// default named the terminal, while a display sat in Files watching a
+    /// directory quietly go stale.
+    ///
+    /// TP-SUR-STAGE-03
     fn active_file_manager_generation(&self) -> Option<u32> {
-        (self.state.stage.surface_view() == crate::ui::surface_host::StageSurfaceView::NativeFiles)
-            .then(|| self.state.stage.active_instance_generation())
-            .flatten()
+        self.state.files_generation_in_use()
     }
 
     fn file_manager_location_authority_is_current(

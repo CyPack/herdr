@@ -2421,6 +2421,19 @@ macro_rules! client_surfaces {
 client_surfaces! {
     /// The workspace this display is in.
     active: Option<usize>,
+    /// Which app surface this display is looking at.
+    ///
+    /// This is the level above the workspace, and leaving it shared is what
+    /// made one display opening Files send every other display to Files too.
+    /// It is pure identity — instance ids and generations, no owned resources
+    /// — so a display can carry its own copy for the cost of a memcpy.
+    ///
+    /// The Files *contents* stay session-wide for now: the watcher, the
+    /// preview worker and the IO worker all run outside any display's window
+    /// and would need to be taught which display they are serving. Two
+    /// displays both in Files therefore still browse one directory. One in
+    /// Files and one in the terminal — the reported symptom — is fixed here.
+    stage: crate::ui::surface_host::StageState,
 }
 
 /// All application state — pure data, no channels or async runtime.
@@ -2904,6 +2917,41 @@ impl AppState {
             // silently suppresses its agent notifications.
             self.active = self.default_surfaces.active;
         }
+
+        // The Files surface and the state it browses are opened in one
+        // transaction but no longer parked together: the stage travels with
+        // the display, the contents stay session-wide. So a display can come
+        // back holding a stage that points at a file browser another display
+        // has since closed. Showing the Files surface with nothing behind it
+        // is the one way that split can be seen, so it is closed here instead.
+        if self.file_manager.is_none() {
+            self.stage.close_files();
+        }
+    }
+
+    /// Whether any display is looking at the Files surface.
+    ///
+    /// The filesystem watcher, the preview worker and the IO worker all run
+    /// outside every display's window, where the registers hold the session
+    /// default rather than any particular display's view. Asking the default
+    /// whether Files is open would stop the listing from refreshing the moment
+    /// the default happened to name the terminal — while a display sat in
+    /// Files watching a directory quietly go stale.
+    ///
+    /// TP-SUR-STAGE-03
+    pub(crate) fn files_generation_in_use(&self) -> Option<u32> {
+        let showing = |stage: &crate::ui::surface_host::StageState| {
+            (stage.surface_view() == crate::ui::surface_host::StageSurfaceView::NativeFiles)
+                .then(|| stage.active_instance_generation())
+                .flatten()
+        };
+        showing(&self.stage)
+            .or_else(|| showing(&self.default_surfaces.stage))
+            .or_else(|| {
+                self.surfaces_by_client
+                    .values()
+                    .find_map(|s| showing(&s.stage))
+            })
     }
 
     pub(crate) fn mark_session_dirty(&mut self) {

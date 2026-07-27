@@ -185,6 +185,43 @@ impl StageState {
         Ok(())
     }
 
+    /// Show the Files instance the session already has open, rather than
+    /// minting one of this display's own.
+    ///
+    /// Each display carries its own stage, but the Files app is a singleton
+    /// and the directory it browses is session-wide. Letting a second display
+    /// mint its own generation would give one set of contents two lifecycle
+    /// identities, and every event the watcher tagged with one of them would
+    /// be rejected as stale by the display holding the other — a file browser
+    /// that silently stops refreshing on whichever display opened it second.
+    ///
+    /// TP-SUR-STAGE-04
+    pub(crate) fn adopt_files_instance(&mut self, generation: u32) -> Result<(), StageStateError> {
+        let files_id = AppInstanceId {
+            app: BuiltInAppId::Files,
+            generation,
+        };
+        if self.active == files_id {
+            return Ok(());
+        }
+
+        if self.instance(files_id).is_none() {
+            // Any other Files instance this display still carries is one the
+            // session has already replaced.
+            let stale = self
+                .instances()
+                .position(|instance| instance.id.app == BuiltInAppId::Files);
+            if let Some(index) = stale {
+                self.remove_instance_at(index);
+            }
+            self.insert_instance(AppInstance::built_in(files_id))?;
+        }
+
+        self.previous = Some(self.active);
+        self.active = files_id;
+        Ok(())
+    }
+
     /// Return the stage to the terminal workspace, keeping every resident app
     /// instance in the tab strip.
     ///

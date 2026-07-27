@@ -381,9 +381,13 @@ impl AppState {
         let retained_stage = self.stage;
         let retained_focus = self.previous_pane_focus.clone();
 
-        self.stage
-            .activate_files()
-            .map_err(FileManagerOpenError::Stage)?;
+        // One session, one Files instance — the display only chooses whether
+        // it is looking at it. TP-SUR-STAGE-04
+        match self.files_generation_in_use() {
+            Some(generation) => self.stage.adopt_files_instance(generation),
+            None => self.stage.activate_files(),
+        }
+        .map_err(FileManagerOpenError::Stage)?;
         let prepared = match prepare(&mut self.previous_pane_focus) {
             Some(prepared) => prepared,
             None => {
@@ -3672,6 +3676,137 @@ mod tests {
         state
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root.0)))
             .expect("Files activation");
+    }
+
+    // TP-SUR-STAGE-01
+    #[test]
+    fn one_display_opening_files_leaves_the_other_in_the_terminal() {
+        let (mut state, root) = backgroundable_files_fixture("per-display-stage");
+
+        // Both displays start on the terminal surface.
+        state.enter_viewer(Some(1));
+        state.restore_viewer(None);
+        state.enter_viewer(Some(2));
+        state.restore_viewer(None);
+
+        // One of them opens the file browser.
+        state.enter_viewer(Some(1));
+        open_files_at(&mut state, &root);
+        assert_eq!(
+            state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::NativeFiles
+        );
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(2));
+        assert_eq!(
+            state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace,
+            "the display that did not open Files must stay in the terminal"
+        );
+        state.restore_viewer(None);
+
+        // And serving the terminal display must not take Files away from the
+        // display that opened it.
+        state.enter_viewer(Some(1));
+        assert_eq!(
+            state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::NativeFiles,
+            "the display in Files keeps Files"
+        );
+        state.restore_viewer(None);
+    }
+
+    // TP-SUR-STAGE-03
+    #[test]
+    fn a_worker_outside_every_display_still_sees_files_open() {
+        let (mut state, root) = backgroundable_files_fixture("worker-gate");
+
+        // One display opens the browser, so a display seen afterwards adopts
+        // it -- that is where the session is being driven.
+        state.enter_viewer(Some(2));
+        open_files_at(&mut state, &root);
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(1));
+        let generation = state
+            .stage
+            .active_instance_generation()
+            .expect("an open Files instance has a generation");
+        state.restore_viewer(None);
+
+        // The display that opened it goes back to the terminal, which takes
+        // the session default with it. The other one is still in Files.
+        state.enter_viewer(Some(2));
+        state.stage.show_terminal_workspace();
+        state.restore_viewer(None);
+
+        // Nobody is being served here, so the registers hold that default.
+        // The watcher, the preview worker and the IO worker all run at this
+        // point, and the directory still on screen elsewhere must not stop
+        // refreshing under them.
+        assert_eq!(
+            state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace
+        );
+        assert_eq!(
+            state.files_generation_in_use(),
+            Some(generation),
+            "a display in Files keeps the file workers running"
+        );
+    }
+
+    // TP-SUR-STAGE-04
+    #[test]
+    fn a_second_display_opening_files_joins_the_instance_already_open() {
+        let (mut state, root) = backgroundable_files_fixture("shared-instance");
+
+        state.enter_viewer(Some(1));
+        open_files_at(&mut state, &root);
+        let first = state
+            .stage
+            .active_instance_generation()
+            .expect("first display has an open Files instance");
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(2));
+        open_files_at(&mut state, &root);
+        let second = state
+            .stage
+            .active_instance_generation()
+            .expect("second display has an open Files instance");
+        state.restore_viewer(None);
+
+        assert_eq!(
+            first, second,
+            "one set of contents must not carry two lifecycle identities, or \
+             the watcher's events read as stale on one of the displays"
+        );
+    }
+
+    // TP-SUR-STAGE-05
+    #[test]
+    fn closing_files_leaves_no_display_showing_a_surface_with_nothing_behind_it() {
+        let (mut state, root) = backgroundable_files_fixture("close-reconcile");
+
+        state.enter_viewer(Some(1));
+        open_files_at(&mut state, &root);
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(2));
+        open_files_at(&mut state, &root);
+        // This display closes the browser, which takes the contents with it.
+        state.close_file_manager();
+        assert!(state.file_manager.is_none());
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(1));
+        assert_eq!(
+            state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace,
+            "a stage pointing at contents that no longer exist must fall back"
+        );
+        state.restore_viewer(None);
     }
 
     // TP-FTAB-DOCK-01: once Files can be open but backgrounded, "is a file
