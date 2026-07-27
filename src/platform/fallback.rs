@@ -105,6 +105,34 @@ pub fn process_exists(_pid: u32) -> bool {
 }
 
 /// Unsupported platform stub.
+#[derive(Debug)]
+pub struct ShutdownTarget {
+    pid: u32,
+}
+
+impl ShutdownTarget {
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+}
+
+/// Unsupported platform stub.
+pub fn session_shutdown_targets(child_pid: u32) -> Vec<ShutdownTarget> {
+    if child_pid == 0 {
+        return Vec::new();
+    }
+    vec![ShutdownTarget { pid: child_pid }]
+}
+
+/// Unsupported platform stub.
+pub fn signal_targets(_targets: &[ShutdownTarget], _signal: Signal) {}
+
+/// Unsupported platform stub.
+pub fn target_alive(_target: &ShutdownTarget) -> bool {
+    false
+}
+
+/// Unsupported platform stub.
 pub fn write_clipboard(_bytes: &[u8]) -> bool {
     false
 }

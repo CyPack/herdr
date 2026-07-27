@@ -650,6 +650,39 @@ pub fn process_exists(pid: u32) -> bool {
     ok && exit_code == STILL_ACTIVE
 }
 
+/// Shutdown target — Windows keeps the legacy pid-based path unchanged
+/// (see linux.rs for the identity-pinned variant).
+#[derive(Debug)]
+pub struct ShutdownTarget {
+    pid: u32,
+}
+
+impl ShutdownTarget {
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+}
+
+pub fn session_shutdown_targets(child_pid: u32) -> Vec<ShutdownTarget> {
+    if child_pid == 0 {
+        return Vec::new();
+    }
+    let mut pids = session_processes(child_pid);
+    if pids.is_empty() {
+        pids.push(child_pid);
+    }
+    pids.into_iter().map(|pid| ShutdownTarget { pid }).collect()
+}
+
+pub fn signal_targets(targets: &[ShutdownTarget], signal: Signal) {
+    let pids: Vec<u32> = targets.iter().map(|target| target.pid).collect();
+    signal_processes(&pids, signal);
+}
+
+pub fn target_alive(target: &ShutdownTarget) -> bool {
+    process_exists(target.pid)
+}
+
 pub fn write_clipboard(bytes: &[u8]) -> bool {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return false;

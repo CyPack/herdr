@@ -1017,6 +1017,39 @@ pub fn process_exists(pid: u32) -> bool {
     }
 }
 
+/// Shutdown target — macOS has no pidfd equivalent, so this wraps the legacy
+/// pid-based path unchanged (see linux.rs for the identity-pinned variant).
+#[derive(Debug)]
+pub struct ShutdownTarget {
+    pid: u32,
+}
+
+impl ShutdownTarget {
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+}
+
+pub fn session_shutdown_targets(child_pid: u32) -> Vec<ShutdownTarget> {
+    if child_pid == 0 {
+        return Vec::new();
+    }
+    let mut pids = session_processes(child_pid);
+    if pids.is_empty() {
+        pids.push(child_pid);
+    }
+    pids.into_iter().map(|pid| ShutdownTarget { pid }).collect()
+}
+
+pub fn signal_targets(targets: &[ShutdownTarget], signal: Signal) {
+    let pids: Vec<u32> = targets.iter().map(|target| target.pid).collect();
+    signal_processes(&pids, signal);
+}
+
+pub fn target_alive(target: &ShutdownTarget) -> bool {
+    process_exists(target.pid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
