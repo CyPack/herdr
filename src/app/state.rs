@@ -2035,6 +2035,7 @@ pub struct SettingsState {
     pub original_theme: Option<String>,
 }
 
+#[derive(Clone)]
 pub(crate) enum DragTarget {
     WorkspaceReorder {
         source_ws_idx: usize,
@@ -2078,16 +2079,19 @@ pub(crate) enum DragTarget {
 }
 
 /// Active mouse drag on a split border or sidebar divider.
+#[derive(Clone)]
 pub(crate) struct DragState {
     pub target: DragTarget,
 }
 
+#[derive(Clone)]
 pub(crate) struct WorkspacePressState {
     pub ws_idx: usize,
     pub start_col: u16,
     pub start_row: u16,
 }
 
+#[derive(Clone)]
 pub(crate) struct TabPressState {
     pub ws_idx: usize,
     pub tab_idx: usize,
@@ -2333,8 +2337,9 @@ pub struct KeybindHelpState {
     pub search_focused: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SidebarWidthSource {
+    #[default]
     ConfigDefault,
     Persisted,
     Manual,
@@ -2489,6 +2494,19 @@ client_surfaces! {
     stage: crate::ui::surface_host::StageState,
     }
     broadcast {
+    /// Sidebar geometry, which is measured against the display it is drawn
+    /// on. Two displays are two different widths, so one width cannot be
+    /// right on both, and the collapse a narrow display needs is exactly
+    /// what a wide one should not be forced into. The configured defaults
+    /// and the bounds around them stay session-wide; only what this display
+    /// currently is belongs here.
+    sidebar_width: u16,
+    sidebar_collapsed: bool,
+    sidebar_width_source: SidebarWidthSource,
+    sidebar_section_split: f32,
+    /// Transient feedback, which belongs on the screen that earned it.
+    toast: Option<ToastNotification>,
+    copy_feedback: Option<CopyFeedback>,
     /// Which of Spaces, Projects and Files the left rail is showing.
     ///
     /// Its own comment already called it state that lives in the client
@@ -2541,6 +2559,16 @@ client_surfaces! {
     rename_pane_target: Option<PaneId>,
     }
     private {
+    /// A gesture in flight, which is private for the same reason it is
+    /// per-display. Every one of these is anchored to a rectangle in
+    /// one display's last frame, so letting another display resolve it would
+    /// apply the drag to geometry it never saw.
+    drag: Option<DragState>,
+    workspace_press: Option<WorkspacePressState>,
+    tab_press: Option<TabPressState>,
+    selection: Option<Selection>,
+    selection_autoscroll: Option<SelectionAutoscroll>,
+    right_click_passthrough: Option<RightClickPassthroughGesture>,
     /// Blocking pickers, which own the keyboard of the display that opened
     /// them and no other. They carry a live filesystem view, which is why
     /// they are private: comparing one is neither cheap nor meaningful.
@@ -5449,6 +5477,59 @@ mod viewer_context_tests {
         assert_eq!(state.sidebar_tab, SidebarTab::Projects);
         assert_eq!(state.projects_scroll, 12);
         assert_eq!(state.selected, 3);
+        state.restore_viewer(None);
+    }
+
+    // TP-SUR-GEOMETRY-01
+    #[test]
+    fn sidebar_geometry_is_measured_against_the_display_it_is_drawn_on() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("only"));
+        state.active = Some(0);
+
+        state.enter_viewer(Some(1));
+        state.restore_viewer(None);
+        state.enter_viewer(Some(2));
+        state.restore_viewer(None);
+
+        // A narrow display collapses its sidebar; a wide one must not be
+        // dragged into a layout chosen for a screen it is not.
+        state.enter_viewer(Some(1));
+        state.sidebar_collapsed = true;
+        state.sidebar_width = 12;
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(2));
+        assert!(!state.sidebar_collapsed);
+        assert_ne!(state.sidebar_width, 12);
+        state.restore_viewer(None);
+    }
+
+    // TP-SUR-GESTURE-01
+    #[test]
+    fn a_display_seen_for_the_first_time_is_not_halfway_through_a_drag() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("only"));
+        state.active = Some(0);
+
+        state.enter_viewer(Some(1));
+        state.drag = Some(DragState {
+            target: DragTarget::WorkspaceListScrollbar { grab_row_offset: 2 },
+        });
+        state.restore_viewer(None);
+
+        // A gesture is anchored to a rectangle in one display's last frame,
+        // so a display that never saw that frame cannot be given it.
+        state.enter_viewer(Some(2));
+        assert!(state.drag.is_none());
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(1));
+        assert!(state.drag.is_some(), "and the display dragging keeps it");
         state.restore_viewer(None);
     }
 
