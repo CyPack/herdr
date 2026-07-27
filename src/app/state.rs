@@ -2616,6 +2616,14 @@ client_surfaces! {
     file_manager: Option<crate::fm::FmState>,
     /// Where the location rail on this display is pointed.
     file_manager_locations: crate::app::file_manager_locations::FileManagerLocationsState,
+    /// A navigation this display's rail asked for, waiting to be served.
+    ///
+    /// Shared, this is consumed by whichever display the scheduled loop
+    /// reaches first — lowest id, every time — so a click on any other
+    /// display navigates that one's browser instead, and the display that
+    /// was actually clicked sits inert. The request has to belong to the
+    /// display that made it, because the browser it acts on does.
+    request_file_manager_location_navigation: Option<FileManagerLocationNavigationRequest>,
     }
     ephemeral {
     /// A gesture in flight, which is private for the same reason it is
@@ -2757,6 +2765,7 @@ pub struct AppState {
     /// Prepared, bounded Files-locations data. Filesystem/environment discovery
     /// happens only when this projection is refreshed, never during render.
     pub file_manager_locations_model: FileManagerLocationsModel,
+    pub request_file_manager_location_navigation: Option<FileManagerLocationNavigationRequest>,
     /// Explicit client-local root identity for the Native Files locations
     /// surface. It is never inferred from cwd and never persisted or sent
     /// through the server protocol.
@@ -2764,7 +2773,6 @@ pub struct AppState {
         crate::app::file_manager_locations::FileManagerLocationsState,
     /// Exact row path and surface intent prepared by input and consumed once
     /// by the App-owned scheduled navigation boundary.
-    pub request_file_manager_location_navigation: Option<FileManagerLocationNavigationRequest>,
     pub should_quit: bool,
     /// In monolithic --no-session mode, detach exits the app because there is no server to detach from.
     pub detach_exits: bool,
@@ -5675,6 +5683,46 @@ mod viewer_context_tests {
 
         state.enter_viewer(Some(1));
         assert!(state.drag.is_some(), "and the display dragging keeps it");
+        state.restore_viewer(None);
+    }
+
+    // TP-SUR-FM-05
+    #[test]
+    fn a_request_one_display_made_is_not_consumed_by_another() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("only"));
+        state.active = Some(0);
+
+        state.enter_viewer(Some(1));
+        state.restore_viewer(None);
+        state.enter_viewer(Some(2));
+        state.restore_viewer(None);
+
+        // The second display clicks a location in the rail.
+        state.enter_viewer(Some(2));
+        state.request_file_manager_location_navigation = Some(
+            FileManagerLocationNavigationRequest::from(std::path::PathBuf::from("/tmp")),
+        );
+        state.restore_viewer(None);
+
+        // Scheduled work serves displays in order, lowest first. The display
+        // that clicked nothing must find nothing to do -- otherwise it takes
+        // the other display's request and navigates its own browser with it,
+        // and the display that actually clicked is left inert.
+        state.enter_viewer(Some(1));
+        assert!(
+            state.request_file_manager_location_navigation.is_none(),
+            "a request belongs to the display that made it"
+        );
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(2));
+        assert!(
+            state.request_file_manager_location_navigation.is_some(),
+            "and is still waiting when that display is served"
+        );
         state.restore_viewer(None);
     }
 
