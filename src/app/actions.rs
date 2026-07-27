@@ -3727,6 +3727,65 @@ mod tests {
         state.restore_viewer(None);
     }
 
+    // TP-SUR-FM-01
+    #[test]
+    fn two_displays_browse_two_directories() {
+        let (mut state, root) = backgroundable_files_fixture("two-directories");
+        let other = root.0.join("sub");
+        std::fs::create_dir_all(&other).expect("second fixture directory");
+        std::fs::write(other.join("only-here.txt"), b"x").expect("second fixture entry");
+
+        state.enter_viewer(Some(1));
+        open_files_at(&mut state, &root);
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(2));
+        state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&other)))
+            .expect("second display opens its own browser");
+        let second_cwd = state
+            .file_manager
+            .as_ref()
+            .map(|fm| fm.cwd.clone())
+            .expect("second display is browsing");
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(1));
+        let first_cwd = state
+            .file_manager
+            .as_ref()
+            .map(|fm| fm.cwd.clone())
+            .expect("first display is still browsing");
+        state.restore_viewer(None);
+
+        assert_ne!(
+            first_cwd, second_cwd,
+            "each display browses where it navigated, not where the other one did"
+        );
+    }
+
+    // TP-SUR-ADOPT-01
+    #[test]
+    fn a_display_attaching_later_does_not_inherit_an_open_browser() {
+        let (mut state, root) = backgroundable_files_fixture("adopt-clean");
+
+        // The first display to be served is the session, so it takes over a
+        // browser opened before any display existed.
+        state.enter_viewer(Some(1));
+        open_files_at(&mut state, &root);
+        state.restore_viewer(None);
+
+        // A second monitor is plugged in. Handing it the first one's browser
+        // would be the shared-focus complaint arriving on attach.
+        state.enter_viewer(Some(2));
+        assert_eq!(
+            state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace
+        );
+        assert!(state.file_manager.is_none());
+        state.restore_viewer(None);
+    }
+
     // TP-SUR-STAGE-01
     #[test]
     fn one_display_opening_files_leaves_the_other_in_the_terminal() {
@@ -3771,33 +3830,26 @@ mod tests {
     fn a_worker_outside_every_display_still_sees_files_open() {
         let (mut state, root) = backgroundable_files_fixture("worker-gate");
 
-        // One display opens the browser, so a display seen afterwards adopts
-        // it -- that is where the session is being driven.
-        state.enter_viewer(Some(2));
-        open_files_at(&mut state, &root);
-        state.restore_viewer(None);
-
+        // Two displays, one of them browsing files.
         state.enter_viewer(Some(1));
+        open_files_at(&mut state, &root);
         let generation = state
             .stage
             .active_instance_generation()
             .expect("an open Files instance has a generation");
         state.restore_viewer(None);
 
-        // The display that opened it goes back to the terminal, which takes
-        // the session default with it. The other one is still in Files.
         state.enter_viewer(Some(2));
-        state.stage.show_terminal_workspace();
-        state.restore_viewer(None);
-
-        // Nobody is being served here, so the registers hold that default.
-        // The watcher, the preview worker and the IO worker all run at this
-        // point, and the directory still on screen elsewhere must not stop
-        // refreshing under them.
         assert_eq!(
             state.stage.surface_view(),
-            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace,
+            "the second display opens in the terminal, not in someone else's browser"
         );
+        state.restore_viewer(None);
+
+        // Nobody is being served here. The watcher, the preview worker and the
+        // IO worker all run at this point, and a directory still on screen
+        // elsewhere must not stop refreshing under them.
         assert_eq!(
             state.files_generation_in_use(),
             Some(generation),
@@ -3835,8 +3887,8 @@ mod tests {
 
     // TP-SUR-STAGE-05
     #[test]
-    fn closing_files_leaves_no_display_showing_a_surface_with_nothing_behind_it() {
-        let (mut state, root) = backgroundable_files_fixture("close-reconcile");
+    fn closing_the_browser_on_one_display_leaves_the_others_browsing() {
+        let (mut state, root) = backgroundable_files_fixture("close-independence");
 
         state.enter_viewer(Some(1));
         open_files_at(&mut state, &root);
@@ -3844,16 +3896,25 @@ mod tests {
 
         state.enter_viewer(Some(2));
         open_files_at(&mut state, &root);
-        // This display closes the browser, which takes the contents with it.
         state.close_file_manager();
         assert!(state.file_manager.is_none());
+        assert_eq!(
+            state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace
+        );
         state.restore_viewer(None);
 
+        // The surface and the contents behind it travel together, so closing
+        // one display's browser cannot leave another display showing a surface
+        // with nothing behind it -- nor take away a browser it is still using.
         state.enter_viewer(Some(1));
         assert_eq!(
             state.stage.surface_view(),
-            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace,
-            "a stage pointing at contents that no longer exist must fall back"
+            crate::ui::surface_host::StageSurfaceView::NativeFiles
+        );
+        assert!(
+            state.file_manager.is_some(),
+            "the display that did not close anything keeps what it was reading"
         );
         state.restore_viewer(None);
     }

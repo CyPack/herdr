@@ -2376,7 +2376,8 @@ macro_rules! client_surfaces {
         inherited { $( $(#[$meta:meta])* $field:ident : $ty:ty ),+ $(,)? }
         broadcast {
 $( $(#[$bmeta:meta])* $bfield:ident : $bty:ty ),+ $(,)? }
-        private { $( $(#[$pmeta:meta])* $pfield:ident : $pty:ty ),+ $(,)? }
+        owned { $( $(#[$ometa:meta])* $ofield:ident : $oty:ty ),+ $(,)? }
+        ephemeral { $( $(#[$emeta:meta])* $efield:ident : $ety:ty ),+ $(,)? }
     ) => {
         /// Everything about *what this display is looking at*, parked while
         /// another display is being served. Never persisted as session truth.
@@ -2384,7 +2385,8 @@ $( $(#[$bmeta:meta])* $bfield:ident : $bty:ty ),+ $(,)? }
         pub(super) struct ClientSurfaces {
             $( $(#[$meta])* pub(super) $field: $ty, )+
             $( $(#[$bmeta])* pub(super) $bfield: $bty, )+
-            $( $(#[$pmeta])* pub(super) $pfield: $pty, )+
+            $( $(#[$ometa])* pub(super) $ofield: $oty, )+
+            $( $(#[$emeta])* pub(super) $efield: $ety, )+
         }
 
         impl AppState {
@@ -2396,7 +2398,34 @@ $( $(#[$bmeta:meta])* $bfield:ident : $bty:ty ),+ $(,)? }
                 ClientSurfaces {
                     $( $field: std::mem::take(&mut self.$field), )+
                     $( $bfield: std::mem::take(&mut self.$bfield), )+
-                    $( $pfield: std::mem::take(&mut self.$pfield), )+
+                    $( $ofield: std::mem::take(&mut self.$ofield), )+
+                    $( $efield: std::mem::take(&mut self.$efield), )+
+                }
+            }
+
+            /// Builds what a display seen for the first time starts with.
+            ///
+            /// Inherited and broadcast surfaces come from the default, so a
+            /// display attaching now lands where the session is being driven
+            /// rather than on workspace zero. Owned and ephemeral surfaces do
+            /// not: a display that has just attached has not opened a file
+            /// browser, is not halfway through a drag, and is not holding a
+            /// blocking picker. Handing it one is the shared-focus complaint
+            /// arriving at the moment a monitor is plugged in.
+            ///
+            /// TP-SUR-ADOPT-01
+            fn adopted_surfaces(&self) -> ClientSurfaces {
+                if self.surfaces_by_client.is_empty() {
+                    // The first display to be served is the session: it takes
+                    // over whatever the session had open, including a file
+                    // browser opened before any display existed. This is the
+                    // whole of the monolithic path.
+                    return self.default_surfaces.clone();
+                }
+                ClientSurfaces {
+                    $( $field: self.default_surfaces.$field.clone(), )+
+                    $( $bfield: self.default_surfaces.$bfield.clone(), )+
+                    ..Default::default()
                 }
             }
 
@@ -2404,7 +2433,8 @@ $( $(#[$bmeta:meta])* $bfield:ident : $bty:ty ),+ $(,)? }
             fn install_surfaces(&mut self, surfaces: ClientSurfaces) {
                 $( self.$field = surfaces.$field; )+
                 $( self.$bfield = surfaces.$bfield; )+
-                $( self.$pfield = surfaces.$pfield; )+
+                $( self.$ofield = surfaces.$ofield; )+
+                $( self.$efield = surfaces.$efield; )+
             }
 
             /// Moves the surfaces a display actually changed into the default.
@@ -2448,6 +2478,25 @@ $( $(#[$bmeta:meta])* $bfield:ident : $bty:ty ),+ $(,)? }
                         self.default_surfaces.$bfield = outgoing.$bfield.clone();
                     }
                 )+
+
+                // An owned surface cannot be compared, so it cannot be told
+                // apart from a display merely being looked at — unless there
+                // is only one display, in which case that display *is* the
+                // session and everything it does is a session change.
+                //
+                // Ephemeral surfaces are absent even here. A drag in flight
+                // and a blocking picker are the two things a display attaching
+                // right now must not be handed, and attaching while one is
+                // open is exactly when that would happen.
+                //
+                // This is what keeps the single-display path, which is every
+                // monolithic run and every test, behaving exactly as it did
+                // before any of this existed. The moment a second display
+                // attaches, the pair stops being promoted and the two browse
+                // independently.
+                if self.surfaces_by_client.len() <= 1 {
+                    $( self.default_surfaces.$ofield = outgoing.$ofield.clone(); )+
+                }
             }
 
             /// Hands every display a change the session made on its own.
@@ -2469,6 +2518,20 @@ $( $(#[$bmeta:meta])* $bfield:ident : $bty:ty ),+ $(,)? }
                         }
                     }
                 )+
+
+                // The other half of the sole-display rule. With one display,
+                // the session and that display are the same thing, so a change
+                // made outside its window has to land in what it parked —
+                // otherwise opening the file browser from anywhere but that
+                // window is silently undone the next time it is served.
+                //
+                // With a second display attached this stops, because then the
+                // session is no longer any one display's view.
+                if self.surfaces_by_client.len() <= 1 {
+                    for parked in self.surfaces_by_client.values_mut() {
+                        $( parked.$ofield = outgoing.$ofield.clone(); )+
+                    }
+                }
             }
         }
     };
@@ -2479,19 +2542,6 @@ client_surfaces! {
 
     /// The workspace this display is in.
     active: Option<usize>,
-    /// Which app surface this display is looking at.
-    ///
-    /// This is the level above the workspace, and leaving it shared is what
-    /// made one display opening Files send every other display to Files too.
-    /// It is pure identity — instance ids and generations, no owned resources
-    /// — so a display can carry its own copy for the cost of a memcpy.
-    ///
-    /// The Files *contents* stay session-wide for now: the watcher, the
-    /// preview worker and the IO worker all run outside any display's window
-    /// and would need to be taught which display they are serving. Two
-    /// displays both in Files therefore still browse one directory. One in
-    /// Files and one in the terminal — the reported symptom — is fixed here.
-    stage: crate::ui::surface_host::StageState,
     }
     broadcast {
     /// The file browser's own prompts. The directory they act on is still
@@ -2563,7 +2613,36 @@ client_surfaces! {
     requested_new_tab_name: Option<String>,
     rename_pane_target: Option<PaneId>,
     }
-    private {
+    owned {
+    /// Which app surface this display is looking at, and — since it is the
+    /// same surface — the directory behind it.
+    ///
+    /// This is the level above the workspace, and leaving it shared is what
+    /// made one display opening Files send every other display to Files too.
+    ///
+    /// It sits here rather than with the inherited surfaces because it can
+    /// only ever be as inheritable as the contents it points at, and those
+    /// cannot be promoted: comparing a directory listing on every park means
+    /// walking a directory's worth of entries per display per frame. Keeping
+    /// the pair together is what makes a stage pointing at contents that do
+    /// not exist unrepresentable rather than merely repaired.
+    ///
+    /// The consequence is the behaviour you want anyway: a display seen for
+    /// the first time starts in the terminal, because a display that has just
+    /// attached has not opened a file browser.
+    stage: crate::ui::surface_host::StageState,
+    /// The directory this display is browsing, and where it is in it.
+    ///
+    /// Private rather than broadcast because a directory listing is not
+    /// something the session decides on a display's behalf, and because
+    /// comparing one on every park would mean walking a directory's worth of
+    /// entries per display per frame. A display seen for the first time opens
+    /// its own browser rather than joining someone else's position in theirs.
+    file_manager: Option<crate::fm::FmState>,
+    /// Where the location rail on this display is pointed.
+    file_manager_locations: crate::app::file_manager_locations::FileManagerLocationsState,
+    }
+    ephemeral {
     /// A gesture in flight, which is private for the same reason it is
     /// per-display. Every one of these is anchored to a rectangle in
     /// one display's last frame, so letting another display resolve it would
@@ -3019,7 +3098,7 @@ impl AppState {
             Some(client) => match self.surfaces_by_client.get(&client) {
                 Some(parked) => parked.clone(),
                 None => {
-                    let adopted = self.default_surfaces.clone();
+                    let adopted = self.adopted_surfaces();
                     self.surfaces_by_client.insert(client, adopted.clone());
                     adopted
                 }
@@ -3068,16 +3147,6 @@ impl AppState {
             // workspace here makes a background pane look foreground, which
             // silently suppresses its agent notifications.
             self.active = self.default_surfaces.active;
-        }
-
-        // The Files surface and the state it browses are opened in one
-        // transaction but no longer parked together: the stage travels with
-        // the display, the contents stay session-wide. So a display can come
-        // back holding a stage that points at a file browser another display
-        // has since closed. Showing the Files surface with nothing behind it
-        // is the one way that split can be seen, so it is closed here instead.
-        if self.file_manager.is_none() {
-            self.stage.close_files();
         }
     }
 
