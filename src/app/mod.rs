@@ -627,6 +627,8 @@ impl App {
                 active,
                 ..Default::default()
             },
+            owned_by_client: std::collections::HashMap::new(),
+            default_owned: state::ClientOwned::default(),
             previous_pane_focus: None,
             selected,
             mode,

@@ -2385,6 +2385,17 @@ $( $(#[$bmeta:meta])* $bfield:ident : $bty:ty ),+ $(,)? }
         pub(super) struct ClientSurfaces {
             $( $(#[$meta])* pub(super) $field: $ty, )+
             $( $(#[$bmeta])* pub(super) $bfield: $bty, )+
+        }
+
+        /// What a display holds that is never copied — only handed over.
+        ///
+        /// Kept apart from [`ClientSurfaces`] for one reason: that bundle is
+        /// cloned on entry so the next park has something to compare against,
+        /// and these are the surfaces where a clone means walking a
+        /// directory's worth of entries, per display, per frame. Nothing
+        /// compares them, so nothing needs a second copy of them.
+        #[derive(Default)]
+        pub(super) struct ClientOwned {
             $( $(#[$ometa])* pub(super) $ofield: $oty, )+
             $( $(#[$emeta])* pub(super) $efield: $ety, )+
         }
@@ -2398,9 +2409,19 @@ $( $(#[$bmeta:meta])* $bfield:ident : $bty:ty ),+ $(,)? }
                 ClientSurfaces {
                     $( $field: std::mem::take(&mut self.$field), )+
                     $( $bfield: std::mem::take(&mut self.$bfield), )+
+                }
+            }
+
+            fn take_owned(&mut self) -> ClientOwned {
+                ClientOwned {
                     $( $ofield: std::mem::take(&mut self.$ofield), )+
                     $( $efield: std::mem::take(&mut self.$efield), )+
                 }
+            }
+
+            fn install_owned(&mut self, owned: ClientOwned) {
+                $( self.$ofield = owned.$ofield; )+
+                $( self.$efield = owned.$efield; )+
             }
 
             /// Builds what a display seen for the first time starts with.
@@ -2415,26 +2436,13 @@ $( $(#[$bmeta:meta])* $bfield:ident : $bty:ty ),+ $(,)? }
             ///
             /// TP-SUR-ADOPT-01
             fn adopted_surfaces(&self) -> ClientSurfaces {
-                if self.surfaces_by_client.is_empty() {
-                    // The first display to be served is the session: it takes
-                    // over whatever the session had open, including a file
-                    // browser opened before any display existed. This is the
-                    // whole of the monolithic path.
-                    return self.default_surfaces.clone();
-                }
-                ClientSurfaces {
-                    $( $field: self.default_surfaces.$field.clone(), )+
-                    $( $bfield: self.default_surfaces.$bfield.clone(), )+
-                    ..Default::default()
-                }
+                self.default_surfaces.clone()
             }
 
             /// Installs a display's surfaces into the registers.
             fn install_surfaces(&mut self, surfaces: ClientSurfaces) {
                 $( self.$field = surfaces.$field; )+
                 $( self.$bfield = surfaces.$bfield; )+
-                $( self.$ofield = surfaces.$ofield; )+
-                $( self.$efield = surfaces.$efield; )+
             }
 
             /// Moves the surfaces a display actually changed into the default.
@@ -2478,25 +2486,6 @@ $( $(#[$bmeta:meta])* $bfield:ident : $bty:ty ),+ $(,)? }
                         self.default_surfaces.$bfield = outgoing.$bfield.clone();
                     }
                 )+
-
-                // An owned surface cannot be compared, so it cannot be told
-                // apart from a display merely being looked at — unless there
-                // is only one display, in which case that display *is* the
-                // session and everything it does is a session change.
-                //
-                // Ephemeral surfaces are absent even here. A drag in flight
-                // and a blocking picker are the two things a display attaching
-                // right now must not be handed, and attaching while one is
-                // open is exactly when that would happen.
-                //
-                // This is what keeps the single-display path, which is every
-                // monolithic run and every test, behaving exactly as it did
-                // before any of this existed. The moment a second display
-                // attaches, the pair stops being promoted and the two browse
-                // independently.
-                if self.surfaces_by_client.len() <= 1 {
-                    $( self.default_surfaces.$ofield = outgoing.$ofield.clone(); )+
-                }
             }
 
             /// Hands every display a change the session made on its own.
@@ -2518,20 +2507,6 @@ $( $(#[$bmeta:meta])* $bfield:ident : $bty:ty ),+ $(,)? }
                         }
                     }
                 )+
-
-                // The other half of the sole-display rule. With one display,
-                // the session and that display are the same thing, so a change
-                // made outside its window has to land in what it parked —
-                // otherwise opening the file browser from anywhere but that
-                // window is silently undone the next time it is served.
-                //
-                // With a second display attached this stops, because then the
-                // session is no longer any one display's view.
-                if self.surfaces_by_client.len() <= 1 {
-                    for parked in self.surfaces_by_client.values_mut() {
-                        $( parked.$ofield = outgoing.$ofield.clone(); )+
-                    }
-                }
             }
         }
     };
@@ -2699,6 +2674,13 @@ pub struct AppState {
     /// Tracks the most recent actual switch, so a display attaching later
     /// lands where the session is being driven.
     pub(super) default_surfaces: ClientSurfaces,
+    /// What each display holds that is only ever handed over, never copied.
+    ///
+    /// A display being served has no entry here: its state is in the
+    /// registers. That is what makes the swap free.
+    pub(super) owned_by_client: std::collections::HashMap<ClientId, ClientOwned>,
+    /// The owned surfaces held when no display has ever been served.
+    pub(super) default_owned: ClientOwned,
     pub(crate) previous_pane_focus: Option<PaneFocusTarget>,
     pub selected: usize,
     pub mode: Mode,
@@ -3060,6 +3042,12 @@ impl AppState {
         if !self.per_display_focus {
             return;
         }
+        // Read before anything is inserted: a display attaching right now must
+        // not make the display that was alone stop being the session halfway
+        // through this swap, or what it was holding is parked in a slot it
+        // will never look in again.
+        let sole_display = self.sole_display();
+
         // Park the serving display's surfaces before installing the incoming
         // display's. The fields are registers, not storage, so this is a
         // context switch rather than a set of assignments.
@@ -3107,6 +3095,41 @@ impl AppState {
         };
         self.install_surfaces(incoming);
 
+        // The owned half is handed over rather than copied, so the park and
+        // the install are both moves.
+        //
+        // With one display, that display *is* the session: the register, the
+        // no-viewer state and that display's state are one thing, so they
+        // share a single slot rather than being kept in step. Every monolithic
+        // run is this case, and it behaves exactly as it did before any of
+        // this existed. The moment a second display attaches the slots
+        // separate and the two browse independently.
+        let outgoing_owned = self.take_owned();
+        match self.viewer.or(sole_display) {
+            Some(owner) => {
+                self.owned_by_client.insert(owner, outgoing_owned);
+            }
+            None => self.default_owned = outgoing_owned,
+        }
+        let first_display = self.surfaces_by_client.len() <= 1;
+        let incoming_owned = match viewer.or(sole_display) {
+            Some(owner) => self.owned_by_client.remove(&owner).unwrap_or_else(|| {
+                if first_display {
+                    // The first display served takes over what the session
+                    // had open before any display existed.
+                    std::mem::take(&mut self.default_owned)
+                } else {
+                    // A display attaching later has not opened a file browser,
+                    // is not halfway through a drag and is holding no picker.
+                    // Handing it one is the shared-focus complaint arriving at
+                    // the moment a monitor is plugged in. TP-SUR-ADOPT-01
+                    ClientOwned::default()
+                }
+            }),
+            None => std::mem::take(&mut self.default_owned),
+        };
+        self.install_owned(incoming_owned);
+
         self.reconcile_surfaces_with_session();
 
         self.viewer = viewer;
@@ -3124,6 +3147,7 @@ impl AppState {
     /// TP-MCF-TAB-02
     pub(crate) fn forget_client(&mut self, client: ClientId) {
         self.surfaces_by_client.remove(&client);
+        self.owned_by_client.remove(&client);
         for workspace in &mut self.workspaces {
             workspace.forget_client(client);
         }
@@ -3150,6 +3174,19 @@ impl AppState {
         }
     }
 
+    /// The one display there is, if there is exactly one.
+    ///
+    /// Not "the display being served": this answers whether the session and a
+    /// display are the same thing, which is what lets them share one slot for
+    /// the surfaces that are handed over rather than copied.
+    fn sole_display(&self) -> Option<ClientId> {
+        let mut clients = self.surfaces_by_client.keys();
+        match (clients.next(), clients.next()) {
+            (Some(only), None) => Some(*only),
+            _ => None,
+        }
+    }
+
     /// Whether any display is looking at the Files surface.
     ///
     /// The filesystem watcher, the preview worker and the IO worker all run
@@ -3167,9 +3204,9 @@ impl AppState {
                 .flatten()
         };
         showing(&self.stage)
-            .or_else(|| showing(&self.default_surfaces.stage))
+            .or_else(|| showing(&self.default_owned.stage))
             .or_else(|| {
-                self.surfaces_by_client
+                self.owned_by_client
                     .values()
                     .find_map(|s| showing(&s.stage))
             })
@@ -3417,6 +3454,8 @@ impl AppState {
             viewer: None,
             surfaces_by_client: std::collections::HashMap::new(),
             default_surfaces: ClientSurfaces::default(),
+            owned_by_client: std::collections::HashMap::new(),
+            default_owned: ClientOwned::default(),
             previous_pane_focus: None,
             selected: 0,
             mode: Mode::Navigate,
