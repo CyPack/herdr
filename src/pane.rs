@@ -1146,8 +1146,8 @@ fn process_alive_for_shutdown(
     process_exists(pid)
 }
 
-fn wait_for_processes_to_exit(
-    pids: &[u32],
+fn wait_for_targets_to_exit(
+    targets: &[crate::platform::ShutdownTarget],
     child_pid: u32,
     child_wait_completed: Option<&AtomicBool>,
     timeout: std::time::Duration,
@@ -1156,13 +1156,10 @@ fn wait_for_processes_to_exit(
     loop {
         let child_wait_completed =
             child_wait_completed.is_some_and(|flag| flag.load(Ordering::Acquire));
-        if pids.iter().all(|pid| {
-            !process_alive_for_shutdown(
-                *pid,
-                child_pid,
-                child_wait_completed,
-                crate::platform::process_exists,
-            )
+        if targets.iter().all(|target| {
+            !process_alive_for_shutdown(target.pid(), child_pid, child_wait_completed, |_| {
+                crate::platform::target_alive(target)
+            })
         }) {
             return true;
         }
@@ -1182,12 +1179,21 @@ fn shutdown_pane_processes(
         return;
     }
 
-    let mut pids = crate::platform::session_processes(child_pid);
-    if pids.is_empty() {
-        pids.push(child_pid);
+    // Identity-pinned targets: on Linux every entry is backed by a pidfd, so a
+    // pid recycled between collection and signalling cannot be hit (incident
+    // PM-2026-07-27-001). An empty set means the child is already gone — the
+    // old `pids.push(child_pid)` fallback here would signal a stranger.
+    let targets = crate::platform::session_shutdown_targets(child_pid);
+    if targets.is_empty() {
+        info!(
+            pane = pane_id.raw(),
+            pid = child_pid,
+            "pane child already gone; no shutdown signals sent"
+        );
+        return;
     }
+    let mut pids: Vec<u32> = targets.iter().map(|target| target.pid()).collect();
     pids.sort_unstable();
-    pids.dedup();
 
     for (signal, grace) in [
         (
@@ -1203,12 +1209,16 @@ fn shutdown_pane_processes(
             std::time::Duration::from_millis(250),
         ),
     ] {
-        crate::platform::signal_processes(&pids, signal);
-        if wait_for_processes_to_exit(&pids, child_pid, child_wait_completed, grace) {
+        crate::platform::signal_targets(&targets, signal);
+        if wait_for_targets_to_exit(&targets, child_pid, child_wait_completed, grace) {
+            // The swept pid set is logged on EVERY outcome, not only on the
+            // still-alive warning: during the 2026-07-27 post-mortem the six
+            // successfully-terminated panes' sweep sets were unrecoverable.
             info!(
                 pane = pane_id.raw(),
                 pid = child_pid,
                 ?signal,
+                swept = ?pids,
                 "pane session terminated"
             );
             return;

@@ -229,11 +229,11 @@ pub fn parse_target_name(name: &str) -> Result<Option<String>, String> {
     normalize_name(name)
 }
 
-pub fn stop_session(name: Option<&str>) -> Result<SessionInfo, String> {
-    stop_session_with_timeout(name, STOP_WAIT_TIMEOUT)
+pub fn stop_session(name: Option<&str>, force: bool) -> Result<SessionInfo, String> {
+    stop_session_with_timeout(name, STOP_WAIT_TIMEOUT, force)
 }
 
-pub(crate) fn stop_active_server() -> Result<(), String> {
+pub(crate) fn stop_active_server(force: bool) -> Result<(), String> {
     let socket_path = active_api_socket_path();
     let client_socket_path = crate::server::socket_paths::client_socket_path();
     stop_socket_with_timeout(
@@ -241,10 +241,15 @@ pub(crate) fn stop_active_server() -> Result<(), String> {
         vec![socket_path, client_socket_path],
         STOP_WAIT_TIMEOUT,
         "server",
+        force,
     )
 }
 
-fn stop_session_with_timeout(name: Option<&str>, timeout: Duration) -> Result<SessionInfo, String> {
+fn stop_session_with_timeout(
+    name: Option<&str>,
+    timeout: Duration,
+    force: bool,
+) -> Result<SessionInfo, String> {
     let socket_path = api_socket_path_for(name);
     let client_socket_path = client_socket_path_for(name);
     let label = format!("session {}", name.unwrap_or(DEFAULT_SESSION_NAME));
@@ -253,6 +258,7 @@ fn stop_session_with_timeout(name: Option<&str>, timeout: Duration) -> Result<Se
         vec![socket_path, client_socket_path],
         timeout,
         &label,
+        force,
     )?;
     Ok(session_info(name))
 }
@@ -262,12 +268,13 @@ fn stop_socket_with_timeout(
     stopped_socket_paths: Vec<PathBuf>,
     timeout: Duration,
     label: &str,
+    force: bool,
 ) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     let request = serde_json::json!({
         "id": "cli:session:stop",
         "method": "server.stop",
-        "params": {}
+        "params": { "force": force }
     });
     let stream = crate::ipc::connect_local_stream(&socket_path).map_err(|err| {
         format!(
@@ -607,7 +614,7 @@ mod tests {
             }
         });
 
-        let err = stop_session_with_timeout(Some(session_name), Duration::from_millis(75))
+        let err = stop_session_with_timeout(Some(session_name), Duration::from_millis(75), false)
             .expect_err("silent session should fail after timeout");
 
         assert!(err.contains("did not stop"), "{err}");
@@ -1000,7 +1007,7 @@ mod tests {
             }
         });
 
-        let err = stop_session_with_timeout(Some(session_name), Duration::from_millis(75))
+        let err = stop_session_with_timeout(Some(session_name), Duration::from_millis(75), false)
             .expect_err("still-running session should fail");
 
         assert!(err.contains("did not stop"), "{err}");

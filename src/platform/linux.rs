@@ -367,11 +367,17 @@ pub fn signal_processes(pids: &[u32], signal: Signal) {
     };
 
     for &pid in pids {
+        // A pid above i32::MAX would wrap negative under `as i32` and turn
+        // kill(2) into a process-group (or kill(-1): every process) signal.
+        // try_from makes that class unrepresentable.
+        let Ok(pid) = i32::try_from(pid) else {
+            continue;
+        };
         if pid == 0 {
             continue;
         }
         unsafe {
-            libc::kill(pid as i32, sig);
+            libc::kill(pid, sig);
         }
     }
 }
@@ -380,11 +386,160 @@ pub fn process_exists(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
-    let result = unsafe { libc::kill(pid as i32, 0) };
+    let Ok(pid) = i32::try_from(pid) else {
+        return false;
+    };
+    let result = unsafe { libc::kill(pid, 0) };
     if result == 0 {
         true
     } else {
         std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Identity-safe shutdown targets (pidfd).
+//
+// A bare pid is NOT a process identity: pid numbers recycle, and a pid stored
+// at spawn time can name an unrelated process by shutdown time — the classic
+// ABA problem (an active pid-counter wraparound was measured on this machine
+// during incident PM-2026-07-27-001). A pidfd is an identity: once opened it
+// pins exactly one process incarnation, and signalling through it can never
+// hit a recycled pid, no matter how much time passes between the /proc scan
+// and the signal.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A shutdown target pinned to a specific process incarnation.
+#[derive(Debug)]
+pub struct ShutdownTarget {
+    pid: u32,
+    /// `Some` = pidfd-pinned identity. `None` = legacy pid-only fallback
+    /// (pre-5.3 kernels without pidfd support).
+    fd: Option<std::os::fd::OwnedFd>,
+}
+
+impl ShutdownTarget {
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+}
+
+fn pidfd_open(pid: u32) -> Result<std::os::fd::OwnedFd, std::io::Error> {
+    use std::os::fd::FromRawFd;
+    // SAFETY: pidfd_open(2) takes a pid and a flags word — no pointers. The
+    // only invariant is checking the return value before wrapping it.
+    let ret = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0u32) };
+    if ret < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `ret` is a freshly returned file descriptor we now own.
+    Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(ret as RawFd) })
+}
+
+fn pidfd_send_signal(fd: &std::os::fd::OwnedFd, sig: libc::c_int) -> bool {
+    use std::os::fd::AsRawFd;
+    // SAFETY: pidfd_send_signal(2) with a null siginfo pointer behaves like
+    // kill(2) aimed at the exact process the fd pins; arguments are plain
+    // integers plus an explicitly-null pointer.
+    let ret = unsafe {
+        libc::syscall(
+            libc::SYS_pidfd_send_signal,
+            fd.as_raw_fd(),
+            sig,
+            std::ptr::null::<libc::c_void>(),
+            0u32,
+        )
+    };
+    ret == 0
+}
+
+/// What to do when the child's own pidfd cannot be opened. Factored out so the
+/// error mapping is unit-testable without forcing kernel error conditions.
+fn targets_after_child_open_failure(child_pid: u32, err: &std::io::Error) -> Vec<ShutdownTarget> {
+    if err.raw_os_error() == Some(libc::ENOSYS) {
+        // Kernel without pidfd support: keep the legacy behavior rather than
+        // silently skipping shutdown signals.
+        let mut pids = session_processes(child_pid);
+        if pids.is_empty() {
+            pids.push(child_pid);
+        }
+        return pids
+            .into_iter()
+            .map(|pid| ShutdownTarget { pid, fd: None })
+            .collect();
+    }
+    // ESRCH and friends: the child is already gone. A dead child needs no
+    // signals, and its recorded pid may already name a stranger — the old
+    // `pids.push(child_pid)` fallback here was exactly the ABA hazard.
+    Vec::new()
+}
+
+/// Collect identity-pinned shutdown targets for a pane child.
+///
+/// Order of operations is the whole point: each target's pidfd is opened
+/// FIRST and its kernel session id verified AFTER, so the fd pins the very
+/// incarnation the verification saw (no scan→signal TOCTOU window). If the
+/// child's session id does not equal its pid (PTY children are session
+/// leaders; a mismatch means either pid reuse or an unusual spawn path), the
+/// session sweep is skipped and only the pinned child itself is targeted —
+/// leaking grandchildren is the fail-safe direction, signalling strangers is
+/// not.
+pub fn session_shutdown_targets(child_pid: u32) -> Vec<ShutdownTarget> {
+    if child_pid == 0 {
+        return Vec::new();
+    }
+    let child_fd = match pidfd_open(child_pid) {
+        Ok(fd) => fd,
+        Err(err) => return targets_after_child_open_failure(child_pid, &err),
+    };
+    if process_session_id(child_pid) != Some(child_pid as i32) {
+        return vec![ShutdownTarget {
+            pid: child_pid,
+            fd: Some(child_fd),
+        }];
+    }
+    let mut targets = Vec::new();
+    for pid in session_processes(child_pid) {
+        if pid == child_pid {
+            continue;
+        }
+        let Ok(fd) = pidfd_open(pid) else {
+            continue; // exited between scan and open — nothing to pin
+        };
+        // Verify AFTER the open: the fd pins the incarnation this check sees.
+        if process_session_id(pid) == Some(child_pid as i32) {
+            targets.push(ShutdownTarget { pid, fd: Some(fd) });
+        }
+    }
+    targets.push(ShutdownTarget {
+        pid: child_pid,
+        fd: Some(child_fd),
+    });
+    targets
+}
+
+pub fn signal_targets(targets: &[ShutdownTarget], signal: Signal) {
+    let sig = match signal {
+        Signal::Hangup => libc::SIGHUP,
+        Signal::Terminate => libc::SIGTERM,
+        Signal::Kill => libc::SIGKILL,
+    };
+    for target in targets {
+        match &target.fd {
+            Some(fd) => {
+                let _ = pidfd_send_signal(fd, sig);
+            }
+            None => signal_processes(&[target.pid], signal),
+        }
+    }
+}
+
+pub fn target_alive(target: &ShutdownTarget) -> bool {
+    match &target.fd {
+        // Signal 0 through the pidfd: existence probe that can never race
+        // onto a recycled pid (mirrors kill(pid, 0) semantics, incl. zombies).
+        Some(fd) => pidfd_send_signal(fd, 0),
+        None => process_exists(target.pid),
     }
 }
 
@@ -694,6 +849,134 @@ mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
     use std::{cell::RefCell, collections::HashMap};
+
+    // ── F1: identity-safe shutdown targets (PRD session-collapse-hardening) ──
+
+    /// Anchors the assumption `session_shutdown_targets` builds on: a PTY
+    /// child is its own kernel session leader (sid == pid). If a spawn-path
+    /// change ever breaks this, the sweep silently degrades to single-child
+    /// mode — this test makes that degradation loud instead.
+    #[test]
+    fn pty_child_is_its_own_session_leader() {
+        let pty = portable_pty::native_pty_system()
+            .openpty(portable_pty::PtySize::default())
+            .expect("openpty");
+        let mut cmd = portable_pty::CommandBuilder::new("sleep");
+        cmd.arg("300");
+        let mut child = pty.slave.spawn_command(cmd).expect("spawn");
+        let pid = child.process_id().expect("pid");
+
+        assert_eq!(
+            process_session_id(pid),
+            Some(pid as i32),
+            "PTY child must be a session leader"
+        );
+
+        let targets = session_shutdown_targets(pid);
+        assert!(
+            targets.iter().any(|t| t.pid() == pid),
+            "sweep must include the child itself"
+        );
+
+        child.kill().ok();
+        child.wait().ok();
+    }
+
+    /// F1-T1 + mismatch yolu: a non-setsid child (plain std::process spawn)
+    /// has sid != pid, so the sweep must pin ONLY the child — and the signal
+    /// must be delivered through the pidfd.
+    #[test]
+    fn shutdown_targets_signal_via_pidfd_and_terminate() {
+        use std::os::unix::process::ExitStatusExt;
+        let mut child = Command::new("sleep")
+            .arg("300")
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id();
+
+        let targets = session_shutdown_targets(pid);
+        assert_eq!(
+            targets.len(),
+            1,
+            "non-leader child must yield exactly the pinned child, no session sweep"
+        );
+        assert_eq!(targets[0].pid(), pid);
+
+        signal_targets(&targets, Signal::Terminate);
+        let status = child.wait().expect("wait");
+        assert_eq!(status.signal(), Some(libc::SIGTERM));
+    }
+
+    /// F1-T2: a handle whose process died (and was reaped) reports dead and
+    /// signalling it is a no-op — never a hit on a recycled pid.
+    #[test]
+    fn dead_target_alive_is_false_and_signal_is_noop() {
+        let mut child = Command::new("sleep")
+            .arg("300")
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id();
+
+        let targets = session_shutdown_targets(pid);
+        assert_eq!(targets.len(), 1);
+        assert!(target_alive(&targets[0]), "child is alive before kill");
+
+        child.kill().expect("kill");
+        child.wait().expect("wait");
+
+        assert!(!target_alive(&targets[0]), "reaped child must read as dead");
+        // Must not panic and must not signal anything else.
+        signal_targets(&targets, Signal::Terminate);
+    }
+
+    /// F1-T4 (ABA çekirdeği): a child that exited and was reaped BEFORE
+    /// collection yields ZERO targets. The pre-fix behavior pushed the stale
+    /// pid into the kill set — exactly the recycled-pid hazard from
+    /// PM-2026-07-27-001. (Theoretical flake: the pid would have to be
+    /// recycled within microseconds across a ~4M pid space to break this.)
+    #[test]
+    fn stale_child_pid_yields_no_targets() {
+        let mut child = Command::new("true")
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("spawn true");
+        let pid = child.id();
+        child.wait().expect("wait");
+
+        let targets = session_shutdown_targets(pid);
+        assert!(
+            targets.is_empty(),
+            "stale (reaped) child pid must produce no shutdown targets"
+        );
+    }
+
+    /// F1-T5: kernel-capability error mapping — ENOSYS keeps the legacy
+    /// pid-based path (old kernels must not lose shutdown signals), ESRCH
+    /// yields nothing (dead child needs none).
+    #[test]
+    fn child_open_failure_mapping_enosys_vs_esrch() {
+        let enosys = std::io::Error::from_raw_os_error(libc::ENOSYS);
+        let esrch = std::io::Error::from_raw_os_error(libc::ESRCH);
+
+        let legacy = targets_after_child_open_failure(std::process::id(), &enosys);
+        assert!(
+            legacy.iter().any(|t| t.pid() == std::process::id()),
+            "ENOSYS must fall back to the legacy pid set"
+        );
+        assert!(
+            legacy
+                .iter()
+                .all(|t| target_alive(t) || t.pid() != std::process::id()),
+            "legacy targets must still be pid-probeable"
+        );
+
+        assert!(
+            targets_after_child_open_failure(999_999_999, &esrch).is_empty(),
+            "ESRCH must yield an empty target set"
+        );
+    }
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();

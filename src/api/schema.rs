@@ -46,7 +46,7 @@ pub enum Method {
     #[serde(rename = "ping")]
     Ping(PingParams),
     #[serde(rename = "server.stop")]
-    ServerStop(EmptyParams),
+    ServerStop(ServerStopParams),
     #[serde(rename = "server.live_handoff")]
     ServerLiveHandoff(ServerLiveHandoffParams),
     #[serde(rename = "server.reload_config")]

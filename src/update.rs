@@ -1372,15 +1372,22 @@ fn reconnect_or_stop_guidance(plan: &RunningServerUpdatePlan) -> String {
     }
 }
 
+/// The update flow's stop request. force: the operator explicitly ran the
+/// update flow, and this path already warned that stopping exits pane
+/// processes — letting the live-agent guard block here would wedge updates
+/// on machines that always have agents running.
+#[cfg(not(windows))]
+fn update_server_stop_method() -> crate::api::schema::Method {
+    crate::api::schema::Method::ServerStop(crate::api::schema::ServerStopParams { force: true })
+}
+
 #[cfg(not(windows))]
 fn stop_server_via_api_at(socket_path: &Path, timeout: Duration) -> Result<(), String> {
-    use crate::api::schema::{EmptyParams, Method};
-
     send_server_update_method_at(
         socket_path,
         timeout,
         "update:server:stop",
-        Method::ServerStop(EmptyParams::default()),
+        update_server_stop_method(),
         "server stop",
     )
 }
@@ -2242,6 +2249,20 @@ mod tests {
         Arc,
     };
     use std::sync::{Mutex, OnceLock};
+
+    /// SG-STOP-5: the update flow must pass the live-agent guard with an
+    /// explicit force, otherwise `herdr update` wedges on any machine that
+    /// always has agents running.
+    #[test]
+    fn update_stop_request_forces_past_the_agent_guard() {
+        let request = crate::api::schema::Request {
+            id: "update:server:stop".into(),
+            method: update_server_stop_method(),
+        };
+        let wire = serde_json::to_string(&request).expect("serialize");
+        assert!(wire.contains("\"server.stop\""), "{wire}");
+        assert!(wire.contains("\"force\":true"), "{wire}");
+    }
     use std::thread;
 
     fn env_lock() -> &'static Mutex<()> {
