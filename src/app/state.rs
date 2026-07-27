@@ -2494,6 +2494,11 @@ client_surfaces! {
     stage: crate::ui::surface_host::StageState,
     }
     broadcast {
+    /// The file browser's own prompts. The directory they act on is still
+    /// session-wide, but the confirmation and the rename field are things a
+    /// person opened, on one screen, with a cursor in them.
+    file_manager_rename: Option<FileManagerRenameState>,
+    file_manager_delete_confirmation: Option<FileManagerDeleteConfirmation>,
     /// Sidebar geometry, which is measured against the display it is drawn
     /// on. Two displays are two different widths, so one width cannot be
     /// right on both, and the collapse a narrow display needs is exactly
