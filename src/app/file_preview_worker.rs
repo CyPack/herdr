@@ -394,8 +394,8 @@ fn lock_state(state: &Mutex<FilePreviewWorkerState>) -> MutexGuard<'_, FilePrevi
 
 impl super::App {
     #[cfg(test)]
-    pub(in crate::app) fn file_preview_worker_generation_for_test(&self) -> u64 {
-        self.file_preview_worker.slot.generation
+    pub(in crate::app) fn file_preview_worker_generation_for_test(&mut self) -> u64 {
+        self.preview_worker().slot.generation
     }
 
     pub(crate) fn sync_file_preview_worker(&mut self) -> bool {
@@ -451,8 +451,8 @@ impl super::App {
             })
         });
 
-        let _ = self.file_preview_worker.sync_target(target);
-        let drained = self.file_preview_worker.drain();
+        let _ = self.preview_worker().sync_target(target);
+        let drained = self.preview_worker().drain();
         let mut changed = false;
         if drained.report_disconnect {
             tracing::warn!("fm: text preview worker stopped; pending preview is unavailable");
@@ -1315,7 +1315,7 @@ mod tests {
         std::fs::write(&path, "fn panic_fixture() {}\n").expect("write panic fixture");
         std::fs::write(&retry_path, "fn retry_fixture() {}\n").expect("write retry fixture");
         let mut app = test_app();
-        app.file_preview_worker = FilePreviewWorker::with_preview_processor(
+        *app.preview_worker() = FilePreviewWorker::with_preview_processor(
             Arc::new(Notify::new()),
             |_path, _source| -> Result<PreparedFilePreview, FilePreviewFailure> {
                 panic!("intentional pending preview processor failure")
@@ -1418,7 +1418,7 @@ mod tests {
             },
         );
         let mut app = test_app();
-        app.file_preview_worker = worker;
+        *app.preview_worker() = worker;
         app.state
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&old_branch)))
             .expect("Files activation");
@@ -1523,7 +1523,7 @@ mod tests {
             },
         );
         let mut app = test_app();
-        app.file_preview_worker = worker;
+        *app.preview_worker() = worker;
         app.state
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
             .expect("Files activation");
@@ -1608,7 +1608,7 @@ mod tests {
         );
         let shared = worker.shared.clone();
         let mut app = test_app();
-        app.file_preview_worker = worker;
+        *app.preview_worker() = worker;
         app.state
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
             .expect("Files activation");

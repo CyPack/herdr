@@ -345,10 +345,10 @@ impl NativeFileManagerWatcher {
 impl super::App {
     #[cfg(test)]
     pub(in crate::app) fn file_manager_watcher_reconcile_snapshot_for_test(
-        &self,
+        &mut self,
         directory: &Path,
     ) -> Option<(u64, u64)> {
-        self.file_manager_watcher.reconcile_snapshot(directory)
+        self.watcher().reconcile_snapshot(directory)
     }
 
     /// The Files instance *this display* is looking at.
@@ -387,7 +387,7 @@ impl super::App {
     ) -> Option<bool> {
         self.state.file_manager.as_ref()?;
         matches!(
-            self.file_manager_io_worker.submit(
+            self.io_worker().submit(
                 crate::app::file_manager_io_worker::FileManagerIoRequest::Refresh(request),
             ),
             crate::app::file_manager_io_worker::FileManagerIoSubmit::Accepted { .. }
@@ -425,11 +425,11 @@ impl super::App {
                 .file_manager_locations
                 .select_cursor(&path, &self.state.file_manager_locations_model);
         }
-        let generation_before = self.file_manager_io_worker.latest_generation_for_test();
+        let generation_before = self.io_worker().latest_generation_for_test();
         let _ = self.sync_file_manager_location_request();
-        let generation_after = self.file_manager_io_worker.latest_generation_for_test();
+        let generation_after = self.io_worker().latest_generation_for_test();
         if generation_after != generation_before {
-            self.file_manager_io_worker.wait_for_result_for_test();
+            self.io_worker().wait_for_result_for_test();
             let _ = self.sync_file_manager_io_results();
         }
         requested
@@ -450,7 +450,7 @@ impl super::App {
         if !self.schedule_file_manager_watcher_at(now) {
             return false;
         }
-        self.file_manager_io_worker.wait_for_result_for_test();
+        self.io_worker().wait_for_result_for_test();
         self.sync_file_manager_io_results()
     }
 
@@ -460,22 +460,19 @@ impl super::App {
                 file_manager.active_trail_directory().map(Path::to_path_buf)
             });
 
-        let watcher_sync = self.file_manager_watcher.sync(target.as_deref(), now);
+        let watcher_sync = self.watcher().sync(target.as_deref(), now);
         if matches!(watcher_sync, FmWatcherSync::Started { .. })
-            && self.file_manager_watcher.mode() == FileManagerWatcherMode::PollingFallback
+            && self.watcher().mode() == FileManagerWatcherMode::PollingFallback
         {
             tracing::warn!(
                 ?target,
-                error = self.file_manager_watcher.last_native_error(),
+                error = self.watcher().last_native_error(),
                 "fm: native filesystem watcher unavailable; using bounded polling fallback"
             );
         }
 
-        let watched_dir = self
-            .file_manager_watcher
-            .watched_dir()
-            .map(Path::to_path_buf);
-        let drained = self.file_manager_watcher.drain();
+        let watched_dir = self.watcher().watched_dir().map(Path::to_path_buf);
+        let drained = self.watcher().drain();
 
         if drained.disconnected {
             tracing::warn!(?watched_dir, "fm: filesystem watcher channel disconnected");
@@ -490,10 +487,10 @@ impl super::App {
             tracing::warn!(?watched_dir, %error, "fm: filesystem watcher runtime error");
         }
 
-        let reconcile_due = self.file_manager_watcher.take_reconcile_due(now);
-        let requested_reconcile = self.file_manager_watcher.take_requested_reconcile();
+        let reconcile_due = self.watcher().take_reconcile_due(now);
+        let requested_reconcile = self.watcher().take_requested_reconcile();
         let owned_operation_burst = self
-            .file_manager_watcher
+            .watcher()
             .owns_drained_operation_burst(&drained.events.paths, now);
         if (!drained.events.refresh || owned_operation_burst)
             && !reconcile_due
@@ -524,7 +521,7 @@ impl super::App {
         else {
             return false;
         };
-        let _ = self.file_manager_io_worker.submit(
+        let _ = self.io_worker().submit(
             crate::app::file_manager_io_worker::FileManagerIoRequest::TrailRefresh {
                 files_generation,
                 source,
@@ -537,11 +534,8 @@ impl super::App {
     }
 
     pub(super) fn record_file_manager_reconcile_applied(&mut self) {
-        self.file_manager_watcher.reconcile_revision = self
-            .file_manager_watcher
-            .reconcile_revision
-            .wrapping_add(1)
-            .max(1);
+        self.watcher().reconcile_revision =
+            self.watcher().reconcile_revision.wrapping_add(1).max(1);
     }
 }
 
@@ -681,17 +675,14 @@ mod tests {
             "one-shot request"
         );
         let _ = app.sync_file_manager_watcher();
-        assert_eq!(
-            app.file_manager_watcher.watched_dir(),
-            Some(
-                app.state
-                    .file_manager
-                    .as_ref()
-                    .expect("open FM")
-                    .cwd
-                    .as_path()
-            )
-        );
+        let expected_dir = app
+            .state
+            .file_manager
+            .as_ref()
+            .expect("open FM")
+            .cwd
+            .clone();
+        assert_eq!(app.watcher().watched_dir(), Some(expected_dir.as_path()));
 
         let before_cwd = app
             .state
@@ -914,7 +905,7 @@ mod tests {
             .expect("Files activation");
         let now = Instant::now();
         assert!(!app.sync_file_manager_watcher_at(now));
-        let watcher_generation = app.file_manager_watcher.generation();
+        let watcher_generation = app.watcher().generation();
 
         app.state.file_manager_clipboard = vec![source];
         assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
@@ -934,7 +925,7 @@ mod tests {
                     .expect("UTF-8 temp path"),
             ))
             .expect("queue matching watcher event");
-        app.file_manager_watcher.receiver = Some(watch_rx);
+        app.watcher().receiver = Some(watch_rx);
 
         let before_generation = app
             .state
@@ -999,7 +990,8 @@ mod tests {
             .expect("Files activation");
         let now = Instant::now();
         assert!(!app.sync_file_manager_watcher_at(now));
-        let watcher_generation = app.file_manager_watcher.generation();
+        let watcher_generation = app.watcher().generation();
+        let reconcile_revision = app.watcher().reconcile_revision;
         let before = app
             .state
             .file_manager
@@ -1008,7 +1000,7 @@ mod tests {
                 (
                     file_manager.directory_generation,
                     file_manager.preview_generation,
-                    app.file_manager_watcher.reconcile_revision,
+                    reconcile_revision,
                 )
             })
             .expect("file manager open");
@@ -1022,9 +1014,10 @@ mod tests {
                 inserted.to_str().expect("UTF-8 inserted temp path"),
             ))
             .expect("queue watcher event");
-        app.file_manager_watcher.receiver = Some(watch_rx);
+        app.watcher().receiver = Some(watch_rx);
 
         assert!(app.sync_file_manager_watcher_at(now));
+        let revision_after = app.watcher().reconcile_revision;
         let refreshed = app.state.file_manager.as_ref().expect("file manager open");
         assert_eq!(
             refreshed.selected().map(|entry| entry.path.as_path()),
@@ -1036,7 +1029,7 @@ mod tests {
         // Bumping here was the blink users saw — every auto-save next door
         // reset the selected picture to Pending (TP-FMW-REFRESH-01).
         assert_eq!(refreshed.preview_generation, before.1);
-        assert_eq!(app.file_manager_watcher.reconcile_revision, before.2 + 1);
+        assert_eq!(revision_after, before.2 + 1);
         assert!(refreshed.entries.iter().any(|entry| entry.path == inserted));
 
         assert!(!app.sync_file_manager_watcher_at(now));
@@ -1045,7 +1038,7 @@ mod tests {
         // Still the sibling-refresh value from above; the idle second sync
         // must not move it either (TP-FMW-REFRESH-01).
         assert_eq!(stable.preview_generation, before.1);
-        assert_eq!(app.file_manager_watcher.reconcile_revision, before.2 + 1);
+        assert_eq!(app.watcher().reconcile_revision, before.2 + 1);
         drop(watch_tx);
     }
 
@@ -1123,7 +1116,7 @@ mod tests {
             .expect("Files activation");
         let now = Instant::now();
         assert!(!app.sync_file_manager_watcher_at(now));
-        let watcher_generation = app.file_manager_watcher.generation();
+        let watcher_generation = app.watcher().generation();
         let before_generations = app
             .state
             .file_manager
@@ -1144,7 +1137,7 @@ mod tests {
                 b.to_str().expect("UTF-8 grouped watcher path"),
             ))
             .expect("queue grouped mtime watcher event");
-        app.file_manager_watcher.receiver = Some(watch_rx);
+        app.watcher().receiver = Some(watch_rx);
 
         assert!(app.sync_file_manager_watcher_at(now));
         let refreshed = app.state.file_manager.as_ref().expect("refreshed FM");
@@ -1217,11 +1210,11 @@ mod tests {
         let now = Instant::now();
         assert!(!app.sync_file_manager_watcher_at(now));
         assert_eq!(
-            app.file_manager_watcher.watched_dir(),
+            app.watcher().watched_dir(),
             Some(child.as_path()),
             "watcher must bind to the active child column"
         );
-        let watcher_generation = app.file_manager_watcher.generation();
+        let watcher_generation = app.watcher().generation();
 
         let inserted = child.join("after.txt");
         std::fs::write(&inserted, b"after").expect("write inserted child entry");
@@ -1232,7 +1225,7 @@ mod tests {
                 inserted.to_str().expect("UTF-8 inserted temp path"),
             ))
             .expect("queue child watcher event");
-        app.file_manager_watcher.receiver = Some(watch_rx);
+        app.watcher().receiver = Some(watch_rx);
 
         assert!(app.sync_file_manager_watcher_at(now));
         let refreshed = app.state.file_manager.as_ref().expect("file manager open");
@@ -1344,7 +1337,7 @@ mod tests {
             .expect("Files activation");
         let now = Instant::now();
         assert!(!app.sync_file_manager_watcher_at(now));
-        let watcher_generation = app.file_manager_watcher.generation();
+        let watcher_generation = app.watcher().generation();
         app.state.file_manager_clipboard = vec![source];
         assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
         published_rx
@@ -1367,7 +1360,7 @@ mod tests {
                     .expect("UTF-8 temp path"),
             ))
             .expect("queue post-publish watcher event");
-        app.file_manager_watcher.receiver = Some(watch_rx);
+        app.watcher().receiver = Some(watch_rx);
         assert!(app.sync_file_manager_watcher_at(now));
 
         release_tx.send(()).expect("release worker completion");
@@ -1414,7 +1407,7 @@ mod tests {
             .expect("Files activation");
         let now = Instant::now();
         assert!(!app.sync_file_manager_watcher_at(now));
-        let watcher_generation = app.file_manager_watcher.generation();
+        let watcher_generation = app.watcher().generation();
         app.state.file_manager_clipboard = vec![source];
         assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -1442,7 +1435,7 @@ mod tests {
                     .expect("UTF-8 temp path"),
             ))
             .expect("queue delayed own-operation event");
-        app.file_manager_watcher.receiver = Some(watch_rx);
+        app.watcher().receiver = Some(watch_rx);
         let _ = app.sync_file_manager_watcher_at(now);
 
         let file_manager = app.state.file_manager.as_ref().expect("file manager open");
@@ -1492,7 +1485,7 @@ mod tests {
             .expect("Files activation");
         let now = Instant::now();
         assert!(!app.sync_file_manager_watcher_at(now));
-        let prior_watcher_generation = app.file_manager_watcher.generation();
+        let prior_watcher_generation = app.watcher().generation();
         app.state.file_manager_clipboard = vec![source];
         assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Paste));
         started_rx
@@ -1505,7 +1498,7 @@ mod tests {
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&destination)))
             .expect("Files activation");
         assert!(!app.sync_file_manager_watcher_at(now));
-        assert!(app.file_manager_watcher.generation() > prior_watcher_generation);
+        assert!(app.watcher().generation() > prior_watcher_generation);
         let reopened_generation = app
             .state
             .file_manager
@@ -1557,7 +1550,7 @@ mod tests {
             .expect("Files activation");
         let now = Instant::now();
         assert!(!app.sync_file_manager_watcher_at(now));
-        app.file_manager_watcher.mode = FileManagerWatcherMode::PollingFallback;
+        app.watcher().mode = FileManagerWatcherMode::PollingFallback;
         let before_generation = app
             .state
             .file_manager
@@ -1582,7 +1575,7 @@ mod tests {
             .iter()
             .any(|entry| entry.name == "payload.txt"));
         assert_eq!(
-            app.file_manager_watcher.mode(),
+            app.watcher().mode(),
             FileManagerWatcherMode::PollingFallback
         );
     }
@@ -1613,7 +1606,7 @@ mod tests {
             .expect("Files activation");
         let now = Instant::now();
         assert!(!app.sync_file_manager_watcher_at(now));
-        let watcher_generation = app.file_manager_watcher.generation();
+        let watcher_generation = app.watcher().generation();
         std::fs::rename(&old_path, &new_path).expect("rename selected path");
         let (watch_tx, watch_rx) = sync_channel(1);
         watch_tx
@@ -1622,7 +1615,7 @@ mod tests {
                 new_path.to_str().expect("UTF-8 renamed temp path"),
             ))
             .expect("queue rename watcher event");
-        app.file_manager_watcher.receiver = Some(watch_rx);
+        app.watcher().receiver = Some(watch_rx);
 
         assert!(app.sync_file_manager_watcher_at(now));
         let file_manager = app.state.file_manager.as_ref().expect("file manager open");
@@ -1648,21 +1641,18 @@ mod tests {
         let mut app = test_app();
 
         assert!(!app.sync_file_manager_watcher());
-        assert!(!app.file_manager_watcher.has_backend());
+        assert!(!app.watcher().has_backend());
 
         app.state
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&child)))
             .expect("Files activation");
         assert!(!app.sync_file_manager_watcher());
-        assert_eq!(
-            app.file_manager_watcher.watched_dir(),
-            Some(child.as_path())
-        );
-        assert!(app.file_manager_watcher.has_backend());
-        let child_generation = app.file_manager_watcher.generation();
+        assert_eq!(app.watcher().watched_dir(), Some(child.as_path()));
+        assert!(app.watcher().has_backend());
+        let child_generation = app.watcher().generation();
 
         assert!(!app.sync_file_manager_watcher());
-        assert_eq!(app.file_manager_watcher.generation(), child_generation);
+        assert_eq!(app.watcher().generation(), child_generation);
 
         app.state
             .file_manager
@@ -1688,12 +1678,12 @@ mod tests {
         );
         assert!(!app.sync_file_manager_watcher());
         assert_eq!(
-            app.file_manager_watcher.watched_dir(),
+            app.watcher().watched_dir(),
             Some(tree.root.as_path()),
             "watcher follows the explicit parent-column focus"
         );
-        assert!(app.file_manager_watcher.has_backend());
-        let parent_generation = app.file_manager_watcher.generation();
+        assert!(app.watcher().has_backend());
+        let parent_generation = app.watcher().generation();
         assert_ne!(
             parent_generation, child_generation,
             "the changed owner directory rebinds exactly once"
@@ -1704,15 +1694,15 @@ mod tests {
             "unchanged parent focus keeps the active Trail watcher stable"
         );
         assert_eq!(
-            app.file_manager_watcher.generation(),
+            app.watcher().generation(),
             parent_generation,
             "no second persistent parent watcher may be created"
         );
 
         app.state.file_manager = None;
         assert!(!app.sync_file_manager_watcher());
-        assert_eq!(app.file_manager_watcher.watched_dir(), None);
-        assert!(!app.file_manager_watcher.has_backend());
+        assert_eq!(app.watcher().watched_dir(), None);
+        assert!(!app.watcher().has_backend());
     }
 
     #[test]
@@ -1725,22 +1715,19 @@ mod tests {
             .expect("Files activation");
 
         assert!(!app.sync_file_manager_watcher());
+        assert_eq!(app.watcher().watched_dir(), Some(missing.as_path()));
+        assert!(app.watcher().has_backend());
         assert_eq!(
-            app.file_manager_watcher.watched_dir(),
-            Some(missing.as_path())
-        );
-        assert!(app.file_manager_watcher.has_backend());
-        assert_eq!(
-            app.file_manager_watcher.mode(),
+            app.watcher().mode(),
             FileManagerWatcherMode::PollingFallback
         );
-        let failed_generation = app.file_manager_watcher.generation();
+        let failed_generation = app.watcher().generation();
 
         assert!(!app.sync_file_manager_watcher());
-        assert_eq!(app.file_manager_watcher.generation(), failed_generation);
-        assert!(app.file_manager_watcher.has_backend());
+        assert_eq!(app.watcher().generation(), failed_generation);
+        assert!(app.watcher().has_backend());
         assert_eq!(
-            app.file_manager_watcher.mode(),
+            app.watcher().mode(),
             FileManagerWatcherMode::PollingFallback
         );
     }
@@ -1788,14 +1775,14 @@ mod tests {
 
         assert!(!app.sync_file_manager_watcher_at(started_at));
         assert_eq!(
-            app.file_manager_watcher.mode(),
+            app.watcher().mode(),
             FileManagerWatcherMode::PollingFallback
         );
         std::fs::create_dir_all(&missing).expect("create previously missing directory");
         std::fs::write(missing.join("arrived.txt"), b"arrived").expect("write fallback file");
 
         let first_deadline = app
-            .file_manager_watcher
+            .watcher()
             .next_reconcile_at()
             .expect("fallback deadline");
         assert!(app.sync_file_manager_watcher_at(first_deadline));
@@ -1809,7 +1796,7 @@ mod tests {
             .any(|entry| entry.name == "arrived.txt"));
 
         let unchanged_deadline = app
-            .file_manager_watcher
+            .watcher()
             .next_reconcile_at()
             .expect("next fallback deadline");
         assert!(
@@ -1866,7 +1853,7 @@ mod tests {
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&td.root)))
             .expect("Files activation");
         assert!(!app.sync_file_manager_watcher());
-        assert!(app.file_manager_watcher.has_backend());
+        assert!(app.watcher().has_backend());
 
         std::fs::write(td.root.join("old.txt"), b"old").expect("create watched file");
         wait_for_file_manager_state(&mut app, "created file", |state| {

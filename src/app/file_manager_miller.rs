@@ -76,7 +76,7 @@ impl crate::app::App {
             }
         };
         Some(matches!(
-            self.file_manager_io_worker.submit(request),
+            self.io_worker().submit(request),
             crate::app::file_manager_io_worker::FileManagerIoSubmit::Accepted { .. }
         ))
     }
@@ -89,7 +89,7 @@ impl crate::app::App {
             return false;
         };
         matches!(
-            self.file_manager_io_worker.submit(
+            self.io_worker().submit(
                 crate::app::file_manager_io_worker::FileManagerIoRequest::Navigate {
                     files_generation,
                     request,

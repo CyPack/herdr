@@ -29,6 +29,7 @@ mod file_rename;
 mod ids;
 mod image_preview_worker;
 mod input;
+mod per_display;
 mod popup;
 mod preview;
 mod projects;
@@ -122,8 +123,8 @@ pub struct App {
     pub(crate) last_focus: Option<(usize, crate::layout::PaneId)>,
     pub(crate) no_session: bool,
     pub(crate) input_rx: Option<mpsc::Receiver<crate::raw_input::RawInputEvent>>,
-    file_manager_watcher: file_manager_watcher::NativeFileManagerWatcher,
-    file_manager_io_worker: file_manager_io_worker::FileManagerIoWorker,
+    file_manager_watcher: per_display::PerDisplay<file_manager_watcher::NativeFileManagerWatcher>,
+    file_manager_io_worker: per_display::PerDisplay<file_manager_io_worker::FileManagerIoWorker>,
     file_manager_vertical_wheel_gate: input::FileManagerVerticalWheelBurstGate,
     /// One-event override for the legacy void mouse dispatcher. Accepted FM
     /// wheel input repaints; a coalesced host duplicate explicitly declines.
@@ -132,8 +133,8 @@ pub struct App {
     file_operation_worker: file_operation_worker::FileOperationWorker,
     file_operation_reconcile_baseline:
         Option<file_operation_worker::FileOperationReconcileBaseline>,
-    file_preview_worker: file_preview_worker::FilePreviewWorker,
-    image_preview_worker: image_preview_worker::ImagePreviewWorker,
+    file_preview_worker: per_display::PerDisplay<file_preview_worker::FilePreviewWorker>,
+    image_preview_worker: per_display::PerDisplay<image_preview_worker::ImagePreviewWorker>,
     /// Cell size the image preview decodes against.
     ///
     /// Written by whichever loop owns presentation: the monolithic render loop
@@ -423,6 +424,72 @@ fn resolve_effective_theme(
 }
 
 impl App {
+    /// Drops the workers a departed display was being served by.
+    ///
+    /// TP-SUR-FM-03
+    pub(crate) fn forget_display_workers(&mut self, client: state::ClientId) {
+        self.file_manager_watcher.forget(client);
+        self.file_manager_io_worker.forget(client);
+        self.file_preview_worker.forget(client);
+        self.image_preview_worker.forget(client);
+    }
+
+    /// Whose worker to use.
+    ///
+    /// The same rule the owned surfaces follow: with one display, the session
+    /// and that display are one thing and share one worker. Keying on the
+    /// display being served instead would start a second, idle worker for
+    /// anything waited on outside a window — and block on it forever.
+    ///
+    /// TP-SUR-FM-03
+    fn worker_key(&self) -> Option<state::ClientId> {
+        if self.state.has_several_displays() {
+            self.state.viewer()
+        } else {
+            // One display, or none: the session and that display are the same
+            // thing, so they share one worker. Splitting here instead would
+            // move the key the moment the first display is served and strand
+            // whatever was already in flight in a worker nobody asks again.
+            None
+        }
+    }
+
+    /// The file watcher serving the display being served.
+    fn watcher(&mut self) -> &mut file_manager_watcher::NativeFileManagerWatcher {
+        let notify = self.render_notify.clone();
+        let viewer = self.worker_key();
+        self.file_manager_watcher.get_or_start(viewer, || {
+            file_manager_watcher::NativeFileManagerWatcher::new(notify)
+        })
+    }
+
+    /// The filesystem reader serving the display being served.
+    fn io_worker(&mut self) -> &mut file_manager_io_worker::FileManagerIoWorker {
+        let notify = self.render_notify.clone();
+        let viewer = self.worker_key();
+        self.file_manager_io_worker.get_or_start(viewer, || {
+            file_manager_io_worker::FileManagerIoWorker::new(notify)
+        })
+    }
+
+    /// The text preview worker serving the display being served.
+    fn preview_worker(&mut self) -> &mut file_preview_worker::FilePreviewWorker {
+        let notify = self.render_notify.clone();
+        let viewer = self.worker_key();
+        self.file_preview_worker.get_or_start(viewer, || {
+            file_preview_worker::FilePreviewWorker::new(notify)
+        })
+    }
+
+    /// The image preview worker serving the display being served.
+    fn image_worker(&mut self) -> &mut image_preview_worker::ImagePreviewWorker {
+        let notify = self.render_notify.clone();
+        let viewer = self.worker_key();
+        self.image_preview_worker.get_or_start(viewer, || {
+            image_preview_worker::ImagePreviewWorker::new(notify)
+        })
+    }
+
     pub fn new(
         config: &Config,
         no_session: bool,
@@ -944,12 +1011,8 @@ impl App {
             last_focus,
             no_session,
             input_rx: None,
-            file_manager_watcher: file_manager_watcher::NativeFileManagerWatcher::new(
-                render_notify.clone(),
-            ),
-            file_manager_io_worker: file_manager_io_worker::FileManagerIoWorker::new(
-                render_notify.clone(),
-            ),
+            file_manager_watcher: per_display::PerDisplay::default(),
+            file_manager_io_worker: per_display::PerDisplay::default(),
             file_manager_vertical_wheel_gate: input::FileManagerVerticalWheelBurstGate::default(),
             file_manager_mouse_render_override: None,
             file_manager_key_render_override: None,
@@ -957,10 +1020,8 @@ impl App {
                 render_notify.clone(),
             ),
             file_operation_reconcile_baseline: None,
-            file_preview_worker: file_preview_worker::FilePreviewWorker::new(render_notify.clone()),
-            image_preview_worker: image_preview_worker::ImagePreviewWorker::new(
-                render_notify.clone(),
-            ),
+            file_preview_worker: per_display::PerDisplay::default(),
+            image_preview_worker: per_display::PerDisplay::default(),
             image_preview_cell_size: crate::kitty_graphics::HostCellSize::default(),
             last_terminal_size: terminal::size().ok(),
             render_notify,

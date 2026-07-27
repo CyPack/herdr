@@ -314,8 +314,8 @@ fn lock_image_state(
 
 impl super::App {
     #[cfg(test)]
-    pub(in crate::app) fn image_preview_worker_generation_for_test(&self) -> u64 {
-        self.image_preview_worker.slot.generation
+    pub(in crate::app) fn image_preview_worker_generation_for_test(&mut self) -> u64 {
+        self.image_worker().slot.generation
     }
 
     /// Drive the bounded image preview worker one step.
@@ -355,7 +355,7 @@ impl super::App {
             }
         });
 
-        match self.image_preview_worker.sync_target(target.clone()) {
+        match self.image_worker().sync_target(target.clone()) {
             ImagePreviewSync::Started { .. } => {
                 return target.is_some_and(|key| {
                     crate::render_prof::event("fm.image_target.refresh");
@@ -368,7 +368,7 @@ impl super::App {
             ImagePreviewSync::Unchanged => {}
         }
 
-        let drained = self.image_preview_worker.drain();
+        let drained = self.image_worker().drain();
         let mut changed = false;
         if drained.disconnected {
             tracing::warn!("fm: image preview worker stopped; using explicit failure fallback");
@@ -797,11 +797,11 @@ mod tests {
         }
     }
 
-    fn wait_for_worker_result_generation(app: &crate::app::App, generation: u64) {
+    fn wait_for_worker_result_generation(app: &mut crate::app::App, generation: u64) {
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
             let has_result = {
-                let (state, _) = &*app.image_preview_worker.shared;
+                let (state, _) = &*app.image_worker().shared;
                 lock_image_state(state)
                     .result
                     .as_ref()
@@ -1095,7 +1095,7 @@ mod tests {
             "initial committed geometry starts one target"
         );
         let (original_target, _, _) = wait_for_ready(&mut app);
-        let generation_before = app.image_preview_worker.slot.generation;
+        let generation_before = app.image_worker().slot.generation;
 
         app.image_preview_cell_size = HostCellSize {
             width_px: 4,
@@ -1113,7 +1113,7 @@ mod tests {
             "the first committed frame refreshes the target exactly once"
         );
         assert_eq!(
-            app.image_preview_worker.slot.generation,
+            app.image_worker().slot.generation,
             generation_before + 1,
             "one committed geometry change requests one target generation"
         );
@@ -1123,7 +1123,7 @@ mod tests {
             "host-cell geometry changes the Trail panel pixel target"
         );
         assert_eq!(
-            app.image_preview_worker.slot.generation,
+            app.image_worker().slot.generation,
             generation_before + 1,
             "completion cannot create another target generation"
         );
@@ -1171,7 +1171,7 @@ mod tests {
 
         let (started_tx, started_rx) = mpsc::channel::<Option<usize>>();
         let (release_tx, release_rx) = mpsc::channel::<()>();
-        app.image_preview_worker = ImagePreviewWorker::with_processor(
+        *app.image_worker() = ImagePreviewWorker::with_processor(
             app.render_notify.clone(),
             move |_path, _target, page| {
                 started_tx
@@ -1214,7 +1214,7 @@ mod tests {
             Some(0)
         );
         release_tx.send(()).expect("finish the first page");
-        wait_for_worker_result_generation(&app, 1);
+        wait_for_worker_result_generation(&mut app, 1);
         assert!(app.sync_image_preview_worker(), "the first page is ready");
         assert_eq!(current_pdf_preview(&app).total_pages, Some(10));
 
@@ -1272,7 +1272,7 @@ mod tests {
             Some(0)
         );
         release_tx.send(()).expect("finish the first page");
-        wait_for_worker_result_generation(&app, 1);
+        wait_for_worker_result_generation(&mut app, 1);
         assert!(app.sync_image_preview_worker(), "the first page is ready");
 
         // Turn to page 1 and queue its render, then answer with the page-0
@@ -1341,7 +1341,7 @@ mod tests {
 
         let (started_tx, started_rx) = mpsc::channel::<ImagePreviewTarget>();
         let (release_tx, release_rx) = mpsc::channel::<()>();
-        app.image_preview_worker = ImagePreviewWorker::with_processor(
+        *app.image_worker() = ImagePreviewWorker::with_processor(
             app.render_notify.clone(),
             move |_path, target, _page| {
                 started_tx
@@ -1380,10 +1380,10 @@ mod tests {
             app.sync_image_preview_worker(),
             "new host-cell geometry immediately retires generation one"
         );
-        assert_eq!(app.image_preview_worker.slot.generation, 2);
+        assert_eq!(app.image_worker().slot.generation, 2);
 
         release_tx.send(()).expect("finish the prior-geometry job");
-        wait_for_worker_result_generation(&app, 1);
+        wait_for_worker_result_generation(&mut app, 1);
         let committed_target = started_rx
             .recv_timeout(Duration::from_secs(2))
             .expect("replacement image job starts");
@@ -1401,7 +1401,7 @@ mod tests {
         );
 
         release_tx.send(()).expect("finish the replacement job");
-        wait_for_worker_result_generation(&app, 2);
+        wait_for_worker_result_generation(&mut app, 2);
         assert!(
             app.sync_image_preview_worker(),
             "only the committed generation may become Ready"

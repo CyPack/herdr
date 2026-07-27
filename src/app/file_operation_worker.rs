@@ -670,14 +670,14 @@ impl crate::app::App {
         }
         let had_reconcile_baseline = reconcile_baseline.is_some();
         let watcher_already_reconciled = reconcile_baseline.as_ref().is_some_and(|baseline| {
-            self.file_manager_watcher.reconciled_since(
+            self.watcher().reconciled_since(
                 &destination_directory,
                 baseline.watcher_generation,
                 baseline.watcher_revision,
             )
         });
         let owned_by_watcher = reconcile_baseline.as_ref().is_some_and(|baseline| {
-            self.file_manager_watcher.own_operation_reconcile(
+            self.watcher().own_operation_reconcile(
                 &destination_directory,
                 baseline.watcher_generation,
                 baseline.affected_paths.clone(),
@@ -691,9 +691,7 @@ impl crate::app::App {
                 .file_manager
                 .as_ref()
                 .is_some_and(|file_manager| file_manager.cwd == destination_directory)
-                && self
-                    .file_manager_watcher
-                    .request_reconcile(&destination_directory);
+                && self.watcher().request_reconcile(&destination_directory);
         if !reconcile_with_watcher {
             let _ = self.refresh_file_manager_after_operation(&destination_directory);
         }
@@ -708,7 +706,7 @@ impl crate::app::App {
         affected_paths: BTreeSet<std::path::PathBuf>,
     ) {
         self.file_operation_reconcile_baseline = self
-            .file_manager_watcher
+            .watcher()
             .reconcile_snapshot(destination_directory)
             .map(
                 |(watcher_generation, watcher_revision)| FileOperationReconcileBaseline {

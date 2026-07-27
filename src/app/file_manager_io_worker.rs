@@ -702,7 +702,7 @@ impl super::App {
             crate::render_prof::event(ROOT_FAILED);
             true
         });
-        self.file_manager_io_worker = FileManagerIoWorker::new(self.render_notify.clone());
+        *self.io_worker() = FileManagerIoWorker::new(self.render_notify.clone());
         tracing::error!("fm: bounded file-manager I/O worker disconnected; lane replaced");
         changed
     }
@@ -732,13 +732,13 @@ impl super::App {
 
     #[cfg(test)]
     pub(crate) fn complete_file_manager_io_for_test(&mut self) -> bool {
-        self.file_manager_io_worker.wait_for_result_for_test();
+        self.io_worker().wait_for_result_for_test();
         self.sync_file_manager_io_results()
     }
 
     #[cfg(test)]
-    pub(crate) fn wait_file_manager_io_for_test(&self) {
-        self.file_manager_io_worker.wait_for_result_for_test();
+    pub(crate) fn wait_file_manager_io_for_test(&mut self) {
+        self.io_worker().wait_for_result_for_test();
     }
 
     /// Consume one exact locations intent without performing filesystem work
@@ -793,7 +793,7 @@ impl super::App {
             target_root: path.clone(),
             show_hidden,
         });
-        match self.file_manager_io_worker.submit(request) {
+        match self.io_worker().submit(request) {
             FileManagerIoSubmit::Accepted { generation, .. } => {
                 self.state.file_manager_locations.begin_load(
                     path,
@@ -818,7 +818,7 @@ impl super::App {
     /// Drain at most one bounded result and apply it only while every captured
     /// identity remains current. No filesystem access occurs in this method.
     pub(crate) fn sync_file_manager_io_results(&mut self) -> bool {
-        let drain = self.file_manager_io_worker.drain();
+        let drain = self.io_worker().drain();
         if drain.disconnected {
             if drain
                 .current
@@ -1468,7 +1468,7 @@ mod tests {
         let worker_gate = gate.clone();
         let blocked_first = paths[0].clone();
         let (started_tx, started_rx) = std::sync::mpsc::channel();
-        replaced_app.file_manager_io_worker =
+        *replaced_app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 if request.identity().target_path() == Some(blocked_first.as_path()) {
                     started_tx.send(()).unwrap();
@@ -1487,9 +1487,7 @@ mod tests {
                 stage_location(&mut replaced_app, &paths[2], FollowPreview);
                 let third_changed = replaced_app.sync_file_manager_location_request();
                 gate.release();
-                replaced_app
-                    .file_manager_io_worker
-                    .wait_for_result_for_test();
+                replaced_app.io_worker().wait_for_result_for_test();
                 let applied = replaced_app.sync_file_manager_io_results();
                 (first_changed, second_changed, third_changed, applied)
             });
@@ -1511,7 +1509,7 @@ mod tests {
 
         let failed = td.root.join("profile-missing");
         let mut failed_app = flf_app(&initial, std::slice::from_ref(&failed));
-        failed_app.file_manager_io_worker =
+        *failed_app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 FileManagerIoOutcome::Root(Err(FmRootNavigationError::Missing))
                     .for_request(&request)
@@ -1519,7 +1517,7 @@ mod tests {
         stage_location(&mut failed_app, &failed, FollowPreview);
         let (failed_changed, failed_profile) = crate::render_prof::observe_for_test(|| {
             assert!(failed_app.sync_file_manager_location_request());
-            failed_app.file_manager_io_worker.wait_for_result_for_test();
+            failed_app.io_worker().wait_for_result_for_test();
             failed_app.sync_file_manager_io_results()
         });
         assert!(failed_changed);
@@ -1538,7 +1536,7 @@ mod tests {
         stage_location(&mut stale_app, &stale, FollowPreview);
         let (stale_applied, stale_profile) = crate::render_prof::observe_for_test(|| {
             assert!(stale_app.sync_file_manager_location_request());
-            stale_app.file_manager_io_worker.wait_for_result_for_test();
+            stale_app.io_worker().wait_for_result_for_test();
             stale_app.state.file_manager_locations.focus_trail();
             stale_app.sync_file_manager_io_results()
         });
@@ -1711,7 +1709,7 @@ mod tests {
         let worker_blocked_processed = blocked_processed.clone();
         let worker_blocked_first = blocked_first.clone();
         let (blocked_started_tx, blocked_started_rx) = std::sync::mpsc::channel();
-        blocked_app.file_manager_io_worker =
+        *blocked_app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 let target = request.identity().target_path().unwrap().to_path_buf();
                 worker_blocked_processed
@@ -1750,9 +1748,7 @@ mod tests {
         let hold_elapsed = hold_started.elapsed();
         let settle_started = Instant::now();
         drop(blocked_release);
-        blocked_app
-            .file_manager_io_worker
-            .wait_for_result_for_test();
+        blocked_app.io_worker().wait_for_result_for_test();
         let final_applied = blocked_app.sync_file_manager_io_results();
         let settle_us = settle_started.elapsed().as_micros();
         let blocked_processed = blocked_processed.lock().unwrap().clone();
@@ -1854,7 +1850,7 @@ mod tests {
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
         let (started_tx, started_rx) = std::sync::mpsc::channel();
-        app.file_manager_io_worker =
+        *app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 started_tx.send(()).unwrap();
                 worker_gate.wait();
@@ -1866,7 +1862,7 @@ mod tests {
         let blocked_focus = app.state.file_manager_locations.focus;
         let blocked_cwd = app.state.file_manager.as_ref().unwrap().cwd.clone();
         gate.release();
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
         assert!(app.sync_file_manager_io_results());
 
         assert_eq!(blocked_focus, crate::app::FileManagerLocationsFocus::Rail);
@@ -1893,7 +1889,7 @@ mod tests {
         let processed = Arc::new(Mutex::new(Vec::new()));
         let worker_processed = processed.clone();
         let (started_tx, started_rx) = std::sync::mpsc::channel();
-        app.file_manager_io_worker =
+        *app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 let path = request.identity().target_path().unwrap().to_path_buf();
                 worker_processed.lock().unwrap().push(path);
@@ -1907,10 +1903,10 @@ mod tests {
         started_rx.recv().unwrap();
         stage_location(&mut app, &target, EnterTrail);
         let promotion_changed = app.sync_file_manager_location_request();
-        let generation_after_promotion = app.file_manager_io_worker.latest_generation;
+        let generation_after_promotion = app.io_worker().latest_generation;
 
         gate.release();
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
         let _ = app.sync_file_manager_io_results();
 
         assert!(
@@ -1935,7 +1931,7 @@ mod tests {
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
         let (started_tx, started_rx) = std::sync::mpsc::channel();
-        app.file_manager_io_worker =
+        *app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 started_tx.send(()).unwrap();
                 worker_gate.wait();
@@ -1947,12 +1943,12 @@ mod tests {
         started_rx.recv().unwrap();
         stage_location(&mut app, &second, FollowPreview);
         gate.release();
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
 
         assert!(!app.sync_file_manager_io_results());
         assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, initial);
         assert!(app.sync_file_manager_location_request());
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
         assert!(app.sync_file_manager_io_results());
         assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, second);
     }
@@ -1974,7 +1970,7 @@ mod tests {
         let worker_processed = processed.clone();
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let blocked_a = a.clone();
-        app.file_manager_io_worker =
+        *app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 let path = request.identity().target_path().unwrap().to_path_buf();
                 worker_processed.lock().unwrap().push(path.clone());
@@ -1993,7 +1989,7 @@ mod tests {
         stage_location(&mut app, &a, FollowPreview);
         assert!(app.sync_file_manager_location_request());
         gate.release();
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
         assert!(app.sync_file_manager_io_results());
 
         assert_eq!(
@@ -2026,7 +2022,7 @@ mod tests {
         let processed = Arc::new(Mutex::new(Vec::new()));
         let worker_processed = processed.clone();
         let (started_tx, started_rx) = std::sync::mpsc::channel();
-        app.file_manager_io_worker =
+        *app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 let target = request.identity().target_path().unwrap().to_path_buf();
                 worker_processed.lock().unwrap().push(target.clone());
@@ -2045,7 +2041,7 @@ mod tests {
             assert!(app.sync_file_manager_location_request());
         }
         gate.release();
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
         assert!(app.sync_file_manager_io_results());
 
         assert_eq!(
@@ -2075,7 +2071,7 @@ mod tests {
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
         let (started_tx, started_rx) = std::sync::mpsc::channel();
-        app.file_manager_io_worker =
+        *app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 started_tx.send(()).unwrap();
                 worker_gate.wait();
@@ -2116,7 +2112,7 @@ mod tests {
         let worker_gate = gate.clone();
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let blocked_first = first.clone();
-        app.file_manager_io_worker =
+        *app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 if request.identity().target_path() == Some(blocked_first.as_path()) {
                     started_tx.send(()).unwrap();
@@ -2131,7 +2127,7 @@ mod tests {
         stage_location(&mut app, &latest, FollowPreview);
         assert!(app.sync_file_manager_location_request());
         gate.release();
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
         assert!(app.sync_file_manager_io_results());
 
         assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, latest);
@@ -2167,7 +2163,7 @@ mod tests {
         app.state.file_manager_locations_model = locations_model(std::slice::from_ref(&td.root));
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let worker_calls = calls.clone();
-        app.file_manager_io_worker =
+        *app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 worker_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 process_request(request)
@@ -2210,7 +2206,7 @@ mod tests {
             &initial,
             &[missing.clone(), changed.clone(), permission.clone()],
         );
-        app.file_manager_io_worker =
+        *app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 let error = match request.identity().target_path().and_then(Path::file_name) {
                     Some(name) if name == "failure-missing" => FmRootNavigationError::Missing,
@@ -2223,7 +2219,7 @@ mod tests {
         for path in [&missing, &changed, &permission] {
             stage_location(&mut app, path, FollowPreview);
             assert!(app.sync_file_manager_location_request());
-            app.file_manager_io_worker.wait_for_result_for_test();
+            app.io_worker().wait_for_result_for_test();
             assert!(app.sync_file_manager_io_results());
             assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, initial);
             assert!(app.state.file_manager_locations.failure.is_some());
@@ -2247,7 +2243,7 @@ mod tests {
         let mut app = flf_app(&initial, &[panic_target.clone(), recovered.clone()]);
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let worker_calls = calls.clone();
-        app.file_manager_io_worker =
+        *app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 if worker_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
                     panic!("injected FLF root panic");
@@ -2257,14 +2253,14 @@ mod tests {
 
         stage_location(&mut app, &panic_target, FollowPreview);
         assert!(app.sync_file_manager_location_request());
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
         assert!(app.sync_file_manager_io_results());
         assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, initial);
         assert!(app.state.file_manager_locations.failure.is_some());
 
         stage_location(&mut app, &recovered, FollowPreview);
         assert!(app.sync_file_manager_location_request());
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
         assert!(app.sync_file_manager_io_results());
         assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, recovered);
     }
@@ -2287,8 +2283,8 @@ mod tests {
 
         stage_location(&mut app, &discarded, FollowPreview);
         assert!(app.sync_file_manager_location_request());
-        app.file_manager_io_worker.wait_for_result_for_test();
-        app.file_manager_io_worker.disconnect_for_test();
+        app.io_worker().wait_for_result_for_test();
+        app.io_worker().disconnect_for_test();
         assert!(app.sync_file_manager_io_results());
         assert_eq!(
             app.state.file_manager.as_ref().unwrap().cwd,
@@ -2303,11 +2299,11 @@ mod tests {
 
         stage_location(&mut app, &recovered, FollowPreview);
         assert!(app.sync_file_manager_location_request());
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
         assert!(app.sync_file_manager_io_results());
         assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, recovered);
 
-        app.file_manager_io_worker.disconnect_for_test();
+        app.io_worker().disconnect_for_test();
         stage_location(&mut app, &submit_dead, FollowPreview);
         assert!(app.sync_file_manager_location_request());
         assert!(app.state.file_manager_locations.failure.is_some());
@@ -2315,7 +2311,7 @@ mod tests {
 
         stage_location(&mut app, &submit_dead, FollowPreview);
         assert!(app.sync_file_manager_location_request());
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
         assert!(app.sync_file_manager_io_results());
         assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, submit_dead);
     }
@@ -2333,7 +2329,7 @@ mod tests {
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
         let (started_tx, started_rx) = std::sync::mpsc::channel();
-        app.file_manager_io_worker =
+        *app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 started_tx.send(()).unwrap();
                 worker_gate.wait();
@@ -2345,7 +2341,7 @@ mod tests {
         started_rx.recv().unwrap();
         app.state.file_manager_locations.focus_trail();
         gate.release();
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
 
         assert!(!app.sync_file_manager_io_results());
         assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, initial);
@@ -2365,7 +2361,7 @@ mod tests {
         stage_location(&mut app, &empty, FollowPreview);
 
         assert!(app.sync_file_manager_location_request());
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
         assert!(app.sync_file_manager_io_results());
         let file_manager = app.state.file_manager.as_ref().unwrap();
         assert_eq!(file_manager.cwd, empty);
@@ -2388,7 +2384,7 @@ mod tests {
         stage_location(&mut app, &target, EnterTrail);
 
         assert!(app.sync_file_manager_location_request());
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
         assert!(app.sync_file_manager_io_results());
 
         assert_eq!(
@@ -2417,7 +2413,7 @@ mod tests {
         stage_location(&mut app, &empty, EnterTrail);
 
         assert!(app.sync_file_manager_location_request());
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
         assert!(app.sync_file_manager_io_results());
 
         assert_eq!(
@@ -2447,7 +2443,7 @@ mod tests {
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
         let (started_tx, started_rx) = std::sync::mpsc::channel();
-        app.file_manager_io_worker =
+        *app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 started_tx.send(()).unwrap();
                 worker_gate.wait();
@@ -2463,7 +2459,7 @@ mod tests {
         );
 
         gate.release();
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
         assert!(app.sync_file_manager_io_results());
         assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, target);
     }
@@ -2484,7 +2480,7 @@ mod tests {
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
         let (started_tx, started_rx) = std::sync::mpsc::channel();
-        app.file_manager_io_worker =
+        *app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 started_tx.send(()).unwrap();
                 worker_gate.wait();
@@ -2498,7 +2494,7 @@ mod tests {
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&reopened)))
             .unwrap();
         gate.release();
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
         assert!(!app.sync_file_manager_io_results());
         assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, reopened);
     }
@@ -2539,14 +2535,14 @@ mod tests {
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
         let (started_tx, started_rx) = std::sync::mpsc::channel();
-        app.file_manager_io_worker =
+        *app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 started_tx.send(()).unwrap();
                 worker_gate.wait();
                 process_request(request)
             });
         assert!(matches!(
-            app.file_manager_io_worker.submit(request),
+            app.io_worker().submit(request),
             FileManagerIoSubmit::Accepted { .. }
         ));
         started_rx.recv().unwrap();
@@ -2559,7 +2555,7 @@ mod tests {
         assert_ne!(files_generation, reopened_generation);
 
         gate.release();
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
         assert!(!app.sync_file_manager_io_results());
         assert_eq!(
             app.state
@@ -2593,7 +2589,7 @@ mod tests {
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
         let (started_tx, started_rx) = std::sync::mpsc::channel();
-        app.file_manager_io_worker =
+        *app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 started_tx.send(()).unwrap();
                 worker_gate.wait();
@@ -2606,7 +2602,7 @@ mod tests {
             .file_manager_locations
             .activate_direct(initial.clone());
         gate.release();
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
 
         assert!(!app.sync_file_manager_io_results());
         assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, initial);
@@ -2630,7 +2626,7 @@ mod tests {
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
         let (started_tx, started_rx) = std::sync::mpsc::channel();
-        app.file_manager_io_worker =
+        *app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 started_tx.send(()).unwrap();
                 worker_gate.wait();
@@ -2643,7 +2639,7 @@ mod tests {
             .file_manager_locations_model
             .replace_with(location_model(&target));
         gate.release();
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
 
         assert!(!app.sync_file_manager_io_results());
         assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, initial);
@@ -2670,7 +2666,7 @@ mod tests {
         let gate = Arc::new(Gate::default());
         let worker_gate = gate.clone();
         let (started_tx, started_rx) = std::sync::mpsc::channel();
-        app.file_manager_io_worker =
+        *app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 started_tx.send(()).unwrap();
                 worker_gate.wait();
@@ -2680,7 +2676,7 @@ mod tests {
         started_rx.recv().unwrap();
         std::fs::remove_dir(&target).unwrap();
         gate.release();
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
 
         assert!(app.sync_file_manager_io_results());
         assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, initial);
@@ -2708,7 +2704,7 @@ mod tests {
         stage_follow(&mut app, &target);
         assert!(app.sync_file_manager_location_request());
         started_rx.recv().unwrap();
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
         assert!(app.sync_file_manager_io_results());
         assert_eq!(app.state.file_manager.as_ref().unwrap().cwd, target);
         assert_eq!(app.state.file_manager_locations.failure, None);
@@ -2730,7 +2726,7 @@ mod tests {
 
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let worker_calls = calls.clone();
-        app.file_manager_io_worker =
+        *app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 worker_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 process_request(request)
@@ -2756,7 +2752,7 @@ mod tests {
         let files_generation = app.state.stage.active_instance_generation().unwrap();
         let caller = std::thread::current().id();
         let (processor_tx, processor_rx) = std::sync::mpsc::channel();
-        app.file_manager_io_worker =
+        *app.io_worker() =
             FileManagerIoWorker::with_processor(Arc::new(Notify::new()), move |request| {
                 processor_tx.send(std::thread::current().id()).unwrap();
                 process_request(request)
@@ -2770,7 +2766,7 @@ mod tests {
             .unwrap();
         assert!(app.execute_file_manager_navigation(navigation));
         assert_ne!(processor_rx.recv().unwrap(), caller);
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
         assert!(app.sync_file_manager_io_results());
 
         let refresh = app
@@ -2784,7 +2780,7 @@ mod tests {
             Some(false)
         );
         assert_ne!(processor_rx.recv().unwrap(), caller);
-        app.file_manager_io_worker.wait_for_result_for_test();
+        app.io_worker().wait_for_result_for_test();
         let _ = app.sync_file_manager_io_results();
     }
 

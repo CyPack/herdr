@@ -3203,7 +3203,15 @@ impl AppState {
     /// Not "the display being served": this answers whether the session and a
     /// display are the same thing, which is what lets them share one slot for
     /// the surfaces that are handed over rather than copied.
-    fn sole_display(&self) -> Option<ClientId> {
+    /// Whether more than one display is attached.
+    ///
+    /// Below that, the session and the single display are the same thing and
+    /// share one of everything.
+    pub(crate) fn has_several_displays(&self) -> bool {
+        self.surfaces_by_client.len() > 1
+    }
+
+    pub(crate) fn sole_display(&self) -> Option<ClientId> {
         let mut clients = self.surfaces_by_client.keys();
         match (clients.next(), clients.next()) {
             (Some(only), None) => Some(*only),
