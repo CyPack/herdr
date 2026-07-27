@@ -272,13 +272,17 @@ impl App {
         let mut resized = false;
 
         changed |= self.sync_file_operation_worker();
-        changed |= self.sync_file_manager_agent_handoff();
         changed |= self.sync_file_manager_agent_handoff_send();
         changed |= self.sync_agent_attachment_delivery();
-        changed |= self.sync_agent_reference_picker();
-        changed |= self.sync_file_manager_plugin_action();
         changed |= self.for_each_display(|app| {
             let mut changed = false;
+            // Three consumers compete for one context-action field, and the
+            // order between them is the precedence: send-to-agent, then a
+            // plugin, then the ordinary actions. All three resolve against
+            // the raising display's browser, so all three belong in its view.
+            changed |= app.sync_file_manager_agent_handoff();
+            changed |= app.sync_file_manager_plugin_action();
+            changed |= app.sync_agent_reference_picker();
             changed |= app.sync_file_manager_requests();
             changed |= app.sync_file_manager_io_results();
             changed |= app.sync_file_manager_location_request();

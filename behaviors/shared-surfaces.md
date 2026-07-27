@@ -11,6 +11,21 @@ reverted without a conflict; these can.
 
 Format and rules: [`README.md`](README.md).
 
+## Machine gate: per-display scheduling
+
+One failure in this family cannot be pinned by a row, because it is not a
+behavior in one place — it is a *pairing*. A field is per-display and its
+consumer is correct, but the consumer is scheduled outside every display's
+view. Both halves compile, every unit test passes, and once a second display
+attaches the consumer reads nobody's state: the request is taken, nothing
+matches, and the action is dropped in silence on every display.
+
+`scripts/test_per_display_scheduling.py` (run by `just check`) enforces the
+pairing directly against the source: no scheduled task may read a per-display
+field from outside `for_each_display`, and the monolithic and headless
+schedulers must drive the same per-display work. Deliberate exceptions are
+listed in `OUTSIDE_LOOP_ALLOWED` with their reason.
+
 ## Activation and keybinding
 
 How the fork's surfaces are reached at all. Upstream owns the keybind registry, the navigate-mode dispatcher and the help screen, so these are the first rows a sync can quietly unbind.
@@ -198,3 +213,4 @@ displays are attached at the same time.
 | TP-SUR-STAGE-05 | Closing the browser on one display leaves the others browsing. | Closing one display's file browser takes away one another display is still reading, or leaves it showing a surface with nothing behind it. | `closing_the_browser_on_one_display_leaves_the_others_browsing` |
 | TP-SUR-FM-05 | A navigation the rail asked for belongs to the display that asked, and is still waiting when that display is served. | Scheduled work serves displays lowest-id first, so a shared request is consumed by the wrong display: it navigates that one's browser and the display actually clicked sits inert. | `a_request_one_display_made_is_not_consumed_by_another` |
 | TP-SUR-FM-06 | Every browser request — rename, bulk rename, delete, context action — belongs to the display that made it and is taken up in that display's view. | Each resolves against the asking display's rail focus, directory and selection; taken outside that view they match nothing and the rename or delete is silently dropped on every display but the first. | `every_browser_request_belongs_to_the_display_that_made_it` |
+| TP-SUR-FM-07 | A context action is visible only in the view that raised it, and all three of its consumers — send-to-agent, plugin dispatch, ordinary actions — run in that view, in that precedence. | Consumers split across the loop boundary read nobody's browser once a second display attaches: the request is taken, nothing matches, and the whole branch goes quiet on every display. | `a_context_action_is_visible_only_where_it_was_raised` |

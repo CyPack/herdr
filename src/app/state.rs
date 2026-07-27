@@ -5773,6 +5773,52 @@ mod viewer_context_tests {
         state.restore_viewer(None);
     }
 
+    // TP-SUR-FM-07
+    #[test]
+    fn a_context_action_is_visible_only_where_it_was_raised() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("only"));
+        state.active = Some(0);
+
+        state.enter_viewer(Some(1));
+        state.restore_viewer(None);
+        state.enter_viewer(Some(2));
+        state.restore_viewer(None);
+
+        // A context action raised on the second display. Three different
+        // consumers compete for this one field -- send-to-agent, plugin
+        // dispatch, and the ordinary actions -- and every one of them must
+        // look for it in the view that raised it. A consumer left outside
+        // finds the registers holding nobody's request once a second display
+        // attaches, and its whole branch goes quiet.
+        state.enter_viewer(Some(2));
+        state.request_file_manager_context_action = Some(FileManagerContextActionIntent {
+            action: FileManagerContextMenuAction::Copy,
+            paths: vec![std::path::PathBuf::from("/tmp/x")],
+        });
+        state.restore_viewer(None);
+
+        // Outside every display's view -- where the three consumers used to
+        // run -- there is nothing to act on.
+        assert!(
+            state.request_file_manager_context_action.is_none(),
+            "no consumer may see it from outside a display's view"
+        );
+
+        state.enter_viewer(Some(1));
+        assert!(state.request_file_manager_context_action.is_none());
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(2));
+        assert!(
+            state.request_file_manager_context_action.is_some(),
+            "it is still waiting where it was raised"
+        );
+        state.restore_viewer(None);
+    }
+
     // TP-MCF-MODE-01
     #[test]
     fn mirror_mode_puts_every_display_back_on_one_view() {
