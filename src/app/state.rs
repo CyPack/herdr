@@ -2821,6 +2821,10 @@ pub struct AppState {
     pub worktree_remove: Option<WorktreeRemoveState>,
     pub worktree_directory: std::path::PathBuf,
     pub collapsed_space_keys: std::collections::HashSet<String>,
+    /// Validated `[[spaces.split]]` rules, in config order. A checkout claimed
+    /// by one of these groups under the rule's key instead of its repository's.
+    /// Config-derived presentation state: refreshed on load and on reload.
+    pub space_split_rules: Vec<crate::spaces::SpaceSplitRule>,
     /// Expanded, absolute project directories pinned to the Projects tab, in
     /// config order (`[projects] pinned` with `~` resolved). TUI/client state.
     pub projects_pinned: Vec<std::path::PathBuf>,
@@ -3556,6 +3560,7 @@ impl AppState {
             worktree_remove: None,
             worktree_directory: std::path::PathBuf::from("/tmp/herdr-worktrees"),
             collapsed_space_keys: std::collections::HashSet::new(),
+            space_split_rules: Vec::new(),
             projects_pinned: Vec::new(),
             projects_sessions: Vec::new(),
             preview_bindings: Vec::new(),

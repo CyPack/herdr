@@ -268,31 +268,102 @@ fn workspace_attention_priority(state: AgentState, seen: bool) -> u8 {
     }
 }
 
+/// The space a workspace renders under, after `[[spaces.split]]` rules.
+///
+/// Resolution happens here, at render time, rather than being baked into the
+/// persisted membership. That keeps the stored key the repository's — which is
+/// what restore validates against — and makes a config reload re-group every
+/// open workspace immediately instead of only newly opened ones.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EffectiveSpace {
+    pub key: String,
+    pub label: String,
+    /// Whether this workspace may render as the group's header row (used by
+    /// TP-SPLIT-GROUP-01). A repo
+    /// space has exactly one candidate, its main checkout. A config space has
+    /// no main checkout of its own, so every member is a candidate and the
+    /// first one in workspace order takes the header.
+    pub is_parent_candidate: bool,
+    /// True when a `[[spaces.split]]` rule claimed this checkout.
+    pub is_custom: bool,
+}
+
+pub(crate) fn effective_space(app: &AppState, ws_idx: usize) -> Option<EffectiveSpace> {
+    let ws = app.workspaces.get(ws_idx)?;
+    let space = ws.worktree_space()?;
+    match crate::spaces::resolve_space_rule(
+        &app.space_split_rules,
+        &space.repo_root,
+        &space.checkout_path,
+        ws.branch().as_deref(),
+    ) {
+        Some(rule) => Some(EffectiveSpace {
+            key: rule.key.clone(),
+            label: rule.label.clone(),
+            is_parent_candidate: true,
+            is_custom: true,
+        }),
+        None => Some(EffectiveSpace {
+            key: space.key.clone(),
+            label: space.label.clone(),
+            is_parent_candidate: !space.is_linked_worktree,
+            is_custom: false,
+        }),
+    }
+}
+
+/// Workspace indices in the given space, in workspace order.
+fn space_member_indices(app: &AppState, key: &str) -> Vec<usize> {
+    (0..app.workspaces.len())
+        .filter(|idx| effective_space(app, *idx).is_some_and(|space| space.key == key))
+        .collect()
+}
+
+/// The member that renders as the group header, if the group has one.
+fn space_parent_index(app: &AppState, key: &str) -> Option<usize> {
+    space_member_indices(app, key)
+        .into_iter()
+        .find(|idx| effective_space(app, *idx).is_some_and(|space| space.is_parent_candidate))
+}
+
+/// Header text for a non-indented row: a config space names itself after the
+/// rule, so the module — not whichever checkout happens to lead it — is what
+/// the collapsed group reads as (TP-SPLIT-HEAD-01).
+pub(crate) fn space_header_display_label(
+    app: &AppState,
+    ws_idx: usize,
+    workspace_label: String,
+) -> String {
+    effective_space(app, ws_idx)
+        .filter(|space| space.is_custom)
+        .filter(|space| space_parent_index(app, &space.key) == Some(ws_idx))
+        .filter(|space| space_member_indices(app, &space.key).len() >= 2)
+        .map(|space| space.label)
+        .unwrap_or(workspace_label)
+}
+
 fn space_aggregate_state(app: &AppState, key: &str) -> (AgentState, bool) {
-    app.workspaces
-        .iter()
-        .filter(|ws| ws.worktree_space().is_some_and(|space| space.key == key))
+    (0..app.workspaces.len())
+        .filter(|idx| effective_space(app, *idx).is_some_and(|space| space.key == key))
+        .filter_map(|idx| app.workspaces.get(idx))
         .map(|ws| ws.aggregate_state(&app.terminals))
         .max_by_key(|(state, seen)| workspace_attention_priority(*state, *seen))
         .unwrap_or((AgentState::Unknown, true))
 }
 
+// TP-SPLIT-HEAD-02: only the header row reports a group, keyed by the rule.
 pub(crate) fn workspace_parent_group_state(
     app: &AppState,
     ws_idx: usize,
 ) -> Option<(String, bool)> {
-    let space = app.workspaces.get(ws_idx)?.worktree_space()?;
-    if space.is_linked_worktree {
+    let space = effective_space(app, ws_idx)?;
+    if !space.is_parent_candidate {
         return None;
     }
-    let member_count = app
-        .workspaces
-        .iter()
-        .filter(|ws| {
-            ws.worktree_space()
-                .is_some_and(|member| member.key == space.key)
-        })
-        .count();
+    if space_parent_index(app, &space.key) != Some(ws_idx) {
+        return None;
+    }
+    let member_count = space_member_indices(app, &space.key).len();
     (member_count >= 2).then(|| {
         (
             space.key.clone(),
@@ -356,13 +427,14 @@ pub(crate) fn workspace_list_entries_expanded(app: &AppState) -> Vec<WorkspaceLi
 }
 
 fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<WorkspaceListEntry> {
+    // TP-SPLIT-GROUP-01/02: a config space groups without a main checkout, and
+    // several rules over one repository produce several sibling groups.
+    // TP-SPLIT-GROUP-03/04: the two-member threshold and the untouched repo
+    // group are shared with upstream's behaviour.
     let mut members_by_key = std::collections::HashMap::<String, Vec<usize>>::new();
-    for (ws_idx, ws) in app.workspaces.iter().enumerate() {
-        if let Some(space) = ws.worktree_space() {
-            members_by_key
-                .entry(space.key.clone())
-                .or_default()
-                .push(ws_idx);
+    for ws_idx in 0..app.workspaces.len() {
+        if let Some(space) = effective_space(app, ws_idx) {
+            members_by_key.entry(space.key).or_default().push(ws_idx);
         }
     }
     let grouped_keys = members_by_key
@@ -370,10 +442,7 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
         .filter(|(_, members)| {
             members.len() >= 2
                 && members.iter().any(|idx| {
-                    app.workspaces
-                        .get(*idx)
-                        .and_then(|ws| ws.worktree_space())
-                        .is_some_and(|space| !space.is_linked_worktree)
+                    effective_space(app, *idx).is_some_and(|space| space.is_parent_candidate)
                 })
         })
         .map(|(key, _)| key.clone())
@@ -384,19 +453,14 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
     } else {
         app.active
     };
-    let active_group = visible_group_idx.and_then(|idx| {
-        app.workspaces
-            .get(idx)
-            .and_then(|ws| ws.worktree_space())
-            .map(|space| space.key.clone())
-    });
+    let active_group =
+        visible_group_idx.and_then(|idx| effective_space(app, idx).map(|space| space.key));
 
     let mut emitted_groups = std::collections::HashSet::<String>::new();
     let mut entries = Vec::new();
-    for (ws_idx, ws) in app.workspaces.iter().enumerate() {
-        let Some(space) = ws
-            .worktree_space()
-            .filter(|space| grouped_keys.contains(&space.key))
+    for ws_idx in 0..app.workspaces.len() {
+        let Some(space) =
+            effective_space(app, ws_idx).filter(|space| grouped_keys.contains(&space.key))
         else {
             entries.push(WorkspaceListEntry::Workspace {
                 ws_idx,
@@ -413,10 +477,7 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
             continue;
         };
         let Some(parent_idx) = members.iter().copied().find(|idx| {
-            app.workspaces
-                .get(*idx)
-                .and_then(|member| member.worktree_space())
-                .is_some_and(|member_space| !member_space.is_linked_worktree)
+            effective_space(app, *idx).is_some_and(|member| member.is_parent_candidate)
         }) else {
             entries.push(WorkspaceListEntry::Workspace {
                 ws_idx,
@@ -1272,7 +1333,7 @@ fn render_workspace_list(
         let display_label = if card.indented {
             grouped_child_display_label(&label, ws.branch().as_deref(), ws.custom_name.is_some())
         } else {
-            label
+            space_header_display_label(app, i, label)
         };
         let parent_group = (!card.indented)
             .then(|| workspace_parent_group_state(app, i))
@@ -3607,6 +3668,199 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             });
         }
         ws
+    }
+
+    /// A checkout of `/repo/herdr` on `branch`, living in its own directory.
+    /// Everything here is a linked worktree: a config space's whole point is
+    /// that it has no main checkout of its own.
+    fn worktree_on_branch(name: &str, branch: &str) -> crate::workspace::Workspace {
+        let mut ws = crate::workspace::Workspace::test_new(name);
+        ws.cached_git_branch = Some(branch.into());
+        ws.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "/repo/herdr/.git".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from(format!("/repo/herdr-{name}")),
+            is_linked_worktree: true,
+        });
+        ws
+    }
+
+    fn split_rule(patterns: &[&str], key: &str, label: &str) -> crate::spaces::SpaceSplitRule {
+        crate::spaces::SpaceSplitRule {
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            patterns: patterns.iter().map(|p| (*p).to_string()).collect(),
+            key: key.to_string(),
+            label: label.to_string(),
+        }
+    }
+
+    #[test]
+    fn config_space_groups_worktrees_that_have_no_main_checkout() {
+        let mut app = AppState::test_new();
+        app.workspaces = vec![
+            worktree_on_branch("alpha", "feat/t4f-alpha"),
+            worktree_on_branch("beta", "feat/t4f-beta"),
+        ];
+        app.space_split_rules = vec![split_rule(&["feat/t4f-*"], "herdr:t4f", "T4F")];
+
+        let entries = workspace_list_entries(&app);
+        assert_eq!(
+            entries,
+            vec![
+                WorkspaceListEntry::Workspace {
+                    ws_idx: 0,
+                    indented: false
+                },
+                WorkspaceListEntry::Workspace {
+                    ws_idx: 1,
+                    indented: true
+                },
+            ],
+            "a config space must group even though every member is a linked worktree"
+        );
+    }
+
+    #[test]
+    fn config_space_header_row_shows_the_rule_label() {
+        let mut app = AppState::test_new();
+        app.workspaces = vec![
+            worktree_on_branch("alpha", "feat/t4f-alpha"),
+            worktree_on_branch("beta", "feat/t4f-beta"),
+        ];
+        app.space_split_rules = vec![split_rule(&["feat/t4f-*"], "herdr:t4f", "T4F BAM")];
+
+        assert_eq!(
+            space_header_display_label(&app, 0, "alpha".into()),
+            "T4F BAM",
+            "the collapsed group must read as the module, not as whichever checkout leads it"
+        );
+        assert_eq!(
+            space_header_display_label(&app, 1, "beta".into()),
+            "beta",
+            "only the header row is renamed"
+        );
+    }
+
+    #[test]
+    fn config_space_splits_one_repository_into_several_groups() {
+        let mut app = AppState::test_new();
+        app.workspaces = vec![
+            worktree_on_branch("alpha", "feat/t4f-alpha"),
+            worktree_on_branch("beta", "feat/t4f-beta"),
+            worktree_on_branch("gamma", "feat/circet-gamma"),
+            worktree_on_branch("delta", "feat/circet-delta"),
+        ];
+        app.space_split_rules = vec![
+            split_rule(&["feat/t4f-*"], "herdr:t4f", "T4F"),
+            split_rule(&["feat/circet-*"], "herdr:circet", "Circet"),
+        ];
+
+        let entries = workspace_list_entries(&app);
+        assert_eq!(
+            entries,
+            vec![
+                WorkspaceListEntry::Workspace {
+                    ws_idx: 0,
+                    indented: false
+                },
+                WorkspaceListEntry::Workspace {
+                    ws_idx: 1,
+                    indented: true
+                },
+                WorkspaceListEntry::Workspace {
+                    ws_idx: 2,
+                    indented: false
+                },
+                WorkspaceListEntry::Workspace {
+                    ws_idx: 3,
+                    indented: true
+                },
+            ],
+            "two rules over one repository must produce two sibling groups"
+        );
+    }
+
+    #[test]
+    fn config_space_with_a_single_member_stays_flat() {
+        let mut app = AppState::test_new();
+        app.workspaces = vec![worktree_on_branch("alpha", "feat/t4f-alpha")];
+        app.space_split_rules = vec![split_rule(&["feat/t4f-*"], "herdr:t4f", "T4F")];
+
+        assert_eq!(
+            workspace_list_entries(&app),
+            vec![WorkspaceListEntry::Workspace {
+                ws_idx: 0,
+                indented: false
+            }],
+            "one member is a row, not a group — same rule the repo space follows"
+        );
+        assert_eq!(
+            space_header_display_label(&app, 0, "alpha".into()),
+            "alpha",
+            "a row that heads no group keeps its own name"
+        );
+    }
+
+    #[test]
+    fn unclaimed_worktrees_keep_the_repository_group() {
+        let mut app = AppState::test_new();
+        app.workspaces = vec![
+            workspace_with_worktree_space("main", Some("repo-key"), "/repo/herdr"),
+            workspace_with_worktree_space("issue", Some("repo-key"), "/repo/herdr-issue"),
+        ];
+        app.space_split_rules = vec![split_rule(&["feat/t4f-*"], "herdr:t4f", "T4F")];
+
+        assert_eq!(
+            workspace_list_entries(&app),
+            vec![
+                WorkspaceListEntry::Workspace {
+                    ws_idx: 0,
+                    indented: false
+                },
+                WorkspaceListEntry::Workspace {
+                    ws_idx: 1,
+                    indented: true
+                },
+            ],
+            "rules must not disturb checkouts they do not claim"
+        );
+        assert_eq!(
+            space_header_display_label(&app, 0, "main".into()),
+            "main",
+            "a repo group keeps naming itself after its main checkout"
+        );
+    }
+
+    #[test]
+    fn config_space_collapse_state_is_keyed_by_the_rule_key() {
+        let mut app = AppState::test_new();
+        app.workspaces = vec![
+            worktree_on_branch("alpha", "feat/t4f-alpha"),
+            worktree_on_branch("beta", "feat/t4f-beta"),
+        ];
+        app.space_split_rules = vec![split_rule(&["feat/t4f-*"], "herdr:t4f", "T4F")];
+
+        assert_eq!(
+            workspace_parent_group_state(&app, 0),
+            Some(("herdr:t4f".to_string(), false)),
+            "the header row must report the rule key so collapse targets the module"
+        );
+        assert_eq!(
+            workspace_parent_group_state(&app, 1),
+            None,
+            "a non-header member heads no group"
+        );
+
+        app.collapsed_space_keys.insert("herdr:t4f".into());
+        assert_eq!(
+            workspace_list_entries(&app),
+            vec![WorkspaceListEntry::Workspace {
+                ws_idx: 0,
+                indented: false
+            }],
+            "collapsing the module must hide its members"
+        );
     }
 
     fn workspace_with_git_space(name: &str, key: &str) -> crate::workspace::Workspace {

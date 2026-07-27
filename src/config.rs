@@ -74,6 +74,7 @@ impl Config {
             .chain(self.ui.sound.diagnostics())
             .chain(self.invalid_sidebar_bounds_diagnostic())
             .chain(self.projects.diagnostics())
+            .chain(self.spaces.diagnostics())
             .collect()
     }
 

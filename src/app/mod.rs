@@ -747,6 +747,7 @@ impl App {
             worktree_remove: None,
             worktree_directory,
             collapsed_space_keys,
+            space_split_rules: config.spaces.rules(),
             projects_pinned,
             projects_sessions: Vec::new(),
             preview_placement: config.preview.placement,
@@ -1807,6 +1808,15 @@ impl App {
         if !invalid_section("worktrees") {
             self.state.worktree_directory =
                 crate::worktree::expand_tilde_absolute_path(&config.worktrees.directory);
+        }
+
+        // Space rules are presentation-only. Grouping resolves them against the
+        // stored membership at render time, so a reload re-groups every open
+        // workspace immediately and session truth is never rewritten — the
+        // persisted key stays the repository's, which is what restore validates
+        // against.
+        if !invalid_section("spaces") {
+            self.state.space_split_rules = config.spaces.rules();
         }
 
         if !invalid_section("theme") {
