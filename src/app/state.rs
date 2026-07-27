@@ -2348,6 +2348,81 @@ pub(crate) struct PaneFocusTarget {
 /// resolves through.
 pub type ClientId = u64;
 
+/// Declares the state that belongs to one display rather than to the session.
+///
+/// The generated pair is the whole point. A surface is declared once here, and
+/// both the save side and the load side are generated from that one line, so a
+/// surface cannot be half-migrated. Half-migration is the failure shape this
+/// feature exists to remove: the field keeps living in one place, every display
+/// keeps resolving the same value, and the symptom — a menu opening on all of
+/// them at once — looks like a rendering bug rather than a missing swap.
+///
+/// The fields stay on `AppState` as registers rather than moving into the
+/// bundle, because they are read in hundreds of places and every one of those
+/// reads means "the display being served". The bundle is only what a display
+/// parks while another one is being served.
+macro_rules! client_surfaces {
+    ($( $(#[$meta:meta])* $field:ident : $ty:ty ),+ $(,)?) => {
+        /// Everything about *what this display is looking at*, parked while
+        /// another display is being served. Never persisted as session truth.
+        #[derive(Clone, Default)]
+        pub(super) struct ClientSurfaces {
+            $( $(#[$meta])* pub(super) $field: $ty, )+
+        }
+
+        impl AppState {
+            /// Lifts the serving display's surfaces out of the registers.
+            ///
+            /// This is a move, not a copy: swapping displays costs the size of
+            /// the bundle, not a deep clone of what it holds.
+            fn take_surfaces(&mut self) -> ClientSurfaces {
+                ClientSurfaces {
+                    $( $field: std::mem::take(&mut self.$field), )+
+                }
+            }
+
+            /// Installs a display's surfaces into the registers.
+            fn install_surfaces(&mut self, surfaces: ClientSurfaces) {
+                $( self.$field = surfaces.$field; )+
+            }
+
+            /// Moves the surfaces a display actually changed into the default.
+            ///
+            /// Field by field, and only where the value differs from what that
+            /// display parked last time. Promoting the whole bundle on every
+            /// park would make the default mean "whatever was rendered last"
+            /// instead of "where the session is being driven" — and the render
+            /// loop parks every attached display on every frame, so the
+            /// default would be overwritten continuously by displays that did
+            /// nothing.
+            ///
+            /// That distinction is load-bearing, not cosmetic. The default is
+            /// what resolves when no display is acting, which is the path the
+            /// API and the notification logic run on: clobber it and a pane
+            /// sitting in a background workspace starts reading as foreground,
+            /// so its agent finishes in silence.
+            ///
+            /// TP-SUR-DEFAULT-01
+            fn promote_changed_surfaces(
+                &mut self,
+                parked: Option<&ClientSurfaces>,
+                outgoing: &ClientSurfaces,
+            ) {
+                $(
+                    if parked.map(|previous| &previous.$field) != Some(&outgoing.$field) {
+                        self.default_surfaces.$field = outgoing.$field.clone();
+                    }
+                )+
+            }
+        }
+    };
+}
+
+client_surfaces! {
+    /// The workspace this display is in.
+    active: Option<usize>,
+}
+
 /// All application state — pure data, no channels or async runtime.
 /// Testable without PTYs or a tokio runtime.
 pub struct AppState {
@@ -2379,13 +2454,13 @@ pub struct AppState {
     /// every one of them means "the workspace the display being served is in".
     ///
     /// Client-local presentation state: never persisted.
-    pub(super) active_by_client: std::collections::HashMap<ClientId, Option<usize>>,
+    pub(super) surfaces_by_client: std::collections::HashMap<ClientId, ClientSurfaces>,
     /// The workspace a client adopts before it has chosen one, and the value
     /// resolved when no client is acting.
     ///
     /// Tracks the most recent actual switch, so a display attaching later
     /// lands where the session is being driven.
-    pub(super) default_active: Option<usize>,
+    pub(super) default_surfaces: ClientSurfaces,
     pub(crate) previous_pane_focus: Option<PaneFocusTarget>,
     pub selected: usize,
     pub mode: Mode,
@@ -2747,41 +2822,48 @@ impl AppState {
         if !self.per_display_focus {
             return;
         }
-        // Save the outgoing view before installing the incoming one. `active`
-        // is a register, not storage, so this is a context switch rather than
-        // a plain assignment.
+        // Park the serving display's surfaces before installing the incoming
+        // display's. The fields are registers, not storage, so this is a
+        // context switch rather than a set of assignments.
+        let outgoing = self.take_surfaces();
         match self.viewer {
             Some(previous) => {
-                let changed =
-                    self.active_by_client.insert(previous, self.active) != Some(self.active);
-                if changed {
-                    // A display actually moved, so that is where the session is
-                    // being driven and where a display attaching later lands.
-                    self.default_active = self.active;
-                }
+                let parked = self.surfaces_by_client.insert(previous, outgoing.clone());
+                // Only what this display actually moved counts as driving the
+                // session, and so as what a display attaching later adopts.
+                self.promote_changed_surfaces(parked.as_ref(), &outgoing);
             }
-            None => self.default_active = self.active,
+            // Nothing was being served, so these registers hold whatever the
+            // session itself last set — an API call, a restore, a startup.
+            // That is a switch by definition and belongs in the default whole.
+            None => self.default_surfaces = outgoing,
         }
 
-        self.active = match viewer {
+        let incoming = match viewer {
+            // Seeded rather than read, and left in place rather than taken.
+            //
+            // Seeded: a display adopts the default the first time it is seen
+            // and is its own from then on. Without that, a display nobody has
+            // touched keeps resolving the default, and the default follows
+            // whoever switched last — which is the shared-focus complaint
+            // wearing a different hat.
+            //
+            // Left in place: the entry is what the next park compares against
+            // to decide whether this display actually moved. Taking it out
+            // makes every park look like a change, and the default — the value
+            // the API and the notification path resolve through — is then
+            // overwritten on every frame by displays that did nothing.
             Some(client) => {
-                let default_active = self.default_active;
-                let slot = self
-                    .active_by_client
+                let default_surfaces = self.default_surfaces.clone();
+                self.surfaces_by_client
                     .entry(client)
-                    .or_insert(default_active);
-                // `None` is the absence of a choice, not a choice. A client
-                // that attached before the session had any workspace would
-                // otherwise resolve to no workspace forever, including after
-                // one was created — and a workspace-less render resizes live
-                // panes to a fallback area.
-                if slot.is_none() {
-                    *slot = default_active;
-                }
-                *slot
+                    .or_insert(default_surfaces)
+                    .clone()
             }
-            None => self.default_active,
+            None => self.default_surfaces.clone(),
         };
+        self.install_surfaces(incoming);
+        self.reconcile_surfaces_with_session();
 
         self.viewer = viewer;
         for workspace in &mut self.workspaces {
@@ -2797,9 +2879,30 @@ impl AppState {
     ///
     /// TP-MCF-TAB-02
     pub(crate) fn forget_client(&mut self, client: ClientId) {
-        self.active_by_client.remove(&client);
+        self.surfaces_by_client.remove(&client);
         for workspace in &mut self.workspaces {
             workspace.forget_client(client);
+        }
+    }
+
+    /// Repairs a freshly installed bundle against facts the session has since
+    /// changed.
+    ///
+    /// A parked bundle can name a state that was true when the display was
+    /// last served and is not any more. The one that bites: a display that
+    /// attached before the session had any workspace parked "no workspace",
+    /// and would keep resolving that forever — its renders then take the
+    /// workspace-less path and resize live panes to a fallback area.
+    ///
+    /// TP-MCF-WS-03
+    fn reconcile_surfaces_with_session(&mut self) {
+        if self.active.is_none() {
+            // An empty slot is the absence of a choice, not a choice. Fill it
+            // from the default only — never invent a workspace. "No active
+            // workspace" is a real state the session can be in, and forcing a
+            // workspace here makes a background pane look foreground, which
+            // silently suppresses its agent notifications.
+            self.active = self.default_surfaces.active;
         }
     }
 
@@ -3043,8 +3146,8 @@ impl AppState {
             workspaces: Vec::new(),
             active: None,
             viewer: None,
-            active_by_client: std::collections::HashMap::new(),
-            default_active: None,
+            surfaces_by_client: std::collections::HashMap::new(),
+            default_surfaces: ClientSurfaces::default(),
             previous_pane_focus: None,
             selected: 0,
             mode: Mode::Navigate,
@@ -4951,7 +5054,54 @@ mod viewer_context_tests {
 
         // And a departed display leaves nothing behind.
         state.forget_client(1);
-        assert!(!state.active_by_client.contains_key(&1));
+        assert!(!state.surfaces_by_client.contains_key(&1));
+    }
+
+    // TP-SUR-DEFAULT-01
+    #[test]
+    fn serving_a_display_that_did_not_move_leaves_the_session_default_alone() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("left"));
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("right"));
+        state.active = Some(0);
+
+        // A display attaches and settles on workspace zero.
+        state.enter_viewer(Some(2));
+        state.restore_viewer(None);
+
+        // Something with no display behind it moves the session -- an API
+        // call, a restore, a keybind handled outside any view.
+        state.active = Some(1);
+
+        // The render loop now serves that display several times. It is only
+        // looking; it never moves.
+        for _ in 0..4 {
+            state.enter_viewer(Some(2));
+            assert_eq!(
+                state.active,
+                Some(0),
+                "the display keeps its own workspace while it is being served"
+            );
+            state.restore_viewer(None);
+
+            assert_eq!(
+                state.active,
+                Some(1),
+                "and looking at it must not drag the session onto its workspace"
+            );
+        }
+
+        // The session default is what the notification path resolves through:
+        // a pane on workspace zero has to keep reading as background, or its
+        // agent finishes in silence.
+        assert!(
+            !state.pane_is_in_active_tab(0, crate::layout::PaneId::from_raw(1)),
+            "a pane outside the session workspace must stay in the background"
+        );
     }
 
     // TP-MCF-MODE-01
@@ -4980,7 +5130,7 @@ mod viewer_context_tests {
             "mirror mode must reproduce the shared view exactly"
         );
         assert_eq!(state.viewer(), None, "no per-display view is recorded");
-        assert!(state.active_by_client.is_empty());
+        assert!(state.surfaces_by_client.is_empty());
         state.restore_viewer(None);
     }
 
