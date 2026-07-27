@@ -1,0 +1,96 @@
+<style>
+  :root { color-scheme: dark; }
+  .intro { max-width: 980px; margin: 0 auto 18px; }
+  .intro h2 { margin-bottom: 8px; }
+  .intro p { color: #cbd5e1; line-height: 1.55; }
+  .review-note { padding: 10px 12px; border: 1px solid #38bdf8; border-radius: 8px; background: #0c2635; color: #bae6fd; }
+  .tui { background: #0f172a; color: #dbeafe; border: 1px solid #475569; border-radius: 9px; overflow: hidden; font: 12px ui-monospace, monospace; }
+  .top { padding: 7px 9px; background: #1e293b; border-bottom: 1px solid #475569; }
+  .shell { display: grid; grid-template-columns: 92px minmax(0, 1fr); min-height: 212px; }
+  .side { padding: 8px; background: #172033; border-right: 1px solid #475569; }
+  .side p { margin: 7px 0; }
+  .active { background: #67e8f9; color: #082f49; border-radius: 4px; padding: 3px; }
+  .main { min-width: 0; display: flex; flex-direction: column; }
+  .surface { display: flex; gap: 7px; align-items: center; padding: 6px 8px; background: #111c31; border-bottom: 1px solid #334155; }
+  .surface .on { color: #0f172a; background: #a5b4fc; padding: 3px 7px; border-radius: 4px; }
+  .crumb { padding: 7px 9px; color: #c4b5fd; border-bottom: 1px solid #475569; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cols { display: flex; height: 142px; overflow: hidden; }
+  .col { flex: 0 0 27%; min-width: 72px; padding: 7px; border-right: 1px solid #64748b; }
+  .col.wide { flex-basis: 34%; }
+  .sel { display: inline-block; min-width: 70%; background: #60a5fa; color: #0f172a; border-radius: 3px; padding: 2px; }
+  .drag { width: 7px; margin-left: -4px; cursor: col-resize; background: linear-gradient(90deg, transparent 3px, #f59e0b 3px, #f59e0b 4px, transparent 4px); }
+  .scroll { height: 8px; margin: 7px 9px; background: #334155; border-radius: 9px; }
+  .thumb { width: 38%; height: 8px; margin-left: 42%; background: #94a3b8; border-radius: 9px; }
+  .guard { color: #86efac; font-size: 10px; float: right; }
+  .risk { color: #fca5a5; }
+  .question-map { max-width: 980px; margin: 18px auto 0; padding: 14px; border: 1px solid #475569; border-radius: 9px; background: #111827; }
+  .question-map h3 { margin-top: 0; }
+  .question-map ul { margin-bottom: 0; line-height: 1.55; }
+</style>
+
+<section class="intro">
+  <h2>Herdr Native FM — Files Workspace Yeniden Değerlendirme</h2>
+  <p>Karar henüz kapanmadı. Aşağıdaki üç yaklaşım aynı Miller kolon davranışını hedefliyor; asıl fark, Files yüzeyinin Herdr içindeki kimliği ve geçiş biçimi.</p>
+  <div class="review-note">Bir karta tıklayabilir veya hiçbirini seçmeden hangi noktayı farklı düşündüğünüzü sohbette tarif edebilirsiniz. Rust kodu bu inceleme tamamlanmadan değişmeyecek.</div>
+</section>
+
+<div class="cards">
+  <div class="card" data-choice="workspace-core" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="tui">
+        <div class="top"><b>Files Workspace</b><span class="guard">terminal çalışır · input bloke</span></div>
+        <div class="shell">
+          <div class="side"><b>FILES</b><p class="active">Home</p><p>Projects</p><p>Downloads</p><p>Locations</p></div>
+          <div class="main">
+            <div class="crumb">Home › projects › herdr › src › app</div>
+            <div class="cols"><div class="col">PROJECTS<br><span class="sel">herdr</span></div><div class="drag"></div><div class="col">HERDR<br><span class="sel">src</span><br>tests</div><div class="drag"></div><div class="col">SRC<br><span class="sel">app</span><br>fm<br>ui</div><div class="drag"></div><div class="col wide">APP / PREVIEW<br>actions<br>input<br>state.rs</div></div>
+            <div class="scroll"><div class="thumb"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body"><h3>A — Saf Files Workspace</h3><p>CenterContent bütünüyle client-owned Files sayfasına dönüşür. Terminal tab chrome görünmez; Files sidebar, yatay Miller zinciri ve resize ayraçları tek bir focus alanıdır.</p><p><b>Güçlü yanı:</b> En temiz input sahipliği ve en az kimlik karmaşası.</p></div>
+  </div>
+
+  <div class="card" data-choice="workspace-switcher" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="tui">
+        <div class="top"><b>Herdr Workspace</b><span class="guard">client surface ownership</span></div>
+        <div class="shell">
+          <div class="side"><b>NAV</b><p>Agents</p><p class="active">Files</p><p>Settings</p></div>
+          <div class="main">
+            <div class="surface"><span>Terminal</span><span class="on">Files</span><span>Activity</span><small style="margin-left:auto;color:#94a3b8">surface switcher</small></div>
+            <div class="crumb">Home › projects › herdr › src › fm</div>
+            <div class="cols" style="height:115px"><div class="col">HERDR<br><span class="sel">src</span></div><div class="drag"></div><div class="col">SRC<br><span class="sel">fm</span></div><div class="drag"></div><div class="col wide">FM<br>mod.rs<br>watcher.rs</div></div>
+            <div class="scroll"><div class="thumb"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body"><h3>A+ — Files Workspace + Surface Switcher</h3><p>Files yine bağımsız client page’dir; üstte terminal pane tab’larından ayrı, ince bir global yüzey seçici bulunur.</p><p><b>Trade-off:</b> Geçiş daha görünür olur; fakat yeni bir global navigation katmanı ve daha az dikey alan getirir.</p></div>
+  </div>
+
+  <div class="card" data-choice="surface-tab" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="tui">
+        <div class="top">Terminal 1 &nbsp; Terminal 2 &nbsp; <b style="background:#475569;padding:4px">Files</b> &nbsp; +</div>
+        <div class="shell">
+          <div class="side"><b>FILES</b><p class="active">Project</p><p>Recent</p></div>
+          <div class="main"><div class="crumb">Files: /home/ayaz/projects/herdr</div><div class="cols"><div class="col">HERDR<br><span class="sel">src</span></div><div class="drag"></div><div class="col">SRC<br><span class="sel">fm</span></div><div class="drag"></div><div class="col wide">FM / PREVIEW<br>mod.rs</div></div><div class="scroll"><div class="thumb"></div></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body"><h3>B — Terminal Tab Sırasında Files</h3><p>Files görünüşte terminal tab’larıyla aynı sırada yer alır.</p><p class="risk"><b>Risk:</b> Runtime pane/tab kimliği ile client-only Files yüzeyini aynı görsel ve input modeline sokabilir.</p></div>
+  </div>
+</div>
+
+<section class="question-map">
+  <h3>Birlikte netleştireceğimiz nokta</h3>
+  <ul>
+    <li><b>Geçiş:</b> Files’a nereden ve hangi zihinsel modelle girilmeli?</li>
+    <li><b>Bağlam:</b> Terminal tab chrome Files açıkken görünmeli mi?</li>
+    <li><b>Alan:</b> Sidebar sabit mi kalmalı, dar ekranda kapanmalı mı?</li>
+    <li><b>Kimlik:</b> Files bir runtime tab değilse kullanıcıya bunu nasıl açıkça hissettirmeliyiz?</li>
+    <li><b>Miller deneyimi:</b> Yatay scroll, ayraç resize ve kolon zincirinde hangi davranış Finder’a en yakın olmalı?</li>
+  </ul>
+</section>

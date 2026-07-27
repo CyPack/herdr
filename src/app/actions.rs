@@ -3727,6 +3727,77 @@ mod tests {
         state.restore_viewer(None);
     }
 
+    // TP-SUR-FM-03
+    #[test]
+    fn each_display_navigates_its_own_browser_without_moving_the_other() {
+        let (mut state, root) = backgroundable_files_fixture("independent-navigation");
+        let left = root.0.join("left");
+        let right = root.0.join("right");
+        for dir in [&left, &right] {
+            std::fs::create_dir_all(dir).expect("fixture directory");
+            std::fs::write(dir.join("00.txt"), b"x").expect("fixture entry");
+            std::fs::write(dir.join("01.txt"), b"y").expect("fixture entry");
+        }
+
+        state.enter_viewer(Some(1));
+        state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&left)))
+            .expect("first display opens its browser");
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(2));
+        state
+            .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&right)))
+            .expect("second display opens its browser");
+        // The second display moves its cursor down a row.
+        if let Some(file_manager) = state.file_manager.as_mut() {
+            file_manager.cursor = 1;
+        }
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(1));
+        let first = state.file_manager.as_ref().expect("first display browsing");
+        assert_eq!(
+            first.cwd, left,
+            "the first display stays in the directory it opened"
+        );
+        assert_eq!(
+            first.cursor, 0,
+            "and keeps the row it had -- a cursor is a position on one screen"
+        );
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(2));
+        let second = state
+            .file_manager
+            .as_ref()
+            .expect("second display browsing");
+        assert_eq!(second.cwd, right);
+        assert_eq!(second.cursor, 1);
+        state.restore_viewer(None);
+    }
+
+    // TP-SUR-FM-04
+    #[test]
+    fn a_departed_display_leaves_no_browser_behind() {
+        let (mut state, root) = backgroundable_files_fixture("departed-browser");
+
+        state.enter_viewer(Some(1));
+        open_files_at(&mut state, &root);
+        state.restore_viewer(None);
+        state.enter_viewer(Some(2));
+        state.restore_viewer(None);
+
+        state.forget_client(1);
+
+        // Nothing of the departed display's is left for a reconnecting client
+        // to inherit, and the file workers stop being told to serve it.
+        assert!(!state.displays_to_serve().contains(&Some(1)));
+        state.enter_viewer(Some(2));
+        assert!(state.file_manager.is_none());
+        state.restore_viewer(None);
+    }
+
     // TP-SUR-FM-01
     #[test]
     fn two_displays_browse_two_directories() {

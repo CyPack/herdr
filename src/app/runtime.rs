@@ -1201,3 +1201,32 @@ mod tests {
         assert!(app.pending_agent_resume_deadline.is_none());
     }
 }
+
+#[cfg(test)]
+mod per_display_worker_tests {
+    // TP-SUR-FM-02
+    #[test]
+    fn scheduled_work_visits_each_display_in_its_own_view() {
+        let mut state = crate::app::state::AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("only"));
+        state.active = Some(0);
+
+        // No display has been served: the session is the whole list, which is
+        // every monolithic run and every test that never attaches one.
+        assert_eq!(state.displays_to_serve(), vec![None]);
+
+        state.enter_viewer(Some(7));
+        state.restore_viewer(None);
+        state.enter_viewer(Some(3));
+        state.restore_viewer(None);
+
+        // Stable order, so which display wins a race does not change between
+        // runs the way hash order would.
+        assert_eq!(state.displays_to_serve(), vec![Some(3), Some(7)]);
+
+        state.forget_client(3);
+        assert_eq!(state.displays_to_serve(), vec![Some(7)]);
+    }
+}
