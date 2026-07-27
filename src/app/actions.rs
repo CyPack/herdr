@@ -336,6 +336,15 @@ impl AppState {
         if self.copy_mode.is_some() {
             self.clear_copy_mode_selection();
         }
+        // Focusing a pane names a terminal, so the display doing it has to be
+        // looking at the terminal. Without this the workspace, the tab and the
+        // pane focus all move correctly and nothing appears to happen, because
+        // the display is still showing Files on top of them — clicking an
+        // agent in the sidebar from the file browser did exactly that.
+        //
+        // The stage is per-display, so this moves only the display that
+        // clicked. TP-SUR-STAGE-06
+        self.show_terminal_workspace();
         self.switch_workspace_tab(ws_idx, tab_idx);
         if let Some(tab) = self
             .workspaces
@@ -3676,6 +3685,46 @@ mod tests {
         state
             .try_open_file_manager_with(|_| Some(crate::fm::FmState::new(&root.0)))
             .expect("Files activation");
+    }
+
+    // TP-SUR-STAGE-06
+    #[test]
+    fn clicking_an_agent_from_the_file_browser_takes_that_display_to_its_pane() {
+        let (mut state, root) = backgroundable_files_fixture("agent-click");
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("second"));
+        state.active = Some(0);
+
+        let target_ws = 1;
+        let pane_id = state.workspaces[target_ws]
+            .tabs
+            .first()
+            .and_then(|tab| tab.panes.keys().next().copied())
+            .expect("the fixture workspace has a pane");
+
+        state.enter_viewer(Some(1));
+        state.restore_viewer(None);
+
+        // One display is browsing files while the other stays in the terminal.
+        state.enter_viewer(Some(2));
+        open_files_at(&mut state, &root);
+        assert!(state.focus_pane_in_workspace(target_ws, pane_id));
+        assert_eq!(
+            state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::TerminalWorkspace,
+            "the display that clicked has to leave Files to see the pane it asked for"
+        );
+        assert_eq!(state.active, Some(target_ws));
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(1));
+        assert_eq!(
+            state.active,
+            Some(0),
+            "and the display that clicked nothing stays where it was"
+        );
+        state.restore_viewer(None);
     }
 
     // TP-SUR-STAGE-01
