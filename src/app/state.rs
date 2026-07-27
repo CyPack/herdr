@@ -1641,11 +1641,13 @@ impl TailscaleSendState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mode {
     Onboarding,
     ReleaseNotes,
     ProductAnnouncement,
+    /// No overlay: keys go to the layout.
+    #[default]
     Navigate,
     Prefix,
     Copy,
@@ -1782,7 +1784,7 @@ pub(crate) enum NavigatorStateFilter {
     Done,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct NavigatorState {
     pub query: String,
     pub selected: usize,
@@ -1842,8 +1844,9 @@ pub enum AgentPanelSort {
 // ---------------------------------------------------------------------------
 
 /// Which section of the settings panel is focused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SettingsSection {
+    #[default]
     Theme,
     Sound,
     Toast,
@@ -1958,7 +1961,7 @@ pub const THEME_NAMES: &[&str] = &[
     "vesper",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct MenuListState {
     pub highlighted: usize,
 }
@@ -1985,7 +1988,7 @@ impl MenuListState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SelectionListState {
     pub selected: usize,
 }
@@ -2020,6 +2023,7 @@ pub struct ThemeRuntimeConfig {
     pub legacy_accent: Option<String>,
 }
 
+#[derive(Clone, Default, PartialEq)]
 pub struct SettingsState {
     /// Which section tab is active.
     pub section: SettingsSection,
@@ -2134,6 +2138,7 @@ pub enum ContextMenuKind {
 }
 
 /// Right-click context menu state.
+#[derive(Clone, PartialEq)]
 pub struct ContextMenuState {
     pub kind: ContextMenuKind,
     pub x: u16,
@@ -2321,7 +2326,7 @@ pub struct ProductAnnouncementState {
     pub preview: bool,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default, PartialEq)]
 pub struct KeybindHelpState {
     pub scroll: u16,
     pub query: String,
@@ -2362,12 +2367,18 @@ pub type ClientId = u64;
 /// reads means "the display being served". The bundle is only what a display
 /// parks while another one is being served.
 macro_rules! client_surfaces {
-    ($( $(#[$meta:meta])* $field:ident : $ty:ty ),+ $(,)?) => {
+    (
+        inherited { $( $(#[$meta:meta])* $field:ident : $ty:ty ),+ $(,)? }
+        broadcast { $( $(#[$bmeta:meta])* $bfield:ident : $bty:ty ),+ $(,)? }
+        private { $( $(#[$pmeta:meta])* $pfield:ident : $pty:ty ),+ $(,)? }
+    ) => {
         /// Everything about *what this display is looking at*, parked while
         /// another display is being served. Never persisted as session truth.
         #[derive(Clone, Default)]
         pub(super) struct ClientSurfaces {
             $( $(#[$meta])* pub(super) $field: $ty, )+
+            $( $(#[$bmeta])* pub(super) $bfield: $bty, )+
+            $( $(#[$pmeta])* pub(super) $pfield: $pty, )+
         }
 
         impl AppState {
@@ -2378,12 +2389,16 @@ macro_rules! client_surfaces {
             fn take_surfaces(&mut self) -> ClientSurfaces {
                 ClientSurfaces {
                     $( $field: std::mem::take(&mut self.$field), )+
+                    $( $bfield: std::mem::take(&mut self.$bfield), )+
+                    $( $pfield: std::mem::take(&mut self.$pfield), )+
                 }
             }
 
             /// Installs a display's surfaces into the registers.
             fn install_surfaces(&mut self, surfaces: ClientSurfaces) {
                 $( self.$field = surfaces.$field; )+
+                $( self.$bfield = surfaces.$bfield; )+
+                $( self.$pfield = surfaces.$pfield; )+
             }
 
             /// Moves the surfaces a display actually changed into the default.
@@ -2402,6 +2417,15 @@ macro_rules! client_surfaces {
             /// sitting in a background workspace starts reading as foreground,
             /// so its agent finishes in silence.
             ///
+            /// Private surfaces are absent here on purpose. A surface that
+            /// cannot be compared cannot be told apart from a display merely
+            /// being looked at, so it can never be promoted safely — and a
+            /// surface that is never promoted stays `Default` in the default
+            /// bundle, which means a display seen for the first time starts
+            /// without it. For a blocking picker holding a live filesystem
+            /// view that is not a limitation but the behaviour you want: a
+            /// display that has just attached has not opened anything.
+            ///
             /// TP-SUR-DEFAULT-01
             fn promote_changed_surfaces(
                 &mut self,
@@ -2413,12 +2437,40 @@ macro_rules! client_surfaces {
                         self.default_surfaces.$field = outgoing.$field.clone();
                     }
                 )+
+                $(
+                    if parked.map(|previous| &previous.$bfield) != Some(&outgoing.$bfield) {
+                        self.default_surfaces.$bfield = outgoing.$bfield.clone();
+                    }
+                )+
+            }
+
+            /// Hands every display a change the session made on its own.
+            ///
+            /// Broadcast surfaces are the ones where a change with no display
+            /// behind it is an instruction rather than a preference: focusing
+            /// a pane through the API puts the session in terminal mode, and a
+            /// display still parked in navigate mode would swallow everything
+            /// its user typed. Inherited surfaces are deliberately excluded —
+            /// choosing a workspace for one display is the whole point of
+            /// keeping them apart.
+            ///
+            /// TP-SUR-BROADCAST-01
+            fn broadcast_session_changes(&mut self, outgoing: &ClientSurfaces) {
+                $(
+                    if self.default_surfaces.$bfield != outgoing.$bfield {
+                        for parked in self.surfaces_by_client.values_mut() {
+                            parked.$bfield = outgoing.$bfield.clone();
+                        }
+                    }
+                )+
             }
         }
     };
 }
 
 client_surfaces! {
+    inherited {
+
     /// The workspace this display is in.
     active: Option<usize>,
     /// Which app surface this display is looking at.
@@ -2434,6 +2486,47 @@ client_surfaces! {
     /// displays both in Files therefore still browse one directory. One in
     /// Files and one in the terminal — the reported symptom — is fixed here.
     stage: crate::ui::surface_host::StageState,
+    }
+    broadcast {
+    /// Which overlay, if any, owns this display's input.
+    mode: Mode,
+    /// The mode to return to when the overlay on top of it closes.
+    overlay_return_mode: Option<Mode>,
+    /// The right-click menu, which opens where one display was clicked.
+    context_menu: Option<ContextMenuState>,
+    /// Highlight position in the global menu.
+    global_menu: MenuListState,
+    /// The floating pane an overlay puts on top of the layout.
+    popup_pane: Option<PopupPaneState>,
+    /// Scrollback selection, which is a cursor on one display's screen.
+    copy_mode: Option<CopyModeState>,
+    /// The full-surface preview one display opened.
+    preview_viewer: Option<PreviewViewerState>,
+    /// Settings, the navigator and the keybind sheet each carry a cursor and
+    /// a query, which belong to whoever is typing.
+    settings: SettingsState,
+    navigator: NavigatorState,
+    keybind_help: KeybindHelpState,
+    /// The worktree dialogs, each a multi-step form.
+    worktree_create: Option<WorktreeCreateState>,
+    worktree_open: Option<WorktreeOpenState>,
+    worktree_remove: Option<WorktreeRemoveState>,
+    /// The shared text field every naming prompt types into, and the prompts
+    /// that read it. Splitting the field without the prompts would let one
+    /// display's keystrokes land in another display's dialog.
+    name_input: String,
+    name_input_replace_on_type: bool,
+    creating_new_tab: bool,
+    requested_new_tab_name: Option<String>,
+    rename_pane_target: Option<PaneId>,
+    }
+    private {
+    /// Blocking pickers, which own the keyboard of the display that opened
+    /// them and no other. They carry a live filesystem view, which is why
+    /// they are private: comparing one is neither cheap nor meaningful.
+    agent_attachment_picker: Option<AgentAttachmentPickerState>,
+    agent_reference_picker: Option<crate::app::agent_reference_picker::AgentReferencePickerState>,
+    }
 }
 
 /// All application state — pure data, no channels or async runtime.
@@ -2848,8 +2941,12 @@ impl AppState {
             }
             // Nothing was being served, so these registers hold whatever the
             // session itself last set — an API call, a restore, a startup.
-            // That is a switch by definition and belongs in the default whole.
-            None => self.default_surfaces = outgoing,
+            // That is a switch by definition and belongs in the default whole,
+            // and for broadcast surfaces it belongs to every display too.
+            None => {
+                self.broadcast_session_changes(&outgoing);
+                self.default_surfaces = outgoing;
+            }
         }
 
         let incoming = match viewer {
@@ -2866,16 +2963,18 @@ impl AppState {
             // makes every park look like a change, and the default — the value
             // the API and the notification path resolve through — is then
             // overwritten on every frame by displays that did nothing.
-            Some(client) => {
-                let default_surfaces = self.default_surfaces.clone();
-                self.surfaces_by_client
-                    .entry(client)
-                    .or_insert(default_surfaces)
-                    .clone()
-            }
+            Some(client) => match self.surfaces_by_client.get(&client) {
+                Some(parked) => parked.clone(),
+                None => {
+                    let adopted = self.default_surfaces.clone();
+                    self.surfaces_by_client.insert(client, adopted.clone());
+                    adopted
+                }
+            },
             None => self.default_surfaces.clone(),
         };
         self.install_surfaces(incoming);
+
         self.reconcile_surfaces_with_session();
 
         self.viewer = viewer;
@@ -5150,6 +5249,144 @@ mod viewer_context_tests {
             !state.pane_is_in_active_tab(0, crate::layout::PaneId::from_raw(1)),
             "a pane outside the session workspace must stay in the background"
         );
+    }
+
+    // TP-SUR-OVERLAY-01
+    #[test]
+    fn a_menu_opened_on_one_display_does_not_open_on_the_others() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("only"));
+        state.active = Some(0);
+
+        // Both displays are known and in the base mode.
+        state.enter_viewer(Some(1));
+        state.restore_viewer(None);
+        state.enter_viewer(Some(2));
+        state.restore_viewer(None);
+
+        // One of them right-clicks.
+        state.enter_viewer(Some(1));
+        state.mode = Mode::ContextMenu;
+        state.context_menu = Some(ContextMenuState {
+            kind: ContextMenuKind::Workspace { ws_idx: 0 },
+            x: 4,
+            y: 9,
+            list: MenuListState::new(0),
+        });
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(2));
+        assert!(
+            state.context_menu.is_none(),
+            "the display nobody clicked must not grow a menu"
+        );
+        assert_ne!(
+            state.mode,
+            Mode::ContextMenu,
+            "and must not have its input taken by one"
+        );
+        state.restore_viewer(None);
+
+        // The display that opened it still has it.
+        state.enter_viewer(Some(1));
+        assert!(state.context_menu.is_some());
+        assert_eq!(state.mode, Mode::ContextMenu);
+        state.restore_viewer(None);
+    }
+
+    // TP-SUR-OVERLAY-02
+    #[test]
+    fn each_display_types_into_its_own_prompt() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("only"));
+        state.active = Some(0);
+
+        // Both displays are known before either types.
+        state.enter_viewer(Some(1));
+        state.restore_viewer(None);
+        state.enter_viewer(Some(2));
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(1));
+        state.mode = Mode::RenameTab;
+        state.name_input = "from display one".to_string();
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(2));
+        assert_eq!(
+            state.name_input, "",
+            "one display's keystrokes must not appear in another's field"
+        );
+        state.name_input = "from display two".to_string();
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(1));
+        assert_eq!(state.name_input, "from display one");
+        state.restore_viewer(None);
+    }
+
+    // TP-SUR-BROADCAST-01
+    #[test]
+    fn a_mode_the_session_sets_itself_reaches_every_display() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("only"));
+        state.active = Some(0);
+
+        // Two displays are already attached and settled.
+        state.enter_viewer(Some(1));
+        state.restore_viewer(None);
+        state.enter_viewer(Some(2));
+        state.restore_viewer(None);
+
+        // The session puts itself in terminal mode with no display behind it
+        // -- an API call focusing a pane does exactly this.
+        state.mode = Mode::Terminal;
+
+        for client in [1, 2] {
+            state.enter_viewer(Some(client));
+            assert_eq!(
+                state.mode,
+                Mode::Terminal,
+                "a display parked in another mode would swallow everything typed into it"
+            );
+            state.restore_viewer(None);
+        }
+    }
+
+    // TP-SUR-BROADCAST-02
+    #[test]
+    fn a_workspace_the_session_picks_does_not_move_the_displays() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("left"));
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("right"));
+        state.active = Some(0);
+
+        state.enter_viewer(Some(1));
+        state.restore_viewer(None);
+        state.enter_viewer(Some(2));
+        state.restore_viewer(None);
+
+        // The counterpart to the broadcast above: choosing a workspace for one
+        // display is the point of keeping them apart, so this must not travel.
+        state.active = Some(1);
+
+        state.enter_viewer(Some(1));
+        assert_eq!(
+            state.active,
+            Some(0),
+            "an API workspace switch must not drag a display that is watching another"
+        );
+        state.restore_viewer(None);
     }
 
     // TP-MCF-MODE-01
