@@ -348,6 +348,112 @@ impl ProjectsConfig {
     }
 }
 
+/// Space partitioning configuration: the `[[spaces.split]]` rules that move
+/// some of a repository's checkouts into their own sidebar space.
+///
+/// Entries are user-authored, so an unusable one is dropped and reported rather
+/// than failing the whole config load — the same tolerance [`ProjectsConfig`]
+/// applies to `pinned`. An empty list reproduces stock grouping exactly.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct SpacesConfig {
+    pub split: Vec<SpaceSplitEntry>,
+}
+
+/// One authored `[[spaces.split]]` table, before validation.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct SpaceSplitEntry {
+    /// Repository root the rule applies to. Absolute or `~`-rooted.
+    pub repo: String,
+    /// Globs claiming checkouts, matched against branch then directory name.
+    #[serde(rename = "match")]
+    pub patterns: Vec<String>,
+    /// Space key the claimed checkouts group under.
+    pub key: String,
+    /// Group header label. Falls back to `key` when blank.
+    pub label: String,
+}
+
+impl SpacesConfig {
+    /// Validated rules in config order, `~` expanded. Unusable entries are
+    /// dropped (see [`Self::diagnostics`]).
+    pub fn rules(&self) -> Vec<crate::spaces::SpaceSplitRule> {
+        self.split
+            .iter()
+            .filter(|entry| space_split_entry_problem(entry).is_none())
+            .map(|entry| {
+                let label = entry.label.trim();
+                crate::spaces::SpaceSplitRule {
+                    repo_root: crate::worktree::expand_tilde_absolute_path(entry.repo.trim()),
+                    patterns: entry
+                        .patterns
+                        .iter()
+                        .map(|pattern| pattern.trim().to_string())
+                        .filter(|pattern| !pattern.is_empty())
+                        .collect(),
+                    key: entry.key.trim().to_string(),
+                    label: if label.is_empty() {
+                        entry.key.trim().to_string()
+                    } else {
+                        label.to_string()
+                    },
+                }
+            })
+            .collect()
+    }
+
+    /// Human-readable diagnostics for dropped entries, plus duplicate keys
+    /// (TP-SPLIT-CONF-01, TP-SPLIT-CONF-02).
+    pub fn diagnostics(&self) -> Vec<String> {
+        let mut seen_keys = std::collections::HashSet::new();
+        let mut diagnostics: Vec<String> = self
+            .split
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                space_split_entry_problem(entry)
+                    .map(|problem| format!("spaces.split[{index}] {problem}; ignoring"))
+            })
+            .collect();
+        // A duplicate key would silently merge two modules into one space,
+        // which looks like a grouping bug rather than a config typo.
+        for (index, entry) in self.split.iter().enumerate() {
+            let key = entry.key.trim();
+            if !key.is_empty() && !seen_keys.insert(key.to_string()) {
+                diagnostics.push(format!(
+                    "spaces.split[{index}] key {key:?} is already used by an earlier rule; \
+                     both rules will share one space"
+                ));
+            }
+        }
+        diagnostics
+    }
+}
+
+/// Why an entry cannot be used, or `None` when it is usable
+/// (TP-SPLIT-CONF-01).
+fn space_split_entry_problem(entry: &SpaceSplitEntry) -> Option<&'static str> {
+    let repo = entry.repo.trim();
+    if repo.is_empty() {
+        return Some("has no repo");
+    }
+    if !pinned_entry_is_usable(repo) {
+        return Some("repo is not an absolute path");
+    }
+    if entry.key.trim().is_empty() {
+        return Some("has no key");
+    }
+    if entry
+        .patterns
+        .iter()
+        .all(|pattern| pattern.trim().is_empty())
+    {
+        return Some("has no usable match pattern");
+    }
+    None
+}
+
 /// A pinned entry is usable when it is non-blank and points at an absolute or
 /// `~`-rooted location. `~` is accepted because Herdr config paths conventionally
 /// use it (e.g. `worktrees.directory` defaults to `~/.herdr/worktrees`).
@@ -370,6 +476,7 @@ pub struct Config {
     pub experimental: ExperimentalConfig,
     pub remote: RemoteConfig,
     pub projects: ProjectsConfig,
+    pub spaces: SpacesConfig,
     pub preview: PreviewConfig,
     pub tailscale: TailscaleConfig,
 }
@@ -1975,6 +2082,126 @@ scrollback_lines = 12345
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.advanced.scrollback_limit_bytes, 12345);
+    }
+
+    #[test]
+    fn spaces_rules_drop_unusable_entries() {
+        let config: Config = toml::from_str(
+            r#"
+[[spaces.split]]
+repo = ""
+match = ["a"]
+key = "k1"
+
+[[spaces.split]]
+repo = "relative/path"
+match = ["a"]
+key = "k2"
+
+[[spaces.split]]
+repo = "/repo/ok"
+match = ["a"]
+key = ""
+
+[[spaces.split]]
+repo = "/repo/ok"
+match = ["   "]
+key = "k4"
+
+[[spaces.split]]
+repo = "/repo/ok"
+match = ["feat/*"]
+key = "k5"
+"#,
+        )
+        .expect("config parses");
+
+        let rules = config.spaces.rules();
+        assert_eq!(
+            rules
+                .iter()
+                .map(|rule| rule.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["k5"],
+            "only the usable rule survives"
+        );
+        assert_eq!(
+            config.spaces.diagnostics().len(),
+            4,
+            "each dropped entry is reported: {:?}",
+            config.spaces.diagnostics()
+        );
+    }
+
+    #[test]
+    fn space_split_entry_problem_rejects_unusable_entries() {
+        let usable = SpaceSplitEntry {
+            repo: "~/panel".into(),
+            patterns: vec!["feat/*".into()],
+            key: "panel:feat".into(),
+            label: String::new(),
+        };
+        assert_eq!(space_split_entry_problem(&usable), None);
+
+        let mut no_key = usable.clone();
+        no_key.key = "  ".into();
+        assert_eq!(space_split_entry_problem(&no_key), Some("has no key"));
+
+        let mut relative = usable.clone();
+        relative.repo = "panel".into();
+        assert_eq!(
+            space_split_entry_problem(&relative),
+            Some("repo is not an absolute path")
+        );
+
+        let mut no_pattern = usable.clone();
+        no_pattern.patterns = vec![String::new()];
+        assert_eq!(
+            space_split_entry_problem(&no_pattern),
+            Some("has no usable match pattern")
+        );
+    }
+
+    #[test]
+    fn spaces_rule_label_falls_back_to_key() {
+        let config: Config = toml::from_str(
+            r#"
+[[spaces.split]]
+repo = "/repo/ok"
+match = ["feat/*"]
+key = "panel:feat"
+"#,
+        )
+        .expect("config parses");
+        assert_eq!(config.spaces.rules()[0].label, "panel:feat");
+    }
+
+    #[test]
+    fn spaces_diagnostics_report_duplicate_keys() {
+        let config: Config = toml::from_str(
+            r#"
+[[spaces.split]]
+repo = "/repo/ok"
+match = ["feat/*"]
+key = "panel:dup"
+
+[[spaces.split]]
+repo = "/repo/ok"
+match = ["fix/*"]
+key = "panel:dup"
+"#,
+        )
+        .expect("config parses");
+
+        assert!(
+            config
+                .spaces
+                .diagnostics()
+                .iter()
+                .any(|d| d.contains("already used by an earlier rule")),
+            "a duplicate key must be reported: {:?}",
+            config.spaces.diagnostics()
+        );
     }
 
     #[test]

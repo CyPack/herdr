@@ -12,6 +12,7 @@ const KNOWN_TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
     "projects",
     "remote",
     "session",
+    "spaces",
     "terminal",
     "theme",
     "ui",
@@ -348,6 +349,15 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
         &mut diagnostics,
         &mut invalid_sections,
         |section| config.projects = section,
+    );
+    // TP-SPLIT-CONF-03: a known section, isolated when malformed.
+    load_live_section(
+        table,
+        "spaces",
+        "spaces config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.spaces = section,
     );
 
     Ok(LoadedConfig {
@@ -1073,6 +1083,55 @@ pinned = ["/home/a/x"]
             loaded.diagnostics
         );
         assert!(loaded.invalid_sections.is_empty());
+    }
+
+    #[test]
+    fn load_live_config_recognizes_spaces_section() {
+        let loaded = load_live_config_from_str(
+            r#"
+[[spaces.split]]
+repo = "/home/a/panel"
+match = ["feat/t4f-*"]
+key = "panel:t4f"
+label = "T4F"
+"#,
+        )
+        .unwrap();
+
+        let rules = loaded.config.spaces.rules();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].key, "panel:t4f");
+        assert_eq!(rules[0].label, "T4F");
+        assert!(
+            loaded.diagnostics.is_empty(),
+            "known [spaces] section must not warn: {:?}",
+            loaded.diagnostics
+        );
+        assert!(loaded.invalid_sections.is_empty());
+    }
+
+    #[test]
+    fn load_live_config_isolates_invalid_spaces_section() {
+        let loaded = load_live_config_from_str(
+            r#"
+[spaces]
+split = 5
+
+[ui]
+mouse_capture = false
+"#,
+        )
+        .unwrap();
+
+        // A malformed [spaces] is isolated: other sections still apply.
+        assert!(loaded.config.spaces.rules().is_empty());
+        assert!(!loaded.config.ui.mouse_capture);
+        assert!(loaded.invalid_sections.contains(&"spaces".to_string()));
+        assert!(
+            loaded.diagnostics.iter().any(|d| d.contains("spaces")),
+            "invalid spaces section should produce a diagnostic: {:?}",
+            loaded.diagnostics
+        );
     }
 
     #[test]
