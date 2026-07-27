@@ -279,6 +279,7 @@ impl App {
         changed |= self.sync_file_manager_plugin_action();
         changed |= self.for_each_display(|app| {
             let mut changed = false;
+            changed |= app.sync_file_manager_requests();
             changed |= app.sync_file_manager_io_results();
             changed |= app.sync_file_manager_location_request();
             changed |= app.sync_file_manager_watcher_at(now);

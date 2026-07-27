@@ -2624,6 +2624,15 @@ client_surfaces! {
     /// was actually clicked sits inert. The request has to belong to the
     /// display that made it, because the browser it acts on does.
     request_file_manager_location_navigation: Option<FileManagerLocationNavigationRequest>,
+    /// The rest of what this display asked its browser to do. Each one is
+    /// resolved against the asking display's rail focus, current directory
+    /// and selection, so consumed in another display's view it acts on the
+    /// wrong browser or — far more often — on none, and the click reads as
+    /// ignored.
+    request_file_manager_rename: Option<FileManagerRenameRequest>,
+    request_file_manager_bulk_rename: Option<FileManagerBulkRenameRequest>,
+    request_file_manager_delete: Option<FileManagerDeleteRequest>,
+    request_file_manager_context_action: Option<FileManagerContextActionIntent>,
     }
     ephemeral {
     /// A gesture in flight, which is private for the same reason it is
@@ -5722,6 +5731,44 @@ mod viewer_context_tests {
         assert!(
             state.request_file_manager_location_navigation.is_some(),
             "and is still waiting when that display is served"
+        );
+        state.restore_viewer(None);
+    }
+
+    // TP-SUR-FM-06
+    #[test]
+    fn every_browser_request_belongs_to_the_display_that_made_it() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("only"));
+        state.active = Some(0);
+
+        state.enter_viewer(Some(1));
+        state.restore_viewer(None);
+        state.enter_viewer(Some(2));
+        state.restore_viewer(None);
+
+        // The second display asks its browser to do things.
+        state.enter_viewer(Some(2));
+        state.request_file_manager_delete = Some(FileManagerDeleteRequest {
+            kind: FileManagerDeleteKind::Trash,
+            paths: vec![std::path::PathBuf::from("/tmp/x")],
+        });
+        state.restore_viewer(None);
+
+        // Every one of these acts on the asking display's browser and its
+        // rail focus, so none of them may be visible to another display --
+        // consumed there, they act on the wrong browser or, more often,
+        // on none at all, and the click looks ignored.
+        state.enter_viewer(Some(1));
+        assert!(state.request_file_manager_delete.is_none());
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(2));
+        assert!(
+            state.request_file_manager_delete.is_some(),
+            "and is still waiting when the asking display is served"
         );
         state.restore_viewer(None);
     }

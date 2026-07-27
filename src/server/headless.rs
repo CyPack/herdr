@@ -4086,6 +4086,7 @@ impl HeadlessServer {
         // once per display, inside that display's view. TP-SUR-FM-02
         changed |= self.app.for_each_display(|app| {
             let mut changed = false;
+            changed |= app.sync_file_manager_requests();
             changed |= app.sync_file_manager_io_results();
             changed |= app.sync_file_manager_location_request();
             changed |= app.sync_file_manager_watcher_at(now);

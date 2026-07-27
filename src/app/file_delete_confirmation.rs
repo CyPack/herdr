@@ -204,7 +204,7 @@ mod tests {
 
     fn open_header_delete_confirmation(app: &mut crate::app::App) {
         assert!(app.dispatch_file_manager_header_action(FileManagerHeaderAction::Delete));
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
     }
 
     // TP-C4.2-CONFIRM: header Delete snapshots current prepared path order into
@@ -276,7 +276,7 @@ mod tests {
             paths: paths.clone(),
         });
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
 
         assert_eq!(app.state.mode, Mode::ConfirmFileDelete);
         assert_eq!(

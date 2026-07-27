@@ -933,7 +933,7 @@ mod tests {
             .as_ref()
             .expect("file manager open")
             .preview_generation;
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         let _ = app.sync_file_manager_watcher_at(now);
 
         let file_manager = app.state.file_manager.as_ref().expect("file manager open");
@@ -1369,7 +1369,7 @@ mod tests {
             assert!(Instant::now() < deadline, "completion buffering timed out");
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         let _ = app.sync_file_manager_watcher_at(now);
 
         let file_manager = app.state.file_manager.as_ref().expect("file manager open");
@@ -1422,7 +1422,7 @@ mod tests {
             .as_ref()
             .expect("file manager open")
             .preview_generation;
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         let _ = app.sync_file_manager_watcher_at(now);
 
         let (watch_tx, watch_rx) = sync_channel(1);
@@ -1512,7 +1512,7 @@ mod tests {
             assert!(Instant::now() < deadline, "stale completion timed out");
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         let _ = app.sync_file_manager_watcher_at(now);
 
         let reopened = app
@@ -1565,7 +1565,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert!(app.sync_file_manager_watcher_at(now));
         assert!(!app.sync_file_manager_watcher_at(now));
         let file_manager = app.state.file_manager.as_ref().expect("file manager open");

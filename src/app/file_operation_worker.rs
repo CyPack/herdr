@@ -589,7 +589,17 @@ impl crate::app::App {
     /// Consume C3's revalidated C4 intents and reconcile one worker terminal
     /// result. C5 context actions remain queued for their owning module
     /// instead of being silently discarded.
-    pub(crate) fn sync_file_operation_worker(&mut self) -> bool {
+    /// Takes up what the display being served asked its browser to do.
+    ///
+    /// Split from the worker drain below, and driven once per display,
+    /// because every one of these resolves against the asking display's rail
+    /// focus, current directory and selection. Run outside a display's view
+    /// they read whatever the registers happen to hold, which for two or more
+    /// displays is nobody's browser: the request is taken, nothing matches,
+    /// and the rename or delete is silently dropped.
+    ///
+    /// TP-SUR-FM-06
+    pub(crate) fn sync_file_manager_requests(&mut self) -> bool {
         let mut changed = self.consume_file_manager_delete_request();
         changed |= self.consume_file_manager_rename_request();
         changed |= self.consume_file_manager_bulk_rename_request();
@@ -600,6 +610,28 @@ impl crate::app::App {
         changed |= self.consume_file_manager_context_delete();
         changed |= self.consume_file_manager_context_copy();
         changed |= self.consume_unsupported_file_manager_context_action();
+        changed
+    }
+
+    /// Both halves in one call, for tests that drive the browser directly.
+    ///
+    /// Production splits them because they belong to different scopes: the
+    /// requests to a display, the operation to the session. A test that owns
+    /// the whole state wants both to happen.
+    #[cfg(test)]
+    pub(crate) fn sync_file_operations_for_test(&mut self) -> bool {
+        let mut changed = self.sync_file_manager_requests();
+        changed |= self.sync_file_operation_worker();
+        changed
+    }
+
+    /// Advances the one operation the session has in flight.
+    ///
+    /// Deliberately *not* per display: there is a single worker channel and a
+    /// single operation, so draining it once per display would let the first
+    /// display served eat progress meant for the whole session.
+    pub(crate) fn sync_file_operation_worker(&mut self) -> bool {
+        let mut changed = false;
         let drained = self.file_operation_worker.drain();
         if let Some(progress) = drained.progress {
             if let Some(operation) = self.state.file_manager_operation.as_mut() {
@@ -1736,7 +1768,7 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .expect("App worker reported progress");
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         let operation = app
             .state
             .file_manager_operation
@@ -1763,7 +1795,7 @@ mod tests {
             .as_ref()
             .is_some_and(FileManagerOperationState::is_running)
         {
-            let _ = app.sync_file_operation_worker();
+            let _ = app.sync_file_operations_for_test();
             assert!(
                 Instant::now() < deadline,
                 "App progress completion timed out"
@@ -2031,14 +2063,14 @@ mod tests {
                 paths: vec![first.clone(), second.clone()],
             })
         );
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
 
         assert_eq!(
             app.state.file_manager_clipboard,
             vec![first.clone(), second.clone()]
         );
         assert!(app.state.request_file_manager_context_action.is_none());
-        assert!(!app.sync_file_operation_worker());
+        assert!(!app.sync_file_operations_for_test());
         assert!(app.state.file_manager_operation.is_none());
         assert_eq!(
             fs::read(first).expect("read first after copy action"),
@@ -2169,14 +2201,14 @@ mod tests {
             paths: vec![directory.clone()],
         });
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert!(app.complete_file_manager_io_for_test());
         assert!(app.state.request_file_manager_context_action.is_none());
         assert_eq!(
             app.state.file_manager.as_ref().expect("open FM").cwd,
             directory
         );
-        assert!(!app.sync_file_operation_worker());
+        assert!(!app.sync_file_operations_for_test());
     }
 
     /// An app whose file manager has `name` selected inside a fresh temp dir.
@@ -2209,7 +2241,7 @@ mod tests {
             paths: vec![path.clone()],
         });
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert!(app.state.request_file_manager_context_action.is_none());
         assert_eq!(app.state.mode, crate::app::state::Mode::PreviewViewer);
         assert_eq!(
@@ -2240,7 +2272,7 @@ mod tests {
             paths: vec![path.clone()],
         });
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert!(app.state.request_file_manager_context_action.is_none());
         assert_eq!(app.state.mode, crate::app::state::Mode::TailscaleSend);
         let picker = app.state.tailscale_send.as_ref().expect("picker is open");
@@ -2264,7 +2296,7 @@ mod tests {
             paths: vec![td.root.join("notes.txt")],
         });
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert!(app.state.request_file_manager_context_action.is_none());
         assert!(app.state.preview_viewer.is_none());
         assert_ne!(app.state.mode, crate::app::state::Mode::PreviewViewer);
@@ -2281,7 +2313,7 @@ mod tests {
             paths: vec![td.root.join("other.png")],
         });
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert!(app.state.request_file_manager_context_action.is_none());
         assert!(app.state.preview_viewer.is_none());
     }
@@ -2305,7 +2337,7 @@ mod tests {
             paths: vec![selected.clone()],
         });
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert!(app.state.request_file_manager_context_action.is_none());
         assert!(app.state.file_manager_operation.is_none());
         assert!(app.state.file_manager_delete_confirmation.is_none());
@@ -2367,7 +2399,7 @@ mod tests {
         release_tx.send(()).expect("release paste worker");
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            if app.sync_file_operation_worker()
+            if app.sync_file_operations_for_test()
                 && app
                     .state
                     .file_manager_operation
@@ -2483,7 +2515,7 @@ mod tests {
 
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
-            if app.sync_file_operation_worker()
+            if app.sync_file_operations_for_test()
                 && app
                     .state
                     .file_manager_operation
@@ -2540,7 +2572,7 @@ mod tests {
             .as_ref()
             .is_some_and(FileManagerOperationState::is_running)
         {
-            let _ = app.sync_file_operation_worker();
+            let _ = app.sync_file_operations_for_test();
             assert!(Instant::now() < deadline, "next generation timed out");
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -2606,7 +2638,7 @@ mod tests {
             .as_ref()
             .is_some_and(|operation| operation.status == FileManagerOperationStatus::Running)
         {
-            let _ = app.sync_file_operation_worker();
+            let _ = app.sync_file_operations_for_test();
             assert!(Instant::now() < deadline, "stale completion timed out");
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -2639,7 +2671,7 @@ mod tests {
             paths: vec![source.clone()],
         });
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
 
         assert_eq!(app.state.file_manager_clipboard, vec![source]);
         assert!(app.state.request_file_manager_context_action.is_none());
@@ -2665,7 +2697,7 @@ mod tests {
             paths: vec![source.clone()],
         });
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert_eq!(app.state.mode, crate::app::Mode::RenameFile);
         assert_eq!(
             app.state
@@ -2689,7 +2721,7 @@ mod tests {
                 action: FileManagerContextMenuAction::Rename,
                 paths,
             });
-            assert!(app.sync_file_operation_worker());
+            assert!(app.sync_file_operations_for_test());
             assert_ne!(app.state.mode, crate::app::Mode::RenameFile);
             assert!(app.state.file_manager_rename.is_none());
             assert!(app.state.request_file_manager_context_action.is_none());
@@ -2700,7 +2732,7 @@ mod tests {
             action: FileManagerContextMenuAction::Rename,
             paths: vec![source.clone()],
         });
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert_ne!(app.state.mode, crate::app::Mode::RenameFile);
         assert!(app.state.file_manager_rename.is_none());
         assert_eq!(
@@ -2728,7 +2760,7 @@ mod tests {
             paths: vec![source.clone()],
         });
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert!(app.state.request_file_manager_delete.is_none());
         let generation = app
             .state
@@ -2739,7 +2771,7 @@ mod tests {
 
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let _ = app.sync_file_operation_worker();
+            let _ = app.sync_file_operations_for_test();
             if app
                 .state
                 .file_manager_operation
@@ -2800,7 +2832,7 @@ mod tests {
             paths: vec![source.clone()],
         });
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
 
         assert!(app.state.request_file_manager_delete.is_none());
         assert_eq!(
@@ -2920,10 +2952,10 @@ mod tests {
             paths: vec![source.clone()],
         });
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let _ = app.sync_file_operation_worker();
+            let _ = app.sync_file_operations_for_test();
             if app
                 .state
                 .file_manager_operation
@@ -2976,10 +3008,10 @@ mod tests {
             paths: vec![source.clone()],
         });
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let _ = app.sync_file_operation_worker();
+            let _ = app.sync_file_operations_for_test();
             if app
                 .state
                 .file_manager_operation
@@ -3079,7 +3111,7 @@ mod tests {
             .as_ref()
             .is_some_and(FileManagerOperationState::is_running)
         {
-            let _ = app.sync_file_operation_worker();
+            let _ = app.sync_file_operations_for_test();
             assert!(
                 Instant::now() < deadline,
                 "progress panic recovery timed out"
@@ -3118,7 +3150,7 @@ mod tests {
             .as_ref()
             .is_some_and(FileManagerOperationState::is_running)
         {
-            let _ = app.sync_file_operation_worker();
+            let _ = app.sync_file_operations_for_test();
             assert!(Instant::now() < deadline, "reused panic lane timed out");
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -3194,7 +3226,7 @@ mod tests {
             .collect(),
         });
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         let failed = app
             .state
             .file_manager_operation
@@ -3210,7 +3242,7 @@ mod tests {
         assert!(app.file_operation_reconcile_baseline.is_none());
         assert!(!app.file_operation_worker.is_busy());
         assert!(
-            !app.sync_file_operation_worker(),
+            !app.sync_file_operations_for_test(),
             "recovered worker must not hot retry"
         );
 
@@ -3228,7 +3260,7 @@ mod tests {
             assert!(Instant::now() < deadline, "recovered lane timed out");
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert_eq!(
             app.state
                 .file_manager_operation
@@ -3263,7 +3295,7 @@ mod tests {
             new_name: "renamed.txt".to_string(),
         });
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert!(app.state.request_file_manager_rename.is_none());
         let generation = app
             .state
@@ -3274,7 +3306,7 @@ mod tests {
 
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let _ = app.sync_file_operation_worker();
+            let _ = app.sync_file_operations_for_test();
             if app
                 .state
                 .file_manager_operation
@@ -3353,7 +3385,7 @@ mod tests {
             new_name: "renamed.txt".to_string(),
         });
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
 
         assert!(app.state.request_file_manager_rename.is_none());
         assert!(app.state.file_manager_operation.is_none());
@@ -3405,7 +3437,7 @@ mod tests {
                 ],
             });
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
 
         assert!(app.state.request_file_manager_bulk_rename.is_none());
         assert!(app.state.file_manager_operation.is_none());
@@ -3442,7 +3474,7 @@ mod tests {
             source_path: source.clone(),
             new_name: "busy.txt".to_string(),
         });
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert_eq!(
             app.state
                 .file_manager_operation
@@ -3459,7 +3491,7 @@ mod tests {
             source_path: td.root.join("stale.txt"),
             new_name: "ignored.txt".to_string(),
         });
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert!(app.state.file_manager_operation.is_none());
 
         app.state.file_manager = None;
@@ -3467,7 +3499,7 @@ mod tests {
             source_path: source.clone(),
             new_name: "closed.txt".to_string(),
         });
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert!(app.state.file_manager_operation.is_none());
         assert_eq!(
             fs::read(source).expect("closed source retained"),
@@ -3514,7 +3546,7 @@ mod tests {
             source_path: source.clone(),
             new_name: "renamed.txt".to_string(),
         });
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         started_rx
             .recv_timeout(Duration::from_secs(2))
             .expect("rename worker started");
@@ -3531,7 +3563,7 @@ mod tests {
             .as_ref()
             .is_some_and(FileManagerOperationState::is_running)
         {
-            let _ = app.sync_file_operation_worker();
+            let _ = app.sync_file_operations_for_test();
             assert!(Instant::now() < deadline, "reopened rename timed out");
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -3638,11 +3670,11 @@ mod tests {
                 ],
             });
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert!(app.state.request_file_manager_bulk_rename.is_none());
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let _ = app.sync_file_operation_worker();
+            let _ = app.sync_file_operations_for_test();
             if app
                 .state
                 .file_manager_operation
@@ -3775,7 +3807,7 @@ mod tests {
                 ],
             });
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         let failed_generation = app
             .state
             .file_manager_operation
@@ -3789,7 +3821,7 @@ mod tests {
             .as_ref()
             .is_some_and(FileManagerOperationState::is_running)
         {
-            let _ = app.sync_file_operation_worker();
+            let _ = app.sync_file_operations_for_test();
             assert!(Instant::now() < deadline, "private recovery timed out");
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -3850,7 +3882,7 @@ mod tests {
             .as_ref()
             .is_some_and(FileManagerOperationState::is_running)
         {
-            let _ = app.sync_file_operation_worker();
+            let _ = app.sync_file_operations_for_test();
             assert!(Instant::now() < deadline, "post-recovery paste timed out");
             std::thread::sleep(Duration::from_millis(5));
         }

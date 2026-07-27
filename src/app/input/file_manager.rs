@@ -9594,7 +9594,7 @@ command = ["view"]
                 paths: vec![selected.clone()],
             })
         );
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert_eq!(app.state.file_manager_clipboard, vec![selected]);
         assert_eq!(
             fs::read(td.root.join("selected.txt")).expect("copy action preserves source"),
@@ -10054,7 +10054,7 @@ command = ["view"]
             })
         );
         assert_ne!(app.state.mode, Mode::RenameFile);
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert_eq!(app.state.mode, Mode::RenameFile);
         assert_eq!(
             app.state
@@ -10101,7 +10101,7 @@ command = ["view"]
             })
         );
         assert!(app.state.file_manager_delete_confirmation.is_none());
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert_eq!(
             app.state
                 .file_manager_delete_confirmation
@@ -10580,7 +10580,7 @@ command = ["view"]
             "the menu row must emit an intent"
         );
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert_eq!(app.state.mode, Mode::TailscaleSend, "the picker must open");
         assert_eq!(
             app.state
@@ -10629,7 +10629,7 @@ command = ["view"]
             "the clicked row must emit an intent"
         );
 
-        assert!(app.sync_file_operation_worker());
+        assert!(app.sync_file_operations_for_test());
         assert_eq!(app.state.mode, Mode::TailscaleSend, "the picker must open");
     }
 
