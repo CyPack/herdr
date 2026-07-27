@@ -3600,6 +3600,16 @@
           },
           "type": "object"
         },
+        "ServerStopParams": {
+          "description": "Params for `server.stop`. `force` skips the live-agent guard; it defaults\nto false so pre-guard clients sending `\"params\": {}` keep working and get\nthe protective behavior (incident PM-2026-07-27-001: a bare stop silently\nkilled nine live agent sessions).",
+          "properties": {
+            "force": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
         "SplitDirection": {
           "enum": [
             "right",
@@ -4346,7 +4356,7 @@
               "type": "string"
             },
             "params": {
-              "$ref": "#/schemas/request/$defs/EmptyParams"
+              "$ref": "#/schemas/request/$defs/ServerStopParams"
             }
           },
           "required": [

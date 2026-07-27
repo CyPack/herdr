@@ -181,7 +181,7 @@ fn generated_protocol_schema_artifact_is_current() {
 fn request_round_trips_for_server_stop() {
     let request = Request {
         id: "req_stop".into(),
-        method: Method::ServerStop(EmptyParams::default()),
+        method: Method::ServerStop(ServerStopParams::default()),
     };
 
     let json = serde_json::to_value(&request).unwrap();

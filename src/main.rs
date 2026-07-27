@@ -550,7 +550,7 @@ fn main() -> io::Result<()> {
         println!("       herdr completion zsh");
         println!("       herdr update [--handoff]");
         println!("       herdr channel set <stable|preview>");
-        println!("       herdr server stop");
+        println!("       herdr server stop [--force]");
         println!("       herdr server reload-config");
         println!("       herdr api <subcommand> ...");
         println!("       herdr completion <shell>");

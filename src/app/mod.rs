@@ -2762,7 +2762,7 @@ mod tests {
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req_server_stop_after_events".into(),
             method: crate::api::schema::Method::ServerStop(
-                crate::api::schema::EmptyParams::default(),
+                crate::api::schema::ServerStopParams::default(),
             ),
         });
         let response: serde_json::Value = serde_json::from_str(&response).unwrap();
@@ -4242,7 +4242,7 @@ mod tests {
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req_server_stop".into(),
             method: crate::api::schema::Method::ServerStop(
-                crate::api::schema::EmptyParams::default(),
+                crate::api::schema::ServerStopParams::default(),
             ),
         });
         let response: serde_json::Value = serde_json::from_str(&response).unwrap();

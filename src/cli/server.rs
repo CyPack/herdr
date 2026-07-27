@@ -25,12 +25,16 @@ pub(super) fn run_server_command(args: &[String]) -> std::io::Result<Option<i32>
 }
 
 fn server_stop(args: &[String]) -> std::io::Result<i32> {
-    if !args.is_empty() {
-        eprintln!("usage: herdr server stop");
-        return Ok(2);
-    }
+    let force = match args {
+        [] => false,
+        [flag] if flag == "--force" => true,
+        _ => {
+            eprintln!("usage: herdr server stop [--force]");
+            return Ok(2);
+        }
+    };
 
-    match crate::session::stop_active_server() {
+    match crate::session::stop_active_server(force) {
         Ok(()) => Ok(0),
         Err(err) => {
             eprintln!("{err}");

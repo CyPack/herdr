@@ -25,6 +25,16 @@ pub(super) fn metadata_token_values_schema(
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default)]
 pub struct EmptyParams {}
 
+/// Params for `server.stop`. `force` skips the live-agent guard; it defaults
+/// to false so pre-guard clients sending `"params": {}` keep working and get
+/// the protective behavior (incident PM-2026-07-27-001: a bare stop silently
+/// killed nine live agent sessions).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default)]
+pub struct ServerStopParams {
+    #[serde(default)]
+    pub force: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WorkspaceTarget {
     pub workspace_id: String,

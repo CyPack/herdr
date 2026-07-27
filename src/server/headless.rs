@@ -4902,7 +4902,9 @@ mod tests {
             server.handle_api_request_with_shutdown_check(api::ApiRequestMessage {
                 request: api::schema::Request {
                     id: "headless_stop_after_events".into(),
-                    method: api::schema::Method::ServerStop(api::schema::EmptyParams::default()),
+                    method: api::schema::Method::ServerStop(
+                        api::schema::ServerStopParams::default()
+                    ),
                 },
                 respond_to,
                 response_write_complete: None,

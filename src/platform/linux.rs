@@ -370,7 +370,9 @@ pub fn signal_processes(pids: &[u32], signal: Signal) {
         // A pid above i32::MAX would wrap negative under `as i32` and turn
         // kill(2) into a process-group (or kill(-1): every process) signal.
         // try_from makes that class unrepresentable.
-        let Ok(pid) = i32::try_from(pid) else { continue };
+        let Ok(pid) = i32::try_from(pid) else {
+            continue;
+        };
         if pid == 0 {
             continue;
         }
@@ -964,7 +966,9 @@ mod tests {
             "ENOSYS must fall back to the legacy pid set"
         );
         assert!(
-            legacy.iter().all(|t| target_alive(t) || t.pid() != std::process::id()),
+            legacy
+                .iter()
+                .all(|t| target_alive(t) || t.pid() != std::process::id()),
             "legacy targets must still be pid-probeable"
         );
 

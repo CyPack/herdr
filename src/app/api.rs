@@ -869,6 +869,21 @@ impl App {
         self.handle_api_request_after_internal_events_drained(request)
     }
 
+    /// Agent labels (one entry per pane) that would die with the server.
+    /// Detection reuses the sidebar's notion of "which agent lives here":
+    /// an explicitly known agent first, the heuristic detection second.
+    fn agent_sessions_blocking_stop(&self) -> Vec<&'static str> {
+        let mut labels: Vec<&'static str> = self
+            .state
+            .terminals
+            .values()
+            .filter_map(|terminal| terminal.effective_known_agent().or(terminal.detected_agent))
+            .map(crate::detect::agent_label)
+            .collect();
+        labels.sort_unstable();
+        labels
+    }
+
     pub(crate) fn handle_api_request_after_internal_events_drained(
         &mut self,
         request: crate::api::schema::Request,
@@ -879,7 +894,23 @@ impl App {
         };
 
         let response = match request.method {
-            Method::ServerStop(_) => {
+            Method::ServerStop(params) => {
+                // Live-agent stop guard (PM-2026-07-27-001): a bare stop once
+                // swept nine live agent sessions without anyone noticing until
+                // the desktop collapsed. Panes with a detected agent hold
+                // unsaved context; refusing here makes that loss a deliberate
+                // choice (--force) instead of a side effect.
+                let blocking = self.agent_sessions_blocking_stop();
+                if !params.force && !blocking.is_empty() {
+                    let response = ErrorResponse {
+                        id: request.id,
+                        error: ErrorBody {
+                            code: "agent_sessions_active".into(),
+                            message: stop_guard_message(&blocking),
+                        },
+                    };
+                    return serde_json::to_string(&response).unwrap_or_else(|_| "{}".to_string());
+                }
                 self.state.should_quit = true;
                 SuccessResponse {
                     id: request.id,
@@ -2235,5 +2266,129 @@ mod tests {
             app.state.toast.as_ref().map(|toast| toast.context.as_str()),
             Some("__herdr_original__ · 1")
         );
+    }
+}
+
+/// Human-facing refusal for `server.stop` when live agent panes exist.
+/// Free function so the wording and counting are unit-testable without an App.
+fn stop_guard_message(blocking: &[&'static str]) -> String {
+    let mut counts: Vec<(&'static str, usize)> = Vec::new();
+    for label in blocking {
+        match counts.iter_mut().find(|(name, _)| name == label) {
+            Some((_, count)) => *count += 1,
+            None => counts.push((label, 1)),
+        }
+    }
+    let summary = counts
+        .iter()
+        .map(|(name, count)| {
+            if *count == 1 {
+                (*name).to_string()
+            } else {
+                format!("{name} x{count}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "{} pane(s) still run live agent sessions ({}); stopping the server kills their \
+processes and unsaved context. Re-run with `herdr server stop --force` to stop anyway.",
+        blocking.len(),
+        summary
+    )
+}
+
+#[cfg(test)]
+mod stop_guard_tests {
+    use super::*;
+    use crate::detect::Agent;
+    use crate::workspace::Workspace;
+
+    fn guard_test_app() -> crate::app::App {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        crate::app::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        )
+    }
+
+    fn stop_request(force: bool) -> crate::api::schema::Request {
+        crate::api::schema::Request {
+            id: "req_stop_guard".into(),
+            method: crate::api::schema::Method::ServerStop(crate::api::schema::ServerStopParams {
+                force,
+            }),
+        }
+    }
+
+    fn app_with_agent_pane() -> crate::app::App {
+        let mut app = guard_test_app();
+        let ws = Workspace::test_new("guard");
+        let pane = ws.tabs[0].root_pane;
+        app.state.workspaces = vec![ws];
+        app.state.ensure_test_terminals();
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane]
+            .attached_terminal_id
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .expect("test terminal")
+            .detected_agent = Some(Agent::Claude);
+        app
+    }
+
+    /// F2-T1: a live agent pane blocks a bare stop — and the server must
+    /// stay up (should_quit untouched, no signals sent anywhere).
+    #[test]
+    fn stop_without_force_is_refused_while_agent_pane_lives() {
+        let mut app = app_with_agent_pane();
+        let response = app.handle_api_request_after_internal_events_drained(stop_request(false));
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(response["error"]["code"], "agent_sessions_active");
+        assert!(
+            response["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("--force"),
+            "refusal must tell the operator the deliberate way out"
+        );
+        assert!(
+            !app.state.should_quit,
+            "guarded stop must not begin teardown"
+        );
+    }
+
+    /// F2-T2: --force is the deliberate override.
+    #[test]
+    fn stop_with_force_proceeds_despite_agent_pane() {
+        let mut app = app_with_agent_pane();
+        let response = app.handle_api_request_after_internal_events_drained(stop_request(true));
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(response["result"]["type"], "ok");
+        assert!(app.state.should_quit);
+    }
+
+    /// F2-T3: no agents -> no friction (a guard that cries wolf becomes
+    /// theater and trains the operator to always --force).
+    #[test]
+    fn stop_without_agents_needs_no_force() {
+        let mut app = guard_test_app();
+        let response = app.handle_api_request_after_internal_events_drained(stop_request(false));
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(response["result"]["type"], "ok");
+        assert!(app.state.should_quit);
+    }
+
+    /// Message formatting: counts collapse per agent, singulars stay bare.
+    #[test]
+    fn guard_message_counts_agents() {
+        let message = stop_guard_message(&["claude", "claude", "codex"]);
+        assert!(message.contains("3 pane(s)"), "{message}");
+        assert!(message.contains("claude x2"), "{message}");
+        assert!(message.contains("codex"), "{message}");
     }
 }
