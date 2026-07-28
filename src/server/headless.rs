@@ -145,6 +145,17 @@ impl RenderImpact {
     }
 }
 
+/// Whether this request can open a surface a person opened — one that belongs
+/// to a single display rather than to the session.
+///
+/// Kept as an explicit list rather than "run every API request in the focused
+/// display's view": a session instruction such as focusing a pane must stay
+/// session-wide, and scoping it to one display is how a parked display ends up
+/// in a mode that swallows what its user types (TP-SUR-BROADCAST-01).
+fn opens_a_person_surface(method: &api::schema::Method) -> bool {
+    matches!(method, api::schema::Method::PluginPaneOpen(_))
+}
+
 fn record_render_impact(source: &'static str, impact: RenderImpact) {
     let event = match (source, impact) {
         ("api_requests", RenderImpact::Graphics) => "graphics_render_cause.api_requests",
@@ -3249,6 +3260,28 @@ impl HeadlessServer {
                 })
                 .unwrap_or_else(|_| "{}".to_string())
             })
+        } else if opens_a_person_surface(&msg.request.method) {
+            // A plugin opens its viewer by calling back into the API, so the
+            // request that opens a popup arrives with no display behind it.
+            // Handled with no viewer it lands in the session's registers, and
+            // the broadcast rule then copies the popup onto every attached
+            // display. Scoping the request to one display is what keeps the
+            // broadcast from ever seeing it, and it is also what gives the
+            // popup an owner instead of leaving it where no display looks.
+            //
+            // The owner is the display whose terminal has focus: it is the one
+            // the person just clicked in, and it is the same display whose
+            // click queued the action this plugin is running for. With no
+            // focused display this resolves to `None`, which is exactly the
+            // single-view behaviour it replaced.
+            //
+            // TP-SUR-BROADCAST-05
+            let previous_viewer = self.app.state.enter_viewer(self.foreground_client_id);
+            let response = self
+                .app
+                .handle_api_request_after_internal_events_drained(msg.request);
+            self.app.state.restore_viewer(previous_viewer);
+            response
         } else {
             self.app
                 .handle_api_request_after_internal_events_drained(msg.request)
@@ -8027,6 +8060,67 @@ next_tab = ""
         }
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    // A plugin popup opened through the API belongs to the display the person
+    // is looking at, not to every display.
+    //
+    // The live report: clicking a preview in the file manager opened the sheet
+    // viewer on every attached screen. The plugin opens it by calling back into
+    // the API, so the request carries no display identity; the popup landed in
+    // the session's registers and was broadcast from there.
+    //
+    // TP-SUR-BROADCAST-05
+    #[tokio::test]
+    async fn a_plugin_popup_opened_through_the_api_belongs_to_the_focused_display() {
+        let mut server = test_headless_server();
+        server.app.state.workspaces = vec![crate::workspace::Workspace::test_new("test")];
+        server.app.state.active = Some(0);
+        server.app.state.mode = crate::app::Mode::Terminal;
+
+        for client_id in [1u64, 2u64] {
+            let (client_tx, _control, _render) = test_client_writer();
+            server.clients.insert(
+                client_id,
+                ClientConnection::new(
+                    (100, 30),
+                    crate::kitty_graphics::HostCellSize::default(),
+                    crate::terminal_theme::TerminalTheme::default(),
+                    Some(client_id == 1),
+                    client_id,
+                    RenderEncoding::SemanticFrame,
+                    Some(client_tx),
+                ),
+            );
+            // Give each display a parked bundle, as attaching does.
+            let previous = server.app.state.enter_viewer(Some(client_id));
+            server.app.state.restore_viewer(previous);
+        }
+        server.foreground_client_id = Some(1);
+
+        // Display 1 is where the person clicked; the plugin's popup arrives
+        // through the API with no display identity of its own.
+        let previous = server.app.state.enter_viewer(server.foreground_client_id);
+        let runtime = crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b"");
+        server.app.install_test_popup_runtime(runtime);
+        server.app.state.restore_viewer(previous);
+
+        let previous = server.app.state.enter_viewer(Some(1));
+        let focused_sees_it = server.app.state.popup_pane.is_some();
+        server.app.state.restore_viewer(previous);
+
+        let previous = server.app.state.enter_viewer(Some(2));
+        let other_sees_it = server.app.state.popup_pane.is_some();
+        server.app.state.restore_viewer(previous);
+
+        assert!(
+            focused_sees_it,
+            "the display the person clicked in must show the popup it opened"
+        );
+        assert!(
+            !other_sees_it,
+            "a popup opened on one display must not appear on the others"
+        );
     }
 
     // The preview keeps its image while a menu is open over it.

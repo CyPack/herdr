@@ -5560,6 +5560,39 @@ mod viewer_context_tests {
         state.restore_viewer(None);
     }
 
+    // The broadcast rule must keep working while overlay-opening API requests
+    // are scoped to one display (TP-SUR-BROADCAST-05): a session instruction
+    // still reaches parked displays, or a display left in navigate mode
+    // swallows what its user types after the API focuses a pane.
+    //
+    // TP-SUR-BROADCAST-01
+    #[test]
+    fn a_session_instruction_still_reaches_parked_displays() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("main"));
+        state.active = Some(0);
+        state.mode = Mode::Navigate;
+
+        state.enter_viewer(Some(1));
+        state.restore_viewer(None);
+        state.enter_viewer(Some(2));
+        state.restore_viewer(None);
+
+        // The API focuses a pane: the session goes to terminal mode.
+        state.mode = Mode::Terminal;
+
+        state.enter_viewer(Some(2));
+        assert_eq!(
+            state.mode,
+            Mode::Terminal,
+            "a mode change with no display behind it is an instruction and must \
+             reach a parked display"
+        );
+        state.restore_viewer(None);
+    }
+
     // TP-SUR-DEFAULT-01
     #[test]
     fn serving_a_display_that_did_not_move_leaves_the_session_default_alone() {
