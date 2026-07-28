@@ -2434,9 +2434,18 @@ $( $(#[$bmeta:meta])* $bfield:ident : $bty:ty ),+ $(,)? }
             /// blocking picker. Handing it one is the shared-focus complaint
             /// arriving at the moment a monitor is plugged in.
             ///
-            /// TP-SUR-ADOPT-01
+            /// TP-SUR-ADOPT-01, TP-SUR-ADOPT-02
             fn adopted_surfaces(&self) -> ClientSurfaces {
-                self.default_surfaces.clone()
+                let mut adopted = self.default_surfaces.clone();
+                // The first display served IS the session — the monolithic
+                // case — and takes over whatever the session had open,
+                // exactly as the owned surfaces do. Only a display attaching
+                // NEXT TO already-seen displays is born clean: what the
+                // session holds is already owned by one of them.
+                if !self.surfaces_by_client.is_empty() {
+                    self.strip_person_opened_surfaces(&mut adopted);
+                }
+                adopted
             }
 
             /// Installs a display's surfaces into the registers.
@@ -2510,6 +2519,72 @@ $( $(#[$bmeta:meta])* $bfield:ident : $bty:ty ),+ $(,)? }
             }
         }
     };
+}
+
+impl AppState {
+    /// Clears everything a person opened on some other screen from a bundle a
+    /// freshly attached display is about to adopt.
+    ///
+    /// The default bundle is "where the session is being driven", and for the
+    /// inherited and presentational surfaces adopting it is right: a new
+    /// display should land on the session's workspace, not on workspace zero.
+    /// But the default also accumulates overlays — a popup, a preview viewer,
+    /// a context menu, a half-typed rename — promoted there when the display
+    /// that opened them parked. Adopting those is the shared-focus complaint
+    /// arriving at the moment a monitor is plugged in, in its worst form:
+    /// after a restart every display re-attaches, so every display is "seen
+    /// for the first time" and every one of them is born inside the overlay
+    /// one screen had open before the restart.
+    ///
+    /// A display that has just attached has not opened anything. The same
+    /// sentence already governs the owned surfaces (TP-SUR-ADOPT-01); this
+    /// extends it to the person-opened broadcast surfaces.
+    ///
+    /// TP-SUR-ADOPT-02
+    fn strip_person_opened_surfaces(&self, adopted: &mut ClientSurfaces) {
+        adopted.popup_pane = None;
+        adopted.preview_viewer = None;
+        adopted.context_menu = None;
+        adopted.copy_mode = None;
+        adopted.global_menu = MenuListState::default();
+        adopted.settings = SettingsState::default();
+        adopted.navigator = NavigatorState::default();
+        adopted.keybind_help = KeybindHelpState::default();
+        adopted.worktree_create = None;
+        adopted.worktree_open = None;
+        adopted.worktree_remove = None;
+        adopted.file_manager_rename = None;
+        adopted.file_manager_delete_confirmation = None;
+        adopted.name_input = String::new();
+        adopted.name_input_replace_on_type = false;
+        adopted.creating_new_tab = false;
+        adopted.requested_new_tab_name = None;
+        adopted.rename_pane_target = None;
+        // Transient feedback belongs to the screen that earned it.
+        adopted.toast = None;
+        adopted.copy_feedback = None;
+        // A mode whose overlay was just stripped would swallow the new
+        // display's first keystrokes into an overlay it cannot see. Session
+        // announcements (onboarding, release notes) are not person-opened and
+        // stay; Navigate and Terminal are already safe landings.
+        if !matches!(
+            adopted.mode,
+            Mode::Onboarding
+                | Mode::ReleaseNotes
+                | Mode::ProductAnnouncement
+                | Mode::Navigate
+                | Mode::Terminal
+        ) {
+            adopted.mode = adopted.overlay_return_mode.take().unwrap_or({
+                if self.active.is_some() {
+                    Mode::Terminal
+                } else {
+                    Mode::Navigate
+                }
+            });
+        }
+        adopted.overlay_return_mode = None;
+    }
 }
 
 client_surfaces! {
@@ -5417,6 +5492,72 @@ mod viewer_context_tests {
         // And a departed display leaves nothing behind.
         state.forget_client(1);
         assert!(!state.surfaces_by_client.contains_key(&1));
+    }
+
+    // TP-SUR-ADOPT-02
+    #[test]
+    fn a_display_seen_for_the_first_time_is_born_without_person_opened_overlays() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("main"));
+        state.active = Some(0);
+        state.mode = Mode::Terminal;
+
+        // Display 1 opens a popup, a preview viewer and a context menu, then
+        // parks — promoting what it changed into the session default.
+        state.enter_viewer(Some(1));
+        state.popup_pane = Some(crate::app::state::PopupPaneState {
+            pane_id: crate::layout::PaneId::alloc(),
+            terminal_id: crate::terminal::TerminalId::alloc(),
+            width: None,
+            height: None,
+        });
+        state.preview_viewer = Some(PreviewViewerState {
+            source_path: std::path::PathBuf::from("/tmp/adopt.png"),
+        });
+        state.overlay_return_mode = Some(Mode::Terminal);
+        state.mode = Mode::PreviewViewer;
+        state.restore_viewer(None);
+
+        // A display attaching now has opened nothing: no popup, no viewer, no
+        // menu, and an input mode that will not swallow its first keystroke.
+        state.enter_viewer(Some(2));
+        assert!(
+            state.popup_pane.is_none(),
+            "a freshly attached display must not be born holding another \
+             display's popup"
+        );
+        assert!(
+            state.preview_viewer.is_none(),
+            "a freshly attached display must not be born inside another \
+             display's preview viewer"
+        );
+        assert!(
+            state.context_menu.is_none(),
+            "a freshly attached display must not be born with a context menu \
+             open"
+        );
+        assert!(
+            !matches!(
+                state.mode,
+                Mode::PreviewViewer | Mode::ContextMenu | Mode::GlobalMenu | Mode::Copy
+            ),
+            "an overlay mode without its overlay eats every keystroke; \
+             adopted mode was {:?}",
+            state.mode
+        );
+        state.restore_viewer(None);
+
+        // Display 1 keeps everything it opened: stripping the adoption must
+        // not strip the opener.
+        state.enter_viewer(Some(1));
+        assert!(
+            state.popup_pane.is_some(),
+            "the display that opened the popup keeps it"
+        );
+        assert!(matches!(state.mode, Mode::PreviewViewer));
+        state.restore_viewer(None);
     }
 
     // TP-SUR-DEFAULT-01
