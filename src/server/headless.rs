@@ -3783,7 +3783,9 @@ impl HeadlessServer {
         // set of displays watching each tab. TP-MCF-SIZE-01
         for (client_id, (cols, rows), cell_size, _is_foreground, mode) in render_targets {
             let area = Rect::new(0, 0, cols, rows);
-            let is_app_client = matches!(mode, ClientConnectionMode::App);
+            // Filled inside the App arm, where the encode runs in this
+            // client's viewer window; committed after a successful send.
+            let mut encoded_graphics_cache: Option<crate::kitty_graphics::HostGraphicsCache> = None;
             let mut frame = match mode {
                 ClientConnectionMode::App => {
                     // Render resolves this client's view for the whole arm.
@@ -3843,12 +3845,44 @@ impl HeadlessServer {
                         hyperlinks_started,
                     );
                     let frame_started = crate::render_prof::timer();
-                    let frame = FrameData::from_ratatui_buffer_with_hyperlinks(
+                    let mut frame = FrameData::from_ratatui_buffer_with_hyperlinks(
                         &buffer,
                         cursor,
                         &hyperlinks,
                     );
                     crate::render_prof::duration_since("full_render.frame_build", frame_started);
+                    // Graphics are derived from this client's view exactly as
+                    // the text cells are, so they are encoded inside the same
+                    // viewer window the frame was rendered in. Encoding after
+                    // the restore reads whichever view the restore installed —
+                    // with several displays that is the session default, whose
+                    // owned surfaces hold no file browser, so the preview a
+                    // display was looking at never reached it. TP-MCF-CTX-06
+                    if let Some(client) = self.clients.get_mut(&client_id) {
+                        let mut next_graphics_cache = client.graphics_cache.clone();
+                        if self.app.state.kitty_graphics_enabled && cell_size.is_known() {
+                            if client.graphics_surface_reset_pending {
+                                frame.graphics = next_graphics_cache.clear_bytes();
+                            }
+                            let graphics_started = crate::render_prof::timer();
+                            frame.graphics.extend(
+                                crate::kitty_graphics::encode_local_pane_graphics(
+                                    &self.app.state,
+                                    &self.app.terminal_runtimes,
+                                    self.app.state.view.tab_surface(),
+                                    cell_size,
+                                    &mut next_graphics_cache,
+                                ),
+                            );
+                            crate::render_prof::duration_since(
+                                "full_render.graphics_encode",
+                                graphics_started,
+                            );
+                        } else {
+                            frame.graphics = next_graphics_cache.clear_bytes();
+                        }
+                        encoded_graphics_cache = Some(next_graphics_cache);
+                    }
                     self.app.state.restore_viewer(previous_viewer);
                     frame
                 }
@@ -3893,26 +3927,17 @@ impl HeadlessServer {
             let Some(client) = self.clients.get_mut(&client_id) else {
                 continue;
             };
-            let mut next_graphics_cache = client.graphics_cache.clone();
-            let graphics_surface_reset_pending = client.graphics_surface_reset_pending;
-            if is_app_client && self.app.state.kitty_graphics_enabled && cell_size.is_known() {
-                if graphics_surface_reset_pending {
-                    frame.graphics = next_graphics_cache.clear_bytes();
+            // App frames arrive with their graphics already encoded (inside
+            // the viewer window, above). Everything else carries none and
+            // clears its cache exactly as before.
+            let next_graphics_cache = match encoded_graphics_cache.take() {
+                Some(cache) => cache,
+                None => {
+                    let mut cache = client.graphics_cache.clone();
+                    frame.graphics = cache.clear_bytes();
+                    cache
                 }
-                let graphics_started = crate::render_prof::timer();
-                frame
-                    .graphics
-                    .extend(crate::kitty_graphics::encode_local_pane_graphics(
-                        &self.app.state,
-                        &self.app.terminal_runtimes,
-                        self.app.state.view.tab_surface(),
-                        cell_size,
-                        &mut next_graphics_cache,
-                    ));
-                crate::render_prof::duration_since("full_render.graphics_encode", graphics_started);
-            } else {
-                frame.graphics = next_graphics_cache.clear_bytes();
-            }
+            };
 
             let Some(writer) = client.writer.as_ref().cloned() else {
                 crate::render_prof::event("full_render.writer_missing");
@@ -7912,6 +7937,94 @@ next_tab = ""
             "a ready file manager image must reach the client as a placement, \
              not merely as some kitty graphics traffic"
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // With several displays, the graphics must be encoded inside the same
+    // viewer window the frame was rendered in.
+    //
+    // Found live: previews vanished the moment a second display attached. The
+    // render arm restored the viewer before the graphics encode ran, so the
+    // encode read whichever view the restore installed — the session default,
+    // whose owned surfaces hold no file browser. One display worked only
+    // because a sole display shares the register slot with the session.
+    //
+    // TP-MCF-CTX-06
+    #[test]
+    fn fm_image_graphics_reach_the_display_showing_files_with_another_display_present() {
+        let frame_area = ratatui::layout::Rect::new(0, 0, 115, 20);
+        let cell_size = crate::kitty_graphics::HostCellSize {
+            width_px: 8,
+            height_px: 16,
+        };
+        let (mut server, client_rx_1) = headless_graphics_server(cell_size);
+
+        // A second app display, same capabilities, its own writer.
+        let (client_tx_2, _control_2, client_rx_2) = test_client_writer();
+        server.clients.insert(
+            2,
+            ClientConnection::new(
+                (115, 20),
+                cell_size,
+                crate::terminal_theme::TerminalTheme::default(),
+                Some(true),
+                2,
+                RenderEncoding::SemanticFrame,
+                Some(client_tx_2),
+            ),
+        );
+
+        // Seed both displays' views, then open Files with the PNG inside
+        // display 1's window — exactly where a person would have opened it.
+        server.render_and_stream();
+        let previous = server.app.state.enter_viewer(Some(1));
+        let root = headless_server_showing_one_png(&mut server, "image-two-displays", frame_area);
+        server.app.state.restore_viewer(previous);
+
+        // Drive the decode to Ready, checking inside display 1's window: with
+        // several displays the register holds no file manager between serves.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let _ = server.handle_scheduled_tasks_headless(Instant::now(), false);
+            let previous = server.app.state.enter_viewer(Some(1));
+            let ready = matches!(
+                headless_image_preview_state(&server),
+                crate::fm::FmImagePreviewState::Ready { .. }
+            );
+            server.app.state.restore_viewer(previous);
+            if ready {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for the image decode with two displays"
+            );
+            std::thread::yield_now();
+        }
+
+        while client_rx_1.try_recv().is_ok() {}
+        while client_rx_2.try_recv().is_ok() {}
+        server.render_and_stream();
+
+        let frame_1 = read_server_frame(
+            client_rx_1
+                .recv_timeout(Duration::from_millis(500))
+                .expect("display 1 receives a frame"),
+        );
+        assert!(
+            places_an_image(&frame_1.graphics),
+            "the display showing Files must receive its preview even while \
+             another display is attached"
+        );
+
+        if let Ok(bytes) = client_rx_2.recv_timeout(Duration::from_millis(500)) {
+            let frame_2 = read_server_frame(bytes);
+            assert!(
+                !places_an_image(&frame_2.graphics),
+                "a display not showing Files must not receive the preview"
+            );
+        }
 
         let _ = fs::remove_dir_all(root);
     }
