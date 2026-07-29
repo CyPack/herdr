@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use ratatui::layout::Direction;
 use tokio::sync::{mpsc, Notify};
@@ -12,6 +13,22 @@ use crate::pane::{PaneLaunchEnv, PaneState};
 use crate::terminal::{TerminalId, TerminalRuntime, TerminalRuntimeRegistry, TerminalState};
 
 pub(crate) type DetachedPane = (PaneId, TerminalId);
+
+/// The strip flash of a newly spawned tab: total window, then the blink's
+/// half-period within it.
+pub(crate) const TAB_FLASH_WINDOW: Duration = Duration::from_millis(2000);
+const TAB_FLASH_HALF_PERIOD_MS: u128 = 250;
+
+/// Elapsed-based (not tick-based) on purpose: the monolithic renderer ticks
+/// every 16 ms and the headless one every 128 ms, and the blink must look the
+/// same under both. TP-TAB-FLASH-02
+pub(crate) fn flash_phase_at(spawned_at: Option<Instant>, now: Instant) -> Option<bool> {
+    let elapsed = now.checked_duration_since(spawned_at?)?;
+    if elapsed >= TAB_FLASH_WINDOW {
+        return None;
+    }
+    Some((elapsed.as_millis() / TAB_FLASH_HALF_PERIOD_MS).is_multiple_of(2))
+}
 
 pub(crate) struct MovedPane {
     pub pane_id: PaneId,
@@ -50,6 +67,12 @@ pub struct Tab {
     /// whole session — the flag belongs to the tab, not to a display, exactly
     /// like tmux's window activity flag. TP-TAB-UNSEEN-05
     pub unseen: bool,
+    /// When this tab was spawned, driving the strip's short flash.
+    ///
+    /// Opt-in like `unseen`: the spawn constructors set it, while restored
+    /// and moved-pane tabs carry `None` — a restart must not strobe the whole
+    /// strip. Not persisted. TP-TAB-FLASH-01
+    pub spawned_at: Option<Instant>,
     /// Identity source for this tab's pane tree.
     pub root_pane: PaneId,
     pub layout: TileLayout,
@@ -185,6 +208,7 @@ impl Tab {
                 number,
                 resumed_session_id: None,
                 unseen: false,
+                spawned_at: Some(Instant::now()),
                 root_pane: root_id,
                 layout,
                 panes,
@@ -202,6 +226,22 @@ impl Tab {
 
     pub fn is_auto_named(&self) -> bool {
         self.custom_name.is_none()
+    }
+
+    /// Blink phase of the spawn flash: `None` outside the window,
+    /// `Some(bright)` inside it. TP-TAB-FLASH-02
+    pub(crate) fn flash_phase(&self, now: Instant) -> Option<bool> {
+        flash_phase_at(self.spawned_at, now)
+    }
+
+    /// True through the whole flash window regardless of blink phase — this
+    /// is what keeps the animation timer alive so the flash actually gets
+    /// drawn under the headless renderer. TP-TAB-FLASH-03
+    pub(crate) fn flash_window_active(&self, now: Instant) -> bool {
+        self.spawned_at.is_some_and(|spawned| {
+            now.checked_duration_since(spawned)
+                .is_some_and(|elapsed| elapsed < TAB_FLASH_WINDOW)
+        })
     }
 
     pub fn set_custom_name(&mut self, name: String) {
@@ -462,8 +502,10 @@ impl Tab {
             custom_name,
             number,
             resumed_session_id: None,
-            // The person moved this pane here themselves — nothing to notice.
+            // The person moved this pane here themselves — nothing to notice,
+            // nothing to flash about.
             unseen: false,
+            spawned_at: None,
             root_pane: pane_id,
             layout: TileLayout::from_saved(Node::Pane(pane_id), pane_id),
             panes,
@@ -587,5 +629,42 @@ impl Tab {
         terminal_runtimes
             .get(terminal_id)
             .and_then(|rt| rt.foreground_cwd())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // TP-TAB-FLASH-02: the phase function is the flash. It must open bright
+    // (a render within the first half-period always shows the flash), blink
+    // on the half-period, and close for good — a phase that never closes is
+    // a strip that strobes forever.
+    #[test]
+    fn the_flash_phase_blinks_through_its_window_and_then_goes_dark() {
+        let now = Instant::now();
+        let past = |ms: u64| {
+            now.checked_sub(Duration::from_millis(ms))
+                .expect("test clock has history")
+        };
+
+        assert_eq!(flash_phase_at(None, now), None, "no spawn, no flash");
+        assert_eq!(
+            flash_phase_at(Some(now), now),
+            Some(true),
+            "the window opens bright"
+        );
+        assert_eq!(
+            flash_phase_at(Some(past(300)), now),
+            Some(false),
+            "the second half-period is dark — that alternation IS the blink"
+        );
+        assert_eq!(flash_phase_at(Some(past(600)), now), Some(true));
+        assert_eq!(
+            flash_phase_at(Some(past(2000)), now),
+            None,
+            "the window closes for good"
+        );
+        assert_eq!(flash_phase_at(Some(past(60_000)), now), None);
     }
 }

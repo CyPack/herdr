@@ -734,8 +734,9 @@ fn restore_tab(
                 // a tab without claude and block re-resuming the chat.
                 resumed_session_id: restored_resumed_session_id,
                 // A restored tab is not news — restarting must not light up
-                // the whole strip. TP-TAB-UNSEEN-05
+                // or strobe the whole strip. TP-TAB-UNSEEN-05 · TP-TAB-FLASH-01
                 unseen: false,
+                spawned_at: None,
                 root_pane,
                 layout,
                 panes,

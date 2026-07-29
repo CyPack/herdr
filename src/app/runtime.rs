@@ -474,7 +474,7 @@ impl App {
     }
 
     fn sync_animation_timer_with_interval(&mut self, now: Instant, interval: Duration) {
-        if self.agent_panel_has_animation() {
+        if self.agent_panel_has_animation() || self.any_tab_flash_active(now) {
             self.next_animation_tick.get_or_insert(now + interval);
         } else {
             self.next_animation_tick = None;
@@ -486,6 +486,16 @@ impl App {
             .workspaces
             .iter()
             .any(|ws| ws.has_working_pane(&self.state.terminals))
+    }
+
+    /// A freshly spawned tab's flash window drives frames the same way a
+    /// working spinner does — without this the headless renderer never ticks
+    /// and the flash is simply never drawn. TP-TAB-FLASH-03
+    fn any_tab_flash_active(&self, now: Instant) -> bool {
+        self.state
+            .workspaces
+            .iter()
+            .any(|ws| ws.tabs.iter().any(|tab| tab.flash_window_active(now)))
     }
 
     pub(crate) fn tick_selection_autoscroll(&mut self, now: Instant) {
@@ -814,6 +824,37 @@ mod tests {
         let interrupted = std::io::Error::new(std::io::ErrorKind::Interrupted, "test interrupt");
 
         assert!(retain_custom_command_after_wait(42, Err(interrupted)));
+    }
+
+    // TP-TAB-FLASH-03: the flash exists only if frames keep coming. The
+    // headless renderer draws on animation ticks; without this coupling the
+    // timer never arms (no working pane), no tick arrives, and the flash is
+    // simply never drawn even though every phase computation is correct.
+    #[test]
+    fn a_fresh_tabs_flash_window_keeps_the_animation_timer_alive() {
+        let (mut app, _pane) = test_app_with_pane();
+        let now = Instant::now();
+
+        app.sync_animation_timer(now);
+        assert!(
+            app.next_animation_tick.is_none(),
+            "control: no working pane and no flash means no timer"
+        );
+
+        app.state.workspaces[0].tabs[0].spawned_at = Some(now);
+        app.sync_animation_timer(now);
+        assert!(
+            app.next_animation_tick.is_some(),
+            "an open flash window must drive frames"
+        );
+
+        app.state.workspaces[0].tabs[0].spawned_at = now.checked_sub(Duration::from_secs(3));
+        app.next_animation_tick = None;
+        app.sync_animation_timer(now);
+        assert!(
+            app.next_animation_tick.is_none(),
+            "a closed flash window must stop driving frames"
+        );
     }
 
     fn test_app_with_pane() -> (super::super::App, crate::layout::PaneId) {

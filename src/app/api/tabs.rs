@@ -464,6 +464,10 @@ mod tests {
             app.state.workspaces[0].tabs[1].unseen,
             "a background create must mark the tab unseen"
         );
+        assert!(
+            app.state.workspaces[0].tabs[1].spawned_at.is_some(),
+            "a spawned tab must carry its flash window (TP-TAB-FLASH-01)"
+        );
 
         let focused = app.handle_tab_create(
             "fg".into(),

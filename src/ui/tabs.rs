@@ -391,6 +391,7 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
     let terminal_surface_active =
         app.stage.surface_view() == super::surface_host::StageSurfaceView::TerminalWorkspace;
 
+    let now = std::time::Instant::now();
     for (idx, tab) in ws.tabs.iter().enumerate() {
         let Some(rect) = app.view.tab_hit_areas.get(idx).copied() else {
             break;
@@ -423,6 +424,13 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
                 .add_modifier(Modifier::DIM)
         } else {
             Style::default().fg(p.overlay1).bg(p.surface0)
+        };
+        // TP-TAB-FLASH-02: the spawn flash REVERSES whatever style the tab
+        // already earned — active, unseen or plain — so it reads on any theme.
+        let style = if tab.flash_phase(now) == Some(true) {
+            style.add_modifier(Modifier::REVERSED)
+        } else {
+            style
         };
         let width = rect.width as usize;
         let name = tab_chrome_label(ws, idx);
@@ -966,6 +974,62 @@ mod tests {
         assert_eq!(
             visited_cell.bg, accent,
             "the visited tab is now simply the active tab"
+        );
+    }
+
+    // TP-TAB-FLASH-02 at the output level: a freshly spawned tab REVERSES its
+    // style inside the flash window (a render in the first half-period always
+    // catches the bright phase), no other tab does, and once the window closes
+    // the strip carries no trace — a flash that leaves residue is a bug, not
+    // an effect.
+    #[test]
+    fn a_freshly_spawned_tab_flashes_and_the_flash_leaves_no_trace() {
+        let mut app = AppState::test_new();
+        let mut ws = Workspace::test_new("test");
+        let fresh = ws.test_add_tab(Some("fresh"));
+        ws.tabs[fresh].spawned_at = Some(std::time::Instant::now());
+        app.active = Some(0);
+        app.workspaces = vec![ws];
+        app.view.tab_bar_rect = Rect::new(0, 0, 40, 1);
+
+        let render = |app: &mut AppState| {
+            let view = compute_tab_bar_view(
+                &app.workspaces[0],
+                &[],
+                app.view.tab_bar_rect,
+                0,
+                true,
+                false,
+            );
+            app.view.tab_hit_areas = view.tab_hit_areas.clone();
+            let backend = TestBackend::new(40, 1);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| render_tab_bar(app, frame, app.view.tab_bar_rect))
+                .unwrap();
+            (terminal.backend().buffer().clone(), view.tab_hit_areas)
+        };
+        let reversed_in = |buffer: &ratatui::buffer::Buffer, rect: Rect| {
+            (rect.x..rect.x + rect.width)
+                .any(|x| buffer[(x, 0)].modifier.contains(Modifier::REVERSED))
+        };
+
+        let (buffer, hit_areas) = render(&mut app);
+        assert!(
+            reversed_in(&buffer, hit_areas[fresh]),
+            "the fresh tab must flash inside its window"
+        );
+        assert!(
+            !reversed_in(&buffer, hit_areas[0]),
+            "a tab with no spawn window must not flash"
+        );
+
+        app.workspaces[0].tabs[fresh].spawned_at =
+            std::time::Instant::now().checked_sub(std::time::Duration::from_secs(3));
+        let (buffer, hit_areas) = render(&mut app);
+        assert!(
+            !reversed_in(&buffer, hit_areas[fresh]),
+            "a closed flash window must leave no trace on the strip"
         );
     }
 }

@@ -1360,6 +1360,7 @@ impl Workspace {
             number: 1,
             resumed_session_id: None,
             unseen: false,
+            spawned_at: None,
             root_pane: root_id,
             layout,
             panes,
@@ -1417,6 +1418,7 @@ impl Workspace {
             number: self.next_public_tab_number,
             resumed_session_id: None,
             unseen: false,
+            spawned_at: None,
             root_pane: root_id,
             layout,
             panes,
@@ -1817,6 +1819,27 @@ mod tests {
             !ws.tabs[fresh].unseen,
             "leaving and returning must not relight a tab that was already seen"
         );
+    }
+
+    // TP-TAB-FLASH-01: only spawned tabs flash. A tab born from a pane the
+    // person moved themselves must not — they performed the gesture, there is
+    // nothing to announce.
+    #[test]
+    fn a_tab_born_from_a_moved_pane_does_not_flash() {
+        let mut ws = Workspace::test_new("test");
+        let moved_pane = ws.test_split(Direction::Horizontal);
+        let taken = ws
+            .take_pane_for_move(moved_pane)
+            .expect("pane exists to move");
+        let (events, _) = mpsc::channel(1);
+        let new_idx = ws.create_tab_from_existing_pane(
+            taken.moved,
+            None,
+            events,
+            Arc::new(Notify::new()),
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert!(ws.tabs[new_idx].spawned_at.is_none());
     }
 
     // TP-TAB-UNSEEN-05: only the background-opening API paths mark a tab.
