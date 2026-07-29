@@ -114,6 +114,15 @@ impl App {
                 if focus {
                     self.state.switch_workspace_tab(ws_idx, tab_idx);
                     self.state.mode = Mode::Terminal;
+                } else if let Some(tab) = self
+                    .state
+                    .workspaces
+                    .get_mut(ws_idx)
+                    .and_then(|ws| ws.tabs.get_mut(tab_idx))
+                {
+                    // A background create is invisible without the mark.
+                    // TP-TAB-UNSEEN-02
+                    tab.unseen = true;
                 }
                 self.schedule_session_save();
                 self.emit_tab_created_events(ws_idx, tab_idx);
@@ -420,6 +429,59 @@ mod tests {
             crate::worktree::canonical_or_original(created_cwd),
             crate::worktree::canonical_or_original(&cached_cwd)
         );
+        shutdown_test_runtimes(&mut app);
+    }
+
+    // TP-TAB-UNSEEN-02: a tab created through the API without focus is born in
+    // the background — the person watching the strip gets no other signal that
+    // it exists. A focused create goes through the switch funnel and must come
+    // out already seen, proving the clear is wired into the same path.
+    #[tokio::test]
+    async fn a_background_tab_create_is_unseen_and_a_focused_one_is_not() {
+        let event_hub = crate::api::EventHub::default();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(&Config::default(), true, None, api_rx, event_hub);
+        app.state.default_shell = exiting_test_command().into();
+        app.state.shell_mode = ShellModeConfig::NonLogin;
+        app.state.workspaces = vec![Workspace::test_new("tabs")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.ensure_test_terminals();
+
+        let background = app.handle_tab_create(
+            "bg".into(),
+            TabCreateParams {
+                workspace_id: None,
+                cwd: None,
+                focus: false,
+                label: None,
+                env: Default::default(),
+            },
+        );
+        let success: SuccessResponse = serde_json::from_str(&background).unwrap();
+        assert!(matches!(success.result, ResponseResult::TabCreated { .. }));
+        assert!(
+            app.state.workspaces[0].tabs[1].unseen,
+            "a background create must mark the tab unseen"
+        );
+
+        let focused = app.handle_tab_create(
+            "fg".into(),
+            TabCreateParams {
+                workspace_id: None,
+                cwd: None,
+                focus: true,
+                label: None,
+                env: Default::default(),
+            },
+        );
+        let success: SuccessResponse = serde_json::from_str(&focused).unwrap();
+        assert!(matches!(success.result, ResponseResult::TabCreated { .. }));
+        assert!(
+            !app.state.workspaces[0].tabs[2].unseen,
+            "a focused create is visited immediately and must not stay marked"
+        );
+
         shutdown_test_runtimes(&mut app);
     }
 }

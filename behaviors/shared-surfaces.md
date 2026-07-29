@@ -9,6 +9,11 @@ reverted without a conflict; these can.
 `src/ui.rs`, `src/app/input/sidebar.rs`, `src/client/mod.rs` or `src/ui/panes.rs`, the
 "Breaks if lost" column is what decides whether a resolution is acceptable.
 
+The tab-attention family lives in its own file but sits in upstream-owned code all
+the same — consult it under the same rule during a sync:
+[`tab-attention.md`](tab-attention.md) (`workspace.rs`, `workspace/tab.rs`,
+`ui/tabs.rs`, `api/tabs.rs`, `api/plugins/panes.rs`, `persist/restore.rs`).
+
 Format and rules: [`README.md`](README.md).
 
 ## Machine gate: per-display scheduling

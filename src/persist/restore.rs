@@ -733,6 +733,9 @@ fn restore_tab(
                 // plain-shell restore stays unwired: stale wiring would focus
                 // a tab without claude and block re-resuming the chat.
                 resumed_session_id: restored_resumed_session_id,
+                // A restored tab is not news — restarting must not light up
+                // the whole strip. TP-TAB-UNSEEN-05
+                unseen: false,
                 root_pane,
                 layout,
                 panes,

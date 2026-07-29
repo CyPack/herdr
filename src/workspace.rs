@@ -591,6 +591,11 @@ impl Workspace {
         if idx < self.tabs.len() {
             self.set_active_tab(idx);
             if let Some(tab) = self.tabs.get_mut(idx) {
+                // The visit is what "seen" means, and it is permanent —
+                // leaving and returning must not relight a tab nothing new
+                // happened in. Session-level on purpose: the flag belongs to
+                // the tab, like tmux's window activity flag. TP-TAB-UNSEEN-03
+                tab.unseen = false;
                 for pane in tab.panes.values_mut() {
                     pane.seen = true;
                 }
@@ -1354,6 +1359,7 @@ impl Workspace {
             custom_name: None,
             number: 1,
             resumed_session_id: None,
+            unseen: false,
             root_pane: root_id,
             layout,
             panes,
@@ -1410,6 +1416,7 @@ impl Workspace {
             custom_name: name.map(str::to_string),
             number: self.next_public_tab_number,
             resumed_session_id: None,
+            unseen: false,
             root_pane: root_id,
             layout,
             panes,
@@ -1790,6 +1797,47 @@ mod tests {
         assert_eq!(ws.tabs[2].root_pane, moved_root);
         assert_eq!(ws.tabs[ws.active_tab_index()].root_pane, active_root);
         ws.assert_invariants_for_test();
+    }
+
+    // TP-TAB-UNSEEN-03: the first visit clears the flag for good. Without the
+    // clear the highlight never goes out; if the clear were not permanent,
+    // leaving the tab would light it up again even though nothing new happened.
+    #[test]
+    fn visiting_a_tab_clears_its_unseen_flag_for_good() {
+        let mut ws = Workspace::test_new("test");
+        let fresh = ws.test_add_tab(None);
+        ws.tabs[fresh].unseen = true;
+
+        ws.switch_tab(fresh);
+        assert!(!ws.tabs[fresh].unseen, "the visit must clear the flag");
+
+        ws.switch_tab(0);
+        ws.switch_tab(fresh);
+        assert!(
+            !ws.tabs[fresh].unseen,
+            "leaving and returning must not relight a tab that was already seen"
+        );
+    }
+
+    // TP-TAB-UNSEEN-05: only the background-opening API paths mark a tab.
+    // A tab born from a pane the person moved themselves must not light up —
+    // they performed the gesture, there is nothing to notice.
+    #[test]
+    fn a_tab_born_from_a_moved_pane_is_not_unseen() {
+        let mut ws = Workspace::test_new("test");
+        let moved_pane = ws.test_split(Direction::Horizontal);
+        let taken = ws
+            .take_pane_for_move(moved_pane)
+            .expect("pane exists to move");
+        let (events, _) = mpsc::channel(1);
+        let new_idx = ws.create_tab_from_existing_pane(
+            taken.moved,
+            None,
+            events,
+            Arc::new(Notify::new()),
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert!(!ws.tabs[new_idx].unseen);
     }
 }
 

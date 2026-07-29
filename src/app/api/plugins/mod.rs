@@ -1928,6 +1928,91 @@ command = ["sh", "-c", "sleep 1"]
         let _ = std::fs::remove_dir_all(root);
     }
 
+    // TP-TAB-UNSEEN-01: the reported scenario. A plugin's "Open in New Tab"
+    // action opens through the API with focus=false, so the person stays where
+    // they are and the new tab is the only evidence the action worked. Without
+    // the mark the strip shows nothing and the action reads as a silent no-op.
+    // The focused variant goes through the switch funnel and must come out seen.
+    #[tokio::test]
+    async fn a_plugin_tab_opened_in_the_background_is_marked_unseen() {
+        let event_hub = crate::api::EventHub::default();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            event_hub,
+        );
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("plugin-tab")];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = crate::app::Mode::Terminal;
+
+        let root = unique_temp_path("plugin-pane-tab-unseen");
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.tab"
+name = "Tab Plugin"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos"]
+
+[[panes]]
+id = "board"
+title = "Plugin Board"
+placement = "tab"
+command = ["sh", "-c", "sleep 1"]
+"#,
+        );
+        link_manifest(&mut app, &root);
+
+        let open_params = |focus: bool| PluginPaneOpenParams {
+            plugin_id: "example.tab".into(),
+            entrypoint: "board".into(),
+            placement: None,
+            width: None,
+            height: None,
+            workspace_id: None,
+            target_pane_id: None,
+            direction: None,
+            cwd: None,
+            focus,
+            env: std::collections::HashMap::new(),
+        };
+
+        let background = app.handle_api_request(Request {
+            id: "tab-open-background".into(),
+            method: Method::PluginPaneOpen(open_params(false)),
+        });
+        let ResponseResult::PluginPaneOpened { .. } = response_result(&background) else {
+            panic!("expected plugin pane opened response: {background}");
+        };
+        assert!(
+            app.state.workspaces[0].tabs[1].unseen,
+            "a background plugin tab must be marked unseen"
+        );
+
+        let focused = app.handle_api_request(Request {
+            id: "tab-open-focused".into(),
+            method: Method::PluginPaneOpen(open_params(true)),
+        });
+        let ResponseResult::PluginPaneOpened { .. } = response_result(&focused) else {
+            panic!("expected plugin pane opened response: {focused}");
+        };
+        assert!(
+            !app.state.workspaces[0].tabs[2].unseen,
+            "a focused plugin tab is visited immediately and must not stay marked"
+        );
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn plugin_pane_open_zoomed_split_emits_layout_updated() {

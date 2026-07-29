@@ -79,6 +79,15 @@ fn tab_chrome_label(ws: &crate::workspace::Workspace, tab_idx: usize) -> String 
     let name = ws
         .tab_display_name(tab_idx)
         .unwrap_or_else(|| (tab_idx + 1).to_string());
+    // The glyph is the shape channel of the unseen mark — it survives any
+    // palette. Going through the label keeps tab_width and the hit areas in
+    // step automatically, the same route the zoomed " Z" suffix takes.
+    // TP-TAB-UNSEEN-04
+    let name = if ws.tabs.get(tab_idx).is_some_and(|tab| tab.unseen) {
+        format!("● {name}")
+    } else {
+        name
+    };
     if ws.tabs.get(tab_idx).is_some_and(|tab| tab.zoomed) {
         format!("{name} Z")
     } else {
@@ -397,6 +406,16 @@ pub(super) fn render_tab_bar(app: &AppState, frame: &mut Frame, area: Rect) {
             } else {
                 base.add_modifier(Modifier::BOLD)
             }
+        } else if tab.unseen {
+            // The color channel of the unseen mark: accent FOREGROUND on the
+            // inactive background. The active tab owns the accent BACKGROUND,
+            // so the two states stay distinguishable side by side. Checked
+            // before auto-naming so DIM cannot mute a tab that exists to be
+            // noticed. TP-TAB-UNSEEN-04
+            Style::default()
+                .fg(p.accent)
+                .bg(p.surface0)
+                .add_modifier(Modifier::BOLD)
         } else if tab.is_auto_named() {
             Style::default()
                 .fg(p.overlay0)
@@ -868,5 +887,85 @@ mod tests {
 
         let row = buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0);
         assert!(row.contains('馈'), "tab row: {row:?}");
+    }
+
+    // TP-TAB-UNSEEN-04: an unseen background tab must be unmissable on the
+    // strip AND distinguishable from the active tab. Two channels carry the
+    // signal — the `●` glyph (shape, survives any palette) and accent
+    // foreground + bold (color). The active tab keeps its accent BACKGROUND,
+    // so the two states cannot be confused side by side. Visiting the tab
+    // drops both channels: state clearing alone is not enough, the person
+    // judges the strip by what is drawn (the FM-preview lesson: a green suite
+    // said nothing about the frame).
+    #[test]
+    fn an_unseen_background_tab_is_highlighted_until_visited() {
+        let mut app = AppState::test_new();
+        let mut ws = Workspace::test_new("test");
+        let fresh = ws.test_add_tab(Some("fresh"));
+        ws.tabs[fresh].unseen = true;
+
+        app.active = Some(0);
+        app.workspaces = vec![ws];
+        app.view.tab_bar_rect = Rect::new(0, 0, 40, 1);
+
+        let render = |app: &mut AppState| {
+            let view = compute_tab_bar_view(
+                &app.workspaces[0],
+                &[],
+                app.view.tab_bar_rect,
+                0,
+                true,
+                false,
+            );
+            app.view.tab_hit_areas = view.tab_hit_areas.clone();
+            let backend = TestBackend::new(40, 1);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| render_tab_bar(app, frame, app.view.tab_bar_rect))
+                .unwrap();
+            (
+                buffer_row_text(terminal.backend().buffer(), app.view.tab_bar_rect, 0),
+                terminal.backend().buffer().clone(),
+                view.tab_hit_areas,
+            )
+        };
+
+        let accent = app.palette.accent;
+        let surface0 = app.palette.surface0;
+
+        let (row, buffer, hit_areas) = render(&mut app);
+        assert!(
+            row.contains("● fresh"),
+            "the glyph channel must mark the unseen tab: {row:?}"
+        );
+        let unseen_cell = &buffer[(hit_areas[fresh].x + 1, 0)];
+        assert_eq!(unseen_cell.fg, accent, "color channel: accent foreground");
+        assert!(
+            unseen_cell.modifier.contains(Modifier::BOLD),
+            "color channel: bold"
+        );
+        assert_eq!(
+            unseen_cell.bg, surface0,
+            "an unseen tab keeps the inactive background — the accent \
+             BACKGROUND belongs to the active tab alone"
+        );
+        let active_cell = &buffer[(hit_areas[0].x + 1, 0)];
+        assert_eq!(
+            active_cell.bg, accent,
+            "control: the active tab is styled by background, so the two \
+             states stay distinguishable side by side"
+        );
+
+        app.workspaces[0].switch_tab(fresh);
+        let (row_after, buffer_after, hit_areas_after) = render(&mut app);
+        assert!(
+            !row_after.contains('●'),
+            "visiting the tab must drop the glyph: {row_after:?}"
+        );
+        let visited_cell = &buffer_after[(hit_areas_after[fresh].x + 1, 0)];
+        assert_eq!(
+            visited_cell.bg, accent,
+            "the visited tab is now simply the active tab"
+        );
     }
 }

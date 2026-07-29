@@ -42,6 +42,14 @@ pub struct Tab {
     /// Wires the chat to exactly one tab so repeated clicks focus it instead
     /// of spawning duplicates; cleared with the tab when it closes.
     pub resumed_session_id: Option<String>,
+    /// The tab was opened in the background and has never been activated.
+    ///
+    /// Opt-in: constructors start it `false` and only the background-opening
+    /// API paths (plugin tab, `tab create focus:false`) set it, so restored
+    /// and moved-pane tabs never light up. The first visit clears it for the
+    /// whole session — the flag belongs to the tab, not to a display, exactly
+    /// like tmux's window activity flag. TP-TAB-UNSEEN-05
+    pub unseen: bool,
     /// Identity source for this tab's pane tree.
     pub root_pane: PaneId,
     pub layout: TileLayout,
@@ -176,6 +184,7 @@ impl Tab {
                 custom_name: None,
                 number,
                 resumed_session_id: None,
+                unseen: false,
                 root_pane: root_id,
                 layout,
                 panes,
@@ -453,6 +462,8 @@ impl Tab {
             custom_name,
             number,
             resumed_session_id: None,
+            // The person moved this pane here themselves — nothing to notice.
+            unseen: false,
             root_pane: pane_id,
             layout: TileLayout::from_saved(Node::Pane(pane_id), pane_id),
             panes,

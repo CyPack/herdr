@@ -210,6 +210,16 @@ impl App {
         if params.focus {
             self.state.switch_workspace_tab(ws_idx, tab_idx);
             self.state.mode = crate::app::Mode::Terminal;
+        } else if let Some(tab) = self
+            .state
+            .workspaces
+            .get_mut(ws_idx)
+            .and_then(|ws| ws.tabs.get_mut(tab_idx))
+        {
+            // Opened in the background: the person stays where they are, so
+            // the strip's mark is the only evidence the action worked.
+            // TP-TAB-UNSEEN-01
+            tab.unseen = true;
         }
         let new_pane = crate::workspace::NewPane {
             pane_id,
