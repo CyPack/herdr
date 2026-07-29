@@ -1898,22 +1898,36 @@ fn render_agent_detail(
         }
 
         let is_active = app.is_active_pane(detail.ws_idx, detail.tab_idx, detail.pane_id);
+        // TP-AGPANEL-01: the active row speaks the active tab's language —
+        // accent background, contrast text — so "which agent am I on" reads
+        // the same way on both surfaces. Status color would drown on the
+        // accent; the icon's shape still carries the state.
         let row_style = if is_active {
-            Style::default().bg(p.surface_dim)
+            Style::default().bg(p.accent)
         } else {
             Style::default()
         };
         let name_style = if is_active {
-            Style::default().fg(p.text).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(panel_contrast_fg(p))
+                .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(p.subtext0).add_modifier(Modifier::BOLD)
+            // TP-AGPANEL-02: passive rows give up their bold so the eye lands
+            // on the active one.
+            Style::default().fg(p.subtext0)
         };
         let status_style = if is_active {
-            Style::default().fg(label_color)
+            Style::default().fg(panel_contrast_fg(p))
         } else {
             Style::default().fg(label_color).add_modifier(Modifier::DIM)
         };
-        let agent_style = Style::default().fg(p.overlay0).add_modifier(Modifier::DIM);
+        let agent_style = if is_active {
+            Style::default()
+                .fg(panel_contrast_fg(p))
+                .add_modifier(Modifier::DIM)
+        } else {
+            Style::default().fg(p.overlay0).add_modifier(Modifier::DIM)
+        };
         let state_icon = agent_icon(detail.state, detail.seen, app.spinner_tick, p);
 
         for (row_index, resolved) in rows.iter().take(height as usize).enumerate() {
@@ -2047,19 +2061,22 @@ mod tests {
         assert!(!first.contains("working"));
         assert!(!second.contains("working"));
 
+        // TP-AGPANEL-01: this is the ACTIVE card, so it wears the accent
+        // background with contrast text (updated 2026-07-29 with the model
+        // the user chose; the old faint surface_dim style is gone).
         let workspace_x = find_symbol_x(buffer, body.y, body.width, "o");
         let workspace_style = buffer[(workspace_x, body.y)].style();
-        assert_eq!(workspace_style.fg, Some(app.palette.text));
+        assert_eq!(workspace_style.fg, Some(panel_contrast_fg(&app.palette)));
         assert!(workspace_style.add_modifier.contains(Modifier::BOLD));
         assert!(!workspace_style.add_modifier.contains(Modifier::DIM));
-        assert_eq!(workspace_style.bg, Some(app.palette.surface_dim));
+        assert_eq!(workspace_style.bg, Some(app.palette.accent));
 
         let agent_x = find_symbol_x(buffer, body.y + 1, body.width, "p");
         let agent_style = buffer[(agent_x, body.y + 1)].style();
-        assert_eq!(agent_style.fg, Some(app.palette.overlay0));
+        assert_eq!(agent_style.fg, Some(panel_contrast_fg(&app.palette)));
         assert!(agent_style.add_modifier.contains(Modifier::DIM));
         assert!(!agent_style.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(agent_style.bg, Some(app.palette.surface_dim));
+        assert_eq!(agent_style.bg, Some(app.palette.accent));
     }
 
     #[test]
@@ -2094,9 +2111,12 @@ rows = [[{ token = "workspace", bold = false }, { token = "agent", dim = false }
         let workspace = buffer[(find_symbol_x(buffer, body.y, body.width, "o"), body.y)].style();
         let agent = buffer[(find_symbol_x(buffer, body.y, body.width, "p"), body.y)].style();
 
-        assert_eq!(workspace.fg, Some(app.palette.text));
+        // The base colors follow the active-card accent model (TP-AGPANEL-01);
+        // what this test pins is that the config overrides still strip the
+        // BOLD and DIM attributes from those bases.
+        assert_eq!(workspace.fg, Some(panel_contrast_fg(&app.palette)));
         assert!(!workspace.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(agent.fg, Some(app.palette.overlay0));
+        assert_eq!(agent.fg, Some(panel_contrast_fg(&app.palette)));
         assert!(!agent.add_modifier.contains(Modifier::DIM));
     }
 
@@ -3594,6 +3614,81 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let entries = agent_panel_entries(&app);
         assert_eq!(entries[0].primary_label, "bridge");
         assert_eq!(entries[0].agent_label.as_deref(), Some("planner"));
+    }
+
+    // TP-AGPANEL-01 + TP-AGPANEL-02: the panel answers "which agent am I on"
+    // at a glance. The active row speaks the same language as the active tab —
+    // accent background with contrast text — and exactly one row may say it.
+    // The passive rows give up their bold so the eye lands on the active one;
+    // status still reads through the icon's shape.
+    #[test]
+    fn the_active_agent_row_wears_the_accent_background_and_the_rest_stay_muted() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("alpha"), Workspace::test_new("beta")];
+        app.ensure_test_terminals();
+        for ws_idx in 0..2 {
+            let pane = app.workspaces[ws_idx].tabs[0].root_pane;
+            let terminal_id = app.workspaces[ws_idx].tabs[0].panes[&pane]
+                .attached_terminal_id
+                .clone();
+            let terminal = app.terminals.get_mut(&terminal_id).unwrap();
+            terminal.detected_agent = Some(Agent::Pi);
+        }
+        app.active = Some(0);
+        app.selected = 0;
+
+        let accent = app.palette.accent;
+        let muted = app.palette.subtext0;
+        let area = Rect::new(0, 0, 34, 8);
+        let backend = ratatui::backend::TestBackend::new(34, 8);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let registry = TerminalRuntimeRegistry::new();
+        terminal
+            .draw(|frame| render_agent_detail(&app, &registry, frame, area))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        let row_text = |y: u16| -> String {
+            (0..area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        };
+
+        let accent_rows: Vec<u16> = (0..area.height)
+            .filter(|&y| (0..area.width).any(|x| buffer[(x, y)].bg == accent))
+            .collect();
+        assert!(
+            !accent_rows.is_empty(),
+            "the active agent's card must claim the accent background"
+        );
+        let contiguous = accent_rows.windows(2).all(|w| w[1] == w[0] + 1);
+        assert!(
+            contiguous,
+            "only ONE card may claim the accent — scattered accent rows mean \
+             a second entry took it too: {accent_rows:?}"
+        );
+        assert!(
+            accent_rows.iter().any(|&y| row_text(y).contains("alpha")),
+            "the accent card must be the active workspace's agent"
+        );
+
+        let passive_y = (0..area.height)
+            .find(|&y| row_text(y).contains("beta"))
+            .expect("the passive agent must still be listed");
+        assert!(
+            !accent_rows.contains(&passive_y),
+            "a passive agent's card must not wear the accent background"
+        );
+        let passive_name_is_bold = (0..area.width).any(|x| {
+            let cell = &buffer[(x, passive_y)];
+            cell.fg == muted && cell.modifier.contains(Modifier::BOLD)
+        });
+        assert!(
+            !passive_name_is_bold,
+            "a passive agent's name must give up its bold so the active one stands out"
+        );
     }
 
     #[test]
