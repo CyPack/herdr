@@ -13,6 +13,15 @@ use super::{
 
 const WSL_MARKER_ENV_VARS: &[&str] = &["WSL_DISTRO_NAME", "WSL_INTEROP"];
 
+/// How long a clipboard helper may hold the calling thread before it is handed
+/// off to a background reaper. Measured on Wayland: `wl-copy` finishes its
+/// compositor handshake and forks in ~104ms, so this leaves roughly 3x headroom
+/// while staying under the threshold where a copy feels like a UI stall.
+const CLIPBOARD_HANDOFF_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// Poll granularity while waiting for a clipboard helper to exit.
+const CLIPBOARD_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+
 pub(crate) fn file_identity(
     _path: &std::path::Path,
     metadata: &std::fs::Metadata,
@@ -810,6 +819,25 @@ fn read_clipboard_text_with_command(command: &ClipboardCommand) -> Option<String
 }
 
 fn run_clipboard_command(command: &ClipboardCommand, bytes: &[u8]) -> bool {
+    run_clipboard_command_with_timeout(command, bytes, CLIPBOARD_HANDOFF_TIMEOUT)
+}
+
+/// Writes `bytes` to a clipboard helper and waits only until `timeout`.
+///
+/// Clipboard helpers are not fully under our control: `wl-copy` must acquire
+/// clipboard ownership from the Wayland compositor before it forks into the
+/// background, so a slow or throttled compositor stretches that handshake. An
+/// unbounded wait turns that transient delay into a permanent lock of the
+/// calling thread — the TUI client then stops processing input entirely.
+///
+/// Past the timeout the child is handed to a background reaper: the copy is
+/// reported as delivered (ownership is presumed taken, so we must not spawn a
+/// competing X11 writer) while the helper finishes on its own.
+fn run_clipboard_command_with_timeout(
+    command: &ClipboardCommand,
+    bytes: &[u8],
+    timeout: std::time::Duration,
+) -> bool {
     let mut child = match Command::new(command.program)
         .args(command.args)
         .stdin(Stdio::piped())
@@ -834,7 +862,35 @@ fn run_clipboard_command(command: &ClipboardCommand, bytes: &[u8]) -> bool {
     }
     drop(stdin);
 
-    child.wait().map(|status| status.success()).unwrap_or(false)
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    hand_off_clipboard_child(child);
+                    return true;
+                }
+                std::thread::sleep(CLIPBOARD_POLL_INTERVAL);
+            }
+            Err(_) => return false,
+        }
+    }
+}
+
+/// Owns a handed-off clipboard helper until it exits, so a bounded wait never
+/// trades a UI lock for a leaked zombie process.
+fn hand_off_clipboard_child(mut child: std::process::Child) {
+    let pid = child.id();
+    if std::thread::Builder::new()
+        .name("clipboard-reap".to_owned())
+        .spawn(move || {
+            let _ = child.wait();
+        })
+        .is_err()
+    {
+        tracing::debug!(pid, "could not spawn clipboard reaper thread");
+    }
 }
 
 fn process_session_id(pid: u32) -> Option<i32> {
@@ -1169,6 +1225,138 @@ mod tests {
         assert_eq!(commands[1].program, "wl-paste");
         assert_eq!(commands[2].program, "xclip");
         assert_eq!(commands[3].program, "xsel");
+    }
+
+    // ── clipboard handoff must not block the caller ──────────────────────────
+    //
+    // `wl-copy` acquires clipboard ownership from the Wayland compositor before
+    // it forks into the background. When the compositor is slow (CPU pressure,
+    // throttled cgroup) that handshake stalls, and an unbounded `wait()` turns a
+    // transient delay into a permanent UI lock: the client's main thread parks in
+    // `do_wait` and stops processing input. Measured 2026-07-29: a stalled
+    // `wl-copy` child (ppid = herdr client) held the client for 2m50s until it
+    // was killed; normal handoff completes in ~104ms.
+
+    /// The regression guard for that lock: a helper that never exits must not
+    /// hold the caller. Without the bounded wait this test hangs for 60s.
+    #[test]
+    fn clipboard_command_does_not_block_on_hanging_helper() {
+        let command = ClipboardCommand {
+            program: "sleep",
+            args: &["60"],
+        };
+
+        let started = std::time::Instant::now();
+        let handed_off = run_clipboard_command_with_timeout(
+            &command,
+            b"payload",
+            std::time::Duration::from_millis(100),
+        );
+        let elapsed = started.elapsed();
+
+        // Reported as delivered: ownership is presumed taken, so the caller must
+        // NOT fall through to the X11 helpers and spawn a competing writer.
+        assert!(handed_off);
+        assert!(
+            elapsed < std::time::Duration::from_millis(2_000),
+            "bounded wait exceeded: {elapsed:?}"
+        );
+    }
+
+    /// A helper that exits quickly keeps the previous behaviour: reaped inline,
+    /// success reported from its exit status.
+    #[test]
+    fn clipboard_command_succeeds_for_fast_helper() {
+        let command = ClipboardCommand {
+            program: "cat",
+            args: &[],
+        };
+
+        assert!(run_clipboard_command_with_timeout(
+            &command,
+            b"payload",
+            std::time::Duration::from_millis(2_000)
+        ));
+    }
+
+    /// Spawn failure must stay falsy so the xclip/xsel fallback chain still runs.
+    #[test]
+    fn clipboard_command_fails_for_missing_program() {
+        let command = ClipboardCommand {
+            program: "herdr-clipboard-helper-that-does-not-exist",
+            args: &[],
+        };
+
+        assert!(!run_clipboard_command_with_timeout(
+            &command,
+            b"payload",
+            std::time::Duration::from_millis(200)
+        ));
+    }
+
+    /// A helper that exits non-zero must report failure, not a false success.
+    #[test]
+    fn clipboard_command_fails_for_nonzero_exit() {
+        let command = ClipboardCommand {
+            program: "sh",
+            args: &["-c", "exit 3"],
+        };
+
+        assert!(!run_clipboard_command_with_timeout(
+            &command,
+            b"payload",
+            std::time::Duration::from_millis(2_000)
+        ));
+    }
+
+    /// Handing the child off must not leak zombies: once the helper exits, the
+    /// background reaper collects it. Guards against trading a UI lock for a
+    /// process leak.
+    #[test]
+    fn handed_off_clipboard_child_is_reaped_not_zombied() {
+        let command = ClipboardCommand {
+            program: "sh",
+            args: &["-c", "sleep 0.3"],
+        };
+
+        assert!(run_clipboard_command_with_timeout(
+            &command,
+            b"payload",
+            std::time::Duration::from_millis(50)
+        ));
+
+        // Give the helper time to exit and the reaper time to collect it.
+        std::thread::sleep(std::time::Duration::from_millis(1_200));
+
+        let zombies = std::fs::read_dir("/proc")
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|entry| {
+                let name = entry.file_name();
+                let Some(pid) = name.to_str() else {
+                    return false;
+                };
+                if pid.parse::<u32>().is_err() {
+                    return false;
+                }
+                let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+                    return false;
+                };
+                let Some(rest) = stat.rfind(')').and_then(|idx| stat.get(idx + 2..)) else {
+                    return false;
+                };
+                // state == Z and the parent is this test process
+                rest.starts_with("Z ")
+                    && rest
+                        .split_whitespace()
+                        .nth(1)
+                        .and_then(|ppid| ppid.parse::<u32>().ok())
+                        == Some(std::process::id())
+            })
+            .count();
+
+        assert_eq!(zombies, 0, "handed-off clipboard child left a zombie");
     }
 
     #[test]
