@@ -428,6 +428,19 @@ impl WorkspaceListEntry {
     }
 }
 
+/// The cell that opens and closes a workspace's chat drawer.
+///
+/// The right edge, because the left one already belongs to the worktree-group
+/// chevron — two toggles sharing a cell would make one of them unreachable.
+/// A workspace with no remembered chats gets no affordance at all: an arrow
+/// that only ever reveals "(no chats)" is noise on every row.
+pub(crate) fn workspace_chat_toggle_cell(app: &AppState, card_rect: Rect, ws_idx: usize) -> Rect {
+    if card_rect.width < 3 || workspace_chat_rows_for(app, ws_idx).is_empty() {
+        return Rect::default();
+    }
+    Rect::new(card_rect.x + card_rect.width - 1, card_rect.y, 1, 1)
+}
+
 /// The Spaces rows the mobile switcher lays out: workspaces only.
 ///
 /// Its geometry is a strict two rows per workspace and it is a switcher rather
@@ -1550,7 +1563,19 @@ fn render_workspace_list(
                 Rect::new(card.rect.x, row_y + row_index as u16, card.rect.width, 1),
             );
         }
+
+        // TP-WSCHAT-19: the drawer affordance. Drawn last so it sits on top of
+        // the row's own text, and only where there is history to reveal.
+        let toggle = workspace_chat_toggle_cell(app, card.rect, i);
+        if toggle.width > 0 && toggle.y < list_bottom {
+            let open = !workspace_chat_drawer_collapsed(app, i);
+            frame.buffer_mut()[(toggle.x, toggle.y)]
+                .set_symbol(if open { "▾" } else { "▸" })
+                .set_style(Style::default().fg(if open { p.accent } else { p.overlay0 }));
+        }
     }
+
+    render_workspace_chat_rows(app, frame, list_bottom);
 
     if let Some(y) = insertion_row.filter(|y| *y < list_bottom) {
         let indicator_right = scrollbar_rect
@@ -1568,6 +1593,50 @@ fn render_workspace_list(
     }
 
     render_sidebar_footer_buttons(app, frame, area, " new");
+}
+
+/// Draw the chat rows of every open drawer.
+///
+/// TP-WSCHAT-20: a chat row must read as belonging to its workspace and never
+/// as a workspace itself — it is indented past the branch children, carries a
+/// chat glyph rather than a state dot, and never takes the accent BACKGROUND
+/// that marks the active workspace and the active agent card.
+fn render_workspace_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u16) {
+    let p = &app.palette;
+    for row in &app.view.workspace_chat_row_areas {
+        if row.rect.width == 0 || row.rect.y >= list_bottom {
+            continue;
+        }
+        let Some(chat) = workspace_chat_rows_for(app, row.ws_idx).get(row.chat_idx) else {
+            continue;
+        };
+        let open_here = app
+            .find_resumed_chat_tab(&chat.session_id)
+            .is_some_and(|(ws_idx, _)| ws_idx == row.ws_idx);
+        let (glyph, glyph_style) = if open_here {
+            ("●", Style::default().fg(p.accent))
+        } else {
+            ("○", Style::default().fg(p.overlay0))
+        };
+        let name_style = if open_here {
+            Style::default().fg(p.subtext0)
+        } else {
+            Style::default().fg(p.overlay1).add_modifier(Modifier::DIM)
+        };
+        let budget = row.rect.width.saturating_sub(8) as usize;
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::raw("      "),
+                Span::styled(glyph, glyph_style),
+                Span::raw(" "),
+                Span::styled(
+                    super::text::truncate_end(&chat.display_label(), budget),
+                    name_style,
+                ),
+            ])),
+            Rect::new(row.rect.x, row.rect.y, row.rect.width, 1),
+        );
+    }
 }
 
 /// Draw the shared sidebar footer: a left-aligned action button and the
@@ -3760,6 +3829,9 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.workspaces = vec![workspace];
         app.active = Some(0);
         app.selected = 0;
+        // Without this a narrow test area is treated as a phone and the desktop
+        // sidebar is never laid out at all.
+        app.mobile_width_threshold = 0;
 
         let key = crate::persist::workspace_chats::ledger_key(&std::env::temp_dir());
         let rows = (0..chat_count)
@@ -3869,6 +3941,78 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert!(
             chat_rows.iter().all(|row| row.ws_idx == 0),
             "every chat row names the workspace it belongs to"
+        );
+    }
+
+    // TP-WSCHAT-19: the affordance only exists where it does something. An
+    // arrow on every row that mostly reveals "(no chats)" is noise, and the
+    // right edge is used because the left one already carries the worktree
+    // group chevron — two toggles sharing a cell makes one unreachable.
+    #[test]
+    fn only_a_workspace_with_history_offers_a_drawer_toggle() {
+        let (app, _) = app_with_chat_drawer(2);
+        let card = Rect::new(0, 3, 20, 1);
+
+        let cell = workspace_chat_toggle_cell(&app, card, 0);
+        assert_eq!(
+            cell.x,
+            card.x + card.width - 1,
+            "the toggle is the right edge"
+        );
+        assert_eq!(cell.y, card.y);
+
+        let (empty_app, _) = app_with_chat_drawer(0);
+        assert_eq!(
+            workspace_chat_toggle_cell(&empty_app, card, 0),
+            Rect::default(),
+            "a workspace with no remembered chats gets no arrow"
+        );
+    }
+
+    // TP-WSCHAT-20: the drawer has to be visible to exist. A row whose state is
+    // right but whose cells are empty is the failure this family already paid
+    // for once, so this asserts on the drawn buffer, not on the row list.
+    #[test]
+    fn an_open_drawer_draws_its_chats_below_the_workspace() {
+        let (mut app, key) = app_with_chat_drawer(2);
+        app.expanded_chat_workspaces.insert(key);
+        let area = Rect::new(0, 0, 90, 20);
+
+        crate::ui::compute_view(&mut app, area);
+        let backend = ratatui::backend::TestBackend::new(90, 20);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let registry = TerminalRuntimeRegistry::new();
+        terminal
+            .draw(|frame| render_sidebar(&app, &registry, frame, app.view.sidebar_rect))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        let rows: Vec<String> = (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect();
+        let joined = rows.join("\n");
+        assert!(
+            joined.contains("chat 0") && joined.contains("chat 1"),
+            "both remembered chats must be drawn:\n{joined}"
+        );
+        assert!(
+            joined.contains('▾'),
+            "an open drawer shows the open arrow:\n{joined}"
+        );
+
+        let chat_row_y = rows
+            .iter()
+            .position(|row| row.contains("chat 0"))
+            .expect("chat row is on screen") as u16;
+        let accent = app.palette.accent;
+        assert!(
+            (0..area.width).all(|x| buffer[(x, chat_row_y)].bg != accent),
+            "a chat row must never take the accent background — that marks the \
+             active workspace and the active agent card"
         );
     }
 

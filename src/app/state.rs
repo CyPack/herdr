@@ -637,6 +637,23 @@ pub struct WorkspaceChatRow {
     pub last_seen_ms: u64,
 }
 
+impl WorkspaceChatRow {
+    /// Label for the row: the resolved title, else a short id plus the agent.
+    ///
+    /// The fallback is not a placeholder for missing data — for a chat started
+    /// outside this workspace's directory there IS no resolvable title, and the
+    /// association is still worth showing. Degrading beats disappearing.
+    pub fn display_label(&self) -> String {
+        match self.title.as_deref() {
+            Some(title) if !title.is_empty() => title.to_string(),
+            _ => {
+                let short: String = self.session_id.chars().take(8).collect();
+                format!("{short} · {}", self.agent)
+            }
+        }
+    }
+}
+
 /// One laid-out chat row in the Spaces tab.
 ///
 /// Kept in its own vector rather than appended to `workspace_card_areas`,
@@ -1534,6 +1551,10 @@ pub struct ViewState {
     pub shell: crate::ui::shell::ShellView,
     pub sidebar_rect: Rect,
     pub workspace_card_areas: Vec<WorkspaceCardArea>,
+    /// Chat drawer rows, kept apart from `workspace_card_areas` because that
+    /// vector is workspace-indexed: a chat folded into it would resolve as a
+    /// workspace switch on click.
+    pub workspace_chat_row_areas: Vec<WorkspaceChatRowArea>,
     /// Hit areas for the Spaces/Projects/Files header tabs (one per
     /// `SidebarTab::ALL`, in order). Empty when the sidebar is collapsed.
     pub sidebar_tab_hit_areas: Vec<Rect>,
@@ -3711,6 +3732,7 @@ impl AppState {
                 shell: Default::default(),
                 sidebar_rect: Rect::default(),
                 workspace_card_areas: Vec::new(),
+                workspace_chat_row_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
                 app_dock_entry_areas: Vec::new(),

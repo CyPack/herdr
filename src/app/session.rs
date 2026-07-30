@@ -112,8 +112,11 @@ impl App {
         if !self
             .workspace_chat_ledger
             .apply_observations(observations, now_ms)
-            || !persist
         {
+            return;
+        }
+        self.sync_workspace_chat_rows();
+        if !persist {
             return;
         }
         let path = crate::persist::workspace_chats::default_ledger_path();
@@ -122,6 +125,18 @@ impl App {
         {
             tracing::warn!(path = %path.display(), %err, "failed to save workspace chat ledger");
         }
+    }
+
+    /// Project the ledger into the presentation rows the sidebar reads.
+    ///
+    /// Deliberately not a poll: the ledger only changes when a session save
+    /// folds new observations into it, so mirroring it there costs nothing and
+    /// avoids adding a scheduled task — scheduled work in this codebase has to
+    /// answer the per-display question, and a projection of shared session
+    /// history has no business being per-display.
+    pub(crate) fn sync_workspace_chat_rows(&mut self) {
+        self.state.workspace_chat_rows =
+            crate::persist::workspace_chats::project_rows(&self.workspace_chat_ledger);
     }
 
     pub(crate) fn save_session_now(&mut self) {

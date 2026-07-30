@@ -791,6 +791,7 @@ impl App {
                 shell: Default::default(),
                 sidebar_rect: Rect::default(),
                 workspace_card_areas: Vec::new(),
+                workspace_chat_row_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),
                 stage_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
@@ -965,6 +966,19 @@ impl App {
                 .and_then(|ws| ws.focused_pane_id().map(|pane_id| (idx, pane_id)))
         });
 
+        // A `--no-session` run must not read the real ledger; a missing or
+        // corrupt file is a normal empty start either way. The rows are seeded
+        // here so the drawer already knows its history on the first frame,
+        // before any session save has run.
+        let ledger = if no_session {
+            crate::persist::workspace_chats::WorkspaceChatLedger::default()
+        } else {
+            crate::persist::workspace_chats::load_from_path(
+                &crate::persist::workspace_chats::default_ledger_path(),
+            )
+        };
+        state.workspace_chat_rows = crate::persist::workspace_chats::project_rows(&ledger);
+
         Self {
             config_diagnostic_deadline: None,
             toast_deadline: None,
@@ -1007,13 +1021,7 @@ impl App {
             session_save_thread: None,
             // A test app (no_session) must not read the real ledger, and a
             // missing or corrupt file is a normal empty start either way.
-            workspace_chat_ledger: if no_session {
-                crate::persist::workspace_chats::WorkspaceChatLedger::default()
-            } else {
-                crate::persist::workspace_chats::load_from_path(
-                    &crate::persist::workspace_chats::default_ledger_path(),
-                )
-            },
+            workspace_chat_ledger: ledger,
             detached_custom_command_children: Vec::new(),
             selection_autoscroll_deadline: None,
             selection_highlight_clear_deadline: None,

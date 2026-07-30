@@ -262,6 +262,34 @@ impl WorkspaceChatLedger {
     }
 }
 
+/// Project the ledger into the presentation rows the sidebar reads.
+///
+/// One function so startup and every later refresh agree: two projections that
+/// drifted would make the drawer show different history before and after the
+/// first save. Titles are resolved separately — a row without one still carries
+/// the association, which is the information the drawer exists for.
+pub fn project_rows(
+    ledger: &WorkspaceChatLedger,
+) -> std::collections::HashMap<String, Vec<crate::app::state::WorkspaceChatRow>> {
+    ledger
+        .workspaces
+        .iter()
+        .map(|(key, entry)| {
+            let rows = entry
+                .chats
+                .iter()
+                .map(|chat| crate::app::state::WorkspaceChatRow {
+                    session_id: chat.session_id.clone(),
+                    agent: chat.agent.clone(),
+                    title: None,
+                    last_seen_ms: chat.last_seen_ms,
+                })
+                .collect();
+            (key.clone(), rows)
+        })
+        .collect()
+}
+
 /// Read the ledger, degrading to an empty one.
 ///
 /// A missing file is the normal first-run state and a corrupt one must never

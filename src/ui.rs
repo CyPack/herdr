@@ -126,10 +126,10 @@ pub(crate) use self::{
         agent_panel_toggle_rect, all_agent_panel_entries, collapsed_sidebar_sections,
         collapsed_sidebar_toggle_rect, compute_workspace_card_areas, expanded_sidebar_sections,
         expanded_sidebar_toggle_rect, normalized_workspace_scroll, projects_scroll_metrics,
-        projects_scrollbar_rect, sidebar_section_divider_rect, workspace_drop_indicator_row,
-        workspace_list_entries, workspace_list_entries_expanded, workspace_list_rect,
-        workspace_list_scroll_metrics, workspace_list_scrollbar_rect, workspace_parent_group_state,
-        AgentPanelEntry, WorkspaceListEntry,
+        projects_scrollbar_rect, sidebar_section_divider_rect, workspace_chat_toggle_cell,
+        workspace_drop_indicator_row, workspace_list_entries, workspace_list_entries_expanded,
+        workspace_list_rect, workspace_list_scroll_metrics, workspace_list_scrollbar_rect,
+        workspace_parent_group_state, AgentPanelEntry, WorkspaceListEntry,
     },
 };
 pub(crate) use self::{
@@ -411,11 +411,12 @@ fn compute_view_internal(
     // current Files activation preserves whichever Spaces/Projects owner was
     // already selected.
     let show_spaces_content = app.sidebar_tab != crate::app::state::SidebarTab::Projects;
-    let workspace_card_areas = if app.sidebar_collapsed || !show_spaces_content {
-        Vec::new()
-    } else {
-        compute_workspace_card_areas(app, sidebar_area)
-    };
+    let (workspace_card_areas, workspace_chat_row_areas) =
+        if app.sidebar_collapsed || !show_spaces_content {
+            (Vec::new(), Vec::new())
+        } else {
+            sidebar::compute_workspace_list_areas(app, sidebar_area)
+        };
     let sidebar_tab_hit_areas = if app.sidebar_collapsed {
         Vec::new()
     } else {
@@ -510,6 +511,7 @@ fn compute_view_internal(
         shell: shell_view,
         sidebar_rect: sidebar_area,
         workspace_card_areas,
+        workspace_chat_row_areas,
         sidebar_tab_hit_areas,
         project_row_areas,
         app_dock_entry_areas,
@@ -638,6 +640,7 @@ fn compute_mobile_view(
         shell: shell_view,
         sidebar_rect: Rect::default(),
         workspace_card_areas: Vec::new(),
+        workspace_chat_row_areas: Vec::new(),
         sidebar_tab_hit_areas: Vec::new(),
         stage_tab_hit_areas: Vec::new(),
         project_row_areas: Vec::new(),

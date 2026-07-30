@@ -750,6 +750,24 @@ impl AppState {
                     } else {
                         self.view.workspace_card_areas.clone()
                     };
+                    // The drawer toggle sits on the row's right edge, checked
+                    // before the group chevron on the left so neither can
+                    // swallow the other's cell.
+                    if let Some(card) = cards.iter().find(|card| {
+                        let cell =
+                            crate::ui::workspace_chat_toggle_cell(self, card.rect, card.ws_idx);
+                        cell.width > 0 && mouse.row == cell.y && mouse.column == cell.x
+                    }) {
+                        let workspace = self.workspaces.get(card.ws_idx)?;
+                        let key =
+                            crate::persist::workspace_chats::ledger_key(&workspace.identity_cwd);
+                        if !self.expanded_chat_workspaces.remove(&key) {
+                            self.expanded_chat_workspaces.insert(key);
+                        }
+                        self.mark_session_dirty();
+                        return None;
+                    }
+
                     if let Some(card) = cards.iter().find(|card| {
                         mouse.row == card.rect.y
                             && mouse.column == card.rect.x
@@ -2505,6 +2523,70 @@ mod tests {
             Bytes::from_static(b"\x1b[<2;4;5m")
         );
         assert!(input_rx.try_recv().is_err());
+    }
+
+    // TP-WSCHAT-19: the drawer toggle must open AND close, and it must not
+    // steal the click that switches to a workspace. A toggle that only opens
+    // leaves the list permanently expanded; one that swallows the row makes the
+    // workspace unreachable by mouse.
+    #[test]
+    fn the_drawer_toggle_opens_and_closes_without_stealing_the_workspace_click() {
+        let mut app = app_for_mouse_test();
+        let mut workspace = crate::workspace::Workspace::test_new("drawer-click");
+        workspace.identity_cwd = std::env::temp_dir();
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        let key = crate::persist::workspace_chats::ledger_key(&std::env::temp_dir());
+        app.state.workspace_chat_rows.insert(
+            key.clone(),
+            vec![crate::app::state::WorkspaceChatRow {
+                session_id: "click-probe".into(),
+                agent: "claude".into(),
+                title: Some("probe chat".into()),
+                last_seen_ms: 1,
+            }],
+        );
+
+        let area = ratatui::layout::Rect::new(0, 0, 106, 20);
+        crate::ui::compute_view(&mut app.state, area);
+        let card = app.state.view.workspace_card_areas[0];
+        let cell = crate::ui::workspace_chat_toggle_cell(&app.state, card.rect, 0);
+        assert!(cell.width > 0, "the probe workspace offers a toggle");
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            cell.x,
+            cell.y,
+        ));
+        assert!(
+            app.state.expanded_chat_workspaces.contains(&key),
+            "the first click opens the drawer"
+        );
+
+        crate::ui::compute_view(&mut app.state, area);
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            cell.x,
+            cell.y,
+        ));
+        assert!(
+            !app.state.expanded_chat_workspaces.contains(&key),
+            "a second click closes it again"
+        );
+
+        // A press elsewhere on the row still starts the workspace press that
+        // selects it, so the toggle has not taken the row over.
+        crate::ui::compute_view(&mut app.state, area);
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            card.rect.x + card.rect.width / 2,
+            card.rect.y,
+        ));
+        assert!(
+            app.state.workspace_press.is_some(),
+            "the rest of the row still selects the workspace"
+        );
     }
 
     #[tokio::test]
