@@ -226,3 +226,28 @@ displays are attached at the same time.
 | TP-SUR-FM-05 | A navigation the rail asked for belongs to the display that asked, and is still waiting when that display is served. | Scheduled work serves displays lowest-id first, so a shared request is consumed by the wrong display: it navigates that one's browser and the display actually clicked sits inert. | `a_request_one_display_made_is_not_consumed_by_another` |
 | TP-SUR-FM-06 | Every browser request — rename, bulk rename, delete, context action — belongs to the display that made it and is taken up in that display's view. | Each resolves against the asking display's rail focus, directory and selection; taken outside that view they match nothing and the rename or delete is silently dropped on every display but the first. | `every_browser_request_belongs_to_the_display_that_made_it` |
 | TP-SUR-FM-07 | A context action is visible only in the view that raised it, and all three of its consumers — send-to-agent, plugin dispatch, ordinary actions — run in that view, in that precedence. | Consumers split across the loop boundary read nobody's browser once a second display attaches: the request is taken, nothing matches, and the whole branch goes quiet on every display. | `a_context_action_is_visible_only_where_it_was_raised` |
+
+## Mobile and responsive layout
+
+A phone reaching Herdr over SSH is a viewport, not a platform. The fork treats the
+viewport's size as a first-class input on *both* axes and routes every threshold
+decision through one type, because the alternative — each surface comparing raw
+columns for itself — is what let overlays declare 76 columns on a 36-column screen
+and let a phone in landscape keep desktop chrome it had no rows for.
+
+`ui.rs` (layout choice) and `ui/widgets.rs` (overlay geometry) are upstream-owned:
+a sync can take upstream's version of either region without a conflict and quietly
+restore the width-only world.
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-MOB-01 | Width classifies into tight / compact / regular at exact boundaries. | An off-by-one at a boundary sends a whole class of phone widths down the wrong layout path, and nothing reports it. | `size_class_width_boundaries` |
+| TP-MOB-02 | Height classifies into short / regular at an exact boundary. | The landscape-phone case silently rejoins the desktop case, restoring the chrome that has no rows to spare. | `size_class_height_boundaries` |
+| TP-MOB-03 | The tight ceiling follows the configured mobile threshold down, so the two can never cross. | A user who lowers `mobile_width_threshold` below the tight ceiling creates widths that are "too narrow for the mobile shell" — a state with no defined behavior. | `tight_never_exceeds_the_mobile_threshold` |
+| TP-MOB-04 | A zero-width or zero-height viewport is not mobile, matching the predicate this replaced. | A degenerate frame starts taking the mobile path, changing behavior on an area no caller ever had to draw. | `zero_area_is_not_mobile` |
+| TP-MOB-05 | Routing the shell decision through the size class returns exactly what the width-only predicate returned, for every width and threshold. | The shell silently flips for some viewport the migration never considered — the one regression a type-level refactor is most likely to hide. | `mobile_shell_matches_the_width_predicate_it_replaces` |
+| TP-MOB-06 | Every viewport that already took the desktop shell keeps identical popup geometry. | Narrow-screen work moves desktop cells, so a change nobody asked for ships to every existing user. | `regular_viewport_popup_geometry_is_unchanged` |
+| TP-MOB-07 | On a tight viewport a popup spans the full width instead of floating. | Four columns of margin on a 36-column screen is a tenth of the readable area, spent on a floating affordance that at that size no longer reads as floating. | `tight_viewport_popup_spans_the_full_width` |
+| TP-MOB-08 | A compact viewport keeps one column of margin, not the desktop's two. | The popup either loses the panel reading entirely or keeps paying desktop margin on a screen that cannot afford it. | `compact_viewport_popup_keeps_one_column_of_margin` |
+| TP-MOB-09 | A short viewport spends no rows on vertical margin, and being short does not make it narrow. | A landscape phone loses two of fourteen rows to margin, or — worse — is treated as narrow and has its width cut as well. | `short_viewport_popup_drops_the_vertical_margin` |
+| TP-MOB-10 | A viewport too small for a bordered body still refuses to produce a rect. | Callers receive a rectangle nothing can be drawn into and paint a border with no interior. | `impossible_viewport_still_returns_none` |

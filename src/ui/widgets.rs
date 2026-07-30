@@ -6,6 +6,7 @@ use ratatui::{
     Frame,
 };
 
+use super::size_class::{HeightClass, SizeClass, WidthClass};
 use crate::app::state::Palette;
 
 pub(super) fn render_panel_shell(
@@ -36,9 +37,34 @@ pub(super) fn panel_contrast_fg(p: &Palette) -> Color {
     }
 }
 
+/// Columns a floating popup leaves on each side of itself.
+///
+/// A margin is what makes a popup read as floating above the surface behind
+/// it. That reading is worth two columns on a desktop terminal and worth
+/// nothing on a phone held upright, where four columns of margin is a tenth of
+/// the screen and the popup has stopped looking like a floating box anyway.
+/// The tight case is the terminal's version of the compact-viewport rule that
+/// turns a side panel into a full-width sheet.
+fn popup_margin_x(width: WidthClass) -> u16 {
+    match width {
+        WidthClass::Tight => 0,
+        WidthClass::Compact => 1,
+        WidthClass::Regular => 2,
+    }
+}
+
+/// Rows a floating popup leaves above and below itself.
+fn popup_margin_y(height: HeightClass) -> u16 {
+    match height {
+        HeightClass::Short => 0,
+        HeightClass::Regular => 1,
+    }
+}
+
 pub(crate) fn centered_popup_rect(area: Rect, popup_w: u16, popup_h: u16) -> Option<Rect> {
-    let popup_w = popup_w.min(area.width.saturating_sub(4));
-    let popup_h = popup_h.min(area.height.saturating_sub(2));
+    let size = SizeClass::of_viewport(area);
+    let popup_w = popup_w.min(area.width.saturating_sub(2 * popup_margin_x(size.width)));
+    let popup_h = popup_h.min(area.height.saturating_sub(2 * popup_margin_y(size.height)));
     if popup_w < 4 || popup_h < 4 {
         return None;
     }
@@ -275,4 +301,86 @@ pub(super) fn centered_button_row(
             rect
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The geometry `centered_popup_rect` produced before it became size-class
+    /// aware. Kept here, spelled out, so the desktop characterization test
+    /// compares against a fixed rule rather than against the code under test.
+    fn legacy_centered_popup_rect(area: Rect, popup_w: u16, popup_h: u16) -> Option<Rect> {
+        let popup_w = popup_w.min(area.width.saturating_sub(4));
+        let popup_h = popup_h.min(area.height.saturating_sub(2));
+        if popup_w < 4 || popup_h < 4 {
+            return None;
+        }
+        let popup_x = area.x + (area.width.saturating_sub(popup_w)) / 2;
+        let popup_y = area.y + (area.height.saturating_sub(popup_h)) / 2;
+        Some(Rect::new(popup_x, popup_y, popup_w, popup_h))
+    }
+
+    // TP-MOB-06: every viewport that already took the desktop shell keeps the
+    // exact popup geometry it had. Narrow-screen work must not move a single
+    // desktop cell. The compact band (41..=64) is deliberately excluded: it is
+    // already the mobile shell, and halving its margin is the point of
+    // TP-MOB-08.
+    #[test]
+    fn regular_viewport_popup_geometry_is_unchanged() {
+        let declared = [(76u16, 22u16), (96, 30), (68, 12), (56, 7), (64, 6)];
+        for width in (crate::config::DEFAULT_MOBILE_WIDTH_THRESHOLD + 1)..=200u16 {
+            for height in (crate::ui::size_class::SHORT_MAX_HEIGHT + 1)..=60u16 {
+                let area = Rect::new(0, 0, width, height);
+                for (w, h) in declared {
+                    assert_eq!(
+                        centered_popup_rect(area, w, h),
+                        legacy_centered_popup_rect(area, w, h),
+                        "declared {w}x{h} in a {width}x{height} viewport"
+                    );
+                }
+            }
+        }
+    }
+
+    // TP-MOB-07: on a phone held upright the popup stops pretending to float
+    // and takes the whole width, because four columns of margin there is a
+    // tenth of the screen.
+    #[test]
+    fn tight_viewport_popup_spans_the_full_width() {
+        let area = Rect::new(0, 0, 36, 18);
+        let rect = centered_popup_rect(area, 76, 22).expect("tight popup");
+        assert_eq!(rect.x, 0);
+        assert_eq!(rect.width, 36);
+    }
+
+    // TP-MOB-08: a compact viewport keeps one column of margin — enough to
+    // read as a panel, half the cost of the desktop margin.
+    #[test]
+    fn compact_viewport_popup_keeps_one_column_of_margin() {
+        let area = Rect::new(0, 0, 44, 22);
+        let rect = centered_popup_rect(area, 76, 22).expect("compact popup");
+        assert_eq!(rect.width, 42);
+        assert_eq!(rect.x, 1);
+    }
+
+    // TP-MOB-09: a phone held sideways is wide but very short, so the popup
+    // spends no rows on vertical margin.
+    #[test]
+    fn short_viewport_popup_drops_the_vertical_margin() {
+        let area = Rect::new(0, 0, 90, 14);
+        let rect = centered_popup_rect(area, 76, 22).expect("short popup");
+        assert_eq!(rect.height, 14);
+        assert_eq!(rect.y, 0);
+        assert_eq!(rect.width, 76, "a short viewport is not a narrow one");
+    }
+
+    // TP-MOB-10: a viewport too small for a bordered body still refuses,
+    // rather than returning a rect nothing can be drawn into.
+    #[test]
+    fn impossible_viewport_still_returns_none() {
+        assert_eq!(centered_popup_rect(Rect::new(0, 0, 3, 3), 76, 22), None);
+        assert_eq!(centered_popup_rect(Rect::new(0, 0, 0, 0), 76, 22), None);
+        assert_eq!(centered_popup_rect(Rect::new(0, 0, 36, 3), 76, 22), None);
+    }
 }

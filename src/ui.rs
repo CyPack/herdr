@@ -21,6 +21,7 @@ mod scrollbar;
 mod settings;
 pub(crate) mod shell;
 mod sidebar;
+mod size_class;
 mod status;
 pub(crate) mod surface_host;
 mod tab_surface;
@@ -69,7 +70,7 @@ use self::menus::{
     render_resize_overlay,
 };
 use self::mobile::{
-    compute_mobile_header_hit_areas, is_mobile_width, mobile_switcher_max_scroll_for_height,
+    compute_mobile_header_hit_areas, mobile_switcher_max_scroll_for_height,
     mobile_toast_banner_rect, render_mobile_header, render_mobile_panel,
     render_mobile_toast_banner,
 };
@@ -308,7 +309,7 @@ fn compute_view_internal(
         app.cancel_sidebar_resize_for_terminal_area(area.width);
     }
 
-    if is_mobile_width(area, app.mobile_width_threshold) {
+    if size_class::SizeClass::of(area, app.mobile_width_threshold).is_mobile_shell() {
         compute_mobile_view(app, terminal_runtimes, area, resize_panes, cell_size);
         return;
     }

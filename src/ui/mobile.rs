@@ -45,10 +45,6 @@ pub(crate) enum MobileSwitcherTarget {
     Menu(usize),
 }
 
-pub(crate) fn is_mobile_width(area: Rect, threshold: u16) -> bool {
-    area.width > 0 && area.width <= threshold
-}
-
 pub(crate) fn compute_mobile_header_hit_areas(_app: &AppState, area: Rect) -> MobileHeaderHitAreas {
     if area.width == 0 || area.height == 0 {
         return MobileHeaderHitAreas::default();
