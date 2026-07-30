@@ -137,6 +137,12 @@ impl App {
     pub(crate) fn sync_workspace_chat_rows(&mut self) {
         self.state.workspace_chat_rows =
             crate::persist::workspace_chats::project_rows(&self.workspace_chat_ledger);
+        // Titles come from the agent's own store, so this is the one file read
+        // on the path — bounded to workspaces that actually have an untitled
+        // row, and skipped entirely when the store cannot be located.
+        if let Some(dir) = crate::claude_sessions::default_claude_projects_dir() {
+            self.state.resolve_workspace_chat_titles_in(&dir);
+        }
     }
 
     pub(crate) fn save_session_now(&mut self) {

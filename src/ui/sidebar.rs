@@ -435,10 +435,16 @@ impl WorkspaceListEntry {
 /// A workspace with no remembered chats gets no affordance at all: an arrow
 /// that only ever reveals "(no chats)" is noise on every row.
 pub(crate) fn workspace_chat_toggle_cell(app: &AppState, card_rect: Rect, ws_idx: usize) -> Rect {
-    if card_rect.width < 3 || workspace_chat_rows_for(app, ws_idx).is_empty() {
+    if card_rect.width < 4 || workspace_chat_rows_for(app, ws_idx).is_empty() {
         return Rect::default();
     }
-    Rect::new(card_rect.x + card_rect.width - 1, card_rect.y, 1, 1)
+    // Leading, like every other disclosure control in this sidebar and in the
+    // Projects tab: the arrow reads as "this row opens" only when it sits
+    // before the name. A row that already carries the worktree-group chevron
+    // in column 0 puts this one immediately after it, so the two stay adjacent
+    // on the left instead of one drifting to the far edge.
+    let offset = u16::from(workspace_parent_group_state(app, ws_idx).is_some());
+    Rect::new(card_rect.x + offset, card_rect.y, 1, 1)
 }
 
 /// The Spaces rows the mobile switcher lays out: workspaces only.
@@ -1603,6 +1609,7 @@ fn render_workspace_list(
 /// that marks the active workspace and the active agent card.
 fn render_workspace_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u16) {
     let p = &app.palette;
+    let now = std::time::SystemTime::now();
     for row in &app.view.workspace_chat_row_areas {
         if row.rect.width == 0 || row.rect.y >= list_bottom {
             continue;
@@ -1610,32 +1617,66 @@ fn render_workspace_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u1
         let Some(chat) = workspace_chat_rows_for(app, row.ws_idx).get(row.chat_idx) else {
             continue;
         };
-        let open_here = app
-            .find_resumed_chat_tab(&chat.session_id)
-            .is_some_and(|(ws_idx, _)| ws_idx == row.ws_idx);
-        let (glyph, glyph_style) = if open_here {
-            ("●", Style::default().fg(p.accent))
+        // Same wired-state vocabulary the Projects tab uses, so one glyph means
+        // one thing across both surfaces: "▸" this chat IS the focused tab,
+        // "●" open in another tab, blank not open. Plain-text markers stay
+        // readable without color and are assertable in a buffer test.
+        let wired = app.find_resumed_chat_tab(&chat.session_id);
+        let focused = wired.is_some_and(|(ws_idx, tab_idx)| {
+            app.active == Some(ws_idx)
+                && app
+                    .workspaces
+                    .get(ws_idx)
+                    .is_some_and(|ws| ws.active_tab_index() == tab_idx)
+        });
+        let marker = if focused {
+            " ▸ "
+        } else if wired.is_some() {
+            " ● "
         } else {
-            ("○", Style::default().fg(p.overlay0))
+            "   "
         };
-        let name_style = if open_here {
-            Style::default().fg(p.subtext0)
+        let (title_style, marker_style) = if focused {
+            (
+                Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
+                Style::default().fg(p.accent),
+            )
+        } else if wired.is_some() {
+            (Style::default().fg(p.text), Style::default().fg(p.accent))
         } else {
-            Style::default().fg(p.overlay1).add_modifier(Modifier::DIM)
+            (Style::default().fg(p.overlay1), Style::default())
         };
-        let budget = row.rect.width.saturating_sub(8) as usize;
+
+        // The drawer sits one level deeper than a branch child, so its rows
+        // carry the branch indent plus the marker column.
+        const DRAWER_INDENT: &str = "   ";
+        let width = row.rect.width as usize;
+        let age = chat
+            .last_modified
+            .map(|seen| format_relative_time(seen, now))
+            .unwrap_or_default();
+        let age_width = super::text::display_width(&age);
+        let title_budget = width
+            .saturating_sub(DRAWER_INDENT.len() + 3)
+            .saturating_sub(if age_width > 0 { age_width + 1 } else { 0 });
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::raw("      "),
-                Span::styled(glyph, glyph_style),
-                Span::raw(" "),
+                Span::raw(DRAWER_INDENT),
+                Span::styled(marker, marker_style),
                 Span::styled(
-                    super::text::truncate_end(&chat.display_label(), budget),
-                    name_style,
+                    super::text::truncate_end(&chat.display_label(), title_budget),
+                    title_style,
                 ),
             ])),
-            Rect::new(row.rect.x, row.rect.y, row.rect.width, 1),
+            row.rect,
         );
+        if age_width > 0 && age_width < width {
+            frame.render_widget(
+                Paragraph::new(Span::styled(age, Style::default().fg(p.overlay0)))
+                    .alignment(Alignment::Right),
+                row.rect,
+            );
+        }
     }
 }
 
@@ -3840,6 +3881,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 agent: "claude".to_string(),
                 title: Some(format!("chat {idx}")),
                 last_seen_ms: 1_000 + idx as u64,
+                last_modified: None,
             })
             .collect::<Vec<_>>();
         app.workspace_chat_rows.insert(key.clone(), rows);
@@ -3955,9 +3997,10 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
 
         let cell = workspace_chat_toggle_cell(&app, card, 0);
         assert_eq!(
-            cell.x,
-            card.x + card.width - 1,
-            "the toggle is the right edge"
+            cell.x, card.x,
+            "the disclosure arrow LEADS the row, like every other one in this \
+             sidebar and in the Projects tab — a trailing arrow reads as an \
+             unrelated control at the far edge"
         );
         assert_eq!(cell.y, card.y);
 
@@ -4002,6 +4045,14 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert!(
             joined.contains('▾'),
             "an open drawer shows the open arrow:\n{joined}"
+        );
+        // TP-WSCHAT-22: the same wired-state vocabulary the Projects tab uses.
+        // A chat that is not open carries a blank marker, not a glyph of its
+        // own — two surfaces inventing different alphabets for one fact makes
+        // the sidebar unreadable.
+        assert!(
+            !joined.contains('○'),
+            "a closed chat has no glyph of its own; only ▸/● mean something:\n{joined}"
         );
 
         let chat_row_y = rows

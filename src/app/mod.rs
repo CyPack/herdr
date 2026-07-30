@@ -978,6 +978,9 @@ impl App {
             )
         };
         state.workspace_chat_rows = crate::persist::workspace_chats::project_rows(&ledger);
+        if let Some(dir) = crate::claude_sessions::default_claude_projects_dir() {
+            state.resolve_workspace_chat_titles_in(&dir);
+        }
 
         Self {
             config_diagnostic_deadline: None,

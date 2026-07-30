@@ -635,6 +635,10 @@ pub struct WorkspaceChatRow {
     pub agent: String,
     pub title: Option<String>,
     pub last_seen_ms: u64,
+    /// Transcript mtime, when the chat's own file could be found. Drives the
+    /// relative-age column; absent for a chat whose store location is unknown,
+    /// in which case the row simply carries no age rather than a wrong one.
+    pub last_modified: Option<std::time::SystemTime>,
 }
 
 impl WorkspaceChatRow {
@@ -3452,6 +3456,54 @@ impl AppState {
     /// `.../.claude/projects` root, injected for testability). This is the only
     /// place the reader touches the filesystem — render/compute must never scan
     /// the disk. Best-effort: a project with no chats keeps an empty list.
+    /// Fill in the chat drawer's titles and ages from the agent's own store.
+    ///
+    /// The ledger records an association, not a transcript: the title lives in
+    /// the agent's store, which is keyed by the directory the agent was
+    /// launched in. So each workspace's own directory is read and whatever
+    /// matches is filled in. A chat started elsewhere stays untitled by design
+    /// — the drawer degrades to a short id rather than hiding the association,
+    /// which is the part that cannot be recovered from anywhere else.
+    pub(crate) fn resolve_workspace_chat_titles_in(&mut self, projects_dir: &std::path::Path) {
+        // Only slightly more than the drawer shows: parsing opens whole files.
+        const DRAWER_TITLE_FETCH_LIMIT: usize = 12;
+        let keys: Vec<(String, String)> = self
+            .workspaces
+            .iter()
+            .map(|ws| {
+                (
+                    crate::persist::workspace_chats::ledger_key(&ws.identity_cwd),
+                    ws.identity_cwd.to_string_lossy().into_owned(),
+                )
+            })
+            .collect();
+
+        for (key, cwd) in keys {
+            if !self
+                .workspace_chat_rows
+                .get(&key)
+                .is_some_and(|rows| rows.iter().any(|row| row.title.is_none()))
+            {
+                continue;
+            }
+            let (sessions, _) = crate::claude_sessions::read_recent_sessions_for_project_cached(
+                projects_dir,
+                &cwd,
+                DRAWER_TITLE_FETCH_LIMIT,
+                &mut self.sessions_parse_cache,
+            );
+            let Some(rows) = self.workspace_chat_rows.get_mut(&key) else {
+                continue;
+            };
+            for row in rows.iter_mut() {
+                if let Some(found) = sessions.iter().find(|s| s.id == row.session_id) {
+                    row.title = Some(found.title.clone());
+                    row.last_modified = Some(found.last_modified);
+                }
+            }
+        }
+    }
+
     pub(crate) fn refresh_project_sessions_in(&mut self, projects_dir: &std::path::Path) {
         // Parse only slightly more than the sidebar can show: opening a
         // session file reads it whole, and busy projects hold hundreds of
@@ -4657,6 +4709,65 @@ mod tests {
         assert!(state.projects_pinned.is_empty());
         assert!(state.projects_sessions.is_empty());
         assert!(state.collapsed_project_paths.is_empty());
+    }
+
+    // TP-WSCHAT-21: the drawer shows the chat's NAME, the way the Projects tab
+    // does. A session id is not an answer to "which chat did I work with" — the
+    // ledger supplies the association and the agent's own store supplies the
+    // title, and the two are joined here.
+    #[test]
+    fn drawer_rows_take_their_title_from_the_agents_own_store() {
+        let fake = FakeProjectsRoot::new("drawer-titles");
+        let cwd = std::env::temp_dir().join("herdr-drawer-title-probe");
+        std::fs::create_dir_all(&cwd).expect("probe workspace dir");
+        fake.write_session(
+            &cwd.to_string_lossy(),
+            "titled-session",
+            &[r#"{"type":"custom-title","customTitle":"branch review"}"#],
+        );
+
+        let mut state = AppState::test_new();
+        let mut workspace = crate::workspace::Workspace::test_new("titled");
+        workspace.identity_cwd = cwd.clone();
+        state.workspaces = vec![workspace];
+        let key = crate::persist::workspace_chats::ledger_key(&cwd);
+        state.workspace_chat_rows.insert(
+            key.clone(),
+            vec![
+                WorkspaceChatRow {
+                    session_id: "titled-session".into(),
+                    agent: "claude".into(),
+                    title: None,
+                    last_seen_ms: 1,
+                    last_modified: None,
+                },
+                WorkspaceChatRow {
+                    session_id: "elsewhere-session".into(),
+                    agent: "claude".into(),
+                    title: None,
+                    last_seen_ms: 2,
+                    last_modified: None,
+                },
+            ],
+        );
+
+        state.resolve_workspace_chat_titles_in(&fake.root);
+
+        let rows = &state.workspace_chat_rows[&key];
+        assert_eq!(rows[0].title.as_deref(), Some("branch review"));
+        assert!(
+            rows[0].last_modified.is_some(),
+            "a resolved row also gets its age"
+        );
+        assert_eq!(
+            rows[1].title, None,
+            "a chat started outside this directory stays untitled by design — \
+             the drawer degrades to a short id rather than hiding the \
+             association, which is the part nothing else records"
+        );
+        assert!(rows[1].display_label().starts_with("elsewhe"));
+
+        let _ = std::fs::remove_dir_all(&cwd);
     }
 
     // P3: refresh reads the reader for each pinned path, aligned and newest-first.

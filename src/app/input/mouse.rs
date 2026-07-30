@@ -2545,6 +2545,7 @@ mod tests {
                 agent: "claude".into(),
                 title: Some("probe chat".into()),
                 last_seen_ms: 1,
+                last_modified: None,
             }],
         );
 

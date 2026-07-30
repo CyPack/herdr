@@ -283,6 +283,7 @@ pub fn project_rows(
                     agent: chat.agent.clone(),
                     title: None,
                     last_seen_ms: chat.last_seen_ms,
+                    last_modified: None,
                 })
                 .collect();
             (key.clone(), rows)
