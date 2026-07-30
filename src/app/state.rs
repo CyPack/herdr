@@ -5767,6 +5767,58 @@ mod viewer_context_tests {
     // swallows what its user types after the API focuses a pane.
     //
     // TP-SUR-BROADCAST-01
+    // TP-SUR-BROADCAST-06: the remaining broadcast members are presentational,
+    // and this states it instead of leaving it as a comment.
+    //
+    // The popup-leak family came from a PERSON-opened surface sitting in this
+    // class: set with no display behind it, it was copied to every screen. The
+    // rail's tab, its selected row and its scroll offsets are different in kind
+    // — nobody "opens" them, they describe where a list is looking — so
+    // broadcasting them is intended, not an oversight. If a person-opened
+    // surface is ever added to this class, the guard is the seam
+    // (TP-SUR-BROADCAST-05), not this row.
+    #[test]
+    fn the_rails_presentational_broadcast_members_reach_parked_displays() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("main"));
+        state.active = Some(0);
+
+        // Two displays have been seen and parked.
+        state.enter_viewer(Some(1));
+        state.restore_viewer(None);
+        state.enter_viewer(Some(2));
+        state.restore_viewer(None);
+
+        // The session changes presentational rail state with nobody serving.
+        state.sidebar_tab = SidebarTab::Projects;
+        state.selected = 0;
+        state.workspace_scroll = 7;
+
+        state.enter_viewer(Some(2));
+        assert_eq!(
+            state.sidebar_tab,
+            SidebarTab::Projects,
+            "the rail's tab is presentational: a session-level change is an \
+             instruction and reaches a parked display"
+        );
+        assert_eq!(state.workspace_scroll, 7);
+        state.restore_viewer(None);
+
+        // And the guard that matters: a person-opened surface in the same class
+        // must NOT be born on a display that never asked for it. This is the
+        // distinction the class comment relies on.
+        state.popup_pane = None;
+        state.enter_viewer(Some(3));
+        assert!(
+            state.popup_pane.is_none(),
+            "a display seen for the first time is born without a popup — the \
+             seam owns that, not the broadcast class"
+        );
+        state.restore_viewer(None);
+    }
+
     #[test]
     fn a_session_instruction_still_reaches_parked_displays() {
         let mut state = AppState::test_new();
