@@ -411,9 +411,9 @@ fn compute_view_internal(
     // current Files activation preserves whichever Spaces/Projects owner was
     // already selected.
     let show_spaces_content = app.sidebar_tab != crate::app::state::SidebarTab::Projects;
-    let (workspace_card_areas, workspace_chat_row_areas) =
+    let (workspace_card_areas, workspace_chat_row_areas, workspace_group_header_areas) =
         if app.sidebar_collapsed || !show_spaces_content {
-            (Vec::new(), Vec::new())
+            (Vec::new(), Vec::new(), Vec::new())
         } else {
             sidebar::compute_workspace_list_areas(app, sidebar_area)
         };
@@ -512,6 +512,7 @@ fn compute_view_internal(
         sidebar_rect: sidebar_area,
         workspace_card_areas,
         workspace_chat_row_areas,
+        workspace_group_header_areas,
         sidebar_tab_hit_areas,
         project_row_areas,
         app_dock_entry_areas,
@@ -641,6 +642,7 @@ fn compute_mobile_view(
         sidebar_rect: Rect::default(),
         workspace_card_areas: Vec::new(),
         workspace_chat_row_areas: Vec::new(),
+        workspace_group_header_areas: Vec::new(),
         sidebar_tab_hit_areas: Vec::new(),
         stage_tab_hit_areas: Vec::new(),
         project_row_areas: Vec::new(),
@@ -2975,9 +2977,12 @@ mod tests {
         let line1 = buffer_row_text(buffer, card, card.y);
         let line2 = buffer_row_text(buffer, card, card.y + 1);
 
-        assert!(line1.starts_with(" · one"));
+        // TP-TREE-10 reserves the disclosure column on every row so sibling
+        // names line up; the subject here — the state dot leads the name and
+        // no ordinal does — is unchanged.
+        assert!(line1.starts_with("  · one"));
         assert!(!line1.contains("1 one"));
-        assert_eq!(line2, "   main");
+        assert_eq!(line2, "    main");
 
         std::fs::remove_dir_all(repo).ok();
     }

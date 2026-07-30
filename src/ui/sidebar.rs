@@ -243,18 +243,21 @@ fn workspace_row_height_in_body(
     workspace_row_height(app, workspace, indented).min(body_height)
 }
 
-fn workspace_entry_gap(
-    app: &AppState,
-    entries: &[WorkspaceListEntry],
-    entry_idx: usize,
-    indented: bool,
-) -> u16 {
-    if entry_idx + 1 < entries.len()
-        && !(indented && next_entry_is_indented_workspace(entries, entry_idx))
-    {
-        app.sidebar_spaces.row_gap
-    } else {
-        0
+/// The configured group gap, emitted only where the next row starts a new
+/// top-level unit — a repository header or an ungrouped workspace.
+///
+/// TP-TREE-06: one rule for every row kind. A repository's header, its
+/// checkouts and their open drawers read as one block, and the gap falls
+/// between blocks. Before the header row existed the gap landed between a
+/// group's parent and its own first child, which drew a separator inside a
+/// group instead of around it.
+fn workspace_entry_gap(app: &AppState, entries: &[WorkspaceListEntry], entry_idx: usize) -> u16 {
+    match entries.get(entry_idx.saturating_add(1)) {
+        Some(WorkspaceListEntry::GroupHeader { .. })
+        | Some(WorkspaceListEntry::Workspace {
+            indented: false, ..
+        }) => app.sidebar_spaces.row_gap,
+        _ => 0,
     }
 }
 
@@ -391,6 +394,19 @@ pub(crate) fn grouped_child_display_label(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum WorkspaceListEntry {
+    /// The repository a worktree group belongs to, on a row of its own.
+    ///
+    /// TP-TREE-01: this row exists so that the two disclosures the Spaces tab
+    /// owns — "show the sibling checkouts" and "show this checkout's chats" —
+    /// live on different rows. While the group's parent checkout doubled as the
+    /// group header, both arrows landed in the same gutter one column apart and
+    /// a reader could not tell which arrow did what.
+    ///
+    /// It is deliberately not a workspace: it carries no `ws_idx`, so it can
+    /// never be folded into the workspace-indexed area vector.
+    GroupHeader {
+        space_key: String,
+    },
     Workspace {
         ws_idx: usize,
         indented: bool,
@@ -434,17 +450,56 @@ impl WorkspaceListEntry {
 /// chevron — two toggles sharing a cell would make one of them unreachable.
 /// A workspace with no remembered chats gets no affordance at all: an arrow
 /// that only ever reveals "(no chats)" is noise on every row.
+/// Columns one tree level is worth.
+pub(crate) const ROW_INDENT_STEP: u16 = 2;
+/// Columns a disclosure arrow occupies: the glyph plus the breathing space
+/// that keeps it from touching the name. A one-column control read as part of
+/// the word next to it.
+pub(crate) const DISCLOSURE_WIDTH: u16 = 2;
+/// The arrow an open row wears.
+pub(crate) const DISCLOSURE_OPEN: &str = "▾";
+/// The arrow a closed row wears.
+pub(crate) const DISCLOSURE_CLOSED: &str = "▸";
+/// The rule that ties a drawer's rows to the checkout above them.
+pub(crate) const DRAWER_GUIDE: &str = "│";
+
+/// The disclosure cell of a workspace row: leading, at the row's own depth.
+///
+/// TP-TREE-10: a checkout's arrow sits at the checkout's depth, never in the
+/// repository's column. The repository owns column 0 on its own header row, so
+/// the two disclosures can no longer be confused for one another — which is
+/// the whole reason the header row exists.
 pub(crate) fn workspace_chat_toggle_cell(app: &AppState, card_rect: Rect, ws_idx: usize) -> Rect {
     if card_rect.width < 4 || workspace_chat_rows_for(app, ws_idx).is_empty() {
         return Rect::default();
     }
-    // Leading, like every other disclosure control in this sidebar and in the
-    // Projects tab: the arrow reads as "this row opens" only when it sits
-    // before the name. A row that already carries the worktree-group chevron
-    // in column 0 puts this one immediately after it, so the two stay adjacent
-    // on the left instead of one drifting to the far edge.
-    let offset = u16::from(workspace_parent_group_state(app, ws_idx).is_some());
-    Rect::new(card_rect.x + offset, card_rect.y, 1, 1)
+    let depth = u16::from(workspace_is_group_member(app, ws_idx));
+    Rect::new(
+        card_rect.x + depth * ROW_INDENT_STEP,
+        card_rect.y,
+        DISCLOSURE_WIDTH,
+        1,
+    )
+}
+
+/// Whether this workspace is drawn as a child of a repository header row.
+pub(crate) fn workspace_is_group_member(app: &AppState, ws_idx: usize) -> bool {
+    app.view
+        .workspace_card_areas
+        .iter()
+        .find(|card| card.ws_idx == ws_idx)
+        .map(|card| card.indented)
+        .unwrap_or_else(|| {
+            workspace_list_entries(app).iter().any(|entry| {
+                matches!(
+                    entry,
+                    WorkspaceListEntry::Workspace {
+                        ws_idx: idx,
+                        indented: true,
+                    } if *idx == ws_idx
+                )
+            })
+        })
 }
 
 /// The "start a chat here" cell: the row's trailing edge, mirroring the "+" the
@@ -517,13 +572,6 @@ fn push_chat_drawer(app: &AppState, entries: &mut Vec<WorkspaceListEntry>, ws_id
     if chats.len() > WORKSPACE_CHAT_ROW_LIMIT {
         entries.push(WorkspaceListEntry::MoreChats { ws_idx });
     }
-}
-
-pub(crate) fn next_entry_is_indented_workspace(entries: &[WorkspaceListEntry], idx: usize) -> bool {
-    matches!(
-        entries.get(idx.saturating_add(1)),
-        Some(WorkspaceListEntry::Workspace { indented: true, .. })
-    )
 }
 
 pub(crate) fn normalized_workspace_scroll(app: &AppState, area: Rect, requested: usize) -> usize {
@@ -613,16 +661,19 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
             continue;
         };
         let collapsed = !force_expanded && app.collapsed_space_keys.contains(&space.key);
-        entries.push(WorkspaceListEntry::Workspace {
-            ws_idx: parent_idx,
-            indented: false,
+        // TP-TREE-01: the repository takes a row of its own and owns the
+        // "show the sibling checkouts" arrow. TP-TREE-04: every checkout, the
+        // main one included, is then a child — so the arrow a checkout carries
+        // can only ever mean "show my chats".
+        entries.push(WorkspaceListEntry::GroupHeader {
+            space_key: space.key.clone(),
         });
-        push_chat_drawer(app, &mut entries, parent_idx);
 
         if collapsed {
-            if let Some(active_idx) = visible_group_idx
-                .filter(|idx| *idx != parent_idx)
-                .filter(|_| active_group.as_deref() == Some(space.key.as_str()))
+            // TP-TREE-03: a folded group keeps the checkout the user is
+            // standing in, so folding never hides where you are.
+            if let Some(active_idx) =
+                visible_group_idx.filter(|_| active_group.as_deref() == Some(space.key.as_str()))
             {
                 entries.push(WorkspaceListEntry::Workspace {
                     ws_idx: active_idx,
@@ -631,10 +682,11 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
                 push_chat_drawer(app, &mut entries, active_idx);
             }
         } else {
-            for member_idx in members {
-                if *member_idx == parent_idx {
-                    continue;
-                }
+            // The main checkout leads; the linked worktrees follow in session
+            // order, the order they already had as siblings.
+            for member_idx in
+                std::iter::once(&parent_idx).chain(members.iter().filter(|idx| **idx != parent_idx))
+            {
                 entries.push(WorkspaceListEntry::Workspace {
                     ws_idx: *member_idx,
                     indented: true,
@@ -733,18 +785,24 @@ fn entry_row_metrics(
     body_height: u16,
 ) -> Option<(u16, u16)> {
     match entries.get(entry_idx)? {
+        // TP-TREE-06: one line. The header has to be measured here or the list
+        // would scroll past a row it did draw. It never carries a gap: it must
+        // hug the checkouts it introduces.
+        WorkspaceListEntry::GroupHeader { .. } => Some((1, 0)),
         WorkspaceListEntry::Workspace { ws_idx, indented } => {
             let workspace = app.workspaces.get(*ws_idx)?;
             Some((
                 workspace_row_height_in_body(app, workspace, *indented, body_height),
-                workspace_entry_gap(app, entries, entry_idx, *indented),
+                workspace_entry_gap(app, entries, entry_idx),
             ))
         }
         WorkspaceListEntry::Chat { ws_idx, .. }
         | WorkspaceListEntry::NoChats { ws_idx }
         | WorkspaceListEntry::MoreChats { ws_idx } => {
             app.workspaces.get(*ws_idx)?;
-            Some((1, 0))
+            // A drawer's last row still has to separate its block from the
+            // next one, or two repositories run together while a drawer is open.
+            Some((1, workspace_entry_gap(app, entries, entry_idx)))
         }
     }
 }
@@ -919,29 +977,30 @@ pub(crate) fn agent_panel_scrollbar_rect(app: &AppState, area: Rect) -> Option<R
     ))
 }
 
-/// Lay out the Spaces list: workspace cards and, separately, the chat rows of
-/// any open drawer.
+/// Lay out the Spaces list: workspace cards and, separately, the group header
+/// rows and the chat rows of any open drawer.
 ///
-/// The two vectors stay apart because `WorkspaceCardArea` is workspace-indexed
-/// — folding chat rows into it would make a chat click resolve as a workspace,
-/// the same trap the tab strip already documents for its stage entries
-/// (TP-FTAB-ENTRY-05).
+/// The three vectors stay apart because `WorkspaceCardArea` is
+/// workspace-indexed — folding a chat or a header into it would make that
+/// click resolve as a workspace, the same trap the tab strip already documents
+/// for its stage entries (TP-FTAB-ENTRY-05). TP-TREE-05.
 pub(crate) fn compute_workspace_list_areas(
     app: &AppState,
     area: Rect,
 ) -> (
     Vec<crate::app::state::WorkspaceCardArea>,
     Vec<crate::app::state::WorkspaceChatRowArea>,
+    Vec<crate::app::state::WorkspaceGroupHeaderArea>,
 ) {
     let ws_area = workspace_list_rect(area, app.sidebar_section_split);
     if ws_area == Rect::default() {
-        return (Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new());
     }
 
     let metrics = workspace_list_scroll_metrics(app, ws_area);
     let body = workspace_list_body_rect(ws_area, should_show_scrollbar(metrics));
     if body.width == 0 || body.height == 0 {
-        return (Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new());
     }
 
     let scroll = app.workspace_scroll;
@@ -949,6 +1008,7 @@ pub(crate) fn compute_workspace_list_areas(
     let body_bottom = body.y + body.height;
     let mut cards = Vec::new();
     let mut chat_rows = Vec::new();
+    let mut group_headers = Vec::new();
 
     let entries = workspace_list_entries(app);
     for (entry_idx, entry) in entries.iter().enumerate().skip(scroll) {
@@ -961,6 +1021,12 @@ pub(crate) fn compute_workspace_list_areas(
         }
         let rect = Rect::new(body.x, row_y, body.width, row_height);
         match entry {
+            WorkspaceListEntry::GroupHeader { space_key } => {
+                group_headers.push(crate::app::state::WorkspaceGroupHeaderArea {
+                    rect,
+                    space_key: space_key.clone(),
+                });
+            }
             WorkspaceListEntry::Workspace { ws_idx, indented } => {
                 cards.push(crate::app::state::WorkspaceCardArea {
                     ws_idx: *ws_idx,
@@ -984,7 +1050,7 @@ pub(crate) fn compute_workspace_list_areas(
             .min(body_bottom);
     }
 
-    (cards, chat_rows)
+    (cards, chat_rows, group_headers)
 }
 
 pub(crate) fn compute_workspace_card_areas(
@@ -1476,12 +1542,16 @@ fn render_workspace_list(
         let (agg_state, agg_seen) = ws.aggregate_state(&app.terminals);
 
         if highlighted {
-            let bg = if selected {
-                p.surface0
+            // TP-TREE-11: the workspace you are in wears the accent outright,
+            // the same sentence the active agent card and the active tab
+            // already speak. Selection while navigating stays a tone apart, so
+            // "where I am" and "what I am pointing at" never read alike.
+            let bg = if is_active {
+                p.accent
             } else if is_dragged {
                 p.surface1
             } else {
-                p.surface_dim
+                p.surface0
             };
             let buf = frame.buffer_mut();
             for y in row_y..row_y + row_height {
@@ -1494,7 +1564,11 @@ fn render_workspace_list(
             }
         }
 
-        let name_style = if selected || is_active || is_dragged {
+        let name_style = if is_active {
+            Style::default()
+                .fg(panel_contrast_fg(p))
+                .add_modifier(Modifier::BOLD)
+        } else if selected || is_dragged {
             Style::default().fg(p.text).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(p.subtext0)
@@ -1506,14 +1580,10 @@ fn render_workspace_list(
         } else {
             space_header_display_label(app, i, label)
         };
-        let parent_group = (!card.indented)
-            .then(|| workspace_parent_group_state(app, i))
-            .flatten();
-        let (display_state, display_seen) = parent_group
-            .as_ref()
-            .filter(|(_, collapsed)| *collapsed)
-            .map(|(key, _)| space_aggregate_state(app, key))
-            .unwrap_or((agg_state, agg_seen));
+        // TP-TREE-08: a checkout row no longer carries a group chevron. The
+        // repository owns that arrow on its own header row, so the only arrow
+        // that can appear here means "show my chats".
+        let (display_state, display_seen) = (agg_state, agg_seen);
         let state_icon = state_dot(display_state, display_seen, p);
         let state_text_style = Style::default()
             .fg(state_label_color(display_state, display_seen, p))
@@ -1536,39 +1606,40 @@ fn render_workspace_list(
             },
         );
 
+        // Depth is spent once, on indentation, and the disclosure column is
+        // reserved on every row whether or not this row has an arrow — so the
+        // names of sibling checkouts line up instead of stepping in and out.
+        let name_col = u16::from(card.indented) * ROW_INDENT_STEP + DISCLOSURE_WIDTH;
+
+        // TP-TREE-12: the count is information ("how much history is in here"),
+        // the plus is an action, and every checkout offers it — starting a
+        // chat on a branch is the point of the row. It stays quiet until the
+        // row is the one you are on, and it is never bound to hover, which
+        // would make a pointer move repaint the sidebar (TP-REPAINT-2B).
+        let chat_count = workspace_chat_rows_for(app, i).len();
+        let show_plus = app.mouse_capture;
+        let badge = (chat_count > 0).then(|| chat_count.to_string());
+        // The trailing chrome is reserved, not overdrawn: before the tree the
+        // "+" was painted over whatever the name had already written there, so
+        // a long enough workspace name simply lost its last character to it.
+        // A row with no history pays one column, not four.
+        let trailing = u16::from(show_plus)
+            + badge
+                .as_ref()
+                .map(|text| text.len() as u16 + 2)
+                .unwrap_or(0);
+
         for (row_index, resolved) in rows.iter().enumerate() {
             if row_index as u16 >= row_height || row_y + row_index as u16 >= list_bottom {
                 break;
             }
-            let mut spans = Vec::new();
-            if row_index == 0 {
-                if card.indented {
-                    spans.push(Span::raw("   "));
-                } else if let Some((_, collapsed)) = parent_group.as_ref() {
-                    spans.push(Span::styled(
-                        if *collapsed { "▸" } else { "▾" },
-                        Style::default().fg(p.accent),
-                    ));
-                    spans.push(Span::raw(" "));
-                } else {
-                    spans.push(Span::raw(" "));
-                }
-            } else {
-                spans.push(Span::raw(if card.indented { "     " } else { "   " }));
-            }
+            // Continuation rows align under the name, past the state column.
             let prefix_width = if row_index == 0 {
-                if card.indented {
-                    3
-                } else if parent_group.is_some() {
-                    2
-                } else {
-                    1
-                }
-            } else if card.indented {
-                5
+                name_col
             } else {
-                3
+                name_col.saturating_add(2)
             };
+            let mut spans = vec![Span::raw(" ".repeat(prefix_width as usize))];
             spans.extend(resolved_token_spans(
                 resolved,
                 state_icon,
@@ -1577,7 +1648,11 @@ fn render_workspace_list(
                 branch_style,
                 branch_style,
                 p,
-                card.rect.width.saturating_sub(prefix_width) as usize,
+                card.rect
+                    .width
+                    .saturating_sub(prefix_width)
+                    .saturating_sub(if row_index == 0 { trailing } else { 0 })
+                    as usize,
             ));
             frame.render_widget(
                 Paragraph::new(Line::from(spans)),
@@ -1585,27 +1660,69 @@ fn render_workspace_list(
             );
         }
 
-        // TP-WSCHAT-23: the create affordance, mirroring the Projects tab's
-        // per-project "+". Mouse chrome only, like every other button here.
-        if app.mouse_capture {
-            let plus = workspace_new_chat_cell(card.rect);
-            if plus.width > 0 && plus.y < list_bottom {
-                frame.buffer_mut()[(plus.x, plus.y)]
-                    .set_symbol("+")
-                    .set_style(Style::default().fg(p.overlay0));
+        if row_y < list_bottom {
+            let right = card.rect.x + card.rect.width;
+            // TP-WSCHAT-23: the create affordance, mirroring the Projects tab's
+            // per-project "+". Mouse chrome only, like every other button here.
+            if show_plus {
+                let plus = workspace_new_chat_cell(card.rect);
+                if plus.width > 0 {
+                    frame.buffer_mut()[(plus.x, plus.y)]
+                        .set_symbol("+")
+                        .set_style(Style::default().fg(if is_active {
+                            panel_contrast_fg(p)
+                        } else if selected {
+                            p.accent
+                        } else {
+                            p.overlay0
+                        }));
+                }
+            }
+            if let Some(text) = badge.as_ref() {
+                let width = text.len() as u16;
+                let x = right
+                    .saturating_sub(if show_plus { 2 } else { 0 })
+                    .saturating_sub(width);
+                let x = x.max(card.rect.x);
+                if x > card.rect.x {
+                    frame.render_widget(
+                        Paragraph::new(Span::styled(
+                            text.clone(),
+                            Style::default().fg(if is_active {
+                                panel_contrast_fg(p)
+                            } else {
+                                p.overlay1
+                            }),
+                        )),
+                        Rect::new(x, row_y, width, 1),
+                    );
+                }
             }
         }
 
-        // TP-WSCHAT-19: the drawer affordance. Drawn last so it sits on top of
-        // the row's own text, and only where there is history to reveal.
+        // TP-WSCHAT-19 + TP-TREE-10: the drawer affordance, at this row's own
+        // depth. Drawn last so it sits on top of the row's own text, and only
+        // where there is history to reveal.
         let toggle = workspace_chat_toggle_cell(app, card.rect, i);
         if toggle.width > 0 && toggle.y < list_bottom {
             let open = !workspace_chat_drawer_collapsed(app, i);
             frame.buffer_mut()[(toggle.x, toggle.y)]
-                .set_symbol(if open { "▾" } else { "▸" })
-                .set_style(Style::default().fg(if open { p.accent } else { p.overlay0 }));
+                .set_symbol(if open {
+                    DISCLOSURE_OPEN
+                } else {
+                    DISCLOSURE_CLOSED
+                })
+                .set_style(Style::default().fg(if is_active {
+                    panel_contrast_fg(p)
+                } else if open {
+                    p.accent
+                } else {
+                    p.overlay1
+                }));
         }
     }
+
+    render_workspace_group_headers(app, frame, list_bottom);
 
     render_workspace_chat_rows(app, frame, list_bottom);
 
@@ -1627,6 +1744,60 @@ fn render_workspace_list(
     render_sidebar_footer_buttons(app, frame, area, " new");
 }
 
+/// The label a worktree space is known by, or the key itself as a last resort.
+fn space_label_for_key(app: &AppState, key: &str) -> String {
+    (0..app.workspaces.len())
+        .find_map(|ws_idx| effective_space(app, ws_idx).filter(|space| space.key == key))
+        .map(|space| space.label)
+        .unwrap_or_else(|| key.to_string())
+}
+
+/// Draw the repository header of every worktree group.
+///
+/// TP-TREE-08: this row is the only place a group chevron may appear. It is
+/// drawn from its own area vector, so it can never be mistaken for — or hit
+/// as — one of the checkouts beneath it.
+fn render_workspace_group_headers(app: &AppState, frame: &mut Frame, list_bottom: u16) {
+    let p = &app.palette;
+    for head in &app.view.workspace_group_header_areas {
+        if head.rect.width == 0 || head.rect.y >= list_bottom {
+            continue;
+        }
+        let collapsed = app.collapsed_space_keys.contains(&head.space_key);
+        let mut spans = vec![
+            Span::styled(
+                if collapsed {
+                    DISCLOSURE_CLOSED
+                } else {
+                    DISCLOSURE_OPEN
+                },
+                Style::default().fg(p.accent),
+            ),
+            Span::raw(" "),
+        ];
+        // Folded, the header answers for the checkouts it hides; open, each
+        // checkout answers for itself and a second dot here would be noise.
+        if collapsed {
+            let (state, seen) = space_aggregate_state(app, &head.space_key);
+            let (glyph, glyph_style) = state_dot(state, seen, p);
+            spans.push(Span::styled(glyph, glyph_style));
+            spans.push(Span::raw(" "));
+        }
+        let used = spans
+            .iter()
+            .map(|span| super::text::display_width(span.content.as_ref()))
+            .sum::<usize>();
+        spans.push(Span::styled(
+            super::text::truncate_end(
+                &space_label_for_key(app, &head.space_key),
+                (head.rect.width as usize).saturating_sub(used),
+            ),
+            Style::default().fg(p.text).add_modifier(Modifier::BOLD),
+        ));
+        frame.render_widget(Paragraph::new(Line::from(spans)), head.rect);
+    }
+}
+
 /// Draw the chat rows of every open drawer.
 ///
 /// TP-WSCHAT-20: a chat row must read as belonging to its workspace and never
@@ -1643,10 +1814,10 @@ fn render_workspace_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u1
         let Some(chat) = workspace_chat_rows_for(app, row.ws_idx).get(row.chat_idx) else {
             continue;
         };
-        // Same wired-state vocabulary the Projects tab uses, so one glyph means
-        // one thing across both surfaces: "▸" this chat IS the focused tab,
-        // "●" open in another tab, blank not open. Plain-text markers stay
-        // readable without color and are assertable in a buffer test.
+        // TP-TREE-08 resolves the old three-way overload of "▸": it now means
+        // disclosure and nothing else. A chat that IS the focused tab says so
+        // the way every other focused thing in this sidebar says it — with the
+        // accent — and "●" keeps its single meaning, open in another tab.
         let wired = app.find_resumed_chat_tab(&chat.session_id);
         let focused = wired.is_some_and(|(ws_idx, tab_idx)| {
             app.active == Some(ws_idx)
@@ -1655,13 +1826,7 @@ fn render_workspace_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u1
                     .get(ws_idx)
                     .is_some_and(|ws| ws.active_tab_index() == tab_idx)
         });
-        let marker = if focused {
-            " ▸ "
-        } else if wired.is_some() {
-            " ● "
-        } else {
-            "   "
-        };
+        let marker = if wired.is_some() { "● " } else { "  " };
         let (title_style, marker_style) = if focused {
             (
                 Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
@@ -1673,21 +1838,25 @@ fn render_workspace_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u1
             (Style::default().fg(p.overlay1), Style::default())
         };
 
-        // The drawer sits one level deeper than a branch child, so its rows
-        // carry the branch indent plus the marker column.
-        const DRAWER_INDENT: &str = "   ";
+        // TP-TREE-09: the drawer hangs off its checkout's disclosure column,
+        // and a rule is drawn down that column so the rows read as contained
+        // by the checkout above them rather than floating under it.
+        let guide_indent = u16::from(workspace_is_group_member(app, row.ws_idx)) * ROW_INDENT_STEP;
         let width = row.rect.width as usize;
         let age = chat
             .last_modified
             .map(|seen| format_relative_time(seen, now))
             .unwrap_or_default();
         let age_width = super::text::display_width(&age);
+        let prefix_width = guide_indent as usize + 2 + marker.len();
         let title_budget = width
-            .saturating_sub(DRAWER_INDENT.len() + 3)
+            .saturating_sub(prefix_width)
             .saturating_sub(if age_width > 0 { age_width + 1 } else { 0 });
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::raw(DRAWER_INDENT),
+                Span::raw(" ".repeat(guide_indent as usize)),
+                Span::styled(DRAWER_GUIDE, Style::default().fg(p.surface1)),
+                Span::raw(" "),
                 Span::styled(marker, marker_style),
                 Span::styled(
                     super::text::truncate_end(&chat.display_label(), title_budget),
@@ -2409,11 +2578,14 @@ rows = [[{ token = "workspace", bold = false }, { token = "agent", dim = false }
             .unwrap();
         let buffer = terminal.backend().buffer();
 
+        // TP-TREE-11 moved the active row's base from a tone to the accent
+        // itself; this test's subject is that active and inactive still differ,
+        // which it still asserts below.
         let active = buffer[(find_symbol_x(buffer, first_row, 25, "o"), first_row)].style();
-        assert_eq!(active.fg, Some(app.palette.text));
+        assert_eq!(active.fg, Some(panel_contrast_fg(&app.palette)));
         assert!(active.add_modifier.contains(Modifier::BOLD));
         assert!(!active.add_modifier.contains(Modifier::DIM));
-        assert_eq!(active.bg, Some(app.palette.surface_dim));
+        assert_eq!(active.bg, Some(app.palette.accent));
 
         let inactive = buffer[(find_symbol_x(buffer, second_row, 25, "t"), second_row)].style();
         assert_eq!(inactive.fg, Some(app.palette.subtext0));
@@ -2455,16 +2627,19 @@ rows = [[{ token = "$hype", fg = "#abcdef", bold = true, dim = false }, "workspa
         let i = buffer[(find_symbol_x(buffer, row, 25, "I"), row)].style();
         let separator = buffer[(find_symbol_x(buffer, row, 25, "·"), row)].style();
 
+        // The subject here is that the configured token style reaches the name
+        // and not the separator. Only the row's background base moved
+        // (TP-TREE-11).
         for style in [h, i] {
             assert_eq!(style.fg, Some(ratatui::style::Color::Rgb(0xab, 0xcd, 0xef)));
             assert!(style.add_modifier.contains(Modifier::BOLD));
             assert!(!style.add_modifier.contains(Modifier::DIM));
-            assert_eq!(style.bg, Some(app.palette.surface_dim));
+            assert_eq!(style.bg, Some(app.palette.accent));
         }
         assert_eq!(separator.fg, Some(app.palette.overlay0));
         assert!(separator.add_modifier.contains(Modifier::DIM));
         assert!(!separator.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(separator.bg, Some(app.palette.surface_dim));
+        assert_eq!(separator.bg, Some(app.palette.accent));
     }
 
     #[test]
@@ -2675,7 +2850,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let body = workspace_list_body_rect(workspace_area, false);
 
         let metrics = workspace_list_scroll_metrics(&app, workspace_area);
-        let (cards, _) = compute_workspace_list_areas(&app, area);
+        let (cards, _, _headers) = compute_workspace_list_areas(&app, area);
 
         assert_eq!(metrics.viewport_rows, 1);
         assert_eq!(cards.len(), 1);
@@ -3918,6 +4093,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         workspace_list_entries(app)
             .iter()
             .map(|entry| match entry {
+                WorkspaceListEntry::GroupHeader { .. } => "group",
                 WorkspaceListEntry::Workspace { .. } => "workspace",
                 WorkspaceListEntry::Chat { .. } => "chat",
                 WorkspaceListEntry::NoChats { .. } => "no-chats",
@@ -3976,7 +4152,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let area = Rect::new(0, 0, 30, 24);
 
         let entries = workspace_list_entries(&app);
-        let (cards, chat_rows) = compute_workspace_list_areas(&app, area);
+        let (cards, chat_rows, _headers) = compute_workspace_list_areas(&app, area);
 
         assert_eq!(entries.len(), 3, "one workspace plus its two chats");
         assert_eq!(cards.len(), 1);
@@ -4001,7 +4177,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let (mut app, key) = app_with_chat_drawer(3);
         app.expanded_chat_workspaces.insert(key);
 
-        let (cards, chat_rows) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 24));
+        let (cards, chat_rows, _headers) =
+            compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 24));
 
         assert_eq!(cards.len(), 1, "only real workspaces become cards");
         assert!(cards.iter().all(|card| card.ws_idx == 0));
@@ -4295,9 +4472,12 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(
             entries,
             vec![
+                WorkspaceListEntry::GroupHeader {
+                    space_key: "herdr:t4f".into()
+                },
                 WorkspaceListEntry::Workspace {
                     ws_idx: 0,
-                    indented: false
+                    indented: true
                 },
                 WorkspaceListEntry::Workspace {
                     ws_idx: 1,
@@ -4347,17 +4527,23 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(
             entries,
             vec![
+                WorkspaceListEntry::GroupHeader {
+                    space_key: "herdr:t4f".into()
+                },
                 WorkspaceListEntry::Workspace {
                     ws_idx: 0,
-                    indented: false
+                    indented: true
                 },
                 WorkspaceListEntry::Workspace {
                     ws_idx: 1,
                     indented: true
                 },
+                WorkspaceListEntry::GroupHeader {
+                    space_key: "herdr:circet".into()
+                },
                 WorkspaceListEntry::Workspace {
                     ws_idx: 2,
-                    indented: false
+                    indented: true
                 },
                 WorkspaceListEntry::Workspace {
                     ws_idx: 3,
@@ -4401,9 +4587,12 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(
             workspace_list_entries(&app),
             vec![
+                WorkspaceListEntry::GroupHeader {
+                    space_key: "repo-key".into()
+                },
                 WorkspaceListEntry::Workspace {
                     ws_idx: 0,
-                    indented: false
+                    indented: true
                 },
                 WorkspaceListEntry::Workspace {
                     ws_idx: 1,
@@ -4442,11 +4631,17 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.collapsed_space_keys.insert("herdr:t4f".into());
         assert_eq!(
             workspace_list_entries(&app),
-            vec![WorkspaceListEntry::Workspace {
-                ws_idx: 0,
-                indented: false
-            }],
-            "collapsing the module must hide its members"
+            vec![
+                WorkspaceListEntry::GroupHeader {
+                    space_key: "herdr:t4f".into()
+                },
+                WorkspaceListEntry::Workspace {
+                    ws_idx: 0,
+                    indented: true
+                },
+            ],
+            "collapsing the module keeps its header and the checkout in use, and \
+             hides the rest"
         );
     }
 
@@ -4462,6 +4657,315 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         ws
     }
 
+    /// A repository with two checkouts, the main one active, each with an open
+    /// chat drawer — the shape the whole tree exists to render.
+    fn app_with_worktree_tree(width: u16) -> AppState {
+        let mut app = AppState::test_new();
+        let mut main = Workspace::test_new("herdr");
+        main.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr"),
+            is_linked_worktree: false,
+        });
+        main.custom_name = None;
+        main.identity_cwd = std::path::PathBuf::from("/repo/herdr");
+        main.cached_git_branch = Some("master".into());
+        let mut child = Workspace::test_new("fix");
+        child.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr-fix"),
+            is_linked_worktree: true,
+        });
+        child.custom_name = None;
+        child.identity_cwd = std::path::PathBuf::from("/repo/herdr-fix");
+        child.cached_git_branch = Some("fix/clipboard".into());
+        app.workspaces = vec![main, child];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mobile_width_threshold = 0;
+        app.mouse_capture = true;
+        app.sidebar_width = width;
+        app.sidebar_min_width = 10;
+
+        for path in ["/repo/herdr", "/repo/herdr-fix"] {
+            let key = crate::persist::workspace_chats::ledger_key(&std::path::PathBuf::from(path));
+            app.workspace_chat_rows.insert(
+                key.clone(),
+                vec![crate::app::state::WorkspaceChatRow {
+                    session_id: format!("session-{path}"),
+                    agent: "claude".to_string(),
+                    title: Some("remembered chat".to_string()),
+                    last_seen_ms: 1_000,
+                    last_modified: None,
+                }],
+            );
+            app.expanded_chat_workspaces.insert(key);
+        }
+        app
+    }
+
+    /// Draw the sidebar and hand back its rows as plain strings.
+    fn drawn_sidebar_rows(app: &mut AppState, height: u16) -> Vec<String> {
+        let area = Rect::new(0, 0, 100, height);
+        crate::ui::compute_view(app, area);
+        let backend = ratatui::backend::TestBackend::new(100, height);
+        let mut terminal = ratatui::Terminal::new(backend).expect("test terminal");
+        let registry = TerminalRuntimeRegistry::new();
+        terminal
+            .draw(|frame| render_sidebar(app, &registry, frame, app.view.sidebar_rect))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        let width = app.view.sidebar_rect.width;
+        (0..height)
+            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    // TP-TREE-08: the failure that started this work, pinned. Two disclosure
+    // arrows side by side in one row means two different controls one column
+    // apart, and no reader can tell which one folds the repository and which
+    // one opens the chats. The tree makes it structurally impossible; this
+    // asserts it stays impossible.
+    #[test]
+    fn no_row_ever_carries_two_disclosure_arrows_side_by_side() {
+        for width in [18u16, 26, 32] {
+            let mut app = app_with_worktree_tree(width);
+            let rows = drawn_sidebar_rows(&mut app, 26);
+            for row in &rows {
+                for pair in [
+                    format!("{DISCLOSURE_OPEN}{DISCLOSURE_OPEN}"),
+                    format!("{DISCLOSURE_OPEN}{DISCLOSURE_CLOSED}"),
+                    format!("{DISCLOSURE_CLOSED}{DISCLOSURE_OPEN}"),
+                    format!("{DISCLOSURE_CLOSED}{DISCLOSURE_CLOSED}"),
+                ] {
+                    assert!(
+                        !row.contains(&pair),
+                        "width {width}: two disclosures collided in {row:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    // TP-TREE-09 + TP-TREE-10: the repository owns column 0; a checkout's own
+    // arrow sits one level in; and the drawer hangs off that arrow's column on
+    // a rule, so the chats read as contained rather than floating.
+    #[test]
+    fn the_tree_puts_the_repository_the_checkouts_and_the_chats_on_their_own_depths() {
+        let mut app = app_with_worktree_tree(32);
+        let rows = drawn_sidebar_rows(&mut app, 26);
+
+        let header = rows
+            .iter()
+            .find(|row| row.contains("herdr") && !row.contains('·'))
+            .expect("the repository header is drawn");
+        assert!(
+            header.starts_with(DISCLOSURE_OPEN),
+            "the repository owns column 0: {header:?}"
+        );
+
+        let checkout = rows
+            .iter()
+            .find(|row| row.contains("master"))
+            .expect("the checkout is drawn");
+        assert_eq!(
+            checkout.find(DISCLOSURE_OPEN),
+            Some(ROW_INDENT_STEP as usize),
+            "a checkout's arrow sits at the checkout's depth, never in the \
+             repository's column: {checkout:?}"
+        );
+
+        let chat = rows
+            .iter()
+            .find(|row| row.contains("remembered chat"))
+            .expect("the drawer row is drawn");
+        assert_eq!(
+            chat.find(DRAWER_GUIDE),
+            Some(ROW_INDENT_STEP as usize),
+            "the drawer's rule runs down its checkout's arrow column: {chat:?}"
+        );
+    }
+
+    // TP-TREE-11: the workspace you are in wears the accent outright — the
+    // same sentence the active tab and the active agent card speak. A chat row
+    // never takes it, so "which workspace am I in" stays a single answer.
+    #[test]
+    fn the_active_workspace_row_wears_the_accent_and_a_chat_row_never_does() {
+        let mut app = app_with_worktree_tree(32);
+        let area = Rect::new(0, 0, 100, 26);
+        crate::ui::compute_view(&mut app, area);
+        let backend = ratatui::backend::TestBackend::new(100, 26);
+        let mut terminal = ratatui::Terminal::new(backend).expect("test terminal");
+        let registry = TerminalRuntimeRegistry::new();
+        terminal
+            .draw(|frame| render_sidebar(&app, &registry, frame, app.view.sidebar_rect))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        let accent = app.palette.accent;
+        let width = app.view.sidebar_rect.width;
+
+        let active = app
+            .view
+            .workspace_card_areas
+            .iter()
+            .find(|card| Some(card.ws_idx) == app.active)
+            .expect("the active workspace is laid out");
+        assert!(
+            (active.rect.x..active.rect.x + active.rect.width)
+                .all(|x| buffer[(x, active.rect.y)].bg == accent),
+            "the active row is filled with the accent"
+        );
+        for row in &app.view.workspace_chat_row_areas {
+            assert!(
+                (0..width).all(|x| buffer[(x, row.rect.y)].bg != accent),
+                "a chat row must never take the accent background"
+            );
+        }
+    }
+
+    // TP-TREE-12: every checkout offers "start a chat here" — that is what the
+    // row is for — and a checkout with history says how much of it there is.
+    #[test]
+    fn every_checkout_offers_a_plus_and_reports_how_many_chats_it_remembers() {
+        let mut app = app_with_worktree_tree(32);
+        let rows = drawn_sidebar_rows(&mut app, 26);
+
+        let checkout_rows: Vec<&String> = rows
+            .iter()
+            .filter(|row| row.contains("master") || row.contains("fix/clipboard"))
+            .collect();
+        assert_eq!(checkout_rows.len(), 2, "both checkouts are drawn");
+        for row in checkout_rows {
+            assert!(row.contains('+'), "a checkout offers a new chat: {row:?}");
+            assert!(
+                row.contains('1'),
+                "a checkout with one remembered chat says so: {row:?}"
+            );
+        }
+    }
+
+    // TP-TREE-13: the narrowest configurable sidebar still lays out. Depth is
+    // charged in columns, so a width the design never tried is exactly where a
+    // prefix wider than the row would panic or wrap.
+    #[test]
+    fn the_narrowest_sidebar_still_draws_the_tree() {
+        let mut app = app_with_worktree_tree(10);
+        let rows = drawn_sidebar_rows(&mut app, 26);
+        let width = app.view.sidebar_rect.width as usize;
+
+        assert!(
+            width >= 1,
+            "a sidebar is still laid out at the minimum width"
+        );
+        assert!(
+            rows.iter()
+                .all(|row| crate::ui::text::display_width(row) <= width),
+            "no row may overflow the sidebar at the minimum width"
+        );
+    }
+
+    // TP-TREE-01: the repository takes a row of its own. This is the whole
+    // point of the tree: while the group's parent checkout doubled as the
+    // header, the "show the siblings" arrow and the "show my chats" arrow both
+    // landed in the same gutter one column apart, and no reader could tell
+    // which arrow did what.
+    #[test]
+    fn a_repository_with_two_checkouts_gets_a_header_row_of_its_own() {
+        let mut app = AppState::test_new();
+        app.workspaces = vec![
+            workspace_with_worktree_space("main", Some("repo-key"), "/repo/herdr"),
+            workspace_with_worktree_space("issue", Some("repo-key"), "/repo/herdr-issue"),
+        ];
+
+        let entries = workspace_list_entries(&app);
+        assert!(
+            matches!(entries.first(), Some(WorkspaceListEntry::GroupHeader { space_key }) if space_key == "repo-key"),
+            "the repository leads its own block: {entries:?}"
+        );
+        // TP-TREE-04: and every checkout, the main one included, is a child.
+        assert!(
+            entries
+                .iter()
+                .skip(1)
+                .all(|entry| matches!(entry, WorkspaceListEntry::Workspace { indented: true, .. })),
+            "no checkout may stay at the header's depth: {entries:?}"
+        );
+    }
+
+    // TP-TREE-02: a repository with a single checkout gets no header. With a
+    // dozen-plus workspaces, a header each would double the vertical cost of
+    // the list for no information — there is no group to fold.
+    #[test]
+    fn a_lone_checkout_gets_no_header_row() {
+        let mut app = AppState::test_new();
+        app.workspaces = vec![
+            workspace_with_worktree_space("main", Some("repo-key"), "/repo/herdr"),
+            Workspace::test_new("notes"),
+        ];
+
+        let entries = workspace_list_entries(&app);
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| matches!(entry, WorkspaceListEntry::GroupHeader { .. })),
+            "a single checkout is not a group: {entries:?}"
+        );
+    }
+
+    // TP-TREE-06: the header row has to be measured like any other row. A row
+    // that is drawn but not counted makes the list scroll past itself — the
+    // failure the drawer rows already paid for once (TP-WSCHAT-17).
+    #[test]
+    fn the_scroll_metrics_count_the_header_row() {
+        let mut app = AppState::test_new();
+        app.workspaces = vec![
+            workspace_with_worktree_space("main", Some("repo-key"), "/repo/herdr"),
+            workspace_with_worktree_space("issue", Some("repo-key"), "/repo/herdr-issue"),
+        ];
+        app.sidebar_spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
+
+        let area = Rect::new(0, 0, 30, 20);
+        let (cards, _, group_headers) = compute_workspace_list_areas(&app, area);
+        let drawn_rows: u16 = cards.iter().map(|card| card.rect.height).sum::<u16>()
+            + group_headers
+                .iter()
+                .map(|head| head.rect.height)
+                .sum::<u16>();
+        let counted_rows: u16 = (0..workspace_list_entries(&app).len())
+            .filter_map(|idx| {
+                entry_row_metrics(&app, &workspace_list_entries(&app), idx, area.height)
+            })
+            .map(|(height, _)| height)
+            .sum();
+
+        assert_eq!(
+            drawn_rows, counted_rows,
+            "every drawn row must also be a counted row"
+        );
+    }
+
+    // TP-TREE-18: the mobile switcher lays out a fixed number of rows per
+    // workspace. A header leaking into that list would shift every position
+    // after it, so the switcher would select the wrong workspace.
+    #[test]
+    fn the_mobile_switcher_never_sees_a_group_header() {
+        let mut app = AppState::test_new();
+        app.workspaces = vec![
+            workspace_with_worktree_space("main", Some("repo-key"), "/repo/herdr"),
+            workspace_with_worktree_space("issue", Some("repo-key"), "/repo/herdr-issue"),
+        ];
+
+        assert_eq!(
+            mobile_space_entries(&app).len(),
+            2,
+            "the switcher lists checkouts, never the repository row"
+        );
+    }
+
     #[test]
     fn parent_workspace_row_stays_clickable_when_grouped() {
         let mut app = AppState::test_new();
@@ -4471,14 +4975,28 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         ];
         app.sidebar_spaces.row_gap = 1;
 
-        let (cards, headers) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 20));
+        let (cards, chat_rows, group_headers) =
+            compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 20));
 
-        assert!(headers.is_empty());
+        assert!(chat_rows.is_empty());
+        // TP-TREE-04: the main checkout is now a child of the repository row,
+        // but it is still a card of its own — the click target survived the
+        // move. Losing it would strand the main checkout behind the header.
         assert_eq!(cards[0].ws_idx, 0);
-        assert!(!cards[0].indented);
+        assert!(
+            cards[0].indented,
+            "every checkout sits under the repository"
+        );
         assert_eq!(cards[1].ws_idx, 1);
         assert!(cards[1].indented);
-        assert_eq!(cards[1].rect.y, cards[0].rect.y + cards[0].rect.height + 1);
+        // TP-TREE-06: siblings stay compact; the configured gap separates
+        // blocks, not the members of one block.
+        assert_eq!(cards[1].rect.y, cards[0].rect.y + cards[0].rect.height);
+        // TP-TREE-05/07: the header is laid out, in its own vector, above the
+        // checkouts it introduces.
+        assert_eq!(group_headers.len(), 1);
+        assert_eq!(group_headers[0].space_key, "repo-key");
+        assert!(group_headers[0].rect.y < cards[0].rect.y);
     }
 
     #[test]
@@ -4493,10 +5011,12 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.sidebar_spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
         app.sidebar_spaces.row_gap = 2;
 
-        let (spacious, _) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
+        let (spacious, _, _headers) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
+        // TP-TREE-06: the three checkouts of one repository are one block and
+        // stay compact; the gap falls where the next top-level unit begins.
         assert_eq!(
             spacious[1].rect.y,
-            spacious[0].rect.y + spacious[0].rect.height + 2
+            spacious[0].rect.y + spacious[0].rect.height
         );
         assert_eq!(
             spacious[2].rect.y,
@@ -4506,18 +5026,22 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             spacious[3].rect.y,
             spacious[2].rect.y + spacious[2].rect.height + 2
         );
+        // The three checkouts no longer pay a gap each, so more of the block
+        // fits in the same height.
         let spacious_metrics = workspace_list_scroll_metrics(&app, Rect::new(0, 0, 30, 7));
-        assert_eq!(spacious_metrics.viewport_rows, 2);
-        assert_eq!(spacious_metrics.max_offset_from_bottom, 2);
+        assert_eq!(spacious_metrics.viewport_rows, 4);
+        assert_eq!(spacious_metrics.max_offset_from_bottom, 3);
 
         app.sidebar_spaces.row_gap = 0;
-        let (packed, _) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
+        let (packed, _, _headers) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
         assert!(packed
             .windows(2)
             .all(|pair| pair[1].rect.y == pair[0].rect.y + pair[0].rect.height));
         let packed_metrics = workspace_list_scroll_metrics(&app, Rect::new(0, 0, 30, 7));
         assert_eq!(packed_metrics.viewport_rows, 4);
-        assert_eq!(packed_metrics.max_offset_from_bottom, 0);
+        // The repository header costs the one row that used to make the whole
+        // list fit; scrolling by one now reaches the top.
+        assert_eq!(packed_metrics.max_offset_from_bottom, 1);
     }
 
     #[test]
@@ -4598,7 +5122,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let area = Rect::new(0, 0, 30, 20);
         app.workspace_scroll = normalized_workspace_scroll(&app, area, 2);
 
-        let (cards, headers) = compute_workspace_list_areas(&app, area);
+        let (cards, headers, _headers) = compute_workspace_list_areas(&app, area);
 
         assert!(headers.is_empty());
         assert_eq!(app.workspace_scroll, 0);
@@ -4624,9 +5148,12 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let ws_area = Rect::new(0, 0, 30, 6);
         let metrics = workspace_list_scroll_metrics(&app, ws_area);
 
-        assert_eq!(metrics.viewport_rows, 1);
-        assert_eq!(metrics.max_offset_from_bottom, 1);
-        assert_eq!(metrics.offset_from_bottom, 1);
+        // TP-TREE-06: the folded group is a one-line header, so it and the
+        // ungrouped workspace both fit — the metric still counts display
+        // entries rather than raw workspaces, which is this test's subject.
+        assert_eq!(metrics.viewport_rows, 2);
+        assert_eq!(metrics.max_offset_from_bottom, 0);
+        assert_eq!(metrics.offset_from_bottom, 0);
     }
 
     #[test]
@@ -4642,7 +5169,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.mode = Mode::Terminal;
         app.workspace_scroll = 1;
 
-        let (cards, headers) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 12));
+        let (cards, headers, _headers) =
+            compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 12));
 
         assert!(headers.is_empty());
         assert_eq!(cards.len(), 1);
@@ -4660,9 +5188,12 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(
             workspace_list_entries(&app),
             vec![
+                WorkspaceListEntry::GroupHeader {
+                    space_key: "repo-key".into(),
+                },
                 WorkspaceListEntry::Workspace {
                     ws_idx: 0,
-                    indented: false,
+                    indented: true,
                 },
                 WorkspaceListEntry::Workspace {
                     ws_idx: 1,
@@ -4684,9 +5215,12 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(
             workspace_list_entries(&app),
             vec![
+                WorkspaceListEntry::GroupHeader {
+                    space_key: "repo-key".into(),
+                },
                 WorkspaceListEntry::Workspace {
                     ws_idx: 0,
-                    indented: false,
+                    indented: true,
                 },
                 WorkspaceListEntry::Workspace {
                     ws_idx: 2,
@@ -4735,9 +5269,12 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(
             workspace_list_entries(&app),
             vec![
+                WorkspaceListEntry::GroupHeader {
+                    space_key: "repo-key".into(),
+                },
                 WorkspaceListEntry::Workspace {
                     ws_idx: 0,
-                    indented: false,
+                    indented: true,
                 },
                 WorkspaceListEntry::Workspace {
                     ws_idx: 2,
@@ -4788,9 +5325,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(
             workspace_list_entries(&app),
             vec![
-                WorkspaceListEntry::Workspace {
-                    ws_idx: 0,
-                    indented: false,
+                WorkspaceListEntry::GroupHeader {
+                    space_key: "repo-key".into(),
                 },
                 WorkspaceListEntry::Workspace {
                     ws_idx: 1,
@@ -4801,11 +5337,12 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
 
         app.active = None;
         app.mode = Mode::Terminal;
+        // TP-TREE-03: with nothing in the group active, a folded group is one
+        // row — its repository header.
         assert_eq!(
             workspace_list_entries(&app),
-            vec![WorkspaceListEntry::Workspace {
-                ws_idx: 0,
-                indented: false,
+            vec![WorkspaceListEntry::GroupHeader {
+                space_key: "repo-key".into(),
             }]
         );
     }
@@ -4825,9 +5362,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(
             workspace_list_entries(&app),
             vec![
-                WorkspaceListEntry::Workspace {
-                    ws_idx: 0,
-                    indented: false,
+                WorkspaceListEntry::GroupHeader {
+                    space_key: "repo-key".into(),
                 },
                 WorkspaceListEntry::Workspace {
                     ws_idx: 1,

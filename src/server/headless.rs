@@ -8964,7 +8964,9 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
         );
         assert!(!mobile_surface.contains("background"));
 
-        let foreground_terminal_area = Rect::new(26, 1, 94, 39);
+        // The shipped sidebar is 30 columns wide since the Spaces tree
+        // (TP-TREE-13); this test is about per-client sizing, not the width.
+        let foreground_terminal_area = Rect::new(30, 1, 90, 39);
         assert_eq!(
             server.app.state.view.layout,
             crate::app::state::ViewLayout::Desktop

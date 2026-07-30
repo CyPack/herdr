@@ -313,9 +313,15 @@ mod tests {
         // assertions above are unchanged — this digest tracks pixels, and one
         // more painted glyph per row is exactly the kind of change it is meant
         // to surface rather than hide.
+        //
+        // Re-baselined a third time, same day: the Spaces tab became a
+        // three-level tree (TP-TREE-08..13). Rows are indented by depth, the
+        // active row is filled with the accent, and drawers hang off a rule.
+        // Every structural assertion above still holds — the rects, the pane
+        // and split counts, the cursor and the hyperlink are untouched.
         assert_eq!(
             frame_digest(&frame),
-            "8c58a971009f1765cf3eab34c28ff626711babe1e610e4adc7c31889bd67ac55"
+            "919cff30c5adc2e728118c2f642470c548b3017081836e959efaf81387d6a4da"
         );
     }
 

@@ -1541,7 +1541,10 @@ mod tests {
         app.state.active = None;
         app.state.mode = Mode::Terminal;
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
-        let parent = app.state.view.workspace_card_areas[0].rect;
+        // TP-TREE-14 moved this control off the parent checkout and onto the
+        // repository's own row. The subject is unchanged: pressing it toggles
+        // the group and does nothing else.
+        let parent = app.state.view.workspace_group_header_areas[0].rect;
 
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),

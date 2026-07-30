@@ -378,7 +378,11 @@ fn wait_for_output(socket_path: &Path, pane_id: &str, needle: &str) {
             .as_str()
             .unwrap_or_default();
         last_text = text.to_string();
-        if text.contains(needle) {
+        // The pane is only as wide as the terminal leaves it, so a line long
+        // enough wraps mid-word. This test is about output surviving the
+        // handoff, not about where the terminal chose to break it.
+        let unwrapped = text.replace('\n', "");
+        if text.contains(needle) || unwrapped.contains(needle) {
             return;
         }
         thread::sleep(Duration::from_millis(50));

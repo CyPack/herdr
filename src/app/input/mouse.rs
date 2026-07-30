@@ -768,6 +768,30 @@ impl AppState {
                         return None;
                     }
 
+                    // TP-TREE-14: a repository header folds and unfolds its
+                    // group, and does nothing else — it is not a workspace, so
+                    // pressing it must never switch to one. It is matched from
+                    // its own vector for the same reason: resolving a header
+                    // through a ws_idx would fold whichever workspace happened
+                    // to share its position.
+                    if let Some(head) = self
+                        .view
+                        .workspace_group_header_areas
+                        .iter()
+                        .find(|head| {
+                            mouse.row == head.rect.y
+                                && mouse.column >= head.rect.x
+                                && mouse.column < head.rect.x + head.rect.width
+                        })
+                        .cloned()
+                    {
+                        if !self.collapsed_space_keys.remove(&head.space_key) {
+                            self.collapsed_space_keys.insert(head.space_key);
+                        }
+                        self.mark_session_dirty();
+                        return None;
+                    }
+
                     // "+" on the trailing edge starts a chat in that workspace.
                     if let Some(card) = cards
                         .iter()
@@ -811,24 +835,11 @@ impl AppState {
                         return None;
                     }
 
-                    if let Some(card) = cards.iter().find(|card| {
-                        mouse.row == card.rect.y
-                            && mouse.column == card.rect.x
-                            && mouse.column < card.rect.x + card.rect.width
-                    }) {
-                        if let Some((key, collapsed)) =
-                            crate::ui::workspace_parent_group_state(self, card.ws_idx)
-                        {
-                            if collapsed {
-                                self.collapsed_space_keys.remove(&key);
-                            } else {
-                                self.collapsed_space_keys.insert(key);
-                            }
-                            self.mark_session_dirty();
-                            return None;
-                        }
-                    }
-
+                    // The group chevron used to live in column 0 of the group's
+                    // parent checkout. TP-TREE-14 moved it to the repository's
+                    // own row, so column 0 of a checkout row is now plain
+                    // indentation and must fall through to the workspace press
+                    // like any other part of the row.
                     if let Some(idx) = self.workspace_at_row(mouse.row) {
                         self.workspace_press = Some(WorkspacePressState {
                             ws_idx: idx,
@@ -2566,6 +2577,101 @@ mod tests {
             Bytes::from_static(b"\x1b[<2;4;5m")
         );
         assert!(input_rx.try_recv().is_err());
+    }
+
+    // TP-TREE-14 + TP-TREE-15: the two disclosures the Spaces tab owns now sit
+    // on different rows, and each press does exactly one thing. Pressing the
+    // repository folds its group without switching workspace; pressing a
+    // checkout's own arrow opens that checkout's drawer without switching to
+    // it. While both arrows shared one row, one press could plausibly mean
+    // either — which is the complaint that produced this tree.
+    #[test]
+    fn a_repository_press_folds_its_group_and_a_checkout_arrow_opens_its_drawer() {
+        let mut app = app_for_mouse_test();
+        let mut main = crate::workspace::Workspace::test_new("main");
+        main.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr"),
+            is_linked_worktree: false,
+        });
+        main.identity_cwd = std::env::temp_dir();
+        let mut child = crate::workspace::Workspace::test_new("issue");
+        child.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr-issue"),
+            is_linked_worktree: true,
+        });
+        app.state.workspaces = vec![main, child];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mobile_width_threshold = 0;
+        let key = crate::persist::workspace_chats::ledger_key(&std::env::temp_dir());
+        app.state.workspace_chat_rows.insert(
+            key.clone(),
+            vec![crate::app::state::WorkspaceChatRow {
+                session_id: "remembered".into(),
+                agent: "claude".into(),
+                title: Some("remembered chat".into()),
+                last_seen_ms: 1,
+                last_modified: None,
+            }],
+        );
+
+        let area = ratatui::layout::Rect::new(0, 0, 106, 20);
+        crate::ui::compute_view(&mut app.state, area);
+        let header = app.state.view.workspace_group_header_areas[0].clone();
+        let active_before = app.state.active;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            header.rect.x,
+            header.rect.y,
+        ));
+        assert!(
+            app.state.collapsed_space_keys.contains("repo-key"),
+            "pressing the repository folds its group"
+        );
+        assert_eq!(
+            app.state.active, active_before,
+            "the repository row is not a workspace: pressing it must not switch"
+        );
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            header.rect.x,
+            header.rect.y,
+        ));
+        assert!(
+            !app.state.collapsed_space_keys.contains("repo-key"),
+            "pressing it again unfolds the group"
+        );
+
+        // TP-TREE-15: the checkout's own arrow, at the checkout's depth.
+        crate::ui::compute_view(&mut app.state, area);
+        let card = app.state.view.workspace_card_areas[0];
+        let toggle = crate::ui::workspace_chat_toggle_cell(&app.state, card.rect, card.ws_idx);
+        assert!(toggle.width > 0, "a checkout with history offers an arrow");
+        assert!(
+            toggle.x > card.rect.x,
+            "TP-TREE-10: a checkout's arrow never sits in the repository's column"
+        );
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            toggle.x,
+            toggle.y,
+        ));
+        assert!(
+            app.state.expanded_chat_workspaces.contains(&key),
+            "the checkout's arrow opens the checkout's drawer"
+        );
+        assert!(
+            !app.state.collapsed_space_keys.contains("repo-key"),
+            "and leaves the group alone"
+        );
     }
 
     // TP-WSCHAT-24: a chat row that cannot be clicked is decoration. Clicking

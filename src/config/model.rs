@@ -1258,7 +1258,12 @@ impl Default for WorktreesConfig {
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
-            sidebar_width: 26,
+            // TP-TREE-13: the Spaces tab is a three-level tree — repository,
+            // checkout, chat — and depth is charged in columns. At 26 a branch
+            // name and its chat titles were both truncated before they said
+            // anything useful. 30 pays for the two levels of indent and leaves
+            // the names intact; `sidebar_max_width` still allows 36.
+            sidebar_width: 30,
             sidebar_min_width: 18,
             sidebar_max_width: 36,
             sidebar_start_collapsed: false,

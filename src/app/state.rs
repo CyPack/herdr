@@ -671,6 +671,19 @@ pub struct WorkspaceChatRowArea {
     pub chat_idx: usize,
 }
 
+/// One laid-out worktree-group header row in the Spaces tab.
+///
+/// TP-TREE-05: a third vector, for the same reason the chat rows got a second
+/// one. A header is not a workspace — it has no `ws_idx` — so putting it in
+/// the workspace-indexed vector would make a header click resolve as whichever
+/// workspace happened to share its position.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceGroupHeaderArea {
+    pub rect: Rect,
+    /// The worktree-space key this header folds and unfolds.
+    pub space_key: String,
+}
+
 /// Cached Claude Code chat sessions for one pinned project directory. This is
 /// TUI/client-layer presentation state: the reader ([`crate::claude_sessions`])
 /// fills it on demand, never during render (CLAUDE.md render-purity boundary).
@@ -1559,6 +1572,9 @@ pub struct ViewState {
     /// vector is workspace-indexed: a chat folded into it would resolve as a
     /// workspace switch on click.
     pub workspace_chat_row_areas: Vec<WorkspaceChatRowArea>,
+    /// Worktree-group header rows, kept apart for the same reason: a header is
+    /// not a workspace, so it must never be resolvable through a ws_idx.
+    pub workspace_group_header_areas: Vec<WorkspaceGroupHeaderArea>,
     /// Hit areas for the Spaces/Projects/Files header tabs (one per
     /// `SidebarTab::ALL`, in order). Empty when the sidebar is collapsed.
     pub sidebar_tab_hit_areas: Vec<Rect>,
@@ -3802,6 +3818,7 @@ impl AppState {
                 sidebar_rect: Rect::default(),
                 workspace_card_areas: Vec::new(),
                 workspace_chat_row_areas: Vec::new(),
+                workspace_group_header_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
                 app_dock_entry_areas: Vec::new(),

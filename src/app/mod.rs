@@ -792,6 +792,7 @@ impl App {
                 sidebar_rect: Rect::default(),
                 workspace_card_areas: Vec::new(),
                 workspace_chat_row_areas: Vec::new(),
+                workspace_group_header_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),
                 stage_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
