@@ -777,7 +777,20 @@ impl AppState {
                         })
                         .cloned()
                     {
-                        self.request_workspace_chat(card.ws_idx);
+                        // A repository root can start two kinds of thing, so
+                        // it asks; a linked worktree can only start a chat, so
+                        // it just does it. Asking a question with one possible
+                        // answer is a click the person did not need to make.
+                        let offers_worktree = self
+                            .workspaces
+                            .get(card.ws_idx)
+                            .is_some_and(|ws| ws.worktree_space.is_none());
+                        if offers_worktree {
+                            let cell = crate::ui::workspace_new_chat_cell(card.rect);
+                            self.open_workspace_new_chat_menu(card.ws_idx, cell.x, cell.y);
+                        } else {
+                            self.request_workspace_chat(card.ws_idx);
+                        }
                         return None;
                     }
 
@@ -2607,16 +2620,64 @@ mod tests {
             plus.x,
             plus.y,
         ));
-        let fresh = app
+        // TP-WSCHAT-25: a repository root can start two different things, so
+        // the button asks instead of guessing.
+        let menu = app
             .state
-            .request_project_chat_tab
-            .take()
-            .expect("the plus must start a chat");
-        assert_eq!(
-            fresh.session_id, None,
-            "a fresh chat resumes nothing — that is what makes it fresh"
+            .context_menu
+            .as_ref()
+            .expect("the plus on a repository root opens the choice menu");
+        assert!(matches!(
+            menu.kind,
+            crate::app::state::ContextMenuKind::WorkspaceNewChat {
+                ws_idx: 0,
+                offers_worktree: true
+            }
+        ));
+        let labels = menu.items();
+        assert!(
+            labels.contains(&"New worktree"),
+            "the choice includes a worktree: {labels:?}"
         );
-        assert_eq!(fresh.project_path, std::env::temp_dir());
+        assert!(
+            labels.contains(&"claude"),
+            "and the chat agents: {labels:?}"
+        );
+        assert!(
+            app.state.request_project_chat_tab.is_none(),
+            "opening the menu must not already commit to a chat"
+        );
+
+        // TP-WSCHAT-25: and the answer routes. Picking the worktree entry must
+        // reach the worktree request, not fall through to the agent catch-all
+        // and quietly persist "New worktree" as the default chat agent.
+        let worktree_idx = app
+            .state
+            .context_menu
+            .as_ref()
+            .and_then(|menu| menu.items().iter().position(|l| *l == "New worktree"))
+            .expect("the menu offers a worktree");
+        let menu = app
+            .state
+            .context_menu
+            .take()
+            .expect("the menu is still open");
+        crate::app::input::modal::apply_context_menu_action(
+            &mut app.state,
+            &mut app.terminal_runtimes,
+            menu,
+            worktree_idx,
+        );
+        assert_eq!(
+            app.state.request_new_linked_worktree,
+            Some(0),
+            "choosing the worktree entry asks for a worktree"
+        );
+        assert_ne!(
+            app.state.default_chat_agent, "New worktree",
+            "a worktree choice must never be persisted as a chat agent"
+        );
+        assert!(app.state.request_project_chat_tab.is_none());
     }
 
     // TP-WSCHAT-19: the drawer toggle must open AND close, and it must not

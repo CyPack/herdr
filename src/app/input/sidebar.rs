@@ -350,6 +350,34 @@ impl AppState {
         });
     }
 
+    /// Open the Spaces "+" menu for a workspace.
+    ///
+    /// A repository root offers worktree actions alongside the chat agents,
+    /// because "start something new here" genuinely means two things there: a
+    /// chat, or a new branch checkout. A row that IS already a linked worktree
+    /// only offers chats — nesting worktrees is not a thing, and a menu entry
+    /// that cannot work is worse than no entry.
+    pub(crate) fn open_workspace_new_chat_menu(&mut self, ws_idx: usize, x: u16, y: u16) {
+        let Some(workspace) = self.workspaces.get(ws_idx) else {
+            return;
+        };
+        let offers_worktree = workspace.worktree_space.is_none();
+        let highlighted = crate::app::projects::CHAT_AGENTS
+            .iter()
+            .position(|agent| *agent == self.default_chat_agent)
+            .unwrap_or(0);
+        self.context_menu = Some(crate::app::state::ContextMenuState {
+            kind: crate::app::state::ContextMenuKind::WorkspaceNewChat {
+                ws_idx,
+                offers_worktree,
+            },
+            x,
+            y,
+            list: crate::app::state::MenuListState::new(highlighted),
+        });
+        self.enter_overlay_mode(crate::app::Mode::ContextMenu);
+    }
+
     pub(super) fn open_project_new_chat_menu(&mut self, proj_idx: usize, x: u16, y: u16) {
         let highlighted = crate::app::projects::CHAT_AGENTS
             .iter()

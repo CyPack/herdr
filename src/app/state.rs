@@ -2182,6 +2182,15 @@ pub enum ContextMenuKind {
         proj_idx: usize,
         has_workspace: bool,
     },
+    /// The Spaces tab's per-workspace "+" menu. Same choices as the Projects
+    /// one, keyed by workspace directly: the Spaces row already knows which
+    /// workspace it is, so routing through a project index would only add a
+    /// lookup that can fail. `offers_worktree` is false for a checkout that is
+    /// already a linked worktree — nesting worktrees is not a thing.
+    WorkspaceNewChat {
+        ws_idx: usize,
+        offers_worktree: bool,
+    },
     /// Native-FM action model prepared from explicit client-local selection.
     /// C3.1 models intent only; C4/C5 own eventual execution authority.
     File {
@@ -2247,6 +2256,14 @@ impl ContextMenuState {
             } => crate::app::projects::CHAT_AGENTS.to_vec(),
             ContextMenuKind::ProjectNewChat {
                 has_workspace: true,
+                ..
+            } => crate::app::projects::PROJECT_CHAT_MENU_WITH_WORKTREES.to_vec(),
+            ContextMenuKind::WorkspaceNewChat {
+                offers_worktree: false,
+                ..
+            } => crate::app::projects::CHAT_AGENTS.to_vec(),
+            ContextMenuKind::WorkspaceNewChat {
+                offers_worktree: true,
                 ..
             } => crate::app::projects::PROJECT_CHAT_MENU_WITH_WORKTREES.to_vec(),
             ContextMenuKind::File { model } => {
@@ -4224,6 +4241,14 @@ impl AppState {
                 }
                 ContextMenuKind::Tab { ws_idx, tab_idx } => {
                     assert_tab_index(ws_idx, tab_idx, "context menu tab")
+                }
+                ContextMenuKind::WorkspaceNewChat { ws_idx, .. } => {
+                    assert!(
+                        ws_idx < self.workspaces.len(),
+                        "workspace new-chat menu references workspace {} outside the list (len {})",
+                        ws_idx,
+                        self.workspaces.len()
+                    );
                 }
                 ContextMenuKind::ProjectNewChat { proj_idx, .. } => {
                     assert!(

@@ -874,6 +874,21 @@ pub(super) fn apply_context_menu_action(
             }
             leave_modal(state);
         }
+        // Worktree rows before the agent catch-all, same ordering reason as
+        // the Projects menu above.
+        (ContextMenuKind::WorkspaceNewChat { ws_idx, .. }, Some("New worktree")) => {
+            state.request_new_linked_worktree = Some(ws_idx);
+            leave_modal(state);
+        }
+        (ContextMenuKind::WorkspaceNewChat { ws_idx, .. }, Some("Open worktree...")) => {
+            state.request_open_existing_worktree = Some(ws_idx);
+            leave_modal(state);
+        }
+        (ContextMenuKind::WorkspaceNewChat { ws_idx, .. }, Some(agent)) => {
+            state.default_chat_agent = agent.to_string();
+            state.request_workspace_chat(ws_idx);
+            leave_modal(state);
+        }
         (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("New worktree")) => {
             state.request_new_linked_worktree = Some(ws_idx);
             leave_modal(state);
