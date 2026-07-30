@@ -1668,11 +1668,11 @@ impl AppState {
         } else {
             crate::ui::workspace_list_entries(self)
         };
+        // Workspace rows only: navigation moves between workspaces, so a chat
+        // drawer row must not become a stop on the way.
         let order = entries
-            .into_iter()
-            .map(|entry| match entry {
-                crate::ui::WorkspaceListEntry::Workspace { ws_idx, .. } => ws_idx,
-            })
+            .iter()
+            .filter_map(|entry| entry.as_workspace().map(|(ws_idx, _)| ws_idx))
             .collect::<Vec<_>>();
         if order.is_empty() {
             (0..self.workspaces.len()).collect()

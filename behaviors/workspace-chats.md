@@ -47,3 +47,12 @@ Design and the measurements behind it:
 |---|---|---|---|
 | TP-WSCHAT-13 | The association is recorded through the real session-save funnel; a workspace with no agent records nothing | A ledger that only works in a unit test leaves the drawer empty in production — the exact failure this feature exists to prevent | `a_session_save_folds_the_live_wiring_into_the_ledger` · `a_session_save_without_any_agent_records_nothing` |
 | TP-WSCHAT-14 | A `--no-session` run tracks chats in memory but writes nothing | Every unit test that captures a save writes into the real config directory (observed during development: a test run created `~/.config/herdr-dev/workspace-chats.json`), and `--no-session` stops meaning "leaves nothing on disk" | `a_no_session_run_tracks_chats_in_memory_but_writes_nothing` |
+
+## Spaces row model (`src/ui/sidebar.rs`)
+
+| ID | Behavior | What breaks if it is lost | Verified by |
+|---|---|---|---|
+| TP-WSCHAT-15 | A workspace's chat drawer is closed until it is opened — the state records which drawers are OPEN, the inverse of the Projects tab | Spaces routinely holds a dozen-plus workspaces; opening every drawer at once buries the workspace list the tab exists for | `a_workspaces_chat_drawer_is_closed_until_it_is_opened` |
+| TP-WSCHAT-16 | An open drawer with no chats shows a placeholder; a busy one lists a capped number and folds the rest into an inert "older" row | An empty gap reads as a broken drawer, and an uncapped drawer pushes every other workspace off the screen | `an_open_drawer_with_no_chats_shows_a_placeholder` · `a_busy_drawer_lists_a_capped_number_of_chats_and_an_older_row` |
+| TP-WSCHAT-17 | Scroll metrics and layout derive from the same row list, and chat rows are laid out in their own vector rather than the workspace-indexed card vector | Counting rows one way and drawing them another scrolls past rows that were never drawn; folding chat rows into the card vector makes a chat click resolve as a workspace switch (the trap the tab strip documents as TP-FTAB-ENTRY-05) | `the_scroll_metrics_and_the_layout_agree_on_the_drawer_rows` · `chat_rows_stay_out_of_the_workspace_indexed_card_vector` |
+| TP-WSCHAT-18 | The mobile switcher never sees drawer rows | Its geometry is exactly two rows per workspace, so a drawer row shifts every position after it and the switcher selects the wrong workspace | `the_mobile_switcher_never_sees_drawer_rows` |

@@ -622,6 +622,34 @@ pub struct WorkspaceCardArea {
     pub indented: bool,
 }
 
+/// One remembered chat under a workspace in the Spaces tab.
+///
+/// The title is optional on purpose: the ledger records a session id, and the
+/// title lives in the agent's own store, which is keyed by the directory the
+/// agent was launched in. A chat started elsewhere and wired to this workspace
+/// therefore has no resolvable title — the row degrades to a short id rather
+/// than disappearing, because the association is the information that matters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceChatRow {
+    pub session_id: String,
+    pub agent: String,
+    pub title: Option<String>,
+    pub last_seen_ms: u64,
+}
+
+/// One laid-out chat row in the Spaces tab.
+///
+/// Kept in its own vector rather than appended to `workspace_card_areas`,
+/// which is index-aligned with workspaces: appending here would make a chat
+/// click resolve as a workspace (the reasoning already proven for the stage
+/// entries on the tab strip, TP-FTAB-ENTRY-05).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceChatRowArea {
+    pub rect: Rect,
+    pub ws_idx: usize,
+    pub chat_idx: usize,
+}
+
 /// Cached Claude Code chat sessions for one pinned project directory. This is
 /// TUI/client-layer presentation state: the reader ([`crate::claude_sessions`])
 /// fills it on demand, never during render (CLAUDE.md render-purity boundary).
@@ -2915,6 +2943,19 @@ pub struct AppState {
     pub preview_placement: crate::config::PreviewPlacement,
     /// Pinned project paths whose chat list is collapsed in the Projects tab.
     pub collapsed_project_paths: std::collections::HashSet<std::path::PathBuf>,
+    /// Chats remembered for each workspace, keyed by
+    /// [`crate::persist::workspace_chats::ledger_key`] and newest first.
+    /// Presentation cache filled from the ledger outside render, mirroring
+    /// `projects_sessions` — the render path never reads a file.
+    pub workspace_chat_rows: std::collections::HashMap<String, Vec<WorkspaceChatRow>>,
+    /// Ledger keys whose chat drawer is OPEN in the Spaces tab.
+    ///
+    /// The inverse of `collapsed_project_paths`, deliberately: the Projects tab
+    /// pins a handful of projects and opening them all is useful, while Spaces
+    /// routinely holds a dozen-plus workspaces — opening every drawer at once
+    /// would bury the workspace list the tab exists for. So closed is the
+    /// default and this records the exceptions.
+    pub expanded_chat_workspaces: std::collections::HashSet<String>,
     /// Git branch per live terminal cwd, for the agent panel's secondary
     /// label. Kept fresh by the runtime's HEAD-mtime fingerprint poll;
     /// read-only during render.
@@ -3641,6 +3682,8 @@ impl AppState {
             preview_bindings: Vec::new(),
             preview_placement: crate::config::PreviewPlacement::default(),
             collapsed_project_paths: std::collections::HashSet::new(),
+            workspace_chat_rows: std::collections::HashMap::new(),
+            expanded_chat_workspaces: std::collections::HashSet::new(),
             tab_branch_cache: std::collections::HashMap::new(),
             sessions_parse_cache: Default::default(),
             default_chat_agent: "claude".to_string(),

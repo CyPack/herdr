@@ -391,7 +391,98 @@ pub(crate) fn grouped_child_display_label(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum WorkspaceListEntry {
-    Workspace { ws_idx: usize, indented: bool },
+    Workspace {
+        ws_idx: usize,
+        indented: bool,
+    },
+    /// A remembered chat under an expanded workspace's drawer.
+    Chat {
+        ws_idx: usize,
+        chat_idx: usize,
+    },
+    /// Placeholder under an expanded workspace that has no remembered chats.
+    /// Shown rather than nothing, because an empty gap reads as a broken
+    /// drawer — and an empty drawer is the honest answer for a branch whose
+    /// work predates the ledger.
+    NoChats {
+        ws_idx: usize,
+    },
+    /// Inert "… N older" row when a workspace has more chats than the drawer
+    /// lists.
+    MoreChats {
+        ws_idx: usize,
+    },
+}
+
+/// How many chats a workspace's drawer lists before folding the rest into a
+/// single "older" row. The sidebar is a glance surface, not an archive.
+pub(crate) const WORKSPACE_CHAT_ROW_LIMIT: usize = 5;
+
+impl WorkspaceListEntry {
+    /// `Some(indented)` only for a workspace row.
+    pub(crate) fn as_workspace(&self) -> Option<(usize, bool)> {
+        match self {
+            WorkspaceListEntry::Workspace { ws_idx, indented } => Some((*ws_idx, *indented)),
+            _ => None,
+        }
+    }
+}
+
+/// The Spaces rows the mobile switcher lays out: workspaces only.
+///
+/// Its geometry is a strict two rows per workspace and it is a switcher rather
+/// than a browser, so the chat drawer — which belongs to the desktop sidebar —
+/// is filtered out here instead of being special-cased at three call sites.
+pub(crate) fn mobile_space_entries(app: &AppState) -> Vec<(usize, bool)> {
+    workspace_list_entries_expanded(app)
+        .iter()
+        .filter_map(WorkspaceListEntry::as_workspace)
+        .collect()
+}
+
+/// The chats to show under `ws_idx`, or an empty slice when there are none.
+pub(crate) fn workspace_chat_rows_for(
+    app: &AppState,
+    ws_idx: usize,
+) -> &[crate::app::state::WorkspaceChatRow] {
+    let Some(workspace) = app.workspaces.get(ws_idx) else {
+        return &[];
+    };
+    let key = crate::persist::workspace_chats::ledger_key(&workspace.identity_cwd);
+    app.workspace_chat_rows
+        .get(&key)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+}
+
+/// Whether `ws_idx`'s drawer is folded shut.
+///
+/// Closed is the default: opening every workspace at once would bury the
+/// workspace list the tab exists for.
+pub(crate) fn workspace_chat_drawer_collapsed(app: &AppState, ws_idx: usize) -> bool {
+    let Some(workspace) = app.workspaces.get(ws_idx) else {
+        return true;
+    };
+    let key = crate::persist::workspace_chats::ledger_key(&workspace.identity_cwd);
+    !app.expanded_chat_workspaces.contains(&key)
+}
+
+/// Append a workspace's chat drawer rows, if it is open.
+fn push_chat_drawer(app: &AppState, entries: &mut Vec<WorkspaceListEntry>, ws_idx: usize) {
+    if workspace_chat_drawer_collapsed(app, ws_idx) {
+        return;
+    }
+    let chats = workspace_chat_rows_for(app, ws_idx);
+    if chats.is_empty() {
+        entries.push(WorkspaceListEntry::NoChats { ws_idx });
+        return;
+    }
+    for chat_idx in 0..chats.len().min(WORKSPACE_CHAT_ROW_LIMIT) {
+        entries.push(WorkspaceListEntry::Chat { ws_idx, chat_idx });
+    }
+    if chats.len() > WORKSPACE_CHAT_ROW_LIMIT {
+        entries.push(WorkspaceListEntry::MoreChats { ws_idx });
+    }
 }
 
 pub(crate) fn next_entry_is_indented_workspace(entries: &[WorkspaceListEntry], idx: usize) -> bool {
@@ -466,6 +557,7 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
                 ws_idx,
                 indented: false,
             });
+            push_chat_drawer(app, &mut entries, ws_idx);
             continue;
         };
 
@@ -483,6 +575,7 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
                 ws_idx,
                 indented: false,
             });
+            push_chat_drawer(app, &mut entries, ws_idx);
             continue;
         };
         let collapsed = !force_expanded && app.collapsed_space_keys.contains(&space.key);
@@ -490,6 +583,7 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
             ws_idx: parent_idx,
             indented: false,
         });
+        push_chat_drawer(app, &mut entries, parent_idx);
 
         if collapsed {
             if let Some(active_idx) = visible_group_idx
@@ -500,6 +594,7 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
                     ws_idx: active_idx,
                     indented: true,
                 });
+                push_chat_drawer(app, &mut entries, active_idx);
             }
         } else {
             for member_idx in members {
@@ -510,6 +605,7 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
                     ws_idx: *member_idx,
                     indented: true,
                 });
+                push_chat_drawer(app, &mut entries, *member_idx);
             }
         }
     }
@@ -574,17 +670,11 @@ fn workspace_list_visible_count(app: &AppState, area: Rect, scroll: usize) -> us
     let mut visible = 0usize;
     let entries = workspace_list_entries(app);
     for (entry_idx, entry) in entries.iter().enumerate().skip(scroll) {
-        let (row_height, gap) = match entry {
-            WorkspaceListEntry::Workspace { ws_idx, indented } => {
-                let Some(ws) = app.workspaces.get(*ws_idx) else {
-                    continue;
-                };
-                (
-                    workspace_row_height_in_body(app, ws, *indented, body.height),
-                    workspace_entry_gap(app, &entries, entry_idx, *indented),
-                )
-            }
+        let Some((row_height, gap)) = entry_row_metrics(app, &entries, entry_idx, body.height)
+        else {
+            continue;
         };
+        let _ = entry;
         if used_rows.saturating_add(row_height) > body.height {
             break;
         }
@@ -595,19 +685,47 @@ fn workspace_list_visible_count(app: &AppState, area: Rect, scroll: usize) -> us
     visible
 }
 
+/// Height and trailing gap of one list entry, or `None` when it points at a
+/// workspace that no longer exists.
+///
+/// Every consumer — visible-count, bottom-anchored scrolling and layout — asks
+/// this one function, so a row can never be measured one way and drawn another.
+/// Drawer rows are single-line and gapless on purpose: a gap between a
+/// workspace and its own chats would read as a separator between groups.
+fn entry_row_metrics(
+    app: &AppState,
+    entries: &[WorkspaceListEntry],
+    entry_idx: usize,
+    body_height: u16,
+) -> Option<(u16, u16)> {
+    match entries.get(entry_idx)? {
+        WorkspaceListEntry::Workspace { ws_idx, indented } => {
+            let workspace = app.workspaces.get(*ws_idx)?;
+            Some((
+                workspace_row_height_in_body(app, workspace, *indented, body_height),
+                workspace_entry_gap(app, entries, entry_idx, *indented),
+            ))
+        }
+        WorkspaceListEntry::Chat { ws_idx, .. }
+        | WorkspaceListEntry::NoChats { ws_idx }
+        | WorkspaceListEntry::MoreChats { ws_idx } => {
+            app.workspaces.get(*ws_idx)?;
+            Some((1, 0))
+        }
+    }
+}
+
 fn workspace_list_bottom_start(app: &AppState, area: Rect) -> usize {
     let body = workspace_list_body_rect(area, false);
     let entries = workspace_list_entries(app);
     let mut used_rows = 0u16;
     let mut start = entries.len();
-    for (entry_idx, entry) in entries.iter().enumerate().rev() {
-        let WorkspaceListEntry::Workspace { ws_idx, indented } = entry;
-        let Some(workspace) = app.workspaces.get(*ws_idx) else {
+    for entry_idx in (0..entries.len()).rev() {
+        let Some((row_height, gap)) = entry_row_metrics(app, &entries, entry_idx, body.height)
+        else {
             continue;
         };
-        let gap = workspace_entry_gap(app, &entries, entry_idx, *indented);
-        let needed = workspace_row_height_in_body(app, workspace, *indented, body.height)
-            .saturating_add(gap);
+        let needed = row_height.saturating_add(gap);
         if used_rows.saturating_add(needed) > body.height {
             break;
         }
@@ -767,10 +885,20 @@ pub(crate) fn agent_panel_scrollbar_rect(app: &AppState, area: Rect) -> Option<R
     ))
 }
 
+/// Lay out the Spaces list: workspace cards and, separately, the chat rows of
+/// any open drawer.
+///
+/// The two vectors stay apart because `WorkspaceCardArea` is workspace-indexed
+/// — folding chat rows into it would make a chat click resolve as a workspace,
+/// the same trap the tab strip already documents for its stage entries
+/// (TP-FTAB-ENTRY-05).
 pub(crate) fn compute_workspace_list_areas(
     app: &AppState,
     area: Rect,
-) -> (Vec<crate::app::state::WorkspaceCardArea>, Vec<()>) {
+) -> (
+    Vec<crate::app::state::WorkspaceCardArea>,
+    Vec<crate::app::state::WorkspaceChatRowArea>,
+) {
     let ws_area = workspace_list_rect(area, app.sidebar_section_split);
     if ws_area == Rect::default() {
         return (Vec::new(), Vec::new());
@@ -786,34 +914,43 @@ pub(crate) fn compute_workspace_list_areas(
     let mut row_y = body.y;
     let body_bottom = body.y + body.height;
     let mut cards = Vec::new();
-    let headers = Vec::new();
+    let mut chat_rows = Vec::new();
 
     let entries = workspace_list_entries(app);
     for (entry_idx, entry) in entries.iter().enumerate().skip(scroll) {
+        let Some((row_height, gap)) = entry_row_metrics(app, &entries, entry_idx, body.height)
+        else {
+            continue;
+        };
+        if row_y.saturating_add(row_height) > body_bottom {
+            break;
+        }
+        let rect = Rect::new(body.x, row_y, body.width, row_height);
         match entry {
             WorkspaceListEntry::Workspace { ws_idx, indented } => {
-                let Some(ws) = app.workspaces.get(*ws_idx) else {
-                    continue;
-                };
-                let row_height = workspace_row_height_in_body(app, ws, *indented, body.height);
-                let gap = workspace_entry_gap(app, &entries, entry_idx, *indented);
-                if row_y.saturating_add(row_height) > body_bottom {
-                    break;
-                }
                 cards.push(crate::app::state::WorkspaceCardArea {
                     ws_idx: *ws_idx,
-                    rect: Rect::new(body.x, row_y, body.width, row_height),
+                    rect,
                     indented: *indented,
                 });
-                row_y = row_y
-                    .saturating_add(row_height)
-                    .saturating_add(gap)
-                    .min(body_bottom);
             }
+            WorkspaceListEntry::Chat { ws_idx, chat_idx } => {
+                chat_rows.push(crate::app::state::WorkspaceChatRowArea {
+                    rect,
+                    ws_idx: *ws_idx,
+                    chat_idx: *chat_idx,
+                });
+            }
+            // Placeholders occupy a row but are inert: nothing to click.
+            WorkspaceListEntry::NoChats { .. } | WorkspaceListEntry::MoreChats { .. } => {}
         }
+        row_y = row_y
+            .saturating_add(row_height)
+            .saturating_add(gap)
+            .min(body_bottom);
     }
 
-    (cards, headers)
+    (cards, chat_rows)
 }
 
 pub(crate) fn compute_workspace_card_areas(
@@ -3614,6 +3751,140 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let entries = agent_panel_entries(&app);
         assert_eq!(entries[0].primary_label, "bridge");
         assert_eq!(entries[0].agent_label.as_deref(), Some("planner"));
+    }
+
+    fn app_with_chat_drawer(chat_count: usize) -> (AppState, String) {
+        let mut app = AppState::test_new();
+        let mut workspace = Workspace::test_new("drawer-probe");
+        workspace.identity_cwd = std::env::temp_dir();
+        app.workspaces = vec![workspace];
+        app.active = Some(0);
+        app.selected = 0;
+
+        let key = crate::persist::workspace_chats::ledger_key(&std::env::temp_dir());
+        let rows = (0..chat_count)
+            .map(|idx| crate::app::state::WorkspaceChatRow {
+                session_id: format!("session-{idx}"),
+                agent: "claude".to_string(),
+                title: Some(format!("chat {idx}")),
+                last_seen_ms: 1_000 + idx as u64,
+            })
+            .collect::<Vec<_>>();
+        app.workspace_chat_rows.insert(key.clone(), rows);
+        (app, key)
+    }
+
+    fn entry_kinds(app: &AppState) -> Vec<&'static str> {
+        workspace_list_entries(app)
+            .iter()
+            .map(|entry| match entry {
+                WorkspaceListEntry::Workspace { .. } => "workspace",
+                WorkspaceListEntry::Chat { .. } => "chat",
+                WorkspaceListEntry::NoChats { .. } => "no-chats",
+                WorkspaceListEntry::MoreChats { .. } => "more",
+            })
+            .collect()
+    }
+
+    // TP-WSCHAT-15: the drawer is closed until asked for. With a dozen-plus
+    // workspaces, opening every drawer at once would bury the workspace list
+    // the tab exists for.
+    #[test]
+    fn a_workspaces_chat_drawer_is_closed_until_it_is_opened() {
+        let (mut app, key) = app_with_chat_drawer(2);
+        assert_eq!(entry_kinds(&app), vec!["workspace"]);
+
+        app.expanded_chat_workspaces.insert(key);
+        assert_eq!(entry_kinds(&app), vec!["workspace", "chat", "chat"]);
+    }
+
+    // TP-WSCHAT-16: an open drawer with nothing to show says so. An empty gap
+    // reads as a broken drawer, and an empty drawer is the honest answer for a
+    // branch whose work predates the ledger.
+    #[test]
+    fn an_open_drawer_with_no_chats_shows_a_placeholder() {
+        let (mut app, key) = app_with_chat_drawer(0);
+        app.expanded_chat_workspaces.insert(key);
+
+        assert_eq!(entry_kinds(&app), vec!["workspace", "no-chats"]);
+    }
+
+    // TP-WSCHAT-16: the sidebar is a glance surface, not an archive — a busy
+    // workspace folds its tail into one inert row instead of pushing every
+    // other workspace off the screen.
+    #[test]
+    fn a_busy_drawer_lists_a_capped_number_of_chats_and_an_older_row() {
+        let (mut app, key) = app_with_chat_drawer(WORKSPACE_CHAT_ROW_LIMIT + 3);
+        app.expanded_chat_workspaces.insert(key);
+
+        let kinds = entry_kinds(&app);
+        assert_eq!(
+            kinds.iter().filter(|kind| **kind == "chat").count(),
+            WORKSPACE_CHAT_ROW_LIMIT
+        );
+        assert_eq!(kinds.last(), Some(&"more"));
+    }
+
+    // TP-WSCHAT-17: the row list is the single source. If the scroll metrics
+    // counted a different number of rows than the layout produced, the list
+    // would scroll past rows it never drew — the failure the Projects tab
+    // already solved by deriving both from one function.
+    #[test]
+    fn the_scroll_metrics_and_the_layout_agree_on_the_drawer_rows() {
+        let (mut app, key) = app_with_chat_drawer(2);
+        app.expanded_chat_workspaces.insert(key);
+        let area = Rect::new(0, 0, 30, 24);
+
+        let entries = workspace_list_entries(&app);
+        let (cards, chat_rows) = compute_workspace_list_areas(&app, area);
+
+        assert_eq!(entries.len(), 3, "one workspace plus its two chats");
+        assert_eq!(cards.len(), 1);
+        assert_eq!(chat_rows.len(), 2, "chat rows are laid out separately");
+        assert_eq!(chat_rows[0].chat_idx, 0);
+        assert_eq!(chat_rows[1].chat_idx, 1);
+        assert!(
+            chat_rows[0].rect.y < chat_rows[1].rect.y,
+            "drawer rows keep the ledger's newest-first order"
+        );
+        assert!(
+            cards[0].rect.y < chat_rows[0].rect.y,
+            "the drawer sits under its workspace"
+        );
+    }
+
+    // TP-WSCHAT-17: a chat row must never be mistaken for a workspace. The
+    // card vector is workspace-indexed, so folding chat rows into it would make
+    // a chat click resolve as a workspace switch.
+    #[test]
+    fn chat_rows_stay_out_of_the_workspace_indexed_card_vector() {
+        let (mut app, key) = app_with_chat_drawer(3);
+        app.expanded_chat_workspaces.insert(key);
+
+        let (cards, chat_rows) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 24));
+
+        assert_eq!(cards.len(), 1, "only real workspaces become cards");
+        assert!(cards.iter().all(|card| card.ws_idx == 0));
+        assert!(!chat_rows.is_empty());
+        assert!(
+            chat_rows.iter().all(|row| row.ws_idx == 0),
+            "every chat row names the workspace it belongs to"
+        );
+    }
+
+    // TP-WSCHAT-18: the mobile switcher lays out exactly two rows per
+    // workspace. A drawer row inside that list would shift every position
+    // after it, so the switcher would select the wrong workspace.
+    #[test]
+    fn the_mobile_switcher_never_sees_drawer_rows() {
+        let (mut app, key) = app_with_chat_drawer(4);
+        app.expanded_chat_workspaces.insert(key);
+
+        assert_eq!(
+            mobile_space_entries(&app).len(),
+            1,
+            "the switcher lists workspaces only"
+        );
     }
 
     // TP-AGPANEL-01 + TP-AGPANEL-02: the panel answers "which agent am I on"

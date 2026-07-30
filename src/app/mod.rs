@@ -756,6 +756,8 @@ impl App {
             preview_placement: config.preview.placement,
             preview_bindings: Vec::new(),
             collapsed_project_paths: std::collections::HashSet::new(),
+            workspace_chat_rows: std::collections::HashMap::new(),
+            expanded_chat_workspaces: std::collections::HashSet::new(),
             tab_branch_cache: std::collections::HashMap::new(),
             sessions_parse_cache: Default::default(),
             default_chat_agent,
