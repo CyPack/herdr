@@ -187,6 +187,9 @@ pub struct App {
     pub(crate) selection_highlight_clear_deadline: Option<Instant>,
     pub(crate) session_save_deadline: Option<Instant>,
     pub(crate) session_save_thread: Option<std::thread::JoinHandle<()>>,
+    /// Which agent chats have run in which workspace. Loaded once at startup
+    /// and folded forward on each session save; see `persist::workspace_chats`.
+    pub(crate) workspace_chat_ledger: crate::persist::workspace_chats::WorkspaceChatLedger,
     pub(crate) detached_custom_command_children: Vec<std::process::Child>,
     pub(crate) persist_pane_history: bool,
     pub(crate) last_render_at: Option<Instant>,
@@ -1000,6 +1003,15 @@ impl App {
             pending_agent_resume_deadline: None,
             session_save_deadline: None,
             session_save_thread: None,
+            // A test app (no_session) must not read the real ledger, and a
+            // missing or corrupt file is a normal empty start either way.
+            workspace_chat_ledger: if no_session {
+                crate::persist::workspace_chats::WorkspaceChatLedger::default()
+            } else {
+                crate::persist::workspace_chats::load_from_path(
+                    &crate::persist::workspace_chats::default_ledger_path(),
+                )
+            },
             detached_custom_command_children: Vec::new(),
             selection_autoscroll_deadline: None,
             selection_highlight_clear_deadline: None,

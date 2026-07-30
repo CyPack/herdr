@@ -9,11 +9,13 @@ reverted without a conflict; these can.
 `src/ui.rs`, `src/app/input/sidebar.rs`, `src/client/mod.rs` or `src/ui/panes.rs`, the
 "Breaks if lost" column is what decides whether a resolution is acceptable.
 
-Two families live in their own files but sit in upstream-owned code all the same —
+Three families live in their own files but sit in upstream-owned code all the same —
 consult them under the same rule during a sync:
 [`tab-attention.md`](tab-attention.md) (`workspace.rs`, `workspace/tab.rs`,
 `ui/tabs.rs`, `api/tabs.rs`, `api/plugins/panes.rs`, `persist/restore.rs`,
-`app/runtime.rs`) and [`agent-panel.md`](agent-panel.md) (`ui/sidebar.rs`).
+`app/runtime.rs`), [`agent-panel.md`](agent-panel.md) (`ui/sidebar.rs`) and
+[`workspace-chats.md`](workspace-chats.md) (`app/session.rs`, plus the fork-only
+`persist/workspace_chats.rs`).
 
 Format and rules: [`README.md`](README.md).
 

@@ -1,0 +1,49 @@
+# Workspace chats — which agent chat ran in which workspace
+
+The sidebar answers "which chat did I work with on this branch". That question
+cannot be answered from the agent's own on-disk store, which is keyed by the
+directory the agent was launched in: a branch checkout very often is not that
+directory. **Measured 2026-07-30 against a live session:** 9 of 14 workspaces
+resolved to no chats that way, and 4 of the 9 sessions herdr was actively wired
+to lived under a different directory than their workspace.
+
+The live wiring (`agent_session` on a pane) knows the truth, but only while the
+pane exists — closing a tab erases it, and the question is asked in the past
+tense. So the association is recorded as it happens, in an append-only ledger at
+`~/.config/herdr/workspace-chats.json`.
+
+Deliberately **outside** the session snapshot: that snapshot describes the LIVE
+layout and the restore contract depends on its shape, while this ledger is
+history that outlives the workspaces it describes.
+
+Design and the measurements behind it:
+`.local/prd/2026-07-30-spaces-branch-chat-drawer-PRD.md`.
+
+## Ledger core (`src/persist/workspace_chats.rs`)
+
+| ID | Behavior | What breaks if it is lost | Verified by |
+|---|---|---|---|
+| TP-WSCHAT-01 | An observation becomes a record keyed by workspace | The drawer stays permanently empty — the premise of the feature | `a_first_sighting_becomes_a_record` |
+| TP-WSCHAT-02 | A repeat sighting upserts: no duplicate row, `last_seen` advances, `first_seen` is never rewritten; an identical repeat reports no change | Hook reports repeat constantly — without upsert the ledger grows one row per report and "when did I start here" is overwritten; without the no-change signal every report schedules a disk write | `a_repeat_sighting_updates_the_time_without_duplicating_or_rewriting_the_first` · `an_identical_repeat_reports_no_change` |
+| TP-WSCHAT-03 | The most recent sighting leads the list | The drawer would have to sort at render time — state work in the render path | `the_most_recent_sighting_leads_the_list` |
+| TP-WSCHAT-04 | Each workspace keeps its own chats | Per-branch attribution collapses into one shared list, answering the wrong question | `each_workspace_keeps_its_own_chats` |
+| TP-WSCHAT-05 | History is capped per workspace, dropping the oldest | An unbounded ledger turns a convenience into a disk-space bug | `the_ledger_caps_a_workspaces_history_and_drops_the_oldest` |
+| TP-WSCHAT-06 | An empty key or session id is refused | A chat gets attributed to nowhere and shows under the wrong workspace | `an_unresolvable_observation_is_refused` |
+| TP-WSCHAT-07 | The ledger round-trips through disk | It stops outliving the live wiring — the one thing it exists for | `the_ledger_round_trips_through_disk` |
+| TP-WSCHAT-08 | A missing, corrupt or unknown-version file degrades to empty without panicking | A hand-edited or truncated file stops the server from starting; a guessed-at future schema silently misreads history | `a_corrupt_or_missing_ledger_degrades_to_empty_without_panicking` |
+| TP-WSCHAT-09 | Saving is atomic and leaves no temp file | A crash mid-write truncates the file, and the next start reads it as corrupt and drops the whole history | `saving_leaves_no_temp_file_and_replaces_the_previous_ledger` |
+| TP-WSCHAT-10 | The key is canonical, falling back to the raw path when the directory is gone | Two spellings of one directory split a branch's history; a removed directory would silently start over | `the_ledger_key_is_canonical_and_falls_back_for_missing_paths` |
+
+## Observation (snapshot → associations)
+
+| ID | Behavior | What breaks if it is lost | Verified by |
+|---|---|---|---|
+| TP-WSCHAT-11 | Observations are derived from the session SNAPSHOT (which already resolved hook-authority-over-persisted precedence), one association per workspace+session, ignoring panes with no session | Re-deriving the precedence here lets the ledger and the session file disagree about the same pane; a split showing one agent twice would list the chat twice | `the_observer_collects_one_association_per_workspace_and_session` · `the_observer_deduplicates_the_same_chat_across_panes` · `the_observer_ignores_panes_without_a_session` |
+| TP-WSCHAT-12 | A still-fresh sighting is not re-recorded; a stale one is, without moving `first_seen` | The observer runs on every debounced save, so a live chat would advance `last_seen` on every pass and rewrite the ledger continuously — a permanent write loop | `a_fresh_sighting_is_not_re_recorded_but_a_stale_one_is` |
+
+## Wiring (`src/app/session.rs`)
+
+| ID | Behavior | What breaks if it is lost | Verified by |
+|---|---|---|---|
+| TP-WSCHAT-13 | The association is recorded through the real session-save funnel; a workspace with no agent records nothing | A ledger that only works in a unit test leaves the drawer empty in production — the exact failure this feature exists to prevent | `a_session_save_folds_the_live_wiring_into_the_ledger` · `a_session_save_without_any_agent_records_nothing` |
+| TP-WSCHAT-14 | A `--no-session` run tracks chats in memory but writes nothing | Every unit test that captures a save writes into the real config directory (observed during development: a test run created `~/.config/herdr-dev/workspace-chats.json`), and `--no-session` stops meaning "leaves nothing on disk" | `a_no_session_run_tracks_chats_in_memory_but_writes_nothing` |
