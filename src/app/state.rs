@@ -641,12 +641,40 @@ pub struct WorkspaceChatRow {
     pub last_modified: Option<std::time::SystemTime>,
 }
 
+/// Milliseconds since the epoch, saturating at 0 for times before it.
+///
+/// The ledger and the transcript store answer "when" in different units, and
+/// the drawer has to order them together; this is the one place they meet.
+pub(crate) fn system_time_to_ms(time: std::time::SystemTime) -> u64 {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
+}
+
 impl WorkspaceChatRow {
     /// Label for the row: the resolved title, else a short id plus the agent.
     ///
     /// The fallback is not a placeholder for missing data — for a chat started
     /// outside this workspace's directory there IS no resolvable title, and the
     /// association is still worth showing. Degrading beats disappearing.
+    /// Milliseconds since the epoch of this chat's last activity.
+    ///
+    /// TP-DRAW-04/05: the transcript's own mtime when it was found, otherwise
+    /// the moment the ledger last saw the chat. Both are "when did this last
+    /// move", so one column can order and date every row — a drawer where only
+    /// some rows carry an age reads as broken rather than partial.
+    pub fn last_activity_ms(&self) -> u64 {
+        self.last_modified
+            .map(system_time_to_ms)
+            .unwrap_or(self.last_seen_ms)
+    }
+
+    /// Ordering key: last activity, with the id breaking ties so the order is
+    /// stable across refreshes rather than shuffling equal timestamps.
+    pub(crate) fn sort_key(&self) -> (u64, &str) {
+        (self.last_activity_ms(), self.session_id.as_str())
+    }
+
     pub fn display_label(&self) -> String {
         match self.title.as_deref() {
             Some(title) if !title.is_empty() => title.to_string(),
@@ -3497,9 +3525,23 @@ impl AppState {
     /// matches is filled in. A chat started elsewhere stays untitled by design
     /// — the drawer degrades to a short id rather than hiding the association,
     /// which is the part that cannot be recovered from anywhere else.
-    pub(crate) fn resolve_workspace_chat_titles_in(&mut self, projects_dir: &std::path::Path) {
-        // Only slightly more than the drawer shows: parsing opens whole files.
-        const DRAWER_TITLE_FETCH_LIMIT: usize = 12;
+    /// Fill each workspace's drawer from the agent's own transcript store,
+    /// merged with what the ledger observed, newest first.
+    ///
+    /// TP-DRAW-01/02: the two sources answer different questions and neither
+    /// alone is enough. The store holds every chat ever started in a
+    /// workspace's directory — measured 2026-07-30, 1510 of them across the
+    /// open workspaces, of which the ledger knew 14, because the ledger only
+    /// began recording the day it was written. The ledger in turn holds chats
+    /// the store cannot be asked for: a chat that started elsewhere and moved
+    /// in is filed under the directory it started in, not this one (measured:
+    /// one worktree had 1 chat in its own store directory and 4 in the ledger).
+    ///
+    /// So: union, keyed by session id, store winning on title and mtime.
+    pub(crate) fn merge_workspace_chat_rows_in(&mut self, projects_dir: &std::path::Path) {
+        // Only slightly more than the drawer shows: parsing opens whole files,
+        // and a busy directory holds hundreds of them.
+        const DRAWER_FETCH_LIMIT: usize = 12;
         let keys: Vec<(String, String)> = self
             .workspaces
             .iter()
@@ -3511,29 +3553,79 @@ impl AppState {
             })
             .collect();
 
-        for (key, cwd) in keys {
-            if !self
-                .workspace_chat_rows
-                .get(&key)
-                .is_some_and(|rows| rows.iter().any(|row| row.title.is_none()))
-            {
-                continue;
-            }
+        for (key, cwd) in &keys {
             let (sessions, _) = crate::claude_sessions::read_recent_sessions_for_project_cached(
                 projects_dir,
-                &cwd,
-                DRAWER_TITLE_FETCH_LIMIT,
+                cwd,
+                DRAWER_FETCH_LIMIT,
                 &mut self.sessions_parse_cache,
             );
-            let Some(rows) = self.workspace_chat_rows.get_mut(&key) else {
-                continue;
-            };
-            for row in rows.iter_mut() {
-                if let Some(found) = sessions.iter().find(|s| s.id == row.session_id) {
-                    row.title = Some(found.title.clone());
-                    row.last_modified = Some(found.last_modified);
+            let rows = self.workspace_chat_rows.entry(key.clone()).or_default();
+            for session in &sessions {
+                match rows.iter_mut().find(|row| row.session_id == session.id) {
+                    // TP-DRAW-03: one row per chat. The store is authoritative
+                    // for what a chat is called and when it last moved.
+                    Some(row) => {
+                        row.title = Some(session.title.clone());
+                        row.last_modified = Some(session.last_modified);
+                    }
+                    None => rows.push(WorkspaceChatRow {
+                        session_id: session.id.clone(),
+                        agent: "claude".to_string(),
+                        title: Some(session.title.clone()),
+                        last_seen_ms: system_time_to_ms(session.last_modified),
+                        last_modified: Some(session.last_modified),
+                    }),
                 }
             }
+        }
+
+        // TP-DRAW-06: a chat the ledger saw but this workspace's own directory
+        // does not hold lives under whichever directory it started in. Look for
+        // it in the other open workspaces' directories rather than leaving the
+        // row as a bare id — the association is real, only the filing differs.
+        // TP-DRAW-07: only rows that are still untitled cost a read.
+        let unresolved: Vec<String> = self
+            .workspace_chat_rows
+            .values()
+            .flatten()
+            .filter(|row| row.title.is_none())
+            .map(|row| row.session_id.clone())
+            .collect();
+        if !unresolved.is_empty() {
+            let mut found: std::collections::HashMap<
+                String,
+                crate::claude_sessions::ClaudeSession,
+            > = std::collections::HashMap::new();
+            for (_, cwd) in &keys {
+                let (sessions, _) = crate::claude_sessions::read_recent_sessions_for_project_cached(
+                    projects_dir,
+                    cwd,
+                    DRAWER_FETCH_LIMIT,
+                    &mut self.sessions_parse_cache,
+                );
+                for session in sessions {
+                    if unresolved.contains(&session.id) {
+                        found.entry(session.id.clone()).or_insert(session);
+                    }
+                }
+            }
+            for row in self.workspace_chat_rows.values_mut().flatten() {
+                if row.title.is_some() {
+                    continue;
+                }
+                if let Some(session) = found.get(&row.session_id) {
+                    row.title = Some(session.title.clone());
+                    row.last_modified = Some(session.last_modified);
+                }
+            }
+        }
+
+        // TP-DRAW-04: newest first, the order the Projects tab already uses.
+        // A row whose transcript was never located still sorts, on the moment
+        // the ledger last saw it.
+        for rows in self.workspace_chat_rows.values_mut() {
+            rows.sort_by(|a, b| b.sort_key().cmp(&a.sort_key()));
         }
     }
 
@@ -4753,6 +4845,222 @@ mod tests {
         assert!(state.collapsed_project_paths.is_empty());
     }
 
+    /// A workspace at a scratch directory, plus its ledger key.
+    fn drawer_probe_workspace(state: &mut AppState, tag: &str) -> (std::path::PathBuf, String) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let cwd = std::env::temp_dir().join(format!(
+            "herdr-drawer-{}-{}-{}",
+            std::process::id(),
+            tag,
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&cwd).expect("probe workspace dir");
+        let mut workspace = crate::workspace::Workspace::test_new(tag);
+        workspace.identity_cwd = cwd.clone();
+        state.workspaces.push(workspace);
+        let key = crate::persist::workspace_chats::ledger_key(&cwd);
+        (cwd, key)
+    }
+
+    // TP-DRAW-01: the drawer lists what the agent's own store holds, not only
+    // what the ledger happened to witness. Measured 2026-07-30: the open
+    // workspaces held 1510 transcripts between them and the ledger knew 14,
+    // because the ledger only began recording the day it was written — so a
+    // ledger-only drawer showed almost nothing.
+    #[test]
+    fn the_drawer_lists_chats_the_ledger_never_saw() {
+        let fake = FakeProjectsRoot::new("store-only");
+        let mut state = AppState::test_new();
+        let (cwd, key) = drawer_probe_workspace(&mut state, "storeonly");
+        for (id, title) in [("a", "first chat"), ("b", "second chat"), ("c", "third")] {
+            fake.write_session(
+                &cwd.to_string_lossy(),
+                id,
+                &[format!(r#"{{"type":"custom-title","customTitle":"{title}"}}"#).as_str()],
+            );
+        }
+
+        assert!(
+            !state.workspace_chat_rows.contains_key(&key),
+            "the ledger has never seen this workspace"
+        );
+        state.merge_workspace_chat_rows_in(&fake.root);
+
+        let rows = state.workspace_chat_rows.get(&key).expect("rows appear");
+        assert_eq!(rows.len(), 3, "every stored chat is listed: {rows:?}");
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    // TP-DRAW-02 + TP-DRAW-03: union, not replacement, and one row per chat.
+    // The ledger holds chats the store cannot be asked for — a chat that
+    // started elsewhere is filed under the directory it started in (measured:
+    // one worktree had 1 chat in its own directory and 4 in the ledger).
+    #[test]
+    fn the_drawer_unions_the_store_and_the_ledger_without_duplicating() {
+        let fake = FakeProjectsRoot::new("union");
+        let mut state = AppState::test_new();
+        let (cwd, key) = drawer_probe_workspace(&mut state, "union");
+        fake.write_session(
+            &cwd.to_string_lossy(),
+            "shared",
+            &[r#"{"type":"custom-title","customTitle":"in both"}"#],
+        );
+        fake.write_session(
+            &cwd.to_string_lossy(),
+            "store-only",
+            &[r#"{"type":"custom-title","customTitle":"store only"}"#],
+        );
+        state.workspace_chat_rows.insert(
+            key.clone(),
+            vec![
+                WorkspaceChatRow {
+                    session_id: "shared".into(),
+                    agent: "claude".into(),
+                    title: None,
+                    last_seen_ms: 1,
+                    last_modified: None,
+                },
+                WorkspaceChatRow {
+                    session_id: "ledger-only".into(),
+                    agent: "claude".into(),
+                    title: None,
+                    last_seen_ms: 2,
+                    last_modified: None,
+                },
+            ],
+        );
+
+        state.merge_workspace_chat_rows_in(&fake.root);
+
+        let rows = state.workspace_chat_rows.get(&key).expect("rows");
+        assert_eq!(rows.len(), 3, "three distinct chats: {rows:?}");
+        assert_eq!(
+            rows.iter().filter(|row| row.session_id == "shared").count(),
+            1,
+            "a chat known to both sources is one row"
+        );
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.session_id == "shared")
+                .and_then(|row| row.title.as_deref()),
+            Some("in both"),
+            "the store is authoritative for the title"
+        );
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    // TP-DRAW-04: newest first, the order the Projects tab already uses. A
+    // drawer in arbitrary order cannot answer "which chat was I just in".
+    #[test]
+    fn drawer_rows_are_ordered_newest_first() {
+        let fake = FakeProjectsRoot::new("order");
+        let mut state = AppState::test_new();
+        let (cwd, key) = drawer_probe_workspace(&mut state, "order");
+        state.workspace_chat_rows.insert(
+            key.clone(),
+            vec![
+                WorkspaceChatRow {
+                    session_id: "old".into(),
+                    agent: "claude".into(),
+                    title: Some("older".into()),
+                    last_seen_ms: 10,
+                    last_modified: None,
+                },
+                WorkspaceChatRow {
+                    session_id: "new".into(),
+                    agent: "claude".into(),
+                    title: Some("newer".into()),
+                    last_seen_ms: 9_000,
+                    last_modified: None,
+                },
+                WorkspaceChatRow {
+                    session_id: "mid".into(),
+                    agent: "claude".into(),
+                    title: Some("middle".into()),
+                    last_seen_ms: 500,
+                    last_modified: None,
+                },
+            ],
+        );
+
+        state.merge_workspace_chat_rows_in(&fake.root);
+
+        let order: Vec<&str> = state.workspace_chat_rows[&key]
+            .iter()
+            .map(|row| row.session_id.as_str())
+            .collect();
+        assert_eq!(order, vec!["new", "mid", "old"]);
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    // TP-DRAW-05: every row can be dated. A row whose transcript was never
+    // located still knows when the ledger last saw it, and that answers the
+    // same question — a drawer where only some rows carry an age reads as
+    // broken rather than partial.
+    #[test]
+    fn a_row_without_a_located_transcript_still_reports_its_last_activity() {
+        let row = WorkspaceChatRow {
+            session_id: "unplaced".into(),
+            agent: "claude".into(),
+            title: None,
+            last_seen_ms: 1_700_000_000_000,
+            last_modified: None,
+        };
+        assert_eq!(row.last_activity_ms(), 1_700_000_000_000);
+
+        let placed = WorkspaceChatRow {
+            last_modified: Some(
+                std::time::UNIX_EPOCH + std::time::Duration::from_millis(1_800_000_000_000),
+            ),
+            ..row
+        };
+        assert_eq!(
+            placed.last_activity_ms(),
+            1_800_000_000_000,
+            "the transcript's own mtime wins when it is known"
+        );
+    }
+
+    // TP-DRAW-06: a chat filed under another workspace's directory is looked
+    // for there before the row gives up and shows a bare id. This is the
+    // `9433af4a · claude` case the user reported.
+    #[test]
+    fn a_chat_filed_under_another_workspace_is_still_titled() {
+        let fake = FakeProjectsRoot::new("cross-slug");
+        let mut state = AppState::test_new();
+        let (home_cwd, _) = drawer_probe_workspace(&mut state, "elsewhere");
+        let (branch_cwd, branch_key) = drawer_probe_workspace(&mut state, "branch");
+        // The transcript lives under the OTHER workspace's directory.
+        fake.write_session(
+            &home_cwd.to_string_lossy(),
+            "moved",
+            &[r#"{"type":"custom-title","customTitle":"started elsewhere"}"#],
+        );
+        state.workspace_chat_rows.insert(
+            branch_key.clone(),
+            vec![WorkspaceChatRow {
+                session_id: "moved".into(),
+                agent: "claude".into(),
+                title: None,
+                last_seen_ms: 5,
+                last_modified: None,
+            }],
+        );
+
+        state.merge_workspace_chat_rows_in(&fake.root);
+
+        let row = &state.workspace_chat_rows[&branch_key][0];
+        assert_eq!(
+            row.title.as_deref(),
+            Some("started elsewhere"),
+            "the title is found in the directory the chat was filed under"
+        );
+        assert!(row.last_modified.is_some(), "and so is its age");
+        let _ = std::fs::remove_dir_all(&home_cwd);
+        let _ = std::fs::remove_dir_all(&branch_cwd);
+    }
+
     // TP-WSCHAT-21: the drawer shows the chat's NAME, the way the Projects tab
     // does. A session id is not an answer to "which chat did I work with" — the
     // ledger supplies the association and the agent's own store supplies the
@@ -4793,21 +5101,27 @@ mod tests {
             ],
         );
 
-        state.resolve_workspace_chat_titles_in(&fake.root);
+        state.merge_workspace_chat_rows_in(&fake.root);
 
         let rows = &state.workspace_chat_rows[&key];
-        assert_eq!(rows[0].title.as_deref(), Some("branch review"));
+        let titled = rows
+            .iter()
+            .find(|row| row.session_id == "titled-session")
+            .expect("the ledger row survives the merge");
+        assert_eq!(titled.title.as_deref(), Some("branch review"));
         assert!(
-            rows[0].last_modified.is_some(),
+            titled.last_modified.is_some(),
             "a resolved row also gets its age"
         );
-        assert_eq!(
-            rows[1].title, None,
-            "a chat started outside this directory stays untitled by design — \
-             the drawer degrades to a short id rather than hiding the \
-             association, which is the part nothing else records"
-        );
-        assert!(rows[1].display_label().starts_with("elsewhe"));
+        // The fallback still exists — a chat filed under a directory herdr has
+        // no workspace for cannot be titled — but it is now the last resort
+        // rather than the first answer for every chat that moved (TP-DRAW-06).
+        let elsewhere = rows
+            .iter()
+            .find(|row| row.session_id == "elsewhere-session")
+            .expect("a chat the store cannot place is still listed");
+        assert_eq!(elsewhere.title, None);
+        assert!(elsewhere.display_label().starts_with("elsewhe"));
 
         let _ = std::fs::remove_dir_all(&cwd);
     }

@@ -57,9 +57,42 @@ Design and the measurements behind it:
 | TP-WSCHAT-17 | Scroll metrics and layout derive from the same row list, and chat rows are laid out in their own vector rather than the workspace-indexed card vector | Counting rows one way and drawing them another scrolls past rows that were never drawn; folding chat rows into the card vector makes a chat click resolve as a workspace switch (the trap the tab strip documents as TP-FTAB-ENTRY-05) | `the_scroll_metrics_and_the_layout_agree_on_the_drawer_rows` · `chat_rows_stay_out_of_the_workspace_indexed_card_vector` |
 | TP-WSCHAT-19 | The drawer toggle LEADS the workspace row (immediately after the worktree-group chevron when that row has one), offered only where there is history; it opens AND closes, and the rest of the row still selects the workspace | A disclosure arrow only reads as "this row opens" when it precedes the name — at the far edge it reads as an unrelated control; the two chevrons must stay adjacent on the left rather than sharing a cell, which would make one unreachable; an arrow on every row that only ever reveals "(no chats)" is noise; a toggle that swallows the row makes the workspace unclickable | `only_a_workspace_with_history_offers_a_drawer_toggle` · `the_drawer_toggle_opens_and_closes_without_stealing_the_workspace_click` |
 | TP-WSCHAT-20 | An open drawer draws its chats under the workspace, indented past the branch children, and a chat row never takes the accent background | State that is right but draws nothing is this family's known failure (the file-manager previews); the accent background marks the active workspace and the active agent card, so a chat wearing it would read as one of those | `an_open_drawer_draws_its_chats_below_the_workspace` |
-| TP-WSCHAT-21 | Drawer rows take their title and age from the agent's own store; a chat started outside the workspace's directory stays untitled and falls back to a short id | A session id is not an answer to "which chat did I work with"; hiding the untitled ones instead would drop the association, which is the part nothing else records | `drawer_rows_take_their_title_from_the_agents_own_store` |
+| TP-WSCHAT-21 | Drawer rows take their title and age from the agent's own store. A chat filed under a different directory is looked for in the other open workspaces' directories before the row falls back to a short id. | A session id is not an answer to "which chat did I work with". The fallback still exists — a chat filed somewhere herdr has no workspace for cannot be titled — but it is now the last resort rather than the first answer for every chat that moved. Superseded the original "stays untitled by design" on 2026-07-30, when the measurement showed one worktree with 1 chat in its own directory and 4 filed elsewhere (TP-DRAW-06). | `drawer_rows_take_their_title_from_the_agents_own_store` |
 | TP-WSCHAT-22 | The drawer uses the Projects tab's wired-state vocabulary: `▸` this chat is the focused tab, `●` open in another tab, blank not open — and the disclosure arrow LEADS the row | Two surfaces inventing different alphabets for one fact makes the sidebar unreadable; a trailing arrow reads as an unrelated control at the far edge | `an_open_drawer_draws_its_chats_below_the_workspace` · `only_a_workspace_with_history_offers_a_drawer_toggle` |
 | TP-WSCHAT-23 | Every workspace row carries a trailing "+" that starts a chat rooted at that workspace, mirroring the Projects tab's per-project button | Without it the drawer can only ever show history: there is no way to begin the first chat on a branch from the surface that lists them | `clicking_a_drawer_row_asks_for_that_chat_and_plus_starts_a_new_one` |
 | TP-WSCHAT-24 | Clicking a drawer row asks for that chat; a chat already wired to a live tab is focused instead of resumed, and the trailing "+" is not swallowed by the row it sits on | A row that cannot be clicked is decoration; resuming a live chat twice spawns a second process against one transcript — the spam-click guard the Projects tab already learned | `clicking_a_drawer_row_asks_for_that_chat_and_plus_starts_a_new_one` |
 | TP-WSCHAT-25 | The "+" on a repository root opens a choice — chat agents plus worktree actions — while a linked worktree starts a chat directly; picking the worktree entry reaches the worktree request and is never persisted as a chat agent | "Start something new here" genuinely means two things at a repo root and one inside a worktree, so asking there and not here is the difference between a useful question and a click nobody needed; and the worktree rows must be matched before the agent catch-all, or choosing one silently sets "New worktree" as the default agent | `clicking_a_drawer_row_asks_for_that_chat_and_plus_starts_a_new_one` |
 | TP-WSCHAT-18 | The mobile switcher never sees drawer rows | Its geometry is exactly two rows per workspace, so a drawer row shifts every position after it and the switcher selects the wrong workspace | `the_mobile_switcher_never_sees_drawer_rows` |
+
+## Completeness — where the drawer's rows come from
+
+The ledger alone was not enough, and the measurement said so plainly. On
+2026-07-30 the fourteen open workspaces held **1510** transcripts between them
+in the agent's own store; the ledger knew **14**, because it only began
+recording the day it was written. A ledger-only drawer showed almost nothing —
+one workspace with 1225 transcripts showed two rows.
+
+The reverse is also true and is why the ledger cannot simply be replaced: a
+chat that started in one directory and moved is filed under the directory it
+started in. One worktree held 1 transcript in its own directory and 4 in the
+ledger. Neither source answers the question alone, so the drawer is their union.
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-DRAW-01 | The drawer lists the chats the agent's own store holds for a workspace's directory, whether or not the ledger ever witnessed them. | The drawer shows only what herdr happened to be running for, which was 14 chats out of 1510. | `the_drawer_lists_chats_the_ledger_never_saw` |
+| TP-DRAW-02 | The store and the ledger are unioned, not substituted. | A chat that started elsewhere and moved in disappears — and that association is the part nothing else records. | `the_drawer_unions_the_store_and_the_ledger_without_duplicating` |
+| TP-DRAW-03 | One row per chat, with the store authoritative for title and mtime. | Every chat both sources know about is listed twice, and the drawer's cap spends its rows on duplicates. | `the_drawer_unions_the_store_and_the_ledger_without_duplicating` |
+| TP-DRAW-04 | Rows are ordered by last activity, newest first. | The drawer cannot answer "which chat was I just in", which is the question it exists for. | `drawer_rows_are_ordered_newest_first` |
+| TP-DRAW-05 | Every row can be dated: the transcript's mtime when known, the ledger's last sighting otherwise. | Only some rows carry an age, which reads as broken rather than partial. | `a_row_without_a_located_transcript_still_reports_its_last_activity` |
+| TP-DRAW-06 | A chat filed under another open workspace's directory is looked for there before the row falls back to a bare id. | Chats that moved show as `9433af4a · claude` forever, even though the title is on disk one directory away. | `a_chat_filed_under_another_workspace_is_still_titled` |
+| TP-DRAW-07 | The cross-directory search runs only for rows that are still untitled. | A directory holding 1225 transcripts is re-read on every refresh to answer a question already answered. | `a_chat_filed_under_another_workspace_is_still_titled` |
+| TP-DRAW-08 | A known conventional-commit prefix is dropped from a branch row's label. | Every row spends five columns saying `feat/` and the part that tells the branches apart is what gets truncated. | `a_known_branch_prefix_is_dropped_and_a_chosen_namespace_is_kept` |
+| TP-DRAW-09 | Only a closed set of prefixes is dropped, and only when something is left. | A namespace the person chose (`codex/…`) is deleted as if it were noise, or a branch called exactly `feat/` renders as a blank row. | `a_known_branch_prefix_is_dropped_and_a_chosen_namespace_is_kept` |
+
+### Cost
+
+Reading the store costs one `read_dir` plus metadata per workspace. Transcripts
+are ranked by mtime from that metadata alone and only the newest few are opened,
+through a parse cache keyed by (mtime, size) — so a refresh re-reads a file only
+when it actually changed. The merge rides the debounced session save, never a
+frame.

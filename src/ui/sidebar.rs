@@ -375,6 +375,47 @@ pub(crate) fn workspace_parent_group_state(
     })
 }
 
+/// Branch-name prefixes worth dropping from a sidebar row.
+///
+/// TP-DRAW-08: in a column this narrow the prefix is pure cost — every row
+/// spends five columns saying "feat/" and the part that tells the branches
+/// apart is what gets truncated. Only this closed set is dropped: a namespace
+/// the person chose themselves (`codex/…`, a customer name) is information,
+/// and guessing at it would delete meaning rather than noise.
+const DROPPED_BRANCH_PREFIXES: &[&str] = &[
+    "worktree/",
+    "feat/",
+    "feature/",
+    "fix/",
+    "hotfix/",
+    "bugfix/",
+    "chore/",
+    "refactor/",
+    "docs/",
+    "test/",
+    "perf/",
+    "style/",
+    "ci/",
+    "build/",
+    "release/",
+];
+
+/// Drop a known conventional-commit prefix from a branch name.
+///
+/// TP-DRAW-09: a prefix is only dropped when something is left. `feat/` on its
+/// own is the whole name, and a row reading as blank is worse than a row
+/// reading as noisy.
+pub(crate) fn strip_branch_prefix(branch: &str) -> &str {
+    for prefix in DROPPED_BRANCH_PREFIXES {
+        if let Some(rest) = branch.strip_prefix(prefix) {
+            if !rest.is_empty() {
+                return rest;
+            }
+        }
+    }
+    branch
+}
+
 pub(crate) fn grouped_child_display_label(
     label: &str,
     branch: Option<&str>,
@@ -386,10 +427,7 @@ pub(crate) fn grouped_child_display_label(
     let Some(branch) = branch else {
         return label.to_string();
     };
-    branch
-        .strip_prefix("worktree/")
-        .unwrap_or(branch)
-        .to_string()
+    strip_branch_prefix(branch).to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1843,10 +1881,19 @@ fn render_workspace_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u1
         // by the checkout above them rather than floating under it.
         let guide_indent = u16::from(workspace_is_group_member(app, row.ws_idx)) * ROW_INDENT_STEP;
         let width = row.rect.width as usize;
+        // TP-DRAW-05: every row carries an age. When the transcript itself
+        // could not be located the ledger's own sighting answers the same
+        // question — a drawer where only some rows are dated reads as broken
+        // rather than partial.
         let age = chat
             .last_modified
             .map(|seen| format_relative_time(seen, now))
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                std::time::UNIX_EPOCH
+                    .checked_add(std::time::Duration::from_millis(chat.last_seen_ms))
+                    .map(|seen| format_relative_time(seen, now))
+                    .unwrap_or_default()
+            });
         let age_width = super::text::display_width(&age);
         let prefix_width = guide_indent as usize + 2 + marker.len();
         let title_budget = width
@@ -4834,9 +4881,11 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let mut app = app_with_worktree_tree(32);
         let rows = drawn_sidebar_rows(&mut app, 26);
 
+        // The branch prefix is dropped on the way to the screen (TP-DRAW-08),
+        // so "fix/clipboard" is drawn as "clipboard".
         let checkout_rows: Vec<&String> = rows
             .iter()
-            .filter(|row| row.contains("master") || row.contains("fix/clipboard"))
+            .filter(|row| row.contains("master") || row.contains("clipboard"))
             .collect();
         assert_eq!(checkout_rows.len(), 2, "both checkouts are drawn");
         for row in checkout_rows {
@@ -4866,6 +4915,40 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 .all(|row| crate::ui::text::display_width(row) <= width),
             "no row may overflow the sidebar at the minimum width"
         );
+    }
+
+    // TP-DRAW-08 + TP-DRAW-09: in a column this narrow the conventional-commit
+    // prefix is pure cost — every row spends five columns saying "feat/" and
+    // the part that tells the branches apart is what gets truncated. Only a
+    // closed set is dropped, and only when something is left.
+    #[test]
+    fn a_known_branch_prefix_is_dropped_and_a_chosen_namespace_is_kept() {
+        for (branch, expected) in [
+            ("feat/t4f-reactive-refresh", "t4f-reactive-refresh"),
+            ("fix/clipboard-nonblocking", "clipboard-nonblocking"),
+            ("chore/bump-deps", "bump-deps"),
+            ("worktree/Tiling", "Tiling"),
+            ("release/0.8.0", "0.8.0"),
+        ] {
+            assert_eq!(strip_branch_prefix(branch), expected, "branch {branch:?}");
+        }
+
+        for kept in [
+            // A namespace the person chose themselves is information.
+            "codex/user-task-isolation",
+            "cypack/mnmveldops",
+            // Nothing would be left, and a blank row is worse than a noisy one.
+            "feat/",
+            "fix/",
+            // No prefix at all.
+            "master",
+        ] {
+            assert_eq!(
+                strip_branch_prefix(kept),
+                kept,
+                "branch {kept:?} must survive untouched"
+            );
+        }
     }
 
     // TP-TREE-01: the repository takes a row of its own. This is the whole
