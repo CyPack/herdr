@@ -307,6 +307,49 @@ impl AppState {
     /// Open the new-chat agent selector for `proj_idx` at `(x, y)`, with the
     /// current default agent highlighted. When the project is also open as a
     /// workspace the menu grows that workspace's worktree actions.
+    /// Open a chat remembered under a workspace.
+    ///
+    /// Same contract the Projects tab uses, so one click means one thing on
+    /// both surfaces: a chat already wired to a live tab is FOCUSED, never
+    /// resumed a second time — resuming it again would spawn a duplicate
+    /// process against the same transcript.
+    pub(crate) fn open_workspace_chat(&mut self, ws_idx: usize, chat_idx: usize) {
+        let Some(workspace) = self.workspaces.get(ws_idx) else {
+            return;
+        };
+        let project_path = workspace.identity_cwd.clone();
+        let key = crate::persist::workspace_chats::ledger_key(&project_path);
+        let Some(session_id) = self
+            .workspace_chat_rows
+            .get(&key)
+            .and_then(|rows| rows.get(chat_idx))
+            .map(|row| row.session_id.clone())
+        else {
+            return;
+        };
+
+        if let Some((live_ws, live_tab)) = self.find_resumed_chat_tab(&session_id) {
+            self.switch_workspace_tab(live_ws, live_tab);
+            self.mode = crate::app::Mode::Terminal;
+            return;
+        }
+        self.request_project_chat_tab = Some(crate::app::state::ProjectChatTabRequest {
+            project_path,
+            session_id: Some(session_id),
+        });
+    }
+
+    /// Start a fresh chat rooted at a workspace's directory.
+    pub(crate) fn request_workspace_chat(&mut self, ws_idx: usize) {
+        let Some(workspace) = self.workspaces.get(ws_idx) else {
+            return;
+        };
+        self.request_project_chat_tab = Some(crate::app::state::ProjectChatTabRequest {
+            project_path: workspace.identity_cwd.clone(),
+            session_id: None,
+        });
+    }
+
     pub(super) fn open_project_new_chat_menu(&mut self, proj_idx: usize, x: u16, y: u16) {
         let highlighted = crate::app::projects::CHAT_AGENTS
             .iter()

@@ -447,6 +447,21 @@ pub(crate) fn workspace_chat_toggle_cell(app: &AppState, card_rect: Rect, ws_idx
     Rect::new(card_rect.x + offset, card_rect.y, 1, 1)
 }
 
+/// The "start a chat here" cell: the row's trailing edge, mirroring the "+" the
+/// Projects tab puts on every project header.
+///
+/// Trailing rather than leading because the leading edge is where disclosure
+/// lives; a create action sharing that space would be pressed by someone
+/// meaning to expand. Offered on every workspace row, including ones with no
+/// history — starting the first chat somewhere is exactly when the affordance
+/// matters most.
+pub(crate) fn workspace_new_chat_cell(card_rect: Rect) -> Rect {
+    if card_rect.width < 6 {
+        return Rect::default();
+    }
+    Rect::new(card_rect.x + card_rect.width - 1, card_rect.y, 1, 1)
+}
+
 /// The Spaces rows the mobile switcher lays out: workspaces only.
 ///
 /// Its geometry is a strict two rows per workspace and it is a switcher rather
@@ -1568,6 +1583,17 @@ fn render_workspace_list(
                 Paragraph::new(Line::from(spans)),
                 Rect::new(card.rect.x, row_y + row_index as u16, card.rect.width, 1),
             );
+        }
+
+        // TP-WSCHAT-23: the create affordance, mirroring the Projects tab's
+        // per-project "+". Mouse chrome only, like every other button here.
+        if app.mouse_capture {
+            let plus = workspace_new_chat_cell(card.rect);
+            if plus.width > 0 && plus.y < list_bottom {
+                frame.buffer_mut()[(plus.x, plus.y)]
+                    .set_symbol("+")
+                    .set_style(Style::default().fg(p.overlay0));
+            }
         }
 
         // TP-WSCHAT-19: the drawer affordance. Drawn last so it sits on top of

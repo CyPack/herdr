@@ -307,9 +307,15 @@ mod tests {
         // counts, same cursor and hyperlink), but the sidebar paints the
         // fork's Spaces/Projects/Files header tabs and its own section rows,
         // so the byte-level digest necessarily differs from upstream's.
+        //
+        // Re-baselined again 2026-07-30: every workspace row now carries a
+        // trailing "+" that starts a chat there (TP-WSCHAT-23). The structural
+        // assertions above are unchanged — this digest tracks pixels, and one
+        // more painted glyph per row is exactly the kind of change it is meant
+        // to surface rather than hide.
         assert_eq!(
             frame_digest(&frame),
-            "28959a6fdb015028e107985c4a7bacb6ee0e4371c8be938bbe788369962979d1"
+            "8c58a971009f1765cf3eab34c28ff626711babe1e610e4adc7c31889bd67ac55"
         );
     }
 

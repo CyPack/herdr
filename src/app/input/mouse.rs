@@ -750,9 +750,39 @@ impl AppState {
                     } else {
                         self.view.workspace_card_areas.clone()
                     };
-                    // The drawer toggle sits on the row's right edge, checked
-                    // before the group chevron on the left so neither can
-                    // swallow the other's cell.
+                    // A chat row resumes its session. Checked before the
+                    // workspace cards because the two vectors describe
+                    // different rows and only one of them can own a click.
+                    if let Some(hit) = self
+                        .view
+                        .workspace_chat_row_areas
+                        .iter()
+                        .find(|row| {
+                            mouse.row == row.rect.y
+                                && mouse.column >= row.rect.x
+                                && mouse.column < row.rect.x + row.rect.width
+                        })
+                        .cloned()
+                    {
+                        self.open_workspace_chat(hit.ws_idx, hit.chat_idx);
+                        return None;
+                    }
+
+                    // "+" on the trailing edge starts a chat in that workspace.
+                    if let Some(card) = cards
+                        .iter()
+                        .find(|card| {
+                            let cell = crate::ui::workspace_new_chat_cell(card.rect);
+                            cell.width > 0 && mouse.row == cell.y && mouse.column == cell.x
+                        })
+                        .cloned()
+                    {
+                        self.request_workspace_chat(card.ws_idx);
+                        return None;
+                    }
+
+                    // The drawer toggle leads the row, checked after the
+                    // trailing "+" so neither can swallow the other's cell.
                     if let Some(card) = cards.iter().find(|card| {
                         let cell =
                             crate::ui::workspace_chat_toggle_cell(self, card.rect, card.ws_idx);
@@ -2523,6 +2553,70 @@ mod tests {
             Bytes::from_static(b"\x1b[<2;4;5m")
         );
         assert!(input_rx.try_recv().is_err());
+    }
+
+    // TP-WSCHAT-24: a chat row that cannot be clicked is decoration. Clicking
+    // one asks for that session; a chat already wired to a live tab is FOCUSED
+    // instead, because resuming it twice spawns a second process against one
+    // transcript. The trailing "+" starts a fresh chat and must not be
+    // swallowed by the row it sits on.
+    #[test]
+    fn clicking_a_drawer_row_asks_for_that_chat_and_plus_starts_a_new_one() {
+        let mut app = app_for_mouse_test();
+        let mut workspace = crate::workspace::Workspace::test_new("chat-click");
+        workspace.identity_cwd = std::env::temp_dir();
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mobile_width_threshold = 0;
+        let key = crate::persist::workspace_chats::ledger_key(&std::env::temp_dir());
+        app.state.workspace_chat_rows.insert(
+            key.clone(),
+            vec![crate::app::state::WorkspaceChatRow {
+                session_id: "resume-me".into(),
+                agent: "claude".into(),
+                title: Some("remembered chat".into()),
+                last_seen_ms: 1,
+                last_modified: None,
+            }],
+        );
+        app.state.expanded_chat_workspaces.insert(key);
+
+        let area = ratatui::layout::Rect::new(0, 0, 106, 20);
+        crate::ui::compute_view(&mut app.state, area);
+        let row = app.state.view.workspace_chat_row_areas[0].clone();
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            row.rect.x + 5,
+            row.rect.y,
+        ));
+        let request = app
+            .state
+            .request_project_chat_tab
+            .take()
+            .expect("clicking a drawer row must ask for that chat");
+        assert_eq!(request.session_id.as_deref(), Some("resume-me"));
+        assert_eq!(request.project_path, std::env::temp_dir());
+
+        crate::ui::compute_view(&mut app.state, area);
+        let card = app.state.view.workspace_card_areas[0];
+        let plus = crate::ui::workspace_new_chat_cell(card.rect);
+        assert!(plus.width > 0, "every workspace row offers a create button");
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            plus.x,
+            plus.y,
+        ));
+        let fresh = app
+            .state
+            .request_project_chat_tab
+            .take()
+            .expect("the plus must start a chat");
+        assert_eq!(
+            fresh.session_id, None,
+            "a fresh chat resumes nothing — that is what makes it fresh"
+        );
+        assert_eq!(fresh.project_path, std::env::temp_dir());
     }
 
     // TP-WSCHAT-19: the drawer toggle must open AND close, and it must not

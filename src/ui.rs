@@ -129,7 +129,7 @@ pub(crate) use self::{
         projects_scrollbar_rect, sidebar_section_divider_rect, workspace_chat_toggle_cell,
         workspace_drop_indicator_row, workspace_list_entries, workspace_list_entries_expanded,
         workspace_list_rect, workspace_list_scroll_metrics, workspace_list_scrollbar_rect,
-        workspace_parent_group_state, AgentPanelEntry, WorkspaceListEntry,
+        workspace_new_chat_cell, workspace_parent_group_state, AgentPanelEntry, WorkspaceListEntry,
     },
 };
 pub(crate) use self::{
