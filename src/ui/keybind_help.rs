@@ -13,7 +13,7 @@ use super::scrollbar::{release_notes_scrollbar_rect, render_scrollbar};
 use super::text::truncate_end;
 use super::widgets::{
     modal_stack_areas, panel_contrast_fg, render_action_button, render_modal_header,
-    render_modal_shell,
+    render_modal_shell_or_notice,
 };
 use crate::app::AppState;
 
@@ -336,12 +336,17 @@ fn search_hint_for_width(width: u16) -> &'static str {
 pub(super) fn render_keybind_help_overlay(app: &AppState, frame: &mut Frame) {
     super::dim_background(frame, frame.area());
 
-    let Some(inner) = render_modal_shell(frame, frame.area(), 76, 22, &app.palette) else {
+    let Some(inner) = render_modal_shell_or_notice(
+        frame,
+        frame.area(),
+        76,
+        22,
+        "keybinds",
+        (20, 6),
+        &app.palette,
+    ) else {
         return;
     };
-    if inner.height < 6 || inner.width < 20 {
-        return;
-    }
 
     let stack = modal_stack_areas(inner, 2, 1, 0, 1);
     let header_rows =

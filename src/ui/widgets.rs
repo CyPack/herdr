@@ -85,15 +85,70 @@ pub(crate) fn centered_popup_rect(area: Rect, popup_w: u16, popup_h: u16) -> Opt
     Some(Rect::new(popup_x, popup_y, popup_w, popup_h))
 }
 
-pub(super) fn render_modal_shell(
+/// The widest "this does not fit" line that fits `width`.
+///
+/// The exit key is in every variant, because the reader of this line is by
+/// definition someone who opened something they cannot see and needs to know
+/// they are not stuck.
+fn too_small_text(title: &str, width: u16) -> String {
+    let width = width as usize;
+    for candidate in [
+        format!(" {title} · too small · esc"),
+        format!(" {title} · esc"),
+        " esc".to_string(),
+    ] {
+        if candidate.chars().count() <= width {
+            return candidate;
+        }
+    }
+    super::text::truncate_end(" esc", width)
+}
+
+/// Draw a one-line notice in place of a modal the viewport cannot hold.
+///
+/// The alternative — the one this replaces — was to return without drawing
+/// anything. The mode stayed active, so the terminal showed the surface behind
+/// an overlay that was not there, and every keystroke went to an overlay the
+/// reader could not see. An unexplained blank is worse than either an empty
+/// state or an error, because it gives the reader nothing to act on.
+pub(super) fn render_too_small_notice(frame: &mut Frame, area: Rect, title: &str, p: &Palette) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let strip = Rect::new(area.x, area.y + area.height / 2, area.width, 1);
+    frame.render_widget(Clear, strip);
+    frame.render_widget(
+        Paragraph::new(too_small_text(title, strip.width)).style(
+            Style::default()
+                .fg(p.text)
+                .bg(p.surface0)
+                .add_modifier(Modifier::BOLD),
+        ),
+        strip,
+    );
+}
+
+/// Draw a modal frame, or a notice saying the viewport cannot hold one.
+///
+/// `min_inner` is the interior the caller needs before its body is worth
+/// drawing; below it the caller used to return silently, which is the same
+/// blank screen by a different route.
+pub(super) fn render_modal_shell_or_notice(
     frame: &mut Frame,
     area: Rect,
     popup_w: u16,
     popup_h: u16,
+    title: &str,
+    min_inner: (u16, u16),
     p: &Palette,
 ) -> Option<Rect> {
-    let popup = centered_popup_rect(area, popup_w, popup_h)?;
-    render_panel_shell(frame, popup, p.accent, p.panel_bg)
+    let inner = centered_popup_rect(area, popup_w, popup_h)
+        .and_then(|popup| render_panel_shell(frame, popup, p.accent, p.panel_bg))
+        .filter(|inner| inner.width >= min_inner.0 && inner.height >= min_inner.1);
+    if inner.is_none() {
+        render_too_small_notice(frame, area, title, p);
+    }
+    inner
 }
 
 pub(super) fn render_modal_header(frame: &mut Frame, area: Rect, title: &str, p: &Palette) {
@@ -393,5 +448,90 @@ mod tests {
         assert_eq!(centered_popup_rect(Rect::new(0, 0, 3, 3), 76, 22), None);
         assert_eq!(centered_popup_rect(Rect::new(0, 0, 0, 0), 76, 22), None);
         assert_eq!(centered_popup_rect(Rect::new(0, 0, 36, 3), 76, 22), None);
+    }
+
+    // TP-MOB-22: a viewport too small for a modal draws a notice naming the
+    // overlay and its exit key, never a blank. Returning without drawing left
+    // the mode active over a surface with no overlay on it, so every keystroke
+    // went somewhere the reader could not see.
+    #[test]
+    fn a_modal_too_small_to_draw_leaves_a_notice() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let palette = crate::app::state::Palette::catppuccin();
+        // Narrow enough that even a full-width popup leaves less interior than
+        // the help body needs. A 24x10 viewport now *does* fit it, which is
+        // itself what giving tight viewports the full width bought.
+        let area = Rect::new(0, 0, 16, 8);
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height))
+            .expect("test terminal should initialize");
+        terminal
+            .draw(|frame| {
+                assert!(
+                    render_modal_shell_or_notice(
+                        frame,
+                        area,
+                        76,
+                        22,
+                        "keybinds",
+                        (20, 6),
+                        &palette
+                    )
+                    .is_none(),
+                    "this viewport cannot hold the modal"
+                );
+            })
+            .expect("draw");
+
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(
+            rendered.contains("keybinds"),
+            "the notice names the overlay that could not be drawn: {rendered:?}"
+        );
+        assert!(
+            rendered.contains("esc"),
+            "the notice names the key that gets the reader out: {rendered:?}"
+        );
+    }
+
+    // TP-MOB-23: the notice keeps the exit key at every width and never
+    // overruns its strip.
+    #[test]
+    fn the_too_small_notice_always_names_the_exit_and_fits() {
+        for width in 1..=60u16 {
+            let text = too_small_text("keybinds", width);
+            assert!(
+                text.chars().count() <= width as usize,
+                "notice {text:?} overruns its {width}-column strip"
+            );
+            if width >= 4 {
+                assert!(
+                    text.contains("esc"),
+                    "notice {text:?} at width {width} drops the exit key"
+                );
+            }
+        }
+    }
+
+    // TP-MOB-24: drawing the notice never panics, down to a one-cell frame.
+    #[test]
+    fn the_too_small_notice_survives_a_one_cell_frame() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let palette = crate::app::state::Palette::catppuccin();
+        for (w, h) in [(1u16, 1u16), (2, 1), (1, 2), (5, 3), (24, 10)] {
+            let area = Rect::new(0, 0, w, h);
+            let mut terminal =
+                Terminal::new(TestBackend::new(w, h)).expect("test terminal should initialize");
+            terminal
+                .draw(|frame| render_too_small_notice(frame, area, "settings", &palette))
+                .expect("draw");
+        }
     }
 }

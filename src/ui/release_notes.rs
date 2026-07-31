@@ -9,7 +9,7 @@ use ratatui::{
 use super::scrollbar::{release_notes_scrollbar_rect, render_scrollbar};
 use super::widgets::{
     action_button_width, modal_stack_areas, panel_contrast_fg, render_action_button,
-    render_modal_header, render_modal_shell,
+    render_modal_header, render_modal_shell_or_notice,
 };
 use crate::app::{
     state::{Palette, ProductAnnouncementState, ReleaseNotesState},
@@ -26,18 +26,17 @@ pub(super) fn render_release_notes_overlay(app: &AppState, frame: &mut Frame, ar
 
     super::dim_background(frame, area);
 
-    let Some(inner) = render_modal_shell(
+    let Some(inner) = render_modal_shell_or_notice(
         frame,
         area,
         RELEASE_NOTES_MODAL_SIZE.0,
         RELEASE_NOTES_MODAL_SIZE.1,
+        "release notes",
+        (20, 8),
         &app.palette,
     ) else {
         return;
     };
-    if inner.height < 8 || inner.width < 20 {
-        return;
-    }
 
     let stack = modal_stack_areas(inner, 2, 1, 0, 1);
     let header_rows =
@@ -141,18 +140,17 @@ pub(super) fn render_product_announcement_overlay(app: &AppState, frame: &mut Fr
 
     super::dim_background(frame, area);
 
-    let Some(inner) = render_modal_shell(
+    let Some(inner) = render_modal_shell_or_notice(
         frame,
         area,
         PRODUCT_ANNOUNCEMENT_MODAL_SIZE.0,
         PRODUCT_ANNOUNCEMENT_MODAL_SIZE.1,
+        "what's new",
+        (20, 8),
         &app.palette,
     ) else {
         return;
     };
-    if inner.height < 8 || inner.width < 20 {
-        return;
-    }
 
     let stack = modal_stack_areas(inner, 2, 1, 0, 1);
     let header_rows =

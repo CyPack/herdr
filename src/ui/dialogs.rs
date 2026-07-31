@@ -9,7 +9,7 @@ use ratatui::{
 use super::text::{display_width_u16, truncate_end};
 use super::widgets::{
     action_button_row_rects, centered_popup_rect, panel_contrast_fg, render_action_button,
-    render_modal_header, render_modal_shell, render_panel_shell, ActionButtonSpec,
+    render_modal_header, render_modal_shell_or_notice, render_panel_shell, ActionButtonSpec,
 };
 use crate::app::{state::WorktreeOpenState, AppState, Mode};
 use crate::terminal::TerminalRuntimeRegistry;
@@ -55,12 +55,10 @@ pub(super) fn render_rename_overlay(app: &AppState, frame: &mut Frame, area: Rec
         _ => return,
     };
 
-    let Some(inner) = render_modal_shell(frame, area, 56, 7, &app.palette) else {
+    let Some(inner) = render_modal_shell_or_notice(frame, area, 56, 7, title, (0, 4), &app.palette)
+    else {
         return;
     };
-    if inner.height < 4 {
-        return;
-    }
 
     let rows = Layout::vertical([
         Constraint::Length(1),
@@ -249,18 +247,17 @@ pub(super) fn render_new_linked_worktree_overlay(app: &AppState, frame: &mut Fra
     };
 
     super::dim_background(frame, area);
-    let Some(inner) = render_modal_shell(
+    let Some(inner) = render_modal_shell_or_notice(
         frame,
         area,
         NEW_LINKED_WORKTREE_POPUP_WIDTH,
         NEW_LINKED_WORKTREE_POPUP_HEIGHT,
+        "new worktree",
+        (0, 9),
         &app.palette,
     ) else {
         return;
     };
-    if inner.height < 9 {
-        return;
-    }
 
     let rows = Layout::vertical([
         Constraint::Length(1),
@@ -445,12 +442,17 @@ pub(super) fn render_open_existing_worktree_overlay(app: &AppState, frame: &mut 
         .saturating_mul(2)
         .saturating_add(7)
         .clamp(12, 26);
-    let Some(inner) = render_modal_shell(frame, area, 96, height, &app.palette) else {
+    let Some(inner) = render_modal_shell_or_notice(
+        frame,
+        area,
+        96,
+        height,
+        "open worktree",
+        (0, 8),
+        &app.palette,
+    ) else {
         return;
     };
-    if inner.height < 8 {
-        return;
-    }
 
     render_modal_header(
         frame,
@@ -819,18 +821,17 @@ pub(super) fn render_file_delete_confirmation_overlay(
         return;
     };
     super::dim_background(frame, area);
-    let Some(inner) = render_modal_shell(
+    let Some(inner) = render_modal_shell_or_notice(
         frame,
         area,
         FILE_DELETE_POPUP_WIDTH,
         FILE_DELETE_POPUP_HEIGHT,
+        "delete file",
+        (0, 5),
         &app.palette,
     ) else {
         return;
     };
-    if inner.height < 5 {
-        return;
-    }
 
     let count = confirmation.paths.len();
     let noun = if count == 1 { "item" } else { "items" };

@@ -8,7 +8,7 @@ use ratatui::{
 
 use super::widgets::{
     action_button_width, modal_stack_areas, panel_contrast_fg, render_action_button,
-    render_modal_shell,
+    render_modal_shell_or_notice,
 };
 use crate::app::AppState;
 
@@ -29,12 +29,11 @@ pub(crate) fn onboarding_welcome_continue_rect(area: Rect) -> Rect {
 }
 
 fn render_onboarding_welcome(app: &AppState, frame: &mut Frame, area: Rect) {
-    let Some(inner) = render_modal_shell(frame, area, 64, 16, &app.palette) else {
+    let Some(inner) =
+        render_modal_shell_or_notice(frame, area, 64, 16, "welcome", (0, 11), &app.palette)
+    else {
         return;
     };
-    if inner.height < 11 {
-        return;
-    }
 
     let stack = modal_stack_areas(inner, 2, 0, 1, 1);
     let header_rows =

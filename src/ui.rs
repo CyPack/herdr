@@ -2629,6 +2629,101 @@ mod tests {
             .assert_cursor_position((focused.inner_rect.x + 4, focused.inner_rect.y));
     }
 
+    // TP-MOB-25: every overlay reached by entering a mode paints something on
+    // a viewport too small to hold it. A mode with no visible overlay is a
+    // terminal that has stopped responding as far as the reader can tell:
+    // keystrokes go to a surface that is not on screen, and nothing says which
+    // key gets them back.
+    #[test]
+    fn no_overlay_mode_leaves_a_blank_screen_on_a_tiny_viewport() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let modes = [
+            Mode::Onboarding,
+            Mode::ReleaseNotes,
+            Mode::ProductAnnouncement,
+            Mode::Settings,
+            Mode::KeybindHelp,
+            Mode::RenameWorkspace,
+            Mode::RenameTab,
+            Mode::NewLinkedWorktree,
+            Mode::OpenExistingWorktree,
+        ];
+
+        for mode in modes {
+            for (w, h) in [(16u16, 8u16), (20, 10), (28, 12)] {
+                let mut app = crate::app::state::AppState::test_new();
+                app.workspaces = vec![Workspace::test_new("one")];
+                app.active = Some(0);
+                app.selected = 0;
+                // These two modes are only reachable when there is something to
+                // announce, so give them their content: an overlay that draws
+                // nothing because it has nothing to say is a different
+                // question from one that draws nothing because it does not fit.
+                app.release_notes = Some(crate::app::state::ReleaseNotesState {
+                    version: "0.7.5".to_string(),
+                    body: "a line of notes".to_string(),
+                    scroll: 0,
+                    preview: false,
+                });
+                app.product_announcement = Some(crate::app::state::ProductAnnouncementState {
+                    version: "0.7.5".to_string(),
+                    id: "test".to_string(),
+                    title: "something changed".to_string(),
+                    body: "a line of announcement".to_string(),
+                    scroll: 0,
+                    preview: false,
+                });
+                app.worktree_create = Some(crate::app::state::WorktreeCreateState {
+                    source_workspace_id: "one".to_string(),
+                    source_checkout_path: std::path::PathBuf::from("/tmp/herdr-test-repo"),
+                    source_existing_membership: None,
+                    source_repo_root: std::path::PathBuf::from("/tmp/herdr-test-repo"),
+                    repo_key: "herdr-test-repo".to_string(),
+                    repo_name: "herdr-test-repo".to_string(),
+                    branch: "feature".to_string(),
+                    checkout_path: std::path::PathBuf::from("/tmp/herdr-test-repo-feature"),
+                    error: None,
+                    creating: false,
+                });
+                app.worktree_open = Some(crate::app::state::WorktreeOpenState {
+                    source_workspace_id: "one".to_string(),
+                    source_existing_membership: None,
+                    source_checkout_path: std::path::PathBuf::from("/tmp/herdr-test-repo"),
+                    source_repo_root: std::path::PathBuf::from("/tmp/herdr-test-repo"),
+                    repo_key: "herdr-test-repo".to_string(),
+                    repo_name: "herdr-test-repo".to_string(),
+                    entries: Vec::new(),
+                    selected: 0,
+                    query: String::new(),
+                    search_focused: false,
+                    error: None,
+                });
+                app.mode = mode;
+                let area = Rect::new(0, 0, w, h);
+                compute_view(&mut app, area);
+
+                let mut terminal = Terminal::new(TestBackend::new(w, h)).expect("test terminal");
+                terminal
+                    .draw(|frame| render(&app, frame))
+                    .expect("overlay renders");
+                let rendered: String = terminal
+                    .backend()
+                    .buffer()
+                    .content()
+                    .iter()
+                    .map(|cell| cell.symbol())
+                    .collect();
+
+                assert!(
+                    rendered.contains("esc") || rendered.contains('┌'),
+                    "{mode:?} at {w}x{h} drew neither a modal frame nor a way out: \
+                     {rendered:?}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn mobile_width_uses_header_and_full_width_terminal() {
         let mut app = crate::app::state::AppState::test_new();

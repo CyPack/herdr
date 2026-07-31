@@ -9,7 +9,7 @@ use ratatui::{
 use super::widgets::{
     action_button_row_rects, centered_popup_rect, modal_stack_areas, panel_contrast_fg,
     popup_width_for, render_action_button, render_modal_choice_list, render_panel_shell,
-    ActionButtonSpec,
+    render_too_small_notice, ActionButtonSpec,
 };
 use crate::{
     app::{
@@ -56,18 +56,15 @@ pub(super) fn render_settings_overlay(app: &AppState, frame: &mut Frame, area: R
     use crate::app::state::SettingsSection;
 
     let p = &app.palette;
-    let Some(popup) = settings_popup_rect_in(app, area) else {
-        return;
-    };
-
     super::dim_background(frame, area);
 
-    let Some(inner) = render_panel_shell(frame, popup, p.accent, p.panel_bg) else {
+    let inner = settings_popup_rect_in(app, area)
+        .and_then(|popup| render_panel_shell(frame, popup, p.accent, p.panel_bg))
+        .filter(|inner| inner.width >= 10 && inner.height >= 4);
+    let Some(inner) = inner else {
+        render_too_small_notice(frame, area, "settings", p);
         return;
     };
-    if inner.height < 4 || inner.width < 10 {
-        return;
-    }
 
     let stack = modal_stack_areas(inner, 3, 2, 0, 1);
     let header_rows = Layout::vertical([
