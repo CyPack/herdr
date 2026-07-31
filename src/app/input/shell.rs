@@ -285,6 +285,9 @@ impl AppState {
             }
             CollapseDecision::Expanded { width } => {
                 self.sidebar_collapsed = false;
+                // An explicit expansion outranks the short-viewport fold for
+                // the rest of the session.
+                self.sidebar_expanded_explicitly = true;
                 self.sidebar_width = width;
                 self.sidebar_width_source = SidebarWidthSource::Manual;
                 self.sidebar_width_auto = false;

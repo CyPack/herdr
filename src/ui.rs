@@ -262,7 +262,15 @@ fn desktop_tab_bar_and_terminal_area(
     // open stage app is a second entry, so the strip must come back or the
     // Files tab would be unreachable by mouse.
     let strip_entries = ws.tabs.len() + app.stage.app_tab_instances().count();
-    let hide_single_tab_bar = app.hide_tab_bar_when_single_tab && strip_entries == 1;
+    // A phone held sideways is wide but only fourteen rows tall. A strip
+    // showing one entry costs a row and says nothing there, so the short
+    // viewport applies the same rule the setting applies — and gives the row
+    // back the moment the viewport grows, because this reads the size rather
+    // than changing the setting.
+    let short_viewport = size_class::SizeClass::of(main_area, app.mobile_width_threshold).height
+        == size_class::HeightClass::Short;
+    let hide_single_tab_bar =
+        (app.hide_tab_bar_when_single_tab || short_viewport) && strip_entries == 1;
     if !hide_single_tab_bar && main_area.height > 1 {
         let [tab_bar_rect, terminal_area] =
             Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(main_area);
@@ -311,7 +319,15 @@ fn compute_view_internal(
         return;
     }
 
-    let committed_sidebar_w = if app.sidebar_collapsed {
+    // A short viewport spends its rows on the terminal, so the sidebar falls
+    // back to its status rail unless the person expanded it themselves. This
+    // reads the viewport rather than writing `sidebar_collapsed`: the setting
+    // is a preference, the size is a fact, and conflating them would leave a
+    // collapsed sidebar behind after the terminal grew back.
+    let auto_collapsed = size_class::SizeClass::of(area, app.mobile_width_threshold).height
+        == size_class::HeightClass::Short
+        && !app.sidebar_expanded_explicitly;
+    let committed_sidebar_w = if app.sidebar_collapsed || auto_collapsed {
         match app.sidebar_collapsed_mode {
             crate::config::SidebarCollapsedModeConfig::Compact => COLLAPSED_WIDTH,
             crate::config::SidebarCollapsedModeConfig::Hidden => 0,
@@ -2627,6 +2643,108 @@ mod tests {
         terminal
             .backend_mut()
             .assert_cursor_position((focused.inner_rect.x + 4, focused.inner_rect.y));
+    }
+
+    /// A desktop-shaped app with one workspace and one tab.
+    fn desktop_app() -> crate::app::state::AppState {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app
+    }
+
+    // TP-MOB-26: the shell choice for every viewport with room to spare is
+    // exactly what it was. Height became an input to the layout; it must not
+    // have become an input to which shell is drawn.
+    #[test]
+    fn the_shell_choice_is_unchanged_for_every_viewport() {
+        for width in [20u16, 36, 44, 64, 65, 80, 120] {
+            for height in [8u16, 14, 16, 17, 24, 40] {
+                let mut app = desktop_app();
+                compute_view(&mut app, Rect::new(0, 0, width, height));
+                let expected = if width > 0 && width <= app.mobile_width_threshold {
+                    ViewLayout::Mobile
+                } else {
+                    ViewLayout::Desktop
+                };
+                assert_eq!(
+                    app.view.layout, expected,
+                    "{width}x{height} must keep the shell its width chose"
+                );
+            }
+        }
+    }
+
+    // TP-MOB-27: a wide but very short viewport — a phone held sideways —
+    // stays on the desktop shell. Ninety columns fit a sidebar; the problem
+    // there is rows, and swapping shells would not have returned any.
+    #[test]
+    fn a_wide_short_viewport_keeps_the_desktop_shell() {
+        let mut app = desktop_app();
+        compute_view(&mut app, Rect::new(0, 0, 90, 14));
+        assert_eq!(app.view.layout, ViewLayout::Desktop);
+    }
+
+    // TP-MOB-28: on a short viewport the sidebar falls back to its status
+    // rail, giving the terminal the columns back.
+    #[test]
+    fn a_short_viewport_folds_the_sidebar_to_its_rail() {
+        let mut app = desktop_app();
+        compute_view(&mut app, Rect::new(0, 0, 90, 14));
+        assert_eq!(app.view.sidebar_rect.width, COLLAPSED_WIDTH);
+
+        // And gives it back once the rows return, because this reads the
+        // viewport rather than writing the preference.
+        compute_view(&mut app, Rect::new(0, 0, 90, 40));
+        assert!(
+            app.view.sidebar_rect.width > COLLAPSED_WIDTH,
+            "a taller viewport restores the sidebar it folded"
+        );
+        assert!(
+            !app.sidebar_collapsed,
+            "the fold must not have written the collapse preference"
+        );
+    }
+
+    // TP-MOB-29: someone who expanded the sidebar themselves has answered the
+    // question the heuristic was guessing at, so the guess stops arguing.
+    #[test]
+    fn an_explicit_expansion_outranks_the_short_viewport_fold() {
+        let mut app = desktop_app();
+        app.sidebar_expanded_explicitly = true;
+        compute_view(&mut app, Rect::new(0, 0, 90, 14));
+        assert!(
+            app.view.sidebar_rect.width > COLLAPSED_WIDTH,
+            "an explicit expansion survives a short viewport"
+        );
+    }
+
+    // TP-MOB-30: a short viewport hides a tab strip that shows a single entry,
+    // and brings it back when the rows return.
+    #[test]
+    fn a_short_viewport_hides_a_single_entry_tab_strip() {
+        let mut app = desktop_app();
+        compute_view(&mut app, Rect::new(0, 0, 90, 14));
+        assert_eq!(app.view.tab_bar_rect, Rect::default());
+
+        compute_view(&mut app, Rect::new(0, 0, 90, 40));
+        assert_ne!(
+            app.view.tab_bar_rect,
+            Rect::default(),
+            "a taller viewport restores the strip"
+        );
+    }
+
+    // TP-MOB-31: a short viewport keeps a tab strip that shows more than one
+    // entry — hiding it there would make the other tabs unreachable by mouse.
+    #[test]
+    fn a_short_viewport_keeps_a_multi_entry_tab_strip() {
+        let mut app = desktop_app();
+        app.workspaces[0].test_add_tab(Some("logs"));
+        compute_view(&mut app, Rect::new(0, 0, 90, 14));
+        assert_ne!(app.view.tab_bar_rect, Rect::default());
     }
 
     // TP-MOB-25: every overlay reached by entering a mode paints something on

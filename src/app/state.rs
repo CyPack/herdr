@@ -3114,6 +3114,13 @@ pub struct AppState {
     pub sidebar_width_source: SidebarWidthSource,
     pub sidebar_width_auto: bool,
     pub sidebar_collapsed: bool,
+    /// Set when the person expands the sidebar themselves.
+    ///
+    /// A short viewport folds the sidebar to its status rail on its own. That
+    /// is the right default and the wrong override: someone who deliberately
+    /// opened the sidebar on a fourteen-row terminal has answered the question
+    /// the heuristic was guessing at, and the guess must stop arguing.
+    pub sidebar_expanded_explicitly: bool,
     pub sidebar_collapsed_mode: crate::config::SidebarCollapsedModeConfig,
     /// Ratio of sidebar height allocated to the workspaces section.
     pub sidebar_section_split: f32,
@@ -3965,6 +3972,7 @@ impl AppState {
             sidebar_width_source: SidebarWidthSource::ConfigDefault,
             sidebar_width_auto: false,
             sidebar_collapsed: false,
+            sidebar_expanded_explicitly: false,
             sidebar_collapsed_mode: crate::config::SidebarCollapsedModeConfig::Compact,
             sidebar_section_split: 0.5,
             agent_panel_sort: AgentPanelSort::Spaces,
