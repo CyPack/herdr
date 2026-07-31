@@ -129,6 +129,15 @@ impl App {
             return;
         }
 
+        // An open mobile drawer owns the arrow keys, Enter and Tab. On the
+        // clients this surface exists for, a tap is not a reliable click —
+        // iOS terminals bind long-press and drag to their own gestures — so
+        // the keyboard has to reach every row a finger can, including the
+        // agents the drawer leads with.
+        if self.state.handle_mobile_drawer_key(raw_key.as_key_event()) {
+            return;
+        }
+
         if self
             .state
             .keybinds
@@ -1277,6 +1286,13 @@ pub(crate) fn handle_navigate_key(state: &mut AppState, key: KeyEvent) {
 
     if state.is_prefix_key(terminal_key) || key.code == KeyCode::Esc {
         leave_navigate_mode(state);
+        return;
+    }
+
+    // The open drawer owns its keys on both paths. Adding this to only the
+    // interactive one would leave the API and headless clients driving a
+    // surface they cannot see.
+    if state.handle_mobile_drawer_key(key) {
         return;
     }
 
@@ -2500,6 +2516,168 @@ navigate_pane_right = "ctrl+l"
         );
         assert_eq!(state.workspaces[0].focused_pane_id(), Some(right));
         assert_eq!(state.mode, Mode::Navigate);
+    }
+
+    /// A mobile state with an open drawer, already through `compute_view`.
+    fn mobile_drawer_state(
+        drawer: crate::app::state::MobileDrawer,
+        spaces: usize,
+        tabs: usize,
+    ) -> AppState {
+        let mut state = state_with_workspaces(
+            &(0..spaces)
+                .map(|idx| format!("ws-{idx}"))
+                .collect::<Vec<_>>()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        );
+        for _ in 1..tabs {
+            state.workspaces[0].test_add_tab(None);
+        }
+        state.active = Some(0);
+        state.selected = 0;
+        state.mode = Mode::Navigate;
+        state.mobile_drawer = drawer;
+        crate::ui::compute_view(&mut state, ratatui::layout::Rect::new(0, 0, 44, 24));
+        state.mobile_drawer_cursor = crate::ui::mobile_drawer_default_cursor(&state);
+        state
+    }
+
+    fn press(state: &mut AppState, code: KeyCode) {
+        handle_navigate_key(state, KeyEvent::new(code, KeyModifiers::empty()));
+    }
+
+    // TP-MOB-46: the cursor opens on the row the reader is already in, so the
+    // first arrow key moves relative to their context rather than from the top
+    // of a list they did not ask to be at the top of.
+    #[test]
+    fn the_drawer_cursor_opens_on_the_current_row() {
+        let mut state = mobile_drawer_state(crate::app::state::MobileDrawer::Spaces, 3, 1);
+        state.active = Some(2);
+        crate::ui::compute_view(&mut state, ratatui::layout::Rect::new(0, 0, 44, 24));
+        state.mobile_drawer_cursor = crate::ui::mobile_drawer_default_cursor(&state);
+        assert_eq!(
+            crate::ui::mobile_drawer_cursor_target(&state),
+            Some(crate::ui::MobileSwitcherTarget::Workspace(2))
+        );
+
+        let mut tabs = mobile_drawer_state(crate::app::state::MobileDrawer::Tabs, 1, 3);
+        tabs.workspaces[0].set_active_tab(2);
+        tabs.mobile_drawer_cursor = crate::ui::mobile_drawer_default_cursor(&tabs);
+        assert_eq!(
+            crate::ui::mobile_drawer_cursor_target(&tabs),
+            Some(crate::ui::MobileSwitcherTarget::Tab(2))
+        );
+    }
+
+    // TP-MOB-47: arrow keys step over every row a finger could reach and skip
+    // the ones it could not. A cursor that stopped on section headings would
+    // spend keypresses on rows that do nothing.
+    #[test]
+    fn the_drawer_cursor_skips_rows_that_are_not_targets() {
+        let mut state = mobile_drawer_state(crate::app::state::MobileDrawer::Spaces, 2, 1);
+        state.mobile_drawer_cursor = 0;
+
+        let mut seen = Vec::new();
+        for _ in 0..12 {
+            seen.push(crate::ui::mobile_drawer_cursor_target(&state));
+            press(&mut state, KeyCode::Down);
+        }
+
+        assert!(
+            seen.iter().all(Option::is_some),
+            "every stop the cursor makes is a row something happens on: {seen:?}"
+        );
+        assert!(
+            seen.iter()
+                .any(|target| matches!(target, Some(crate::ui::MobileSwitcherTarget::Menu(_)))),
+            "the cursor reaches the menu at the foot of the drawer: {seen:?}"
+        );
+    }
+
+    // TP-MOB-48: the cursor reaches agents from the keyboard. This is the row
+    // class the old switcher could only reach by tap, on clients where a tap
+    // is the unreliable input.
+    #[test]
+    fn the_drawer_cursor_reaches_agents_from_the_keyboard() {
+        let mut state = mobile_drawer_state(crate::app::state::MobileDrawer::Spaces, 1, 2);
+        state.ensure_test_terminals();
+        for terminal in state.terminals.values_mut() {
+            terminal.agent_name = Some("claude".to_string());
+            terminal.state = crate::detect::AgentState::Working;
+        }
+        crate::ui::compute_view(&mut state, ratatui::layout::Rect::new(0, 0, 44, 24));
+        state.mobile_drawer_cursor = crate::ui::mobile_drawer_default_cursor(&state);
+
+        let mut reached_agent = false;
+        for _ in 0..12 {
+            press(&mut state, KeyCode::Down);
+            if matches!(
+                crate::ui::mobile_drawer_cursor_target(&state),
+                Some(crate::ui::MobileSwitcherTarget::Agent { .. })
+            ) {
+                reached_agent = true;
+                break;
+            }
+        }
+        assert!(reached_agent, "arrow keys reach the agents section");
+    }
+
+    // TP-MOB-49: Enter does what tapping the cursor's row would do, routed
+    // through the same targets, so a keystroke and a tap cannot drift into
+    // meaning different things.
+    #[test]
+    fn enter_activates_the_row_the_cursor_is_on() {
+        let mut state = mobile_drawer_state(crate::app::state::MobileDrawer::Tabs, 1, 3);
+        state.workspaces[0].set_active_tab(0);
+        state.mobile_drawer_cursor = crate::ui::mobile_drawer_default_cursor(&state);
+        press(&mut state, KeyCode::Down);
+        let target = crate::ui::mobile_drawer_cursor_target(&state);
+        assert_eq!(target, Some(crate::ui::MobileSwitcherTarget::Tab(1)));
+
+        press(&mut state, KeyCode::Enter);
+        assert_eq!(state.workspaces[0].active_tab_index(), 1);
+        assert_eq!(
+            state.mobile_drawer,
+            crate::app::state::MobileDrawer::None,
+            "activating a row closes the drawer, the way a tap does"
+        );
+        assert_eq!(state.mode, Mode::Terminal);
+    }
+
+    // TP-MOB-50: Tab swaps drawers, so both surfaces are reachable without
+    // going back to the header — the one part of the screen a thumb has to
+    // stretch for.
+    #[test]
+    fn tab_swaps_between_the_two_drawers() {
+        let mut state = mobile_drawer_state(crate::app::state::MobileDrawer::Spaces, 2, 2);
+        press(&mut state, KeyCode::Tab);
+        assert_eq!(state.mobile_drawer, crate::app::state::MobileDrawer::Tabs);
+        press(&mut state, KeyCode::Tab);
+        assert_eq!(state.mobile_drawer, crate::app::state::MobileDrawer::Spaces);
+        assert_eq!(state.mode, Mode::Navigate);
+    }
+
+    // TP-MOB-51: the cursor clamps at both ends. Wrapping on a list whose
+    // length changes with the number of worktrees means a held arrow key loops
+    // silently and the reader loses their place.
+    #[test]
+    fn the_drawer_cursor_clamps_at_both_ends() {
+        let mut state = mobile_drawer_state(crate::app::state::MobileDrawer::Spaces, 2, 1);
+        for _ in 0..40 {
+            press(&mut state, KeyCode::Up);
+        }
+        let first = crate::ui::mobile_drawer_cursor_stops(&state)[0];
+        assert_eq!(state.mobile_drawer_cursor, first);
+
+        for _ in 0..40 {
+            press(&mut state, KeyCode::Down);
+        }
+        let last = *crate::ui::mobile_drawer_cursor_stops(&state)
+            .last()
+            .unwrap();
+        assert_eq!(state.mobile_drawer_cursor, last);
     }
 
     #[test]

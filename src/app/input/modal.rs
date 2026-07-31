@@ -82,7 +82,7 @@ pub(crate) enum GlobalMenuAction {
     Settings,
 }
 
-pub(super) fn global_menu_actions(state: &AppState) -> Vec<GlobalMenuAction> {
+pub(crate) fn global_menu_actions(state: &AppState) -> Vec<GlobalMenuAction> {
     let mut actions = vec![
         GlobalMenuAction::Settings,
         GlobalMenuAction::Keybinds,
@@ -129,7 +129,7 @@ pub(super) fn request_detach(state: &mut AppState) {
     }
 }
 
-pub(super) fn apply_global_menu_action(state: &mut AppState, action: GlobalMenuAction) {
+pub(crate) fn apply_global_menu_action(state: &mut AppState, action: GlobalMenuAction) {
     match action {
         GlobalMenuAction::Detach => {
             leave_modal(state);

@@ -787,6 +787,7 @@ impl App {
             tab_scroll_follow_active: true,
             mobile_switcher_scroll: 0,
             mobile_drawer: crate::app::state::MobileDrawer::None,
+            mobile_drawer_cursor: 0,
             view: state::ViewState {
                 layout: state::ViewLayout::Desktop,
                 shell: Default::default(),

@@ -3109,6 +3109,14 @@ pub struct AppState {
     pub mobile_switcher_scroll: usize,
     /// Which mobile drawer is open, if any.
     pub mobile_drawer: MobileDrawer,
+    /// Document row of the open drawer's keyboard cursor.
+    ///
+    /// A drawer is a touch surface, and on the clients this is built for a tap
+    /// is not a reliable click: iOS terminals bind long-press and drag to their
+    /// own gestures, so what reaches Herdr is a keystroke. Every row a finger
+    /// can reach has to be reachable from the keyboard too, or the drawer's
+    /// whole purpose is unavailable on the platform it was written for.
+    pub mobile_drawer_cursor: usize,
     // View geometry (computed before render, consumed by render + mouse)
     pub view: ViewState,
     /// Transient shell capture/preview state. Never persisted and never owns
@@ -3944,6 +3952,7 @@ impl AppState {
             tab_scroll_follow_active: true,
             mobile_switcher_scroll: 0,
             mobile_drawer: MobileDrawer::None,
+            mobile_drawer_cursor: 0,
             view: ViewState {
                 layout: ViewLayout::Desktop,
                 shell: Default::default(),

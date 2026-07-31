@@ -323,6 +323,66 @@ pub(crate) fn mobile_drawer_workspace_doc_range(
         .unwrap_or(0..0)
 }
 
+/// Document rows that can hold the cursor, in order.
+///
+/// Section titles and empty-state lines are skipped: a cursor that stops on a
+/// heading spends a keypress saying nothing, and every list here is short
+/// enough that the extra stop is felt.
+pub(crate) fn mobile_drawer_cursor_stops(app: &AppState) -> Vec<usize> {
+    let rows = mobile_drawer_rows(app);
+    drawer_row_spans(&rows)
+        .into_iter()
+        .filter(|(_, row)| row.target.is_some())
+        .map(|(span, _)| span.start)
+        .collect()
+}
+
+/// Where the cursor sits when a drawer opens.
+///
+/// Context, not the top: the spaces drawer opens on the workspace you are in
+/// and the tabs drawer on the tab you are looking at, so the first arrow key
+/// moves relative to where you already are.
+pub(crate) fn mobile_drawer_default_cursor(app: &AppState) -> usize {
+    let current = match app.mobile_drawer {
+        crate::app::state::MobileDrawer::Tabs => app
+            .active
+            .and_then(|idx| app.workspaces.get(idx))
+            .map(|ws| MobileSwitcherTarget::Tab(ws.active_tab_index())),
+        crate::app::state::MobileDrawer::Spaces => app.active.map(MobileSwitcherTarget::Workspace),
+        crate::app::state::MobileDrawer::None => None,
+    };
+    let rows = mobile_drawer_rows(app);
+    let spans = drawer_row_spans(&rows);
+    current
+        .and_then(|target| {
+            spans
+                .iter()
+                .find(|(_, row)| row.target == Some(target))
+                .map(|(span, _)| span.start)
+        })
+        .or_else(|| mobile_drawer_cursor_stops(app).first().copied())
+        .unwrap_or(0)
+}
+
+/// The target the cursor is on, if the cursor is on one.
+pub(crate) fn mobile_drawer_cursor_target(app: &AppState) -> Option<MobileSwitcherTarget> {
+    let rows = mobile_drawer_rows(app);
+    drawer_row_spans(&rows)
+        .into_iter()
+        .find(|(span, _)| span.contains(&app.mobile_drawer_cursor))
+        .and_then(|(_, row)| row.target)
+}
+
+/// The document range the cursor's row occupies.
+pub(crate) fn mobile_drawer_cursor_doc_range(app: &AppState) -> std::ops::Range<usize> {
+    let rows = mobile_drawer_rows(app);
+    drawer_row_spans(&rows)
+        .into_iter()
+        .find(|(span, _)| span.contains(&app.mobile_drawer_cursor))
+        .map(|(span, _)| span)
+        .unwrap_or(0..0)
+}
+
 pub(crate) fn mobile_drawer_target_at(
     app: &AppState,
     col: u16,
@@ -725,6 +785,15 @@ fn render_mobile_drawer_content(
                 }
             }
         }
+        if row.target.is_some() && drawer_row_has_cursor(app, doc_y, row.height) {
+            let bg = match &row.content {
+                DrawerRowContent::Space { ws_idx, .. } => {
+                    mobile_item_bg(*ws_idx == app.selected, Some(*ws_idx) == app.active, p)
+                }
+                _ => p.panel_bg,
+            };
+            render_drawer_cursor_marker(frame, viewport, content, doc_y, scroll, p, bg);
+        }
         doc_y += row.height;
     }
 }
@@ -1082,6 +1151,43 @@ fn mobile_item_bg(selected: bool, active: bool, p: &Palette) -> ratatui::style::
     } else {
         p.panel_bg
     }
+}
+
+/// Whether the drawer cursor is on the row starting at `doc_y`.
+fn drawer_row_has_cursor(app: &AppState, doc_y: usize, height: usize) -> bool {
+    app.mobile_drawer.is_open()
+        && app.mobile_drawer_cursor >= doc_y
+        && app.mobile_drawer_cursor < doc_y + height
+}
+
+/// Paint the cursor marker in the row's first column.
+///
+/// A marker rather than a background: the row background already carries two
+/// meanings — selected and active — and a third would be indistinguishable
+/// from them on a terminal with a small palette.
+fn render_drawer_cursor_marker(
+    frame: &mut Frame,
+    viewport: Rect,
+    content: Rect,
+    doc_y: usize,
+    scroll: usize,
+    p: &Palette,
+    bg: ratatui::style::Color,
+) {
+    let Some(y) = visible_y(viewport, scroll, doc_y) else {
+        return;
+    };
+    if content.width == 0 {
+        return;
+    }
+    frame.buffer_mut()[(content.x, y)]
+        .set_symbol("\u{25b8}")
+        .set_style(
+            Style::default()
+                .fg(p.accent)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        );
 }
 
 fn inset_for_left_scrollbar(area: Rect) -> Rect {

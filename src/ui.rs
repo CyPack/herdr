@@ -132,8 +132,10 @@ pub(crate) use self::{
 pub(crate) use self::{
     keybind_help::{keybind_help_layout_width, keybind_help_lines},
     mobile::{
-        mobile_drawer_areas, mobile_drawer_max_scroll, mobile_drawer_target_at,
-        mobile_drawer_workspace_doc_range, MobileHeaderHitAreas, MobileSwitcherTarget,
+        mobile_drawer_areas, mobile_drawer_cursor_doc_range, mobile_drawer_cursor_stops,
+        mobile_drawer_cursor_target, mobile_drawer_default_cursor, mobile_drawer_max_scroll,
+        mobile_drawer_target_at, mobile_drawer_workspace_doc_range, MobileHeaderHitAreas,
+        MobileSwitcherTarget,
     },
     panes::{apply_pane_chrome, pane_inner_rect, pane_is_scrolled_back},
     tab_surface::{tab_surface_cursor, tab_surface_hyperlinks, TabSurfaceView},
@@ -612,6 +614,10 @@ fn compute_mobile_view(
         // keep getting.
         if !app.mobile_drawer.is_open() {
             app.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
+            // A drawer opened by one of those paths still gets its cursor
+            // placed in context, so the first arrow key means the same thing
+            // however the drawer was reached.
+            app.mobile_drawer_cursor = mobile_drawer_default_cursor(app);
         }
         let drawer_viewport_h = area.height.saturating_sub(header_h + 1);
         let max_scroll = mobile_drawer_max_scroll_for_height(app, drawer_viewport_h);

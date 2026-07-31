@@ -39,7 +39,7 @@ fn modified_url_click_modifier_matches_terminal_mouse_reporting() {
 mod copy_mode;
 mod file_manager;
 pub(in crate::app) use file_manager::FileManagerVerticalWheelBurstGate;
-mod modal;
+pub(crate) mod modal;
 pub(crate) use modal::leave_modal;
 mod mouse;
 mod navigate;

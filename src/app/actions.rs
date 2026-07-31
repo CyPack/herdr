@@ -1554,6 +1554,143 @@ impl AppState {
         self.mobile_drawer = drawer;
         self.mobile_switcher_scroll = 0;
         self.mode = Mode::Navigate;
+        self.mobile_drawer_cursor = crate::ui::mobile_drawer_default_cursor(self);
+        self.follow_mobile_drawer_cursor();
+    }
+
+    /// Move the drawer cursor by `delta` stops, clamped at both ends.
+    ///
+    /// Clamped rather than wrapping: on a list whose length changes with the
+    /// number of worktrees, wrapping means a held arrow key silently loops and
+    /// the reader loses track of where they are.
+    pub(crate) fn move_mobile_drawer_cursor(&mut self, delta: isize) {
+        let stops = crate::ui::mobile_drawer_cursor_stops(self);
+        if stops.is_empty() {
+            return;
+        }
+        let current = stops
+            .iter()
+            .position(|start| *start == self.mobile_drawer_cursor)
+            .unwrap_or(0);
+        let next = current
+            .saturating_add_signed(delta)
+            .min(stops.len().saturating_sub(1));
+        self.mobile_drawer_cursor = stops[next];
+        self.sync_selection_to_mobile_drawer_cursor();
+        self.follow_mobile_drawer_cursor();
+    }
+
+    /// Keep `selected` in step when the cursor is on a workspace row.
+    ///
+    /// The two are different things — the cursor walks every row, `selected`
+    /// names a workspace — but a reader moving the cursor onto a space has
+    /// selected it in every sense that matters to the rest of the app.
+    fn sync_selection_to_mobile_drawer_cursor(&mut self) {
+        if let Some(crate::ui::MobileSwitcherTarget::Workspace(ws_idx)) =
+            crate::ui::mobile_drawer_cursor_target(self)
+        {
+            self.selected = ws_idx;
+        }
+    }
+
+    /// Scroll the drawer so the cursor's row is on screen.
+    fn follow_mobile_drawer_cursor(&mut self) {
+        let viewport = crate::ui::mobile_drawer_areas(self).viewport;
+        if viewport.height == 0 {
+            return;
+        }
+        let range = crate::ui::mobile_drawer_cursor_doc_range(self);
+        let visible_start = self.mobile_switcher_scroll;
+        let visible_end = visible_start.saturating_add(viewport.height as usize);
+        if range.start < visible_start {
+            self.mobile_switcher_scroll = range.start;
+        } else if range.end > visible_end {
+            self.mobile_switcher_scroll = range.end.saturating_sub(viewport.height as usize);
+        }
+        self.mobile_switcher_scroll = self
+            .mobile_switcher_scroll
+            .min(crate::ui::mobile_drawer_max_scroll(self));
+    }
+
+    /// Do what tapping the cursor's row would do.
+    ///
+    /// Lives on the state rather than on `App` because two key paths reach it —
+    /// the interactive one and the API/headless one — and an activation that
+    /// existed on only one of them would work in the app and not in a test, or
+    /// the other way round.
+    pub(crate) fn activate_mobile_drawer_cursor(&mut self) {
+        let Some(target) = crate::ui::mobile_drawer_cursor_target(self) else {
+            return;
+        };
+        match target {
+            crate::ui::MobileSwitcherTarget::NewWorkspace => {
+                self.request_new_workspace = true;
+                self.close_mobile_drawer();
+            }
+            crate::ui::MobileSwitcherTarget::Workspace(ws_idx) => {
+                self.close_mobile_drawer();
+                self.switch_workspace(ws_idx);
+            }
+            crate::ui::MobileSwitcherTarget::NewTab => {
+                self.request_new_tab = true;
+                self.close_mobile_drawer();
+            }
+            crate::ui::MobileSwitcherTarget::Tab(tab_idx) => {
+                self.close_mobile_drawer();
+                if let Some(ws) = self.active.and_then(|idx| self.workspaces.get_mut(idx)) {
+                    ws.set_active_tab(tab_idx);
+                }
+            }
+            crate::ui::MobileSwitcherTarget::Agent {
+                ws_idx, tab_idx, ..
+            } => {
+                // Workspace and tab are what the state layer owns; a tap also
+                // focuses the pane through the runtime, which the interactive
+                // path does on top of this. Landing on the agent's tab is the
+                // part that has to be identical, because it is what the reader
+                // asked for.
+                self.close_mobile_drawer();
+                self.switch_workspace(ws_idx);
+                if let Some(ws) = self.workspaces.get_mut(ws_idx) {
+                    ws.set_active_tab(tab_idx);
+                }
+            }
+            crate::ui::MobileSwitcherTarget::Menu(action_idx) => {
+                let actions = crate::app::input::modal::global_menu_actions(self);
+                if let Some(action) = actions.get(action_idx).copied() {
+                    crate::app::input::modal::apply_global_menu_action(self, action);
+                }
+            }
+        }
+    }
+
+    /// Drive the open drawer from the keyboard. Returns whether the key was
+    /// the drawer's.
+    pub(crate) fn handle_mobile_drawer_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        if !self.mobile_drawer.is_open() {
+            return false;
+        }
+        let (code, modifiers) = crate::config::normalize_key_combo((key.code, key.modifiers));
+        if !modifiers.is_empty() {
+            return false;
+        }
+        use crossterm::event::KeyCode;
+        match code {
+            KeyCode::Up | KeyCode::Char('k') => self.move_mobile_drawer_cursor(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.move_mobile_drawer_cursor(1),
+            KeyCode::Tab => {
+                let other = match self.mobile_drawer {
+                    crate::app::state::MobileDrawer::Tabs => {
+                        crate::app::state::MobileDrawer::Spaces
+                    }
+                    _ => crate::app::state::MobileDrawer::Tabs,
+                };
+                self.toggle_mobile_drawer(other);
+            }
+            KeyCode::Enter => self.activate_mobile_drawer_cursor(),
+            _ => return false,
+        }
+        true
     }
 
     pub(crate) fn close_mobile_drawer(&mut self) {
