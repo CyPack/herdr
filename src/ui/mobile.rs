@@ -68,6 +68,8 @@ pub(crate) enum MobileSwitcherTarget {
         pane_id: PaneId,
     },
     Menu(usize),
+    /// Hand the client back its own selection gesture, or take it back.
+    ToggleSelectMode,
 }
 
 /// What a drawer row draws.
@@ -79,6 +81,7 @@ pub(crate) enum DrawerRowContent {
     Agent { entry_idx: usize },
     Tab { tab_idx: usize },
     Menu { menu_idx: usize },
+    SelectMode,
     Empty(&'static str),
 }
 
@@ -256,6 +259,11 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
         height: 1,
         target: None,
         content: DrawerRowContent::SectionTitle("menu"),
+    });
+    rows.push(DrawerRow {
+        height: 1,
+        target: Some(MobileSwitcherTarget::ToggleSelectMode),
+        content: DrawerRowContent::SelectMode,
     });
     for menu_idx in 0..app.global_menu_labels().len() {
         rows.push(DrawerRow {
@@ -605,10 +613,30 @@ fn render_header_status(
     );
 
     if area.height > 1 {
-        frame.render_widget(
-            Paragraph::new(agent_summary_line(app, p, area.width)),
-            Rect::new(area.x, area.y + 1, area.width, 1),
-        );
+        let summary_row = Rect::new(area.x, area.y + 1, area.width, 1);
+        if app.mobile_select_mode.is_some() {
+            // While capture is released, taps do not reach Herdr at all — so
+            // the row that would explain that is the one thing that has to say
+            // it, and say how to get back.
+            frame.render_widget(
+                Paragraph::new(truncate_end(
+                    " select text · tap off in menu",
+                    summary_row.width as usize,
+                ))
+                .style(
+                    Style::default()
+                        .fg(p.accent)
+                        .bg(p.panel_bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                summary_row,
+            );
+        } else {
+            frame.render_widget(
+                Paragraph::new(agent_summary_line(app, p, area.width)),
+                summary_row,
+            );
+        }
     }
 }
 
@@ -769,6 +797,23 @@ fn render_mobile_drawer_content(
             }
             DrawerRowContent::Tab { tab_idx } => {
                 render_tab_row(app, frame, viewport, content, doc_y, *tab_idx);
+            }
+            DrawerRowContent::SelectMode => {
+                if let Some(y) = visible_y(viewport, scroll, doc_y) {
+                    let on = app.mobile_select_mode.is_some();
+                    frame.render_widget(
+                        Paragraph::new(truncate_end(
+                            &format!("  select text  [{}]", if on { "on" } else { "off" }),
+                            content.width as usize,
+                        ))
+                        .style(
+                            Style::default()
+                                .fg(if on { p.accent } else { p.overlay1 })
+                                .bg(p.panel_bg),
+                        ),
+                        Rect::new(content.x, y, content.width, 1),
+                    );
+                }
             }
             DrawerRowContent::Menu { menu_idx } => {
                 if let Some(label) = app.global_menu_labels().get(*menu_idx) {
@@ -1652,6 +1697,92 @@ mod tests {
             0,
             "two tabs and a create row fit without scrolling"
         );
+    }
+
+    // TP-MOB-52: turning select text on releases mouse capture, so the
+    // client's own press-and-hold selection works again. With reporting on,
+    // an iOS terminal suppresses its selection handles entirely.
+    #[test]
+    fn select_text_releases_mouse_capture_and_restores_it() {
+        let mut app = drawer_app(1, 1, 44, 22);
+        app.mouse_capture = true;
+
+        app.toggle_mobile_select_mode();
+        assert!(!app.mouse_capture, "capture is released");
+        assert!(app.mobile_select_mode.is_some());
+
+        app.toggle_mobile_select_mode();
+        assert!(app.mouse_capture, "the previous setting comes back");
+        assert!(app.mobile_select_mode.is_none());
+    }
+
+    // TP-MOB-53: a reader who had capture off keeps it off afterwards. The
+    // toggle restores what was there, not a hardcoded default.
+    #[test]
+    fn select_text_restores_the_setting_it_found() {
+        let mut app = drawer_app(1, 1, 44, 22);
+        app.mouse_capture = false;
+        app.toggle_mobile_select_mode();
+        app.toggle_mobile_select_mode();
+        assert!(!app.mouse_capture);
+    }
+
+    // TP-MOB-54: the spaces drawer offers the toggle, and it is a row the
+    // cursor can reach — while capture is released, a tap reaches nothing, so
+    // the keyboard is the only way back.
+    #[test]
+    fn the_spaces_drawer_offers_a_reachable_select_text_row() {
+        let mut app = drawer_app(2, 1, 44, 22);
+        app.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
+        let rows = mobile_drawer_rows(&app);
+        assert!(
+            rows.iter()
+                .any(|row| row.target == Some(MobileSwitcherTarget::ToggleSelectMode)),
+            "the drawer carries the toggle"
+        );
+        let stops = mobile_drawer_cursor_stops(&app);
+        let toggle_start = drawer_row_spans(&rows)
+            .into_iter()
+            .find(|(_, row)| row.target == Some(MobileSwitcherTarget::ToggleSelectMode))
+            .map(|(span, _)| span.start)
+            .expect("the toggle has a document row");
+        assert!(
+            stops.contains(&toggle_start),
+            "the cursor can stop on the toggle"
+        );
+    }
+
+    // TP-MOB-55: while select text is on the header says so, and says how to
+    // turn it off. A mode with no indicator is one the reader cannot trust,
+    // and this one changes whether their taps do anything at all.
+    #[test]
+    fn the_header_says_when_select_text_is_on() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = drawer_app(1, 1, 44, 22);
+        app.view.mobile_header_hits = compute_mobile_header_hit_areas(&app, Rect::new(0, 0, 44, 2));
+        app.toggle_mobile_select_mode();
+
+        let mut terminal = Terminal::new(TestBackend::new(44, 2)).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_mobile_header(
+                    &app,
+                    &TerminalRuntimeRegistry::new(),
+                    frame,
+                    Rect::new(0, 0, 44, 2),
+                )
+            })
+            .expect("draw");
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("select text"), "header: {rendered:?}");
+        assert!(rendered.contains("menu"), "header names the way back");
     }
 
     #[test]

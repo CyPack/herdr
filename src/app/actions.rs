@@ -1655,6 +1655,9 @@ impl AppState {
                     ws.set_active_tab(tab_idx);
                 }
             }
+            crate::ui::MobileSwitcherTarget::ToggleSelectMode => {
+                self.toggle_mobile_select_mode();
+            }
             crate::ui::MobileSwitcherTarget::Menu(action_idx) => {
                 let actions = crate::app::input::modal::global_menu_actions(self);
                 if let Some(action) = actions.get(action_idx).copied() {
@@ -1691,6 +1694,22 @@ impl AppState {
             _ => return false,
         }
         true
+    }
+
+    /// Release mouse capture so the client's own selection gesture works, or
+    /// take it back.
+    ///
+    /// The drawer stays open on purpose: this is a mode the reader is about to
+    /// use on the terminal behind it, and closing the drawer would hide the
+    /// only indicator saying which state they are in.
+    pub(crate) fn toggle_mobile_select_mode(&mut self) {
+        match self.mobile_select_mode.take() {
+            Some(previous) => self.mouse_capture = previous,
+            None => {
+                self.mobile_select_mode = Some(self.mouse_capture);
+                self.mouse_capture = false;
+            }
+        }
     }
 
     pub(crate) fn close_mobile_drawer(&mut self) {

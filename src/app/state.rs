@@ -3109,6 +3109,16 @@ pub struct AppState {
     pub mobile_switcher_scroll: usize,
     /// Which mobile drawer is open, if any.
     pub mobile_drawer: MobileDrawer,
+    /// Set while Herdr has released mouse capture so the client's own
+    /// selection gesture works, holding the capture setting to restore.
+    ///
+    /// With mouse reporting on, an iOS terminal's press-and-hold selection is
+    /// suppressed: the drag goes to the application, and the client's handles
+    /// never appear. Turning reporting off hands the gesture back, and the
+    /// copy lands on the phone's clipboard through OSC 52 — which is the
+    /// clipboard path Herdr already takes over SSH. This is the same trick the
+    /// tmux world spells `set -g mouse off`.
+    pub mobile_select_mode: Option<bool>,
     /// Document row of the open drawer's keyboard cursor.
     ///
     /// A drawer is a touch surface, and on the clients this is built for a tap
@@ -3953,6 +3963,7 @@ impl AppState {
             mobile_switcher_scroll: 0,
             mobile_drawer: MobileDrawer::None,
             mobile_drawer_cursor: 0,
+            mobile_select_mode: None,
             view: ViewState {
                 layout: ViewLayout::Desktop,
                 shell: Default::default(),

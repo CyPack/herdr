@@ -1485,6 +1485,9 @@ impl AppState {
                 self.close_mobile_drawer();
                 return MobileMouseResult::Action(MouseAction::FocusPane { ws_idx, pane_id });
             }
+            Some(crate::ui::MobileSwitcherTarget::ToggleSelectMode) => {
+                self.toggle_mobile_select_mode();
+            }
             Some(crate::ui::MobileSwitcherTarget::Menu(action_idx)) => {
                 let actions = global_menu_actions(self);
                 if let Some(action) = actions.get(action_idx).copied() {

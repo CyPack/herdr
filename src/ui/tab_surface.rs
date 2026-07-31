@@ -341,10 +341,11 @@ mod tests {
         // drawer over three quarters of the width instead of a full-width
         // panel, and the drawer carries a keyboard cursor marker. The
         // structural assertions above are what hold the shape; this digest
-        // holds everything else steady.
+        // holds everything else steady. It moved again when the drawer gained
+        // its select-text row.
         assert_eq!(
             frame_digest(&frame),
-            "db552fff5d2aac4fb5dca73fba82a175dd57b45fd258538ed9d917d3944d6aef"
+            "852f17c165d2d09b9e286ced574c492a8ce958d4e7268c2598836665fe5d9f78"
         );
     }
 }
