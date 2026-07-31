@@ -134,7 +134,7 @@ pub(crate) use self::{
     },
 };
 pub(crate) use self::{
-    keybind_help::keybind_help_lines,
+    keybind_help::{keybind_help_layout_width, keybind_help_lines},
     mobile::{
         mobile_switcher_areas, mobile_switcher_max_scroll, mobile_switcher_target_at,
         mobile_switcher_workspace_doc_range, MobileSwitcherTarget,
@@ -3391,9 +3391,9 @@ mod tests {
             .iter()
             .any(|(key, label)| key == "prefix+alt+h" && label.as_ref() == "custom command"));
 
-        let rendered_help = keybind_help_lines(&app)
+        let rendered_help = keybind_help_lines(&app, keybind_help::WIDE_HELP_BODY_WIDTH)
             .into_iter()
-            .flat_map(|(_, line)| line.spans)
+            .flat_map(|line| line.spans)
             .map(|span| span.content.into_owned())
             .collect::<Vec<_>>()
             .join("");

@@ -719,11 +719,10 @@ impl AppState {
     fn keybind_help_scroll_metrics(&self) -> Option<crate::pane::ScrollMetrics> {
         let body = self.keybind_help_body_rect()?;
         let viewport_rows = body.height.max(1) as usize;
-        let wrap_width = body.width.max(1) as usize;
-        let total_rows = crate::ui::keybind_help_lines(self)
-            .into_iter()
-            .map(|(width, _)| width.max(1).div_ceil(wrap_width))
-            .sum::<usize>();
+        // The body no longer wraps, so a row is a line: count the lines the
+        // render will actually draw rather than predicting how they wrap.
+        let total_rows =
+            crate::ui::keybind_help_lines(self, crate::ui::keybind_help_layout_width(body)).len();
         let max_offset_from_bottom = total_rows.saturating_sub(viewport_rows);
         Some(crate::pane::ScrollMetrics {
             offset_from_bottom: max_offset_from_bottom

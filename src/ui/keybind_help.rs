@@ -4,12 +4,13 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Wrap},
+    widgets::Paragraph,
     Frame,
 };
 
 use super::release_notes::release_notes_close_button_rect;
 use super::scrollbar::{release_notes_scrollbar_rect, render_scrollbar};
+use super::text::truncate_end;
 use super::widgets::{
     modal_stack_areas, panel_contrast_fg, render_action_button, render_modal_header,
     render_modal_shell,
@@ -210,7 +211,22 @@ fn filter_keybind_help_groups(groups: Vec<HelpGroup>, query: &str) -> Vec<HelpGr
         .collect()
 }
 
-pub(crate) fn keybind_help_lines(app: &AppState) -> Vec<(usize, Line<'static>)> {
+/// Columns the stacked layout indents a label by, so it reads as belonging to
+/// the shortcut above it rather than as a row of its own.
+const STACKED_LABEL_INDENT: usize = 3;
+
+/// Build the help body for a body `content_width` columns wide.
+///
+/// The lines are laid out to fit that width exactly — the caller must not wrap
+/// them. Wrapping is what this replaced: a wrapped label continued at the left
+/// edge of the next line, landing under the key column and breaking the very
+/// alignment the two-column layout exists for.
+///
+/// When the widest `key + label` pair does not fit, every row switches to the
+/// stacked form together. Deciding per row would align some rows and not
+/// others; deciding for the whole list keeps one reading for the whole screen,
+/// and the choice follows the content rather than a guessed breakpoint.
+pub(crate) fn keybind_help_lines(app: &AppState, content_width: u16) -> Vec<Line<'static>> {
     let heading_style = Style::default()
         .fg(app.palette.accent)
         .add_modifier(Modifier::BOLD);
@@ -226,39 +242,95 @@ pub(crate) fn keybind_help_lines(app: &AppState) -> Vec<(usize, Line<'static>)> 
         .max()
         .unwrap_or(8);
 
-    let mut lines = Vec::new();
-
     if groups.is_empty() {
-        let message = " no matching keybinds";
-        return vec![(
-            message.chars().count(),
-            Line::from(Span::styled(
-                message,
-                Style::default().fg(app.palette.overlay1),
-            )),
-        )];
+        return vec![Line::from(Span::styled(
+            " no matching keybinds",
+            Style::default().fg(app.palette.overlay1),
+        ))];
     }
 
+    let budget = content_width as usize;
+    let widest_row = groups
+        .iter()
+        .flat_map(|(_, entries)| {
+            entries
+                .iter()
+                .map(|(_, label)| key_width + 2 + label.chars().count())
+        })
+        .max()
+        .unwrap_or(0);
+    let stacked = widest_row > budget;
+
+    let mut lines = Vec::new();
     for (group, entries) in groups {
-        lines.push((
-            group.len() + 1,
-            Line::from(vec![Span::styled(format!(" {group}"), heading_style)]),
-        ));
+        lines.push(Line::from(vec![Span::styled(
+            truncate_end(&format!(" {group}"), budget),
+            heading_style,
+        )]));
         for (key, label) in entries {
-            let padded_key = format!(" {:<width$} ", key, width = key_width);
-            let width = padded_key.chars().count() + label.chars().count();
-            lines.push((
-                width,
-                Line::from(vec![
-                    Span::styled(padded_key, key_style),
-                    Span::styled(label.into_owned(), label_style),
-                ]),
-            ));
+            if stacked {
+                // A key narrower than its own row is still worth showing: the
+                // stacked form exists precisely for widths where the paired
+                // layout cannot hold, and clipping here only bites below the
+                // width at which the overlay refuses to draw a body at all.
+                lines.push(Line::from(vec![Span::styled(
+                    truncate_end(&format!(" {key}"), budget),
+                    key_style,
+                )]));
+                lines.push(Line::from(vec![Span::styled(
+                    format!(
+                        "{}{}",
+                        " ".repeat(STACKED_LABEL_INDENT.min(budget)),
+                        truncate_end(&label, budget.saturating_sub(STACKED_LABEL_INDENT)),
+                    ),
+                    label_style,
+                )]));
+            } else {
+                let padded_key = format!(" {:<width$} ", key, width = key_width);
+                let label_budget = budget.saturating_sub(padded_key.chars().count());
+                lines.push(Line::from(vec![
+                    Span::styled(truncate_end(&padded_key, budget), key_style),
+                    Span::styled(truncate_end(&label, label_budget), label_style),
+                ]));
+            }
         }
-        lines.push((0, Line::raw("")));
+        lines.push(Line::raw(""));
     }
 
     lines
+}
+
+/// A body width wide enough that the help keeps its single-line layout.
+#[cfg(test)]
+pub(crate) const WIDE_HELP_BODY_WIDTH: u16 = 74;
+
+/// The width the help body lays its lines out for.
+///
+/// Always one column narrower than the body, whether or not the scrollbar is
+/// currently drawn. The scrollbar appears exactly when the content overflows,
+/// and with the stacked layout the content's height now depends on the width —
+/// so asking "is there a scrollbar?" before laying out would be circular.
+/// Reserving the column unconditionally keeps the layout, the scroll metrics
+/// and the render reading the same number.
+pub(crate) fn keybind_help_layout_width(body: Rect) -> u16 {
+    body.width.saturating_sub(1)
+}
+
+/// The widest search hint that fits `width`.
+///
+/// Shortening beats truncating: a hint cut mid-word ("…by command or short")
+/// spends the same columns saying less, and the shorter phrasings still name
+/// the key that opens the filter, which is the only thing the hint is for.
+fn search_hint_for_width(width: u16) -> &'static str {
+    const HINTS: [&str; 3] = [
+        " press / to filter by command or shortcut",
+        " press / to filter",
+        " / filter",
+    ];
+    HINTS
+        .into_iter()
+        .find(|hint| hint.chars().count() <= width as usize)
+        .unwrap_or(HINTS[HINTS.len() - 1])
 }
 
 pub(super) fn render_keybind_help_overlay(app: &AppState, frame: &mut Frame) {
@@ -307,7 +379,7 @@ pub(super) fn render_keybind_help_overlay(app: &AppState, frame: &mut Frame) {
         ])
     } else {
         Line::from(Span::styled(
-            " press / to filter by command or shortcut",
+            search_hint_for_width(header_rows[1].width),
             Style::default().fg(app.palette.overlay0),
         ))
     };
@@ -333,13 +405,10 @@ pub(super) fn render_keybind_help_overlay(app: &AppState, frame: &mut Frame) {
         })
         .unwrap_or(body_area);
 
-    let body = Paragraph::new(
-        keybind_help_lines(app)
-            .into_iter()
-            .map(|(_, line)| line)
-            .collect::<Vec<_>>(),
-    )
-    .wrap(Wrap { trim: false })
+    let body = Paragraph::new(keybind_help_lines(
+        app,
+        keybind_help_layout_width(body_area),
+    ))
     .scroll((app.keybind_help.scroll, 0));
     frame.render_widget(body, text_area);
     if let Some(track) = track {
@@ -353,33 +422,127 @@ pub(super) fn render_keybind_help_overlay(app: &AppState, frame: &mut Frame) {
         );
     }
 
-    let footer = if app.keybind_help.search_focused {
-        Line::from(vec![
-            Span::styled(" filter ", Style::default().fg(app.palette.overlay0)),
-            Span::styled("type/backspace", Style::default().fg(app.palette.text)),
-            Span::styled(" · ", Style::default().fg(app.palette.overlay0)),
-            Span::styled("clear ", Style::default().fg(app.palette.overlay0)),
-            Span::styled("ctrl+u", Style::default().fg(app.palette.text)),
-            Span::styled(" · ", Style::default().fg(app.palette.overlay0)),
-            Span::styled("scroll ", Style::default().fg(app.palette.overlay0)),
-            Span::styled("↑↓/pgup/pgdn", Style::default().fg(app.palette.text)),
-            Span::styled(" · ", Style::default().fg(app.palette.overlay0)),
-            Span::styled("back ", Style::default().fg(app.palette.overlay0)),
-            Span::styled("esc", Style::default().fg(app.palette.text)),
-        ])
+    let footer_area = stack.footer.unwrap_or_default();
+    frame.render_widget(
+        Paragraph::new(footer_line(app, footer_area.width)),
+        footer_area,
+    );
+}
+
+/// One footer hint: a description, the keys that do it, and how hard it fights
+/// to stay when the footer does not fit.
+struct FooterHint {
+    label: &'static str,
+    keys: &'static str,
+    /// Lower drops first. The way out of the overlay holds the highest rank,
+    /// because a hint list that fits by hiding the exit has optimised away the
+    /// one thing a stuck reader needs.
+    rank: u8,
+}
+
+fn footer_hints(search_focused: bool) -> Vec<FooterHint> {
+    if search_focused {
+        vec![
+            FooterHint {
+                label: "filter ",
+                keys: "type/backspace",
+                rank: 2,
+            },
+            FooterHint {
+                label: "clear ",
+                keys: "ctrl+u",
+                rank: 0,
+            },
+            FooterHint {
+                label: "scroll ",
+                keys: "↑↓/pgup/pgdn",
+                rank: 1,
+            },
+            FooterHint {
+                label: "back ",
+                keys: "esc",
+                rank: 3,
+            },
+        ]
     } else {
-        Line::from(vec![
-            Span::styled(" search ", Style::default().fg(app.palette.overlay0)),
-            Span::styled("/", Style::default().fg(app.palette.text)),
-            Span::styled(" · ", Style::default().fg(app.palette.overlay0)),
-            Span::styled("scroll ", Style::default().fg(app.palette.overlay0)),
-            Span::styled("j/k/↑↓/pgup/pgdn", Style::default().fg(app.palette.text)),
-            Span::styled(" · ", Style::default().fg(app.palette.overlay0)),
-            Span::styled("close ", Style::default().fg(app.palette.overlay0)),
-            Span::styled("esc/enter", Style::default().fg(app.palette.text)),
-        ])
-    };
-    frame.render_widget(Paragraph::new(footer), stack.footer.unwrap_or_default());
+        vec![
+            FooterHint {
+                label: "search ",
+                keys: "/",
+                rank: 2,
+            },
+            FooterHint {
+                label: "scroll ",
+                keys: "j/k/↑↓/pgup/pgdn",
+                rank: 1,
+            },
+            FooterHint {
+                label: "close ",
+                keys: "esc/enter",
+                rank: 3,
+            },
+        ]
+    }
+}
+
+fn footer_width(hints: &[FooterHint]) -> usize {
+    let separators = 3 * hints.len().saturating_sub(1);
+    let content: usize = hints
+        .iter()
+        .map(|hint| hint.label.chars().count() + hint.keys.chars().count())
+        .sum();
+    1 + content + separators
+}
+
+/// Build the footer for a `width`-column strip.
+///
+/// Hints are dropped by rank when they do not all fit, but the survivors keep
+/// their original order: a footer that reshuffles as the terminal is resized
+/// makes the reader re-find every hint. The last hint is never dropped — if it
+/// still does not fit, its description goes and the keys stay, because the
+/// keys are the part that gets the reader out.
+fn footer_line(app: &AppState, width: u16) -> Line<'static> {
+    let mut hints = footer_hints(app.keybind_help.search_focused);
+    while hints.len() > 1 && footer_width(&hints) > width as usize {
+        let Some(weakest) = hints
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, hint)| hint.rank)
+            .map(|(idx, _)| idx)
+        else {
+            break;
+        };
+        hints.remove(weakest);
+    }
+
+    let label_style = Style::default().fg(app.palette.overlay0);
+    let keys_style = Style::default().fg(app.palette.text);
+
+    if let [only] = hints.as_slice() {
+        if footer_width(&hints) > width as usize {
+            return Line::from(Span::styled(
+                truncate_end(&format!(" {}", only.keys), width as usize),
+                keys_style,
+            ));
+        }
+    }
+
+    let mut spans = Vec::with_capacity(hints.len() * 3);
+    for (idx, hint) in hints.iter().enumerate() {
+        spans.push(Span::styled(
+            if idx == 0 {
+                format!(" {}", hint.label)
+            } else {
+                hint.label.to_string()
+            },
+            label_style,
+        ));
+        spans.push(Span::styled(hint.keys.to_string(), keys_style));
+        if idx + 1 < hints.len() {
+            spans.push(Span::styled(" · ", label_style));
+        }
+    }
+    Line::from(spans)
 }
 
 #[cfg(test)]
@@ -431,10 +594,10 @@ mod tests {
     fn help_lists_the_new_chat_tab_action() {
         let app = AppState::test_new();
 
-        let lines = keybind_help_lines(&app);
+        let lines = keybind_help_lines(&app, WIDE_HELP_BODY_WIDTH);
 
         assert!(
-            lines.iter().any(|(_, line)| {
+            lines.iter().any(|line| {
                 line.spans
                     .iter()
                     .any(|span| span.content.contains("new chat tab"))
@@ -448,15 +611,242 @@ mod tests {
     fn help_lists_the_file_manager_action() {
         let app = AppState::test_new();
 
-        let lines = keybind_help_lines(&app);
+        let lines = keybind_help_lines(&app, WIDE_HELP_BODY_WIDTH);
 
         assert!(
-            lines.iter().any(|(_, line)| {
+            lines.iter().any(|line| {
                 line.spans
                     .iter()
                     .any(|span| span.content.contains("file manager"))
             }),
             "keybind help should list the file manager action"
         );
+    }
+
+    /// Render the overlay into a buffer and return it row by row.
+    fn help_rows(width: u16, height: u16) -> Vec<String> {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = AppState::test_new();
+        app.workspaces = vec![crate::workspace::Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = crate::app::Mode::KeybindHelp;
+        crate::ui::compute_view(&mut app, Rect::new(0, 0, width, height));
+
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+        terminal
+            .draw(|frame| crate::ui::render(&app, frame))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    /// The keys the help lists, longest first, as they appear in a rendered row.
+    fn rendered_keys(app: &AppState) -> Vec<String> {
+        keybind_help_groups(app)
+            .into_iter()
+            .flat_map(|(_, entries)| entries.into_iter().map(|(key, _)| key))
+            .collect()
+    }
+
+    // TP-MOB-11: a narrow help body stacks each label under its shortcut
+    // instead of letting it wrap. The wrapped form put the tail of a label at
+    // the left edge of the next line, under the key column.
+    #[test]
+    fn narrow_keybind_help_stacks_labels_under_their_keys() {
+        let app = AppState::test_new();
+        let lines = keybind_help_lines(&app, 38);
+        let rendered: Vec<String> = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect();
+
+        let prefix_row = rendered
+            .iter()
+            .position(|row| row.trim() == "ctrl+b")
+            .expect("the prefix shortcut gets a row of its own when stacked");
+        assert_eq!(
+            rendered[prefix_row + 1].trim(),
+            "prefix mode",
+            "the label follows on the next line, indented under its key"
+        );
+        assert!(
+            rendered[prefix_row + 1].starts_with(&" ".repeat(STACKED_LABEL_INDENT)),
+            "stacked labels are indented so they read as belonging to the key above"
+        );
+    }
+
+    // TP-MOB-12: no rendered row is wider than the body it was laid out for,
+    // at any width the overlay can be drawn at. This closes the whole class of
+    // overflow rather than the one instance that was observed.
+    #[test]
+    fn keybind_help_rows_never_exceed_the_body_width() {
+        let app = AppState::test_new();
+        for content_width in 8..=100u16 {
+            for line in keybind_help_lines(&app, content_width) {
+                let rendered: String = line
+                    .spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect();
+                assert!(
+                    rendered.chars().count() <= content_width as usize,
+                    "row {rendered:?} is wider than the {content_width}-column body it was \
+                     laid out for"
+                );
+            }
+        }
+    }
+
+    // TP-MOB-13: in a rendered narrow overlay, no body row starts with the
+    // tail of a label — the exact shape the wrapped layout produced.
+    #[test]
+    fn narrow_keybind_help_never_starts_a_row_with_a_label_tail() {
+        let app = AppState::test_new();
+        let keys = rendered_keys(&app);
+        let rows = help_rows(44, 22);
+
+        for row in &rows {
+            let Some(body) = row.strip_prefix('|') else {
+                continue;
+            };
+            let text = body.trim_end_matches('|');
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            // A body row is legitimate if it is blank, a group heading, a key,
+            // an indented label, or chrome. What it must never be is a bare
+            // label starting hard against the border, which is what a wrapped
+            // continuation looked like.
+            let starts_flush = text.starts_with(|c: char| c != ' ');
+            if starts_flush {
+                assert!(
+                    keys.iter().any(|key| trimmed.starts_with(key.as_str()))
+                        || trimmed.starts_with('─')
+                        || trimmed.starts_with('│'),
+                    "row {row:?} starts flush against the border with neither a key nor \
+                     chrome, which is what a wrapped label tail looked like"
+                );
+            }
+        }
+    }
+
+    // TP-MOB-14: the search hint shortens to a phrasing that still names the
+    // key, instead of being cut mid-word.
+    #[test]
+    fn keybind_help_search_hint_shortens_instead_of_truncating() {
+        assert_eq!(
+            search_hint_for_width(80),
+            " press / to filter by command or shortcut"
+        );
+        assert_eq!(search_hint_for_width(20), " press / to filter");
+        assert_eq!(search_hint_for_width(12), " / filter");
+        assert_eq!(search_hint_for_width(2), " / filter");
+        for width in 0..=100u16 {
+            let hint = search_hint_for_width(width);
+            assert!(
+                hint.contains('/'),
+                "every hint names the key that opens the filter"
+            );
+        }
+    }
+
+    // TP-MOB-15: a wide help body keeps the single-line, key-aligned layout it
+    // has always had.
+    #[test]
+    fn wide_keybind_help_keeps_the_single_line_layout() {
+        let app = AppState::test_new();
+        let lines = keybind_help_lines(&app, WIDE_HELP_BODY_WIDTH);
+        let rendered: Vec<String> = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect();
+        assert!(
+            rendered
+                .iter()
+                .any(|row| row.contains("ctrl+b") && row.contains("prefix mode")),
+            "a wide body keeps key and label on one row"
+        );
+    }
+
+    // TP-MOB-16: the footer drops its least important hint rather than being
+    // cut mid-word, and never drops the way out of the overlay.
+    #[test]
+    fn narrow_keybind_help_footer_drops_hints_by_rank() {
+        let mut app = AppState::test_new();
+
+        let wide: String = footer_line(&app, 80)
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert_eq!(
+            wide,
+            " search / · scroll j/k/↑↓/pgup/pgdn · close esc/enter"
+        );
+
+        let narrow: String = footer_line(&app, 40)
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert_eq!(narrow, " search / · close esc/enter");
+
+        let tiny: String = footer_line(&app, 8)
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert!(
+            tiny.contains("esc"),
+            "the way out of the overlay survives every width, got {tiny:?}"
+        );
+
+        app.keybind_help.search_focused = true;
+        let focused: String = footer_line(&app, 8)
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert!(
+            focused.contains("esc"),
+            "the search footer also keeps its way out, got {focused:?}"
+        );
+    }
+
+    // TP-MOB-17: the footer never renders wider than the strip it is given,
+    // for either of its two states, at any width.
+    #[test]
+    fn keybind_help_footer_never_exceeds_its_strip() {
+        let mut app = AppState::test_new();
+        for search_focused in [false, true] {
+            app.keybind_help.search_focused = search_focused;
+            for width in 12..=100u16 {
+                let rendered: String = footer_line(&app, width)
+                    .spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect();
+                assert!(
+                    rendered.chars().count() <= width as usize,
+                    "footer {rendered:?} exceeds its {width}-column strip \
+                     (search_focused={search_focused})"
+                );
+            }
+        }
     }
 }
