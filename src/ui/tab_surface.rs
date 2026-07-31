@@ -336,9 +336,14 @@ mod tests {
         assert_eq!(app.view.mobile_header_rect, Rect::new(0, 0, 44, 2));
         assert_eq!(app.view.terminal_area, Rect::new(0, 2, 44, 18));
         assert_eq!(frame.cursor, None);
+        // Updated when the single mobile switcher became two drawers: the
+        // header grew a button at each edge, and navigate mode now paints the
+        // spaces drawer over three quarters of the width instead of a
+        // full-width panel. The structural assertions above are what hold the
+        // shape; this digest holds everything else steady.
         assert_eq!(
             frame_digest(&frame),
-            "295608a66067f1e1f066c0adb3cf427e8a2d68bba8f68949fb72d464dcd8baab"
+            "560ccfc264743cc3d7d45e708b70034a664f8f7005c56ef86b3d3c84e654982c"
         );
     }
 }

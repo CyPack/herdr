@@ -1540,6 +1540,30 @@ impl AppState {
         true
     }
 
+    /// Open `drawer`, or close it if it is already the open one.
+    ///
+    /// The mode and the drawer move together on purpose. `Mode::Navigate` on
+    /// mobile means "a drawer is open"; letting the two drift would recreate
+    /// the failure the too-small overlays had — a mode with no surface, eating
+    /// keystrokes that go nowhere visible.
+    pub(crate) fn toggle_mobile_drawer(&mut self, drawer: crate::app::state::MobileDrawer) {
+        if self.mobile_drawer == drawer {
+            self.close_mobile_drawer();
+            return;
+        }
+        self.mobile_drawer = drawer;
+        self.mobile_switcher_scroll = 0;
+        self.mode = Mode::Navigate;
+    }
+
+    pub(crate) fn close_mobile_drawer(&mut self) {
+        self.mobile_drawer = crate::app::state::MobileDrawer::None;
+        self.mobile_switcher_scroll = 0;
+        if self.mode == Mode::Navigate {
+            self.mode = Mode::Terminal;
+        }
+    }
+
     pub(crate) fn ensure_workspace_visible(&mut self, idx: usize) {
         if idx >= self.workspaces.len() {
             return;
@@ -1601,12 +1625,12 @@ impl AppState {
     }
 
     fn ensure_mobile_workspace_visible(&mut self, idx: usize) {
-        let viewport = crate::ui::mobile_switcher_areas(self).viewport;
+        let viewport = crate::ui::mobile_drawer_areas(self).viewport;
         if viewport.height == 0 {
             return;
         }
 
-        let row_range = crate::ui::mobile_switcher_workspace_doc_range(self, idx);
+        let row_range = crate::ui::mobile_drawer_workspace_doc_range(self, idx);
         let visible_start = self.mobile_switcher_scroll;
         let visible_end = visible_start.saturating_add(viewport.height as usize);
         if row_range.start < visible_start {
@@ -1616,7 +1640,7 @@ impl AppState {
         }
         self.mobile_switcher_scroll = self
             .mobile_switcher_scroll
-            .min(crate::ui::mobile_switcher_max_scroll(self));
+            .min(crate::ui::mobile_drawer_max_scroll(self));
     }
 
     #[cfg(test)]

@@ -1666,7 +1666,9 @@ pub struct ViewState {
     pub new_tab_hit_area: Rect,
     pub terminal_area: Rect,
     pub mobile_header_rect: Rect,
-    pub mobile_menu_hit_area: Rect,
+    /// The three targets the mobile header projects: a button at each edge and
+    /// the active-tab strip between them.
+    pub mobile_header_hits: crate::ui::MobileHeaderHitAreas,
     pub toast_hit_area: Rect,
     pub pane_infos: Vec<PaneInfo>,
     pub split_borders: Vec<SplitBorder>,
@@ -2444,6 +2446,34 @@ pub struct ProductAnnouncementState {
     pub preview: bool,
 }
 
+/// Which mobile drawer is open, if any.
+///
+/// Two edges answer two questions. The left one answers "which project am I
+/// in" — a session-wide question asked when the context changes. The right one
+/// answers "which tab of this project" — a question asked constantly and
+/// answered within one workspace. They used to share a single scrolling list,
+/// which buried the frequent question under the rare one.
+///
+/// One enum rather than two booleans, so the mutual exclusion is structural:
+/// there is no value here that describes both drawers being open, and opening
+/// one closes the other by construction rather than by every caller
+/// remembering to.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum MobileDrawer {
+    #[default]
+    None,
+    /// Spaces, then agents, then the global menu.
+    Spaces,
+    /// The active workspace's tabs.
+    Tabs,
+}
+
+impl MobileDrawer {
+    pub fn is_open(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
 #[derive(Clone, Default, PartialEq)]
 pub struct KeybindHelpState {
     pub scroll: u16,
@@ -3077,6 +3107,8 @@ pub struct AppState {
     pub tab_scroll: usize,
     pub tab_scroll_follow_active: bool,
     pub mobile_switcher_scroll: usize,
+    /// Which mobile drawer is open, if any.
+    pub mobile_drawer: MobileDrawer,
     // View geometry (computed before render, consumed by render + mouse)
     pub view: ViewState,
     /// Transient shell capture/preview state. Never persisted and never owns
@@ -3911,6 +3943,7 @@ impl AppState {
             tab_scroll: 0,
             tab_scroll_follow_active: true,
             mobile_switcher_scroll: 0,
+            mobile_drawer: MobileDrawer::None,
             view: ViewState {
                 layout: ViewLayout::Desktop,
                 shell: Default::default(),
@@ -3940,7 +3973,7 @@ impl AppState {
                 new_tab_hit_area: Rect::default(),
                 terminal_area: Rect::default(),
                 mobile_header_rect: Rect::default(),
-                mobile_menu_hit_area: Rect::default(),
+                mobile_header_hits: crate::ui::MobileHeaderHitAreas::default(),
                 toast_hit_area: Rect::default(),
                 pane_infos: Vec::new(),
                 split_borders: Vec::new(),

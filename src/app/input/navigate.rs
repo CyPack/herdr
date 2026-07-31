@@ -2509,15 +2509,33 @@ navigate_pane_right = "ctrl+l"
         state.selected = 0;
         state.mode = Mode::Navigate;
         crate::ui::compute_view(&mut state, ratatui::layout::Rect::new(0, 0, 44, 8));
+        assert_eq!(
+            state.mobile_drawer,
+            crate::app::state::MobileDrawer::Spaces,
+            "navigate mode on mobile always has a drawer open"
+        );
         assert_eq!(state.mobile_switcher_scroll, 0);
 
-        handle_navigate_key(
-            &mut state,
-            KeyEvent::new(KeyCode::Down, KeyModifiers::empty()),
+        // Four workspaces at two rows each, plus a create row, overflow a
+        // five-row drawer body, so following the selection has to scroll.
+        for expected_selected in 1..=3 {
+            handle_navigate_key(
+                &mut state,
+                KeyEvent::new(KeyCode::Down, KeyModifiers::empty()),
+            );
+            assert_eq!(state.selected, expected_selected);
+        }
+        assert!(
+            state.mobile_switcher_scroll > 0,
+            "the drawer scrolled to keep the selected row on screen"
         );
-
-        assert_eq!(state.selected, 1);
-        assert_eq!(state.mobile_switcher_scroll, 1);
+        let range = crate::ui::mobile_drawer_workspace_doc_range(&state, state.selected);
+        let viewport_h = crate::ui::mobile_drawer_areas(&state).viewport.height as usize;
+        assert!(
+            range.start >= state.mobile_switcher_scroll
+                && range.end <= state.mobile_switcher_scroll + viewport_h,
+            "the selected row is inside the visible window"
+        );
     }
 
     #[test]

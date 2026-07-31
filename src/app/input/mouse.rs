@@ -1423,30 +1423,46 @@ impl AppState {
             return MobileMouseResult::Ignored;
         }
 
-        if self.mode != Mode::Navigate {
-            if !matches!(self.mode, Mode::Terminal | Mode::Resize) {
-                return MobileMouseResult::Ignored;
-            }
-            if rect_contains(self.view.mobile_menu_hit_area, mouse.column, mouse.row) {
-                self.mobile_switcher_scroll = 0;
-                self.mode = Mode::Navigate;
+        // The header stays visible with a drawer open, so its buttons keep
+        // working: pressing the open drawer's own button closes it, which is
+        // how a toggle is expected to behave.
+        let hits = self.view.mobile_header_hits;
+        if matches!(self.mode, Mode::Terminal | Mode::Resize | Mode::Navigate) {
+            let pressed = if rect_contains(hits.spaces_menu, mouse.column, mouse.row) {
+                Some(crate::app::state::MobileDrawer::Spaces)
+            } else if rect_contains(hits.tabs_menu, mouse.column, mouse.row)
+                || rect_contains(hits.tab_strip, mouse.column, mouse.row)
+            {
+                // The strip is the same intent as the button beside it, and the
+                // larger target for it.
+                Some(crate::app::state::MobileDrawer::Tabs)
+            } else {
+                None
+            };
+            if let Some(drawer) = pressed {
+                self.toggle_mobile_drawer(drawer);
                 return MobileMouseResult::Consumed;
             }
+        }
+
+        if self.mode != Mode::Navigate {
             return MobileMouseResult::Ignored;
         }
 
-        let areas = crate::ui::mobile_switcher_areas(self);
-        if rect_contains(areas.close, mouse.column, mouse.row) {
-            self.mode = Mode::Terminal;
+        // The uncovered strip is the drawer's way out: tapping it closes the
+        // drawer and does not reach the terminal underneath.
+        let areas = crate::ui::mobile_drawer_areas(self);
+        if rect_contains(areas.scrim, mouse.column, mouse.row) {
+            self.close_mobile_drawer();
             return MobileMouseResult::Consumed;
         }
 
-        match crate::ui::mobile_switcher_target_at(self, mouse.column, mouse.row) {
+        match crate::ui::mobile_drawer_target_at(self, mouse.column, mouse.row) {
             Some(crate::ui::MobileSwitcherTarget::NewWorkspace) => {
                 return MobileMouseResult::Action(MouseAction::NewWorkspace);
             }
             Some(crate::ui::MobileSwitcherTarget::Workspace(ws_idx)) => {
-                self.mode = Mode::Terminal;
+                self.close_mobile_drawer();
                 return MobileMouseResult::Action(MouseAction::FocusWorkspace { ws_idx });
             }
             Some(crate::ui::MobileSwitcherTarget::NewTab) => {
@@ -1454,11 +1470,11 @@ impl AppState {
                     open_new_tab_dialog(self);
                 } else {
                     self.request_new_tab = true;
-                    self.mode = Mode::Terminal;
+                    self.close_mobile_drawer();
                 }
             }
             Some(crate::ui::MobileSwitcherTarget::Tab(tab_idx)) => {
-                self.mode = Mode::Terminal;
+                self.close_mobile_drawer();
                 return MobileMouseResult::Action(MouseAction::FocusTab { tab_idx });
             }
             Some(crate::ui::MobileSwitcherTarget::Agent {
@@ -1466,7 +1482,7 @@ impl AppState {
                 tab_idx: _,
                 pane_id,
             }) => {
-                self.mode = Mode::Terminal;
+                self.close_mobile_drawer();
                 return MobileMouseResult::Action(MouseAction::FocusPane { ws_idx, pane_id });
             }
             Some(crate::ui::MobileSwitcherTarget::Menu(action_idx)) => {
@@ -1482,7 +1498,7 @@ impl AppState {
     }
 
     fn scroll_mobile_switcher_at(&mut self, _col: u16, _row: u16, delta: i16) {
-        let max_scroll = crate::ui::mobile_switcher_max_scroll(self);
+        let max_scroll = crate::ui::mobile_drawer_max_scroll(self);
         apply_scroll(
             &mut self.mobile_switcher_scroll,
             delta.saturating_mul(2),
@@ -4826,7 +4842,7 @@ mod tests {
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 44, 20));
         assert_eq!(app.state.view.layout, ViewLayout::Mobile);
 
-        let switch = app.state.view.mobile_menu_hit_area;
+        let switch = app.state.view.mobile_header_hits.spaces_menu;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             switch.x + 1,
@@ -4835,7 +4851,7 @@ mod tests {
 
         assert_eq!(app.state.mode, Mode::Navigate);
 
-        let viewport = crate::ui::mobile_switcher_areas(&app.state).viewport;
+        let viewport = crate::ui::mobile_drawer_areas(&app.state).viewport;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
@@ -4857,7 +4873,7 @@ mod tests {
         app.state.mode = Mode::Terminal;
 
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 44, 20));
-        let switch = app.state.view.mobile_menu_hit_area;
+        let switch = app.state.view.mobile_header_hits.spaces_menu;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             switch.x + 1,
@@ -4865,7 +4881,7 @@ mod tests {
         ));
         assert_eq!(app.state.mode, Mode::Navigate);
 
-        let viewport = crate::ui::mobile_switcher_areas(&app.state).viewport;
+        let viewport = crate::ui::mobile_drawer_areas(&app.state).viewport;
         app.handle_mouse(mouse(
             MouseEventKind::ScrollDown,
             viewport.x + 2,
@@ -4884,8 +4900,162 @@ mod tests {
         assert_eq!(app.state.mode, Mode::Terminal);
     }
 
+    /// A mobile app already through `compute_view`, ready for header taps.
+    fn mobile_app_for_drawers(w: u16, h: u16) -> crate::app::App {
+        let mut app = app_for_mouse_test();
+        let mut first = Workspace::test_new("one");
+        first.test_add_tab(Some("logs"));
+        app.state.workspaces = vec![first, Workspace::test_new("two")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, w, h));
+        app
+    }
+
+    fn tap(app: &mut crate::app::App, x: u16, y: u16) {
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+    }
+
+    // TP-MOB-40: each header button opens its own drawer, and opening one
+    // closes the other. Two booleans would have let both be open at once; the
+    // enum makes that unrepresentable.
     #[test]
-    fn mobile_global_scroll_reaches_tabs_and_switches_tab() {
+    fn each_header_button_opens_its_own_drawer_and_closes_the_other() {
+        let mut app = mobile_app_for_drawers(44, 20);
+        let hits = app.state.view.mobile_header_hits;
+
+        tap(&mut app, hits.spaces_menu.x + 1, hits.spaces_menu.y);
+        assert_eq!(
+            app.state.mobile_drawer,
+            crate::app::state::MobileDrawer::Spaces
+        );
+        assert_eq!(app.state.mode, Mode::Navigate);
+
+        tap(&mut app, hits.tabs_menu.x + 1, hits.tabs_menu.y);
+        assert_eq!(
+            app.state.mobile_drawer,
+            crate::app::state::MobileDrawer::Tabs,
+            "the second button takes over"
+        );
+        assert_eq!(app.state.mode, Mode::Navigate);
+    }
+
+    // TP-MOB-41: pressing the open drawer's own button closes it. A control
+    // that opens but cannot close is half a toggle, and on a phone the button
+    // is the nearest thing to hand.
+    #[test]
+    fn pressing_an_open_drawers_own_button_closes_it() {
+        let mut app = mobile_app_for_drawers(44, 20);
+        let hits = app.state.view.mobile_header_hits;
+
+        tap(&mut app, hits.spaces_menu.x + 1, hits.spaces_menu.y);
+        tap(&mut app, hits.spaces_menu.x + 1, hits.spaces_menu.y);
+
+        assert_eq!(
+            app.state.mobile_drawer,
+            crate::app::state::MobileDrawer::None
+        );
+        assert_eq!(app.state.mode, Mode::Terminal);
+    }
+
+    // TP-MOB-42: the active-tab strip dispatches the same action as the button
+    // beside it. It is the larger target for the same intent, so a tap that
+    // misses the three-column button still lands somewhere useful.
+    #[test]
+    fn the_tab_strip_opens_the_same_drawer_as_the_button_beside_it() {
+        let mut by_strip = mobile_app_for_drawers(44, 20);
+        let strip = by_strip.state.view.mobile_header_hits.tab_strip;
+        tap(&mut by_strip, strip.x + strip.width / 2, strip.y);
+
+        let mut by_button = mobile_app_for_drawers(44, 20);
+        let button = by_button.state.view.mobile_header_hits.tabs_menu;
+        tap(&mut by_button, button.x + 1, button.y);
+
+        assert_eq!(
+            by_strip.state.mobile_drawer,
+            crate::app::state::MobileDrawer::Tabs
+        );
+        assert_eq!(by_strip.state.mobile_drawer, by_button.state.mobile_drawer);
+        assert_eq!(by_strip.state.mode, by_button.state.mode);
+    }
+
+    // TP-MOB-43: tapping the uncovered strip closes the drawer and does not
+    // reach the terminal under it. A scrim that leaks its tap would focus a
+    // pane the reader was only trying to dismiss a panel from.
+    #[test]
+    fn tapping_the_scrim_closes_the_drawer_without_reaching_the_terminal() {
+        let mut app = mobile_app_for_drawers(44, 20);
+        let hits = app.state.view.mobile_header_hits;
+        tap(&mut app, hits.spaces_menu.x + 1, hits.spaces_menu.y);
+
+        let before = app.state.active;
+        let scrim = crate::ui::mobile_drawer_areas(&app.state).scrim;
+        tap(
+            &mut app,
+            scrim.x + scrim.width / 2,
+            scrim.y + scrim.height / 2,
+        );
+
+        assert_eq!(
+            app.state.mobile_drawer,
+            crate::app::state::MobileDrawer::None
+        );
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert_eq!(app.state.active, before, "the tap did not focus anything");
+    }
+
+    // TP-MOB-44: a tap inside the drawer that lands on no row leaves it open.
+    // Closing on any miss would make every scroll and every near-miss in a
+    // list dismiss the thing being read.
+    #[test]
+    fn tapping_empty_space_inside_the_drawer_leaves_it_open() {
+        let mut app = mobile_app_for_drawers(44, 20);
+        let hits = app.state.view.mobile_header_hits;
+        tap(&mut app, hits.tabs_menu.x + 1, hits.tabs_menu.y);
+
+        // The tabs drawer holds a create row and two tabs; anything below that
+        // is empty panel.
+        let areas = crate::ui::mobile_drawer_areas(&app.state);
+        tap(
+            &mut app,
+            areas.viewport.x + 2,
+            areas.viewport.y + areas.viewport.height - 1,
+        );
+
+        assert_eq!(
+            app.state.mobile_drawer,
+            crate::app::state::MobileDrawer::Tabs,
+            "an empty row inside the drawer is not a dismissal"
+        );
+    }
+
+    // TP-MOB-45: the header keeps two separate targets even on a viewport
+    // barely wide enough for them. Overlapping targets would make one intent
+    // unreachable without saying which.
+    #[test]
+    fn the_header_targets_never_overlap_however_narrow_the_viewport() {
+        for width in 6..=64u16 {
+            let app = mobile_app_for_drawers(width, 20);
+            let hits = app.state.view.mobile_header_hits;
+            assert!(
+                hits.spaces_menu.width >= 3 && hits.tabs_menu.width >= 3,
+                "at {width} columns both buttons keep a reachable width"
+            );
+            assert!(
+                hits.spaces_menu.x + hits.spaces_menu.width <= hits.tabs_menu.x,
+                "at {width} columns the buttons must not overlap"
+            );
+            assert!(
+                hits.tab_strip.x >= hits.spaces_menu.x + hits.spaces_menu.width
+                    && hits.tab_strip.x + hits.tab_strip.width <= hits.tabs_menu.x,
+                "at {width} columns the strip stays between the buttons"
+            );
+        }
+    }
+
+    #[test]
+    fn the_tabs_drawer_reaches_every_tab_without_scrolling() {
         let mut app = app_for_mouse_test();
         let mut ws = Workspace::test_new("one");
         ws.test_add_tab(Some("two"));
@@ -4897,36 +5067,40 @@ mod tests {
         app.state.mode = Mode::Terminal;
 
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 44, 12));
-        let switch = app.state.view.mobile_menu_hit_area;
+        let tabs_button = app.state.view.mobile_header_hits.tabs_menu;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
-            switch.x + 1,
-            switch.y + 1,
+            tabs_button.x + 1,
+            tabs_button.y + 1,
         ));
+        assert_eq!(app.state.mode, Mode::Navigate);
+        assert_eq!(
+            app.state.mobile_drawer,
+            crate::app::state::MobileDrawer::Tabs
+        );
 
-        let viewport = crate::ui::mobile_switcher_areas(&app.state).viewport;
+        // Four tabs and a create row fit a twelve-row phone without scrolling.
+        // Reaching the fourth tab used to mean scrolling past every workspace
+        // and every agent first, because tabs shared one list with them.
+        assert_eq!(crate::ui::mobile_drawer_max_scroll(&app.state), 0);
 
-        app.handle_mouse(mouse(
-            MouseEventKind::ScrollDown,
-            viewport.x + 2,
-            viewport.y,
-        ));
-        app.handle_mouse(mouse(
-            MouseEventKind::ScrollDown,
-            viewport.x + 2,
-            viewport.y,
-        ));
-        assert_eq!(app.state.mobile_switcher_scroll, 4);
+        let viewport = crate::ui::mobile_drawer_areas(&app.state).viewport;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
             viewport.y + 4,
         ));
-        assert_eq!(app.state.workspaces[0].active_tab_index(), 2);
+
+        assert_eq!(app.state.workspaces[0].active_tab_index(), 3);
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert_eq!(
+            app.state.mobile_drawer,
+            crate::app::state::MobileDrawer::None
+        );
     }
 
     #[test]
-    fn mobile_switcher_new_workspace_opens_prompt_when_enabled() {
+    fn the_spaces_drawer_new_workspace_opens_the_prompt_when_enabled() {
         let mut app = app_for_mouse_test();
         app.state.workspaces = vec![Workspace::test_new("one")];
         app.state.active = Some(0);
@@ -4935,17 +5109,18 @@ mod tests {
         app.state.prompt_new_workspace_name = true;
 
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 44, 20));
-        let switch = app.state.view.mobile_menu_hit_area;
+        let switch = app.state.view.mobile_header_hits.spaces_menu;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             switch.x + 1,
             switch.y + 1,
         ));
-        let viewport = crate::ui::mobile_switcher_areas(&app.state).viewport;
+        // "+ new workspace" opens the drawer body.
+        let viewport = crate::ui::mobile_drawer_areas(&app.state).viewport;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
-            viewport.y + 1,
+            viewport.y,
         ));
 
         assert_eq!(app.state.mode, Mode::RenameWorkspace);
@@ -5001,7 +5176,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_switcher_new_tab_opens_dialog_when_enabled() {
+    fn the_tabs_drawer_new_tab_opens_dialog_when_enabled() {
         let mut app = app_for_mouse_test();
         let mut ws = Workspace::test_new("one");
         ws.test_add_tab(Some("logs"));
@@ -5011,17 +5186,18 @@ mod tests {
         app.state.mode = Mode::Terminal;
 
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 44, 20));
-        let switch = app.state.view.mobile_menu_hit_area;
+        let switch = app.state.view.mobile_header_hits.tabs_menu;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             switch.x + 1,
             switch.y + 1,
         ));
-        let viewport = crate::ui::mobile_switcher_areas(&app.state).viewport;
+        let viewport = crate::ui::mobile_drawer_areas(&app.state).viewport;
+        // "+ new tab" is the first row of the tabs drawer.
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
-            viewport.y + 5,
+            viewport.y,
         ));
 
         assert_eq!(app.state.mode, Mode::RenameTab);
@@ -5076,7 +5252,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_switcher_new_tab_skips_dialog_when_prompt_disabled() {
+    fn the_tabs_drawer_new_tab_skips_dialog_when_prompt_disabled() {
         let mut app = app_for_mouse_test();
         let mut ws = Workspace::test_new("one");
         ws.test_add_tab(Some("logs"));
@@ -5087,18 +5263,19 @@ mod tests {
         app.state.prompt_new_tab_name = false;
 
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 44, 20));
-        let switch = app.state.view.mobile_menu_hit_area;
+        let switch = app.state.view.mobile_header_hits.tabs_menu;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             switch.x + 1,
             switch.y + 1,
         ));
-        let viewport = crate::ui::mobile_switcher_areas(&app.state).viewport;
+        let viewport = crate::ui::mobile_drawer_areas(&app.state).viewport;
 
+        // "+ new tab" is the first row of the tabs drawer.
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
-            viewport.y + 5,
+            viewport.y,
         ));
         assert_eq!(app.state.mode, Mode::Terminal);
         assert!(!app.state.creating_new_tab);
@@ -5138,7 +5315,7 @@ mod tests {
         app.state.mode = Mode::Terminal;
 
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 44, 20));
-        let switch = app.state.view.mobile_menu_hit_area;
+        let switch = app.state.view.mobile_header_hits.spaces_menu;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             switch.x + 1,
@@ -5146,7 +5323,7 @@ mod tests {
         ));
         assert_eq!(app.state.mode, Mode::Navigate);
 
-        let viewport = crate::ui::mobile_switcher_areas(&app.state).viewport;
+        let viewport = crate::ui::mobile_drawer_areas(&app.state).viewport;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Right),
             viewport.x + 2,
@@ -5168,7 +5345,7 @@ mod tests {
         app.state.name_input = "new tab".into();
 
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 44, 20));
-        let switch = app.state.view.mobile_menu_hit_area;
+        let switch = app.state.view.mobile_header_hits.spaces_menu;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             switch.x + 1,
@@ -5189,7 +5366,7 @@ mod tests {
         app.state.mode = Mode::Terminal;
 
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 44, 20));
-        let switch = app.state.view.mobile_menu_hit_area;
+        let switch = app.state.view.mobile_header_hits.spaces_menu;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             switch.x + 1,
@@ -5197,11 +5374,12 @@ mod tests {
         ));
         assert_eq!(app.state.mode, Mode::Navigate);
 
-        let close = crate::ui::mobile_switcher_areas(&app.state).close;
+        // The uncovered strip beside the drawer is what closes it now.
+        let scrim = crate::ui::mobile_drawer_areas(&app.state).scrim;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
-            close.x + 1,
-            close.y,
+            scrim.x,
+            scrim.y,
         ));
 
         assert_eq!(app.state.mode, Mode::Terminal);

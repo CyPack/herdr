@@ -265,7 +265,9 @@ impl AppState {
 
     pub(crate) fn global_launcher_rect(&self) -> Rect {
         if self.view.layout == ViewLayout::Mobile {
-            return self.view.mobile_menu_hit_area;
+            // The global menu lives at the foot of the spaces drawer, which the
+            // left header button opens.
+            return self.view.mobile_header_hits.spaces_menu;
         }
 
         let footer = self.sidebar_footer_rect();

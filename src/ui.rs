@@ -70,9 +70,8 @@ use self::menus::{
     render_resize_overlay,
 };
 use self::mobile::{
-    compute_mobile_header_hit_areas, mobile_switcher_max_scroll_for_height,
-    mobile_toast_banner_rect, render_mobile_header, render_mobile_panel,
-    render_mobile_toast_banner,
+    compute_mobile_header_hit_areas, mobile_drawer_max_scroll_for_height, mobile_toast_banner_rect,
+    render_mobile_drawer, render_mobile_header, render_mobile_toast_banner,
 };
 use self::navigator::render_navigator_overlay;
 pub(crate) use self::onboarding::onboarding_welcome_continue_rect;
@@ -133,8 +132,8 @@ pub(crate) use self::{
 pub(crate) use self::{
     keybind_help::{keybind_help_layout_width, keybind_help_lines},
     mobile::{
-        mobile_switcher_areas, mobile_switcher_max_scroll, mobile_switcher_target_at,
-        mobile_switcher_workspace_doc_range, MobileSwitcherTarget,
+        mobile_drawer_areas, mobile_drawer_max_scroll, mobile_drawer_target_at,
+        mobile_drawer_workspace_doc_range, MobileHeaderHitAreas, MobileSwitcherTarget,
     },
     panes::{apply_pane_chrome, pane_inner_rect, pane_is_scrolled_back},
     tab_surface::{tab_surface_cursor, tab_surface_hyperlinks, TabSurfaceView},
@@ -549,7 +548,7 @@ fn compute_view_internal(
         new_tab_hit_area: tab_bar_view.new_tab_hit_area,
         terminal_area,
         mobile_header_rect: Rect::default(),
-        mobile_menu_hit_area: Rect::default(),
+        mobile_header_hits: crate::ui::MobileHeaderHitAreas::default(),
         toast_hit_area,
         pane_infos,
         split_borders,
@@ -605,9 +604,22 @@ fn compute_mobile_view(
         .flatten();
 
     if app.mode == Mode::Navigate {
-        let switcher_viewport_h = area.height.saturating_sub(header_h + 1);
-        let max_scroll = mobile_switcher_max_scroll_for_height(app, switcher_viewport_h);
+        // On mobile, navigate mode *is* an open drawer. Every other way into
+        // the mode — the prefix key, a keybind, a restored session — predates
+        // the drawers and sets only the mode, which would leave a mode with no
+        // surface: keystrokes going somewhere the reader cannot see. Spaces is
+        // the drawer the old single panel showed, so that is what those paths
+        // keep getting.
+        if !app.mobile_drawer.is_open() {
+            app.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
+        }
+        let drawer_viewport_h = area.height.saturating_sub(header_h + 1);
+        let max_scroll = mobile_drawer_max_scroll_for_height(app, drawer_viewport_h);
         app.mobile_switcher_scroll = app.mobile_switcher_scroll.min(max_scroll);
+    } else if app.mobile_drawer.is_open() {
+        // And the converse: leaving navigate mode by any route closes the
+        // drawer, so the two can never describe different things.
+        app.mobile_drawer = crate::app::state::MobileDrawer::None;
     }
 
     // The same surface-exclusivity contract as the desktop projection: a
@@ -679,7 +691,7 @@ fn compute_mobile_view(
         new_tab_hit_area: Rect::default(),
         terminal_area,
         mobile_header_rect: header_rect,
-        mobile_menu_hit_area: header_hits.menu,
+        mobile_header_hits: header_hits,
         toast_hit_area,
         pane_infos,
         split_borders,
@@ -940,7 +952,7 @@ impl compose::Component for OverlayLayer {
                 render_product_announcement_overlay(app, frame, frame.area())
             }
             Mode::Navigate if app.view.layout == ViewLayout::Mobile => {
-                render_mobile_panel(app, terminal_runtimes, frame, frame.area())
+                render_mobile_drawer(app, terminal_runtimes, frame)
             }
             Mode::Navigate => render_navigate_overlay(app, frame, terminal_area),
             Mode::Prefix => render_prefix_overlay(app, frame, terminal_area),
@@ -2857,11 +2869,10 @@ mod tests {
         assert_eq!(app.view.tab_bar_rect, Rect::default());
         assert_eq!(app.view.mobile_header_rect, Rect::new(0, 0, 44, 2));
         assert_eq!(app.view.terminal_area, Rect::new(0, 2, 44, 18));
-        assert_eq!(app.view.mobile_menu_hit_area.height, 2);
-        assert_eq!(
-            app.view.mobile_menu_hit_area.x + app.view.mobile_menu_hit_area.width,
-            44
-        );
+        let hits = app.view.mobile_header_hits;
+        assert_eq!(hits.spaces_menu, Rect::new(0, 0, 3, 2));
+        assert_eq!(hits.tabs_menu, Rect::new(41, 0, 3, 2));
+        assert_eq!(hits.tab_strip, Rect::new(3, 0, 38, 2));
     }
 
     #[test]

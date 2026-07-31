@@ -272,3 +272,30 @@ restore the width-only world.
 | TP-MOB-29 | An explicit expansion outranks the short-viewport fold for the rest of the session. | The heuristic keeps arguing with someone who has already answered it, re-folding a sidebar they deliberately opened. | `an_explicit_expansion_outranks_the_short_viewport_fold` |
 | TP-MOB-30 | A short viewport hides a tab strip showing a single entry, and restores it when the rows return. | One of fourteen rows goes to a strip that names the only tab there is. | `a_short_viewport_hides_a_single_entry_tab_strip` |
 | TP-MOB-31 | A short viewport keeps a tab strip showing more than one entry. | Hiding it would make every other tab unreachable by mouse — the same trap `hide_tab_bar_when_single_tab` already avoids. | `a_short_viewport_keeps_a_multi_entry_tab_strip` |
+
+## Mobile drawers
+
+The single mobile switcher answered two different questions from one scrolling
+list: "which project am I in" and "which tab of this project". The first is asked
+when the context changes, the second constantly — and burying the frequent one
+under the rare one meant reaching a tab required scrolling past every workspace
+and every agent first. Two drawers, one per edge, split them.
+
+`ui/mobile.rs`, `ui.rs` and `app/input/mouse.rs` are upstream-owned.
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-MOB-32 | An open drawer covers three quarters of the width and leaves the rest showing. | A full-width panel loses both jobs the uncovered strip does: it is the target that closes the drawer, and the reminder that a session is running underneath. | `a_drawer_covers_three_quarters_and_leaves_the_rest` |
+| TP-MOB-33 | The tabs drawer hangs off the right edge, the spaces drawer off the left. | Both panels arrive from the same side and the reader has to read a title to tell which question they are looking at, every time. | `the_tabs_drawer_hangs_off_the_right_edge` |
+| TP-MOB-34 | A closed drawer projects no geometry and no rows. | Hit-testing and painting run against a panel that is not open, so taps on the terminal are swallowed by an invisible surface. | `a_closed_drawer_projects_no_geometry` |
+| TP-MOB-35 | A drawer starts below the header and runs to the bottom. | The header disappears under the drawer, taking with it the toggle that closes it and the active-tab context. | `a_drawer_starts_below_the_header` |
+| TP-MOB-36 | Every row the producer emits hit-tests back to its own target, at every document position it occupies. | Render, hit-testing and height derived the same layout independently — the file asked readers to keep them in step by hand. A cursor made it four. Any drift sends a tap to the wrong row. | `every_drawer_row_hit_tests_back_to_itself` |
+| TP-MOB-37 | The scroll height is the sum of the rows the producer emits. | The drawer scrolls past its own end or refuses to reach it, and which one depends on how many worktrees the person has. | `the_drawer_height_is_the_sum_of_its_rows` |
+| TP-MOB-38 | On a tight viewport each space and agent takes one row instead of two. | A phone held upright spends half the list on detail lines: the measured switcher put eight of twenty-three rows off screen with two workspaces and three agents. | `a_tight_drawer_gives_each_entry_a_single_row` |
+| TP-MOB-39 | A drawer scrolls only when its content overflows. | Either a short list scrolls under the reader for no reason, or a long one cannot reach its end. | `a_drawer_scrolls_only_when_its_content_overflows` |
+| TP-MOB-40 | Each header button opens its own drawer, and opening one closes the other. | Two panels claim the same screen, and which one wins depends on which code path ran last. | `each_header_button_opens_its_own_drawer_and_closes_the_other` |
+| TP-MOB-41 | Pressing an open drawer's own button closes it. | A control that opens but cannot close is half a toggle, and on a phone the button is the nearest thing to hand. | `pressing_an_open_drawers_own_button_closes_it` |
+| TP-MOB-42 | The active-tab strip dispatches the same action as the button beside it. | The strip becomes decoration, and a tap that misses the three-column button does nothing at all. | `the_tab_strip_opens_the_same_drawer_as_the_button_beside_it` |
+| TP-MOB-43 | Tapping the uncovered strip closes the drawer and does not reach the terminal. | Dismissing a panel focuses a pane the reader never meant to touch. | `tapping_the_scrim_closes_the_drawer_without_reaching_the_terminal` |
+| TP-MOB-44 | A tap inside the drawer that lands on no row leaves it open. | Every near-miss in a list dismisses the thing being read. | `tapping_empty_space_inside_the_drawer_leaves_it_open` |
+| TP-MOB-45 | The header keeps two separate, reachable targets however narrow the viewport. | The buttons overlap and one of the two intents becomes unreachable, with nothing saying which. | `the_header_targets_never_overlap_however_narrow_the_viewport` |
