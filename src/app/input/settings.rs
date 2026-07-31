@@ -367,12 +367,10 @@ pub(crate) fn open_settings_at(state: &mut AppState, section: SettingsSection) {
 
 impl AppState {
     fn settings_popup_rect(&self) -> Rect {
-        crate::ui::centered_popup_rect(
-            self.screen_rect(),
-            crate::ui::SETTINGS_POPUP_WIDTH,
-            crate::ui::settings_popup_height(self),
-        )
-        .unwrap_or_default()
+        // The same two-pass sizing the render uses. Computing the height from
+        // the declared width here instead would put every hit target on a row
+        // the render did not draw it on.
+        crate::ui::settings_popup_rect_in(self, self.screen_rect()).unwrap_or_default()
     }
 
     fn settings_inner_rect(&self) -> Rect {
@@ -864,6 +862,80 @@ mod tests {
             available,
             path: std::path::PathBuf::from("/tmp/herdr-test-integration"),
             state,
+        }
+    }
+
+    // TP-MOB-21: the settings hit geometry is sized exactly the way the render
+    // is. The two used to derive the popup height independently, both passing
+    // the declared width; once the height became a function of the *granted*
+    // width, a second derivation would have put every hit target on a row the
+    // render never drew it on.
+    #[test]
+    fn settings_hit_targets_land_on_the_rows_the_render_drew() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut state = state_with_workspaces(&["one"]);
+        open_settings(&mut state);
+        state.settings.section = crate::app::state::SettingsSection::Integrations;
+        state.integration_recommendations = ["claude", "codex", "cursor", "aider", "droid"]
+            .into_iter()
+            .map(integration_recommendation_labelled)
+            .collect();
+        state.integration_install_messages = vec![
+            "installed the claude integration into ~/.config/claude/settings.json and \
+             updated every hook entry it needs"
+                .to_string(),
+            "installed the codex integration into ~/.codex/config.toml and migrated the \
+             top-level feature flags"
+                .to_string(),
+        ];
+
+        // A viewport narrow enough that the popup is clamped below its
+        // declared width — the case the two-pass sizing exists for.
+        let area = Rect::new(0, 0, 44, 40);
+        crate::ui::compute_view(&mut state, area);
+
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height))
+            .expect("test terminal should initialize");
+        terminal
+            .draw(|frame| crate::ui::render(&state, frame))
+            .expect("settings overlay renders");
+        let buffer = terminal.backend().buffer();
+
+        let drawn_tab_row = (0..area.height)
+            .find(|y| {
+                (0..area.width)
+                    .map(|x| buffer[(x, *y)].symbol())
+                    .collect::<String>()
+                    .contains("theme")
+            })
+            .expect("the section tabs are drawn somewhere");
+        let theme_col = (0..area.width)
+            .find(|x| {
+                (0..area.width.saturating_sub(*x))
+                    .map(|offset| buffer[(x + offset, drawn_tab_row)].symbol())
+                    .collect::<String>()
+                    .starts_with("theme")
+            })
+            .expect("the theme tab starts somewhere on that row");
+
+        assert_eq!(
+            state.settings_tab_at(theme_col, drawn_tab_row),
+            Some(crate::app::state::SettingsSection::Theme),
+            "clicking the drawn theme tab must select the theme section"
+        );
+    }
+
+    fn integration_recommendation_labelled(
+        label: &'static str,
+    ) -> crate::integration::IntegrationRecommendation {
+        crate::integration::IntegrationRecommendation {
+            target: crate::api::schema::IntegrationTarget::Claude,
+            label,
+            command: "claude",
+            available: true,
+            path: std::path::PathBuf::from("/tmp/herdr-test-integration"),
+            state: crate::integration::IntegrationStatusKind::NotInstalled,
         }
     }
 }

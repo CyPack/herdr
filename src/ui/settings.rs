@@ -8,7 +8,8 @@ use ratatui::{
 
 use super::widgets::{
     action_button_row_rects, centered_popup_rect, modal_stack_areas, panel_contrast_fg,
-    render_action_button, render_modal_choice_list, render_panel_shell, ActionButtonSpec,
+    popup_width_for, render_action_button, render_modal_choice_list, render_panel_shell,
+    ActionButtonSpec,
 };
 use crate::{
     app::{
@@ -21,23 +22,41 @@ use crate::{
 pub(crate) const SETTINGS_POPUP_WIDTH: u16 = 76;
 pub(crate) const SETTINGS_POPUP_BASE_HEIGHT: u16 = 22;
 
-pub(crate) fn settings_popup_height(app: &AppState) -> u16 {
+/// How tall the settings popup needs to be when its body is `inner_width`
+/// columns wide.
+///
+/// The width has to be passed in rather than assumed. The integrations footer
+/// wraps, so its row count is a function of the width it wraps at — and on a
+/// narrow screen the popup does not get the width it declares. Budgeting
+/// against the declared width there reserved fewer rows than the footer
+/// actually takes, and the content was cut off at the bottom.
+pub(crate) fn settings_popup_height(app: &AppState, inner_width: u16) -> u16 {
     if app.settings.section != crate::app::state::SettingsSection::Integrations {
         return SETTINGS_POPUP_BASE_HEIGHT;
     }
     let list_rows = app.integration_recommendations.len().max(1) as u16;
-    let footer_rows = integrations_footer_height(app, SETTINGS_POPUP_WIDTH - 2);
+    let footer_rows = integrations_footer_height(app, inner_width);
     // borders 2 + header 3 + stack gaps 2 + modal footer 2
     // + section title 1 + description 2 + spacers 2
     (14 + list_rows + footer_rows).max(SETTINGS_POPUP_BASE_HEIGHT)
+}
+
+/// The settings popup's rectangle inside `area`, sized in two passes: the
+/// width the viewport will grant, then the height that width implies.
+pub(crate) fn settings_popup_rect_in(app: &AppState, area: Rect) -> Option<Rect> {
+    let inner_width = popup_width_for(area, SETTINGS_POPUP_WIDTH).saturating_sub(2);
+    centered_popup_rect(
+        area,
+        SETTINGS_POPUP_WIDTH,
+        settings_popup_height(app, inner_width),
+    )
 }
 
 pub(super) fn render_settings_overlay(app: &AppState, frame: &mut Frame, area: Rect) {
     use crate::app::state::SettingsSection;
 
     let p = &app.palette;
-    let Some(popup) = centered_popup_rect(area, SETTINGS_POPUP_WIDTH, settings_popup_height(app))
-    else {
+    let Some(popup) = settings_popup_rect_in(app, area) else {
         return;
     };
 
@@ -581,5 +600,123 @@ mod tests {
             .collect::<String>();
 
         assert!(rendered.contains("switch to ascii input source in prefix (macOS) [✓]"));
+    }
+
+    fn test_integration_recommendation(
+        label: &'static str,
+    ) -> crate::integration::IntegrationRecommendation {
+        crate::integration::IntegrationRecommendation {
+            target: crate::api::schema::IntegrationTarget::Claude,
+            label,
+            command: "claude",
+            available: true,
+            path: std::path::PathBuf::from("/tmp/herdr-test-integration"),
+            state: crate::integration::IntegrationStatusKind::NotInstalled,
+        }
+    }
+
+    /// A settings app whose integrations footer wraps, and whose list is long
+    /// enough that the popup is taller than its floor — otherwise the floor
+    /// hides every difference the width makes.
+    fn integrations_app_with_wrapping_footer() -> AppState {
+        let mut app = AppState::test_new();
+        app.settings.section = SettingsSection::Integrations;
+        app.integration_recommendations = ["claude", "codex", "cursor", "aider", "droid"]
+            .into_iter()
+            .map(test_integration_recommendation)
+            .collect();
+        app.integration_install_messages = vec![
+            "installed the claude integration into ~/.config/claude/settings.json and \
+             updated every hook entry it needs"
+                .to_string(),
+            "installed the codex integration into ~/.codex/config.toml and migrated the \
+             top-level feature flags"
+                .to_string(),
+        ];
+        app.mode = Mode::Settings;
+        app
+    }
+
+    // TP-MOB-18: the popup's height is budgeted against the width its body
+    // actually gets. Budgeting against the declared width reserved fewer rows
+    // than the footer took once the viewport clamped the popup narrower, and
+    // the bottom of the content was cut off.
+    #[test]
+    fn settings_height_is_budgeted_against_the_real_inner_width() {
+        let app = integrations_app_with_wrapping_footer();
+
+        assert!(
+            integrations_footer_height(&app, 38) > integrations_footer_height(&app, 74),
+            "the footer's row count is a function of the width it wraps at"
+        );
+
+        let wide = settings_popup_height(&app, SETTINGS_POPUP_WIDTH - 2);
+        let narrow = settings_popup_height(&app, 38);
+        assert!(
+            narrow > wide,
+            "a narrower body wraps the footer onto more rows, so it must reserve more \
+             height (narrow {narrow}, wide {wide})"
+        );
+
+        let area = Rect::new(0, 0, 44, 40);
+        let rect = settings_popup_rect_in(&app, area).expect("settings popup");
+        let inner_width = rect.width.saturating_sub(2);
+        assert!(
+            rect.height >= settings_popup_height(&app, inner_width),
+            "the rect must be at least as tall as the height its own width implies"
+        );
+    }
+
+    // TP-MOB-19: a viewport that never clamped the popup keeps the height it
+    // always had.
+    #[test]
+    fn settings_height_is_unchanged_on_a_roomy_viewport() {
+        let app = integrations_app_with_wrapping_footer();
+        let area = Rect::new(0, 0, 100, 40);
+
+        let rect = settings_popup_rect_in(&app, area).expect("settings popup");
+        assert_eq!(rect.width, SETTINGS_POPUP_WIDTH);
+        assert_eq!(
+            rect.height,
+            settings_popup_height(&app, SETTINGS_POPUP_WIDTH - 2)
+        );
+
+        let plain = AppState::test_new();
+        assert_eq!(
+            settings_popup_height(&plain, SETTINGS_POPUP_WIDTH - 2),
+            SETTINGS_POPUP_BASE_HEIGHT,
+            "a section without a wrapping footer keeps the base height"
+        );
+    }
+
+    // TP-MOB-20: the integrations body never draws past the popup it was sized
+    // for, at any viewport the overlay is reachable from.
+    #[test]
+    fn settings_integrations_body_stays_inside_its_popup() {
+        let app = integrations_app_with_wrapping_footer();
+        for width in [36u16, 44, 52, 64, 80, 100] {
+            let area = Rect::new(0, 0, width, 40);
+            let Some(rect) = settings_popup_rect_in(&app, area) else {
+                continue;
+            };
+            let mut terminal =
+                Terminal::new(TestBackend::new(area.width, area.height)).expect("terminal");
+            terminal
+                .draw(|frame| render_settings_overlay(&app, frame, area))
+                .expect("settings overlay renders");
+            let buffer = terminal.backend().buffer();
+
+            // Every row below the popup must be untouched by the overlay: a
+            // body sized for the wrong width would spill into them.
+            for y in (rect.y + rect.height)..area.height {
+                let row: String = (0..area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>();
+                assert!(
+                    row.trim().is_empty(),
+                    "row {y} below the popup is not empty at width {width}: {row:?}"
+                );
+            }
+        }
     }
 }

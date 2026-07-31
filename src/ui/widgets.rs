@@ -61,9 +61,20 @@ fn popup_margin_y(height: HeightClass) -> u16 {
     }
 }
 
+/// The width a popup declaring `popup_w` actually gets inside `area`.
+///
+/// Split out from [`centered_popup_rect`] for popups whose height depends on
+/// how their content wraps: the height is an input to `centered_popup_rect`,
+/// but the wrapping that determines it needs the width that call would return.
+/// Asking for the width first breaks the cycle.
+pub(crate) fn popup_width_for(area: Rect, popup_w: u16) -> u16 {
+    let size = SizeClass::of_viewport(area);
+    popup_w.min(area.width.saturating_sub(2 * popup_margin_x(size.width)))
+}
+
 pub(crate) fn centered_popup_rect(area: Rect, popup_w: u16, popup_h: u16) -> Option<Rect> {
     let size = SizeClass::of_viewport(area);
-    let popup_w = popup_w.min(area.width.saturating_sub(2 * popup_margin_x(size.width)));
+    let popup_w = popup_width_for(area, popup_w);
     let popup_h = popup_h.min(area.height.saturating_sub(2 * popup_margin_y(size.height)));
     if popup_w < 4 || popup_h < 4 {
         return None;

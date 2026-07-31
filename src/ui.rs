@@ -117,10 +117,7 @@ pub(crate) use self::{
         file_delete_choose_button_rects, file_delete_confirmation_inner_rect,
         file_delete_permanent_button_rects,
     },
-    settings::{
-        settings_button_rects, settings_popup_height, settings_show_primary_action,
-        SETTINGS_POPUP_WIDTH,
-    },
+    settings::{settings_button_rects, settings_popup_rect_in, settings_show_primary_action},
     sidebar::{
         agent_entry_gap, agent_entry_height_in_body, agent_panel_body_rect, agent_panel_entries,
         agent_panel_scroll_for_target, agent_panel_scroll_metrics, agent_panel_scrollbar_rect,
