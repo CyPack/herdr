@@ -185,3 +185,69 @@ herdr --no-session
 ```
 
 This is mainly an escape hatch for debugging or compatibility. The default persistent session mode is the normal path.
+
+## Phones and tablets
+
+Herdr reshapes itself for the viewport it is given, on both axes.
+
+A narrow terminal takes the mobile shell: no sidebar, no tab strip, a two-row
+header above a full-width terminal. The threshold is `ui.mobile_width_threshold`
+(64 columns by default) — raise it for a tablet, lower it if you want the
+desktop shell on a narrow split.
+
+A short terminal keeps the desktop shell but stops spending rows on chrome: the
+sidebar folds to its status rail and a tab strip showing a single tab goes away.
+Both come back when the viewport grows. Expanding the sidebar yourself overrides
+the fold for the rest of the session.
+
+### Two drawers
+
+The mobile header has a button at each edge.
+
+The left button opens **spaces**: your workspaces and worktrees, then the agents
+running in them, then the menu. The right button opens **tabs** for the
+workspace you are in — as does the active-tab strip between the two buttons,
+which is the larger target for the same intent.
+
+Each drawer covers three quarters of the width. The quarter left showing is the
+live terminal, and tapping it closes the drawer.
+
+### Driving it from the keyboard
+
+Every row a finger can reach is reachable from the keyboard, because on iOS
+terminals a tap is often not forwarded as a click at all.
+
+| Key | Action |
+|---|---|
+| `↑` `↓` (or `k` `j`) | Move the drawer cursor |
+| `Enter` | Activate the row under the cursor |
+| `Tab` | Swap between the two drawers |
+| `Esc` | Close the drawer |
+
+The cursor opens on the row you are already in — the active workspace, the
+active tab — so the first arrow key moves relative to your context.
+
+### Selecting and copying text
+
+Herdr captures mouse input so its own interface is clickable. While it does,
+your terminal app's press-and-hold text selection is suppressed: the drag is
+forwarded to Herdr, and the client's selection handles never appear. Some
+clients, Termius among them, also bind long-press to arrow keys, so a finger
+dragging across text moves a cursor instead.
+
+Turn **select text** on in the spaces drawer's menu. Herdr releases mouse
+capture, your client's own selection works normally, and turning it off restores
+the previous setting. While it is on, the header says so and names the way back —
+taps do not reach Herdr at all in that state, so use the keyboard to switch it
+off.
+
+Copying works with no extra setup as long as your client honours OSC 52: over
+SSH, Herdr writes the selection out as an OSC 52 clipboard sequence, which the
+client puts on the phone's clipboard. Pasting is your client's own paste.
+
+### What Herdr cannot do
+
+Herdr cannot hide your on-screen keyboard. Keyboard visibility is a property of
+the client app, and no terminal escape sequence controls it. Use your client's
+own gesture — a keyboard button or a downward swipe. Opening a drawer does stop
+your keystrokes from reaching the agent: they drive the drawer instead.

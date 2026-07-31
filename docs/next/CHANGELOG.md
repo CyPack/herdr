@@ -3,12 +3,17 @@
 ## Unreleased
 
 ### Added
+- The mobile shell now has a drawer at each edge: the left header button opens spaces, agents and the menu; the right one opens the active workspace's tabs, as does the active-tab strip between them. Each covers three quarters of the width, and tapping the terminal still showing beside it closes the drawer. Every row is reachable from the keyboard with the arrow keys, `Enter` and `Tab`.
+- A `select text` toggle in the mobile spaces drawer releases mouse capture so a phone terminal's own press-and-hold selection works; turning it off restores the previous `ui.mouse_capture` setting. Copying reaches the phone clipboard through OSC 52, which Herdr already uses over SSH.
+- A short terminal — a phone held sideways — now folds the sidebar to its status rail and hides a tab strip showing a single tab, restoring both when the viewport grows. Expanding the sidebar yourself overrides the fold for the session.
 - Each attached display now keeps its own workspace, tab and focused pane, so several monitors can watch different tabs of one session at the same time. A tab is sized to the smallest display watching it, so a tab only one display is watching keeps that display's full size. Set `session.per_display_focus = false` to mirror one view onto every display instead.
 
 ### Changed
 - Relicensed Herdr from AGPL-3.0-or-later to Apache-2.0.
 
 ### Fixed
+- Overlays now lay themselves out for the width they are given on narrow terminals: the keybind help stacks each label under its shortcut instead of wrapping it into the key column, the settings popup budgets its height against the width it is actually granted, and every popup takes the full width on a phone-sized viewport instead of spending a tenth of the screen on margins.
+- An overlay too small to draw now shows a one-line notice naming it and the key that closes it, instead of leaving the mode open over a screen with no overlay on it.
 - Pane and agent read responses now report `truncated: true` when older terminal rows were omitted. (#1717)
 - Pane applications that query OSC 4 palette colors now inherit the host terminal palette. (#1752)
 - Ctrl-clicking a pane URL no longer forwards an unmatched mouse release to alternate-screen applications, preventing duplicate browser tabs. (#1761)
