@@ -7,8 +7,7 @@ use ratatui::{
 };
 
 use super::sidebar::{
-    agent_panel_entries, agent_panel_entries_from, grouped_child_display_label,
-    mobile_space_entries, AgentPanelEntry,
+    agent_panel_entries, agent_panel_entries_from, grouped_child_display_label, AgentPanelEntry,
 };
 use super::status::{agent_icon, state_dot};
 use super::text::{display_width_u16, truncate_end};
@@ -74,6 +73,17 @@ pub(crate) enum MobileSwitcherTarget {
         pane_id: PaneId,
     },
     Menu(usize),
+    /// Fold or unfold a repository group. Carried as its position among the
+    /// group rows rather than its key, so the target stays `Copy` like every
+    /// other one; the key is read back from the row list on activation.
+    ToggleSpaceGroup {
+        group_idx: usize,
+    },
+    /// Open a remembered chat under a checkout.
+    Chat {
+        ws_idx: usize,
+        chat_idx: usize,
+    },
     /// Hand the client back its own selection gesture, or take it back.
     ToggleSelectMode,
 }
@@ -83,10 +93,37 @@ pub(crate) enum MobileSwitcherTarget {
 pub(crate) enum DrawerRowContent {
     SectionTitle(&'static str),
     Action(&'static str),
-    Space { ws_idx: usize, indented: bool },
-    Agent { entry_idx: usize },
-    Tab { tab_idx: usize },
-    Menu { menu_idx: usize },
+    /// The repository a group of checkouts belongs to.
+    SpaceGroup {
+        space_key: String,
+        depth: u8,
+        collapsed: bool,
+    },
+    Space {
+        ws_idx: usize,
+        depth: u8,
+    },
+    /// A remembered chat under a checkout.
+    Chat {
+        ws_idx: usize,
+        chat_idx: usize,
+        depth: u8,
+    },
+    /// An inert note under a checkout's chat drawer: "no chats yet" or the
+    /// folded "… N older" row. Not a cursor stop, exactly as on the desktop.
+    ChatNote {
+        depth: u8,
+        label: String,
+    },
+    Agent {
+        entry_idx: usize,
+    },
+    Tab {
+        tab_idx: usize,
+    },
+    Menu {
+        menu_idx: usize,
+    },
     SelectMode,
     Empty(&'static str),
 }
@@ -231,12 +268,72 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
         target: Some(MobileSwitcherTarget::NewWorkspace),
         content: DrawerRowContent::Action("+ new workspace"),
     });
-    for (ws_idx, indented) in mobile_space_entries(app) {
-        rows.push(DrawerRow {
-            height: entry_h,
-            target: Some(MobileSwitcherTarget::Workspace(ws_idx)),
-            content: DrawerRowContent::Space { ws_idx, indented },
-        });
+    // The drawer walks the same tree the desktop sidebar walks, unfiltered.
+    // It used to keep only the workspace rows, which dropped the repository
+    // header above them and the chats below: worktrees from different
+    // repositories landed in one flat list and a remembered chat could not be
+    // reached from a phone at all (TP-MOB-60).
+    let mut group_idx = 0usize;
+    for entry in crate::ui::sidebar::workspace_list_entries(app) {
+        match entry {
+            crate::ui::sidebar::WorkspaceListEntry::GroupHeader { space_key } => {
+                let collapsed = app.collapsed_space_keys.contains(&space_key);
+                rows.push(DrawerRow {
+                    height: 1,
+                    target: Some(MobileSwitcherTarget::ToggleSpaceGroup { group_idx }),
+                    content: DrawerRowContent::SpaceGroup {
+                        space_key,
+                        depth: 0,
+                        collapsed,
+                    },
+                });
+                group_idx += 1;
+            }
+            crate::ui::sidebar::WorkspaceListEntry::Workspace { ws_idx, indented } => {
+                rows.push(DrawerRow {
+                    height: entry_h,
+                    target: Some(MobileSwitcherTarget::Workspace(ws_idx)),
+                    content: DrawerRowContent::Space {
+                        ws_idx,
+                        depth: u8::from(indented),
+                    },
+                });
+            }
+            crate::ui::sidebar::WorkspaceListEntry::Chat { ws_idx, chat_idx } => {
+                rows.push(DrawerRow {
+                    height: 1,
+                    target: Some(MobileSwitcherTarget::Chat { ws_idx, chat_idx }),
+                    content: DrawerRowContent::Chat {
+                        ws_idx,
+                        chat_idx,
+                        depth: 2,
+                    },
+                });
+            }
+            crate::ui::sidebar::WorkspaceListEntry::NoChats { .. } => {
+                rows.push(DrawerRow {
+                    height: 1,
+                    target: None,
+                    content: DrawerRowContent::ChatNote {
+                        depth: 2,
+                        label: "no chats yet".into(),
+                    },
+                });
+            }
+            crate::ui::sidebar::WorkspaceListEntry::MoreChats { ws_idx } => {
+                let hidden = crate::ui::sidebar::workspace_chat_rows_for(app, ws_idx)
+                    .len()
+                    .saturating_sub(crate::ui::sidebar::WORKSPACE_CHAT_ROW_LIMIT);
+                rows.push(DrawerRow {
+                    height: 1,
+                    target: None,
+                    content: DrawerRowContent::ChatNote {
+                        depth: 2,
+                        label: format!("… {hidden} older"),
+                    },
+                });
+            }
+        }
     }
 
     let agents = agent_panel_entries(app);
@@ -738,7 +835,6 @@ fn render_mobile_drawer_content(
 
     let scroll = app.mobile_switcher_scroll;
     let agents = agent_panel_entries_from(app, terminal_runtimes);
-    let space_entries = mobile_space_entries(app);
     let focused_agent = app.active.and_then(|ws_idx| {
         let ws = app.workspaces.get(ws_idx)?;
         ws.focused_pane_id()
@@ -746,7 +842,7 @@ fn render_mobile_drawer_content(
     });
 
     let mut doc_y = 0usize;
-    for row in &rows {
+    for (row_idx, row) in rows.iter().enumerate() {
         match &row.content {
             DrawerRowContent::SectionTitle(title) => {
                 let title = if *title == "agents" {
@@ -778,7 +874,7 @@ fn render_mobile_drawer_content(
                     )),
                 );
             }
-            DrawerRowContent::Space { ws_idx, indented } => {
+            DrawerRowContent::Space { ws_idx, depth } => {
                 render_space_row(
                     app,
                     terminal_runtimes,
@@ -788,9 +884,73 @@ fn render_mobile_drawer_content(
                     doc_y,
                     row.height,
                     *ws_idx,
-                    *indented,
-                    &space_entries,
+                    *depth,
+                    drawer_row_is_last_at_depth(&rows, row_idx),
                 );
+            }
+            DrawerRowContent::SpaceGroup {
+                space_key,
+                depth,
+                collapsed,
+            } => {
+                if let Some(y) = visible_y(viewport, scroll, doc_y) {
+                    let label = crate::ui::sidebar::space_label_for_key(app, space_key);
+                    let indent = drawer_indent(*depth, content.width);
+                    let text = format!(
+                        "{:indent$}{} {label}",
+                        "",
+                        if *collapsed { "▸" } else { "▾" },
+                        indent = indent
+                    );
+                    frame.render_widget(
+                        Paragraph::new(truncate_end(&text, content.width as usize)).style(
+                            Style::default()
+                                .fg(p.text)
+                                .bg(p.panel_bg)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Rect::new(content.x, y, content.width, 1),
+                    );
+                }
+            }
+            DrawerRowContent::Chat {
+                ws_idx,
+                chat_idx,
+                depth,
+            } => {
+                if let Some(y) = visible_y(viewport, scroll, doc_y) {
+                    let title = crate::ui::sidebar::workspace_chat_rows_for(app, *ws_idx)
+                        .get(*chat_idx)
+                        .map(|row| row.title.clone().unwrap_or_else(|| row.session_id.clone()))
+                        .unwrap_or_default();
+                    let indent = drawer_indent(*depth, content.width);
+                    frame.render_widget(
+                        Paragraph::new(truncate_end(
+                            &format!("{:indent$}· {title}", "", indent = indent),
+                            content.width as usize,
+                        ))
+                        .style(Style::default().fg(p.overlay1).bg(p.panel_bg)),
+                        Rect::new(content.x, y, content.width, 1),
+                    );
+                }
+            }
+            DrawerRowContent::ChatNote { depth, label } => {
+                if let Some(y) = visible_y(viewport, scroll, doc_y) {
+                    let indent = drawer_indent(*depth, content.width);
+                    frame.render_widget(
+                        Paragraph::new(truncate_end(
+                            &format!("{:indent$}{label}", "", indent = indent),
+                            content.width as usize,
+                        ))
+                        .style(
+                            Style::default()
+                                .fg(p.overlay0)
+                                .bg(p.panel_bg)
+                                .add_modifier(Modifier::DIM),
+                        ),
+                        Rect::new(content.x, y, content.width, 1),
+                    );
+                }
             }
             DrawerRowContent::Agent { entry_idx } => {
                 if let Some(entry) = agents.get(*entry_idx) {
@@ -854,9 +1014,50 @@ fn render_mobile_drawer_content(
     }
 }
 
-#[allow(clippy::too_many_arguments)] // one row, one call site; splitting the
-                                     // argument list would only move the same values through a struct nobody else
-                                     // constructs.
+#[allow(clippy::too_many_arguments)]
+// one row, one call site; splitting the
+// argument list would only move the same values through a struct nobody else
+// constructs.
+/// The tree level a row sits at, for rows that have one.
+fn drawer_row_depth(content: &DrawerRowContent) -> Option<u8> {
+    match content {
+        DrawerRowContent::SpaceGroup { depth, .. }
+        | DrawerRowContent::Space { depth, .. }
+        | DrawerRowContent::Chat { depth, .. }
+        | DrawerRowContent::ChatNote { depth, .. } => Some(*depth),
+        _ => None,
+    }
+}
+
+/// Columns of indent a level earns, capped so the label keeps room.
+///
+/// Ratatui does not clip a line that overruns its rect, so an indent budget
+/// spent without a floor would push a name off the panel and corrupt the row
+/// (TP-MOB-64).
+fn drawer_indent(depth: u8, content_width: u16) -> usize {
+    const PER_LEVEL: u16 = 2;
+    const MIN_LABEL: u16 = 8;
+    let wanted = u16::from(depth).saturating_mul(PER_LEVEL);
+    usize::from(wanted.min(content_width.saturating_sub(MIN_LABEL)))
+}
+
+/// Whether `idx` is the last row at its own level within its parent.
+fn drawer_row_is_last_at_depth(rows: &[DrawerRow], idx: usize) -> bool {
+    let Some(depth) = rows.get(idx).and_then(|r| drawer_row_depth(&r.content)) else {
+        return true;
+    };
+    for row in rows.iter().skip(idx + 1) {
+        match drawer_row_depth(&row.content) {
+            Some(other) if other > depth => continue,
+            Some(other) if other == depth => {
+                return !matches!(row.content, DrawerRowContent::Space { .. });
+            }
+            _ => return true,
+        }
+    }
+    true
+}
+
 fn render_space_row(
     app: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
@@ -866,8 +1067,8 @@ fn render_space_row(
     doc_y: usize,
     height: usize,
     ws_idx: usize,
-    indented: bool,
-    space_entries: &[(usize, bool)],
+    depth: u8,
+    last_child: bool,
 ) {
     let p = &app.palette;
     let Some(ws) = app.workspaces.get(ws_idx) else {
@@ -883,14 +1084,7 @@ fn render_space_row(
     // Worktrees of the same space render as branches off their parent, so a
     // child gets an L/T connector on its name row and a matching vertical
     // continuation on its detail row.
-    let detail_prefix = if indented {
-        let position = space_entries
-            .iter()
-            .position(|(idx, _)| *idx == ws_idx)
-            .unwrap_or(0);
-        let last_child = !space_entries
-            .get(position + 1)
-            .is_some_and(|(_, indented)| *indented);
+    let detail_prefix = if depth > 0 {
         title_spans.push(Span::styled(
             if last_child { "└─ " } else { "├─ " },
             Style::default().fg(p.overlay0).bg(bg),
@@ -907,12 +1101,12 @@ fn render_space_row(
     title_spans.push(Span::styled(dot, dot_style.bg(bg)));
     title_spans.push(Span::styled(" ", Style::default().bg(bg)));
     let raw_label = ws.display_name_from(&app.terminals, terminal_runtimes);
-    let name = if indented {
+    let name = if depth > 0 {
         grouped_child_display_label(&raw_label, ws.branch().as_deref(), ws.custom_name.is_some())
     } else {
         raw_label
     };
-    let name_budget = content.width.saturating_sub(if indented { 8 } else { 5 }) as usize;
+    let name_budget = content.width.saturating_sub(if depth > 0 { 8 } else { 5 }) as usize;
     title_spans.push(Span::styled(
         truncate_end(&name, name_budget),
         Style::default()
@@ -1545,6 +1739,204 @@ mod tests {
         app
     }
 
+    /// A repository group with a main checkout, two linked worktrees and a
+    /// standalone workspace, with chats open under the second checkout. This is
+    /// the shape the reader actually has — the flat fixtures elsewhere in this
+    /// file cannot show a level being lost.
+    fn tree_app(w: u16, h: u16) -> AppState {
+        use crate::workspace::{Workspace, WorktreeSpaceMembership};
+
+        fn checkout(name: &str, linked: bool) -> Workspace {
+            let mut ws = Workspace::test_new(name);
+            ws.identity_cwd = std::path::PathBuf::from(format!("/repo/herdr-{name}"));
+            ws.worktree_space = Some(WorktreeSpaceMembership {
+                key: "/repo/herdr/.git".into(),
+                label: "herdr".into(),
+                repo_root: std::path::PathBuf::from("/repo/herdr"),
+                checkout_path: std::path::PathBuf::from(format!("/repo/herdr-{name}")),
+                is_linked_worktree: linked,
+            });
+            ws
+        }
+
+        let mut app = AppState::test_new();
+        app.workspaces = vec![
+            checkout("main", false),
+            checkout("mobil", true),
+            checkout("tiling", true),
+            Workspace::test_new("cc-dashboard"),
+        ];
+        app.active = Some(0);
+        app.selected = 0;
+
+        let key = crate::persist::workspace_chats::ledger_key(&app.workspaces[1].identity_cwd);
+        app.workspace_chat_rows.insert(
+            key.clone(),
+            (0..2)
+                .map(|idx| crate::app::state::WorkspaceChatRow {
+                    session_id: format!("s{idx}"),
+                    agent: "claude".into(),
+                    title: Some(format!("chat {idx}")),
+                    last_seen_ms: 1_000 + idx as u64,
+                    last_modified: None,
+                })
+                .collect(),
+        );
+        app.expanded_chat_workspaces.insert(key);
+
+        app.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
+        app.view.mobile_header_rect = Rect::new(0, 0, w, 2);
+        app.view.terminal_area = Rect::new(0, 2, w, h - 2);
+        app.view.layout = crate::app::state::ViewLayout::Mobile;
+        app
+    }
+
+    // TP-MOB-60: the drawer carries every level the workspace tree has. It used
+    // to keep only the workspace rows, dropping the repository header above them
+    // and the chats below — so a reader on a phone saw worktrees from different
+    // repositories in one flat list, and could not reach a remembered chat at
+    // all. A level the drawer does not carry is a level that can go missing
+    // again without a test noticing.
+    #[test]
+    fn the_spaces_drawer_carries_every_level_of_the_tree() {
+        let app = tree_app(76, 35);
+        let rows = mobile_drawer_rows(&app);
+
+        let groups = rows
+            .iter()
+            .filter(|r| matches!(r.content, DrawerRowContent::SpaceGroup { .. }))
+            .count();
+        let spaces = rows
+            .iter()
+            .filter(|r| matches!(r.content, DrawerRowContent::Space { .. }))
+            .count();
+        let chats = rows
+            .iter()
+            .filter(|r| matches!(r.content, DrawerRowContent::Chat { .. }))
+            .count();
+
+        assert_eq!(groups, 1, "the repository header row");
+        assert_eq!(spaces, 4, "three checkouts plus the standalone workspace");
+        assert_eq!(chats, 2, "both remembered chats under the second checkout");
+    }
+
+    // TP-MOB-61: the three levels are distinguishable. The old row carried a
+    // single `indented` flag, so a repository, a checkout under it and that
+    // checkout's chat all drew at the same offset — which is exactly what the
+    // reader reported as the levels being mixed up.
+    #[test]
+    fn the_three_levels_carry_three_different_depths() {
+        let app = tree_app(76, 35);
+        let rows = mobile_drawer_rows(&app);
+
+        let group_depth = rows
+            .iter()
+            .find_map(|r| match r.content {
+                DrawerRowContent::SpaceGroup { depth, .. } => Some(depth),
+                _ => None,
+            })
+            .expect("group row");
+        let member_depth = rows
+            .iter()
+            .find_map(|r| match r.content {
+                DrawerRowContent::Space { ws_idx: 1, depth } => Some(depth),
+                _ => None,
+            })
+            .expect("member row");
+        let chat_depth = rows
+            .iter()
+            .find_map(|r| match r.content {
+                DrawerRowContent::Chat { depth, .. } => Some(depth),
+                _ => None,
+            })
+            .expect("chat row");
+
+        assert_eq!((group_depth, member_depth, chat_depth), (0, 1, 2));
+    }
+
+    // TP-MOB-62: a collapsed group hides its members, on the phone as on the
+    // desktop. The mobile list used to force every group open because the old
+    // flat switcher had no way to fold one; the drawer has a header row a finger
+    // and the keyboard cursor can both reach, and a reader with sixteen
+    // workspaces needs it.
+    #[test]
+    fn a_collapsed_group_hides_its_members_from_the_drawer() {
+        let mut app = tree_app(76, 35);
+        app.collapsed_space_keys.insert("/repo/herdr/.git".into());
+        let rows = mobile_drawer_rows(&app);
+
+        assert!(
+            rows.iter()
+                .any(|r| matches!(r.content, DrawerRowContent::SpaceGroup { .. })),
+            "the header stays so the group can be opened again"
+        );
+        assert!(
+            !rows
+                .iter()
+                .any(|r| matches!(r.content, DrawerRowContent::Space { ws_idx: 1, .. })),
+            "a member of the collapsed group must not be drawn"
+        );
+        assert!(
+            !rows
+                .iter()
+                .any(|r| matches!(r.content, DrawerRowContent::Chat { .. })),
+            "nor its chats"
+        );
+        assert!(
+            rows.iter()
+                .any(|r| matches!(r.content, DrawerRowContent::Space { ws_idx: 3, .. })),
+            "the standalone workspace belongs to no group and stays"
+        );
+    }
+
+    // TP-MOB-63: the keyboard cursor never lands on a row that is not drawn,
+    // and never on an inert note. A cursor on a hidden row is C14's failure in
+    // tree form — the arrow key moves, nothing on screen does, and the reader
+    // loses their place.
+    #[test]
+    fn the_drawer_cursor_only_stops_on_rows_that_are_drawn() {
+        let mut app = tree_app(76, 35);
+        app.collapsed_space_keys.insert("/repo/herdr/.git".into());
+
+        let rows = mobile_drawer_rows(&app);
+        let stops = mobile_drawer_cursor_stops(&app);
+        let doc_height: usize = rows.iter().map(|row| row.height).sum();
+
+        for stop in &stops {
+            assert!(
+                *stop < doc_height,
+                "cursor stop {stop} is past the document"
+            );
+        }
+        for row in &rows {
+            if matches!(row.content, DrawerRowContent::ChatNote { .. }) {
+                assert!(row.target.is_none(), "an inert note is not a cursor stop");
+            }
+        }
+        assert!(
+            !rows
+                .iter()
+                .any(|row| matches!(row.content, DrawerRowContent::Chat { .. })),
+            "a folded group contributes no chat rows for the cursor to reach"
+        );
+    }
+
+    // TP-MOB-64: an indent budget has a floor. Ratatui does not clip a line
+    // that overruns its rect, so indenting without one would push a name past
+    // the panel edge and corrupt the row on the narrowest phones.
+    #[test]
+    fn indenting_never_costs_the_label_its_last_columns() {
+        for width in 1..=60u16 {
+            for depth in 0..=4u8 {
+                let indent = drawer_indent(depth, width);
+                assert!(
+                    indent < usize::from(width).max(1),
+                    "depth {depth} at width {width} indented {indent}"
+                );
+            }
+        }
+    }
+
     // TP-MOB-32: an open drawer covers three quarters of the width and leaves
     // the rest showing. The uncovered strip is both the way out and the
     // reminder that a session is running under it.
@@ -2022,22 +2414,40 @@ mod tests {
         app.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
 
         // Grouped order pulls the worktree (idx 2) up under its parent (idx 0),
-        // ahead of the unrelated "other" workspace (idx 1): rows are main,
-        // feature, other, starting after the create row.
-        assert_eq!(mobile_drawer_workspace_doc_range(&app, 2).start, 3);
-        assert_eq!(mobile_drawer_workspace_doc_range(&app, 1).start, 5);
+        // ahead of the unrelated "other" workspace (idx 1). The document now
+        // opens with the create row, then the repository header the two
+        // checkouts belong to, then main, feature, other.
+        assert_eq!(mobile_drawer_workspace_doc_range(&app, 0).start, 2);
+        assert_eq!(mobile_drawer_workspace_doc_range(&app, 2).start, 4);
+        assert_eq!(mobile_drawer_workspace_doc_range(&app, 1).start, 6);
 
         let viewport = mobile_drawer_areas(&app).viewport;
         // The second space row on screen is the worktree, not workspaces[1].
-        let hit = mobile_drawer_target_at(&app, viewport.x + 2, viewport.y + 3);
+        let hit = mobile_drawer_target_at(&app, viewport.x + 2, viewport.y + 4);
         assert_eq!(hit, Some(MobileSwitcherTarget::Workspace(2)));
 
-        // Mobile ignores collapse: even with the space folded on desktop, the
-        // worktree child still renders in the same position.
+        // TP-MOB-62: folding the group on the phone hides its checkouts, the
+        // same as on the desktop. The old mobile list forced every group open
+        // because the flat switcher had no way to fold one; the drawer's header
+        // row is reachable by both a finger and the keyboard cursor, and a
+        // reader with sixteen workspaces needs it.
         app.collapsed_space_keys.insert("repo-key".to_string());
-        assert_eq!(mobile_drawer_workspace_doc_range(&app, 2).start, 3);
-        let hit = mobile_drawer_target_at(&app, viewport.x + 2, viewport.y + 3);
-        assert_eq!(hit, Some(MobileSwitcherTarget::Workspace(2)));
+        assert_eq!(
+            mobile_drawer_target_at(&app, viewport.x + 2, viewport.y + 1),
+            Some(MobileSwitcherTarget::ToggleSpaceGroup { group_idx: 0 }),
+            "the header stays, so the group can be opened again"
+        );
+        assert_eq!(
+            mobile_drawer_target_at(&app, viewport.x + 2, viewport.y + 2),
+            Some(MobileSwitcherTarget::Workspace(0)),
+            "folding hides the linked worktrees, not the checkout they branch from"
+        );
+        assert!(
+            !mobile_drawer_rows(&app)
+                .iter()
+                .any(|row| matches!(row.content, DrawerRowContent::Space { ws_idx: 2, .. })),
+            "the linked worktree is folded away"
+        );
     }
 
     #[test]

@@ -560,13 +560,6 @@ pub(crate) fn workspace_new_chat_cell(card_rect: Rect) -> Rect {
 /// Its geometry is a strict two rows per workspace and it is a switcher rather
 /// than a browser, so the chat drawer — which belongs to the desktop sidebar —
 /// is filtered out here instead of being special-cased at three call sites.
-pub(crate) fn mobile_space_entries(app: &AppState) -> Vec<(usize, bool)> {
-    workspace_list_entries_expanded(app)
-        .iter()
-        .filter_map(WorkspaceListEntry::as_workspace)
-        .collect()
-}
-
 /// The chats to show under `ws_idx`, or an empty slice when there are none.
 pub(crate) fn workspace_chat_rows_for(
     app: &AppState,
@@ -1783,7 +1776,7 @@ fn render_workspace_list(
 }
 
 /// The label a worktree space is known by, or the key itself as a last resort.
-fn space_label_for_key(app: &AppState, key: &str) -> String {
+pub(crate) fn space_label_for_key(app: &AppState, key: &str) -> String {
     (0..app.workspaces.len())
         .find_map(|ws_idx| effective_space(app, ws_idx).filter(|space| space.key == key))
         .map(|space| space.label)
@@ -4317,18 +4310,29 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         );
     }
 
-    // TP-WSCHAT-18: the mobile switcher lays out exactly two rows per
-    // workspace. A drawer row inside that list would shift every position
-    // after it, so the switcher would select the wrong workspace.
+    // TP-WSCHAT-18: the phone drawer carries the chat rows of an open drawer.
+    //
+    // This row used to say the opposite. The flat mobile switcher derived a
+    // workspace's position arithmetically — two rows each — so any row that was
+    // not a workspace shifted every position after it and the switcher selected
+    // the wrong one. The drawer that replaced it derives every position from
+    // one row list (`mobile_drawer_rows`), which render, hit-testing, height and
+    // the keyboard cursor all read, so an extra row kind cannot desynchronise
+    // them. With the hazard gone, the exclusion only hid the chats from anyone
+    // on a phone.
     #[test]
-    fn the_mobile_switcher_never_sees_drawer_rows() {
+    fn the_mobile_drawer_sees_chat_rows() {
         let (mut app, key) = app_with_chat_drawer(4);
         app.expanded_chat_workspaces.insert(key);
+        app.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
 
+        let chats = crate::ui::mobile_drawer_rows(&app)
+            .iter()
+            .filter(|row| matches!(row.content, crate::ui::DrawerRowContent::Chat { .. }))
+            .count();
         assert_eq!(
-            mobile_space_entries(&app).len(),
-            1,
-            "the switcher lists workspaces only"
+            chats, 4,
+            "every remembered chat is reachable from the phone"
         );
     }
 
@@ -5035,17 +5039,28 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     // workspace. A header leaking into that list would shift every position
     // after it, so the switcher would select the wrong workspace.
     #[test]
-    fn the_mobile_switcher_never_sees_a_group_header() {
+    fn the_mobile_drawer_sees_the_group_header() {
         let mut app = AppState::test_new();
         app.workspaces = vec![
             workspace_with_worktree_space("main", Some("repo-key"), "/repo/herdr"),
             workspace_with_worktree_space("issue", Some("repo-key"), "/repo/herdr-issue"),
         ];
+        app.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
 
+        let rows = crate::ui::mobile_drawer_rows(&app);
         assert_eq!(
-            mobile_space_entries(&app).len(),
+            rows.iter()
+                .filter(|row| matches!(row.content, crate::ui::DrawerRowContent::SpaceGroup { .. }))
+                .count(),
+            1,
+            "the repository row names what the checkouts under it belong to"
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| matches!(row.content, crate::ui::DrawerRowContent::Space { .. }))
+                .count(),
             2,
-            "the switcher lists checkouts, never the repository row"
+            "and the checkouts are still there"
         );
     }
 

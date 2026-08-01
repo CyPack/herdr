@@ -1485,6 +1485,13 @@ impl AppState {
                 self.close_mobile_drawer();
                 return MobileMouseResult::Action(MouseAction::FocusPane { ws_idx, pane_id });
             }
+            Some(crate::ui::MobileSwitcherTarget::ToggleSpaceGroup { group_idx }) => {
+                self.toggle_mobile_space_group(group_idx);
+            }
+            Some(crate::ui::MobileSwitcherTarget::Chat { ws_idx, chat_idx }) => {
+                self.close_mobile_drawer();
+                self.open_workspace_chat(ws_idx, chat_idx);
+            }
             Some(crate::ui::MobileSwitcherTarget::ToggleSelectMode) => {
                 self.toggle_mobile_select_mode();
             }

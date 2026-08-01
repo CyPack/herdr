@@ -1631,6 +1631,16 @@ impl AppState {
                 self.close_mobile_drawer();
                 self.switch_workspace(ws_idx);
             }
+            crate::ui::MobileSwitcherTarget::ToggleSpaceGroup { group_idx } => {
+                // Folding is the one activation that keeps the drawer open: the
+                // reader is narrowing the list they are still reading, not
+                // leaving it (TP-MOB-63).
+                self.toggle_mobile_space_group(group_idx);
+            }
+            crate::ui::MobileSwitcherTarget::Chat { ws_idx, chat_idx } => {
+                self.close_mobile_drawer();
+                self.open_workspace_chat(ws_idx, chat_idx);
+            }
             crate::ui::MobileSwitcherTarget::NewTab => {
                 self.request_new_tab = true;
                 self.close_mobile_drawer();
@@ -1702,6 +1712,36 @@ impl AppState {
     /// The drawer stays open on purpose: this is a mode the reader is about to
     /// use on the terminal behind it, and closing the drawer would hide the
     /// only indicator saying which state they are in.
+    /// Fold or unfold the repository group at `group_idx` in the open drawer.
+    ///
+    /// The index is resolved back through the row producer rather than carried
+    /// as a key, so the drawer and the thing it folds can never describe
+    /// different groups.
+    pub(crate) fn toggle_mobile_space_group(&mut self, group_idx: usize) {
+        let key = crate::ui::mobile_drawer_rows(self)
+            .into_iter()
+            .filter_map(|row| match row.content {
+                crate::ui::DrawerRowContent::SpaceGroup { space_key, .. } => Some(space_key),
+                _ => None,
+            })
+            .nth(group_idx);
+        let Some(key) = key else {
+            return;
+        };
+        if !self.collapsed_space_keys.remove(&key) {
+            self.collapsed_space_keys.insert(key);
+        }
+        // Folding changes how many rows there are, so an offset taken against
+        // the old length would leave the reader scrolled past the end.
+        let max_scroll = crate::ui::mobile_drawer_max_scroll(self);
+        self.mobile_switcher_scroll = self.mobile_switcher_scroll.min(max_scroll);
+        self.mobile_drawer_cursor = self.mobile_drawer_cursor.min(
+            crate::ui::mobile_drawer_cursor_stops(self)
+                .len()
+                .saturating_sub(1),
+        );
+    }
+
     pub(crate) fn toggle_mobile_select_mode(&mut self) {
         match self.mobile_select_mode.take() {
             Some(previous) => self.mouse_capture = previous,

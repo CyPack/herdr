@@ -78,7 +78,7 @@ Two ideas run through the family:
 
 | ID | Behavior | Breaks if lost | Verified by |
 |---|---|---|---|
-| TP-TREE-18 | The mobile switcher never sees a header row. | The switcher lays out a fixed number of rows per workspace; a header leaking in shifts every position after it and the switcher selects the wrong workspace. | `the_mobile_switcher_never_sees_a_group_header` |
+| TP-TREE-18 | The mobile drawer *does* see the header row. **Reversed 2026-08-01.** | The old rule protected the flat switcher, which derived a workspace position arithmetically, so a header shifted every position after it. The drawer that replaced it derives every position from one row list that render, hit-testing, height and the cursor all read, so an extra row kind cannot desynchronise them — and without the header a reader on a phone cannot tell which repository a worktree belongs to (TP-MOB-60). | `the_mobile_drawer_sees_the_group_header` |
 
 ## Cost
 

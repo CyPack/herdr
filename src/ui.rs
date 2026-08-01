@@ -134,8 +134,8 @@ pub(crate) use self::{
     mobile::{
         mobile_drawer_areas, mobile_drawer_cursor_doc_range, mobile_drawer_cursor_stops,
         mobile_drawer_cursor_target, mobile_drawer_default_cursor, mobile_drawer_max_scroll,
-        mobile_drawer_target_at, mobile_drawer_workspace_doc_range, MobileHeaderHitAreas,
-        MobileSwitcherTarget,
+        mobile_drawer_rows, mobile_drawer_target_at, mobile_drawer_workspace_doc_range,
+        DrawerRowContent, MobileHeaderHitAreas, MobileSwitcherTarget,
     },
     panes::{apply_pane_chrome, pane_inner_rect, pane_is_scrolled_back},
     tab_surface::{tab_surface_cursor, tab_surface_hyperlinks, TabSurfaceView},
