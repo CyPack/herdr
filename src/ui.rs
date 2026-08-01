@@ -2876,9 +2876,10 @@ mod tests {
         assert_eq!(app.view.mobile_header_rect, Rect::new(0, 0, 44, 2));
         assert_eq!(app.view.terminal_area, Rect::new(0, 2, 44, 18));
         let hits = app.view.mobile_header_hits;
-        assert_eq!(hits.spaces_menu, Rect::new(0, 0, 3, 2));
-        assert_eq!(hits.tabs_menu, Rect::new(41, 0, 3, 2));
-        assert_eq!(hits.tab_strip, Rect::new(3, 0, 38, 2));
+        // Five columns each since TP-MOB-58 widened the thumb targets.
+        assert_eq!(hits.spaces_menu, Rect::new(0, 0, 5, 2));
+        assert_eq!(hits.tabs_menu, Rect::new(39, 0, 5, 2));
+        assert_eq!(hits.tab_strip, Rect::new(5, 0, 34, 2));
     }
 
     #[test]

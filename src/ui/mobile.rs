@@ -25,7 +25,13 @@ use crate::terminal::TerminalRuntimeRegistry;
 /// on the narrowest viewport, and the strip between them takes the loss —
 /// missing the button is a failed action, missing the strip is a failed
 /// shortcut to the same action.
-const HEADER_BUTTON_WIDTH: u16 = 3;
+/// The header buttons sit in the two corners a thumb reaches least accurately
+/// and are the only tap targets the phone shell always shows. Three columns is
+/// roughly half the 44pt floor Apple asks for; five across the header's two
+/// rows reads as a square button rather than a glyph with a hitbox drawn round
+/// it. It stops there because every column a button takes is one the
+/// active-tab strip loses (TP-MOB-58).
+const HEADER_BUTTON_WIDTH: u16 = 5;
 
 /// The share of the screen an open drawer covers.
 ///
@@ -109,8 +115,13 @@ pub(crate) fn compute_mobile_header_hit_areas(_app: &AppState, area: Rect) -> Mo
     // The buttons hold their width and the strip absorbs whatever narrowing
     // there is, down to nothing. Overlapping targets would make one of the two
     // intents unreachable without saying which.
-    let left_w = HEADER_BUTTON_WIDTH.min(area.width);
-    let right_w = HEADER_BUTTON_WIDTH.min(area.width.saturating_sub(left_w));
+    // Narrowing is shared between the two buttons rather than spent entirely on
+    // the right one: taking the full width for the left button first leaves the
+    // right one a sliver on a viewport that is merely narrow, and the two
+    // buttons are equal in importance (TP-MOB-45, TP-MOB-58).
+    let button_w = HEADER_BUTTON_WIDTH.min(area.width / 2).max(1);
+    let left_w = button_w.min(area.width);
+    let right_w = button_w.min(area.width.saturating_sub(left_w));
     let strip_w = area.width.saturating_sub(left_w + right_w);
 
     MobileHeaderHitAreas {
@@ -1750,6 +1761,53 @@ mod tests {
             stops.contains(&toggle_start),
             "the cursor can stop on the toggle"
         );
+    }
+
+    // TP-MOB-58: the header buttons are the only always-present tap targets in
+    // the phone shell, and they sit in the two corners a thumb reaches least
+    // accurately. Apple's own guidance puts the floor at 44pt; a 3-column
+    // button on a phone is roughly half that across. They stay square-ish
+    // rather than growing without limit, because every column they take is one
+    // the active-tab strip loses.
+    #[test]
+    fn the_header_buttons_are_wide_enough_for_a_thumb() {
+        let app = drawer_app(1, 1, 76, 35);
+        let hits = compute_mobile_header_hit_areas(&app, Rect::new(0, 0, 76, 2));
+
+        assert!(
+            hits.spaces_menu.width >= 5,
+            "spaces button is {} columns wide",
+            hits.spaces_menu.width
+        );
+        assert_eq!(hits.spaces_menu.width, hits.tabs_menu.width);
+        assert!(
+            hits.tab_strip.width > 0,
+            "the strip still has to name the active tab"
+        );
+        assert_eq!(
+            hits.spaces_menu.right(),
+            hits.tab_strip.x,
+            "targets must not overlap or leave a dead gap"
+        );
+        assert_eq!(hits.tab_strip.right(), hits.tabs_menu.x);
+        assert_eq!(hits.tabs_menu.right(), 76);
+    }
+
+    // TP-MOB-59: a viewport too narrow for two full buttons degrades by
+    // shrinking them rather than by overlapping them, because two targets that
+    // share a cell make one of the two intents unreachable without saying so.
+    #[test]
+    fn the_header_buttons_shrink_before_they_overlap() {
+        let app = drawer_app(1, 1, 8, 20);
+        for width in 1..=12u16 {
+            let hits = compute_mobile_header_hit_areas(&app, Rect::new(0, 0, width, 2));
+            assert!(
+                hits.spaces_menu.right() <= hits.tab_strip.x,
+                "width {width}"
+            );
+            assert!(hits.tab_strip.right() <= hits.tabs_menu.x, "width {width}");
+            assert!(hits.tabs_menu.right() <= width, "width {width}");
+        }
     }
 
     // TP-MOB-55: while select text is on the header says so, and says how to

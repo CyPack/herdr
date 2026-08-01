@@ -342,10 +342,13 @@ mod tests {
         // panel, and the drawer carries a keyboard cursor marker. The
         // structural assertions above are what hold the shape; this digest
         // holds everything else steady. It moved again when the drawer gained
-        // its select-text row.
+        // its select-text row, and again when the header buttons widened from
+        // three columns to five (TP-MOB-58) — verified by dumping the frame
+        // first: both corners still carry a centred hamburger and the strip
+        // still names the active tab, only the button columns changed.
         assert_eq!(
             frame_digest(&frame),
-            "852f17c165d2d09b9e286ced574c492a8ce958d4e7268c2598836665fe5d9f78"
+            "0f123c7929ac342b2192ac14ede63f541315e1780b0b79e73c012c9799891abc"
         );
     }
 }
