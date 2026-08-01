@@ -227,6 +227,18 @@ terminals a tap is often not forwarded as a click at all.
 The cursor opens on the row you are already in — the active workspace, the
 active tab — so the first arrow key moves relative to your context.
 
+### Scrolling the terminal
+
+Your client reports a swipe as a mouse wheel event. On a desktop that wheel goes
+to the program running in the pane, which is what lets you scroll inside its own
+lists and viewers. Coding agents ask for mouse reporting but usually do nothing
+with the wheel, so on a phone that handover left the content area looking frozen.
+
+In the mobile shell a vertical swipe over the terminal scrolls Herdr's own
+scrollback instead. Programs that scroll with arrow keys, such as `less` and
+`vim`, are unaffected — their swipe still reaches them. On a desktop-width
+terminal nothing changes.
+
 ### Selecting and copying text
 
 Herdr captures mouse input so its own interface is clickable. While it does,

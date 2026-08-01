@@ -309,3 +309,18 @@ and every agent first. Two drawers, one per edge, split them.
 | TP-MOB-53 | The toggle restores the capture setting it found, not a hardcoded default. | A reader who runs with `mouse_capture = false` has it silently switched on by using a feature that has nothing to do with it. | `select_text_restores_the_setting_it_found` |
 | TP-MOB-54 | The spaces drawer carries the toggle on a row the keyboard cursor can reach. | While capture is released a tap reaches nothing, so a toggle reachable only by tap is a one-way door out of Herdr's own interface. | `the_spaces_drawer_offers_a_reachable_select_text_row` |
 | TP-MOB-55 | While select text is on, the header says so and names the way back. | This is the one mode that changes whether taps do anything at all; without an indicator the reader concludes Herdr has stopped responding. | `the_header_says_when_select_text_is_on` |
+
+## Mobile scrolling
+
+A touch client reports a swipe as a wheel event. On a desktop that wheel belongs
+to the program in the pane, and handing it over is what makes scrolling work
+inside its own lists and viewers. On a phone the same handover is a dead end: an
+agent that asked for mouse reporting usually ignores the wheel, and the reader
+has no second way to reach scrollback — no wheel, no keyboard shortcut within
+reach, and a scrollbar too thin for a finger. The phone shell keeps the vertical
+wheel over pane content for its own viewport.
+
+| ID | Behaviour | Why it exists | Test |
+| --- | --- | --- | --- |
+| TP-MOB-56 | In the mobile shell a vertical wheel over pane content scrolls Herdr's viewport instead of being reported to the pane. | A swipe is the only scroll gesture a phone has; spending it on an agent that discards it leaves the content area looking frozen. | `mobile_shell_vertical_wheel_scrolls_the_pane_instead_of_reporting_it` |
+| TP-MOB-57 | On a desktop layout the vertical wheel still reports to a mouse-reporting pane and does not move Herdr's viewport. | The override is a phone accommodation; applying it everywhere would break scrolling inside every mouse-aware program Herdr hosts. | `desktop_shell_vertical_wheel_still_reports_to_the_pane` |

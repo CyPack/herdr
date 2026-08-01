@@ -2055,6 +2055,23 @@ impl AppState {
         };
         match rt.wheel_routing() {
             Some(crate::pane::WheelRouting::HostScroll) | None => false,
+            Some(crate::pane::WheelRouting::MouseReport)
+                if self.view.layout == ViewLayout::Mobile
+                    && matches!(
+                        mouse.kind,
+                        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                    ) =>
+            {
+                // A touch client reports a swipe as a wheel event, and an agent
+                // that asked for mouse reporting typically does nothing with
+                // it. On a phone that spends the only scroll gesture there is:
+                // no wheel, no keyboard shortcut in reach, and a scrollbar too
+                // thin for a finger. The phone shell keeps the vertical wheel
+                // for its own viewport and leaves the rest of the reporting
+                // contract alone (TP-MOB-56). Alternate-scroll panes are not
+                // covered because their arrow keys already scroll on touch.
+                false
+            }
             Some(crate::pane::WheelRouting::MouseReport) => {
                 rt.scroll_reset();
                 let column = mouse.column.saturating_sub(info.inner_rect.x);
@@ -2442,6 +2459,112 @@ mod tests {
             .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
             .expect("scroll metrics after wheel");
         assert_eq!(metrics.offset_from_bottom, 7);
+    }
+
+    fn mouse_reporting_pane_with_scrollback(
+        info: &PaneInfo,
+    ) -> (
+        crate::terminal::TerminalRuntime,
+        tokio::sync::mpsc::Receiver<Bytes>,
+    ) {
+        let mut bytes = b"\x1b[?1000h\x1b[?1006h".to_vec();
+        bytes.extend_from_slice(&numbered_lines_bytes(64));
+        crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+            info.inner_rect.width,
+            info.inner_rect.height,
+            16 * 1024,
+            &bytes,
+            4,
+        )
+    }
+
+    /// TP-MOB-56: a phone has no wheel and no finger-reachable scrollbar, so a
+    /// two-finger swipe is the only way to reach a pane's scrollback. Termius
+    /// reports that swipe as an SGR wheel event, and handing it to a
+    /// mouse-reporting agent swallows it — the content area looks frozen. In
+    /// the mobile shell the vertical wheel drives Herdr's own viewport instead.
+    #[tokio::test]
+    async fn mobile_shell_vertical_wheel_scrolls_the_pane_instead_of_reporting_it() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(0, 2, 40, 18));
+        let info = pane_infos[0].clone();
+        let (runtime, mut input_rx) = mouse_reporting_pane_with_scrollback(&info);
+        ws.insert_test_runtime(pane_id, runtime);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.view.layout = ViewLayout::Mobile;
+        // The phone shell has no sidebar; the shared fixture's desktop sidebar
+        // rect would otherwise sit under the full-width mobile pane.
+        app.state.view.sidebar_rect = Rect::default();
+        app.state.view.pane_infos = pane_infos;
+        app.state.mouse_scroll_lines = 3;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::ScrollUp,
+            info.inner_rect.x + 1,
+            info.inner_rect.y + 1,
+        ));
+
+        let metrics = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
+            .expect("scroll metrics after wheel");
+        assert_eq!(
+            metrics.offset_from_bottom, 3,
+            "the mobile shell owns the vertical wheel over pane content"
+        );
+        assert!(
+            input_rx.try_recv().is_err(),
+            "a swipe the phone cannot repeat elsewhere must not be spent on the agent"
+        );
+    }
+
+    /// TP-MOB-57: the override is scoped to the phone shell. On a desktop
+    /// layout the wheel still belongs to the program in the pane, which is
+    /// what makes scroll work inside its own lists and viewers.
+    #[tokio::test]
+    async fn desktop_shell_vertical_wheel_still_reports_to_the_pane() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
+        let info = pane_infos[0].clone();
+        let (runtime, mut input_rx) = mouse_reporting_pane_with_scrollback(&info);
+        ws.insert_test_runtime(pane_id, runtime);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.view.pane_infos = pane_infos;
+        app.state.mouse_scroll_lines = 3;
+        assert_ne!(app.state.view.layout, ViewLayout::Mobile);
+
+        app.handle_mouse(mouse(
+            MouseEventKind::ScrollUp,
+            info.inner_rect.x + 1,
+            info.inner_rect.y + 1,
+        ));
+
+        assert!(
+            input_rx.try_recv().is_ok(),
+            "the desktop wheel still reaches a mouse-reporting pane"
+        );
+        let metrics = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
+            .expect("scroll metrics after wheel");
+        assert_eq!(
+            metrics.offset_from_bottom, 0,
+            "reporting the wheel must not also move Herdr's viewport"
+        );
     }
 
     #[tokio::test]

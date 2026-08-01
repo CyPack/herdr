@@ -14,6 +14,7 @@
 ### Fixed
 - Overlays now lay themselves out for the width they are given on narrow terminals: the keybind help stacks each label under its shortcut instead of wrapping it into the key column, the settings popup budgets its height against the width it is actually granted, and every popup takes the full width on a phone-sized viewport instead of spending a tenth of the screen on margins.
 - An overlay too small to draw now shows a one-line notice naming it and the key that closes it, instead of leaving the mode open over a screen with no overlay on it.
+- Swiping over the terminal on a phone now scrolls Herdr's scrollback instead of being reported to an agent that discards it, which left the content area looking frozen. Desktop widths and arrow-key scrolling programs are unaffected.
 - Pane and agent read responses now report `truncated: true` when older terminal rows were omitted. (#1717)
 - Pane applications that query OSC 4 palette colors now inherit the host terminal palette. (#1752)
 - Ctrl-clicking a pane URL no longer forwards an unmatched mouse release to alternate-screen applications, preventing duplicate browser tabs. (#1761)
