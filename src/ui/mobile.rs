@@ -856,11 +856,14 @@ pub(crate) fn mobile_drawer_target_at(
     if !matches!(app.mobile_drawer, crate::app::state::MobileDrawer::Tabs)
         && rect_contains(areas.title, col, row)
     {
-        let half = areas.title.width / 2;
-        let tab = if col < areas.title.x + half {
+        let third = areas.title.width / 3;
+        let offset = col.saturating_sub(areas.title.x);
+        let tab = if offset < third {
             crate::app::state::SidebarTab::Spaces
-        } else {
+        } else if offset < third * 2 {
             crate::app::state::SidebarTab::Projects
+        } else {
+            crate::app::state::SidebarTab::Files
         };
         return Some(MobileSwitcherTarget::DrawerSegment(tab));
     }
@@ -1080,23 +1083,31 @@ fn render_drawer_segment_band(app: &AppState, frame: &mut Frame, band: Rect) {
         return;
     }
     let p = &app.palette;
-    let half = band.width / 2;
+    let third = band.width / 3;
     let zones = [
         (
             crate::app::state::SidebarTab::Spaces,
             "spaces",
-            Rect::new(band.x, band.y, half, band.height),
+            Rect::new(band.x, band.y, third, band.height),
         ),
         (
             crate::app::state::SidebarTab::Projects,
             "projects",
-            Rect::new(band.x + half, band.y, band.width - half, band.height),
+            Rect::new(band.x + third, band.y, third, band.height),
+        ),
+        (
+            crate::app::state::SidebarTab::Files,
+            "files",
+            Rect::new(
+                band.x + third * 2,
+                band.y,
+                band.width - third * 2,
+                band.height,
+            ),
         ),
     ];
     for (tab, label, zone) in zones {
-        let active = app.sidebar_tab == tab
-            || (tab == crate::app::state::SidebarTab::Spaces
-                && app.sidebar_tab == crate::app::state::SidebarTab::Files);
+        let active = app.sidebar_tab == tab;
         if active && zone.height >= 2 && zone.width >= 4 {
             // The active segment is drawn as a tab: a rounded box open
             // toward the list it selects, so the shape says "this is what
@@ -3304,9 +3315,10 @@ mod tests {
                 crate::app::state::SidebarTab::Spaces
             ))
         );
+        // The middle third since the band grew its files zone (TP-MOB-93).
         let right = mobile_drawer_target_at(
             &app,
-            areas.title.x + areas.title.width - 3,
+            areas.title.x + areas.title.width / 2,
             areas.title.y + areas.title.height - 1,
         );
         assert_eq!(
@@ -3436,6 +3448,82 @@ mod tests {
             "switching segments is not leaving"
         );
         assert_eq!(back.mobile_switcher_scroll, 0);
+    }
+
+    // TP-MOB-93: the segment band carries all three of the desktop rail's
+    // segments — spaces, projects, files — and files is a surface, not a
+    // list: choosing it opens the file browser in the terminal area and
+    // closes the drawer, exactly the travelling rule every other
+    // destination follows. The drawer reopened on the Files tracker shows
+    // the spaces tree, the same fallback the desktop rail keeps.
+    #[test]
+    fn the_segment_band_offers_files_and_files_is_a_surface() {
+        let mut app = chat_app(1, 76, 63);
+        app.mobile_width_threshold = 90;
+        let areas = mobile_drawer_areas(&app);
+
+        // T-A: three zones, one per rail segment, resolved by thirds.
+        let third = areas.title.width / 3;
+        let hits = [
+            (areas.title.x + 1, crate::app::state::SidebarTab::Spaces),
+            (
+                areas.title.x + third + 1,
+                crate::app::state::SidebarTab::Projects,
+            ),
+            (
+                areas.title.x + 2 * third + 1,
+                crate::app::state::SidebarTab::Files,
+            ),
+        ];
+        for (col, expected) in hits {
+            assert_eq!(
+                mobile_drawer_target_at(&app, col, areas.title.y),
+                Some(MobileSwitcherTarget::DrawerSegment(expected)),
+                "zone at column {col}"
+            );
+        }
+
+        // T-B: files travels — the browser opens, the drawer closes. The
+        // browser walks a real directory, so the fixture's workspace gets
+        // one.
+        if let Some(ws) = app.active.and_then(|i| app.workspaces.get_mut(i)) {
+            ws.identity_cwd = std::env::temp_dir();
+        }
+        app.apply_mobile_switcher_target(MobileSwitcherTarget::DrawerSegment(
+            crate::app::state::SidebarTab::Files,
+        ));
+        assert_eq!(
+            app.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::NativeFiles,
+            "choosing files opens the browser"
+        );
+        assert_eq!(
+            app.mobile_drawer,
+            crate::app::state::MobileDrawer::None,
+            "opening a surface is travelling"
+        );
+        assert_eq!(app.sidebar_tab, crate::app::state::SidebarTab::Files);
+
+        // T-C: the drawer reopened on the Files tracker walks the spaces
+        // tree — a drawer with no list is a dead end, and the desktop rail
+        // makes the same choice.
+        app.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
+        assert!(
+            mobile_drawer_rows(&app)
+                .iter()
+                .any(|row| matches!(row.content, DrawerRowContent::Space { .. })),
+            "the Files tracker keeps the spaces tree"
+        );
+
+        // T-D: the mobile view leaves the browser open — computing the view
+        // at phone width must not force the surface shut.
+        crate::ui::compute_view(&mut app, Rect::new(0, 0, 76, 63));
+        assert_eq!(app.view.layout, crate::app::state::ViewLayout::Mobile);
+        assert_eq!(
+            app.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::NativeFiles,
+            "the phone layout keeps the browser open"
+        );
     }
 
     // TP-MOB-92: the drawer's structure is drawn, not implied — the primary

@@ -1705,13 +1705,29 @@ impl AppState {
                 }
             }
             crate::ui::MobileSwitcherTarget::DrawerSegment(tab) => {
-                // Switching segments is not travelling: the drawer stays
-                // open, the new list starts at its top. Per-display state —
-                // a phone reading projects must not move a desktop off
-                // spaces (TP-MOB-91).
+                // Switching list segments is not travelling: the drawer
+                // stays open, the new list starts at its top. Files is the
+                // exception because it is a surface, not a list — choosing
+                // it opens the browser in the terminal area and closes the
+                // drawer, the same travelling rule every destination
+                // follows. All of it per-display: a phone reading projects
+                // must not move a desktop off spaces (TP-MOB-91/93).
                 self.sidebar_tab = tab;
                 self.mobile_switcher_scroll = 0;
                 self.mobile_drawer_cursor = 0;
+                if tab == crate::app::state::SidebarTab::Files {
+                    self.close_mobile_drawer();
+                    if self.stage.surface_view()
+                        != crate::ui::surface_host::StageSurfaceView::NativeFiles
+                    {
+                        match self.resident_files_instance() {
+                            Some(instance) => {
+                                self.activate_stage_instance(instance);
+                            }
+                            None => self.open_file_manager(),
+                        }
+                    }
+                }
             }
             crate::ui::MobileSwitcherTarget::ToggleProject { proj_idx } => {
                 // Folding narrows the list being read; the drawer stays

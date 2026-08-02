@@ -375,10 +375,13 @@ mod tests {
         // starts one row lower. It moved once more when the drawer
         // learned to draw its structure (TP-MOB-92) — verified by dumping
         // the frame: the create action sits in a rounded accent pill and
-        // the active segment is a tab-shaped box open toward its list.
+        // the active segment is a tab-shaped box open toward its list. It
+        // moved once more when the band grew its third zone (TP-MOB-93) —
+        // verified by dumping the band rows: spaces boxed, projects and
+        // files as words in their thirds.
         assert_eq!(
             frame_digest(&frame),
-            "048636d7a90ead71916ee331a19c886c8ffd08214deda03ed76febd41dc946e2"
+            "15692bef23dd5c62593a3bd44794aabf4258cbfb1167eaf99ee10d0d31b966ab"
         );
     }
 }
