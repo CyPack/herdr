@@ -365,10 +365,13 @@ mod tests {
         // once more when the header grew to the four-row touch height with
         // nine-column buttons (TP-MOB-89) — verified by dumping the frame:
         // the strip's two lines sit centred on header rows 1-2, each menu
-        // glyph on row 2, and the drawer panel starts on row 4.
+        // glyph on row 2, and the drawer panel starts on row 4. It moved once
+        // more when readable dim text stepped up from overlay0 to overlay1
+        // (TP-MOB-90) — a colour-only delta over the same layout, so the
+        // frame text is unchanged from the previous pin.
         assert_eq!(
             frame_digest(&frame),
-            "fc18e8ac6a72a9690572abf8ae527a99c4388ea8a8b0c191703aa7411afc56c8"
+            "dcd2aa591373aea8d0aa0b344ed7802cacbe45763521e0993212f6479358f025"
         );
     }
 }

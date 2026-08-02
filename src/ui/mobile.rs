@@ -859,7 +859,9 @@ pub(crate) fn render_mobile_toast_banner(
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(" · ", Style::default().fg(p.overlay0).bg(bg)),
-            Span::styled(&toast.context, Style::default().fg(p.overlay0).bg(bg)),
+            // overlay1, not overlay0: the context is words, and overlay0 is
+            // under the AA contrast floor on every mobile surface (TP-MOB-90).
+            Span::styled(&toast.context, Style::default().fg(p.overlay1).bg(bg)),
         ])),
         banner,
     );
@@ -1183,7 +1185,7 @@ fn render_mobile_drawer_content(
                     ratatui::style::Color::Reset,
                     Line::from(Span::styled(
                         *label,
-                        Style::default().fg(p.overlay0).add_modifier(Modifier::DIM),
+                        Style::default().fg(p.overlay1).add_modifier(Modifier::DIM),
                     )),
                 );
             }
@@ -1266,7 +1268,7 @@ fn render_mobile_drawer_content(
                         frame.render_widget(
                             Paragraph::new(age).style(
                                 Style::default()
-                                    .fg(p.overlay0)
+                                    .fg(p.overlay1)
                                     .bg(p.panel_bg)
                                     .add_modifier(Modifier::DIM),
                             ),
@@ -1285,7 +1287,7 @@ fn render_mobile_drawer_content(
                         ))
                         .style(
                             Style::default()
-                                .fg(p.overlay0)
+                                .fg(p.overlay1)
                                 .bg(p.panel_bg)
                                 .add_modifier(Modifier::DIM),
                         ),
@@ -1498,7 +1500,7 @@ fn render_space_row(
             ws.branch().unwrap_or_else(|| "shell".into()),
             mobile_tab_status(ws)
         );
-        (truncate_end(&text, content.width as usize), p.overlay0)
+        (truncate_end(&text, content.width as usize), p.overlay1)
     });
     render_list_item(
         frame,
@@ -1558,7 +1560,7 @@ fn render_agent_row(
         title,
         Some((
             truncate_end(&mobile_agent_detail(entry), content.width as usize),
-            p.overlay0,
+            p.overlay1,
         )),
     );
 }
@@ -2902,6 +2904,39 @@ mod tests {
         tabs.mobile_drawer = crate::app::state::MobileDrawer::Tabs;
         for (height, content) in floor_of(&tabs) {
             assert!(height >= 3, "tabs drawer, {content} spends {height}");
+        }
+    }
+
+    // TP-MOB-90: no readable text in the drawer is painted `overlay0`.
+    // Measured against WCAG 2.1: overlay0 on the panel is 3.59:1, under the
+    // 4.5:1 AA floor — dim text in that colour is what "unreadable in
+    // sunlight" is made of, and a phone is read in sunlight. Words wear
+    // `overlay1` (4.75:1) with DIM where they must recede; `overlay0` keeps
+    // only the wordless work — tree connectors, separators, ellipses —
+    // where legibility is not the job.
+    #[test]
+    fn readable_drawer_text_clears_the_contrast_floor() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = chat_app(1, 76, 63);
+        app.mobile_width_threshold = 90;
+        let mut term = Terminal::new(TestBackend::new(76, 63)).expect("terminal");
+        term.draw(|frame| render_mobile_drawer(&app, &TerminalRuntimeRegistry::new(), frame))
+            .expect("draw");
+        let buffer = term.backend().buffer().clone();
+        let p = &app.palette;
+        for y in 0..63u16 {
+            for x in 0..76u16 {
+                let cell = &buffer[(x, y)];
+                if cell.symbol().chars().any(char::is_alphanumeric) {
+                    assert_ne!(
+                        cell.style().fg,
+                        Some(p.overlay0),
+                        "readable text at ({x},{y}) {:?} wears the under-floor grey",
+                        cell.symbol()
+                    );
+                }
+            }
         }
     }
 
