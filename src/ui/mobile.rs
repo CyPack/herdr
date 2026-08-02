@@ -1555,12 +1555,15 @@ fn render_mobile_drawer_content(
                     let indent = drawer_indent(*depth, content.width);
                     let age_w = age.len() as u16;
                     let title_w = content.width.saturating_sub(age_w.saturating_add(1)).max(4);
+                    // `subtext0`, a colour layer above the detail lines:
+                    // a chat title is tappable content, not commentary
+                    // (TP-MOB-95).
                     frame.render_widget(
                         Paragraph::new(truncate_end(
                             &format!("{:indent$}· {title}", "", indent = indent),
                             title_w as usize,
                         ))
-                        .style(Style::default().fg(p.overlay1).bg(p.panel_bg)),
+                        .style(Style::default().fg(p.subtext0).bg(p.panel_bg)),
                         Rect::new(content.x, y, title_w, 1),
                     );
                     if age_w > 0 && content.width > age_w {
@@ -1662,12 +1665,14 @@ fn render_mobile_drawer_content(
                         let age = chat_age_label(now_ms, seen_ms);
                         let age_w = age.len() as u16;
                         let title_w = content.width.saturating_sub(age_w.saturating_add(1)).max(4);
+                        // `subtext0`, the same layer every chat title wears
+                        // (TP-MOB-95).
                         frame.render_widget(
                             Paragraph::new(truncate_end(
                                 &format!("  · {}", session.title),
                                 title_w as usize,
                             ))
-                            .style(Style::default().fg(p.overlay1).bg(p.panel_bg)),
+                            .style(Style::default().fg(p.subtext0).bg(p.panel_bg)),
                             Rect::new(content.x, y, title_w, 1),
                         );
                         if age_w > 0 && content.width > age_w {
@@ -1841,13 +1846,18 @@ fn render_space_row(
         .width
         .saturating_sub(if depth > 0 { 8 } else { 5 })
         .saturating_sub(if content.width >= 14 { 6 } else { 3 }) as usize;
-    title_spans.push(Span::styled(
-        truncate_end(&name, name_budget),
+    // Only the active branch's name is bold: a terminal has no type scale,
+    // so weight is one of the four channels hierarchy has — and when every
+    // name is bold, none is (TP-MOB-95).
+    let name_style = if active {
         Style::default()
             .fg(p.text)
             .bg(bg)
-            .add_modifier(Modifier::BOLD),
-    ));
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(p.text).bg(bg)
+    };
+    title_spans.push(Span::styled(truncate_end(&name, name_budget), name_style));
 
     // The trailing `+` starts a chat in this branch, and `⋯` beside it opens
     // the row's menu — each drawn in the same cells its tap zone claims
@@ -3470,6 +3480,59 @@ mod tests {
             "switching segments is not leaving"
         );
         assert_eq!(back.mobile_switcher_scroll, 0);
+    }
+
+    // TP-MOB-95: the drawer's text reads in four layers on one font size —
+    // a terminal has no type scale, so hierarchy is carried by weight and
+    // colour alone: the active branch name is the only bold branch name
+    // (when every name is bold, none is), chat titles wear `subtext0` a
+    // layer above the `overlay1` details, and decorations stay `overlay0`.
+    #[test]
+    fn drawer_text_reads_in_layers() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = chat_app(1, 76, 63);
+        app.mobile_width_threshold = 90;
+        let mut term = Terminal::new(TestBackend::new(76, 63)).expect("terminal");
+        term.draw(|frame| render_mobile_drawer(&app, &TerminalRuntimeRegistry::new(), frame))
+            .expect("draw");
+        let buffer = term.backend().buffer().clone();
+        let areas = mobile_drawer_areas(&app);
+        let content = inset_for_left_scrollbar(areas.viewport);
+        let p = &app.palette;
+
+        // Doc rows 0..3 = ws0 (inactive), 3..6 = ws1 (active); names start
+        // after the disclosure, dot and gap.
+        let name_x = content.x + 4;
+        let inactive = &buffer[(name_x, areas.viewport.y)];
+        assert!(
+            !inactive.style().add_modifier.contains(Modifier::BOLD),
+            "an inactive branch name is not bold: {:?}",
+            inactive.symbol()
+        );
+        let active = &buffer[(name_x, areas.viewport.y + 3)];
+        assert!(
+            active.style().add_modifier.contains(Modifier::BOLD),
+            "the active branch name is the bold one: {:?}",
+            active.symbol()
+        );
+
+        // The active branch's first chat follows its span; its title sits a
+        // colour layer above the detail line.
+        let chat = &buffer[(content.x + 4, areas.viewport.y + 6)];
+        assert_eq!(
+            chat.style().fg,
+            Some(p.subtext0),
+            "a chat title wears subtext0: {:?}",
+            chat.symbol()
+        );
+        let detail = &buffer[(content.x + 4, areas.viewport.y + 4)];
+        assert_eq!(
+            detail.style().fg,
+            Some(p.overlay1),
+            "the detail line stays overlay1: {:?}",
+            detail.symbol()
+        );
     }
 
     // TP-MOB-94: a workspace row's tail carries `⋯` beside its `+` — the
