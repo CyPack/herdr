@@ -218,6 +218,23 @@ pub(super) fn agent_icon(
     }
 }
 
+/// [`agent_icon`] without the animation: working is a steady yellow dot.
+///
+/// The phone shell uses this for every agent row. A spinner there redraws a
+/// GPU-less phone terminal eight times a second for as long as any agent
+/// works; the colour already carries the state — red blocked, yellow working,
+/// teal done, green idle — so holding still loses nothing (TP-MOB-83).
+pub(super) fn agent_icon_still(
+    state: AgentState,
+    seen: bool,
+    p: &Palette,
+) -> (&'static str, Style) {
+    match (state, seen) {
+        (AgentState::Working, _) => ("●", Style::default().fg(p.yellow)),
+        _ => agent_icon(state, seen, 0, p),
+    }
+}
+
 pub(super) fn state_label(state: AgentState, seen: bool) -> &'static str {
     match (state, seen) {
         (AgentState::Blocked, _) => "blocked",

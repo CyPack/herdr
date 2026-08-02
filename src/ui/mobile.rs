@@ -9,7 +9,7 @@ use ratatui::{
 use super::sidebar::{
     agent_panel_entries, agent_panel_entries_from, grouped_child_display_label, AgentPanelEntry,
 };
-use super::status::{agent_icon, state_dot};
+use super::status::state_dot;
 use super::text::{display_width_u16, truncate_end};
 use crate::app::state::{Palette, ToastKind, ToastNotification};
 use crate::app::AppState;
@@ -884,14 +884,14 @@ fn render_header_status(
     };
 
     let (state, seen) = ws.aggregate_state(&app.terminals);
-    let (dot, dot_style) = if matches!(state, AgentState::Working) {
-        (
-            super::spinner_frame(app.spinner_tick),
-            Style::default().fg(p.yellow),
-        )
-    } else {
-        state_dot(state, seen, p)
-    };
+    // No spinner here, deliberately. On a phone every distinct frame is a
+    // redraw on a GPU-less terminal and a reason to keep the radio awake,
+    // eight times a second for as long as an agent works; the steady yellow
+    // dot carries the same information, and identical frames are deduplicated
+    // before they reach the client, so holding still costs nothing
+    // (TP-MOB-83). The desktop keeps its spinner: its terminal renders for
+    // free and its link is a wire.
+    let (dot, dot_style) = state_dot(state, seen, p);
     let tab_label = mobile_tab_status(ws);
     let row1 = Rect::new(area.x, area.y, area.width, 1);
     let tab_w = display_width_u16(&tab_label)
@@ -1399,7 +1399,7 @@ fn render_agent_row(
         entry.ws_idx == ws_idx && entry.tab_idx == tab_idx && entry.pane_id == pane_id
     });
     let bg = mobile_item_bg(false, active, p);
-    let (icon, icon_style) = agent_icon(entry.state, entry.seen, app.spinner_tick, p);
+    let (icon, icon_style) = super::status::agent_icon_still(entry.state, entry.seen, p);
     let title = Line::from(vec![
         Span::styled("  ", Style::default().bg(bg)),
         Span::styled(icon, icon_style.bg(bg)),
@@ -2693,6 +2693,76 @@ mod tests {
                 );
             }
         }
+    }
+
+    // TP-MOB-83: the mobile header's working indicator does not animate. Every
+    // distinct frame is a redraw on a GPU-less phone terminal and a reason to
+    // keep the radio awake, at eight frames a second for however long an agent
+    // works — which for this reader is most of the time. A steady yellow dot
+    // carries the same information; identical frames are deduplicated before
+    // they reach the client, so a still indicator costs nothing at all.
+    #[test]
+    fn the_mobile_header_holds_still_while_an_agent_works() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = drawer_app(1, 1, 76, 35);
+        for terminal in app.terminals.values_mut() {
+            terminal.state = AgentState::Working;
+        }
+        app.view.mobile_header_hits = compute_mobile_header_hit_areas(&app, Rect::new(0, 0, 76, 2));
+
+        let render_at = |app: &AppState| {
+            let mut term = Terminal::new(TestBackend::new(76, 2)).expect("terminal");
+            term.draw(|frame| {
+                render_mobile_header(
+                    app,
+                    &TerminalRuntimeRegistry::new(),
+                    frame,
+                    Rect::new(0, 0, 76, 2),
+                )
+            })
+            .expect("draw");
+            term.backend().buffer().clone()
+        };
+
+        app.spinner_tick = 0;
+        let first = render_at(&app);
+        app.spinner_tick = 8;
+        let second = render_at(&app);
+        assert_eq!(
+            first, second,
+            "two animation ticks must produce the same header"
+        );
+
+        // The drawer's agent rows hold still too — the reader named them:
+        // the working agents in the agents section each spun their own
+        // spinner, multiplying the redraw by however many were running.
+        app.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
+        app.view.terminal_area = Rect::new(0, 2, 76, 33);
+        app.view.layout = crate::app::state::ViewLayout::Mobile;
+        let render_drawer = |app: &AppState| {
+            let mut term = Terminal::new(TestBackend::new(76, 35)).expect("terminal");
+            term.draw(|frame| render_mobile_drawer(app, &TerminalRuntimeRegistry::new(), frame))
+                .expect("draw");
+            term.backend().buffer().clone()
+        };
+        app.spinner_tick = 0;
+        let drawer_first = render_drawer(&app);
+        app.spinner_tick = 8;
+        let drawer_second = render_drawer(&app);
+        assert_eq!(
+            drawer_first, drawer_second,
+            "an open drawer with a working agent must not animate"
+        );
+
+        let symbols: String = (0..2u16)
+            .flat_map(|row| (0..76).map(move |col| (col, row)))
+            .map(|(col, row)| first[(col, row)].symbol().to_string())
+            .collect();
+        assert!(
+            symbols.contains('●'),
+            "the working state still shows its dot: {symbols:?}"
+        );
     }
 
     // TP-MOB-32: an open drawer covers three quarters of the width and leaves
