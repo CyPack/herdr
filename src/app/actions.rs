@@ -1631,6 +1631,60 @@ impl AppState {
         self.apply_mobile_switcher_target(target);
     }
 
+    /// Open a workspace row's own menu over the open drawer — the touch
+    /// road to what the desktop reaches with a right click (TP-MOB-94).
+    ///
+    /// The kind derivation mirrors the desktop's, minus the runtime-registry
+    /// fallback the state layer cannot reach: a workspace whose git metadata
+    /// only lives in the runtime cache gets the plain menu instead of the
+    /// worktree one, which degrades to fewer actions, never wrong ones.
+    pub(crate) fn open_mobile_row_menu(&mut self, ws_idx: usize) {
+        let Some(ws) = self.workspaces.get(ws_idx) else {
+            return;
+        };
+        let group_state = crate::ui::workspace_parent_group_state(self, ws_idx);
+        let git_space = ws.git_space().cloned();
+        let is_linked_worktree = ws.worktree_space().map_or_else(
+            || {
+                git_space
+                    .as_ref()
+                    .is_some_and(|space| space.is_linked_worktree)
+            },
+            |space| space.is_linked_worktree,
+        );
+        let show_git_menu = ws.worktree_space().is_some()
+            || git_space
+                .as_ref()
+                .is_some_and(|space| !space.is_linked_worktree);
+        let kind = if show_git_menu {
+            crate::app::state::ContextMenuKind::GitWorkspace {
+                ws_idx,
+                is_linked_worktree,
+                has_worktree_children: group_state.is_some(),
+                collapsed: group_state
+                    .as_ref()
+                    .is_some_and(|(_, collapsed)| *collapsed),
+            }
+        } else {
+            crate::app::state::ContextMenuKind::Workspace { ws_idx }
+        };
+        // Anchored where the row sits on screen, clamped into the viewport
+        // so a scrolled-away row still opens a reachable menu.
+        let areas = crate::ui::mobile_drawer_areas(self);
+        let range = crate::ui::mobile_drawer_workspace_doc_range(self, ws_idx);
+        let row_offset = range.start.saturating_sub(self.mobile_switcher_scroll);
+        let y = areas.viewport.y.saturating_add(
+            row_offset.min(areas.viewport.height.saturating_sub(1) as usize) as u16,
+        );
+        self.context_menu = Some(crate::app::state::ContextMenuState {
+            kind,
+            x: areas.viewport.x.saturating_add(4),
+            y,
+            list: crate::app::state::MenuListState::new(0),
+        });
+        self.enter_overlay_mode(crate::app::Mode::ContextMenu);
+    }
+
     /// Apply a drawer target regardless of how it was reached — cursor,
     /// tap or the segment band, which has no cursor row at all.
     pub(crate) fn apply_mobile_switcher_target(&mut self, target: crate::ui::MobileSwitcherTarget) {
@@ -1762,6 +1816,9 @@ impl AppState {
                             session_id: Some(session_id),
                         });
                 }
+            }
+            crate::ui::MobileSwitcherTarget::RowMenu { ws_idx } => {
+                self.open_mobile_row_menu(ws_idx);
             }
             crate::ui::MobileSwitcherTarget::NewChatInProject { proj_idx } => {
                 if let Some(path) = self

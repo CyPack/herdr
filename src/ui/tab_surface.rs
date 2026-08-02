@@ -378,10 +378,12 @@ mod tests {
         // the active segment is a tab-shaped box open toward its list. It
         // moved once more when the band grew its third zone (TP-MOB-93) —
         // verified by dumping the band rows: spaces boxed, projects and
-        // files as words in their thirds.
+        // files as words in their thirds. It moved once more when
+        // workspace rows grew their menu dots (TP-MOB-94) — verified by
+        // dumping the row: it reads "▸ · name … ⋯ +".
         assert_eq!(
             frame_digest(&frame),
-            "15692bef23dd5c62593a3bd44794aabf4258cbfb1167eaf99ee10d0d31b966ab"
+            "02e1876b10a02d742f8a8dab6304b1bd8bd8b45abae34c7994fd9aa40d19cd6a"
         );
     }
 }

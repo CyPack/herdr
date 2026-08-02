@@ -101,6 +101,11 @@ pub(crate) enum MobileSwitcherTarget {
     NewChatIn {
         ws_idx: usize,
     },
+    /// Open the row's own menu — rename, close, worktree operations — the
+    /// touch road to what the desktop reaches with a right click.
+    RowMenu {
+        ws_idx: usize,
+    },
     /// Hand the client back its own selection gesture, or take it back.
     ToggleSelectMode,
     /// Move this display's rail to another segment — spaces or projects.
@@ -900,6 +905,16 @@ pub(crate) fn mobile_drawer_target_at(
         }
         if content.width >= 10 && offset >= content.width.saturating_sub(3) {
             return Some(MobileSwitcherTarget::NewChatIn { ws_idx });
+        }
+        // The three cells before `+`: the row's own menu (TP-MOB-94). Only
+        // when the label still keeps its floor — on a narrow panel the menu
+        // zone is the one to fold first, because the primary meaning and
+        // the create shortcut both outrank it.
+        if content.width >= 14
+            && offset >= content.width.saturating_sub(6)
+            && offset < content.width.saturating_sub(3)
+        {
+            return Some(MobileSwitcherTarget::RowMenu { ws_idx });
         }
     }
     // A project header carries the same trailing `+` a workspace row does:
@@ -1825,7 +1840,7 @@ fn render_space_row(
     let name_budget = content
         .width
         .saturating_sub(if depth > 0 { 8 } else { 5 })
-        .saturating_sub(3) as usize;
+        .saturating_sub(if content.width >= 14 { 6 } else { 3 }) as usize;
     title_spans.push(Span::styled(
         truncate_end(&name, name_budget),
         Style::default()
@@ -1834,8 +1849,9 @@ fn render_space_row(
             .add_modifier(Modifier::BOLD),
     ));
 
-    // The trailing `+` starts a chat in this branch — the same three cells
-    // the tap zone claims (TP-MOB-84).
+    // The trailing `+` starts a chat in this branch, and `⋯` beside it opens
+    // the row's menu — each drawn in the same cells its tap zone claims
+    // (TP-MOB-84, TP-MOB-94).
     let draw_plus = |frame: &mut Frame| {
         if content.width >= 10 {
             if let Some(y) = visible_y(viewport, app.mobile_switcher_scroll, doc_y) {
@@ -1843,6 +1859,12 @@ fn render_space_row(
                     Paragraph::new(" +").style(Style::default().fg(p.overlay1).bg(bg)),
                     Rect::new(content.x + content.width - 3, y, 3, 1),
                 );
+                if content.width >= 14 {
+                    frame.render_widget(
+                        Paragraph::new(" ⋯").style(Style::default().fg(p.overlay1).bg(bg)),
+                        Rect::new(content.x + content.width - 6, y, 3, 1),
+                    );
+                }
             }
         }
     };
@@ -3448,6 +3470,50 @@ mod tests {
             "switching segments is not leaving"
         );
         assert_eq!(back.mobile_switcher_scroll, 0);
+    }
+
+    // TP-MOB-94: a workspace row's tail carries `⋯` beside its `+` — the
+    // touch road to the same menu the desktop opens with a right click
+    // (rename, close, worktree operations). Without it those actions simply
+    // do not exist on a phone. The menu floats over the open drawer: the
+    // reader is choosing an action about a row, not leaving the list.
+    #[test]
+    fn a_branch_row_offers_its_menu_from_the_tail() {
+        let mut app = chat_app(1, 76, 63);
+        app.mobile_width_threshold = 90;
+        let areas = mobile_drawer_areas(&app);
+        let content = inset_for_left_scrollbar(areas.viewport);
+
+        // T-A: `⋯` sits in the three cells before `+`, and `+` keeps its own.
+        let row_y = areas.viewport.y; // first workspace row's title line
+        assert_eq!(
+            mobile_drawer_target_at(&app, content.x + content.width - 5, row_y),
+            Some(MobileSwitcherTarget::RowMenu { ws_idx: 0 }),
+            "the dots zone opens the row's menu"
+        );
+        assert_eq!(
+            mobile_drawer_target_at(&app, content.x + content.width - 2, row_y),
+            Some(MobileSwitcherTarget::NewChatIn { ws_idx: 0 }),
+            "the plus keeps its cells"
+        );
+
+        // T-B: activating it opens the desktop's menu over the open drawer.
+        app.apply_mobile_switcher_target(MobileSwitcherTarget::RowMenu { ws_idx: 1 });
+        let menu = app.context_menu.as_ref().expect("the row's menu is open");
+        assert!(
+            matches!(
+                menu.kind,
+                crate::app::state::ContextMenuKind::Workspace { ws_idx: 1 }
+                    | crate::app::state::ContextMenuKind::GitWorkspace { ws_idx: 1, .. }
+            ),
+            "the same menu the desktop right-click builds: {:?}",
+            menu.kind
+        );
+        assert_eq!(app.mode, crate::app::Mode::ContextMenu);
+        assert!(
+            app.mobile_drawer.is_open(),
+            "choosing an action about a row is not leaving the list"
+        );
     }
 
     // TP-MOB-93: the segment band carries all three of the desktop rail's

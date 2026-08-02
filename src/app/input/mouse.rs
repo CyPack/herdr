@@ -1507,7 +1507,8 @@ impl AppState {
                 target @ (crate::ui::MobileSwitcherTarget::DrawerSegment(_)
                 | crate::ui::MobileSwitcherTarget::ToggleProject { .. }
                 | crate::ui::MobileSwitcherTarget::ProjectChat { .. }
-                | crate::ui::MobileSwitcherTarget::NewChatInProject { .. }),
+                | crate::ui::MobileSwitcherTarget::NewChatInProject { .. }
+                | crate::ui::MobileSwitcherTarget::RowMenu { .. }),
             ) => {
                 // The projects segment's targets behave identically from a
                 // tap and from the keyboard cursor, so both roads go through
