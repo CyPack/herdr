@@ -25,12 +25,13 @@ use crate::terminal::TerminalRuntimeRegistry;
 /// missing the button is a failed action, missing the strip is a failed
 /// shortcut to the same action.
 /// The header buttons sit in the two corners a thumb reaches least accurately
-/// and are the only tap targets the phone shell always shows. Three columns is
-/// roughly half the 44pt floor Apple asks for; five across the header's two
-/// rows reads as a square button rather than a glyph with a hitbox drawn round
-/// it. It stops there because every column a button takes is one the
-/// active-tab strip loses (TP-MOB-58).
-const HEADER_BUTTON_WIDTH: u16 = 5;
+/// and are the only tap targets the phone shell always shows. A terminal cell
+/// is anisotropic — ≈5pt wide by ≈12pt tall on this phone — so the 44pt
+/// square Apple asks for is nine columns by four rows, not a "square" of
+/// cells. Nine is the base with no pay-down: every column a button takes is
+/// one the active-tab strip loses, and the strip is the shortcut, the
+/// buttons are the action (TP-MOB-58, TP-MOB-89).
+const HEADER_BUTTON_WIDTH: u16 = 9;
 
 /// The share of the screen an open drawer covers.
 ///
@@ -958,7 +959,10 @@ fn render_header_status(
     // free and its link is a wire.
     let (dot, dot_style) = state_dot(state, seen, p);
     let tab_label = mobile_tab_status(ws);
-    let row1 = Rect::new(area.x, area.y, area.width, 1);
+    // The strip's two lines sit centred in a touch-height header (TP-MOB-89)
+    // and flush in a two-row one.
+    let top = area.y + area.height.saturating_sub(2) / 2;
+    let row1 = Rect::new(area.x, top, area.width, 1);
     let tab_w = display_width_u16(&tab_label)
         .saturating_add(1)
         .min(area.width);
@@ -990,14 +994,17 @@ fn render_header_status(
     );
 
     if area.height > 1 {
-        let summary_row = Rect::new(area.x, area.y + 1, area.width, 1);
+        let summary_row = Rect::new(area.x, top + 1, area.width, 1);
         if app.mobile_select_mode.is_some() {
             // While capture is released, taps do not reach Herdr at all — so
             // the row that would explain that is the one thing that has to say
             // it, and say how to get back.
             frame.render_widget(
+                // Short enough to survive the strip the nine-column buttons
+                // leave at 44 columns — "menu" is the word that names the
+                // way back, so it is the word that must not be truncated off.
                 Paragraph::new(truncate_end(
-                    " select text · tap off in menu",
+                    " select text · off in menu",
                     summary_row.width as usize,
                 ))
                 .style(
@@ -1053,7 +1060,7 @@ fn render_header_button(
     let bg = if active { p.surface_dim } else { p.surface0 };
     fill_rect(frame, area, Style::default().bg(bg));
 
-    let glyph_y = if area.height > 1 { area.y + 1 } else { area.y };
+    let glyph_y = area.y + area.height / 2;
     frame.render_widget(
         Paragraph::new("\u{2630}")
             .style(
@@ -2896,6 +2903,35 @@ mod tests {
         for (height, content) in floor_of(&tabs) {
             assert!(height >= 3, "tabs drawer, {content} spends {height}");
         }
+    }
+
+    // TP-MOB-89: the header is the touch floor's hardest case — its two
+    // buttons live in the corners a thumb reaches least accurately and are
+    // the only targets the phone shell always shows. A 44pt square is nine
+    // columns by four rows on an anisotropic cell (≈5×12pt), so the header
+    // spends four rows in a regular-height viewport and the buttons span
+    // its full height plus the one-row reach below (TP-MOB-66). A short
+    // viewport folds the header back to two rows — rows are what it is
+    // short of — and the buttons stay nine wide, because width is the cheap
+    // axis everywhere.
+    #[test]
+    fn the_header_meets_the_touch_floor() {
+        let mut app = drawer_app(1, 1, 76, 63);
+        app.mobile_width_threshold = 90;
+        crate::ui::compute_view(&mut app, Rect::new(0, 0, 76, 63));
+        assert_eq!(app.view.layout, crate::app::state::ViewLayout::Mobile);
+        assert_eq!(app.view.mobile_header_rect.height, 4, "regular header");
+        let hits = app.view.mobile_header_hits;
+        assert_eq!(hits.spaces_menu.width, 9);
+        assert_eq!(hits.tabs_menu.width, 9);
+        assert_eq!(hits.spaces_menu.height, 5, "four drawn rows plus reach");
+        assert_eq!(hits.tabs_menu.height, 5);
+
+        let mut short = drawer_app(1, 1, 76, 14);
+        short.mobile_width_threshold = 90;
+        crate::ui::compute_view(&mut short, Rect::new(0, 0, 76, 14));
+        assert_eq!(short.view.mobile_header_rect.height, 2, "short header");
+        assert_eq!(short.view.mobile_header_hits.spaces_menu.width, 9);
     }
 
     // TP-MOB-88: the pinned band's targets are touch-sized too — the create

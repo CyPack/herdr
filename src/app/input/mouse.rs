@@ -5227,16 +5227,16 @@ mod tests {
         let mut app = mobile_app_for_drawers(76, 35);
         let hits = app.state.view.mobile_header_hits;
         assert_eq!(
-            hits.spaces_menu.height, 3,
-            "two drawn rows plus one of reach"
+            hits.spaces_menu.height, 5,
+            "four drawn rows plus one of reach (TP-MOB-89)"
         );
         assert_eq!(
-            hits.tab_strip.height, 2,
+            hits.tab_strip.height, 4,
             "the strip does not overshoot: it spans most of the width and would \
              swallow the terminal's top row"
         );
 
-        tap(&mut app, hits.spaces_menu.x + 2, 2);
+        tap(&mut app, hits.spaces_menu.x + 2, 4);
         assert_eq!(
             app.state.mobile_drawer,
             crate::app::state::MobileDrawer::Spaces

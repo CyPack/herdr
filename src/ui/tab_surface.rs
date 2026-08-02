@@ -333,8 +333,8 @@ mod tests {
 
         assert_eq!((frame.width, frame.height), (44, 20));
         assert_eq!(app.view.layout, crate::app::state::ViewLayout::Mobile);
-        assert_eq!(app.view.mobile_header_rect, Rect::new(0, 0, 44, 2));
-        assert_eq!(app.view.terminal_area, Rect::new(0, 2, 44, 18));
+        assert_eq!(app.view.mobile_header_rect, Rect::new(0, 0, 44, 4));
+        assert_eq!(app.view.terminal_area, Rect::new(0, 4, 44, 16));
         assert_eq!(frame.cursor, None);
         // Updated when the single mobile switcher became two drawers: the
         // header grew a button at each edge, navigate mode paints the spaces
@@ -361,10 +361,14 @@ mod tests {
         // bottom. It moved once more when the band itself became touch-sized
         // (TP-MOB-88) — verified by dumping the frame: the create action
         // spans four rows with its label one row in, select text spans
-        // three, and the panel's final row is an empty guard.
+        // three, and the panel's final row is an empty guard. It moved
+        // once more when the header grew to the four-row touch height with
+        // nine-column buttons (TP-MOB-89) — verified by dumping the frame:
+        // the strip's two lines sit centred on header rows 1-2, each menu
+        // glyph on row 2, and the drawer panel starts on row 4.
         assert_eq!(
             frame_digest(&frame),
-            "7e3dff8667c26e155f32158ca712764138e9ba558cecc7329ebf0743e31f7951"
+            "fc18e8ac6a72a9690572abf8ae527a99c4388ea8a8b0c191703aa7411afc56c8"
         );
     }
 }

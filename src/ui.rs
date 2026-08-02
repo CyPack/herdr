@@ -570,7 +570,15 @@ fn compute_mobile_view(
     resize_panes: bool,
     cell_size: crate::kitty_graphics::HostCellSize,
 ) {
-    let header_h = area.height.min(2);
+    // Four rows make the header's buttons a 44pt touch square on a phone
+    // cell; a short viewport folds back to two — rows are what it is short
+    // of, and the one-row reach below the buttons (TP-MOB-66) still tops the
+    // targets up (TP-MOB-89).
+    let header_h =
+        match crate::ui::size_class::SizeClass::of(area, app.mobile_width_threshold).height {
+            crate::ui::size_class::HeightClass::Short => area.height.min(2),
+            crate::ui::size_class::HeightClass::Regular => area.height.min(4),
+        };
     let (header_rect, terminal_area) = if area.height > header_h {
         let [header_rect, terminal_area] =
             Layout::vertical([Constraint::Length(header_h), Constraint::Min(1)]).areas(area);
@@ -2877,15 +2885,15 @@ mod tests {
         assert_eq!(app.view.layout, ViewLayout::Mobile);
         assert_eq!(app.view.sidebar_rect, Rect::default());
         assert_eq!(app.view.tab_bar_rect, Rect::default());
-        assert_eq!(app.view.mobile_header_rect, Rect::new(0, 0, 44, 2));
-        assert_eq!(app.view.terminal_area, Rect::new(0, 2, 44, 18));
+        assert_eq!(app.view.mobile_header_rect, Rect::new(0, 0, 44, 4));
+        assert_eq!(app.view.terminal_area, Rect::new(0, 4, 44, 16));
         let hits = app.view.mobile_header_hits;
-        // Five columns each since TP-MOB-58 widened the thumb targets, and one
-        // row taller than the header they draw in since TP-MOB-66 gave them a
-        // row of reach for a thumb that lands just under.
-        assert_eq!(hits.spaces_menu, Rect::new(0, 0, 5, 3));
-        assert_eq!(hits.tabs_menu, Rect::new(39, 0, 5, 3));
-        assert_eq!(hits.tab_strip, Rect::new(5, 0, 34, 2));
+        // Nine columns by four rows each since TP-MOB-89 made the buttons a
+        // 44pt touch square, plus the one row of reach TP-MOB-66 gave them
+        // for a thumb that lands just under.
+        assert_eq!(hits.spaces_menu, Rect::new(0, 0, 9, 5));
+        assert_eq!(hits.tabs_menu, Rect::new(35, 0, 9, 5));
+        assert_eq!(hits.tab_strip, Rect::new(9, 0, 26, 4));
     }
 
     #[test]
@@ -2968,8 +2976,8 @@ mod tests {
         app.mobile_width_threshold = 90;
         compute_view(&mut app, Rect::new(0, 0, 80, 20));
         assert_eq!(app.view.layout, ViewLayout::Mobile);
-        assert_eq!(app.view.mobile_header_rect, Rect::new(0, 0, 80, 2));
-        assert_eq!(app.view.terminal_area, Rect::new(0, 2, 80, 18));
+        assert_eq!(app.view.mobile_header_rect, Rect::new(0, 0, 80, 4));
+        assert_eq!(app.view.terminal_area, Rect::new(0, 4, 80, 16));
     }
 
     #[test]
@@ -3060,10 +3068,10 @@ mod tests {
         compute_view(&mut app, Rect::new(0, 0, 44, 20));
 
         assert_eq!(app.view.layout, ViewLayout::Mobile);
-        assert_eq!(app.view.terminal_area, Rect::new(0, 2, 44, 18));
+        assert_eq!(app.view.terminal_area, Rect::new(0, 4, 44, 16));
         assert_eq!(
             app.workspaces[0].tabs[background_tab].runtimes[&background_pane].current_size(),
-            (18, 43)
+            (16, 43)
         );
     }
 
