@@ -358,10 +358,13 @@ mod tests {
         // height (TP-MOB-87) — verified by dumping the frame: the workspace
         // spans rows 3-5 (title, detail, breath) and each menu item spans
         // three rows of its own, with the pinned band unchanged at the
-        // bottom.
+        // bottom. It moved once more when the band itself became touch-sized
+        // (TP-MOB-88) — verified by dumping the frame: the create action
+        // spans four rows with its label one row in, select text spans
+        // three, and the panel's final row is an empty guard.
         assert_eq!(
             frame_digest(&frame),
-            "f055c7c481d272e44fe8d233d632b8ef4c98ace6c1b15701820fc4ab79127f93"
+            "7e3dff8667c26e155f32158ca712764138e9ba558cecc7329ebf0743e31f7951"
         );
     }
 }

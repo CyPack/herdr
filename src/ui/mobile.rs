@@ -267,15 +267,19 @@ pub(crate) fn mobile_drawer_areas(app: &AppState) -> MobileDrawerAreas {
     // Row 0 of the panel is its title; the body starts under it.
     let body_h = panel.height.saturating_sub(1);
 
-    // The pinned tail claims a band at the bottom — its rows plus a separator.
-    // A body too short for both clips the footer rather than the list: the
-    // list is what the drawer exists for, the footer is a convenience on top
-    // of it (TP-MOB-80). The list keeps at least one row.
+    // The pinned tail claims a band at the bottom — its rows plus a separator
+    // above and a guard row below. The guard keeps the panel's very last row
+    // free of targets: the keyboard's arrival changes the row count under the
+    // thumb (measured 35↔63), and whatever sits on the final row is what
+    // slides out from under a landing finger. A body too short for the band
+    // clips the footer rather than the list: the list is what the drawer
+    // exists for, the footer is a convenience on top of it (TP-MOB-80). The
+    // list keeps at least one row.
     let tail = drawer_pinned_tail_height(&mobile_drawer_rows(app));
-    let wanted_band = if tail > 0 { tail + 1 } else { 0 };
+    let wanted_band = if tail > 0 { tail + 2 } else { 0 };
     let band = wanted_band.min(usize::from(body_h.saturating_sub(1)));
     let scroll_h = body_h.saturating_sub(band as u16);
-    let footer_h = band.saturating_sub(1) as u16;
+    let footer_h = band.saturating_sub(2) as u16;
 
     let viewport = Rect::new(body_x, panel.y.saturating_add(1), body_w, scroll_h);
     let footer = if footer_h > 0 {
@@ -362,6 +366,21 @@ fn drawer_entry_height(app: &AppState) -> usize {
     {
         super::size_class::HeightClass::Short => 2,
         super::size_class::HeightClass::Regular => 3,
+    }
+}
+
+/// The primary action's height — the Touch class, a full fingertip in rows.
+///
+/// One row taller than a list entry: the create action is the drawer's one
+/// always-there commitment, and it sits in the band a thumb reaches without
+/// looking. A short viewport folds it back to the compact entry height —
+/// the band cannot outgrow the list it serves.
+fn drawer_touch_height(app: &AppState) -> usize {
+    match super::size_class::SizeClass::of(mobile_screen_rect(app), app.mobile_width_threshold)
+        .height
+    {
+        super::size_class::HeightClass::Short => 2,
+        super::size_class::HeightClass::Regular => 4,
     }
 }
 
@@ -561,12 +580,12 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
     // mode where taps reach nothing — at a screen position scrolling cannot
     // move (TP-MOB-76, TP-MOB-77).
     rows.push(DrawerRow {
-        height: 1,
+        height: drawer_touch_height(app),
         target: Some(MobileSwitcherTarget::NewWorkspace),
         content: DrawerRowContent::FooterAction("+ new workspace"),
     });
     rows.push(DrawerRow {
-        height: 1,
+        height: entry_h,
         target: Some(MobileSwitcherTarget::ToggleSelectMode),
         content: DrawerRowContent::SelectMode,
     });
@@ -578,7 +597,7 @@ fn tabs_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
     let entry_h = drawer_entry_height(app);
     let mut rows = Vec::new();
     let footer = DrawerRow {
-        height: 1,
+        height: drawer_touch_height(app),
         target: Some(MobileSwitcherTarget::NewTab),
         content: DrawerRowContent::FooterAction("+ new tab"),
     };
@@ -1130,7 +1149,11 @@ fn render_mobile_drawer_content(
                 render_section_title_at(frame, viewport, content, doc_y, scroll, &title, p);
             }
             DrawerRowContent::FooterAction(label) => {
-                if let Some(y) = visible_y(viewport, scroll, doc_y) {
+                // The label sits one row into a touch-height span so the
+                // target reads centred rather than top-heavy; the span
+                // itself is what the finger gets.
+                let label_row = doc_y + usize::from(row.height >= 3);
+                if let Some(y) = visible_y(viewport, scroll, label_row) {
                     frame.render_widget(
                         Paragraph::new(truncate_end(&format!("  {label}"), content.width as usize))
                             .style(
@@ -1281,7 +1304,9 @@ fn render_mobile_drawer_content(
                 render_tab_row(app, frame, viewport, content, doc_y, row.height, *tab_idx);
             }
             DrawerRowContent::SelectMode => {
-                if let Some(y) = visible_y(viewport, scroll, doc_y) {
+                // Same centring as the action above it.
+                let label_row = doc_y + usize::from(row.height >= 3);
+                if let Some(y) = visible_y(viewport, scroll, label_row) {
                     let on = app.mobile_select_mode.is_some();
                     frame.render_widget(
                         Paragraph::new(truncate_end(
@@ -2871,6 +2896,61 @@ mod tests {
         for (height, content) in floor_of(&tabs) {
             assert!(height >= 3, "tabs drawer, {content} spends {height}");
         }
+    }
+
+    // TP-MOB-88: the pinned band's targets are touch-sized too — the create
+    // action spends four rows (it is the drawer's one primary action) and
+    // `select text` three — and the panel's very last row answers no tap at
+    // all. The keyboard's arrival changes the row count under the thumb
+    // (measured 35↔63 on this phone), so whatever sits on the final row is
+    // exactly what slides out from under a landing finger; a guard row of
+    // nothing is the cheapest miss.
+    #[test]
+    fn the_pinned_band_is_touch_sized_and_clears_the_last_row() {
+        let mut app = chat_app(1, 76, 63);
+        app.mobile_width_threshold = 90;
+        let areas = mobile_drawer_areas(&app);
+        let rows = mobile_drawer_rows(&app);
+
+        let pinned: Vec<(usize, String)> = rows
+            .iter()
+            .filter(|row| drawer_row_is_pinned(&row.content))
+            .map(|row| (row.height, format!("{:?}", row.content)))
+            .collect();
+        assert_eq!(pinned.len(), 2, "create action and select text");
+        assert_eq!(pinned[0].0, 4, "the primary action is Touch class");
+        assert!(pinned[1].0 >= 3, "select text keeps the list floor");
+
+        // The band shows every pinned row, and both stay hittable.
+        assert_eq!(
+            usize::from(areas.footer.height),
+            drawer_pinned_tail_height(&rows)
+        );
+        assert_eq!(
+            mobile_drawer_target_at(&app, areas.footer.x + 1, areas.footer.y + 1),
+            Some(MobileSwitcherTarget::NewWorkspace)
+        );
+        assert_eq!(
+            mobile_drawer_target_at(
+                &app,
+                areas.footer.x + 1,
+                areas.footer.y + areas.footer.height - 1
+            ),
+            Some(MobileSwitcherTarget::ToggleSelectMode)
+        );
+
+        // The panel's last row is a guard: below the band, above nothing.
+        let panel = areas.panel;
+        let last_row = panel.y + panel.height - 1;
+        assert!(
+            areas.footer.y + areas.footer.height <= last_row,
+            "the band ends above the panel's final row"
+        );
+        assert_eq!(
+            mobile_drawer_target_at(&app, panel.x + 2, last_row),
+            None,
+            "the final row answers no tap"
+        );
     }
 
     // TP-MOB-83: the mobile header's working indicator does not animate. Every

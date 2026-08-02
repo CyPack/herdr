@@ -5309,7 +5309,7 @@ mod tests {
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
 
-        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 44, 20));
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 44, 24));
         let tabs_button = app.state.view.mobile_header_hits.tabs_menu;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -5322,7 +5322,7 @@ mod tests {
             crate::app::state::MobileDrawer::Tabs
         );
 
-        // Four touch-height tabs fit a twenty-row phone without scrolling —
+        // Four touch-height tabs fit a twenty-four-row phone without scrolling —
         // the create row moved to the pinned footer (TP-MOB-77), so the list
         // is the tabs alone. Reaching the fourth tab used to mean scrolling
         // past every workspace and every agent first, because tabs shared one

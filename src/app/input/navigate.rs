@@ -2686,7 +2686,7 @@ navigate_pane_right = "ctrl+l"
         state.active = Some(0);
         state.selected = 0;
         state.mode = Mode::Navigate;
-        crate::ui::compute_view(&mut state, ratatui::layout::Rect::new(0, 0, 44, 8));
+        crate::ui::compute_view(&mut state, ratatui::layout::Rect::new(0, 0, 44, 20));
         assert_eq!(
             state.mobile_drawer,
             crate::app::state::MobileDrawer::Spaces,
@@ -2694,8 +2694,10 @@ navigate_pane_right = "ctrl+l"
         );
         assert_eq!(state.mobile_switcher_scroll, 0);
 
-        // Four workspaces at two rows each, plus a create row, overflow a
-        // five-row drawer body, so following the selection has to scroll.
+        // Four workspaces at the three-row touch height (TP-MOB-87) overflow
+        // the viewport left over the pinned band, so following the selection
+        // has to scroll. (A viewport shorter than one entry is TP-MOB-80's
+        // case, not this one.)
         for expected_selected in 1..=3 {
             handle_navigate_key(
                 &mut state,
