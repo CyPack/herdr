@@ -2808,6 +2808,20 @@ client_surfaces! {
     rename_pane_target: Option<PaneId>,
     }
     owned {
+    /// The phone shell's drawer, and everything that describes its position.
+    ///
+    /// Owned rather than broadcast: a broadcast surface promotes what one
+    /// display changed into what every later display adopts, which is right
+    /// for a mode and wrong for a drawer. Shared, a phone attached beside a
+    /// desktop opened and closed the desktop's drawer with its own — which
+    /// drawer was open, where its cursor sat, whether the active workspace's
+    /// chats were folded, and whether the client had been handed back its own
+    /// selection gesture were one value for every display at once. A display
+    /// that has just attached has not opened a drawer (TP-MOB-75).
+    mobile_drawer: MobileDrawer,
+    mobile_drawer_cursor: usize,
+    mobile_active_chats_folded: bool,
+    mobile_select_mode: Option<bool>,
     /// Which app surface this display is looking at, and — since it is the
     /// same surface — the directory behind it.
     ///

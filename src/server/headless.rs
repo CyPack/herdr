@@ -9011,6 +9011,105 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_ACTION_ID\""]
         })
     }
 
+    fn wheel_up(column: u16, row: u16) -> crate::raw_input::RawInputEvent {
+        crate::raw_input::RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::ScrollUp,
+            column,
+            row,
+            modifiers: crossterm::event::KeyModifiers::empty(),
+        })
+    }
+
+    /// TP-MOB-74: a phone attached beside a desktop still gets the phone's
+    /// wheel rule. The rule reads `view.layout`, and the view is one shared
+    /// structure that the last render leaves behind — so with a wide display
+    /// drawing last, a swipe from the narrow one was decided against the wide
+    /// display's geometry and went to the agent, which discards it. The
+    /// reader saw touch scrolling stop working the moment a second machine
+    /// attached.
+    #[tokio::test]
+    async fn a_narrow_display_keeps_its_wheel_rule_while_a_wide_one_draws() {
+        let mut server = test_headless_server();
+        let mut workspace = crate::workspace::Workspace::test_new("test");
+        let pane_id = workspace.tabs[0].root_pane;
+        let mut bytes = b"\x1b[?1000h\x1b[?1006h".to_vec();
+        for line in 0..80 {
+            bytes.extend_from_slice(format!("line {line:02}\r\n").as_bytes());
+        }
+        let (runtime, _input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                58,
+                16,
+                16 * 1024,
+                &bytes,
+                4,
+            );
+        workspace.insert_test_runtime(pane_id, runtime);
+        server.app.state.workspaces = vec![workspace];
+        server.app.state.active = Some(0);
+        server.app.state.selected = 0;
+        server.app.state.mode = crate::app::Mode::Terminal;
+        server.app.state.mouse_scroll_lines = 3;
+
+        let (wide_tx, _wide_control_rx, _wide_rx) = test_client_writer();
+        let (narrow_tx, _narrow_control_rx, _narrow_rx) = test_client_writer();
+        server.clients.insert(
+            1,
+            ClientConnection::new(
+                (200, 50),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                1,
+                RenderEncoding::SemanticFrame,
+                Some(wide_tx),
+            ),
+        );
+        server.clients.insert(
+            2,
+            ClientConnection::new(
+                (60, 20),
+                crate::kitty_graphics::HostCellSize::default(),
+                crate::terminal_theme::TerminalTheme::default(),
+                None,
+                2,
+                RenderEncoding::SemanticFrame,
+                Some(narrow_tx),
+            ),
+        );
+        // The wide display is in front, so it is the geometry the last frame
+        // leaves behind.
+        server.foreground_client_id = Some(1);
+        server.render_and_stream();
+        assert_eq!(
+            server.app.state.view.layout,
+            crate::app::state::ViewLayout::Desktop,
+            "the wide display drew last"
+        );
+
+        let before = server
+            .app
+            .state
+            .runtime_for_pane_in_workspace(&server.app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
+            .map(|metrics| metrics.offset_from_bottom)
+            .expect("scroll metrics");
+
+        server.handle_client_input_events(2, vec![wheel_up(4, 6)]);
+
+        let after = server
+            .app
+            .state
+            .runtime_for_pane_in_workspace(&server.app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
+            .map(|metrics| metrics.offset_from_bottom)
+            .expect("scroll metrics");
+        assert!(
+            after > before,
+            "the narrow display's swipe scrolled nothing: {before} -> {after}"
+        );
+    }
+
     /// Correct hit geometry must not cost a layout pass per pointer motion.
     /// The input loop is serial, so that cost lands directly on input latency
     /// — which is what the inert-motion render gate exists to avoid.

@@ -2218,6 +2218,72 @@ mod tests {
         }
     }
 
+    // TP-MOB-75: the drawer belongs to the display it was opened on. A phone
+    // attached beside a desktop shared one drawer state with it: which drawer
+    // was open, where its cursor sat, whether the active workspace's chats
+    // were folded and whether the client had been handed back its own
+    // selection gesture were all one value for every display at once. Opening
+    // a drawer on the phone therefore reached into the desktop's state and
+    // back, which is what "the system gets confused about which client has
+    // priority" describes.
+    #[test]
+    fn a_drawer_belongs_to_the_display_it_was_opened_on() {
+        let mut app = chat_app(1, 76, 35);
+        app.mobile_drawer = crate::app::state::MobileDrawer::None;
+
+        let phone = crate::app::state::ClientId::from(2u64);
+        let desktop = crate::app::state::ClientId::from(1u64);
+
+        let previous = app.enter_viewer(Some(phone));
+        app.toggle_mobile_drawer(crate::app::state::MobileDrawer::Spaces);
+        app.mobile_active_chats_folded = true;
+        app.restore_viewer(previous);
+
+        let previous = app.enter_viewer(Some(desktop));
+        assert_eq!(
+            app.mobile_drawer,
+            crate::app::state::MobileDrawer::None,
+            "a drawer opened on the phone is not open on the desktop"
+        );
+        assert!(
+            !app.mobile_active_chats_folded,
+            "and neither is the fold it left behind"
+        );
+        app.restore_viewer(previous);
+
+        let previous = app.enter_viewer(Some(phone));
+        assert_eq!(
+            app.mobile_drawer,
+            crate::app::state::MobileDrawer::Spaces,
+            "the display that opened it still has it"
+        );
+        assert!(app.mobile_active_chats_folded);
+        app.restore_viewer(previous);
+
+        // The migration moves four fields between register banks, so the
+        // identity invariants are asserted against adversarial state rather
+        // than against the tidy fixture above.
+        let mut adversarial = AppState::test_with_adversarial_identity_state();
+        adversarial.assert_invariants_for_test();
+        let previous = adversarial.enter_viewer(Some(phone));
+        adversarial.mobile_drawer = crate::app::state::MobileDrawer::Tabs;
+        adversarial.mobile_drawer_cursor = 7;
+        adversarial.mobile_select_mode = Some(true);
+        adversarial.assert_invariants_for_test();
+        adversarial.restore_viewer(previous);
+        adversarial.assert_invariants_for_test();
+
+        let previous = adversarial.enter_viewer(Some(desktop));
+        assert_eq!(
+            adversarial.mobile_drawer,
+            crate::app::state::MobileDrawer::None
+        );
+        assert_eq!(adversarial.mobile_drawer_cursor, 0);
+        assert_eq!(adversarial.mobile_select_mode, None);
+        adversarial.assert_invariants_for_test();
+        adversarial.restore_viewer(previous);
+    }
+
     // TP-MOB-32: an open drawer covers three quarters of the width and leaves
     // the rest showing. The uncovered strip is both the way out and the
     // reminder that a session is running under it.
