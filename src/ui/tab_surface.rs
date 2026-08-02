@@ -353,10 +353,15 @@ mod tests {
         // frame first: a blank row now sits between the workspace's detail
         // line and the "menu" heading. It moved again when workspace rows
         // grew their chat-disclosure head and their trailing `+` (TP-MOB-84)
-        // — verified by dumping the frame: the row reads "▸ · name … +".
+        // — verified by dumping the frame: the row reads "▸ · name … +". It
+        // moved again when every tappable entry grew to the three-row touch
+        // height (TP-MOB-87) — verified by dumping the frame: the workspace
+        // spans rows 3-5 (title, detail, breath) and each menu item spans
+        // three rows of its own, with the pinned band unchanged at the
+        // bottom.
         assert_eq!(
             frame_digest(&frame),
-            "9f71ab431757ea72eff606b132f611365aa3749001815744c65ac059c1ebc98f"
+            "f055c7c481d272e44fe8d233d632b8ef4c98ace6c1b15701820fc4ab79127f93"
         );
     }
 }

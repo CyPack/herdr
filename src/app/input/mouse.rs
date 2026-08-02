@@ -5006,16 +5006,17 @@ mod tests {
 
         assert_eq!(app.state.mode, Mode::Navigate);
 
-        // The active workspace over two rows, then the other one. The create
-        // row that used to lead the document moved to the pinned footer
-        // (TP-MOB-77), so the list starts with the workspaces themselves.
+        // Each workspace over its three touch rows (TP-MOB-87), the second
+        // one spanning document rows 3..6. The create row that used to lead
+        // the document moved to the pinned footer (TP-MOB-77), so the list
+        // starts with the workspaces themselves.
         let viewport = crate::ui::mobile_drawer_areas(&app.state).viewport;
         // Mid-row: the head cells are the chat disclosure and the tail cells
         // start a chat since TP-MOB-84, so "switch to it" is the middle.
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + viewport.width / 2,
-            viewport.y + 2,
+            viewport.y + 4,
         ));
 
         assert_eq!(app.state.active, Some(1));
@@ -5050,11 +5051,9 @@ mod tests {
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 44, 20));
         assert_eq!(app.state.mobile_switcher_scroll, 2);
 
-        // Scrolled two rows, the third viewport row is document row four: the
-        // active workspace over two rows, then one row per workspace — the
-        // create row that used to lead the document lives in the pinned footer
-        // now (TP-MOB-77). This reaches ws-3; the point being that a scrolled
-        // row is reachable at all.
+        // Scrolled two rows, the third viewport row is document row four,
+        // inside ws-1's three-row span (3..6, TP-MOB-87) — the point being
+        // that a scrolled row is reachable at all.
         // Mid-row: the head cells are the chat disclosure and the tail cells
         // start a chat since TP-MOB-84, so "switch to it" is the middle.
         app.handle_mouse(mouse(
@@ -5063,7 +5062,7 @@ mod tests {
             viewport.y + 2,
         ));
 
-        assert_eq!(app.state.active, Some(3));
+        assert_eq!(app.state.active, Some(1));
         assert_eq!(app.state.mode, Mode::Terminal);
     }
 
@@ -5310,7 +5309,7 @@ mod tests {
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
 
-        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 44, 12));
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 44, 20));
         let tabs_button = app.state.view.mobile_header_hits.tabs_menu;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -5323,18 +5322,19 @@ mod tests {
             crate::app::state::MobileDrawer::Tabs
         );
 
-        // Four tabs fit a twelve-row phone without scrolling — the create row
-        // moved to the pinned footer (TP-MOB-77), so the list is the tabs
-        // alone. Reaching the fourth tab used to mean scrolling past every
-        // workspace and every agent first, because tabs shared one list with
-        // them.
+        // Four touch-height tabs fit a twenty-row phone without scrolling —
+        // the create row moved to the pinned footer (TP-MOB-77), so the list
+        // is the tabs alone. Reaching the fourth tab used to mean scrolling
+        // past every workspace and every agent first, because tabs shared one
+        // list with them.
         assert_eq!(crate::ui::mobile_drawer_max_scroll(&app.state), 0);
 
+        // The fourth tab's span is document rows 9..12 (TP-MOB-87).
         let viewport = crate::ui::mobile_drawer_areas(&app.state).viewport;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
-            viewport.y + 3,
+            viewport.y + 10,
         ));
 
         assert_eq!(app.state.workspaces[0].active_tab_index(), 3);

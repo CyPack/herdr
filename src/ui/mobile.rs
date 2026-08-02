@@ -347,23 +347,21 @@ pub(crate) fn mobile_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
     }
 }
 
-/// How many document rows a space or agent entry takes.
+/// How many document rows a tappable drawer entry takes — the density scale.
 ///
-/// Two lines carry a name and its detail — branch, tab, agent state. On a
-/// phone held upright that detail costs half the list: the measured switcher
-/// put a third of its rows off screen with only two workspaces and three
-/// agents. There, the name alone is the thing being scanned for.
+/// Three rows are a touch pad's worth of vertical space on a phone cell
+/// (11–13pt a row against a ≈44pt fingertip): a title, a detail, and a
+/// breathing row that keeps one touch from resting on two targets. A short
+/// viewport — a phone held sideways — drops the breathing row and keeps two;
+/// it never drops to one, because one-line targets are the measured root of
+/// "my finger touches everything at once". Width does not lower the floor:
+/// a grown font is exactly when the reader needs targets most.
 fn drawer_entry_height(app: &AppState) -> usize {
-    let width = app
-        .view
-        .mobile_header_rect
-        .width
-        .max(app.view.terminal_area.width);
-    match super::size_class::SizeClass::of(Rect::new(0, 0, width, 24), app.mobile_width_threshold)
-        .width
+    match super::size_class::SizeClass::of(mobile_screen_rect(app), app.mobile_width_threshold)
+        .height
     {
-        super::size_class::WidthClass::Tight => 1,
-        _ => 2,
+        super::size_class::HeightClass::Short => 2,
+        super::size_class::HeightClass::Regular => 3,
     }
 }
 
@@ -386,7 +384,7 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
             crate::ui::sidebar::WorkspaceListEntry::GroupHeader { space_key } => {
                 let collapsed = app.collapsed_space_keys.contains(&space_key);
                 rows.push(DrawerRow {
-                    height: 1,
+                    height: entry_h,
                     target: Some(MobileSwitcherTarget::ToggleSpaceGroup { group_idx }),
                     content: DrawerRowContent::SpaceGroup {
                         space_key,
@@ -399,12 +397,15 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
             crate::ui::sidebar::WorkspaceListEntry::Workspace { ws_idx, indented } => {
                 let is_active = Some(ws_idx) == app.active;
                 rows.push(DrawerRow {
-                    // The detail line answers "what state is this branch in",
-                    // and that is asked about the branch being worked in, not
-                    // about all sixteen at once. Measured: sixteen workspaces
-                    // made a 42-row document in a 32-row viewport, which put
-                    // the menu five rows below the fold (TP-MOB-70).
-                    height: if is_active { entry_h } else { 1 },
+                    // Every workspace row spends the full entry height now,
+                    // not only the active one. TP-MOB-70 traded thin rows for
+                    // a shorter document; the density floor (TP-MOB-87)
+                    // reversed that trade — a sixteen-branch list that fits
+                    // but cannot be tapped is worth less than one that
+                    // scrolls. The detail line still belongs to the active
+                    // branch alone; the others keep the row as breathing
+                    // room.
+                    height: entry_h,
                     // Every workspace row keeps the same target. Splitting it
                     // by whether the row was active broke both consumers that
                     // identify a workspace row by its target — the doc range
@@ -437,7 +438,7 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
                         .min(crate::ui::sidebar::WORKSPACE_CHAT_ROW_LIMIT);
                     for chat_idx in 0..shown {
                         rows.push(DrawerRow {
-                            height: 1,
+                            height: entry_h,
                             target: Some(MobileSwitcherTarget::Chat { ws_idx, chat_idx }),
                             content: DrawerRowContent::Chat {
                                 ws_idx,
@@ -461,7 +462,7 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
             }
             crate::ui::sidebar::WorkspaceListEntry::Chat { ws_idx, chat_idx } => {
                 rows.push(DrawerRow {
-                    height: 1,
+                    height: entry_h,
                     target: Some(MobileSwitcherTarget::Chat { ws_idx, chat_idx }),
                     content: DrawerRowContent::Chat {
                         ws_idx,
@@ -549,7 +550,7 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
     });
     for menu_idx in 0..app.global_menu_labels().len() {
         rows.push(DrawerRow {
-            height: 1,
+            height: entry_h,
             target: Some(MobileSwitcherTarget::Menu(menu_idx)),
             content: DrawerRowContent::Menu { menu_idx },
         });
@@ -574,6 +575,7 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
 }
 
 fn tabs_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
+    let entry_h = drawer_entry_height(app);
     let mut rows = Vec::new();
     let footer = DrawerRow {
         height: 1,
@@ -586,7 +588,7 @@ fn tabs_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
     };
     for tab_idx in 0..ws.tabs.len() {
         rows.push(DrawerRow {
-            height: 1,
+            height: entry_h,
             target: Some(MobileSwitcherTarget::Tab(tab_idx)),
             content: DrawerRowContent::Tab { tab_idx },
         });
@@ -1276,7 +1278,7 @@ fn render_mobile_drawer_content(
                 }
             }
             DrawerRowContent::Tab { tab_idx } => {
-                render_tab_row(app, frame, viewport, content, doc_y, *tab_idx);
+                render_tab_row(app, frame, viewport, content, doc_y, row.height, *tab_idx);
             }
             DrawerRowContent::SelectMode => {
                 if let Some(y) = visible_y(viewport, scroll, doc_y) {
@@ -1454,35 +1456,28 @@ fn render_space_row(
         }
     };
 
-    if height == 1 {
-        render_one_line_item(
-            frame,
-            viewport,
-            content,
-            doc_y,
-            app.mobile_switcher_scroll,
-            bg,
-            Line::from(title_spans),
+    // The detail line answers "what state is this branch in", and that is
+    // asked about the branch being worked in, not about all sixteen at once
+    // (TP-MOB-70's surviving half) — the other branches keep their second
+    // row as breathing room, which is what makes each row its own target.
+    let detail = active.then(|| {
+        let text = format!(
+            "{detail_prefix}{} · {}",
+            ws.branch().unwrap_or_else(|| "shell".into()),
+            mobile_tab_status(ws)
         );
-        draw_plus(frame);
-        return;
-    }
-
-    let detail = format!(
-        "{detail_prefix}{} · {}",
-        ws.branch().unwrap_or_else(|| "shell".into()),
-        mobile_tab_status(ws)
-    );
-    render_two_line_item(
+        (truncate_end(&text, content.width as usize), p.overlay0)
+    });
+    render_list_item(
         frame,
         viewport,
         content,
         doc_y,
         app.mobile_switcher_scroll,
+        height,
         bg,
         Line::from(title_spans),
-        truncate_end(&detail, content.width as usize),
-        p.overlay0,
+        detail,
     );
     draw_plus(frame);
 }
@@ -1520,29 +1515,19 @@ fn render_agent_row(
         ),
     ]);
 
-    if height == 1 {
-        render_one_line_item(
-            frame,
-            viewport,
-            content,
-            doc_y,
-            app.mobile_switcher_scroll,
-            bg,
-            title,
-        );
-        return;
-    }
-
-    render_two_line_item(
+    render_list_item(
         frame,
         viewport,
         content,
         doc_y,
         app.mobile_switcher_scroll,
+        height,
         bg,
         title,
-        truncate_end(&mobile_agent_detail(entry), content.width as usize),
-        p.overlay0,
+        Some((
+            truncate_end(&mobile_agent_detail(entry), content.width as usize),
+            p.overlay0,
+        )),
     );
 }
 
@@ -1552,6 +1537,7 @@ fn render_tab_row(
     viewport: Rect,
     content: Rect,
     doc_y: usize,
+    height: usize,
     tab_idx: usize,
 ) {
     let p = &app.palette;
@@ -1587,14 +1573,16 @@ fn render_tab_row(
                 .add_modifier(Modifier::BOLD),
         ),
     ]);
-    render_one_line_item(
+    render_list_item(
         frame,
         viewport,
         content,
         doc_y,
         app.mobile_switcher_scroll,
+        height,
         bg,
         title,
+        None,
     );
 }
 
@@ -1664,23 +1652,29 @@ fn render_one_line_item(
     }
 }
 
-fn render_two_line_item(
+/// A list entry over its full density span: the background claims every row
+/// the entry owns — the visible shape of the tap target (breathing row
+/// included) — the title sits on the first, the detail, when there is one,
+/// on the second.
+#[allow(clippy::too_many_arguments)] // one entry shape, three call sites; a
+                                     // struct nobody else constructs would only rename the same values.
+fn render_list_item(
     frame: &mut Frame,
     viewport: Rect,
     content: Rect,
     doc_y: usize,
     scroll: usize,
+    height: usize,
     bg: ratatui::style::Color,
     title: Line<'_>,
-    detail: String,
-    detail_fg: ratatui::style::Color,
+    detail: Option<(String, ratatui::style::Color)>,
 ) {
     fill_visible_doc_rect(
         frame,
         viewport,
         content,
         doc_y,
-        2,
+        height,
         Style::default().bg(bg),
         scroll,
     );
@@ -1690,11 +1684,16 @@ fn render_two_line_item(
             Rect::new(content.x, y, content.width, 1),
         );
     }
-    if let Some(y) = visible_y(viewport, scroll, doc_y + 1) {
-        frame.render_widget(
-            Paragraph::new(detail).style(Style::default().fg(detail_fg).bg(bg)),
-            Rect::new(content.x, y, content.width, 1),
-        );
+    if height < 2 {
+        return;
+    }
+    if let Some((detail, detail_fg)) = detail {
+        if let Some(y) = visible_y(viewport, scroll, doc_y + 1) {
+            frame.render_widget(
+                Paragraph::new(detail).style(Style::default().fg(detail_fg).bg(bg)),
+                Rect::new(content.x, y, content.width, 1),
+            );
+        }
     }
 }
 
@@ -2365,6 +2364,11 @@ mod tests {
     // in a 32-row viewport, so the menu sat five rows below the fold.
     #[test]
     fn only_the_active_workspace_spends_a_second_row_on_detail() {
+        // Every space row spends the same touch height (TP-MOB-87 reversed
+        // the per-row trade); what stays true of the active one alone is the
+        // detail *content* on its second row — the others keep that row as
+        // breathing room. Geometry is uniform so a fingertip finds the same
+        // shape everywhere; the text is what varies.
         let app = chat_app(1, 76, 35);
         let heights: Vec<(usize, usize)> = mobile_drawer_rows(&app)
             .iter()
@@ -2373,7 +2377,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(heights, vec![(0, 1), (1, 2), (2, 1)]);
+        assert_eq!(heights, vec![(0, 3), (1, 3), (2, 3)]);
     }
 
     // TP-MOB-71: sixteen workspaces fit the drawer without scrolling. Measured
@@ -2410,11 +2414,34 @@ mod tests {
         app.view.terminal_area = Rect::new(0, 2, 76, 33);
         app.view.layout = crate::app::state::ViewLayout::Mobile;
 
-        let document: usize = mobile_drawer_rows(&app).iter().map(|row| row.height).sum();
-        let viewport = mobile_drawer_areas(&app).viewport.height as usize;
+        // The drawer no longer promises to *fit* sixteen workspaces — the
+        // density floor (TP-MOB-87) spends that budget on tappable rows, and
+        // spending it was the design decision, not an accident. What it still
+        // promises: the way back out stays pinned on screen however long the
+        // document grows, and scrolling reaches everything the fold hides.
+        let rows = mobile_drawer_rows(&app);
+        let document: usize = rows.iter().map(|row| row.height).sum();
+        let areas = mobile_drawer_areas(&app);
+        let viewport = areas.viewport.height as usize;
         assert!(
-            document <= viewport,
-            "sixteen workspaces make a {document}-row document in a {viewport}-row viewport"
+            document > viewport,
+            "sixteen touch-height workspaces overflow by design \
+             ({document} rows in a {viewport}-row viewport)"
+        );
+        assert_eq!(
+            mobile_drawer_target_at(
+                &app,
+                areas.footer.x + 1,
+                areas.footer.y + areas.footer.height - 1
+            ),
+            Some(MobileSwitcherTarget::ToggleSelectMode),
+            "the escape hatch stays pinned above the overflow"
+        );
+        let scrollable = document - drawer_pinned_tail_height(&rows);
+        assert_eq!(
+            mobile_drawer_max_scroll(&app) + viewport,
+            scrollable,
+            "scroll reaches the last unpinned row and no further"
         );
     }
 
@@ -2729,13 +2756,16 @@ mod tests {
         }
         assert!(spacer_before_title >= 1, "the menu section exists");
 
+        // A tight width breathes too now: the density floor (TP-MOB-87) gives
+        // every entry its breathing row regardless of width, so the section
+        // spacer is no longer the odd row out that a narrow screen skips.
         let mut tight = drawer_app(2, 1, 36, 18);
         tight.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
         assert!(
-            !mobile_drawer_rows(&tight)
+            mobile_drawer_rows(&tight)
                 .iter()
                 .any(|row| matches!(row.content, DrawerRowContent::Empty(""))),
-            "a tight drawer spends no rows on air"
+            "a tight drawer breathes like every other"
         );
     }
 
@@ -2743,9 +2773,9 @@ mod tests {
     // large font leaves. The reader's answer to small text is the client's
     // font setting, and growing it shrinks the columns: 76 becomes ~50, then
     // ~38, then ~32. The threshold keeps the phone shell on; this test keeps
-    // the shell honest inside it — every row one line, no rows spent on air,
-    // the footer still hittable, the chats still reachable, nothing wider
-    // than the panel.
+    // the shell honest inside it — the touch floor holds (a grown font is
+    // when targets matter most, TP-MOB-87), the footer stays hittable, the
+    // chats stay reachable, nothing wider than the panel.
     #[test]
     fn the_drawer_keeps_its_promises_at_large_font_widths() {
         for width in [50u16, 38, 32] {
@@ -2754,17 +2784,12 @@ mod tests {
             let areas = mobile_drawer_areas(&app);
             let rows = mobile_drawer_rows(&app);
 
-            let tight = width <= crate::ui::size_class::TIGHT_MAX_WIDTH;
             for row in &rows {
-                if tight {
-                    assert_eq!(
-                        row.height, 1,
-                        "at {width} columns every row spends one line, {:?}",
-                        row.content
-                    );
+                if row.target.is_some() && !drawer_row_is_pinned(&row.content) {
                     assert!(
-                        !matches!(row.content, DrawerRowContent::Empty("")),
-                        "at {width} columns no row is spent on air"
+                        row.height >= 3,
+                        "at {width} columns the touch floor holds, {:?}",
+                        row.content
                     );
                 }
             }
@@ -2796,6 +2821,55 @@ mod tests {
                     "indent at {width} columns depth {depth}"
                 );
             }
+        }
+    }
+
+    // TP-MOB-87: every row that can be tapped spends at least three document
+    // rows in a regular-height viewport, two in a short one, and never one. A
+    // fingertip pad covers roughly 44pt while a terminal row is 11–13pt on
+    // this phone — a one-line target puts three or four rows under one touch,
+    // which is the measured root of "my finger touches everything at once".
+    // The pinned tail rows carry their own touch promise separately; rows
+    // without a target (titles, notes, spacers) stay thin on purpose, they
+    // are what the eye skips and the finger never aims at.
+    #[test]
+    fn tappable_rows_meet_the_density_floor() {
+        let floor_of = |app: &AppState| {
+            mobile_drawer_rows(app)
+                .into_iter()
+                .filter(|row| row.target.is_some() && !drawer_row_is_pinned(&row.content))
+                .map(|row| (row.height, format!("{:?}", row.content)))
+                .collect::<Vec<_>>()
+        };
+
+        // A phone held upright: Comfortable, three rows per target.
+        let mut app = tree_app(76, 63);
+        app.mobile_width_threshold = 90;
+        for (height, content) in floor_of(&app) {
+            assert!(height >= 3, "regular height, {content} spends {height}");
+        }
+
+        // A large font (Tight width) keeps the same floor: touch targets are
+        // needed most exactly when the reader grew the font to see.
+        let mut tight = chat_app(1, 32, 40);
+        tight.mobile_width_threshold = 90;
+        for (height, content) in floor_of(&tight) {
+            assert!(height >= 3, "tight width, {content} spends {height}");
+        }
+
+        // A phone held sideways: Compact, two rows — never one.
+        let mut short = tree_app(76, 14);
+        short.mobile_width_threshold = 90;
+        for (height, content) in floor_of(&short) {
+            assert!(height >= 2, "short height, {content} spends {height}");
+        }
+
+        // The tabs drawer makes the same promise.
+        let mut tabs = drawer_app(1, 3, 76, 63);
+        tabs.mobile_width_threshold = 90;
+        tabs.mobile_drawer = crate::app::state::MobileDrawer::Tabs;
+        for (height, content) in floor_of(&tabs) {
+            assert!(height >= 3, "tabs drawer, {content} spends {height}");
         }
     }
 
@@ -3046,47 +3120,11 @@ mod tests {
         }
     }
 
-    // TP-MOB-38: on a phone held upright each entry takes one row instead of
-    // two. The measured switcher put a third of its rows off screen with two
-    // workspaces and three agents; the detail line is what paid for that.
-    #[test]
-    fn a_tight_drawer_gives_each_entry_a_single_row() {
-        let mut tight = drawer_app(2, 1, 36, 18);
-        tight.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
-        let tight_rows = mobile_drawer_rows(&tight);
-        assert!(
-            tight_rows
-                .iter()
-                .filter(|row| matches!(row.content, DrawerRowContent::Space { .. }))
-                .all(|row| row.height == 1),
-            "tight spaces take one row"
-        );
-
-        // A compact viewport still affords the detail line, but spends it only
-        // on the workspace being worked in. The line answers "what state is
-        // this branch in", and that is asked about one branch, not sixteen —
-        // measured, sixteen of them made a 42-row document in a 32-row
-        // viewport (TP-MOB-70).
-        let mut compact = drawer_app(2, 1, 52, 26);
-        compact.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
-        let compact_heights: Vec<(usize, usize)> = mobile_drawer_rows(&compact)
-            .iter()
-            .filter_map(|row| match row.content {
-                DrawerRowContent::Space { ws_idx, .. } => Some((ws_idx, row.height)),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(compact.active, Some(0));
-        assert_eq!(compact_heights, vec![(0, 2), (1, 1)]);
-
-        let doc = |app: &AppState| -> usize {
-            mobile_drawer_rows(app).iter().map(|row| row.height).sum()
-        };
-        assert!(
-            doc(&tight) < doc(&compact),
-            "the tight drawer is the shorter document"
-        );
-    }
+    // TP-MOB-38 REVERSED by TP-MOB-87: a tight drawer used to give each entry
+    // a single row to shorten the document. One-line entries are exactly what
+    // "my finger touches everything at once" is made of; the density floor
+    // now holds at every width, and reachability of an overflowing document
+    // is the pinned footer's job, not thin rows'.
 
     // TP-MOB-39: a drawer whose content overflows can be scrolled to its end,
     // and one that fits reports no scroll at all.
@@ -3381,15 +3419,19 @@ mod tests {
         assert_eq!(mobile_drawer_workspace_doc_range(&app, 0).start, 0);
 
         let viewport = mobile_drawer_areas(&app).viewport;
-        app.mobile_switcher_scroll = 100;
+        // At the top of the document: touch-height entries make even this
+        // small fixture overflow, so an over-large scroll would clamp to a
+        // real offset now instead of zero — the clamp itself is TP-MOB-39's
+        // promise, this test reads the document head.
+        app.mobile_switcher_scroll = 0;
         // Mid-row since TP-MOB-84 gave the head cells their own zone.
         let workspace_hit =
             mobile_drawer_target_at(&app, viewport.x + viewport.width / 2, viewport.y + 1);
         assert_eq!(workspace_hit, Some(MobileSwitcherTarget::Workspace(0)));
 
-        // Agents follow: one two-row space and the "agents"
-        // title put the first agent at doc row 4.
-        let agent_hit = mobile_drawer_target_at(&app, viewport.x + 2, viewport.y + 4);
+        // Agents follow: one three-row space, its spacer and the "agents"
+        // title put the first agent at doc row 5.
+        let agent_hit = mobile_drawer_target_at(&app, viewport.x + 2, viewport.y + 5);
         assert!(matches!(
             agent_hit,
             Some(MobileSwitcherTarget::Agent { .. })
@@ -3425,16 +3467,17 @@ mod tests {
         // Grouped order pulls the worktree (idx 2) up under its parent (idx 0),
         // ahead of the unrelated "other" workspace (idx 1). The document opens
         // with the repository header — the create row moved to the pinned
-        // footer (TP-MOB-77) — then main, feature, other. The active checkout
-        // spends two rows on its detail line; the others one each (TP-MOB-70).
-        assert_eq!(mobile_drawer_workspace_doc_range(&app, 0).start, 1);
-        assert_eq!(mobile_drawer_workspace_doc_range(&app, 2).start, 3);
-        assert_eq!(mobile_drawer_workspace_doc_range(&app, 1).start, 4);
+        // footer (TP-MOB-77) — then main, feature, other. Every entry spends
+        // the three-row touch height (TP-MOB-87), header included.
+        assert_eq!(mobile_drawer_workspace_doc_range(&app, 0).start, 3);
+        assert_eq!(mobile_drawer_workspace_doc_range(&app, 2).start, 6);
+        assert_eq!(mobile_drawer_workspace_doc_range(&app, 1).start, 9);
 
         let viewport = mobile_drawer_areas(&app).viewport;
-        // The second space row on screen is the worktree, not workspaces[1].
-        // Mid-row since TP-MOB-84 gave the head cells their own zone.
-        let hit = mobile_drawer_target_at(&app, viewport.x + viewport.width / 2, viewport.y + 3);
+        // The second space entry on screen is the worktree, not workspaces[1]:
+        // doc rows 6..9 are its span, 7 is its middle. Mid-column since
+        // TP-MOB-84 gave the head cells their own zone.
+        let hit = mobile_drawer_target_at(&app, viewport.x + viewport.width / 2, viewport.y + 7);
         assert_eq!(hit, Some(MobileSwitcherTarget::Workspace(2)));
 
         // TP-MOB-62: folding the group on the phone hides its checkouts, the
@@ -3449,7 +3492,7 @@ mod tests {
             "the header stays, so the group can be opened again"
         );
         assert_eq!(
-            mobile_drawer_target_at(&app, viewport.x + viewport.width / 2, viewport.y + 1),
+            mobile_drawer_target_at(&app, viewport.x + viewport.width / 2, viewport.y + 3),
             Some(MobileSwitcherTarget::Workspace(0)),
             "folding hides the linked worktrees, not the checkout they branch from"
         );
