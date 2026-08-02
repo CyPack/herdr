@@ -1628,6 +1628,12 @@ impl AppState {
         let Some(target) = crate::ui::mobile_drawer_cursor_target(self) else {
             return;
         };
+        self.apply_mobile_switcher_target(target);
+    }
+
+    /// Apply a drawer target regardless of how it was reached — cursor,
+    /// tap or the segment band, which has no cursor row at all.
+    pub(crate) fn apply_mobile_switcher_target(&mut self, target: crate::ui::MobileSwitcherTarget) {
         match target {
             crate::ui::MobileSwitcherTarget::NewWorkspace => {
                 self.request_new_workspace = true;
@@ -1696,6 +1702,63 @@ impl AppState {
                 let actions = crate::app::input::modal::global_menu_actions(self);
                 if let Some(action) = actions.get(action_idx).copied() {
                     crate::app::input::modal::apply_global_menu_action(self, action);
+                }
+            }
+            crate::ui::MobileSwitcherTarget::DrawerSegment(tab) => {
+                // Switching segments is not travelling: the drawer stays
+                // open, the new list starts at its top. Per-display state —
+                // a phone reading projects must not move a desktop off
+                // spaces (TP-MOB-91).
+                self.sidebar_tab = tab;
+                self.mobile_switcher_scroll = 0;
+                self.mobile_drawer_cursor = 0;
+            }
+            crate::ui::MobileSwitcherTarget::ToggleProject { proj_idx } => {
+                // Folding narrows the list being read; the drawer stays
+                // open, like every other fold (TP-MOB-63).
+                if let Some(path) = self
+                    .projects_sessions
+                    .get(proj_idx)
+                    .map(|project| project.path.clone())
+                {
+                    if !self.collapsed_project_paths.remove(&path) {
+                        self.collapsed_project_paths.insert(path);
+                    }
+                    self.clamp_mobile_drawer_scroll_and_cursor();
+                }
+            }
+            crate::ui::MobileSwitcherTarget::ProjectChat { proj_idx, chat_idx } => {
+                // Resuming a chat is travelling: the drawer closes and the
+                // event loop opens the tab from the deferred request, the
+                // same road the desktop Projects tab takes.
+                if let Some((path, session_id)) =
+                    self.projects_sessions.get(proj_idx).and_then(|project| {
+                        project
+                            .sessions
+                            .get(chat_idx)
+                            .map(|session| (project.path.clone(), session.id.clone()))
+                    })
+                {
+                    self.close_mobile_drawer();
+                    self.request_project_chat_tab =
+                        Some(crate::app::state::ProjectChatTabRequest {
+                            project_path: path,
+                            session_id: Some(session_id),
+                        });
+                }
+            }
+            crate::ui::MobileSwitcherTarget::NewChatInProject { proj_idx } => {
+                if let Some(path) = self
+                    .projects_sessions
+                    .get(proj_idx)
+                    .map(|project| project.path.clone())
+                {
+                    self.close_mobile_drawer();
+                    self.request_project_chat_tab =
+                        Some(crate::app::state::ProjectChatTabRequest {
+                            project_path: path,
+                            session_id: None,
+                        });
                 }
             }
         }
@@ -1797,6 +1860,12 @@ impl AppState {
             self.expanded_chat_workspaces.insert(key);
         }
         self.mark_session_dirty();
+        self.clamp_mobile_drawer_scroll_and_cursor();
+    }
+
+    /// After a fold changes the drawer document, keep the scroll inside it
+    /// and the cursor on a row that still exists.
+    pub(crate) fn clamp_mobile_drawer_scroll_and_cursor(&mut self) {
         let max_scroll = crate::ui::mobile_drawer_max_scroll(self);
         self.mobile_switcher_scroll = self.mobile_switcher_scroll.min(max_scroll);
         let stops = crate::ui::mobile_drawer_cursor_stops(self);

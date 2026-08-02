@@ -104,9 +104,15 @@ impl super::App {
     /// runs only when a fingerprint actually changed. Returns whether the
     /// cache changed (callers re-render).
     pub(crate) fn refresh_projects_if_due(&mut self, now: std::time::Instant) -> bool {
-        if self.state.sidebar_collapsed
-            || self.state.sidebar_tab != crate::app::state::SidebarTab::Projects
-        {
+        if self.state.sidebar_tab != crate::app::state::SidebarTab::Projects {
+            return false;
+        }
+        // The tab is visible either as the desktop rail or as the phone
+        // drawer's projects segment (TP-MOB-91) — a collapsed desktop
+        // sidebar says nothing about a phone with its drawer open.
+        let desktop_visible = !self.state.sidebar_collapsed;
+        let mobile_visible = self.state.mobile_drawer.is_open();
+        if !desktop_visible && !mobile_visible {
             return false;
         }
         if self.next_projects_poll.is_some_and(|due| now < due) {

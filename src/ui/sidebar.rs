@@ -2278,7 +2278,7 @@ fn render_projects_list(app: &AppState, frame: &mut Frame, area: Rect) {
 
 /// Short, human-friendly label for a pinned project: its final path component
 /// (e.g. `herdr`), falling back to the full path when there is none.
-fn project_display_name(path: &std::path::Path) -> String {
+pub(crate) fn project_display_name(path: &std::path::Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .filter(|name| !name.is_empty())

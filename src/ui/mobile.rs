@@ -58,7 +58,11 @@ pub(crate) struct MobileDrawerAreas {
     pub panel: Rect,
     /// The strip the drawer leaves uncovered. Tapping it closes the drawer.
     pub scrim: Rect,
-    /// The scrolling body inside the panel, below its title row.
+    /// The band at the panel's top: the left drawer's segment switcher
+    /// (spaces · projects), the right drawer's title. Two rows in a
+    /// regular-height viewport so the segments are tappable (TP-MOB-91).
+    pub title: Rect,
+    /// The scrolling body inside the panel, below its title band.
     pub viewport: Rect,
     /// The pinned band under the scroll body: the drawer's primary action and
     /// `select text`, at a screen position scrolling cannot move (TP-MOB-76).
@@ -99,6 +103,23 @@ pub(crate) enum MobileSwitcherTarget {
     },
     /// Hand the client back its own selection gesture, or take it back.
     ToggleSelectMode,
+    /// Move this display's rail to another segment — spaces or projects.
+    /// Per-display on purpose: a phone reading projects must not move a
+    /// desktop off spaces (the desktop relearned that once already).
+    DrawerSegment(crate::app::state::SidebarTab),
+    /// Fold or unfold a pinned project's chats.
+    ToggleProject {
+        proj_idx: usize,
+    },
+    /// Resume a remembered Claude chat in its project directory.
+    ProjectChat {
+        proj_idx: usize,
+        chat_idx: usize,
+    },
+    /// Start a fresh chat in that project — the trailing `+` zone.
+    NewChatInProject {
+        proj_idx: usize,
+    },
 }
 
 /// What a drawer row draws.
@@ -142,6 +163,16 @@ pub(crate) enum DrawerRowContent {
     },
     SelectMode,
     Empty(&'static str),
+    /// A pinned project on the projects segment — the desktop rail's tree,
+    /// walked by a thumb.
+    Project {
+        proj_idx: usize,
+    },
+    /// A remembered Claude chat under a pinned project.
+    ProjectChat {
+        proj_idx: usize,
+        chat_idx: usize,
+    },
 }
 
 /// One entry in a drawer, in document space.
@@ -265,8 +296,20 @@ pub(crate) fn mobile_drawer_areas(app: &AppState) -> MobileDrawerAreas {
         _ => panel.x,
     };
     let body_w = panel.width.saturating_sub(1);
-    // Row 0 of the panel is its title; the body starts under it.
-    let body_h = panel.height.saturating_sub(1);
+    // The panel opens with its title band — two rows in a regular-height
+    // viewport, because the left drawer's band is the segment switcher and a
+    // switcher is a tap target (TP-MOB-91); one row when the viewport is
+    // short, the same fold every touch height makes.
+    let title_h =
+        match super::size_class::SizeClass::of(mobile_screen_rect(app), app.mobile_width_threshold)
+            .height
+        {
+            super::size_class::HeightClass::Short => 1u16,
+            super::size_class::HeightClass::Regular => 2u16,
+        }
+        .min(panel.height);
+    let title = Rect::new(body_x, panel.y, body_w, title_h);
+    let body_h = panel.height.saturating_sub(title_h);
 
     // The pinned tail claims a band at the bottom — its rows plus a separator
     // above and a guard row below. The guard keeps the panel's very last row
@@ -282,7 +325,7 @@ pub(crate) fn mobile_drawer_areas(app: &AppState) -> MobileDrawerAreas {
     let scroll_h = body_h.saturating_sub(band as u16);
     let footer_h = band.saturating_sub(2) as u16;
 
-    let viewport = Rect::new(body_x, panel.y.saturating_add(1), body_w, scroll_h);
+    let viewport = Rect::new(body_x, panel.y.saturating_add(title_h), body_w, scroll_h);
     let footer = if footer_h > 0 {
         // One separator row sits between the list and the band.
         Rect::new(body_x, viewport.y + scroll_h + 1, body_w, footer_h)
@@ -293,6 +336,7 @@ pub(crate) fn mobile_drawer_areas(app: &AppState) -> MobileDrawerAreas {
     MobileDrawerAreas {
         panel,
         scrim,
+        title,
         viewport,
         footer,
     }
@@ -347,9 +391,74 @@ pub(crate) fn mobile_drawer_footer_band_height(app: &AppState) -> usize {
 pub(crate) fn mobile_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
     match app.mobile_drawer {
         crate::app::state::MobileDrawer::None => Vec::new(),
-        crate::app::state::MobileDrawer::Spaces => spaces_drawer_rows(app),
+        // The left drawer is the desktop's rail: its segment decides which
+        // tree it walks. Files stays a desktop surface for now — on the
+        // desktop it never was a rail list, it opens the file browser in the
+        // centre, and the phone's version of that is its own piece of work.
+        crate::app::state::MobileDrawer::Spaces => match app.sidebar_tab {
+            crate::app::state::SidebarTab::Projects => projects_drawer_rows(app),
+            _ => spaces_drawer_rows(app),
+        },
         crate::app::state::MobileDrawer::Tabs => tabs_drawer_rows(app),
     }
+}
+
+/// The projects segment: the same tree the desktop Projects tab walks —
+/// a foldable header per pinned project, a row per remembered chat, the
+/// surplus as "… N older" — plus the pinned footer every left-drawer
+/// segment keeps, because `select text` must stay reachable everywhere.
+fn projects_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
+    let entry_h = drawer_entry_height(app);
+    let mut rows = Vec::new();
+
+    if app.projects_sessions.is_empty() {
+        rows.push(DrawerRow {
+            height: 1,
+            target: None,
+            content: DrawerRowContent::Empty("  no projects yet"),
+        });
+    }
+    for (proj_idx, project) in app.projects_sessions.iter().enumerate() {
+        let collapsed = app.collapsed_project_paths.contains(&project.path);
+        rows.push(DrawerRow {
+            height: entry_h,
+            target: Some(MobileSwitcherTarget::ToggleProject { proj_idx }),
+            content: DrawerRowContent::Project { proj_idx },
+        });
+        if collapsed {
+            continue;
+        }
+        for chat_idx in 0..project.sessions.len() {
+            rows.push(DrawerRow {
+                height: entry_h,
+                target: Some(MobileSwitcherTarget::ProjectChat { proj_idx, chat_idx }),
+                content: DrawerRowContent::ProjectChat { proj_idx, chat_idx },
+            });
+        }
+        let surplus = project.total_count.saturating_sub(project.sessions.len());
+        if surplus > 0 {
+            rows.push(DrawerRow {
+                height: 1,
+                target: None,
+                content: DrawerRowContent::ChatNote {
+                    depth: 1,
+                    label: format!("… {surplus} older"),
+                },
+            });
+        }
+    }
+
+    rows.push(DrawerRow {
+        height: drawer_touch_height(app),
+        target: Some(MobileSwitcherTarget::NewWorkspace),
+        content: DrawerRowContent::FooterAction("+ new workspace"),
+    });
+    rows.push(DrawerRow {
+        height: entry_h,
+        target: Some(MobileSwitcherTarget::ToggleSelectMode),
+        content: DrawerRowContent::SelectMode,
+    });
+    rows
 }
 
 /// How many document rows a tappable drawer entry takes — the density scale.
@@ -741,6 +850,21 @@ pub(crate) fn mobile_drawer_target_at(
             .and_then(|(_, r)| r.target);
     }
 
+    // The title band: on the left drawer it is the segment switcher, split
+    // into two zones each half the panel wide — width is what buys these
+    // targets their 44pt, the band's two rows top them up (TP-MOB-91).
+    if !matches!(app.mobile_drawer, crate::app::state::MobileDrawer::Tabs)
+        && rect_contains(areas.title, col, row)
+    {
+        let half = areas.title.width / 2;
+        let tab = if col < areas.title.x + half {
+            crate::app::state::SidebarTab::Spaces
+        } else {
+            crate::app::state::SidebarTab::Projects
+        };
+        return Some(MobileSwitcherTarget::DrawerSegment(tab));
+    }
+
     let content = inset_for_left_scrollbar(areas.viewport);
     if !rect_contains(content, col, row) {
         return None;
@@ -773,6 +897,19 @@ pub(crate) fn mobile_drawer_target_at(
         }
         if content.width >= 10 && offset >= content.width.saturating_sub(3) {
             return Some(MobileSwitcherTarget::NewChatIn { ws_idx });
+        }
+    }
+    // A project header carries the same trailing `+` a workspace row does:
+    // starting a chat there is the row's second intent, in the same cells
+    // every other row spends on it (TP-MOB-84's zone, TP-MOB-91's tree).
+    if let (
+        Some(MobileSwitcherTarget::ToggleProject { proj_idx }),
+        DrawerRowContent::Project { .. },
+    ) = (target, &row_content)
+    {
+        let offset = col.saturating_sub(content.x);
+        if content.width >= 10 && offset >= content.width.saturating_sub(3) {
+            return Some(MobileSwitcherTarget::NewChatInProject { proj_idx });
         }
     }
     target
@@ -886,19 +1023,24 @@ pub(crate) fn render_mobile_drawer(
     frame.render_widget(Clear, areas.panel);
     fill_rect(frame, areas.panel, Style::default().bg(p.panel_bg));
 
-    let title = match app.mobile_drawer {
-        crate::app::state::MobileDrawer::Tabs => drawer_tabs_title(app),
-        _ => " spaces".to_string(),
-    };
-    frame.render_widget(
-        Paragraph::new(truncate_end(&title, areas.panel.width as usize)).style(
-            Style::default()
-                .fg(p.text)
-                .bg(p.panel_bg)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Rect::new(areas.viewport.x, areas.panel.y, areas.viewport.width, 1),
-    );
+    match app.mobile_drawer {
+        crate::app::state::MobileDrawer::Tabs => {
+            frame.render_widget(
+                Paragraph::new(truncate_end(
+                    &drawer_tabs_title(app),
+                    areas.panel.width as usize,
+                ))
+                .style(
+                    Style::default()
+                        .fg(p.text)
+                        .bg(p.panel_bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Rect::new(areas.title.x, areas.title.y, areas.title.width, 1),
+            );
+        }
+        _ => render_drawer_segment_band(app, frame, areas.title),
+    }
 
     render_mobile_drawer_content(app, terminal_runtimes, frame, &areas);
 
@@ -926,6 +1068,53 @@ pub(crate) fn render_mobile_drawer(
                 .set_symbol("│")
                 .set_style(Style::default().fg(p.surface_dim).bg(p.panel_bg));
         }
+    }
+}
+
+/// The left drawer's segment switcher: two zones, each half the band wide,
+/// drawn where they tap (TP-MOB-91). The active segment wears the raised
+/// surface; the inactive one is a word, not a decoration — `overlay1`, the
+/// readable dim (TP-MOB-90).
+fn render_drawer_segment_band(app: &AppState, frame: &mut Frame, band: Rect) {
+    if band.width == 0 || band.height == 0 {
+        return;
+    }
+    let p = &app.palette;
+    let half = band.width / 2;
+    let zones = [
+        (
+            crate::app::state::SidebarTab::Spaces,
+            "spaces",
+            Rect::new(band.x, band.y, half, band.height),
+        ),
+        (
+            crate::app::state::SidebarTab::Projects,
+            "projects",
+            Rect::new(band.x + half, band.y, band.width - half, band.height),
+        ),
+    ];
+    for (tab, label, zone) in zones {
+        let active = app.sidebar_tab == tab
+            || (tab == crate::app::state::SidebarTab::Spaces
+                && app.sidebar_tab == crate::app::state::SidebarTab::Files);
+        let (bg, style) = if active {
+            (
+                p.surface0,
+                Style::default()
+                    .fg(p.text)
+                    .bg(p.surface0)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            (p.panel_bg, Style::default().fg(p.overlay1).bg(p.panel_bg))
+        };
+        fill_rect(frame, zone, Style::default().bg(bg));
+        frame.render_widget(
+            Paragraph::new(truncate_end(label, zone.width as usize))
+                .style(style)
+                .alignment(Alignment::Center),
+            Rect::new(zone.x, zone.y, zone.width, 1),
+        );
     }
 }
 
@@ -1311,6 +1500,79 @@ fn render_mobile_drawer_content(
             }
             DrawerRowContent::Tab { tab_idx } => {
                 render_tab_row(app, frame, viewport, content, doc_y, row.height, *tab_idx);
+            }
+            DrawerRowContent::Project { proj_idx } => {
+                if let Some(project) = app.projects_sessions.get(*proj_idx) {
+                    let collapsed = app.collapsed_project_paths.contains(&project.path);
+                    let disc = if collapsed { "▸ " } else { "▾ " };
+                    let name = crate::ui::sidebar::project_display_name(&project.path);
+                    let title = Line::from(vec![
+                        Span::styled(disc, Style::default().fg(p.accent).bg(p.panel_bg)),
+                        Span::styled(
+                            truncate_end(&name, content.width.saturating_sub(6) as usize),
+                            Style::default()
+                                .fg(p.text)
+                                .bg(p.panel_bg)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ]);
+                    render_list_item(
+                        frame, viewport, content, doc_y, scroll, row.height, p.panel_bg, title,
+                        None,
+                    );
+                    // The trailing `+` starts a chat in this project — the
+                    // same cells the tap zone claims (TP-MOB-84/91).
+                    if content.width >= 10 {
+                        if let Some(y) = visible_y(viewport, scroll, doc_y) {
+                            frame.render_widget(
+                                Paragraph::new(" +")
+                                    .style(Style::default().fg(p.overlay1).bg(p.panel_bg)),
+                                Rect::new(content.x + content.width - 3, y, 3, 1),
+                            );
+                        }
+                    }
+                }
+            }
+            DrawerRowContent::ProjectChat { proj_idx, chat_idx } => {
+                if let Some(session) = app
+                    .projects_sessions
+                    .get(*proj_idx)
+                    .and_then(|project| project.sessions.get(*chat_idx))
+                {
+                    if let Some(y) = visible_y(viewport, scroll, doc_y) {
+                        let now_ms = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+                        let seen_ms = session
+                            .last_modified
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(now_ms);
+                        let age = chat_age_label(now_ms, seen_ms);
+                        let age_w = age.len() as u16;
+                        let title_w = content.width.saturating_sub(age_w.saturating_add(1)).max(4);
+                        frame.render_widget(
+                            Paragraph::new(truncate_end(
+                                &format!("  · {}", session.title),
+                                title_w as usize,
+                            ))
+                            .style(Style::default().fg(p.overlay1).bg(p.panel_bg)),
+                            Rect::new(content.x, y, title_w, 1),
+                        );
+                        if age_w > 0 && content.width > age_w {
+                            frame.render_widget(
+                                Paragraph::new(age).style(
+                                    Style::default()
+                                        .fg(p.overlay1)
+                                        .bg(p.panel_bg)
+                                        .add_modifier(Modifier::DIM),
+                                ),
+                                Rect::new(content.x + content.width - age_w, y, age_w, 1),
+                            );
+                        }
+                    }
+                }
             }
             DrawerRowContent::SelectMode => {
                 // Same centring as the action above it.
@@ -2907,6 +3169,191 @@ mod tests {
         }
     }
 
+    /// A phone app with two pinned projects: alpha carrying two chats (of
+    /// three total) and beta carrying none. The shape the Projects rail
+    /// shows on the desktop, so the drawer can be held to the same tree.
+    fn projects_app(w: u16, h: u16) -> AppState {
+        let mut app = chat_app(1, w, h);
+        app.mobile_width_threshold = 90;
+        let session = |id: &str, title: &str| crate::claude_sessions::ClaudeSession {
+            id: id.to_string(),
+            title: title.to_string(),
+            last_modified: std::time::SystemTime::now(),
+            msg_count: 3,
+        };
+        app.projects_sessions = vec![
+            crate::app::state::ProjectSessions {
+                path: std::path::PathBuf::from("/repo/alpha"),
+                sessions: vec![
+                    session("s-1", "fix the drawer"),
+                    session("s-2", "port to phone"),
+                ],
+                total_count: 3,
+            },
+            crate::app::state::ProjectSessions {
+                path: std::path::PathBuf::from("/repo/beta"),
+                sessions: Vec::new(),
+                total_count: 0,
+            },
+        ];
+        app
+    }
+
+    // TP-MOB-91: the drawer shows the desktop's rail segments — spaces and
+    // projects — as a touch band at its top, and the projects segment walks
+    // the same tree the desktop Projects tab walks: a header per pinned
+    // project that folds, a chat row per remembered session that resumes it,
+    // a trailing `+` on each header that starts a fresh chat there. The
+    // segment is per-display state (`sidebar_tab`), so a phone reading
+    // projects does not move a desktop off spaces.
+    #[test]
+    fn the_drawer_walks_the_projects_tree_behind_its_segment_band() {
+        let mut app = projects_app(76, 63);
+
+        // The band's two zones sit where the panel's title used to be.
+        let areas = mobile_drawer_areas(&app);
+        assert!(areas.title.height >= 2, "the band is a touch target");
+        let left = mobile_drawer_target_at(&app, areas.title.x + 2, areas.title.y);
+        assert_eq!(
+            left,
+            Some(MobileSwitcherTarget::DrawerSegment(
+                crate::app::state::SidebarTab::Spaces
+            ))
+        );
+        let right = mobile_drawer_target_at(
+            &app,
+            areas.title.x + areas.title.width - 3,
+            areas.title.y + areas.title.height - 1,
+        );
+        assert_eq!(
+            right,
+            Some(MobileSwitcherTarget::DrawerSegment(
+                crate::app::state::SidebarTab::Projects
+            ))
+        );
+
+        // On the spaces segment the drawer is what it always was.
+        assert!(mobile_drawer_rows(&app)
+            .iter()
+            .any(|row| matches!(row.content, DrawerRowContent::Space { .. })));
+
+        // On the projects segment it is the desktop's tree.
+        app.sidebar_tab = crate::app::state::SidebarTab::Projects;
+        let rows = mobile_drawer_rows(&app);
+        let entry_h = 3;
+        let header = rows
+            .iter()
+            .find(|row| matches!(row.content, DrawerRowContent::Project { proj_idx: 0 }))
+            .expect("alpha header row");
+        assert_eq!(header.height, entry_h);
+        assert_eq!(
+            header.target,
+            Some(MobileSwitcherTarget::ToggleProject { proj_idx: 0 })
+        );
+        let chat = rows
+            .iter()
+            .find(|row| {
+                matches!(
+                    row.content,
+                    DrawerRowContent::ProjectChat {
+                        proj_idx: 0,
+                        chat_idx: 1
+                    }
+                )
+            })
+            .expect("alpha chat row");
+        assert_eq!(chat.height, entry_h);
+        assert_eq!(
+            chat.target,
+            Some(MobileSwitcherTarget::ProjectChat {
+                proj_idx: 0,
+                chat_idx: 1
+            })
+        );
+        // One chat of three is older than the fetch window: the surplus says so.
+        assert!(rows.iter().any(
+            |row| matches!(&row.content, DrawerRowContent::ChatNote { label, .. } if label.contains("older"))
+        ));
+        // The way out stays pinned on this segment too.
+        assert!(rows
+            .iter()
+            .any(|row| matches!(row.content, DrawerRowContent::SelectMode)));
+
+        // The header's tail cells start a fresh chat in that project.
+        let span_start: usize = rows
+            .iter()
+            .take_while(|row| !matches!(row.content, DrawerRowContent::Project { proj_idx: 0 }))
+            .map(|row| row.height)
+            .sum();
+        let viewport = areas.viewport;
+        let content = inset_for_left_scrollbar(viewport);
+        let plus = mobile_drawer_target_at(
+            &app,
+            content.x + content.width - 2,
+            viewport.y + span_start as u16,
+        );
+        assert_eq!(
+            plus,
+            Some(MobileSwitcherTarget::NewChatInProject { proj_idx: 0 })
+        );
+
+        // A folded project hides its chats, like every fold in the drawer.
+        app.collapsed_project_paths
+            .insert(std::path::PathBuf::from("/repo/alpha"));
+        assert!(!mobile_drawer_rows(&app)
+            .iter()
+            .any(|row| matches!(row.content, DrawerRowContent::ProjectChat { .. })));
+    }
+
+    // TP-MOB-91 (activation half): resuming a chat is travelling — the
+    // drawer closes and the deferred tab request carries the project path and
+    // session id the event loop needs. Switching segments is not travelling:
+    // the drawer stays open and only this display's rail moves.
+    #[test]
+    fn projects_activations_travel_and_segment_switches_do_not() {
+        let mut app = projects_app(76, 63);
+        app.sidebar_tab = crate::app::state::SidebarTab::Projects;
+
+        // Walk the cursor onto the first chat row and activate it.
+        let rows = mobile_drawer_rows(&app);
+        let chat_doc: usize = rows
+            .iter()
+            .take_while(|row| {
+                !matches!(
+                    row.content,
+                    DrawerRowContent::ProjectChat {
+                        proj_idx: 0,
+                        chat_idx: 0
+                    }
+                )
+            })
+            .map(|row| row.height)
+            .sum();
+        app.mobile_drawer_cursor = chat_doc;
+        app.activate_mobile_drawer_cursor();
+        assert_eq!(
+            app.request_project_chat_tab,
+            Some(crate::app::state::ProjectChatTabRequest {
+                project_path: std::path::PathBuf::from("/repo/alpha"),
+                session_id: Some("s-1".to_string()),
+            })
+        );
+        assert_eq!(app.mobile_drawer, crate::app::state::MobileDrawer::None);
+
+        // Segment switch: drawer stays open, scroll starts at the top.
+        let mut back = projects_app(76, 63);
+        back.mobile_switcher_scroll = 7;
+        back.apply_mobile_switcher_target(MobileSwitcherTarget::DrawerSegment(
+            crate::app::state::SidebarTab::Projects,
+        ));
+        assert_eq!(back.sidebar_tab, crate::app::state::SidebarTab::Projects);
+        assert!(
+            back.mobile_drawer.is_open(),
+            "switching segments is not leaving"
+        );
+        assert_eq!(back.mobile_switcher_scroll, 0);
+    }
+
     // TP-MOB-90: no readable text in the drawer is painted `overlay0`.
     // Measured against WCAG 2.1: overlay0 on the panel is 3.59:1, under the
     // 4.5:1 AA floor — dim text in that colour is what "unreadable in
@@ -3626,9 +4073,11 @@ mod tests {
 
         let viewport = mobile_drawer_areas(&app).viewport;
         // The second space entry on screen is the worktree, not workspaces[1]:
-        // doc rows 6..9 are its span, 7 is its middle. Mid-column since
-        // TP-MOB-84 gave the head cells their own zone.
-        let hit = mobile_drawer_target_at(&app, viewport.x + viewport.width / 2, viewport.y + 7);
+        // doc rows 6..9 are its span, and row 6 is the last one this small
+        // fixture's viewport still shows (the segment band and the touch
+        // footer left it seven rows). Mid-column since TP-MOB-84 gave the
+        // head cells their own zone.
+        let hit = mobile_drawer_target_at(&app, viewport.x + viewport.width / 2, viewport.y + 6);
         assert_eq!(hit, Some(MobileSwitcherTarget::Workspace(2)));
 
         // TP-MOB-62: folding the group on the phone hides its checkouts, the

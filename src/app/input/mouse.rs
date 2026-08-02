@@ -1503,6 +1503,17 @@ impl AppState {
             Some(crate::ui::MobileSwitcherTarget::ToggleSpaceGroup { group_idx }) => {
                 self.toggle_mobile_space_group(group_idx);
             }
+            Some(
+                target @ (crate::ui::MobileSwitcherTarget::DrawerSegment(_)
+                | crate::ui::MobileSwitcherTarget::ToggleProject { .. }
+                | crate::ui::MobileSwitcherTarget::ProjectChat { .. }
+                | crate::ui::MobileSwitcherTarget::NewChatInProject { .. }),
+            ) => {
+                // The projects segment's targets behave identically from a
+                // tap and from the keyboard cursor, so both roads go through
+                // the one application point (TP-MOB-91).
+                self.apply_mobile_switcher_target(target);
+            }
             Some(crate::ui::MobileSwitcherTarget::Chat { ws_idx, chat_idx }) => {
                 self.close_mobile_drawer();
                 self.open_workspace_chat(ws_idx, chat_idx);

@@ -368,10 +368,14 @@ mod tests {
         // glyph on row 2, and the drawer panel starts on row 4. It moved once
         // more when readable dim text stepped up from overlay0 to overlay1
         // (TP-MOB-90) — a colour-only delta over the same layout, so the
-        // frame text is unchanged from the previous pin.
+        // frame text is unchanged from the previous pin. It moved once more
+        // when the drawer's title row became the two-row segment band
+        // (TP-MOB-91) — verified by dumping the frame: "spaces" and
+        // "projects" split the band's width on panel rows 0-1 and the list
+        // starts one row lower.
         assert_eq!(
             frame_digest(&frame),
-            "dcd2aa591373aea8d0aa0b344ed7802cacbe45763521e0993212f6479358f025"
+            "6ea0b3266ff3d8f2c1d540106d9d7932a337ca2819a269d01fb0016a01d66ea4"
         );
     }
 }
