@@ -87,6 +87,15 @@ pub(crate) enum MobileSwitcherTarget {
         ws_idx: usize,
         chat_idx: usize,
     },
+    /// Fold or unfold a branch's chats without going there — the disclosure
+    /// zone at the head of a workspace row. Looking is not travelling.
+    ToggleBranchChats {
+        ws_idx: usize,
+    },
+    /// Start a fresh chat rooted at that branch — the trailing `+` zone.
+    NewChatIn {
+        ws_idx: usize,
+    },
     /// Hand the client back its own selection gesture, or take it back.
     ToggleSelectMode,
 }
@@ -148,6 +157,22 @@ pub(crate) struct DrawerRow {
     /// What tapping or activating this row does, if anything.
     pub target: Option<MobileSwitcherTarget>,
     pub content: DrawerRowContent,
+}
+
+/// Compact age of a chat's last message: now · 5m · 3h · 2d.
+///
+/// Pure so the tests can pin it; render passes the wall clock.
+pub(crate) fn chat_age_label(now_ms: u64, last_seen_ms: u64) -> String {
+    let secs = now_ms.saturating_sub(last_seen_ms) / 1000;
+    if secs < 60 {
+        "now".into()
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86_400 {
+        format!("{}h", secs / 3600)
+    } else {
+        format!("{}d", secs / 86_400)
+    }
 }
 
 pub(crate) fn compute_mobile_header_hit_areas(_app: &AppState, area: Rect) -> MobileHeaderHitAreas {
@@ -706,10 +731,29 @@ pub(crate) fn mobile_drawer_target_at(
             areas.viewport.height,
         ));
     let doc_row = scroll.saturating_add(row.saturating_sub(areas.viewport.y) as usize);
-    drawer_row_spans(&rows)
+    let hit = drawer_row_spans(&rows)
         .into_iter()
         .find(|(span, _)| span.contains(&doc_row))
-        .and_then(|(_, row)| row.target)
+        .map(|(_, r)| (r.target, r.content.clone()));
+    let (target, row_content) = hit?;
+    // A workspace row carries three tap zones. The head cells are the chat
+    // disclosure — looking at a branch's history is not travelling to it —
+    // and the tail cells start a chat there. The middle keeps the row's
+    // primary meaning. Each zone is three cells: a measured one-in-six of
+    // real taps missed even a five-cell target, so anything narrower is a
+    // decoration, not a control (TP-MOB-84).
+    if let (Some(MobileSwitcherTarget::Workspace(ws_idx)), DrawerRowContent::Space { .. }) =
+        (target, &row_content)
+    {
+        let offset = col.saturating_sub(content.x);
+        if offset < 3 {
+            return Some(MobileSwitcherTarget::ToggleBranchChats { ws_idx });
+        }
+        if content.width >= 10 && offset >= content.width.saturating_sub(3) {
+            return Some(MobileSwitcherTarget::NewChatIn { ws_idx });
+        }
+    }
+    target
 }
 
 pub(crate) fn render_mobile_header(
@@ -1156,19 +1200,47 @@ fn render_mobile_drawer_content(
                 depth,
             } => {
                 if let Some(y) = visible_y(viewport, scroll, doc_y) {
-                    let title = crate::ui::sidebar::workspace_chat_rows_for(app, *ws_idx)
+                    let entry = crate::ui::sidebar::workspace_chat_rows_for(app, *ws_idx)
                         .get(*chat_idx)
+                        .cloned();
+                    let title = entry
+                        .as_ref()
                         .map(|row| row.title.clone().unwrap_or_else(|| row.session_id.clone()))
                         .unwrap_or_default();
+                    // When the last message landed, kept at the right edge —
+                    // recency is what the reader scans a history for
+                    // (TP-MOB-85).
+                    let age = entry
+                        .map(|row| {
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis() as u64)
+                                .unwrap_or(row.last_seen_ms);
+                            chat_age_label(now_ms, row.last_seen_ms)
+                        })
+                        .unwrap_or_default();
                     let indent = drawer_indent(*depth, content.width);
+                    let age_w = age.len() as u16;
+                    let title_w = content.width.saturating_sub(age_w.saturating_add(1)).max(4);
                     frame.render_widget(
                         Paragraph::new(truncate_end(
                             &format!("{:indent$}· {title}", "", indent = indent),
-                            content.width as usize,
+                            title_w as usize,
                         ))
                         .style(Style::default().fg(p.overlay1).bg(p.panel_bg)),
-                        Rect::new(content.x, y, content.width, 1),
+                        Rect::new(content.x, y, title_w, 1),
                     );
+                    if age_w > 0 && content.width > age_w {
+                        frame.render_widget(
+                            Paragraph::new(age).style(
+                                Style::default()
+                                    .fg(p.overlay0)
+                                    .bg(p.panel_bg)
+                                    .add_modifier(Modifier::DIM),
+                            ),
+                            Rect::new(content.x + content.width - age_w, y, age_w, 1),
+                        );
+                    }
                 }
             }
             DrawerRowContent::ChatNote { depth, label } => {
@@ -1317,7 +1389,21 @@ fn render_space_row(
     let (state, seen) = ws.aggregate_state(&app.terminals);
     let (dot, dot_style) = state_dot(state, seen, p);
 
-    let mut title_spans = vec![Span::styled("  ", Style::default().bg(bg))];
+    // The head of every workspace row is its chat disclosure: open, shut, or
+    // dim when there is no history to show. It mirrors the tap zone the same
+    // cells carry (TP-MOB-84) — a control that does not look like one is a
+    // decoration, and a zone that looks like nothing is a dead spot.
+    let has_chats = !crate::ui::sidebar::workspace_chat_rows_for(app, ws_idx).is_empty();
+    let chats_open = has_chats
+        && ((active && !app.mobile_active_chats_folded)
+            || !crate::ui::sidebar::workspace_chat_drawer_collapsed(app, ws_idx));
+    let disc = if chats_open { "▾ " } else { "▸ " };
+    let disc_style = if has_chats {
+        Style::default().fg(p.accent).bg(bg)
+    } else {
+        Style::default().fg(p.surface_dim).bg(bg)
+    };
+    let mut title_spans = vec![Span::styled(disc, disc_style)];
     // Worktrees of the same space render as branches off their parent, so a
     // child gets an L/T connector on its name row and a matching vertical
     // continuation on its detail row.
@@ -1343,7 +1429,10 @@ fn render_space_row(
     } else {
         raw_label
     };
-    let name_budget = content.width.saturating_sub(if depth > 0 { 8 } else { 5 }) as usize;
+    let name_budget = content
+        .width
+        .saturating_sub(if depth > 0 { 8 } else { 5 })
+        .saturating_sub(3) as usize;
     title_spans.push(Span::styled(
         truncate_end(&name, name_budget),
         Style::default()
@@ -1351,6 +1440,19 @@ fn render_space_row(
             .bg(bg)
             .add_modifier(Modifier::BOLD),
     ));
+
+    // The trailing `+` starts a chat in this branch — the same three cells
+    // the tap zone claims (TP-MOB-84).
+    let draw_plus = |frame: &mut Frame| {
+        if content.width >= 10 {
+            if let Some(y) = visible_y(viewport, app.mobile_switcher_scroll, doc_y) {
+                frame.render_widget(
+                    Paragraph::new(" +").style(Style::default().fg(p.overlay1).bg(bg)),
+                    Rect::new(content.x + content.width - 3, y, 3, 1),
+                );
+            }
+        }
+    };
 
     if height == 1 {
         render_one_line_item(
@@ -1362,6 +1464,7 @@ fn render_space_row(
             bg,
             Line::from(title_spans),
         );
+        draw_plus(frame);
         return;
     }
 
@@ -1381,6 +1484,7 @@ fn render_space_row(
         truncate_end(&detail, content.width as usize),
         p.overlay0,
     );
+    draw_plus(frame);
 }
 
 #[allow(clippy::too_many_arguments)] // same reasoning as `render_space_row`.
@@ -2765,6 +2869,63 @@ mod tests {
         );
     }
 
+    // TP-MOB-84: a workspace row carries three tap zones — disclosure at the
+    // head, the row itself, and `+` at the tail. Looking at a branch's history
+    // is not travelling to it, and starting a chat there is; the middle keeps
+    // the row's primary meaning so every existing reflex still works.
+    #[test]
+    fn a_branch_row_carries_three_zones() {
+        let mut app = chat_app(1, 76, 35);
+        let areas = mobile_drawer_areas(&app);
+        let content_x = areas.viewport.x + 1;
+        let content_w = areas.viewport.width - 1;
+        let row_y = areas.viewport.y + mobile_drawer_workspace_doc_range(&app, 0).start as u16;
+
+        assert_eq!(
+            mobile_drawer_target_at(&app, content_x + 1, row_y),
+            Some(MobileSwitcherTarget::ToggleBranchChats { ws_idx: 0 }),
+            "the head cells disclose"
+        );
+        assert_eq!(
+            mobile_drawer_target_at(&app, content_x + content_w - 2, row_y),
+            Some(MobileSwitcherTarget::NewChatIn { ws_idx: 0 }),
+            "the tail cells create"
+        );
+        assert_eq!(
+            mobile_drawer_target_at(&app, content_x + content_w / 2, row_y),
+            Some(MobileSwitcherTarget::Workspace(0)),
+            "the middle still switches"
+        );
+
+        // Disclosing shows the branch's chats without going there, and the
+        // drawer stays open: the reader is browsing, not travelling.
+        assert!(!mobile_drawer_rows(&app)
+            .iter()
+            .any(|row| matches!(row.content, DrawerRowContent::Chat { ws_idx: 0, .. })));
+        app.toggle_mobile_branch_chats(0);
+        assert_eq!(app.active, Some(1), "still on the workspace we were on");
+        assert_eq!(app.mobile_drawer, crate::app::state::MobileDrawer::Spaces);
+        assert!(mobile_drawer_rows(&app)
+            .iter()
+            .any(|row| matches!(row.content, DrawerRowContent::Chat { ws_idx: 0, .. })));
+        app.toggle_mobile_branch_chats(0);
+        assert!(!mobile_drawer_rows(&app)
+            .iter()
+            .any(|row| matches!(row.content, DrawerRowContent::Chat { ws_idx: 0, .. })));
+    }
+
+    // TP-MOB-85: a chat row ends with when its last message landed. Recency is
+    // what a history is scanned for; a list of titles with no ages answers
+    // "what did I do" but never "where was I last".
+    #[test]
+    fn chat_age_reads_compactly() {
+        let m = 60_000u64;
+        assert_eq!(chat_age_label(m, m), "now");
+        assert_eq!(chat_age_label(m * 6, m), "5m");
+        assert_eq!(chat_age_label(m * 60 * 3 + m, m), "3h");
+        assert_eq!(chat_age_label(m * 60 * 24 * 2 + m, m), "2d");
+    }
+
     // TP-MOB-32: an open drawer covers three quarters of the width and leaves
     // the rest showing. The uncovered strip is both the way out and the
     // reminder that a session is running under it.
@@ -2847,7 +3008,14 @@ mod tests {
                     if screen_y >= areas.viewport.y + areas.viewport.height {
                         continue;
                     }
-                    let hit = mobile_drawer_target_at(&app, areas.viewport.x + 2, screen_y);
+                    // Mid-row: a workspace row's head and tail cells carry
+                    // their own zone targets since TP-MOB-84; the roundtrip
+                    // guarantee is about the row's primary meaning.
+                    let hit = mobile_drawer_target_at(
+                        &app,
+                        areas.viewport.x + areas.viewport.width / 2,
+                        screen_y,
+                    );
                     assert_eq!(
                         hit,
                         row.target,
@@ -3214,7 +3382,9 @@ mod tests {
 
         let viewport = mobile_drawer_areas(&app).viewport;
         app.mobile_switcher_scroll = 100;
-        let workspace_hit = mobile_drawer_target_at(&app, viewport.x + 2, viewport.y + 1);
+        // Mid-row since TP-MOB-84 gave the head cells their own zone.
+        let workspace_hit =
+            mobile_drawer_target_at(&app, viewport.x + viewport.width / 2, viewport.y + 1);
         assert_eq!(workspace_hit, Some(MobileSwitcherTarget::Workspace(0)));
 
         // Agents follow: one two-row space and the "agents"
@@ -3263,7 +3433,8 @@ mod tests {
 
         let viewport = mobile_drawer_areas(&app).viewport;
         // The second space row on screen is the worktree, not workspaces[1].
-        let hit = mobile_drawer_target_at(&app, viewport.x + 2, viewport.y + 3);
+        // Mid-row since TP-MOB-84 gave the head cells their own zone.
+        let hit = mobile_drawer_target_at(&app, viewport.x + viewport.width / 2, viewport.y + 3);
         assert_eq!(hit, Some(MobileSwitcherTarget::Workspace(2)));
 
         // TP-MOB-62: folding the group on the phone hides its checkouts, the
@@ -3278,7 +3449,7 @@ mod tests {
             "the header stays, so the group can be opened again"
         );
         assert_eq!(
-            mobile_drawer_target_at(&app, viewport.x + 2, viewport.y + 1),
+            mobile_drawer_target_at(&app, viewport.x + viewport.width / 2, viewport.y + 1),
             Some(MobileSwitcherTarget::Workspace(0)),
             "folding hides the linked worktrees, not the checkout they branch from"
         );

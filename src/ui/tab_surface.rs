@@ -351,10 +351,12 @@ mod tests {
         // bottom of the panel. It moved once more when section titles gained
         // a breathing row above them (TP-MOB-81) — verified by dumping the
         // frame first: a blank row now sits between the workspace's detail
-        // line and the "menu" heading.
+        // line and the "menu" heading. It moved again when workspace rows
+        // grew their chat-disclosure head and their trailing `+` (TP-MOB-84)
+        // — verified by dumping the frame: the row reads "▸ · name … +".
         assert_eq!(
             frame_digest(&frame),
-            "afcaa84d6afb8a49ec50932799e6cd0de11b317cb85a57a2f5053d548d455397"
+            "9f71ab431757ea72eff606b132f611365aa3749001815744c65ac059c1ebc98f"
         );
     }
 }

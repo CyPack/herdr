@@ -1507,6 +1507,13 @@ impl AppState {
                 self.close_mobile_drawer();
                 self.open_workspace_chat(ws_idx, chat_idx);
             }
+            Some(crate::ui::MobileSwitcherTarget::ToggleBranchChats { ws_idx }) => {
+                self.toggle_mobile_branch_chats(ws_idx);
+            }
+            Some(crate::ui::MobileSwitcherTarget::NewChatIn { ws_idx }) => {
+                self.close_mobile_drawer();
+                self.request_workspace_chat(ws_idx);
+            }
             Some(crate::ui::MobileSwitcherTarget::ToggleSelectMode) => {
                 self.toggle_mobile_select_mode();
             }
@@ -5003,9 +5010,11 @@ mod tests {
         // row that used to lead the document moved to the pinned footer
         // (TP-MOB-77), so the list starts with the workspaces themselves.
         let viewport = crate::ui::mobile_drawer_areas(&app.state).viewport;
+        // Mid-row: the head cells are the chat disclosure and the tail cells
+        // start a chat since TP-MOB-84, so "switch to it" is the middle.
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
-            viewport.x + 2,
+            viewport.x + viewport.width / 2,
             viewport.y + 2,
         ));
 
@@ -5046,9 +5055,11 @@ mod tests {
         // create row that used to lead the document lives in the pinned footer
         // now (TP-MOB-77). This reaches ws-3; the point being that a scrolled
         // row is reachable at all.
+        // Mid-row: the head cells are the chat disclosure and the tail cells
+        // start a chat since TP-MOB-84, so "switch to it" is the middle.
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
-            viewport.x + 2,
+            viewport.x + viewport.width / 2,
             viewport.y + 2,
         ));
 

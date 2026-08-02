@@ -1655,6 +1655,16 @@ impl AppState {
                 self.close_mobile_drawer();
                 self.open_workspace_chat(ws_idx, chat_idx);
             }
+            crate::ui::MobileSwitcherTarget::ToggleBranchChats { ws_idx } => {
+                // Looking at a branch's history is not travelling to it, so
+                // the drawer stays open (TP-MOB-84).
+                self.toggle_mobile_branch_chats(ws_idx);
+            }
+            crate::ui::MobileSwitcherTarget::NewChatIn { ws_idx } => {
+                // Starting a chat IS travelling, so the drawer closes.
+                self.close_mobile_drawer();
+                self.request_workspace_chat(ws_idx);
+            }
             crate::ui::MobileSwitcherTarget::NewTab => {
                 self.request_new_tab = true;
                 self.close_mobile_drawer();
@@ -1759,6 +1769,34 @@ impl AppState {
     /// Fold or unfold the active workspace's chats in the phone drawer.
     pub(crate) fn toggle_mobile_active_chats(&mut self) {
         self.mobile_active_chats_folded = !self.mobile_active_chats_folded;
+        let max_scroll = crate::ui::mobile_drawer_max_scroll(self);
+        self.mobile_switcher_scroll = self.mobile_switcher_scroll.min(max_scroll);
+        let stops = crate::ui::mobile_drawer_cursor_stops(self);
+        if !stops.contains(&self.mobile_drawer_cursor) {
+            self.mobile_drawer_cursor = crate::ui::mobile_drawer_default_cursor(self);
+        }
+    }
+
+    /// Fold or unfold one branch's chats in the phone drawer, without
+    /// switching to it.
+    ///
+    /// The active workspace's chats are governed by the phone-only fold
+    /// (TP-MOB-67); every other branch reuses the same per-workspace set the
+    /// desktop's disclosure cell toggles, so the two surfaces can never
+    /// disagree about which drawers are open.
+    pub(crate) fn toggle_mobile_branch_chats(&mut self, ws_idx: usize) {
+        if Some(ws_idx) == self.active {
+            self.toggle_mobile_active_chats();
+            return;
+        }
+        let Some(workspace) = self.workspaces.get(ws_idx) else {
+            return;
+        };
+        let key = crate::persist::workspace_chats::ledger_key(&workspace.identity_cwd);
+        if !self.expanded_chat_workspaces.remove(&key) {
+            self.expanded_chat_workspaces.insert(key);
+        }
+        self.mark_session_dirty();
         let max_scroll = crate::ui::mobile_drawer_max_scroll(self);
         self.mobile_switcher_scroll = self.mobile_switcher_scroll.min(max_scroll);
         let stops = crate::ui::mobile_drawer_cursor_stops(self);
