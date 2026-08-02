@@ -2635,6 +2635,66 @@ mod tests {
         );
     }
 
+    // TP-MOB-82: everything the drawer promises still holds at the widths a
+    // large font leaves. The reader's answer to small text is the client's
+    // font setting, and growing it shrinks the columns: 76 becomes ~50, then
+    // ~38, then ~32. The threshold keeps the phone shell on; this test keeps
+    // the shell honest inside it — every row one line, no rows spent on air,
+    // the footer still hittable, the chats still reachable, nothing wider
+    // than the panel.
+    #[test]
+    fn the_drawer_keeps_its_promises_at_large_font_widths() {
+        for width in [50u16, 38, 32] {
+            let mut app = chat_app(1, width, 30);
+            app.mobile_width_threshold = 90;
+            let areas = mobile_drawer_areas(&app);
+            let rows = mobile_drawer_rows(&app);
+
+            let tight = width <= crate::ui::size_class::TIGHT_MAX_WIDTH;
+            for row in &rows {
+                if tight {
+                    assert_eq!(
+                        row.height, 1,
+                        "at {width} columns every row spends one line, {:?}",
+                        row.content
+                    );
+                    assert!(
+                        !matches!(row.content, DrawerRowContent::Empty("")),
+                        "at {width} columns no row is spent on air"
+                    );
+                }
+            }
+
+            // The escape hatch stays hittable at every width.
+            assert!(areas.footer.height >= 2, "footer at {width} columns");
+            assert_eq!(
+                mobile_drawer_target_at(
+                    &app,
+                    areas.footer.x + 1,
+                    areas.footer.y + areas.footer.height - 1
+                ),
+                Some(MobileSwitcherTarget::ToggleSelectMode),
+                "select text at {width} columns"
+            );
+
+            // The active workspace's chats stay reachable.
+            assert!(
+                rows.iter()
+                    .any(|row| matches!(row.content, DrawerRowContent::Chat { .. })),
+                "chats at {width} columns"
+            );
+
+            // The indent budget never costs a label its last columns.
+            let content_w = areas.viewport.width.saturating_sub(1);
+            for depth in 0..=2u8 {
+                assert!(
+                    drawer_indent(depth, content_w) < usize::from(content_w.max(1)),
+                    "indent at {width} columns depth {depth}"
+                );
+            }
+        }
+    }
+
     // TP-MOB-32: an open drawer covers three quarters of the width and leaves
     // the rest showing. The uncovered strip is both the way out and the
     // reminder that a session is running under it.
