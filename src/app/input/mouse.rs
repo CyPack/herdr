@@ -5042,6 +5042,9 @@ mod tests {
         app.state.active = Some(0);
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
+        // The reader's phone reports 76 columns, above the 64-column default;
+        // the fixture has to be able to describe that viewport as a phone.
+        app.state.mobile_width_threshold = app.state.mobile_width_threshold.max(w);
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, w, h));
         app
     }
