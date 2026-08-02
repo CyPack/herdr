@@ -2864,7 +2864,7 @@ mod tests {
                     .collect();
 
                 assert!(
-                    rendered.contains("esc") || rendered.contains('┌'),
+                    rendered.contains("esc") || rendered.contains('┌') || rendered.contains('╭'),
                     "{mode:?} at {w}x{h} drew neither a modal frame nor a way out: \
                      {rendered:?}"
                 );

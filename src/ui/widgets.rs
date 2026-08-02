@@ -19,10 +19,15 @@ pub(super) fn render_panel_shell(
         return None;
     }
 
+    // Rounded, because everything drawn through this shell floats above the
+    // surface behind it, and what floats is drawn as floating — the pattern
+    // the reference file managers keep (yazi rounds exactly its overlays and
+    // leaves its panes plain), adopted here by the reader's explicit call
+    // (TP-SUR-SHELL-01). Static border cells are free in the frame diff.
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
-        .border_set(ratatui::symbols::border::PLAIN)
+        .border_set(ratatui::symbols::border::ROUNDED)
         .style(Style::default().bg(bg));
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
@@ -372,6 +377,26 @@ pub(super) fn centered_button_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // TP-SUR-SHELL-01: every floating panel shell wears rounded corners.
+    // What floats above the surface is drawn as floating — the pattern the
+    // reference file managers keep (yazi rounds exactly its overlays:
+    // confirm, notify, pick — and leaves its panes plain), and the reader
+    // asked for it. One shared shell means one voice for every popup.
+    #[test]
+    fn floating_shells_wear_rounded_corners() {
+        use ratatui::{backend::TestBackend, Terminal};
+        let mut term = Terminal::new(TestBackend::new(10, 5)).expect("terminal");
+        term.draw(|frame| {
+            render_panel_shell(frame, Rect::new(0, 0, 10, 5), Color::Blue, Color::Reset);
+        })
+        .expect("draw");
+        let buffer = term.backend().buffer().clone();
+        assert_eq!(buffer[(0u16, 0u16)].symbol(), "╭");
+        assert_eq!(buffer[(9u16, 0u16)].symbol(), "╮");
+        assert_eq!(buffer[(0u16, 4u16)].symbol(), "╰");
+        assert_eq!(buffer[(9u16, 4u16)].symbol(), "╯");
+    }
 
     /// The geometry `centered_popup_rect` produced before it became size-class
     /// aware. Kept here, spelled out, so the desktop characterization test
