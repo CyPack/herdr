@@ -1097,6 +1097,36 @@ fn render_drawer_segment_band(app: &AppState, frame: &mut Frame, band: Rect) {
         let active = app.sidebar_tab == tab
             || (tab == crate::app::state::SidebarTab::Spaces
                 && app.sidebar_tab == crate::app::state::SidebarTab::Files);
+        if active && zone.height >= 2 && zone.width >= 4 {
+            // The active segment is drawn as a tab: a rounded box open
+            // toward the list it selects, so the shape says "this is what
+            // you are reading" before the word does (TP-MOB-92).
+            let bg = p.surface0;
+            fill_rect(frame, zone, Style::default().bg(bg));
+            let frame_style = Style::default().fg(p.accent).bg(bg);
+            let inner_w = zone.width.saturating_sub(2) as usize;
+            frame.render_widget(
+                Paragraph::new(format!("╭{}╮", "─".repeat(inner_w))).style(frame_style),
+                Rect::new(zone.x, zone.y, zone.width, 1),
+            );
+            frame.render_widget(
+                Paragraph::new(truncate_end(label, inner_w))
+                    .style(
+                        Style::default()
+                            .fg(p.text)
+                            .bg(bg)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                    .alignment(Alignment::Center),
+                Rect::new(zone.x + 1, zone.y + 1, zone.width.saturating_sub(2), 1),
+            );
+            for x in [zone.x, zone.x + zone.width.saturating_sub(1)] {
+                frame.buffer_mut()[(x, zone.y + 1)]
+                    .set_symbol("│")
+                    .set_style(frame_style);
+            }
+            continue;
+        }
         let (bg, style) = if active {
             (
                 p.surface0,
@@ -1349,19 +1379,73 @@ fn render_mobile_drawer_content(
             DrawerRowContent::FooterAction(label) => {
                 // The label sits one row into a touch-height span so the
                 // target reads centred rather than top-heavy; the span
-                // itself is what the finger gets.
+                // itself is what the finger gets. A touch-height action also
+                // wears a rounded accent frame — the terminal's pill — so
+                // the drawer's one primary commitment is drawn as a button,
+                // not implied by colour alone (TP-MOB-92). Static cells are
+                // free in the diff, so the frame costs its first paint and
+                // nothing after.
+                let framed = row.height >= 4 && content.width >= 8;
+                if framed {
+                    let frame_style = Style::default().fg(p.accent).bg(p.panel_bg);
+                    let inner_w = content.width.saturating_sub(4) as usize;
+                    let top = format!("  ╭{}╮", "─".repeat(inner_w));
+                    let bottom = format!("  ╰{}╯", "─".repeat(inner_w));
+                    if let Some(y) = visible_y(viewport, scroll, doc_y) {
+                        frame.render_widget(
+                            Paragraph::new(top).style(frame_style),
+                            Rect::new(content.x, y, content.width, 1),
+                        );
+                    }
+                    if let Some(y) = visible_y(viewport, scroll, doc_y + row.height - 1) {
+                        frame.render_widget(
+                            Paragraph::new(bottom).style(frame_style),
+                            Rect::new(content.x, y, content.width, 1),
+                        );
+                    }
+                    for wall_row in 1..row.height.saturating_sub(1) {
+                        if let Some(y) = visible_y(viewport, scroll, doc_y + wall_row) {
+                            for x in [content.x + 2, content.x + content.width.saturating_sub(1)] {
+                                frame.buffer_mut()[(x, y)]
+                                    .set_symbol("│")
+                                    .set_style(frame_style);
+                            }
+                        }
+                    }
+                }
                 let label_row = doc_y + usize::from(row.height >= 3);
                 if let Some(y) = visible_y(viewport, scroll, label_row) {
-                    frame.render_widget(
-                        Paragraph::new(truncate_end(&format!("  {label}"), content.width as usize))
+                    if framed {
+                        // Centred inside the pill, clear of its walls.
+                        frame.render_widget(
+                            Paragraph::new(truncate_end(
+                                label,
+                                content.width.saturating_sub(4) as usize,
+                            ))
+                            .style(
+                                Style::default()
+                                    .fg(p.accent)
+                                    .bg(p.panel_bg)
+                                    .add_modifier(Modifier::BOLD),
+                            )
+                            .alignment(Alignment::Center),
+                            Rect::new(content.x + 3, y, content.width.saturating_sub(4), 1),
+                        );
+                    } else {
+                        frame.render_widget(
+                            Paragraph::new(truncate_end(
+                                &format!("  {label}"),
+                                content.width as usize,
+                            ))
                             .style(
                                 Style::default()
                                     .fg(p.accent)
                                     .bg(p.panel_bg)
                                     .add_modifier(Modifier::BOLD),
                             ),
-                        Rect::new(content.x, y, content.width, 1),
-                    );
+                            Rect::new(content.x, y, content.width, 1),
+                        );
+                    }
                 }
             }
             DrawerRowContent::Empty(label) => {
@@ -3352,6 +3436,47 @@ mod tests {
             "switching segments is not leaving"
         );
         assert_eq!(back.mobile_switcher_scroll, 0);
+    }
+
+    // TP-MOB-92: the drawer's structure is drawn, not implied — the primary
+    // action wears a rounded accent frame (the terminal's pill), and the
+    // active segment is a tab-shaped box open toward the list it selects.
+    // The reader asked for visible regional borders with rounded corners;
+    // the measured cost answer is that static cells are free in the diff,
+    // so this is an aesthetic decision and it was the reader's to make.
+    #[test]
+    fn the_primary_action_wears_a_rounded_frame() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = chat_app(1, 76, 63);
+        app.mobile_width_threshold = 90;
+        let mut term = Terminal::new(TestBackend::new(76, 63)).expect("terminal");
+        term.draw(|frame| render_mobile_drawer(&app, &TerminalRuntimeRegistry::new(), frame))
+            .expect("draw");
+        let buffer = term.backend().buffer().clone();
+        let areas = mobile_drawer_areas(&app);
+
+        let band_symbols: String = (areas.footer.y..areas.footer.y + areas.footer.height)
+            .flat_map(|y| {
+                (areas.footer.x..areas.footer.x + areas.footer.width).map(move |x| (x, y))
+            })
+            .map(|(x, y)| buffer[(x, y)].symbol().to_string())
+            .collect();
+        for corner in ["╭", "╮", "╰", "╯"] {
+            assert!(
+                band_symbols.contains(corner),
+                "the pill frame carries {corner}: {band_symbols:?}"
+            );
+        }
+
+        let seg_symbols: String = (areas.title.y..areas.title.y + areas.title.height)
+            .flat_map(|y| (areas.title.x..areas.title.x + areas.title.width).map(move |x| (x, y)))
+            .map(|(x, y)| buffer[(x, y)].symbol().to_string())
+            .collect();
+        assert!(
+            seg_symbols.contains('╭') && seg_symbols.contains('╮'),
+            "the active segment reads as a tab: {seg_symbols:?}"
+        );
     }
 
     // TP-MOB-90: no readable text in the drawer is painted `overlay0`.

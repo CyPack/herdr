@@ -372,10 +372,13 @@ mod tests {
         // when the drawer's title row became the two-row segment band
         // (TP-MOB-91) — verified by dumping the frame: "spaces" and
         // "projects" split the band's width on panel rows 0-1 and the list
-        // starts one row lower.
+        // starts one row lower. It moved once more when the drawer
+        // learned to draw its structure (TP-MOB-92) — verified by dumping
+        // the frame: the create action sits in a rounded accent pill and
+        // the active segment is a tab-shaped box open toward its list.
         assert_eq!(
             frame_digest(&frame),
-            "6ea0b3266ff3d8f2c1d540106d9d7932a337ca2819a269d01fb0016a01d66ea4"
+            "048636d7a90ead71916ee331a19c886c8ffd08214deda03ed76febd41dc946e2"
         );
     }
 }
