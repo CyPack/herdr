@@ -161,11 +161,36 @@ pub(crate) fn compute_mobile_header_hit_areas(_app: &AppState, area: Rect) -> Mo
     let right_w = button_w.min(area.width.saturating_sub(left_w));
     let strip_w = area.width.saturating_sub(left_w + right_w);
 
+    // The buttons reach one row below what they draw. The header is two rows
+    // tall and a thumb aiming at a five-by-two target routinely lands just
+    // under it; measured live, three of thirty-seven taps did. Those used to
+    // reach the terminal and do nothing, which reads as a broken button. The
+    // strip does not overshoot — it spans most of the width, so a row of reach
+    // there would swallow the terminal's top row instead (TP-MOB-66).
+    let button_h = area.height.saturating_add(1);
+
     MobileHeaderHitAreas {
-        spaces_menu: Rect::new(area.x, area.y, left_w, area.height),
+        spaces_menu: Rect::new(area.x, area.y, left_w, button_h),
         tab_strip: Rect::new(area.x + left_w, area.y, strip_w, area.height),
-        tabs_menu: Rect::new(area.x + left_w + strip_w, area.y, right_w, area.height),
+        tabs_menu: Rect::new(area.x + left_w + strip_w, area.y, right_w, button_h),
     }
+}
+
+/// Pull a reported position back inside `screen`.
+///
+/// A touch client clamps a tap on the last column or row to the screen size
+/// rather than one less, so an edge tap arrives at column 76 on a 76-column
+/// phone — outside every rect. Measured live, three of thirty-seven taps did,
+/// and the rightmost column is exactly where one of the two header buttons
+/// lives (TP-MOB-65).
+pub(crate) fn clamp_to_mobile_screen(screen: Rect, column: u16, row: u16) -> (u16, u16) {
+    if screen.width == 0 || screen.height == 0 {
+        return (column, row);
+    }
+    (
+        column.min(screen.right().saturating_sub(1)),
+        row.min(screen.bottom().saturating_sub(1)),
+    )
 }
 
 /// Width an open drawer covers inside `screen`.
@@ -538,18 +563,22 @@ pub(crate) fn render_mobile_header(
     fill_rect(frame, area, Style::default().bg(p.panel_bg));
 
     let hits = app.view.mobile_header_hits;
+    // The buttons reach one row below the header so a thumb that lands just
+    // under one still presses it (TP-MOB-66). That row belongs to whatever is
+    // drawn below, so drawing stays inside the header.
+    let drawn = |target: Rect| target.intersection(area);
     render_header_button(
         app,
         frame,
-        hits.spaces_menu,
+        drawn(hits.spaces_menu),
         crate::app::state::MobileDrawer::Spaces,
         global_agent_counts(app).blocked > 0,
     );
-    render_header_status(app, terminal_runtimes, frame, hits.tab_strip);
+    render_header_status(app, terminal_runtimes, frame, drawn(hits.tab_strip));
     render_header_button(
         app,
         frame,
-        hits.tabs_menu,
+        drawn(hits.tabs_menu),
         crate::app::state::MobileDrawer::Tabs,
         false,
     );
@@ -1515,7 +1544,7 @@ fn rect_contains(rect: Rect, col: u16, row: u16) -> bool {
         && row < rect.y + rect.height
 }
 
-fn mobile_screen_rect(app: &AppState) -> Rect {
+pub(crate) fn mobile_screen_rect(app: &AppState) -> Rect {
     let header = app.view.mobile_header_rect;
     let terminal = app.view.terminal_area;
     let x = header.x.min(terminal.x);

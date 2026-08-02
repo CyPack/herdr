@@ -14,6 +14,7 @@
 ### Fixed
 - Overlays now lay themselves out for the width they are given on narrow terminals: the keybind help stacks each label under its shortcut instead of wrapping it into the key column, the settings popup budgets its height against the width it is actually granted, and every popup takes the full width on a phone-sized viewport instead of spending a tenth of the screen on margins.
 - An overlay too small to draw now shows a one-line notice naming it and the key that closes it, instead of leaving the mode open over a screen with no overlay on it.
+- Header buttons on a phone no longer lose taps aimed at them: an edge tap the terminal client clamped one column past the screen still lands, and each button accepts a tap one row below the header.
 - The phone's spaces drawer now shows the full workspace tree — repository, the checkouts under it, and each checkout's remembered chats — and folds a repository group on tap. It previously flattened everything to a single list of checkouts, which mixed worktrees from different repositories together and left remembered chats unreachable from a phone.
 - Swiping over the terminal on a phone now scrolls Herdr's scrollback instead of being reported to an agent that discards it, which left the content area looking frozen. Desktop widths and arrow-key scrolling programs are unaffected.
 - Pane and agent read responses now report `truncated: true` when older terminal rows were omitted. (#1717)

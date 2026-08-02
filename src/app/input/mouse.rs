@@ -1406,6 +1406,15 @@ impl AppState {
     }
 
     fn handle_mobile_mouse(&mut self, mouse: MouseEvent) -> MobileMouseResult {
+        // Every mobile hit test below reads these coordinates, so the edge
+        // correction belongs here rather than at each rect (TP-MOB-65).
+        let screen = crate::ui::mobile_screen_rect(self);
+        let (column, row) = crate::ui::clamp_to_mobile_screen(screen, mouse.column, mouse.row);
+        let mouse = MouseEvent {
+            column,
+            row,
+            ..mouse
+        };
         if self.mode == Mode::Navigate {
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
@@ -5163,6 +5172,50 @@ mod tests {
             app.state.mobile_drawer,
             crate::app::state::MobileDrawer::Tabs,
             "an empty row inside the drawer is not a dismissal"
+        );
+    }
+
+    // TP-MOB-65: a tap reported one column past the last cell still reaches the
+    // target under the last cell. A touch client clamps an edge tap to the
+    // screen width rather than width - 1, so on a 76-column phone taps arrive
+    // at column 76 — outside every rect, and the rightmost column is exactly
+    // where one of the two header buttons lives. Measured live: 3 of 37 taps.
+    #[test]
+    fn a_tap_past_the_last_column_still_reaches_the_button_there() {
+        let mut app = mobile_app_for_drawers(76, 35);
+        assert_eq!(app.state.view.mobile_header_hits.tabs_menu.right(), 76);
+
+        tap(&mut app, 76, 0);
+        assert_eq!(
+            app.state.mobile_drawer,
+            crate::app::state::MobileDrawer::Tabs,
+            "an edge tap the client clamped one column too far is still a tap on the button"
+        );
+    }
+
+    // TP-MOB-66: the header buttons accept a tap one row below the header. The
+    // header is two rows tall and a thumb aiming at a 5x2 target routinely
+    // lands just under it; those taps used to reach the terminal and do
+    // nothing, which reads as the button being broken. Measured live: 3 of 37
+    // taps landed on rows 2 and 4.
+    #[test]
+    fn the_header_buttons_accept_a_tap_just_below_them() {
+        let mut app = mobile_app_for_drawers(76, 35);
+        let hits = app.state.view.mobile_header_hits;
+        assert_eq!(
+            hits.spaces_menu.height, 3,
+            "two drawn rows plus one of reach"
+        );
+        assert_eq!(
+            hits.tab_strip.height, 2,
+            "the strip does not overshoot: it spans most of the width and would \
+             swallow the terminal's top row"
+        );
+
+        tap(&mut app, hits.spaces_menu.x + 2, 2);
+        assert_eq!(
+            app.state.mobile_drawer,
+            crate::app::state::MobileDrawer::Spaces
         );
     }
 

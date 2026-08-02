@@ -132,10 +132,11 @@ pub(crate) use self::{
 pub(crate) use self::{
     keybind_help::{keybind_help_layout_width, keybind_help_lines},
     mobile::{
-        mobile_drawer_areas, mobile_drawer_cursor_doc_range, mobile_drawer_cursor_stops,
-        mobile_drawer_cursor_target, mobile_drawer_default_cursor, mobile_drawer_max_scroll,
-        mobile_drawer_rows, mobile_drawer_target_at, mobile_drawer_workspace_doc_range,
-        DrawerRowContent, MobileHeaderHitAreas, MobileSwitcherTarget,
+        clamp_to_mobile_screen, mobile_drawer_areas, mobile_drawer_cursor_doc_range,
+        mobile_drawer_cursor_stops, mobile_drawer_cursor_target, mobile_drawer_default_cursor,
+        mobile_drawer_max_scroll, mobile_drawer_rows, mobile_drawer_target_at,
+        mobile_drawer_workspace_doc_range, mobile_screen_rect, DrawerRowContent,
+        MobileHeaderHitAreas, MobileSwitcherTarget,
     },
     panes::{apply_pane_chrome, pane_inner_rect, pane_is_scrolled_back},
     tab_surface::{tab_surface_cursor, tab_surface_hyperlinks, TabSurfaceView},
@@ -2876,9 +2877,11 @@ mod tests {
         assert_eq!(app.view.mobile_header_rect, Rect::new(0, 0, 44, 2));
         assert_eq!(app.view.terminal_area, Rect::new(0, 2, 44, 18));
         let hits = app.view.mobile_header_hits;
-        // Five columns each since TP-MOB-58 widened the thumb targets.
-        assert_eq!(hits.spaces_menu, Rect::new(0, 0, 5, 2));
-        assert_eq!(hits.tabs_menu, Rect::new(39, 0, 5, 2));
+        // Five columns each since TP-MOB-58 widened the thumb targets, and one
+        // row taller than the header they draw in since TP-MOB-66 gave them a
+        // row of reach for a thumb that lands just under.
+        assert_eq!(hits.spaces_menu, Rect::new(0, 0, 5, 3));
+        assert_eq!(hits.tabs_menu, Rect::new(39, 0, 5, 3));
         assert_eq!(hits.tab_strip, Rect::new(5, 0, 34, 2));
     }
 
