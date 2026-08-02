@@ -1344,6 +1344,7 @@ fn run_client_with_mode(
     // Get the terminal geometry before handshake (before raw mode).
     let (cols, rows, cell_width_px, cell_height_px) =
         current_terminal_geometry(kitty_graphics_enabled);
+    log_host_terminal_metrics(cols, rows);
 
     // Perform handshake while the stream is still in blocking mode.
     let negotiated_encoding = match do_handshake(
@@ -2272,6 +2273,47 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 // Resize polling
 // ---------------------------------------------------------------------------
 
+/// Cell pixel size from a raw winsize, or `None` when the host stayed silent.
+///
+/// Any zero field means the terminal (or the SSH stack between us and it) did
+/// not report pixels — TIOCGWINSZ carries zeros there, not small numbers.
+fn host_cell_px_from_winsize(
+    columns: u16,
+    rows: u16,
+    width: u16,
+    height: u16,
+) -> Option<(u32, u32)> {
+    if columns == 0 || rows == 0 || width == 0 || height == 0 {
+        return None;
+    }
+    Some((width as u32 / columns as u32, height as u32 / rows as u32))
+}
+
+/// Records, once per attach, whether the host terminal reports its pixel
+/// size. The mobile shell's touch-target math runs on a derived cell↔pt
+/// bridge until a real terminal answers here; this line is where the answer
+/// lands (or where "no answer" is pinned down, which keeps the safe
+/// defaults authoritative).
+fn log_host_terminal_metrics(cols: u16, rows: u16) {
+    match crossterm::terminal::window_size() {
+        Ok(size) => {
+            match host_cell_px_from_winsize(size.columns, size.rows, size.width, size.height) {
+                Some((cell_w, cell_h)) => info!(
+                    cols,
+                    rows,
+                    width_px = size.width,
+                    height_px = size.height,
+                    cell_width_px = cell_w,
+                    cell_height_px = cell_h,
+                    "host terminal reports pixel size"
+                ),
+                None => info!(cols, rows, "host terminal reports no pixel size"),
+            }
+        }
+        Err(err) => info!(cols, rows, err = %err, "host terminal winsize query failed"),
+    }
+}
+
 fn current_terminal_geometry(kitty_graphics_enabled: bool) -> (u16, u16, u32, u32) {
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
     if !kitty_graphics_enabled {
@@ -2657,6 +2699,19 @@ mod tests {
             !cfg!(windows)
         );
         assert!(!should_enable_host_color_scheme_reports(false));
+    }
+
+    // TP-MOB-86: the attach log must tell a pixel-reporting host apart from a
+    // silent one, because the mobile design system's cell↔pt bridge is only
+    // derived until a real terminal reports its pixels. A zero in any field
+    // means "not reported" — most SSH stacks forward ws_xpixel as zero, and
+    // dividing by a zero column count must not be reachable.
+    #[test]
+    fn host_cell_px_reads_only_a_fully_reported_winsize() {
+        assert_eq!(host_cell_px_from_winsize(57, 54, 969, 1998), Some((17, 37)));
+        assert_eq!(host_cell_px_from_winsize(76, 63, 0, 0), None);
+        assert_eq!(host_cell_px_from_winsize(0, 0, 969, 1998), None);
+        assert_eq!(host_cell_px_from_winsize(76, 63, 969, 0), None);
     }
 
     #[test]
