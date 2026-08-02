@@ -1471,6 +1471,12 @@ impl AppState {
                 return MobileMouseResult::Action(MouseAction::NewWorkspace);
             }
             Some(crate::ui::MobileSwitcherTarget::Workspace(ws_idx)) => {
+                // The row you are already on folds its own history instead of
+                // switching, and the drawer stays open (TP-MOB-69).
+                if Some(ws_idx) == self.active {
+                    self.toggle_mobile_active_chats();
+                    return MobileMouseResult::Consumed;
+                }
                 self.close_mobile_drawer();
                 return MobileMouseResult::Action(MouseAction::FocusWorkspace { ws_idx });
             }
@@ -4993,11 +4999,14 @@ mod tests {
 
         assert_eq!(app.state.mode, Mode::Navigate);
 
+        // Create row, then the active workspace over two rows, then the other
+        // one — the second workspace moved up a row when only the active
+        // checkout kept its detail line (TP-MOB-70).
         let viewport = crate::ui::mobile_drawer_areas(&app.state).viewport;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
-            viewport.y + 4,
+            viewport.y + 3,
         ));
 
         assert_eq!(app.state.active, Some(1));
@@ -5032,13 +5041,18 @@ mod tests {
         crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 44, 20));
         assert_eq!(app.state.mobile_switcher_scroll, 2);
 
+        // Scrolled two rows, the third viewport row is document row four: the
+        // create row, the active workspace over two rows, then one row each.
+        // Only the active checkout keeps its detail line since TP-MOB-70, so
+        // this reaches ws-2 where it used to reach ws-1 — the point being that
+        // a scrolled row is reachable at all.
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
             viewport.y + 2,
         ));
 
-        assert_eq!(app.state.active, Some(1));
+        assert_eq!(app.state.active, Some(2));
         assert_eq!(app.state.mode, Mode::Terminal);
     }
 
@@ -5216,6 +5230,36 @@ mod tests {
         assert_eq!(
             app.state.mobile_drawer,
             crate::app::state::MobileDrawer::Spaces
+        );
+    }
+
+    // TP-MOB-69 (tap path): tapping the workspace you are already in folds its chats and
+    // leaves the drawer open; tapping any other one switches and closes. The
+    // meaning of the tap follows from where the reader already is, which is
+    // what lets the row carry a second intent without a second target.
+    #[tokio::test]
+    async fn tapping_the_active_workspace_folds_its_chats_without_closing_the_drawer() {
+        let mut app = mobile_app_for_drawers(76, 35);
+        let hits = app.state.view.mobile_header_hits;
+        tap(&mut app, hits.spaces_menu.x + 1, hits.spaces_menu.y);
+        assert_eq!(
+            app.state.mobile_drawer,
+            crate::app::state::MobileDrawer::Spaces
+        );
+
+        let active = app.state.active.expect("an active workspace");
+        let range = crate::ui::mobile_drawer_workspace_doc_range(&app.state, active);
+        let viewport = crate::ui::mobile_drawer_areas(&app.state).viewport;
+        tap(&mut app, viewport.x + 2, viewport.y + range.start as u16);
+
+        assert!(
+            app.state.mobile_active_chats_folded,
+            "the row you are on folds its own history"
+        );
+        assert_eq!(
+            app.state.mobile_drawer,
+            crate::app::state::MobileDrawer::Spaces,
+            "folding narrows the list being read; it does not leave it"
         );
     }
 

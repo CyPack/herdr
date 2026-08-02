@@ -3127,6 +3127,14 @@ pub struct AppState {
     /// can reach has to be reachable from the keyboard too, or the drawer's
     /// whole purpose is unavailable on the platform it was written for.
     pub mobile_drawer_cursor: usize,
+    /// Whether the reader folded away the active workspace's chats on a phone.
+    ///
+    /// The phone shell opens them by default because it draws no cell small
+    /// enough to press instead (TP-MOB-67); this remembers a deliberate fold.
+    /// It is client presentation state, not a shared session fact, so it does
+    /// not join `expanded_chat_workspaces` — that set is the desktop's
+    /// per-workspace preference and folding on a phone must not rewrite it.
+    pub mobile_active_chats_folded: bool,
     // View geometry (computed before render, consumed by render + mouse)
     pub view: ViewState,
     /// Transient shell capture/preview state. Never persisted and never owns
@@ -3963,6 +3971,7 @@ impl AppState {
             mobile_switcher_scroll: 0,
             mobile_drawer: MobileDrawer::None,
             mobile_drawer_cursor: 0,
+            mobile_active_chats_folded: false,
             mobile_select_mode: None,
             view: ViewState {
                 layout: ViewLayout::Desktop,

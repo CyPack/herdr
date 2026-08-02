@@ -315,14 +315,67 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
                 group_idx += 1;
             }
             crate::ui::sidebar::WorkspaceListEntry::Workspace { ws_idx, indented } => {
+                let is_active = Some(ws_idx) == app.active;
                 rows.push(DrawerRow {
-                    height: entry_h,
+                    // The detail line answers "what state is this branch in",
+                    // and that is asked about the branch being worked in, not
+                    // about all sixteen at once. Measured: sixteen workspaces
+                    // made a 42-row document in a 32-row viewport, which put
+                    // the menu five rows below the fold (TP-MOB-70).
+                    height: if is_active { entry_h } else { 1 },
+                    // Every workspace row keeps the same target. Splitting it
+                    // by whether the row was active broke both consumers that
+                    // identify a workspace row by its target — the doc range
+                    // the drawer scrolls to, and the keyboard cursor's
+                    // selection sync. The two intents live in the activation
+                    // instead, which is where "it depends where you already
+                    // are" belongs (TP-MOB-69).
                     target: Some(MobileSwitcherTarget::Workspace(ws_idx)),
                     content: DrawerRowContent::Space {
                         ws_idx,
                         depth: u8::from(indented),
                     },
                 });
+                // The desktop list already carries the chats of a workspace the
+                // reader expanded there, so this only adds the ones a phone
+                // would otherwise never see; the two can never emit the same
+                // row twice (TP-MOB-67).
+                if is_active
+                    && !app.mobile_active_chats_folded
+                    && crate::ui::sidebar::workspace_chat_drawer_collapsed(app, ws_idx)
+                {
+                    // No "no chats yet" note here. The desktop shows one
+                    // because the reader opened that drawer and an empty gap
+                    // would read as broken; this one opens itself, so the note
+                    // would be an unasked-for row under every branch without a
+                    // history — and rows are what this viewport is short of.
+                    let chats = crate::ui::sidebar::workspace_chat_rows_for(app, ws_idx);
+                    let shown = chats
+                        .len()
+                        .min(crate::ui::sidebar::WORKSPACE_CHAT_ROW_LIMIT);
+                    for chat_idx in 0..shown {
+                        rows.push(DrawerRow {
+                            height: 1,
+                            target: Some(MobileSwitcherTarget::Chat { ws_idx, chat_idx }),
+                            content: DrawerRowContent::Chat {
+                                ws_idx,
+                                chat_idx,
+                                depth: 2,
+                            },
+                        });
+                    }
+                    if chats.len() > shown {
+                        let hidden = chats.len() - shown;
+                        rows.push(DrawerRow {
+                            height: 1,
+                            target: None,
+                            content: DrawerRowContent::ChatNote {
+                                depth: 2,
+                                label: format!("… {hidden} older"),
+                            },
+                        });
+                    }
+                }
             }
             crate::ui::sidebar::WorkspaceListEntry::Chat { ws_idx, chat_idx } => {
                 rows.push(DrawerRow {
@@ -457,9 +510,15 @@ pub(crate) fn mobile_drawer_workspace_doc_range(
     idx: usize,
 ) -> std::ops::Range<usize> {
     let rows = mobile_drawer_rows(app);
+    // Matched on what the row *is*, not on what tapping it does. The active
+    // workspace's row carries `ToggleActiveChats` rather than `Workspace(idx)`
+    // (TP-MOB-69), and keying off the target silently lost the one row this is
+    // most often asked about — the row the reader is standing on.
     drawer_row_spans(&rows)
         .into_iter()
-        .find(|(_, row)| row.target == Some(MobileSwitcherTarget::Workspace(idx)))
+        .find(|(_, row)| {
+            matches!(row.content, DrawerRowContent::Space { ws_idx, .. } if ws_idx == idx)
+        })
         .map(|(span, _)| span)
         .unwrap_or(0..0)
 }
@@ -1966,6 +2025,199 @@ mod tests {
         }
     }
 
+    /// A workspace with remembered chats, none of them expanded — the state a
+    /// phone starts in, because the only thing that ever expanded one was a
+    /// single cell on the desktop sidebar's workspace card.
+    fn chat_app(active: usize, w: u16, h: u16) -> AppState {
+        let mut app = AppState::test_new();
+        app.workspaces = (0..3)
+            .map(|idx| {
+                let mut ws = crate::workspace::Workspace::test_new(&format!("ws-{idx}"));
+                ws.identity_cwd = std::path::PathBuf::from(format!("/repo/ws-{idx}"));
+                ws
+            })
+            .collect();
+        for idx in 0..3 {
+            let key =
+                crate::persist::workspace_chats::ledger_key(&app.workspaces[idx].identity_cwd);
+            app.workspace_chat_rows.insert(
+                key,
+                (0..2)
+                    .map(|c| crate::app::state::WorkspaceChatRow {
+                        session_id: format!("ws{idx}-s{c}"),
+                        agent: "claude".into(),
+                        title: Some(format!("ws{idx} chat {c}")),
+                        last_seen_ms: 1_000 + c as u64,
+                        last_modified: None,
+                    })
+                    .collect(),
+            );
+        }
+        app.active = Some(active);
+        app.selected = active;
+        app.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
+        app.view.mobile_header_rect = Rect::new(0, 0, w, 2);
+        app.view.terminal_area = Rect::new(0, 2, w, h - 2);
+        app.view.layout = crate::app::state::ViewLayout::Mobile;
+        app
+    }
+
+    // TP-MOB-67: the workspace you are in shows the chats it remembers, with
+    // nothing to press first. The only thing that ever opened a chat drawer was
+    // a single cell on the desktop sidebar's workspace card, which the phone
+    // shell does not draw — so on a phone the chats existed in the ledger and
+    // could not be reached at all. A cell that small is not a phone target
+    // either: five columns by two rows already loses one tap in six.
+    #[test]
+    fn the_workspace_you_are_in_shows_its_remembered_chats() {
+        let app = chat_app(1, 76, 35);
+        let chats: Vec<usize> = mobile_drawer_rows(&app)
+            .iter()
+            .filter_map(|row| match row.content {
+                DrawerRowContent::Chat { ws_idx, .. } => Some(ws_idx),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(chats, vec![1, 1], "both chats of the active workspace");
+    }
+
+    // TP-MOB-68: only the workspace you are in. Opening all sixteen at once
+    // would rebuild the wall the drawer exists to avoid.
+    #[test]
+    fn the_other_workspaces_keep_their_chats_folded() {
+        let app = chat_app(1, 76, 35);
+        assert!(
+            !mobile_drawer_rows(&app).iter().any(|row| matches!(
+                row.content,
+                DrawerRowContent::Chat { ws_idx: 0, .. } | DrawerRowContent::Chat { ws_idx: 2, .. }
+            )),
+            "a workspace you are not in stays a single row"
+        );
+    }
+
+    // TP-MOB-69: the active workspace's row carries a different intent from
+    // every other one. Tapping a workspace you are not in means "go there";
+    // tapping the one you are already in cannot mean that, so it means "show
+    // me what I did here" instead.
+    #[test]
+    fn activating_the_row_you_are_on_folds_its_chats_rather_than_switching() {
+        let app = chat_app(1, 76, 35);
+        let rows = mobile_drawer_rows(&app);
+        let target_for = |ws: usize| {
+            rows.iter()
+                .find(|row| matches!(row.content, DrawerRowContent::Space { ws_idx, .. } if ws_idx == ws))
+                .and_then(|row| row.target)
+        };
+        // Every row carries the same target: the two intents live in the
+        // activation, because the consumers that identify a workspace row do
+        // it by target and splitting it silently broke them.
+        assert_eq!(target_for(1), Some(MobileSwitcherTarget::Workspace(1)));
+        assert_eq!(target_for(0), Some(MobileSwitcherTarget::Workspace(0)));
+
+        // The row you are on folds its own history and stays open.
+        let mut on_active = chat_app(1, 76, 35);
+        on_active.mobile_drawer_cursor = mobile_drawer_workspace_doc_range(&on_active, 1).start;
+        on_active.activate_mobile_drawer_cursor();
+        assert!(on_active.mobile_active_chats_folded);
+        assert_eq!(
+            on_active.mobile_drawer,
+            crate::app::state::MobileDrawer::Spaces,
+            "narrowing the list being read does not leave it"
+        );
+
+        // Any other row switches and closes.
+        let mut on_other = chat_app(1, 76, 35);
+        on_other.mobile_drawer_cursor = mobile_drawer_workspace_doc_range(&on_other, 0).start;
+        on_other.activate_mobile_drawer_cursor();
+        assert!(!on_other.mobile_active_chats_folded);
+        assert_eq!(
+            on_other.mobile_drawer,
+            crate::app::state::MobileDrawer::None
+        );
+    }
+
+    // TP-MOB-70: the detail line is the answer to "what state is this branch
+    // in", and that is a question asked about the branch you are on, not about
+    // all sixteen at once. Measured: sixteen workspaces made a 42-row document
+    // in a 32-row viewport, so the menu sat five rows below the fold.
+    #[test]
+    fn only_the_active_workspace_spends_a_second_row_on_detail() {
+        let app = chat_app(1, 76, 35);
+        let heights: Vec<(usize, usize)> = mobile_drawer_rows(&app)
+            .iter()
+            .filter_map(|row| match row.content {
+                DrawerRowContent::Space { ws_idx, .. } => Some((ws_idx, row.height)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(heights, vec![(0, 1), (1, 2), (2, 1)]);
+    }
+
+    // TP-MOB-71: sixteen workspaces fit the drawer without scrolling. Measured
+    // before this change: a 42-row document in a 32-row viewport, which put the
+    // menu — and with it `select text`, the way back out of a mode where taps
+    // reach nothing — five rows below the fold.
+    #[test]
+    fn the_drawer_fits_the_reader_s_real_workspace_count() {
+        use crate::workspace::{Workspace, WorktreeSpaceMembership};
+        let mut app = AppState::test_new();
+        let mut list = Vec::new();
+        for group in 0..3 {
+            for member in 0..4 {
+                let mut ws = Workspace::test_new(&format!("g{group}-m{member}"));
+                ws.identity_cwd = std::path::PathBuf::from(format!("/repo/r{group}-{member}"));
+                ws.worktree_space = Some(WorktreeSpaceMembership {
+                    key: format!("/repo/r{group}/.git"),
+                    label: format!("repo{group}"),
+                    repo_root: std::path::PathBuf::from(format!("/repo/r{group}")),
+                    checkout_path: std::path::PathBuf::from(format!("/repo/r{group}-{member}")),
+                    is_linked_worktree: member != 0,
+                });
+                list.push(ws);
+            }
+        }
+        for extra in 0..4 {
+            list.push(Workspace::test_new(&format!("solo{extra}")));
+        }
+        app.workspaces = list;
+        app.active = Some(0);
+        app.selected = 0;
+        app.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
+        app.view.mobile_header_rect = Rect::new(0, 0, 76, 2);
+        app.view.terminal_area = Rect::new(0, 2, 76, 33);
+        app.view.layout = crate::app::state::ViewLayout::Mobile;
+
+        let document: usize = mobile_drawer_rows(&app).iter().map(|row| row.height).sum();
+        let viewport = mobile_drawer_areas(&app).viewport.height as usize;
+        assert!(
+            document <= viewport,
+            "sixteen workspaces make a {document}-row document in a {viewport}-row viewport"
+        );
+    }
+
+    // TP-MOB-72: the keyboard reaches the chats too. A tap is not reliably
+    // delivered by an iOS terminal, so a row only a finger can reach is only
+    // half reachable — the same reason every other drawer row is a cursor stop.
+    #[test]
+    fn the_keyboard_cursor_stops_on_the_chat_rows() {
+        let app = chat_app(1, 76, 35);
+        let rows = mobile_drawer_rows(&app);
+        let stops = mobile_drawer_cursor_stops(&app);
+
+        let mut doc_y = 0usize;
+        let mut chat_starts = Vec::new();
+        for row in &rows {
+            if matches!(row.content, DrawerRowContent::Chat { .. }) {
+                chat_starts.push(doc_y);
+            }
+            doc_y += row.height;
+        }
+        assert_eq!(chat_starts.len(), 2);
+        for start in chat_starts {
+            assert!(stops.contains(&start), "chat row at {start} is not a stop");
+        }
+    }
+
     // TP-MOB-32: an open drawer covers three quarters of the width and leaves
     // the rest showing. The uncovered strip is both the way out and the
     // reminder that a session is running under it.
@@ -2095,15 +2347,22 @@ mod tests {
             "tight spaces take one row"
         );
 
+        // A compact viewport still affords the detail line, but spends it only
+        // on the workspace being worked in. The line answers "what state is
+        // this branch in", and that is asked about one branch, not sixteen —
+        // measured, sixteen of them made a 42-row document in a 32-row
+        // viewport (TP-MOB-70).
         let mut compact = drawer_app(2, 1, 52, 26);
         compact.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
-        assert!(
-            mobile_drawer_rows(&compact)
-                .iter()
-                .filter(|row| matches!(row.content, DrawerRowContent::Space { .. }))
-                .all(|row| row.height == 2),
-            "a compact viewport keeps the detail line"
-        );
+        let compact_heights: Vec<(usize, usize)> = mobile_drawer_rows(&compact)
+            .iter()
+            .filter_map(|row| match row.content {
+                DrawerRowContent::Space { ws_idx, .. } => Some((ws_idx, row.height)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(compact.active, Some(0));
+        assert_eq!(compact_heights, vec![(0, 2), (1, 1)]);
 
         assert!(
             mobile_drawer_content_height(&tight) < mobile_drawer_content_height(&compact),
@@ -2446,9 +2705,11 @@ mod tests {
         // ahead of the unrelated "other" workspace (idx 1). The document now
         // opens with the create row, then the repository header the two
         // checkouts belong to, then main, feature, other.
+        // The active checkout spends two rows on its detail line; the others
+        // take one each since TP-MOB-70.
         assert_eq!(mobile_drawer_workspace_doc_range(&app, 0).start, 2);
         assert_eq!(mobile_drawer_workspace_doc_range(&app, 2).start, 4);
-        assert_eq!(mobile_drawer_workspace_doc_range(&app, 1).start, 6);
+        assert_eq!(mobile_drawer_workspace_doc_range(&app, 1).start, 5);
 
         let viewport = mobile_drawer_areas(&app).viewport;
         // The second space row on screen is the worktree, not workspaces[1].

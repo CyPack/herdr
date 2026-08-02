@@ -1628,8 +1628,16 @@ impl AppState {
                 self.close_mobile_drawer();
             }
             crate::ui::MobileSwitcherTarget::Workspace(ws_idx) => {
-                self.close_mobile_drawer();
-                self.switch_workspace(ws_idx);
+                // Activating the row you are already on cannot mean "switch to
+                // this", so it means "show me what I did here" instead, and
+                // narrowing the list being read keeps the drawer open — the
+                // same reason a group header does (TP-MOB-69).
+                if Some(ws_idx) == self.active {
+                    self.toggle_mobile_active_chats();
+                } else {
+                    self.close_mobile_drawer();
+                    self.switch_workspace(ws_idx);
+                }
             }
             crate::ui::MobileSwitcherTarget::ToggleSpaceGroup { group_idx } => {
                 // Folding is the one activation that keeps the drawer open: the
@@ -1740,6 +1748,17 @@ impl AppState {
                 .len()
                 .saturating_sub(1),
         );
+    }
+
+    /// Fold or unfold the active workspace's chats in the phone drawer.
+    pub(crate) fn toggle_mobile_active_chats(&mut self) {
+        self.mobile_active_chats_folded = !self.mobile_active_chats_folded;
+        let max_scroll = crate::ui::mobile_drawer_max_scroll(self);
+        self.mobile_switcher_scroll = self.mobile_switcher_scroll.min(max_scroll);
+        let stops = crate::ui::mobile_drawer_cursor_stops(self);
+        if !stops.contains(&self.mobile_drawer_cursor) {
+            self.mobile_drawer_cursor = crate::ui::mobile_drawer_default_cursor(self);
+        }
     }
 
     pub(crate) fn toggle_mobile_select_mode(&mut self) {

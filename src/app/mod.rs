@@ -788,6 +788,7 @@ impl App {
             mobile_switcher_scroll: 0,
             mobile_drawer: crate::app::state::MobileDrawer::None,
             mobile_drawer_cursor: 0,
+            mobile_active_chats_folded: false,
             mobile_select_mode: None,
             view: state::ViewState {
                 layout: state::ViewLayout::Desktop,
