@@ -348,10 +348,13 @@ mod tests {
         // verified by dumping the frame first: the list opens with the
         // workspace itself, a dim rule divides it from the band, and the last
         // two rows are "+ new workspace" and "select text [off]" at the
-        // bottom of the panel.
+        // bottom of the panel. It moved once more when section titles gained
+        // a breathing row above them (TP-MOB-81) — verified by dumping the
+        // frame first: a blank row now sits between the workspace's detail
+        // line and the "menu" heading.
         assert_eq!(
             frame_digest(&frame),
-            "00beb008e87d9d9a6176d2f677857ab523df2b35eb67d054a94f01c080854bb1"
+            "afcaa84d6afb8a49ec50932799e6cd0de11b317cb85a57a2f5053d548d455397"
         );
     }
 }

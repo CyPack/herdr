@@ -471,8 +471,24 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
         }
     }
 
+    // A blank row before each section title, when the width class affords
+    // one: the separation is most of what reads as composed about the
+    // reference app's drawer, and a heading jammed against the row above
+    // reads as one more list item. Tight widths skip it — rows are the
+    // scarce resource there, the same trade the detail line makes
+    // (TP-MOB-81).
+    let spacer = || DrawerRow {
+        height: 1,
+        target: None,
+        content: DrawerRowContent::Empty(""),
+    };
+    let breathe = entry_h > 1;
+
     let agents = agent_panel_entries(app);
     if !agents.is_empty() || app.agent_view_override.is_some() {
+        if breathe {
+            rows.push(spacer());
+        }
         rows.push(DrawerRow {
             height: 1,
             target: None,
@@ -498,6 +514,9 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
         }
     }
 
+    if breathe {
+        rows.push(spacer());
+    }
     rows.push(DrawerRow {
         height: 1,
         target: None,
@@ -2579,6 +2598,41 @@ mod tests {
                 );
             }
         }
+    }
+
+    // TP-MOB-81: a blank row precedes each section title when the width class
+    // affords one. The reference app separates its sections with whitespace,
+    // and that separation is most of what reads as "designed" about it; a
+    // heading jammed against the row above reads as one more list item. Tight
+    // widths skip the spacer — there the rows are the scarce resource, which
+    // is the same trade the detail line already makes (TP-MOB-38).
+    #[test]
+    fn sections_breathe_when_the_width_affords_it() {
+        let mut compact = drawer_app(2, 1, 52, 26);
+        compact.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
+        let rows = mobile_drawer_rows(&compact);
+        let mut spacer_before_title = 0;
+        for pair in rows.windows(2) {
+            if matches!(pair[1].content, DrawerRowContent::SectionTitle(_)) {
+                assert!(
+                    matches!(pair[0].content, DrawerRowContent::Empty("")),
+                    "a section title follows a spacer, found {:?}",
+                    pair[0].content
+                );
+                assert!(pair[0].target.is_none(), "a spacer is not a cursor stop");
+                spacer_before_title += 1;
+            }
+        }
+        assert!(spacer_before_title >= 1, "the menu section exists");
+
+        let mut tight = drawer_app(2, 1, 36, 18);
+        tight.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
+        assert!(
+            !mobile_drawer_rows(&tight)
+                .iter()
+                .any(|row| matches!(row.content, DrawerRowContent::Empty(""))),
+            "a tight drawer spends no rows on air"
+        );
     }
 
     // TP-MOB-32: an open drawer covers three quarters of the width and leaves
