@@ -4999,14 +4999,14 @@ mod tests {
 
         assert_eq!(app.state.mode, Mode::Navigate);
 
-        // Create row, then the active workspace over two rows, then the other
-        // one — the second workspace moved up a row when only the active
-        // checkout kept its detail line (TP-MOB-70).
+        // The active workspace over two rows, then the other one. The create
+        // row that used to lead the document moved to the pinned footer
+        // (TP-MOB-77), so the list starts with the workspaces themselves.
         let viewport = crate::ui::mobile_drawer_areas(&app.state).viewport;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
-            viewport.y + 3,
+            viewport.y + 2,
         ));
 
         assert_eq!(app.state.active, Some(1));
@@ -5042,17 +5042,17 @@ mod tests {
         assert_eq!(app.state.mobile_switcher_scroll, 2);
 
         // Scrolled two rows, the third viewport row is document row four: the
-        // create row, the active workspace over two rows, then one row each.
-        // Only the active checkout keeps its detail line since TP-MOB-70, so
-        // this reaches ws-2 where it used to reach ws-1 — the point being that
-        // a scrolled row is reachable at all.
+        // active workspace over two rows, then one row per workspace — the
+        // create row that used to lead the document lives in the pinned footer
+        // now (TP-MOB-77). This reaches ws-3; the point being that a scrolled
+        // row is reachable at all.
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
             viewport.y + 2,
         ));
 
-        assert_eq!(app.state.active, Some(2));
+        assert_eq!(app.state.active, Some(3));
         assert_eq!(app.state.mode, Mode::Terminal);
     }
 
@@ -5312,16 +5312,18 @@ mod tests {
             crate::app::state::MobileDrawer::Tabs
         );
 
-        // Four tabs and a create row fit a twelve-row phone without scrolling.
-        // Reaching the fourth tab used to mean scrolling past every workspace
-        // and every agent first, because tabs shared one list with them.
+        // Four tabs fit a twelve-row phone without scrolling — the create row
+        // moved to the pinned footer (TP-MOB-77), so the list is the tabs
+        // alone. Reaching the fourth tab used to mean scrolling past every
+        // workspace and every agent first, because tabs shared one list with
+        // them.
         assert_eq!(crate::ui::mobile_drawer_max_scroll(&app.state), 0);
 
         let viewport = crate::ui::mobile_drawer_areas(&app.state).viewport;
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             viewport.x + 2,
-            viewport.y + 4,
+            viewport.y + 3,
         ));
 
         assert_eq!(app.state.workspaces[0].active_tab_index(), 3);
@@ -5348,12 +5350,12 @@ mod tests {
             switch.x + 1,
             switch.y + 1,
         ));
-        // "+ new workspace" opens the drawer body.
-        let viewport = crate::ui::mobile_drawer_areas(&app.state).viewport;
+        // "+ new workspace" lives in the pinned footer band now (TP-MOB-77).
+        let areas = crate::ui::mobile_drawer_areas(&app.state);
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
-            viewport.x + 2,
-            viewport.y,
+            areas.footer.x + 2,
+            areas.footer.y,
         ));
 
         assert_eq!(app.state.mode, Mode::RenameWorkspace);
@@ -5425,12 +5427,12 @@ mod tests {
             switch.x + 1,
             switch.y + 1,
         ));
-        let viewport = crate::ui::mobile_drawer_areas(&app.state).viewport;
-        // "+ new tab" is the first row of the tabs drawer.
+        let areas = crate::ui::mobile_drawer_areas(&app.state);
+        // "+ new tab" lives in the pinned footer band now (TP-MOB-77).
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
-            viewport.x + 2,
-            viewport.y,
+            areas.footer.x + 2,
+            areas.footer.y,
         ));
 
         assert_eq!(app.state.mode, Mode::RenameTab);
@@ -5502,13 +5504,13 @@ mod tests {
             switch.x + 1,
             switch.y + 1,
         ));
-        let viewport = crate::ui::mobile_drawer_areas(&app.state).viewport;
+        let areas = crate::ui::mobile_drawer_areas(&app.state);
 
-        // "+ new tab" is the first row of the tabs drawer.
+        // "+ new tab" lives in the pinned footer band now (TP-MOB-77).
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
-            viewport.x + 2,
-            viewport.y,
+            areas.footer.x + 2,
+            areas.footer.y,
         ));
         assert_eq!(app.state.mode, Mode::Terminal);
         assert!(!app.state.creating_new_tab);

@@ -134,9 +134,9 @@ pub(crate) use self::{
     mobile::{
         clamp_to_mobile_screen, mobile_drawer_areas, mobile_drawer_cursor_doc_range,
         mobile_drawer_cursor_stops, mobile_drawer_cursor_target, mobile_drawer_default_cursor,
-        mobile_drawer_max_scroll, mobile_drawer_rows, mobile_drawer_target_at,
-        mobile_drawer_workspace_doc_range, mobile_screen_rect, DrawerRowContent,
-        MobileHeaderHitAreas, MobileSwitcherTarget,
+        mobile_drawer_footer_band_height, mobile_drawer_max_scroll, mobile_drawer_pinned_start,
+        mobile_drawer_rows, mobile_drawer_target_at, mobile_drawer_workspace_doc_range,
+        mobile_screen_rect, DrawerRowContent, MobileHeaderHitAreas, MobileSwitcherTarget,
     },
     panes::{apply_pane_chrome, pane_inner_rect, pane_is_scrolled_back},
     tab_surface::{tab_surface_cursor, tab_surface_hyperlinks, TabSurfaceView},
@@ -620,7 +620,10 @@ fn compute_mobile_view(
             // however the drawer was reached.
             app.mobile_drawer_cursor = mobile_drawer_default_cursor(app);
         }
-        let drawer_viewport_h = area.height.saturating_sub(header_h + 1);
+        let drawer_viewport_h = area
+            .height
+            .saturating_sub(header_h + 1)
+            .saturating_sub(crate::ui::mobile_drawer_footer_band_height(app) as u16);
         let max_scroll = mobile_drawer_max_scroll_for_height(app, drawer_viewport_h);
         app.mobile_switcher_scroll = app.mobile_switcher_scroll.min(max_scroll);
     } else if app.mobile_drawer.is_open() {

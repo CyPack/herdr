@@ -59,6 +59,9 @@ pub(crate) struct MobileDrawerAreas {
     pub scrim: Rect,
     /// The scrolling body inside the panel, below its title row.
     pub viewport: Rect,
+    /// The pinned band under the scroll body: the drawer's primary action and
+    /// `select text`, at a screen position scrolling cannot move (TP-MOB-76).
+    pub footer: Rect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,7 +95,6 @@ pub(crate) enum MobileSwitcherTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DrawerRowContent {
     SectionTitle(&'static str),
-    Action(&'static str),
     /// The repository a group of checkouts belongs to.
     SpaceGroup {
         space_key: String,
@@ -109,6 +111,10 @@ pub(crate) enum DrawerRowContent {
         chat_idx: usize,
         depth: u8,
     },
+    /// A primary action pinned to the drawer's footer band, styled to read as
+    /// the one button the drawer wants pressed — the terminal's answer to the
+    /// reference app's "+ New chat" pill.
+    FooterAction(&'static str),
     /// An inert note under a checkout's chat drawer: "no chats yet" or the
     /// folded "… N older" row. Not a cursor stop, exactly as on the desktop.
     ChatNote {
@@ -234,17 +240,72 @@ pub(crate) fn mobile_drawer_areas(app: &AppState) -> MobileDrawerAreas {
     };
     let body_w = panel.width.saturating_sub(1);
     // Row 0 of the panel is its title; the body starts under it.
-    let viewport = Rect::new(
-        body_x,
-        panel.y.saturating_add(1),
-        body_w,
-        panel.height.saturating_sub(1),
-    );
+    let body_h = panel.height.saturating_sub(1);
+
+    // The pinned tail claims a band at the bottom — its rows plus a separator.
+    // A body too short for both clips the footer rather than the list: the
+    // list is what the drawer exists for, the footer is a convenience on top
+    // of it (TP-MOB-80). The list keeps at least one row.
+    let tail = drawer_pinned_tail_height(&mobile_drawer_rows(app));
+    let wanted_band = if tail > 0 { tail + 1 } else { 0 };
+    let band = wanted_band.min(usize::from(body_h.saturating_sub(1)));
+    let scroll_h = body_h.saturating_sub(band as u16);
+    let footer_h = band.saturating_sub(1) as u16;
+
+    let viewport = Rect::new(body_x, panel.y.saturating_add(1), body_w, scroll_h);
+    let footer = if footer_h > 0 {
+        // One separator row sits between the list and the band.
+        Rect::new(body_x, viewport.y + scroll_h + 1, body_w, footer_h)
+    } else {
+        Rect::default()
+    };
 
     MobileDrawerAreas {
         panel,
         scrim,
         viewport,
+        footer,
+    }
+}
+
+/// Whether a row belongs to the pinned footer band rather than the scroll
+/// document. Derived from what the row *is* so no construction site has to
+/// remember a flag; the producers append these rows last, and a test pins
+/// that they stay trailing.
+fn drawer_row_is_pinned(content: &DrawerRowContent) -> bool {
+    matches!(
+        content,
+        DrawerRowContent::FooterAction(_) | DrawerRowContent::SelectMode
+    )
+}
+
+/// Height of the trailing pinned rows.
+fn drawer_pinned_tail_height(rows: &[DrawerRow]) -> usize {
+    rows.iter()
+        .rev()
+        .take_while(|row| drawer_row_is_pinned(&row.content))
+        .map(|row| row.height)
+        .sum()
+}
+
+/// First document row of the pinned tail — the row count of the scrollable
+/// part. Everything at or past this position renders in the footer band.
+pub(crate) fn mobile_drawer_pinned_start(app: &AppState) -> usize {
+    let rows = mobile_drawer_rows(app);
+    let total: usize = rows.iter().map(|row| row.height).sum();
+    total - drawer_pinned_tail_height(&rows)
+}
+
+/// The band (footer rows + separator) the footer costs the drawer body, in
+/// document rows. The `compute_view` scroll clamp subtracts this because it
+/// derives the viewport height arithmetically rather than through
+/// [`mobile_drawer_areas`].
+pub(crate) fn mobile_drawer_footer_band_height(app: &AppState) -> usize {
+    let tail = drawer_pinned_tail_height(&mobile_drawer_rows(app));
+    if tail > 0 {
+        tail + 1
+    } else {
+        0
     }
 }
 
@@ -287,12 +348,8 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
 
     // No "spaces" section title: the panel is titled "spaces" one row above,
     // and a heading that repeats the panel above it spends a row saying
-    // nothing. The later headings earn their rows by marking a change.
-    rows.push(DrawerRow {
-        height: 1,
-        target: Some(MobileSwitcherTarget::NewWorkspace),
-        content: DrawerRowContent::Action("+ new workspace"),
-    });
+    // nothing. The later headings earn their rows by marking a change. The
+    // create action lives in the pinned footer rather than here (TP-MOB-77).
     // The drawer walks the same tree the desktop sidebar walks, unfiltered.
     // It used to keep only the workspace rows, which dropped the repository
     // header above them and the chats below: worktrees from different
@@ -446,11 +503,6 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
         target: None,
         content: DrawerRowContent::SectionTitle("menu"),
     });
-    rows.push(DrawerRow {
-        height: 1,
-        target: Some(MobileSwitcherTarget::ToggleSelectMode),
-        content: DrawerRowContent::SelectMode,
-    });
     for menu_idx in 0..app.global_menu_labels().len() {
         rows.push(DrawerRow {
             height: 1,
@@ -459,16 +511,33 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
         });
     }
 
+    // The pinned footer, last so its rows are the trailing ones: the create
+    // action in the thumb zone, and `select text` — the way back out of a
+    // mode where taps reach nothing — at a screen position scrolling cannot
+    // move (TP-MOB-76, TP-MOB-77).
+    rows.push(DrawerRow {
+        height: 1,
+        target: Some(MobileSwitcherTarget::NewWorkspace),
+        content: DrawerRowContent::FooterAction("+ new workspace"),
+    });
+    rows.push(DrawerRow {
+        height: 1,
+        target: Some(MobileSwitcherTarget::ToggleSelectMode),
+        content: DrawerRowContent::SelectMode,
+    });
+
     rows
 }
 
 fn tabs_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
-    let mut rows = vec![DrawerRow {
+    let mut rows = Vec::new();
+    let footer = DrawerRow {
         height: 1,
         target: Some(MobileSwitcherTarget::NewTab),
-        content: DrawerRowContent::Action("+ new tab"),
-    }];
+        content: DrawerRowContent::FooterAction("+ new tab"),
+    };
     let Some(ws) = app.active.and_then(|idx| app.workspaces.get(idx)) else {
+        rows.push(footer);
         return rows;
     };
     for tab_idx in 0..ws.tabs.len() {
@@ -478,15 +547,17 @@ fn tabs_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
             content: DrawerRowContent::Tab { tab_idx },
         });
     }
+    rows.push(footer);
     rows
 }
 
-pub(crate) fn mobile_drawer_content_height(app: &AppState) -> usize {
-    mobile_drawer_rows(app).iter().map(|row| row.height).sum()
-}
-
 pub(crate) fn mobile_drawer_max_scroll_for_height(app: &AppState, viewport_height: u16) -> usize {
-    mobile_drawer_content_height(app).saturating_sub(viewport_height as usize)
+    // Only the scrollable part counts: the pinned tail is already on screen,
+    // and scroll range that "revealed" it again would run the list past its
+    // own end into blank rows (TP-MOB-78).
+    let rows = mobile_drawer_rows(app);
+    let total: usize = rows.iter().map(|row| row.height).sum();
+    (total - drawer_pinned_tail_height(&rows)).saturating_sub(viewport_height as usize)
 }
 
 pub(crate) fn mobile_drawer_max_scroll(app: &AppState) -> usize {
@@ -589,6 +660,21 @@ pub(crate) fn mobile_drawer_target_at(
     row: u16,
 ) -> Option<MobileSwitcherTarget> {
     let areas = mobile_drawer_areas(app);
+    let rows = mobile_drawer_rows(app);
+
+    // The footer band maps by screen position alone: scrolling cannot move it,
+    // so the mapping must not consult the scroll either — hit-testing has to
+    // agree with what render drew (TP-MOB-76).
+    if rect_contains(areas.footer, col, row) {
+        let total: usize = rows.iter().map(|r| r.height).sum();
+        let pinned_start = total - drawer_pinned_tail_height(&rows);
+        let doc_row = pinned_start + usize::from(row - areas.footer.y);
+        return drawer_row_spans(&rows)
+            .into_iter()
+            .find(|(span, _)| span.contains(&doc_row))
+            .and_then(|(_, r)| r.target);
+    }
+
     let content = inset_for_left_scrollbar(areas.viewport);
     if !rect_contains(content, col, row) {
         return None;
@@ -601,7 +687,6 @@ pub(crate) fn mobile_drawer_target_at(
             areas.viewport.height,
         ));
     let doc_row = scroll.saturating_add(row.saturating_sub(areas.viewport.y) as usize);
-    let rows = mobile_drawer_rows(app);
     drawer_row_spans(&rows)
         .into_iter()
         .find(|(span, _)| span.contains(&doc_row))
@@ -728,7 +813,19 @@ pub(crate) fn render_mobile_drawer(
         Rect::new(areas.viewport.x, areas.panel.y, areas.viewport.width, 1),
     );
 
-    render_mobile_drawer_content(app, terminal_runtimes, frame, areas.viewport);
+    render_mobile_drawer_content(app, terminal_runtimes, frame, &areas);
+
+    // The separator between the list and the pinned band: the reference app
+    // divides them with whitespace, and one dim rule buys the same reading for
+    // a single row.
+    if areas.footer.height > 0 {
+        let sep_y = areas.footer.y.saturating_sub(1);
+        frame.render_widget(
+            Paragraph::new("─".repeat(areas.footer.width as usize))
+                .style(Style::default().fg(p.surface_dim).bg(p.panel_bg)),
+            Rect::new(areas.footer.x, sep_y, areas.footer.width, 1),
+        );
+    }
 
     // A single column of the drawer's edge, drawn against the scrim, tells the
     // eye where the panel stops without spending a whole border row.
@@ -899,8 +996,9 @@ fn render_mobile_drawer_content(
     app: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
     frame: &mut Frame,
-    viewport: Rect,
+    areas: &MobileDrawerAreas,
 ) {
+    let viewport = areas.viewport;
     if viewport.width == 0 || viewport.height == 0 {
         return;
     }
@@ -908,10 +1006,13 @@ fn render_mobile_drawer_content(
     let p = &app.palette;
     let rows = mobile_drawer_rows(app);
     let total_height: usize = rows.iter().map(|row| row.height).sum();
+    let pinned_start = total_height - drawer_pinned_tail_height(&rows);
+    // The scrollbar describes the scrollable part only; the pinned band never
+    // scrolls, so counting it would show a bar that can never reach its end.
     render_left_scrollbar(
         frame,
         viewport,
-        total_height,
+        pinned_start,
         viewport.height as usize,
         app.mobile_switcher_scroll,
         p,
@@ -920,6 +1021,15 @@ fn render_mobile_drawer_content(
     if content == Rect::default() {
         return;
     }
+    // Pinned rows draw into the footer band with the band's own origin: the
+    // "scroll" for that band is the document position where the band starts,
+    // which makes `visible_y` place them at a position scrolling cannot move.
+    let footer_content = Rect::new(
+        content.x,
+        areas.footer.y,
+        content.width,
+        areas.footer.height,
+    );
 
     let scroll = app.mobile_switcher_scroll;
     let agents = agent_panel_entries_from(app, terminal_runtimes);
@@ -931,6 +1041,15 @@ fn render_mobile_drawer_content(
 
     let mut doc_y = 0usize;
     for (row_idx, row) in rows.iter().enumerate() {
+        // A pinned row draws into the footer band instead of the scroll
+        // viewport. Shadowing the three geometry inputs keeps every render arm
+        // below — and the cursor marker after them — on one code path, so the
+        // footer cannot drift from the list's rendering rules.
+        let (viewport, content, scroll) = if drawer_row_is_pinned(&row.content) {
+            (footer_content, footer_content, pinned_start)
+        } else {
+            (viewport, content, scroll)
+        };
         match &row.content {
             DrawerRowContent::SectionTitle(title) => {
                 let title = if *title == "agents" {
@@ -945,8 +1064,19 @@ fn render_mobile_drawer_content(
                 };
                 render_section_title_at(frame, viewport, content, doc_y, scroll, &title, p);
             }
-            DrawerRowContent::Action(label) => {
-                render_action_row_at(frame, viewport, content, doc_y, scroll, label, p);
+            DrawerRowContent::FooterAction(label) => {
+                if let Some(y) = visible_y(viewport, scroll, doc_y) {
+                    frame.render_widget(
+                        Paragraph::new(truncate_end(&format!("  {label}"), content.width as usize))
+                            .style(
+                                Style::default()
+                                    .fg(p.accent)
+                                    .bg(p.panel_bg)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                        Rect::new(content.x, y, content.width, 1),
+                    );
+                }
             }
             DrawerRowContent::Empty(label) => {
                 render_one_line_item(
@@ -1385,21 +1515,6 @@ fn render_section_title_at(
     );
 }
 
-fn render_action_row_at(
-    frame: &mut Frame,
-    viewport: Rect,
-    content: Rect,
-    doc_y: usize,
-    scroll: usize,
-    label: &str,
-    p: &Palette,
-) {
-    let Some(y) = visible_y(viewport, scroll, doc_y) else {
-        return;
-    };
-    render_action_row(frame, Rect::new(content.x, y, content.width, 1), label, p);
-}
-
 fn render_one_line_item(
     frame: &mut Frame,
     viewport: Rect,
@@ -1576,21 +1691,6 @@ fn render_section_title(frame: &mut Frame, area: Rect, title: &str, p: &Palette)
                 .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
         ),
         Rect::new(area.x, area.y, area.width, 1),
-    );
-}
-
-fn render_action_row(frame: &mut Frame, area: Rect, label: &str, p: &Palette) {
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-    frame.render_widget(
-        Paragraph::new(format!("  {label}")).style(
-            Style::default()
-                .fg(p.accent)
-                .bg(p.panel_bg)
-                .add_modifier(Modifier::BOLD),
-        ),
-        area,
     );
 }
 
@@ -2284,6 +2384,203 @@ mod tests {
         adversarial.restore_viewer(previous);
     }
 
+    /// The reader's real scale: sixteen workspaces across three repositories,
+    /// shared by every footer test so none of them can pass on a toy list.
+    fn sixteen_workspace_app(w: u16, h: u16) -> AppState {
+        use crate::workspace::{Workspace, WorktreeSpaceMembership};
+        let mut app = AppState::test_new();
+        let mut list = Vec::new();
+        for group in 0..3 {
+            for member in 0..4 {
+                let mut ws = Workspace::test_new(&format!("g{group}-m{member}"));
+                ws.identity_cwd = std::path::PathBuf::from(format!("/repo/r{group}-{member}"));
+                ws.worktree_space = Some(WorktreeSpaceMembership {
+                    key: format!("/repo/r{group}/.git"),
+                    label: format!("repo{group}"),
+                    repo_root: std::path::PathBuf::from(format!("/repo/r{group}")),
+                    checkout_path: std::path::PathBuf::from(format!("/repo/r{group}-{member}")),
+                    is_linked_worktree: member != 0,
+                });
+                list.push(ws);
+            }
+        }
+        for extra in 0..4 {
+            list.push(Workspace::test_new(&format!("solo{extra}")));
+        }
+        app.workspaces = list;
+        app.active = Some(0);
+        app.selected = 0;
+        app.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
+        app.view.mobile_header_rect = Rect::new(0, 0, w, 2);
+        app.view.terminal_area = Rect::new(0, 2, w, h - 2);
+        app.view.layout = crate::app::state::ViewLayout::Mobile;
+        app
+    }
+
+    // TP-MOB-76: `select text` and the primary action sit in a footer band
+    // whose screen position does not move when the list scrolls. The reference
+    // app pins its "+ New chat" pill to the bottom for the same reason: an
+    // escape hatch whose position depends on how far the reader has scrolled
+    // is not an escape hatch. `select text` is the way back out of a mode
+    // where taps reach nothing at all.
+    #[test]
+    fn the_footer_keeps_its_targets_on_screen_at_max_scroll() {
+        let mut app = sixteen_workspace_app(76, 35);
+        app.mobile_switcher_scroll = mobile_drawer_max_scroll(&app);
+        let areas = mobile_drawer_areas(&app);
+        assert!(
+            areas.footer.height >= 2,
+            "the spaces footer holds the create action and select text"
+        );
+        assert_eq!(
+            mobile_drawer_target_at(&app, areas.footer.x + 2, areas.footer.y),
+            Some(MobileSwitcherTarget::NewWorkspace),
+        );
+        assert_eq!(
+            mobile_drawer_target_at(
+                &app,
+                areas.footer.x + 2,
+                areas.footer.y + areas.footer.height - 1
+            ),
+            Some(MobileSwitcherTarget::ToggleSelectMode),
+        );
+    }
+
+    // TP-MOB-77: the primary action leaves the top of the scroll document for
+    // the footer, in both drawers. At the top it was the first thing a thumb
+    // had to scroll past on every open; the reference app keeps it at the
+    // bottom, in the zone a thumb rests over.
+    #[test]
+    fn the_primary_action_lives_in_the_footer_not_the_scroll() {
+        let app = sixteen_workspace_app(76, 35);
+        let rows = mobile_drawer_rows(&app);
+        assert!(
+            matches!(rows[0].content, DrawerRowContent::SpaceGroup { .. }),
+            "the scroll document opens with the tree, not a create row"
+        );
+        let tail: Vec<&DrawerRowContent> =
+            rows.iter().rev().take(2).map(|row| &row.content).collect();
+        assert!(matches!(tail[0], DrawerRowContent::SelectMode));
+        assert!(matches!(
+            tail[1],
+            DrawerRowContent::FooterAction("+ new workspace")
+        ));
+
+        let mut tabs = drawer_app(1, 2, 76, 35);
+        tabs.mobile_drawer = crate::app::state::MobileDrawer::Tabs;
+        let tab_rows = mobile_drawer_rows(&tabs);
+        assert!(
+            matches!(tab_rows[0].content, DrawerRowContent::Tab { tab_idx: 0 }),
+            "the tab list starts at the top"
+        );
+        assert!(matches!(
+            tab_rows.last().expect("rows").content,
+            DrawerRowContent::FooterAction("+ new tab")
+        ));
+        assert_eq!(
+            tab_rows.last().expect("rows").target,
+            Some(MobileSwitcherTarget::NewTab)
+        );
+    }
+
+    // TP-MOB-78: scrolling stops where the scrollable content ends. The pinned
+    // tail is already on screen, so scroll range that "reveals" it again would
+    // scroll the list past its own end into blank rows.
+    #[test]
+    fn max_scroll_excludes_the_pinned_tail() {
+        let app = sixteen_workspace_app(76, 35);
+        let rows = mobile_drawer_rows(&app);
+        let total: usize = rows.iter().map(|row| row.height).sum();
+        let pinned: usize = rows
+            .iter()
+            .rev()
+            .take_while(|row| {
+                matches!(
+                    row.content,
+                    DrawerRowContent::FooterAction(_) | DrawerRowContent::SelectMode
+                )
+            })
+            .map(|row| row.height)
+            .sum();
+        assert!(pinned > 0, "the spaces drawer has a footer");
+        let viewport = mobile_drawer_areas(&app).viewport.height as usize;
+        assert_eq!(
+            mobile_drawer_max_scroll(&app),
+            (total - pinned).saturating_sub(viewport)
+        );
+    }
+
+    // TP-MOB-79: stepping the keyboard cursor onto the footer does not move
+    // the scroll. The footer is always on screen; a follow that treated its
+    // document position as something to reveal would jump the list to the
+    // bottom the moment the cursor entered it, and the reader loses the row
+    // they were just on.
+    #[test]
+    fn stepping_onto_the_footer_needs_no_scroll() {
+        let mut app = sixteen_workspace_app(76, 35);
+        let stops = mobile_drawer_cursor_stops(&app);
+        let rows = mobile_drawer_rows(&app);
+        let total: usize = rows.iter().map(|row| row.height).sum();
+        let pinned: usize = rows
+            .iter()
+            .rev()
+            .take_while(|row| {
+                matches!(
+                    row.content,
+                    DrawerRowContent::FooterAction(_) | DrawerRowContent::SelectMode
+                )
+            })
+            .map(|row| row.height)
+            .sum();
+        let footer_start = total - pinned;
+        let first_footer_stop = stops
+            .iter()
+            .copied()
+            .find(|stop| *stop >= footer_start)
+            .expect("the footer rows are cursor stops");
+
+        app.mobile_switcher_scroll = 0;
+        app.mobile_drawer_cursor = first_footer_stop;
+        app.move_mobile_drawer_cursor(1);
+        assert_eq!(
+            app.mobile_switcher_scroll, 0,
+            "moving within the footer must not scroll the list it sits under"
+        );
+        assert_eq!(
+            mobile_drawer_cursor_target(&app),
+            Some(MobileSwitcherTarget::ToggleSelectMode)
+        );
+    }
+
+    // TP-MOB-80: a short body clips the footer before it starves the list.
+    // The list is what the drawer exists for; the footer is a convenience on
+    // top of it, and two bands drawing over each other is the one outcome
+    // worse than either being short.
+    #[test]
+    fn a_short_drawer_body_never_overlaps_footer_and_list() {
+        for height in [6u16, 8, 10, 14] {
+            let app = tree_app(76, height);
+            let areas = mobile_drawer_areas(&app);
+            if areas.panel.height == 0 {
+                continue;
+            }
+            assert!(
+                areas.viewport.height >= 1,
+                "at screen height {height} the list keeps at least one row"
+            );
+            if areas.footer.height > 0 {
+                assert!(
+                    areas.viewport.y + areas.viewport.height < areas.footer.y,
+                    "at screen height {height} a separator row divides list and footer"
+                );
+                assert!(
+                    areas.footer.y + areas.footer.height <= areas.panel.y + areas.panel.height,
+                    "at screen height {height} the footer stays inside the panel"
+                );
+            }
+        }
+    }
+
     // TP-MOB-32: an open drawer covers three quarters of the width and leaves
     // the rest showing. The uncovered strip is both the way out and the
     // reminder that a session is running under it.
@@ -2390,9 +2687,9 @@ mod tests {
         ] {
             app.mobile_drawer = drawer;
             let rows = mobile_drawer_rows(&app);
-            assert_eq!(
-                mobile_drawer_content_height(&app),
-                rows.iter().map(|row| row.height).sum::<usize>()
+            assert!(
+                !rows.is_empty(),
+                "an open drawer produces rows for {drawer:?}"
             );
         }
     }
@@ -2430,8 +2727,11 @@ mod tests {
         assert_eq!(compact.active, Some(0));
         assert_eq!(compact_heights, vec![(0, 2), (1, 1)]);
 
+        let doc = |app: &AppState| -> usize {
+            mobile_drawer_rows(app).iter().map(|row| row.height).sum()
+        };
         assert!(
-            mobile_drawer_content_height(&tight) < mobile_drawer_content_height(&compact),
+            doc(&tight) < doc(&compact),
             "the tight drawer is the shorter document"
         );
     }
@@ -2722,17 +3022,18 @@ mod tests {
         app.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
 
         assert_eq!(agent_panel_entries(&app).len(), 2);
-        // The panel is already titled "spaces", so the body opens with the
-        // create row and the first space sits at doc row 1: the question the
-        // reader opened this drawer to answer is the first thing in it.
-        assert_eq!(mobile_drawer_workspace_doc_range(&app, 0).start, 1);
+        // The panel is already titled "spaces" and the create row moved to the
+        // pinned footer (TP-MOB-77), so the first space IS the document's
+        // first row: the question the reader opened this drawer to answer is
+        // now literally the first thing in it.
+        assert_eq!(mobile_drawer_workspace_doc_range(&app, 0).start, 0);
 
         let viewport = mobile_drawer_areas(&app).viewport;
         app.mobile_switcher_scroll = 100;
         let workspace_hit = mobile_drawer_target_at(&app, viewport.x + 2, viewport.y + 1);
         assert_eq!(workspace_hit, Some(MobileSwitcherTarget::Workspace(0)));
 
-        // Agents follow: the create row, one two-row space and the "agents"
+        // Agents follow: one two-row space and the "agents"
         // title put the first agent at doc row 4.
         let agent_hit = mobile_drawer_target_at(&app, viewport.x + 2, viewport.y + 4);
         assert!(matches!(
@@ -2768,18 +3069,17 @@ mod tests {
         app.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
 
         // Grouped order pulls the worktree (idx 2) up under its parent (idx 0),
-        // ahead of the unrelated "other" workspace (idx 1). The document now
-        // opens with the create row, then the repository header the two
-        // checkouts belong to, then main, feature, other.
-        // The active checkout spends two rows on its detail line; the others
-        // take one each since TP-MOB-70.
-        assert_eq!(mobile_drawer_workspace_doc_range(&app, 0).start, 2);
-        assert_eq!(mobile_drawer_workspace_doc_range(&app, 2).start, 4);
-        assert_eq!(mobile_drawer_workspace_doc_range(&app, 1).start, 5);
+        // ahead of the unrelated "other" workspace (idx 1). The document opens
+        // with the repository header — the create row moved to the pinned
+        // footer (TP-MOB-77) — then main, feature, other. The active checkout
+        // spends two rows on its detail line; the others one each (TP-MOB-70).
+        assert_eq!(mobile_drawer_workspace_doc_range(&app, 0).start, 1);
+        assert_eq!(mobile_drawer_workspace_doc_range(&app, 2).start, 3);
+        assert_eq!(mobile_drawer_workspace_doc_range(&app, 1).start, 4);
 
         let viewport = mobile_drawer_areas(&app).viewport;
         // The second space row on screen is the worktree, not workspaces[1].
-        let hit = mobile_drawer_target_at(&app, viewport.x + 2, viewport.y + 4);
+        let hit = mobile_drawer_target_at(&app, viewport.x + 2, viewport.y + 3);
         assert_eq!(hit, Some(MobileSwitcherTarget::Workspace(2)));
 
         // TP-MOB-62: folding the group on the phone hides its checkouts, the
@@ -2789,12 +3089,12 @@ mod tests {
         // reader with sixteen workspaces needs it.
         app.collapsed_space_keys.insert("repo-key".to_string());
         assert_eq!(
-            mobile_drawer_target_at(&app, viewport.x + 2, viewport.y + 1),
+            mobile_drawer_target_at(&app, viewport.x + 2, viewport.y),
             Some(MobileSwitcherTarget::ToggleSpaceGroup { group_idx: 0 }),
             "the header stays, so the group can be opened again"
         );
         assert_eq!(
-            mobile_drawer_target_at(&app, viewport.x + 2, viewport.y + 2),
+            mobile_drawer_target_at(&app, viewport.x + 2, viewport.y + 1),
             Some(MobileSwitcherTarget::Workspace(0)),
             "folding hides the linked worktrees, not the checkout they branch from"
         );
@@ -2817,9 +3117,11 @@ mod tests {
         app.view.terminal_area = Rect::new(0, 2, 44, 18);
         app.mobile_drawer = crate::app::state::MobileDrawer::Spaces;
 
-        // No attached terminals -> no agents -> no agents section at all.
+        // No attached terminals -> no agents -> no agents section at all. The
+        // create row lives in the pinned footer (TP-MOB-77), so the lone
+        // workspace opens the document.
         assert_eq!(agent_panel_entries(&app).len(), 0);
-        assert_eq!(mobile_drawer_workspace_doc_range(&app, 0).start, 1);
+        assert_eq!(mobile_drawer_workspace_doc_range(&app, 0).start, 0);
     }
 
     #[test]

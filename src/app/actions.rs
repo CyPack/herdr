@@ -1600,6 +1600,12 @@ impl AppState {
             return;
         }
         let range = crate::ui::mobile_drawer_cursor_doc_range(self);
+        // A footer row is always on screen; treating its document position as
+        // something to reveal would jump the list to the bottom the moment the
+        // cursor entered the band (TP-MOB-79).
+        if range.start >= crate::ui::mobile_drawer_pinned_start(self) {
+            return;
+        }
         let visible_start = self.mobile_switcher_scroll;
         let visible_end = visible_start.saturating_add(viewport.height as usize);
         if range.start < visible_start {
