@@ -2101,7 +2101,10 @@ impl AppState {
                     && matches!(
                         mouse.kind,
                         MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-                    ) =>
+                    )
+                    && rt
+                        .scroll_metrics()
+                        .is_some_and(|metrics| metrics.max_offset_from_bottom > 0) =>
             {
                 // A touch client reports a swipe as a wheel event, and an agent
                 // that asked for mouse reporting typically does nothing with
@@ -2110,7 +2113,11 @@ impl AppState {
                 // thin for a finger. The phone shell keeps the vertical wheel
                 // for its own viewport and leaves the rest of the reporting
                 // contract alone (TP-MOB-56). Alternate-scroll panes are not
-                // covered because their arrow keys already scroll on touch.
+                // covered because their arrow keys already scroll on touch —
+                // and the claim only holds while the host has scrollback to
+                // give: an alternate-screen program has none, and a swipe
+                // spent on an empty scrollback is a swipe that does nothing
+                // at all (TP-MOB-97), so it falls through to the program.
                 false
             }
             Some(crate::pane::WheelRouting::MouseReport) => {
@@ -2563,6 +2570,53 @@ mod tests {
         assert!(
             input_rx.try_recv().is_err(),
             "a swipe the phone cannot repeat elsewhere must not be spent on the agent"
+        );
+    }
+
+    /// TP-MOB-97: the phone shell only claims the wheel when it can honour
+    /// it. An alternate-screen program (an agent TUI, a pager) has no
+    /// scrollback for the host to move — reported live: a swipe inside the
+    /// agent did nothing at all, sometimes, depending on which pane was up.
+    /// When the host has nothing to scroll, the swipe belongs to the
+    /// program, which scrolls its own content with it.
+    #[tokio::test]
+    async fn mobile_wheel_reaches_an_alt_screen_program_the_host_cannot_scroll_for() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(0, 2, 40, 18));
+        let info = pane_infos[0].clone();
+        // Mouse reporting on, then the alternate screen: the shape of every
+        // full-screen agent TUI. No scrollback exists behind it.
+        let bytes = b"\x1b[?1000h\x1b[?1006h\x1b[?1049hAGENT".to_vec();
+        let (runtime, mut input_rx) =
+            crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+                info.inner_rect.width,
+                info.inner_rect.height,
+                16 * 1024,
+                &bytes,
+                4,
+            );
+        ws.insert_test_runtime(pane_id, runtime);
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.view.layout = ViewLayout::Mobile;
+        app.state.view.sidebar_rect = Rect::default();
+        app.state.view.pane_infos = pane_infos;
+        app.state.mouse_scroll_lines = 3;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::ScrollUp,
+            info.inner_rect.x + 1,
+            info.inner_rect.y + 1,
+        ));
+
+        assert!(
+            input_rx.try_recv().is_ok(),
+            "with nothing for the host to scroll, the swipe reaches the program"
         );
     }
 
