@@ -5098,6 +5098,54 @@ mod tests {
         app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), x, y));
     }
 
+    // TP-MOB-96: the drawer answers taps over the file browser too. Reported
+    // live: with Files open, the header button still opened the drawer but
+    // every tap inside it — segments, rows — fell through dead, leaving no
+    // way to leave Files by touch.
+    #[test]
+    fn the_drawer_stays_responsive_over_the_file_browser() {
+        let mut app = mobile_app_for_drawers(76, 35);
+        if let Some(ws) = app
+            .state
+            .active
+            .and_then(|i| app.state.workspaces.get_mut(i))
+        {
+            ws.identity_cwd = std::env::temp_dir();
+        }
+        app.state
+            .apply_mobile_switcher_target(crate::ui::MobileSwitcherTarget::DrawerSegment(
+                crate::app::state::SidebarTab::Files,
+            ));
+        assert_eq!(
+            app.state.stage.surface_view(),
+            crate::ui::surface_host::StageSurfaceView::NativeFiles,
+            "files is open"
+        );
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 76, 35));
+
+        // The header button opens the drawer over the browser…
+        let hits = app.state.view.mobile_header_hits;
+        tap(&mut app, hits.spaces_menu.x + 1, hits.spaces_menu.y + 1);
+        assert_eq!(
+            app.state.mobile_drawer,
+            crate::app::state::MobileDrawer::Spaces,
+            "the drawer opens over files"
+        );
+
+        // …and the drawer's own targets keep answering.
+        let areas = crate::ui::mobile_drawer_areas(&app.state);
+        tap(
+            &mut app,
+            areas.title.x + areas.title.width / 2,
+            areas.title.y,
+        );
+        assert_eq!(
+            app.state.sidebar_tab,
+            crate::app::state::SidebarTab::Projects,
+            "a segment tap answers over the file browser"
+        );
+    }
+
     // TP-MOB-40: each header button opens its own drawer, and opening one
     // closes the other. Two booleans would have let both be open at once; the
     // enum makes that unrepresentable.

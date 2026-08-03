@@ -628,7 +628,16 @@ impl App {
             .shell_mouse_input_owner(ratatui::layout::Position::new(mouse.column, mouse.row))
             == ShellInputOwner::TopmostOverlay;
 
-        if !blocking_overlay {
+        // An open mobile drawer is painted above every surface, so it owns
+        // the mouse the same way: with Files open underneath, the file
+        // manager's pre-branch used to eat the drawer's taps and every
+        // segment and row fell through dead — paint order and input order
+        // must not disagree about what is on top (TP-MOB-96).
+        let mobile_drawer_owns_mouse = self.state.view.layout
+            == crate::app::state::ViewLayout::Mobile
+            && self.state.mobile_drawer.is_open();
+
+        if !blocking_overlay && !mobile_drawer_owns_mouse {
             if self.handle_app_dock_mouse(mouse) {
                 return;
             }
