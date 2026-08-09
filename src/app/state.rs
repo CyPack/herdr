@@ -2801,6 +2801,12 @@ client_surfaces! {
     /// Which tree rows this display has folded away.
     collapsed_space_keys: std::collections::HashSet<String>,
     collapsed_project_paths: std::collections::HashSet<std::path::PathBuf>,
+    /// Which chat drawers this display has opened, and which derived-open
+    /// drawers it has quieted. The same sentence as the folds above: a
+    /// drawer is a statement about one screen, and the shared set was how
+    /// one display's activations shoved another's drawers around.
+    expanded_chat_workspaces: std::collections::HashSet<String>,
+    suppressed_chat_drawers: std::collections::HashSet<String>,
     /// Which overlay, if any, owns this display's input.
     mode: Mode,
     /// The mode to return to when the overlay on top of it closes.
@@ -3122,6 +3128,14 @@ pub struct AppState {
     /// would bury the workspace list the tab exists for. So closed is the
     /// default and this records the exceptions.
     pub expanded_chat_workspaces: std::collections::HashSet<String>,
+    /// Drawers this display has quieted while a mode derives them open.
+    ///
+    /// The all-active drawer mode opens every branch holding a live agent;
+    /// folding one of those rows cannot go through `expanded_chat_workspaces`
+    /// (the derivation would reopen it on the next frame), so the fold lands
+    /// here instead. Per display for the same reason the folds are: one
+    /// screen quieting a drawer must not quiet it anywhere else.
+    pub suppressed_chat_drawers: std::collections::HashSet<String>,
     /// Git branch per live terminal cwd, for the agent panel's secondary
     /// label. Kept fresh by the runtime's HEAD-mtime fingerprint poll;
     /// read-only during render.
@@ -4000,6 +4014,7 @@ impl AppState {
             collapsed_project_paths: std::collections::HashSet::new(),
             workspace_chat_rows: std::collections::HashMap::new(),
             expanded_chat_workspaces: std::collections::HashSet::new(),
+            suppressed_chat_drawers: std::collections::HashSet::new(),
             tab_branch_cache: std::collections::HashMap::new(),
             sessions_parse_cache: Default::default(),
             default_chat_agent: "claude".to_string(),
@@ -6385,6 +6400,59 @@ mod viewer_context_tests {
     }
 
     // TP-SUR-DEFAULT-01
+    #[test]
+    fn a_displays_chat_drawer_folds_stay_its_own() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("left"));
+        state.active = Some(0);
+
+        // Display 2 opens a drawer and parks.
+        state.enter_viewer(Some(2));
+        state.expanded_chat_workspaces.insert("k".into());
+        state.restore_viewer(None);
+
+        // Display 3 may adopt the last broadcast state on attach, but what it
+        // does to ITS view must never leak back into display 2's.
+        state.enter_viewer(Some(3));
+        state.expanded_chat_workspaces.remove("k");
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(2));
+        assert!(
+            state.expanded_chat_workspaces.contains("k"),
+            "display 2 keeps its own drawer folds"
+        );
+        state.restore_viewer(None);
+    }
+
+    // The suppress set is the same sentence for the derived-open rows: one
+    // display quieting a drawer must not quiet it anywhere else.
+    #[test]
+    fn a_displays_drawer_suppressions_stay_its_own() {
+        let mut state = AppState::test_new();
+        state
+            .workspaces
+            .push(crate::workspace::Workspace::test_new("left"));
+        state.active = Some(0);
+
+        state.enter_viewer(Some(2));
+        state.suppressed_chat_drawers.insert("k".into());
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(3));
+        state.suppressed_chat_drawers.remove("k");
+        state.restore_viewer(None);
+
+        state.enter_viewer(Some(2));
+        assert!(
+            state.suppressed_chat_drawers.contains("k"),
+            "display 2 keeps its own suppressions"
+        );
+        state.restore_viewer(None);
+    }
+
     #[test]
     fn serving_a_display_that_did_not_move_leaves_the_session_default_alone() {
         let mut state = AppState::test_new();
