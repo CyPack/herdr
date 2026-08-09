@@ -3232,7 +3232,7 @@ mod tests {
         // no ordinal does — is unchanged. TP-ICON-01 rides the branch glyph
         // on the label itself, after the dot, so the order the test pins
         // still reads state first.
-        assert!(line1.starts_with("  · ⎇ one"));
+        assert!(line1.starts_with("  ·  one"));
         assert!(!line1.contains("1 one"));
         assert_eq!(line2, "    main");
 

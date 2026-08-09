@@ -5180,7 +5180,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let card = app.view.workspace_card_areas[0];
         let chat = app.view.workspace_chat_row_areas[0].clone();
         assert!(
-            row_text(&buffer, card.rect.y, area.width).contains('⎇'),
+            row_text(&buffer, card.rect.y, area.width).contains(''),
             "a checkout row carries the branch glyph"
         );
         assert!(
@@ -5197,13 +5197,13 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let mut plain = app_with_worktree_tree(40);
         let plain_buffer = draw_tree(&mut plain, area);
         let plain_card = plain.view.workspace_card_areas[0];
-        let plain_x = find_symbol_x(&plain_buffer, plain_card.rect.y, area.width, "⎇");
+        let plain_x = find_symbol_x(&plain_buffer, plain_card.rect.y, area.width, "");
 
         let mut nested = app_with_worktree_tree(40);
         nested.space_projects = vec![project_over("project:herdr", &["/repo/herdr"], &[])];
         let nested_buffer = draw_tree(&mut nested, area);
         let nested_card = nested.view.workspace_card_areas[0];
-        let nested_x = find_symbol_x(&nested_buffer, nested_card.rect.y, area.width, "⎇");
+        let nested_x = find_symbol_x(&nested_buffer, nested_card.rect.y, area.width, "");
 
         assert_eq!(
             nested_x,

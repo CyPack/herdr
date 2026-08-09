@@ -320,13 +320,15 @@ mod tests {
         // Every structural assertion above still holds — the rects, the pane
         // and split counts, the cursor and the hyperlink are untouched.
         //
-        // Re-baselined 2026-08-09: checkout rows now carry the branch glyph
+        // Re-baselined 2026-08-09 (twice): checkout rows carry the branch glyph,
+        // now the powerline git-branch (U+E0A0) after the keyboard-symbol ⎇
+        // failed the eye test
         // (TP-ICON-01), one more painted glyph per row — again exactly the
         // change this digest exists to surface. The structural assertions
         // above are untouched.
         assert_eq!(
             frame_digest(&frame),
-            "9db3c8b5032a6466cdaacefdc10285056d16f772aa9627a7b2e84e785d4d82cc"
+            "763a4111a23e08a7092b75e0c8005df1ac6fd23e2fb1460a299e7a189e2cbb88"
         );
     }
 

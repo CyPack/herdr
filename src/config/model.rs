@@ -416,7 +416,7 @@ impl Default for SpaceIconsConfig {
     fn default() -> Self {
         Self {
             project: "📁".to_string(),
-            branch: "⎇".to_string(),
+            branch: "".to_string(),
             chat: "💬".to_string(),
         }
     }
@@ -2510,7 +2510,7 @@ key = "panel:fix"
                 defaults.branch.as_str(),
                 defaults.chat.as_str()
             ),
-            ("📁", "⎇", "💬"),
+            ("📁", "", "💬"),
             "row-kind icons work without any config"
         );
 
@@ -2523,7 +2523,7 @@ chat = "✉"
         .expect("config parses");
         assert_eq!(config.spaces.icons.chat, "✉");
         assert_eq!(
-            config.spaces.icons.branch, "⎇",
+            config.spaces.icons.branch, "\u{e0a0}",
             "an unmentioned icon keeps its default"
         );
     }
