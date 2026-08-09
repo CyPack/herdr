@@ -34,6 +34,10 @@ pub struct SpaceSplitRule {
     pub key: String,
     /// Header label rendered for the group.
     pub label: String,
+    /// Glyph drawn before the label on the group's header row. `None` renders
+    /// the label alone — existing configs carry emoji inside their labels and
+    /// keep rendering unchanged.
+    pub icon: Option<String>,
 }
 
 impl SpaceSplitRule {
@@ -71,6 +75,60 @@ pub fn resolve_space_rule<'a>(
     rules
         .iter()
         .find(|rule| rule.claims(repo_root, checkout_path, branch))
+}
+
+// TP-PROJ-MATCH-01/02/03.
+/// One `[[spaces.project]]` umbrella after validation: a top-level sidebar
+/// group gathering whole repositories and individual spaces under one header,
+/// so several repositories serving one product read as one project.
+// Consumed by the sidebar tree entries in the next commit of this branch; the
+// allow dies there (bin crate: test-only callers count as dead).
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpaceProject {
+    /// Key project collapse state is stored under. Must be unique per project.
+    pub key: String,
+    /// Header title.
+    pub name: String,
+    /// Glyph drawn before the name; `None` uses the configured default.
+    pub icon: Option<String>,
+    /// Repository roots whose every space — the repo space and any config
+    /// spaces split out of it — belongs to this project.
+    pub repo_roots: Vec<PathBuf>,
+    /// Individual space keys claimed regardless of repository. This is the
+    /// promotion path: one branch's space joins (or becomes) a project without
+    /// pulling its whole repository along.
+    pub space_keys: Vec<String>,
+}
+
+impl SpaceProject {
+    /// Whether this project claims the space `space_key`, whose members live
+    /// in `repo_root`. Explicit space keys are the sharper claim and are tried
+    /// first; repository membership is the broad one.
+    // Consumed by the sidebar tree entries in the next commit of this branch.
+    #[allow(dead_code)]
+    pub fn claims(&self, space_key: &str, repo_root: Option<&Path>) -> bool {
+        self.space_keys.iter().any(|key| key == space_key)
+            || repo_root.is_some_and(|root| self.repo_roots.iter().any(|repo| repo == root))
+    }
+}
+
+/// The first project claiming this space, or `None` to stay top-level.
+///
+/// First-match-wins in config order, exactly like [`resolve_space_rule`]:
+/// which project a space lands in stays readable from the config file
+/// (TP-PROJ-MATCH-03). An empty project list claims nothing, so a sidebar
+/// without `[[spaces.project]]` renders as it always has (TP-PROJ-MATCH-01).
+// Consumed by the sidebar tree entries in the next commit of this branch.
+#[allow(dead_code)]
+pub fn resolve_project<'a>(
+    projects: &'a [SpaceProject],
+    space_key: &str,
+    repo_root: Option<&Path>,
+) -> Option<&'a SpaceProject> {
+    projects
+        .iter()
+        .find(|project| project.claims(space_key, repo_root))
 }
 
 /// Glob match supporting `*` (any run of characters, including empty). No `?`,
@@ -123,6 +181,17 @@ mod tests {
             patterns: patterns.iter().map(|p| (*p).to_string()).collect(),
             key: key.to_string(),
             label: label.to_string(),
+            icon: None,
+        }
+    }
+
+    fn project(key: &str, repos: &[&str], spaces: &[&str]) -> SpaceProject {
+        SpaceProject {
+            key: key.to_string(),
+            name: key.to_string(),
+            icon: None,
+            repo_roots: repos.iter().map(PathBuf::from).collect(),
+            space_keys: spaces.iter().map(|s| (*s).to_string()).collect(),
         }
     }
 
@@ -237,6 +306,54 @@ mod tests {
             )
             .is_none(),
             "no rules configured must reproduce upstream grouping exactly"
+        );
+    }
+
+    // TP-PROJ-MATCH-01.
+    #[test]
+    fn empty_project_list_claims_nothing() {
+        assert!(
+            resolve_project(&[], "repo-key", Some(Path::new("/repo/a"))).is_none(),
+            "no projects configured must leave every space top-level"
+        );
+    }
+
+    // TP-PROJ-MATCH-02.
+    #[test]
+    fn project_claims_by_space_key() {
+        let projects = [project("project:x", &[], &["a:t4f"])];
+        let hit = resolve_project(&projects, "a:t4f", None);
+        assert_eq!(hit.map(|p| p.key.as_str()), Some("project:x"));
+        assert!(
+            resolve_project(&projects, "a:other", None).is_none(),
+            "a project must not claim spaces it never names"
+        );
+    }
+
+    // TP-PROJ-MATCH-02.
+    #[test]
+    fn project_claims_by_repo_root() {
+        let projects = [project("project:x", &["/repo/a"], &[])];
+        let hit = resolve_project(&projects, "any-space", Some(Path::new("/repo/a")));
+        assert_eq!(hit.map(|p| p.key.as_str()), Some("project:x"));
+        assert!(
+            resolve_project(&projects, "any-space", Some(Path::new("/repo/b"))).is_none(),
+            "repository membership must not leak across repositories"
+        );
+    }
+
+    // TP-PROJ-MATCH-03.
+    #[test]
+    fn first_matching_project_wins() {
+        let projects = [
+            project("project:first", &["/repo/a"], &[]),
+            project("project:second", &[], &["a:t4f"]),
+        ];
+        let hit = resolve_project(&projects, "a:t4f", Some(Path::new("/repo/a")));
+        assert_eq!(
+            hit.map(|p| p.key.as_str()),
+            Some("project:first"),
+            "config order decides, not claim kind"
         );
     }
 }

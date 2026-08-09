@@ -761,6 +761,30 @@
       ]
     },
     {
+      "id": "spaces",
+      "title": "Spaces",
+      "keys": [
+        {
+          "key": "spaces.icons.project",
+          "type": "string",
+          "default": "\"📁\"",
+          "description": "Glyph drawn before a project header's name when the [[spaces.project]] entry has no icon of its own. Empty disables the glyph."
+        },
+        {
+          "key": "spaces.icons.branch",
+          "type": "string",
+          "default": "\"⎇\"",
+          "description": "Glyph drawn before workspace (branch/checkout) rows in the Spaces tree. Empty disables the glyph."
+        },
+        {
+          "key": "spaces.icons.chat",
+          "type": "string",
+          "default": "\"📄\"",
+          "description": "Glyph drawn before chat rows in a workspace's chat drawer. Empty disables the glyph."
+        }
+      ]
+    },
+    {
       "id": "preview",
       "title": "Preview",
       "keys": [

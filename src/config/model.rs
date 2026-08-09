@@ -358,6 +358,11 @@ impl ProjectsConfig {
 #[serde(default)]
 pub struct SpacesConfig {
     pub split: Vec<SpaceSplitEntry>,
+    /// `[[spaces.project]]` umbrellas gathering repositories and spaces under
+    /// one top-level header.
+    pub project: Vec<SpaceProjectEntry>,
+    /// `[spaces.icons]` row-kind icon defaults for the Spaces tree.
+    pub icons: SpaceIconsConfig,
 }
 
 /// One authored `[[spaces.split]]` table, before validation.
@@ -373,6 +378,48 @@ pub struct SpaceSplitEntry {
     pub key: String,
     /// Group header label. Falls back to `key` when blank.
     pub label: String,
+    /// Glyph drawn before the label. Blank means no icon of its own.
+    pub icon: String,
+}
+
+/// One authored `[[spaces.project]]` table, before validation.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct SpaceProjectEntry {
+    /// Header title. Falls back to `key` when blank.
+    pub name: String,
+    /// Collapse-state key. Must be unique per project.
+    pub key: String,
+    /// Glyph drawn before the name; blank uses `[spaces.icons] project`.
+    pub icon: String,
+    /// Repository roots whose spaces all join this project. Absolute or
+    /// `~`-rooted.
+    pub repos: Vec<String>,
+    /// Individual space keys joining this project.
+    pub spaces: Vec<String>,
+}
+
+/// Row-kind icons for the Spaces tree. Every field carries a working default,
+/// so the table is only written to change taste, not to enable the feature.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct SpaceIconsConfig {
+    /// Project header rows without an `icon` of their own.
+    pub project: String,
+    /// Workspace (branch/checkout) rows.
+    pub branch: String,
+    /// Chat drawer rows.
+    pub chat: String,
+}
+
+impl Default for SpaceIconsConfig {
+    fn default() -> Self {
+        Self {
+            project: "📁".to_string(),
+            branch: "⎇".to_string(),
+            chat: "📄".to_string(),
+        }
+    }
 }
 
 impl SpacesConfig {
@@ -384,6 +431,7 @@ impl SpacesConfig {
             .filter(|entry| space_split_entry_problem(entry).is_none())
             .map(|entry| {
                 let label = entry.label.trim();
+                let icon = entry.icon.trim();
                 crate::spaces::SpaceSplitRule {
                     repo_root: crate::worktree::expand_tilde_absolute_path(entry.repo.trim()),
                     patterns: entry
@@ -398,13 +446,52 @@ impl SpacesConfig {
                     } else {
                         label.to_string()
                     },
+                    icon: (!icon.is_empty()).then(|| icon.to_string()),
+                }
+            })
+            .collect()
+    }
+
+    /// Validated projects in config order, `~` expanded. Unusable entries are
+    /// dropped (see [`Self::diagnostics`]).
+    // Consumed by AppState wiring in the next commit of this branch; the allow
+    // dies there (bin crate: test-only callers count as dead).
+    #[allow(dead_code)]
+    pub fn projects(&self) -> Vec<crate::spaces::SpaceProject> {
+        self.project
+            .iter()
+            .filter(|entry| space_project_entry_problem(entry).is_none())
+            .map(|entry| {
+                let name = entry.name.trim();
+                let icon = entry.icon.trim();
+                crate::spaces::SpaceProject {
+                    key: entry.key.trim().to_string(),
+                    name: if name.is_empty() {
+                        entry.key.trim().to_string()
+                    } else {
+                        name.to_string()
+                    },
+                    icon: (!icon.is_empty()).then(|| icon.to_string()),
+                    repo_roots: entry
+                        .repos
+                        .iter()
+                        .map(|repo| repo.trim())
+                        .filter(|repo| !repo.is_empty())
+                        .map(crate::worktree::expand_tilde_absolute_path)
+                        .collect(),
+                    space_keys: entry
+                        .spaces
+                        .iter()
+                        .map(|space| space.trim().to_string())
+                        .filter(|space| !space.is_empty())
+                        .collect(),
                 }
             })
             .collect()
     }
 
     /// Human-readable diagnostics for dropped entries, plus duplicate keys
-    /// (TP-SPLIT-CONF-01, TP-SPLIT-CONF-02).
+    /// (TP-SPLIT-CONF-01, TP-SPLIT-CONF-02, TP-PROJ-CONF-01, TP-PROJ-CONF-02).
     pub fn diagnostics(&self) -> Vec<String> {
         let mut seen_keys = std::collections::HashSet::new();
         let mut diagnostics: Vec<String> = self
@@ -427,8 +514,54 @@ impl SpacesConfig {
                 ));
             }
         }
+        diagnostics.extend(
+            self.project
+                .iter()
+                .enumerate()
+                .filter_map(|(index, entry)| {
+                    space_project_entry_problem(entry)
+                        .map(|problem| format!("spaces.project[{index}] {problem}; ignoring"))
+                }),
+        );
+        // Same reasoning as duplicate rule keys: two projects sharing a key
+        // share one collapse state, which reads as a folding bug.
+        let mut seen_project_keys = std::collections::HashSet::new();
+        for (index, entry) in self.project.iter().enumerate() {
+            let key = entry.key.trim();
+            if !key.is_empty() && !seen_project_keys.insert(key.to_string()) {
+                diagnostics.push(format!(
+                    "spaces.project[{index}] key {key:?} is already used by an earlier project; \
+                     both will share one collapse state"
+                ));
+            }
+        }
         diagnostics
     }
+}
+
+/// Why a project entry cannot be used, or `None` when it is usable
+/// (TP-PROJ-CONF-01).
+fn space_project_entry_problem(entry: &SpaceProjectEntry) -> Option<&'static str> {
+    if entry.key.trim().is_empty() {
+        return Some("has no key");
+    }
+    // A relative repo drops the whole entry rather than being skipped: a
+    // half-applied project reads as a grouping bug, not as a config typo.
+    if entry.repos.iter().any(|repo| {
+        let trimmed = repo.trim();
+        !trimmed.is_empty() && !pinned_entry_is_usable(trimmed)
+    }) {
+        return Some("has a repo that is not an absolute path");
+    }
+    let has_repo_member = entry
+        .repos
+        .iter()
+        .any(|repo| pinned_entry_is_usable(repo.trim()));
+    let has_space_member = entry.spaces.iter().any(|space| !space.trim().is_empty());
+    if !has_repo_member && !has_space_member {
+        return Some("has no usable repos or spaces member");
+    }
+    None
 }
 
 /// Why an entry cannot be used, or `None` when it is usable
@@ -2145,6 +2278,7 @@ key = "k5"
             patterns: vec!["feat/*".into()],
             key: "panel:feat".into(),
             label: String::new(),
+            icon: String::new(),
         };
         assert_eq!(space_split_entry_problem(&usable), None);
 
@@ -2206,6 +2340,194 @@ key = "panel:dup"
                 .any(|d| d.contains("already used by an earlier rule")),
             "a duplicate key must be reported: {:?}",
             config.spaces.diagnostics()
+        );
+    }
+
+    // TP-PROJ-CONF-01.
+    #[test]
+    fn spaces_projects_drop_unusable_entries() {
+        let config: Config = toml::from_str(
+            r#"
+[[spaces.project]]
+name = "keysiz"
+repos = ["/repo/a"]
+
+[[spaces.project]]
+key = "project:rel"
+repos = ["relative/path"]
+
+[[spaces.project]]
+key = "project:bos"
+
+[[spaces.project]]
+key = "project:ok"
+name = "Herdr"
+icon = " 🚀 "
+repos = ["/repo/a", "  "]
+spaces = ["a:t4f", "   "]
+"#,
+        )
+        .expect("config parses");
+
+        let projects = config.spaces.projects();
+        assert_eq!(
+            projects
+                .iter()
+                .map(|project| project.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["project:ok"],
+            "only the usable project survives"
+        );
+        assert_eq!(projects[0].name, "Herdr");
+        assert_eq!(projects[0].icon.as_deref(), Some("🚀"));
+        assert_eq!(
+            projects[0].repo_roots,
+            vec![std::path::PathBuf::from("/repo/a")],
+            "blank repos entries are dropped, not treated as members"
+        );
+        assert_eq!(projects[0].space_keys, vec!["a:t4f".to_string()]);
+        assert_eq!(
+            config.spaces.diagnostics().len(),
+            3,
+            "each dropped project is reported: {:?}",
+            config.spaces.diagnostics()
+        );
+    }
+
+    // TP-PROJ-CONF-01.
+    #[test]
+    fn space_project_entry_problem_rejects_unusable_entries() {
+        let usable = SpaceProjectEntry {
+            name: String::new(),
+            key: "project:x".into(),
+            icon: String::new(),
+            repos: vec!["~/panel".into()],
+            spaces: Vec::new(),
+        };
+        assert_eq!(space_project_entry_problem(&usable), None);
+
+        let mut no_key = usable.clone();
+        no_key.key = "  ".into();
+        assert_eq!(space_project_entry_problem(&no_key), Some("has no key"));
+
+        let mut relative = usable.clone();
+        relative.repos = vec!["panel".into()];
+        assert_eq!(
+            space_project_entry_problem(&relative),
+            Some("has a repo that is not an absolute path")
+        );
+
+        let mut no_members = usable.clone();
+        no_members.repos = Vec::new();
+        no_members.spaces = vec!["   ".into()];
+        assert_eq!(
+            space_project_entry_problem(&no_members),
+            Some("has no usable repos or spaces member")
+        );
+
+        let mut spaces_only = usable.clone();
+        spaces_only.repos = Vec::new();
+        spaces_only.spaces = vec!["a:t4f".into()];
+        assert_eq!(
+            space_project_entry_problem(&spaces_only),
+            None,
+            "a project may consist of promoted spaces alone"
+        );
+    }
+
+    // TP-PROJ-CONF-02.
+    #[test]
+    fn projects_diagnostics_report_duplicate_project_keys() {
+        let config: Config = toml::from_str(
+            r#"
+[[spaces.project]]
+key = "project:dup"
+repos = ["/repo/a"]
+
+[[spaces.project]]
+key = "project:dup"
+repos = ["/repo/b"]
+"#,
+        )
+        .expect("config parses");
+
+        assert!(
+            config
+                .spaces
+                .diagnostics()
+                .iter()
+                .any(|d| d.contains("already used by an earlier project")),
+            "a duplicate project key must be reported: {:?}",
+            config.spaces.diagnostics()
+        );
+    }
+
+    #[test]
+    fn spaces_project_name_falls_back_to_key() {
+        let config: Config = toml::from_str(
+            r#"
+[[spaces.project]]
+key = "project:herdr"
+repos = ["/repo/a"]
+"#,
+        )
+        .expect("config parses");
+        assert_eq!(config.spaces.projects()[0].name, "project:herdr");
+        assert_eq!(
+            config.spaces.projects()[0].icon,
+            None,
+            "a blank icon means \"use the configured default\", not an empty glyph"
+        );
+    }
+
+    // TP-ICON-02 (parse half; the render half lives in ui::sidebar).
+    #[test]
+    fn split_rules_carry_optional_icons() {
+        let config: Config = toml::from_str(
+            r#"
+[[spaces.split]]
+repo = "/repo/ok"
+match = ["feat/*"]
+key = "panel:feat"
+icon = " 🌐 "
+
+[[spaces.split]]
+repo = "/repo/ok"
+match = ["fix/*"]
+key = "panel:fix"
+"#,
+        )
+        .expect("config parses");
+        let rules = config.spaces.rules();
+        assert_eq!(rules[0].icon.as_deref(), Some("🌐"));
+        assert_eq!(rules[1].icon, None);
+    }
+
+    // TP-ICON-04.
+    #[test]
+    fn space_icons_defaults_and_partial_override() {
+        let defaults = SpacesConfig::default().icons;
+        assert_eq!(
+            (
+                defaults.project.as_str(),
+                defaults.branch.as_str(),
+                defaults.chat.as_str()
+            ),
+            ("📁", "⎇", "📄"),
+            "row-kind icons work without any config"
+        );
+
+        let config: Config = toml::from_str(
+            r#"
+[spaces.icons]
+chat = "✉"
+"#,
+        )
+        .expect("config parses");
+        assert_eq!(config.spaces.icons.chat, "✉");
+        assert_eq!(
+            config.spaces.icons.branch, "⎇",
+            "an unmentioned icon keeps its default"
         );
     }
 

@@ -120,6 +120,36 @@ The first matching rule wins, in config order. Checkouts no rule claims keep the
 
 Rules are resolved when the sidebar renders, not stored in the session, so `herdr server reload-config` regroups every open workspace immediately. An unusable rule — no `repo`, a relative `repo`, no `key`, no pattern — is reported and skipped rather than failing the config load, and two rules sharing a `key` are reported because they would silently merge two modules into one space.
 
+A rule may also carry an `icon`, a glyph drawn before the group header's label.
+
+## Gathering repositories and spaces under a project
+
+One level above the split rules, `[[spaces.project]]` entries gather whole repositories and individual spaces under a single top-level header, so several repositories serving one product read as one project:
+
+```toml
+[[spaces.project]]
+name = "herdr"
+key = "project:herdr"
+icon = "🚀"
+repos = ["~/projects/herdr", "~/projects/herdr-web"]
+spaces = []
+```
+
+`repos` claims every space of those repositories — the repository space itself and any spaces split out of it. `spaces` claims individual space keys regardless of repository; `herdr space promote` writes entries of that shape. `key` stores the project's collapse state and must be unique; `name` falls back to the key when blank, and `icon` falls back to `spaces.icons.project`.
+
+Projects follow the same rules as split rules: the first matching project wins in config order, resolution happens at render time so `herdr server reload-config` regroups immediately, an unusable entry — no `key`, a relative repo, no usable member — is reported and skipped, and a duplicate `key` is reported because two projects would share one collapse state. An empty project list leaves the sidebar exactly as it was.
+
+## Row icons in the Spaces tree
+
+`[spaces.icons]` sets the default glyph per row kind — project headers, workspace (branch) rows, and chat drawer rows. Every field has a working default, so the table is only written to change taste. An empty string disables that glyph.
+
+```toml
+[spaces.icons]
+project = "📁"
+branch = "⎇"
+chat = "📄"
+```
+
 ## Remote attach
 
 Remote attach manages its SSH connection with a temporary keepalive and connection-reuse fallback by default.

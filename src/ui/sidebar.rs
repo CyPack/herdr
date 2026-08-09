@@ -4507,6 +4507,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             patterns: patterns.iter().map(|p| (*p).to_string()).collect(),
             key: key.to_string(),
             label: label.to_string(),
+            icon: None,
         }
     }
 
