@@ -500,14 +500,17 @@ impl SpacesConfig {
                     .map(|problem| format!("spaces.split[{index}] {problem}; ignoring"))
             })
             .collect();
-        // A duplicate key would silently merge two modules into one space,
-        // which looks like a grouping bug rather than a config typo.
+        // A duplicate key inside one repository would silently merge two of
+        // its modules, which looks like a grouping bug rather than a config
+        // typo. Across repositories the same key is deliberate: it gathers
+        // several repositories' checkouts into one module (TP-SPLIT-CONF-04).
         for (index, entry) in self.split.iter().enumerate() {
             let key = entry.key.trim();
-            if !key.is_empty() && !seen_keys.insert(key.to_string()) {
+            let repo = crate::worktree::expand_tilde_absolute_path(entry.repo.trim());
+            if !key.is_empty() && !seen_keys.insert((repo, key.to_string())) {
                 diagnostics.push(format!(
-                    "spaces.split[{index}] key {key:?} is already used by an earlier rule; \
-                     both rules will share one space"
+                    "spaces.split[{index}] key {key:?} is already used by an earlier rule \
+                     for the same repository; both rules will share one space"
                 ));
             }
         }
@@ -2336,6 +2339,33 @@ key = "panel:dup"
                 .iter()
                 .any(|d| d.contains("already used by an earlier rule")),
             "a duplicate key must be reported: {:?}",
+            config.spaces.diagnostics()
+        );
+    }
+
+    // TP-SPLIT-CONF-04: the same key in two different repositories is a
+    // deliberate cross-repository module, not a typo — the sidebar gathers
+    // both repositories' checkouts under one group, so no warning banner.
+    #[test]
+    fn spaces_diagnostics_ignore_shared_key_across_repos() {
+        let config: Config = toml::from_str(
+            r#"
+[[spaces.split]]
+repo = "/repo/fork"
+match = ["herdr-web"]
+key = "herdr:web"
+
+[[spaces.split]]
+repo = "/repo/pwa"
+match = ["main"]
+key = "herdr:web"
+"#,
+        )
+        .expect("config parses");
+
+        assert!(
+            config.spaces.diagnostics().is_empty(),
+            "two repositories may share one module key on purpose: {:?}",
             config.spaces.diagnostics()
         );
     }

@@ -4881,6 +4881,53 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         );
     }
 
+    // TP-SPLIT-CONF-04: one module key spanning two repositories gathers both
+    // repositories' checkouts under a single group header — the render half of
+    // the "shared key across repos is deliberate" contract.
+    #[test]
+    fn two_repositories_sharing_a_space_key_render_one_module_group() {
+        let mut app = AppState::test_new();
+        let mut pwa = crate::workspace::Workspace::test_new("pwa");
+        pwa.cached_git_branch = Some("main".into());
+        pwa.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "/repo/pwa/.git".into(),
+            label: "pwa".into(),
+            repo_root: std::path::PathBuf::from("/repo/pwa"),
+            checkout_path: std::path::PathBuf::from("/repo/pwa"),
+            is_linked_worktree: false,
+        });
+        app.workspaces = vec![worktree_on_branch("alpha", "herdr-web"), pwa];
+        app.space_split_rules = vec![
+            split_rule(&["herdr-web"], "herdr:web", "Web"),
+            crate::spaces::SpaceSplitRule {
+                repo_root: std::path::PathBuf::from("/repo/pwa"),
+                patterns: vec!["main".to_string()],
+                key: "herdr:web".to_string(),
+                label: "Web".to_string(),
+                icon: None,
+            },
+        ];
+
+        let entries = workspace_list_entries(&app);
+        assert_eq!(
+            entries,
+            vec![
+                WorkspaceListEntry::GroupHeader {
+                    space_key: "herdr:web".into()
+                },
+                WorkspaceListEntry::Workspace {
+                    ws_idx: 0,
+                    indented: true
+                },
+                WorkspaceListEntry::Workspace {
+                    ws_idx: 1,
+                    indented: true
+                },
+            ],
+            "a shared key must merge checkouts from both repositories into one module group"
+        );
+    }
+
     #[test]
     fn config_space_with_a_single_member_stays_flat() {
         let mut app = AppState::test_new();
