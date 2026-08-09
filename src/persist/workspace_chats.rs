@@ -614,6 +614,7 @@ mod tests {
             sidebar_width: None,
             sidebar_section_split: None,
             collapsed_space_keys: Default::default(),
+            collapsed_project_keys: Default::default(),
             files_tab: None,
         }
     }

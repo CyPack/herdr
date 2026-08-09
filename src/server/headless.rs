@@ -1157,6 +1157,7 @@ impl HeadlessServer {
             &self.app.state.shell_presentation,
             self.app.state.sidebar_section_split,
             self.app.state.collapsed_space_keys.clone(),
+            self.app.state.collapsed_project_keys.clone(),
             self.app.state.files_tab_snapshot(),
         );
 

@@ -792,6 +792,28 @@ impl AppState {
                         return None;
                     }
 
+                    // TP-PROJ-GROUP-02: the project header folds and unfolds
+                    // its project, and does nothing else — TP-TREE-14's rule,
+                    // one level up, matched from its own vector for the same
+                    // reason.
+                    if let Some(head) = self
+                        .view
+                        .workspace_project_header_areas
+                        .iter()
+                        .find(|head| {
+                            mouse.row == head.rect.y
+                                && mouse.column >= head.rect.x
+                                && mouse.column < head.rect.x + head.rect.width
+                        })
+                        .cloned()
+                    {
+                        if !self.collapsed_project_keys.remove(&head.project_key) {
+                            self.collapsed_project_keys.insert(head.project_key);
+                        }
+                        self.mark_session_dirty();
+                        return None;
+                    }
+
                     // "+" on the trailing edge starts a chat in that workspace.
                     if let Some(card) = cards
                         .iter()

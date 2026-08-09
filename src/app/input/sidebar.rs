@@ -1567,6 +1567,53 @@ mod tests {
         assert!(!app.state.collapsed_space_keys.contains("repo-key"));
     }
 
+    // TP-PROJ-GROUP-02: the project header folds and unfolds its project, and
+    // does nothing else — TP-TREE-14's rule, one level up.
+    #[test]
+    fn clicking_project_header_toggles_project_only() {
+        let mut app = app_for_mouse_test();
+        app.state.workspaces = vec![Workspace::test_new("main"), Workspace::test_new("issue")];
+        for (idx, checkout_path) in ["/repo/herdr", "/repo/herdr-issue"].into_iter().enumerate() {
+            app.state.workspaces[idx].worktree_space =
+                Some(crate::workspace::WorktreeSpaceMembership {
+                    key: "repo-key".into(),
+                    label: "herdr".into(),
+                    repo_root: "/repo/herdr".into(),
+                    checkout_path: checkout_path.into(),
+                    is_linked_worktree: idx > 0,
+                });
+        }
+        app.state.space_projects = vec![crate::spaces::SpaceProject {
+            key: "project:herdr".into(),
+            name: "herdr".into(),
+            icon: None,
+            repo_roots: vec!["/repo/herdr".into()],
+            space_keys: Vec::new(),
+        }];
+        app.state.active = None;
+        app.state.mode = Mode::Terminal;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let header = app.state.view.workspace_project_header_areas[0].rect;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            header.x,
+            header.y,
+        ));
+
+        assert_eq!(app.state.active, None);
+        assert!(app.state.workspace_press.is_none());
+        assert!(app.state.collapsed_project_keys.contains("project:herdr"));
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            header.x,
+            header.y,
+        ));
+
+        assert!(!app.state.collapsed_project_keys.contains("project:herdr"));
+    }
+
     #[test]
     fn wheel_workspace_selection_follows_grouped_visual_order_without_scrollbar() {
         let mut app = app_for_mouse_test();

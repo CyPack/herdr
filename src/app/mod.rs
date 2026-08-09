@@ -518,6 +518,7 @@ impl App {
             sidebar_width_source,
             sidebar_section_split,
             collapsed_space_keys,
+            collapsed_project_keys,
             restored_files_tab,
         ) = if no_session {
             (
@@ -528,6 +529,7 @@ impl App {
                 config.ui.sidebar_start_collapsed,
                 state::SidebarWidthSource::ConfigDefault,
                 0.5_f32,
+                std::collections::HashSet::new(),
                 std::collections::HashSet::new(),
                 None,
             )
@@ -573,6 +575,7 @@ impl App {
                     },
                     snap.sidebar_section_split.unwrap_or(0.5),
                     snap.collapsed_space_keys,
+                    snap.collapsed_project_keys,
                     snap.files_tab.clone(),
                 )
             } else {
@@ -592,6 +595,7 @@ impl App {
                     },
                     snap.sidebar_section_split.unwrap_or(0.5),
                     snap.collapsed_space_keys,
+                    snap.collapsed_project_keys,
                     snap.files_tab.clone(),
                 )
             }
@@ -604,6 +608,7 @@ impl App {
                 config.ui.sidebar_start_collapsed,
                 state::SidebarWidthSource::ConfigDefault,
                 0.5_f32,
+                std::collections::HashSet::new(),
                 std::collections::HashSet::new(),
                 None,
             )
@@ -750,7 +755,10 @@ impl App {
             worktree_remove: None,
             worktree_directory,
             collapsed_space_keys,
+            collapsed_project_keys,
             space_split_rules: config.spaces.rules(),
+            space_projects: config.spaces.projects(),
+            space_icons: config.spaces.icons.clone(),
             projects_pinned,
             projects_sessions: Vec::new(),
             preview_placement: config.preview.placement,
@@ -797,6 +805,7 @@ impl App {
                 workspace_card_areas: Vec::new(),
                 workspace_chat_row_areas: Vec::new(),
                 workspace_group_header_areas: Vec::new(),
+                workspace_project_header_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),
                 stage_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
@@ -1130,6 +1139,7 @@ impl App {
             app.state.sidebar_section_split = split;
         }
         app.state.collapsed_space_keys = snapshot.collapsed_space_keys.clone();
+        app.state.collapsed_project_keys = snapshot.collapsed_project_keys.clone();
         app.state.mode = if app.state.active.is_some() {
             state::Mode::Terminal
         } else {
@@ -1848,6 +1858,8 @@ impl App {
         // against.
         if !invalid_section("spaces") {
             self.state.space_split_rules = config.spaces.rules();
+            self.state.space_projects = config.spaces.projects();
+            self.state.space_icons = config.spaces.icons.clone();
         }
 
         if !invalid_section("theme") {

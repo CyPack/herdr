@@ -515,6 +515,10 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
     let mut group_idx = 0usize;
     for entry in crate::ui::sidebar::workspace_list_entries(app) {
         match entry {
+            // The mobile drawer's project treatment lands with the mobile
+            // parity work on this branch; until then the drawer walks the
+            // spaces directly, exactly as it did before projects existed.
+            crate::ui::sidebar::WorkspaceListEntry::ProjectHeader { .. } => {}
             crate::ui::sidebar::WorkspaceListEntry::GroupHeader { space_key } => {
                 let collapsed = app.collapsed_space_keys.contains(&space_key);
                 rows.push(DrawerRow {

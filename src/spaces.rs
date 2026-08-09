@@ -81,9 +81,6 @@ pub fn resolve_space_rule<'a>(
 /// One `[[spaces.project]]` umbrella after validation: a top-level sidebar
 /// group gathering whole repositories and individual spaces under one header,
 /// so several repositories serving one product read as one project.
-// Consumed by the sidebar tree entries in the next commit of this branch; the
-// allow dies there (bin crate: test-only callers count as dead).
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpaceProject {
     /// Key project collapse state is stored under. Must be unique per project.
@@ -105,8 +102,6 @@ impl SpaceProject {
     /// Whether this project claims the space `space_key`, whose members live
     /// in `repo_root`. Explicit space keys are the sharper claim and are tried
     /// first; repository membership is the broad one.
-    // Consumed by the sidebar tree entries in the next commit of this branch.
-    #[allow(dead_code)]
     pub fn claims(&self, space_key: &str, repo_root: Option<&Path>) -> bool {
         self.space_keys.iter().any(|key| key == space_key)
             || repo_root.is_some_and(|root| self.repo_roots.iter().any(|repo| repo == root))
@@ -119,8 +114,6 @@ impl SpaceProject {
 /// which project a space lands in stays readable from the config file
 /// (TP-PROJ-MATCH-03). An empty project list claims nothing, so a sidebar
 /// without `[[spaces.project]]` renders as it always has (TP-PROJ-MATCH-01).
-// Consumed by the sidebar tree entries in the next commit of this branch.
-#[allow(dead_code)]
 pub fn resolve_project<'a>(
     projects: &'a [SpaceProject],
     space_key: &str,

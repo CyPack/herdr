@@ -454,9 +454,6 @@ impl SpacesConfig {
 
     /// Validated projects in config order, `~` expanded. Unusable entries are
     /// dropped (see [`Self::diagnostics`]).
-    // Consumed by AppState wiring in the next commit of this branch; the allow
-    // dies there (bin crate: test-only callers count as dead).
-    #[allow(dead_code)]
     pub fn projects(&self) -> Vec<crate::spaces::SpaceProject> {
         self.project
             .iter()

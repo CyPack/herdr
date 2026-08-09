@@ -28,12 +28,26 @@ Format and rules: [`README.md`](README.md).
 | TP-PROJ-CONF-01 | An unusable project entry (no key, relative repo, no usable member) is dropped and reported, never fatal. | One typo in `[[spaces.project]]` takes down the whole config load. | `space_project_entry_problem_rejects_unusable_entries`, `spaces_projects_drop_unusable_entries` |
 | TP-PROJ-CONF-02 | A duplicate project key is reported, because two projects sharing a key share one collapse state. | The shared fold reads as a folding bug and is debugged in the sidebar instead of in the config. | `projects_diagnostics_report_duplicate_project_keys` |
 
-## Row icons (config half)
-
-The render half of these behaviors — where the glyphs are actually drawn —
-lands with the tree render work and extends these rows with its test names.
+## Grouping and folding
 
 | ID | Behavior | Breaks if lost | Verified by |
 |---|---|---|---|
-| TP-ICON-02 | A rule's or project's own `icon` overrides the row-kind default; blank means "use the default", not "draw an empty glyph". | Per-module icons stop being configurable, or a blank icon renders as a hole in every row. | `split_rules_carry_optional_icons`, `spaces_project_name_falls_back_to_key` |
+| TP-PROJ-GROUP-01 | The project takes a top-level row of its own, and everything it gathers — module headers, checkouts, chat drawers — steps in one level under it. | The four-level tree collapses back to flat peers: the umbrella stops reading as an umbrella. | `a_project_gathers_its_spaces_under_one_top_level_header`, `workspace_rows_shift_one_step_under_a_project` |
+| TP-PROJ-GROUP-02 | Folding a project — by click or key — hides everything but the checkout the user is standing in, and the header click does nothing else. | Folding loses the user's place, or a header click switches workspaces as a side effect. | `a_collapsed_project_keeps_the_active_checkout_visible`, `clicking_project_header_toggles_project_only` |
+| TP-PROJ-GROUP-03 | Folded, the project header answers for everything it hides with one aggregate state dot. | A folded project goes silent: a blocked agent inside it becomes invisible. | `collapsed_project_header_carries_an_aggregate_state_dot` |
+| TP-PROJ-GROUP-04 | Spaces and workspaces no project claims render exactly as before, in workspace order, after the project blocks they interleave with. | Adding one project re-groups checkouts it never mentioned. | `spaces_outside_a_project_render_after_it_unchanged`, `entries_without_projects_have_no_project_header` |
+
+## Persistence
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-PROJ-PERS-01 | Project folds ride the session file like space folds; a session written before projects existed still loads. | Every restart forgets the folds, or an old session file stops loading at all. | `capture_contract_tracks_project_folds` |
+
+## Row icons
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-ICON-01 | Every row kind wears its glyph: project headers their icon, checkout rows the branch glyph, chat rows the chat glyph — widths measured, never assumed. | Row kinds stop being tellable apart at a glance, which is the reason the icons exist. | `workspace_and_chat_rows_carry_their_kind_icons`, `project_header_row_draws_chevron_icon_and_name` |
+| TP-ICON-02 | A rule's or project's own `icon` overrides the row-kind default; blank means "use the default", not "draw an empty glyph". | Per-module icons stop being configurable, or a blank icon renders as a hole in every row. | `split_rules_carry_optional_icons`, `spaces_project_name_falls_back_to_key`, `group_header_under_a_project_is_indented_and_shows_its_rule_icon` |
+| TP-ICON-03 | A chat row carries the chat glyph and never a state dot, extending TP-WSCHAT-20's rule. | Chat rows start impersonating workspaces, and the attention column lies. | `workspace_and_chat_rows_carry_their_kind_icons` |
 | TP-ICON-04 | Row-kind icon defaults live in `[spaces.icons]` and work without any config; a partial table keeps the unmentioned defaults. | Icons become all-or-nothing: setting one glyph silently blanks the other two. | `space_icons_defaults_and_partial_override` |

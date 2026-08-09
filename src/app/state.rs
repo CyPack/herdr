@@ -712,6 +712,16 @@ pub struct WorkspaceGroupHeaderArea {
     pub space_key: String,
 }
 
+/// One `[[spaces.project]]` header row, kept in its own vector for the same
+/// reason as [`WorkspaceGroupHeaderArea`]: a project header is neither a
+/// workspace nor a space, so clicks on it must resolve through its own key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceProjectHeaderArea {
+    pub rect: Rect,
+    /// The project key this header folds and unfolds.
+    pub project_key: String,
+}
+
 /// Cached Claude Code chat sessions for one pinned project directory. This is
 /// TUI/client-layer presentation state: the reader ([`crate::claude_sessions`])
 /// fills it on demand, never during render (CLAUDE.md render-purity boundary).
@@ -1603,6 +1613,8 @@ pub struct ViewState {
     /// Worktree-group header rows, kept apart for the same reason: a header is
     /// not a workspace, so it must never be resolvable through a ws_idx.
     pub workspace_group_header_areas: Vec<WorkspaceGroupHeaderArea>,
+    /// Project header rows, one per `[[spaces.project]]` umbrella on screen.
+    pub workspace_project_header_areas: Vec<WorkspaceProjectHeaderArea>,
     /// Hit areas for the Spaces/Projects/Files header tabs (one per
     /// `SidebarTab::ALL`, in order). Empty when the sidebar is collapsed.
     pub sidebar_tab_hit_areas: Vec<Rect>,
@@ -3054,10 +3066,20 @@ pub struct AppState {
     pub worktree_remove: Option<WorktreeRemoveState>,
     pub worktree_directory: std::path::PathBuf,
     pub collapsed_space_keys: std::collections::HashSet<String>,
+    /// Folded `[[spaces.project]]` headers, keyed by the project's `key`.
+    /// Same lifecycle as `collapsed_space_keys`: session-persisted UI state.
+    pub collapsed_project_keys: std::collections::HashSet<String>,
     /// Validated `[[spaces.split]]` rules, in config order. A checkout claimed
     /// by one of these groups under the rule's key instead of its repository's.
     /// Config-derived presentation state: refreshed on load and on reload.
     pub space_split_rules: Vec<crate::spaces::SpaceSplitRule>,
+    /// Validated `[[spaces.project]]` umbrellas, in config order. A space
+    /// claimed by one of these nests under the project's top-level header.
+    /// Config-derived presentation state: refreshed on load and on reload.
+    pub space_projects: Vec<crate::spaces::SpaceProject>,
+    /// Row-kind icons for the Spaces tree (`[spaces.icons]`), defaults filled.
+    /// Config-derived presentation state: refreshed on load and on reload.
+    pub space_icons: crate::config::SpaceIconsConfig,
     /// Expanded, absolute project directories pinned to the Projects tab, in
     /// config order (`[projects] pinned` with `~` resolved). TUI/client state.
     pub projects_pinned: Vec<std::path::PathBuf>,
@@ -3953,7 +3975,10 @@ impl AppState {
             worktree_remove: None,
             worktree_directory: std::path::PathBuf::from("/tmp/herdr-worktrees"),
             collapsed_space_keys: std::collections::HashSet::new(),
+            collapsed_project_keys: std::collections::HashSet::new(),
             space_split_rules: Vec::new(),
+            space_projects: Vec::new(),
+            space_icons: Default::default(),
             projects_pinned: Vec::new(),
             projects_sessions: Vec::new(),
             preview_bindings: Vec::new(),
@@ -3994,6 +4019,7 @@ impl AppState {
                 workspace_card_areas: Vec::new(),
                 workspace_chat_row_areas: Vec::new(),
                 workspace_group_header_areas: Vec::new(),
+                workspace_project_header_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
                 app_dock_entry_areas: Vec::new(),

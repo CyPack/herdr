@@ -254,6 +254,7 @@ fn workspace_row_height_in_body(
 fn workspace_entry_gap(app: &AppState, entries: &[WorkspaceListEntry], entry_idx: usize) -> u16 {
     match entries.get(entry_idx.saturating_add(1)) {
         Some(WorkspaceListEntry::GroupHeader { .. })
+        | Some(WorkspaceListEntry::ProjectHeader { .. })
         | Some(WorkspaceListEntry::Workspace {
             indented: false, ..
         }) => app.sidebar_spaces.row_gap,
@@ -343,6 +344,60 @@ pub(crate) fn space_header_display_label(
         .filter(|space| space_member_indices(app, &space.key).len() >= 2)
         .map(|space| space.label)
         .unwrap_or(workspace_label)
+}
+
+/// The project a workspace's space belongs to, if any (TP-PROJ-MATCH-02).
+pub(crate) fn workspace_project(
+    app: &AppState,
+    ws_idx: usize,
+) -> Option<&crate::spaces::SpaceProject> {
+    let space = effective_space(app, ws_idx)?;
+    let repo_root = app
+        .workspaces
+        .get(ws_idx)
+        .and_then(|ws| ws.worktree_space())
+        .map(|membership| membership.repo_root.clone());
+    crate::spaces::resolve_project(&app.space_projects, &space.key, repo_root.as_deref())
+}
+
+/// The project claiming `space_key`, resolved through the space's members.
+fn project_for_space_key<'a>(
+    app: &'a AppState,
+    space_key: &str,
+) -> Option<&'a crate::spaces::SpaceProject> {
+    (0..app.workspaces.len())
+        .find(|idx| effective_space(app, *idx).is_some_and(|space| space.key == space_key))
+        .and_then(|idx| workspace_project(app, idx))
+}
+
+/// The configured project behind a header row's key.
+fn project_for_key<'a>(
+    app: &'a AppState,
+    project_key: &str,
+) -> Option<&'a crate::spaces::SpaceProject> {
+    app.space_projects
+        .iter()
+        .find(|project| project.key == project_key)
+}
+
+/// The icon of the rule that shaped this space, if the rule set one.
+fn space_rule_icon<'a>(app: &'a AppState, space_key: &str) -> Option<&'a str> {
+    app.space_split_rules
+        .iter()
+        .find(|rule| rule.key == space_key)
+        .and_then(|rule| rule.icon.as_deref())
+}
+
+// TP-PROJ-GROUP-03: folded, the project answers for every workspace it hides.
+fn project_aggregate_state(app: &AppState, project_key: &str) -> (AgentState, bool) {
+    (0..app.workspaces.len())
+        .filter(|idx| {
+            workspace_project(app, *idx).is_some_and(|project| project.key == project_key)
+        })
+        .filter_map(|idx| app.workspaces.get(idx))
+        .map(|ws| ws.aggregate_state(&app.terminals))
+        .max_by_key(|(state, seen)| workspace_attention_priority(*state, *seen))
+        .unwrap_or((AgentState::Unknown, true))
 }
 
 fn space_aggregate_state(app: &AppState, key: &str) -> (AgentState, bool) {
@@ -445,6 +500,15 @@ pub(crate) enum WorkspaceListEntry {
     GroupHeader {
         space_key: String,
     },
+    /// A `[[spaces.project]]` umbrella, on a row of its own above the spaces
+    /// it gathers.
+    ///
+    /// TP-PROJ-GROUP-01: like the repository header it carries no `ws_idx`, so
+    /// it can never be folded into the workspace-indexed area vector; folding
+    /// state is keyed by the project's config `key`.
+    ProjectHeader {
+        project_key: String,
+    },
     Workspace {
         ws_idx: usize,
         indented: bool,
@@ -511,7 +575,8 @@ pub(crate) fn workspace_chat_toggle_cell(app: &AppState, card_rect: Rect, ws_idx
     if card_rect.width < 4 || workspace_chat_rows_for(app, ws_idx).is_empty() {
         return Rect::default();
     }
-    let depth = u16::from(workspace_is_group_member(app, ws_idx));
+    let depth = u16::from(workspace_is_group_member(app, ws_idx))
+        + u16::from(workspace_project(app, ws_idx).is_some());
     Rect::new(
         card_rect.x + depth * ROW_INDENT_STEP,
         card_rect.y,
@@ -660,73 +725,177 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
     let active_group =
         visible_group_idx.and_then(|idx| effective_space(app, idx).map(|space| space.key));
 
+    // TP-PROJ-MATCH-02: a space's project is resolved once, through the
+    // repository its members live in — so a config space split out of a repo
+    // follows that repo into its project, and a promoted space key matches
+    // regardless of repository.
+    let project_of_space: std::collections::HashMap<String, String> = members_by_key
+        .iter()
+        .filter_map(|(key, members)| {
+            let repo_root = members
+                .first()
+                .and_then(|idx| app.workspaces.get(*idx))
+                .and_then(|ws| ws.worktree_space())
+                .map(|space| space.repo_root.clone());
+            crate::spaces::resolve_project(&app.space_projects, key, repo_root.as_deref())
+                .map(|project| (key.clone(), project.key.clone()))
+        })
+        .collect();
+
     let mut emitted_groups = std::collections::HashSet::<String>::new();
+    let mut emitted_projects = std::collections::HashSet::<String>::new();
     let mut entries = Vec::new();
     for ws_idx in 0..app.workspaces.len() {
-        let Some(space) =
-            effective_space(app, ws_idx).filter(|space| grouped_keys.contains(&space.key))
-        else {
-            entries.push(WorkspaceListEntry::Workspace {
+        let space = effective_space(app, ws_idx);
+        let project_key = space
+            .as_ref()
+            .and_then(|space| project_of_space.get(&space.key));
+
+        let Some(project_key) = project_key else {
+            push_space_block(
+                app,
+                &mut entries,
                 ws_idx,
-                indented: false,
-            });
-            push_chat_drawer(app, &mut entries, ws_idx);
+                &members_by_key,
+                &grouped_keys,
+                &mut emitted_groups,
+                force_expanded,
+                visible_group_idx,
+                active_group.as_deref(),
+            );
             continue;
         };
 
-        if !emitted_groups.insert(space.key.clone()) {
+        if !emitted_projects.insert(project_key.clone()) {
             continue;
         }
-
-        let Some(members) = members_by_key.get(&space.key) else {
-            continue;
-        };
-        let Some(parent_idx) = members.iter().copied().find(|idx| {
-            effective_space(app, *idx).is_some_and(|member| member.is_parent_candidate)
-        }) else {
-            entries.push(WorkspaceListEntry::Workspace {
-                ws_idx,
-                indented: false,
-            });
-            push_chat_drawer(app, &mut entries, ws_idx);
-            continue;
-        };
-        let collapsed = !force_expanded && app.collapsed_space_keys.contains(&space.key);
-        // TP-TREE-01: the repository takes a row of its own and owns the
-        // "show the sibling checkouts" arrow. TP-TREE-04: every checkout, the
-        // main one included, is then a child — so the arrow a checkout carries
-        // can only ever mean "show my chats".
-        entries.push(WorkspaceListEntry::GroupHeader {
-            space_key: space.key.clone(),
+        // TP-PROJ-GROUP-01: the project takes a row of its own above the
+        // spaces it gathers, emitted where its first member sits so
+        // workspace order keeps meaning what it meant.
+        entries.push(WorkspaceListEntry::ProjectHeader {
+            project_key: project_key.clone(),
         });
 
-        if collapsed {
-            // TP-TREE-03: a folded group keeps the checkout the user is
-            // standing in, so folding never hides where you are.
-            if let Some(active_idx) =
-                visible_group_idx.filter(|_| active_group.as_deref() == Some(space.key.as_str()))
-            {
+        if !force_expanded && app.collapsed_project_keys.contains(project_key) {
+            // TP-PROJ-GROUP-02: like a folded module (TP-TREE-03), a folded
+            // project keeps the checkout the user is standing in.
+            if let Some(active_idx) = visible_group_idx.filter(|idx| {
+                effective_space(app, *idx)
+                    .is_some_and(|space| project_of_space.get(&space.key) == Some(project_key))
+            }) {
                 entries.push(WorkspaceListEntry::Workspace {
                     ws_idx: active_idx,
                     indented: true,
                 });
                 push_chat_drawer(app, &mut entries, active_idx);
             }
-        } else {
-            // The main checkout leads; the linked worktrees follow in session
-            // order, the order they already had as siblings.
-            for member_idx in
-                std::iter::once(&parent_idx).chain(members.iter().filter(|idx| **idx != parent_idx))
-            {
-                entries.push(WorkspaceListEntry::Workspace {
-                    ws_idx: *member_idx,
-                    indented: true,
-                });
-                push_chat_drawer(app, &mut entries, *member_idx);
+            continue;
+        }
+
+        // Every space the project claims, in workspace order, each laid out
+        // exactly as it would be top-level.
+        for member_idx in ws_idx..app.workspaces.len() {
+            let claimed = effective_space(app, member_idx)
+                .is_some_and(|space| project_of_space.get(&space.key) == Some(project_key));
+            if !claimed {
+                continue;
             }
+            push_space_block(
+                app,
+                &mut entries,
+                member_idx,
+                &members_by_key,
+                &grouped_keys,
+                &mut emitted_groups,
+                force_expanded,
+                visible_group_idx,
+                active_group.as_deref(),
+            );
         }
     }
     entries
+}
+
+/// Lay out one workspace's contribution to the list: a plain row for an
+/// ungrouped checkout, or — on first sight of its space — the whole group
+/// block. Shared between the top-level walk and a project's member walk so
+/// a space renders identically inside and outside a project.
+#[allow(clippy::too_many_arguments)] // internal seam of one function, split for reuse not for API
+fn push_space_block(
+    app: &AppState,
+    entries: &mut Vec<WorkspaceListEntry>,
+    ws_idx: usize,
+    members_by_key: &std::collections::HashMap<String, Vec<usize>>,
+    grouped_keys: &std::collections::HashSet<String>,
+    emitted_groups: &mut std::collections::HashSet<String>,
+    force_expanded: bool,
+    visible_group_idx: Option<usize>,
+    active_group: Option<&str>,
+) {
+    let Some(space) =
+        effective_space(app, ws_idx).filter(|space| grouped_keys.contains(&space.key))
+    else {
+        entries.push(WorkspaceListEntry::Workspace {
+            ws_idx,
+            indented: false,
+        });
+        push_chat_drawer(app, entries, ws_idx);
+        return;
+    };
+
+    if !emitted_groups.insert(space.key.clone()) {
+        return;
+    }
+
+    let Some(members) = members_by_key.get(&space.key) else {
+        return;
+    };
+    let Some(parent_idx) = members
+        .iter()
+        .copied()
+        .find(|idx| effective_space(app, *idx).is_some_and(|member| member.is_parent_candidate))
+    else {
+        entries.push(WorkspaceListEntry::Workspace {
+            ws_idx,
+            indented: false,
+        });
+        push_chat_drawer(app, entries, ws_idx);
+        return;
+    };
+    let collapsed = !force_expanded && app.collapsed_space_keys.contains(&space.key);
+    // TP-TREE-01: the repository takes a row of its own and owns the
+    // "show the sibling checkouts" arrow. TP-TREE-04: every checkout, the
+    // main one included, is then a child — so the arrow a checkout carries
+    // can only ever mean "show my chats".
+    entries.push(WorkspaceListEntry::GroupHeader {
+        space_key: space.key.clone(),
+    });
+
+    if collapsed {
+        // TP-TREE-03: a folded group keeps the checkout the user is
+        // standing in, so folding never hides where you are.
+        if let Some(active_idx) =
+            visible_group_idx.filter(|_| active_group == Some(space.key.as_str()))
+        {
+            entries.push(WorkspaceListEntry::Workspace {
+                ws_idx: active_idx,
+                indented: true,
+            });
+            push_chat_drawer(app, entries, active_idx);
+        }
+    } else {
+        // The main checkout leads; the linked worktrees follow in session
+        // order, the order they already had as siblings.
+        for member_idx in
+            std::iter::once(&parent_idx).chain(members.iter().filter(|idx| **idx != parent_idx))
+        {
+            entries.push(WorkspaceListEntry::Workspace {
+                ws_idx: *member_idx,
+                indented: true,
+            });
+            push_chat_drawer(app, entries, *member_idx);
+        }
+    }
 }
 
 pub(crate) fn workspace_list_rect(area: Rect, split_ratio: f32) -> Rect {
@@ -819,7 +988,9 @@ fn entry_row_metrics(
         // TP-TREE-06: one line. The header has to be measured here or the list
         // would scroll past a row it did draw. It never carries a gap: it must
         // hug the checkouts it introduces.
-        WorkspaceListEntry::GroupHeader { .. } => Some((1, 0)),
+        WorkspaceListEntry::GroupHeader { .. } | WorkspaceListEntry::ProjectHeader { .. } => {
+            Some((1, 0))
+        }
         WorkspaceListEntry::Workspace { ws_idx, indented } => {
             let workspace = app.workspaces.get(*ws_idx)?;
             Some((
@@ -1022,16 +1193,17 @@ pub(crate) fn compute_workspace_list_areas(
     Vec<crate::app::state::WorkspaceCardArea>,
     Vec<crate::app::state::WorkspaceChatRowArea>,
     Vec<crate::app::state::WorkspaceGroupHeaderArea>,
+    Vec<crate::app::state::WorkspaceProjectHeaderArea>,
 ) {
     let ws_area = workspace_list_rect(area, app.sidebar_section_split);
     if ws_area == Rect::default() {
-        return (Vec::new(), Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     }
 
     let metrics = workspace_list_scroll_metrics(app, ws_area);
     let body = workspace_list_body_rect(ws_area, should_show_scrollbar(metrics));
     if body.width == 0 || body.height == 0 {
-        return (Vec::new(), Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     }
 
     let scroll = app.workspace_scroll;
@@ -1040,6 +1212,7 @@ pub(crate) fn compute_workspace_list_areas(
     let mut cards = Vec::new();
     let mut chat_rows = Vec::new();
     let mut group_headers = Vec::new();
+    let mut project_headers = Vec::new();
 
     let entries = workspace_list_entries(app);
     for (entry_idx, entry) in entries.iter().enumerate().skip(scroll) {
@@ -1056,6 +1229,12 @@ pub(crate) fn compute_workspace_list_areas(
                 group_headers.push(crate::app::state::WorkspaceGroupHeaderArea {
                     rect,
                     space_key: space_key.clone(),
+                });
+            }
+            WorkspaceListEntry::ProjectHeader { project_key } => {
+                project_headers.push(crate::app::state::WorkspaceProjectHeaderArea {
+                    rect,
+                    project_key: project_key.clone(),
                 });
             }
             WorkspaceListEntry::Workspace { ws_idx, indented } => {
@@ -1081,7 +1260,7 @@ pub(crate) fn compute_workspace_list_areas(
             .min(body_bottom);
     }
 
-    (cards, chat_rows, group_headers)
+    (cards, chat_rows, group_headers, project_headers)
 }
 
 pub(crate) fn compute_workspace_card_areas(
@@ -1624,6 +1803,15 @@ fn render_workspace_list(
         } else {
             p.overlay0
         });
+        // TP-ICON-01: the branch glyph rides the workspace label itself, so it
+        // renders after the state dot (the pinned state-before-name order),
+        // truncates with the name, and an empty configured glyph turns it off.
+        let branch_icon = app.space_icons.branch.trim();
+        let display_label = if branch_icon.is_empty() {
+            display_label
+        } else {
+            format!("{branch_icon} {display_label}")
+        };
         let token_values = ws.metadata_tokens.values();
         let rows = tokens::space_rows(
             &app.sidebar_spaces,
@@ -1640,7 +1828,11 @@ fn render_workspace_list(
         // Depth is spent once, on indentation, and the disclosure column is
         // reserved on every row whether or not this row has an arrow — so the
         // names of sibling checkouts line up instead of stepping in and out.
-        let name_col = u16::from(card.indented) * ROW_INDENT_STEP + DISCLOSURE_WIDTH;
+        // A project adds one more step for everything it gathers
+        // (TP-PROJ-GROUP-01).
+        let project_shift = u16::from(workspace_project(app, i).is_some());
+        let name_col =
+            (project_shift + u16::from(card.indented)) * ROW_INDENT_STEP + DISCLOSURE_WIDTH;
 
         // TP-TREE-12: the count is information ("how much history is in here"),
         // the plus is an action, and every checkout offers it — starting a
@@ -1753,6 +1945,7 @@ fn render_workspace_list(
         }
     }
 
+    render_workspace_project_headers(app, frame, list_bottom);
     render_workspace_group_headers(app, frame, list_bottom);
 
     render_workspace_chat_rows(app, frame, list_bottom);
@@ -1788,13 +1981,21 @@ pub(crate) fn space_label_for_key(app: &AppState, key: &str) -> String {
 /// TP-TREE-08: this row is the only place a group chevron may appear. It is
 /// drawn from its own area vector, so it can never be mistaken for — or hit
 /// as — one of the checkouts beneath it.
-fn render_workspace_group_headers(app: &AppState, frame: &mut Frame, list_bottom: u16) {
+/// Draw the project umbrella header of every `[[spaces.project]]` block.
+///
+/// TP-PROJ-GROUP-01/03: the row wears the project's own icon and name; folded,
+/// it answers for everything it hides with one aggregate state dot, exactly as
+/// a folded module header does.
+fn render_workspace_project_headers(app: &AppState, frame: &mut Frame, list_bottom: u16) {
     let p = &app.palette;
-    for head in &app.view.workspace_group_header_areas {
+    for head in &app.view.workspace_project_header_areas {
         if head.rect.width == 0 || head.rect.y >= list_bottom {
             continue;
         }
-        let collapsed = app.collapsed_space_keys.contains(&head.space_key);
+        let Some(project) = project_for_key(app, &head.project_key) else {
+            continue;
+        };
+        let collapsed = app.collapsed_project_keys.contains(&head.project_key);
         let mut spans = vec![
             Span::styled(
                 if collapsed {
@@ -1806,6 +2007,66 @@ fn render_workspace_group_headers(app: &AppState, frame: &mut Frame, list_bottom
             ),
             Span::raw(" "),
         ];
+        // TP-ICON-02: the project's own icon wins; the configured default
+        // fills in; an empty string means no glyph at all.
+        let icon = project
+            .icon
+            .as_deref()
+            .unwrap_or(app.space_icons.project.as_str())
+            .trim();
+        if !icon.is_empty() {
+            spans.push(Span::raw(format!("{icon} ")));
+        }
+        if collapsed {
+            let (state, seen) = project_aggregate_state(app, &head.project_key);
+            let (glyph, glyph_style) = state_dot(state, seen, p);
+            spans.push(Span::styled(glyph, glyph_style));
+            spans.push(Span::raw(" "));
+        }
+        let used = spans
+            .iter()
+            .map(|span| super::text::display_width(span.content.as_ref()))
+            .sum::<usize>();
+        spans.push(Span::styled(
+            super::text::truncate_end(
+                &project.name,
+                (head.rect.width as usize).saturating_sub(used),
+            ),
+            Style::default().fg(p.text).add_modifier(Modifier::BOLD),
+        ));
+        frame.render_widget(Paragraph::new(Line::from(spans)), head.rect);
+    }
+}
+
+fn render_workspace_group_headers(app: &AppState, frame: &mut Frame, list_bottom: u16) {
+    let p = &app.palette;
+    for head in &app.view.workspace_group_header_areas {
+        if head.rect.width == 0 || head.rect.y >= list_bottom {
+            continue;
+        }
+        let collapsed = app.collapsed_space_keys.contains(&head.space_key);
+        let mut spans = Vec::new();
+        // TP-PROJ-GROUP-01: inside a project the module header steps in once,
+        // so the umbrella, its modules and their checkouts read as one tree.
+        if project_for_space_key(app, &head.space_key).is_some() {
+            spans.push(Span::raw(" ".repeat(ROW_INDENT_STEP as usize)));
+        }
+        spans.push(Span::styled(
+            if collapsed {
+                DISCLOSURE_CLOSED
+            } else {
+                DISCLOSURE_OPEN
+            },
+            Style::default().fg(p.accent),
+        ));
+        spans.push(Span::raw(" "));
+        // TP-ICON-02: a rule's own icon, when it set one.
+        if let Some(icon) = space_rule_icon(app, &head.space_key) {
+            let icon = icon.trim();
+            if !icon.is_empty() {
+                spans.push(Span::raw(format!("{icon} ")));
+            }
+        }
         // Folded, the header answers for the checkouts it hides; open, each
         // checkout answers for itself and a second dot here would be noise.
         if collapsed {
@@ -1871,8 +2132,11 @@ fn render_workspace_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u1
 
         // TP-TREE-09: the drawer hangs off its checkout's disclosure column,
         // and a rule is drawn down that column so the rows read as contained
-        // by the checkout above them rather than floating under it.
-        let guide_indent = u16::from(workspace_is_group_member(app, row.ws_idx)) * ROW_INDENT_STEP;
+        // by the checkout above them rather than floating under it. Inside a
+        // project the whole block sits one step deeper (TP-PROJ-GROUP-01).
+        let guide_indent = (u16::from(workspace_is_group_member(app, row.ws_idx))
+            + u16::from(workspace_project(app, row.ws_idx).is_some()))
+            * ROW_INDENT_STEP;
         let width = row.rect.width as usize;
         // TP-DRAW-05: every row carries an age. When the transcript itself
         // could not be located the ledger's own sighting answers the same
@@ -1888,7 +2152,16 @@ fn render_workspace_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u1
                     .unwrap_or_default()
             });
         let age_width = super::text::display_width(&age);
-        let prefix_width = guide_indent as usize + 2 + marker.len();
+        // TP-ICON-01/03: the chat glyph, never a state dot — an empty
+        // configured glyph turns the column off.
+        let chat_icon = app.space_icons.chat.trim();
+        let chat_icon_span = if chat_icon.is_empty() {
+            String::new()
+        } else {
+            format!("{chat_icon} ")
+        };
+        let prefix_width =
+            guide_indent as usize + 2 + marker.len() + super::text::display_width(&chat_icon_span);
         let title_budget = width
             .saturating_sub(prefix_width)
             .saturating_sub(if age_width > 0 { age_width + 1 } else { 0 });
@@ -1898,6 +2171,7 @@ fn render_workspace_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u1
                 Span::styled(DRAWER_GUIDE, Style::default().fg(p.surface1)),
                 Span::raw(" "),
                 Span::styled(marker, marker_style),
+                Span::raw(chat_icon_span),
                 Span::styled(
                     super::text::truncate_end(&chat.display_label(), title_budget),
                     title_style,
@@ -2890,7 +3164,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let body = workspace_list_body_rect(workspace_area, false);
 
         let metrics = workspace_list_scroll_metrics(&app, workspace_area);
-        let (cards, _, _headers) = compute_workspace_list_areas(&app, area);
+        let (cards, _, _headers, _) = compute_workspace_list_areas(&app, area);
 
         assert_eq!(metrics.viewport_rows, 1);
         assert_eq!(cards.len(), 1);
@@ -4134,6 +4408,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             .iter()
             .map(|entry| match entry {
                 WorkspaceListEntry::GroupHeader { .. } => "group",
+                WorkspaceListEntry::ProjectHeader { .. } => "project",
                 WorkspaceListEntry::Workspace { .. } => "workspace",
                 WorkspaceListEntry::Chat { .. } => "chat",
                 WorkspaceListEntry::NoChats { .. } => "no-chats",
@@ -4192,7 +4467,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let area = Rect::new(0, 0, 30, 24);
 
         let entries = workspace_list_entries(&app);
-        let (cards, chat_rows, _headers) = compute_workspace_list_areas(&app, area);
+        let (cards, chat_rows, _headers, _) = compute_workspace_list_areas(&app, area);
 
         assert_eq!(entries.len(), 3, "one workspace plus its two chats");
         assert_eq!(cards.len(), 1);
@@ -4217,7 +4492,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let (mut app, key) = app_with_chat_drawer(3);
         app.expanded_chat_workspaces.insert(key);
 
-        let (cards, chat_rows, _headers) =
+        let (cards, chat_rows, _headers, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 24));
 
         assert_eq!(cards.len(), 1, "only real workspaces become cards");
@@ -4697,6 +4972,246 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         );
     }
 
+    fn project_over(key: &str, repos: &[&str], spaces: &[&str]) -> crate::spaces::SpaceProject {
+        crate::spaces::SpaceProject {
+            key: key.to_string(),
+            name: key.to_string(),
+            icon: None,
+            repo_roots: repos.iter().map(std::path::PathBuf::from).collect(),
+            space_keys: spaces.iter().map(|s| (*s).to_string()).collect(),
+        }
+    }
+
+    fn foreign_repo_workspace(name: &str, repo: &str) -> crate::workspace::Workspace {
+        let mut ws = Workspace::test_new(name);
+        ws.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: format!("{repo}-key"),
+            label: name.into(),
+            repo_root: std::path::PathBuf::from(repo),
+            checkout_path: std::path::PathBuf::from(repo),
+            is_linked_worktree: false,
+        });
+        ws.identity_cwd = std::path::PathBuf::from(repo);
+        ws
+    }
+
+    // TP-PROJ-MATCH-01 (render half): no projects configured, no project rows.
+    #[test]
+    fn entries_without_projects_have_no_project_header() {
+        let app = app_with_worktree_tree(30);
+        assert_eq!(
+            entry_kinds(&app),
+            vec!["group", "workspace", "chat", "workspace", "chat"],
+            "without [[spaces.project]] the tree renders exactly as before"
+        );
+    }
+
+    // TP-PROJ-GROUP-01.
+    #[test]
+    fn a_project_gathers_its_spaces_under_one_top_level_header() {
+        let mut app = app_with_worktree_tree(30);
+        app.space_projects = vec![project_over("project:herdr", &["/repo/herdr"], &[])];
+        assert_eq!(
+            entry_kinds(&app),
+            vec!["project", "group", "workspace", "chat", "workspace", "chat"],
+            "the four levels stack: project, module, checkout, chat"
+        );
+    }
+
+    // TP-PROJ-GROUP-02.
+    #[test]
+    fn a_collapsed_project_keeps_the_active_checkout_visible() {
+        let mut app = app_with_worktree_tree(30);
+        app.space_projects = vec![project_over("project:herdr", &["/repo/herdr"], &[])];
+        app.collapsed_project_keys
+            .insert("project:herdr".to_string());
+        app.active = Some(1);
+        app.selected = 1;
+
+        let entries = workspace_list_entries(&app);
+        assert_eq!(
+            entry_kinds(&app),
+            vec!["project", "workspace", "chat"],
+            "folding a project hides everything but the checkout in use"
+        );
+        assert!(
+            matches!(
+                entries[1],
+                WorkspaceListEntry::Workspace {
+                    ws_idx: 1,
+                    indented: true,
+                }
+            ),
+            "the surviving row is the active checkout, drawn as a child"
+        );
+    }
+
+    // TP-PROJ-GROUP-04.
+    #[test]
+    fn spaces_outside_a_project_render_after_it_unchanged() {
+        let mut app = app_with_worktree_tree(30);
+        app.workspaces
+            .push(foreign_repo_workspace("other", "/repo/other"));
+        app.space_projects = vec![project_over("project:herdr", &["/repo/herdr"], &[])];
+
+        let entries = workspace_list_entries(&app);
+        assert_eq!(
+            entry_kinds(&app),
+            vec![
+                "project",
+                "group",
+                "workspace",
+                "chat",
+                "workspace",
+                "chat",
+                "workspace"
+            ],
+            "an unclaimed repository keeps its plain row after the project block"
+        );
+        assert!(
+            matches!(
+                entries[6],
+                WorkspaceListEntry::Workspace {
+                    ws_idx: 2,
+                    indented: false,
+                }
+            ),
+            "the foreign checkout is neither indented nor claimed"
+        );
+    }
+
+    /// Buffer text with runs of spaces squeezed to one. A wide glyph's
+    /// continuation cell scrapes as its own space, so "🚀 x" reads back as
+    /// "🚀  x"; comparing squeezed keeps the asserts about order, not about
+    /// terminal width bookkeeping.
+    fn squeezed_row_text(buffer: &ratatui::buffer::Buffer, row: u16, width: u16) -> String {
+        row_text(buffer, row, width)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn draw_tree(app: &mut AppState, area: Rect) -> ratatui::buffer::Buffer {
+        crate::ui::compute_view(app, area);
+        let mut terminal =
+            Terminal::new(TestBackend::new(area.width, area.height)).expect("test backend");
+        terminal
+            .draw(|frame| render_sidebar(app, &TerminalRuntimeRegistry::new(), frame, area))
+            .expect("draw");
+        terminal.backend().buffer().clone()
+    }
+
+    // TP-PROJ-GROUP-01 (render): the umbrella row wears chevron, icon, name.
+    #[test]
+    fn project_header_row_draws_chevron_icon_and_name() {
+        let mut app = app_with_worktree_tree(40);
+        let mut project = project_over("project:herdr", &["/repo/herdr"], &[]);
+        project.name = "herdr".into();
+        project.icon = Some("🚀".into());
+        app.space_projects = vec![project];
+
+        let area = Rect::new(0, 0, 40, 24);
+        let buffer = draw_tree(&mut app, area);
+        let head = app.view.workspace_project_header_areas[0].rect;
+        let text = squeezed_row_text(&buffer, head.y, area.width);
+        assert!(
+            text.contains("▾ 🚀 herdr"),
+            "chevron, project icon and name in order; got {text:?}"
+        );
+    }
+
+    // TP-PROJ-GROUP-03: folded, the header answers for everything it hides.
+    #[test]
+    fn collapsed_project_header_carries_an_aggregate_state_dot() {
+        let mut app = app_with_worktree_tree(40);
+        app.space_projects = vec![project_over("project:herdr", &["/repo/herdr"], &[])];
+        app.collapsed_project_keys.insert("project:herdr".into());
+
+        let area = Rect::new(0, 0, 40, 24);
+        let buffer = draw_tree(&mut app, area);
+        let head = app.view.workspace_project_header_areas[0].rect;
+        let text = row_text(&buffer, head.y, area.width);
+        assert!(
+            text.contains("▸") && text.contains("·"),
+            "a folded project shows its chevron and one aggregate dot; got {text:?}"
+        );
+    }
+
+    // TP-ICON-01/02: the module header wears its rule's icon, one step in
+    // under a project.
+    #[test]
+    fn group_header_under_a_project_is_indented_and_shows_its_rule_icon() {
+        let mut app = AppState::test_new();
+        // Below the threshold the desktop sidebar is never laid out and every
+        // area vector stays empty — the narrow-area-counts-as-mobile trap.
+        app.mobile_width_threshold = 0;
+        app.workspaces = vec![
+            worktree_on_branch("alpha", "feat/t4f-alpha"),
+            worktree_on_branch("beta", "feat/t4f-beta"),
+        ];
+        let mut rule = split_rule(&["feat/t4f-*"], "herdr:t4f", "T4F BAM");
+        rule.icon = Some("🌐".into());
+        app.space_split_rules = vec![rule];
+        app.space_projects = vec![project_over("project:herdr", &["/repo/herdr"], &[])];
+
+        let area = Rect::new(0, 0, 40, 24);
+        let buffer = draw_tree(&mut app, area);
+        let head = app.view.workspace_group_header_areas[0].rect;
+        let text = squeezed_row_text(&buffer, head.y, area.width);
+        assert!(
+            text.contains("▾ 🌐 T4F BAM"),
+            "module chevron, icon, label in order; got {text:?}"
+        );
+        assert_eq!(
+            find_symbol_x(&buffer, head.y, area.width, "▾"),
+            head.x + ROW_INDENT_STEP,
+            "under a project the module header steps in once"
+        );
+    }
+
+    // TP-ICON-01: workspace rows carry the branch glyph, chats the chat glyph.
+    #[test]
+    fn workspace_and_chat_rows_carry_their_kind_icons() {
+        let (mut app, key) = app_with_chat_drawer(1);
+        app.expanded_chat_workspaces.insert(key);
+
+        let area = Rect::new(0, 0, 40, 24);
+        let buffer = draw_tree(&mut app, area);
+        let card = app.view.workspace_card_areas[0];
+        let chat = app.view.workspace_chat_row_areas[0].clone();
+        assert!(
+            row_text(&buffer, card.rect.y, area.width).contains('⎇'),
+            "a checkout row carries the branch glyph"
+        );
+        assert!(
+            row_text(&buffer, chat.rect.y, area.width).contains('📄'),
+            "a chat row carries the chat glyph"
+        );
+    }
+
+    // TP-PROJ-GROUP-01: everything under a project steps in by one level.
+    #[test]
+    fn workspace_rows_shift_one_step_under_a_project() {
+        let area = Rect::new(0, 0, 40, 24);
+
+        let mut plain = app_with_worktree_tree(40);
+        let plain_buffer = draw_tree(&mut plain, area);
+        let plain_card = plain.view.workspace_card_areas[0];
+        let plain_x = find_symbol_x(&plain_buffer, plain_card.rect.y, area.width, "⎇");
+
+        let mut nested = app_with_worktree_tree(40);
+        nested.space_projects = vec![project_over("project:herdr", &["/repo/herdr"], &[])];
+        let nested_buffer = draw_tree(&mut nested, area);
+        let nested_card = nested.view.workspace_card_areas[0];
+        let nested_x = find_symbol_x(&nested_buffer, nested_card.rect.y, area.width, "⎇");
+
+        assert_eq!(
+            nested_x,
+            plain_x + ROW_INDENT_STEP,
+            "the same checkout renders one step deeper inside a project"
+        );
+    }
+
     fn workspace_with_git_space(name: &str, key: &str) -> crate::workspace::Workspace {
         let mut ws = crate::workspace::Workspace::test_new(name);
         ws.cached_git_space = Some(crate::workspace::GitSpaceMetadata {
@@ -5017,7 +5532,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.sidebar_spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
 
         let area = Rect::new(0, 0, 30, 20);
-        let (cards, _, group_headers) = compute_workspace_list_areas(&app, area);
+        let (cards, _, group_headers, _) = compute_workspace_list_areas(&app, area);
         let drawn_rows: u16 = cards.iter().map(|card| card.rect.height).sum::<u16>()
             + group_headers
                 .iter()
@@ -5074,7 +5589,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         ];
         app.sidebar_spaces.row_gap = 1;
 
-        let (cards, chat_rows, group_headers) =
+        let (cards, chat_rows, group_headers, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 20));
 
         assert!(chat_rows.is_empty());
@@ -5110,7 +5625,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.sidebar_spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
         app.sidebar_spaces.row_gap = 2;
 
-        let (spacious, _, _headers) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
+        let (spacious, _, _headers, _) =
+            compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
         // TP-TREE-06: the three checkouts of one repository are one block and
         // stay compact; the gap falls where the next top-level unit begins.
         assert_eq!(
@@ -5132,7 +5648,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(spacious_metrics.max_offset_from_bottom, 3);
 
         app.sidebar_spaces.row_gap = 0;
-        let (packed, _, _headers) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
+        let (packed, _, _headers, _) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
         assert!(packed
             .windows(2)
             .all(|pair| pair[1].rect.y == pair[0].rect.y + pair[0].rect.height));
@@ -5221,7 +5737,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let area = Rect::new(0, 0, 30, 20);
         app.workspace_scroll = normalized_workspace_scroll(&app, area, 2);
 
-        let (cards, headers, _headers) = compute_workspace_list_areas(&app, area);
+        let (cards, headers, _headers, _) = compute_workspace_list_areas(&app, area);
 
         assert!(headers.is_empty());
         assert_eq!(app.workspace_scroll, 0);
@@ -5268,7 +5784,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.mode = Mode::Terminal;
         app.workspace_scroll = 1;
 
-        let (cards, headers, _headers) =
+        let (cards, headers, _headers, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 12));
 
         assert!(headers.is_empty());

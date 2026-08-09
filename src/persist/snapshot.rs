@@ -168,6 +168,10 @@ pub struct SessionSnapshot {
     pub sidebar_section_split: Option<f32>,
     #[serde(default)]
     pub collapsed_space_keys: std::collections::HashSet<String>,
+    /// Folded `[[spaces.project]]` headers. Defaulted so session files written
+    /// before projects existed keep loading (TP-PROJ-PERS-01).
+    #[serde(default)]
+    pub collapsed_project_keys: std::collections::HashSet<String>,
     /// The Files tab left open at save time, if any.
     ///
     /// Optional and defaulted so session files written before the tab existed
@@ -365,6 +369,8 @@ struct RawSessionSnapshot {
     #[serde(default)]
     collapsed_space_keys: std::collections::HashSet<String>,
     #[serde(default)]
+    collapsed_project_keys: std::collections::HashSet<String>,
+    #[serde(default)]
     files_tab: Option<FilesTabSnapshot>,
 }
 
@@ -403,6 +409,7 @@ fn migrate_snapshot(raw: RawSessionSnapshot) -> Result<SessionSnapshot, String> 
         sidebar_width: raw.sidebar_width,
         sidebar_section_split: raw.sidebar_section_split,
         collapsed_space_keys: raw.collapsed_space_keys,
+        collapsed_project_keys: raw.collapsed_project_keys,
         files_tab: raw.files_tab,
     })
 }
@@ -467,6 +474,7 @@ pub fn capture(
     shell_presentation: &ShellPresentationState,
     sidebar_section_split: f32,
     collapsed_space_keys: std::collections::HashSet<String>,
+    collapsed_project_keys: std::collections::HashSet<String>,
     files_tab: Option<FilesTabSnapshot>,
 ) -> SessionSnapshot {
     SessionSnapshot {
@@ -484,6 +492,7 @@ pub fn capture(
         sidebar_width: Some(sidebar_width),
         sidebar_section_split: Some(sidebar_section_split),
         collapsed_space_keys,
+        collapsed_project_keys,
         files_tab,
     }
 }
@@ -968,6 +977,7 @@ mod tests {
             &state.shell_presentation,
             state.sidebar_section_split,
             state.collapsed_space_keys.clone(),
+            state.collapsed_project_keys.clone(),
             state.files_tab_snapshot(),
         )
     }
@@ -1034,6 +1044,7 @@ mod tests {
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
+            collapsed_project_keys: std::collections::HashSet::new(),
             files_tab: None,
         };
         let json = serde_json::to_string(&snap).unwrap();
@@ -1123,6 +1134,7 @@ mod tests {
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
+            collapsed_project_keys: std::collections::HashSet::new(),
             files_tab: None,
             version: SNAPSHOT_VERSION,
         };
@@ -1561,6 +1573,32 @@ mod tests {
         assert!(snapshot.collapsed_space_keys.contains("repo-key"));
     }
 
+    // TP-PROJ-PERS-01: project folds ride the session file like space folds,
+    // and a session written before projects existed still loads.
+    #[test]
+    fn capture_contract_tracks_project_folds() {
+        let mut state = state_with_workspaces(&["one"]);
+        state.collapsed_project_keys.insert("project:herdr".into());
+
+        let snapshot = capture_from_state(&state);
+        assert!(snapshot.collapsed_project_keys.contains("project:herdr"));
+
+        let json = serde_json::to_string(&snapshot).expect("snapshot serializes");
+        let read_back: SessionSnapshot = serde_json::from_str(&json).expect("snapshot reads back");
+        assert!(read_back.collapsed_project_keys.contains("project:herdr"));
+
+        let mut value: serde_json::Value =
+            serde_json::from_str(&json).expect("snapshot json parses");
+        value
+            .as_object_mut()
+            .expect("snapshot is an object")
+            .remove("collapsed_project_keys")
+            .expect("the field was serialized");
+        let legacy: SessionSnapshot =
+            serde_json::from_value(value).expect("a session file without the field still loads");
+        assert!(legacy.collapsed_project_keys.is_empty());
+    }
+
     #[test]
     fn capture_contract_tracks_worktree_space_membership() {
         let mut state = state_with_workspaces(&["main"]);
@@ -1937,6 +1975,7 @@ mod tests {
             sidebar_width: Some(26),
             sidebar_section_split: Some(0.5),
             collapsed_space_keys: std::collections::HashSet::new(),
+            collapsed_project_keys: std::collections::HashSet::new(),
             files_tab: None,
         };
 

@@ -427,12 +427,16 @@ fn compute_view_internal(
     // current Files activation preserves whichever Spaces/Projects owner was
     // already selected.
     let show_spaces_content = app.sidebar_tab != crate::app::state::SidebarTab::Projects;
-    let (workspace_card_areas, workspace_chat_row_areas, workspace_group_header_areas) =
-        if app.sidebar_collapsed || !show_spaces_content {
-            (Vec::new(), Vec::new(), Vec::new())
-        } else {
-            sidebar::compute_workspace_list_areas(app, sidebar_area)
-        };
+    let (
+        workspace_card_areas,
+        workspace_chat_row_areas,
+        workspace_group_header_areas,
+        workspace_project_header_areas,
+    ) = if app.sidebar_collapsed || !show_spaces_content {
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+    } else {
+        sidebar::compute_workspace_list_areas(app, sidebar_area)
+    };
     let sidebar_tab_hit_areas = if app.sidebar_collapsed {
         Vec::new()
     } else {
@@ -529,6 +533,7 @@ fn compute_view_internal(
         workspace_card_areas,
         workspace_chat_row_areas,
         workspace_group_header_areas,
+        workspace_project_header_areas,
         sidebar_tab_hit_areas,
         project_row_areas,
         app_dock_entry_areas,
@@ -687,6 +692,7 @@ fn compute_mobile_view(
         workspace_card_areas: Vec::new(),
         workspace_chat_row_areas: Vec::new(),
         workspace_group_header_areas: Vec::new(),
+        workspace_project_header_areas: Vec::new(),
         sidebar_tab_hit_areas: Vec::new(),
         stage_tab_hit_areas: Vec::new(),
         project_row_areas: Vec::new(),
@@ -3222,8 +3228,10 @@ mod tests {
 
         // TP-TREE-10 reserves the disclosure column on every row so sibling
         // names line up; the subject here — the state dot leads the name and
-        // no ordinal does — is unchanged.
-        assert!(line1.starts_with("  · one"));
+        // no ordinal does — is unchanged. TP-ICON-01 rides the branch glyph
+        // on the label itself, after the dot, so the order the test pins
+        // still reads state first.
+        assert!(line1.starts_with("  · ⎇ one"));
         assert!(!line1.contains("1 one"));
         assert_eq!(line2, "    main");
 
