@@ -5184,7 +5184,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             "a checkout row carries the branch glyph"
         );
         assert!(
-            row_text(&buffer, chat.rect.y, area.width).contains('📄'),
+            row_text(&buffer, chat.rect.y, area.width).contains('💬'),
             "a chat row carries the chat glyph"
         );
     }

@@ -779,7 +779,7 @@
         {
           "key": "spaces.icons.chat",
           "type": "string",
-          "default": "\"📄\"",
+          "default": "\"💬\"",
           "description": "Glyph drawn before chat rows in a workspace's chat drawer. Empty disables the glyph."
         }
       ]

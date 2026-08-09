@@ -417,7 +417,7 @@ impl Default for SpaceIconsConfig {
         Self {
             project: "📁".to_string(),
             branch: "⎇".to_string(),
-            chat: "📄".to_string(),
+            chat: "💬".to_string(),
         }
     }
 }
@@ -2510,7 +2510,7 @@ key = "panel:fix"
                 defaults.branch.as_str(),
                 defaults.chat.as_str()
             ),
-            ("📁", "⎇", "📄"),
+            ("📁", "⎇", "💬"),
             "row-kind icons work without any config"
         );
 
