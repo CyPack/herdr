@@ -652,6 +652,29 @@ pub(crate) fn workspace_chat_drawer_collapsed(app: &AppState, ws_idx: usize) -> 
     !app.expanded_chat_workspaces.contains(&key)
 }
 
+/// The chat row the selection accent belongs to, when there is one.
+///
+/// TP-FOCUS-01: the accent marks the deepest *visible* focus object. When the
+/// active tab resumes a chat and that workspace's drawer is open, the answer
+/// to "where am I" is the chat row itself, so the accent descends to it and
+/// the workspace card steps back to a quiet active tone. Whenever the drawer
+/// is shut or no chat is resumed this is `None` and the card keeps the accent
+/// (TP-TREE-11) — an invisible selection would be worse than a coarse one.
+pub(crate) fn visible_active_chat(app: &AppState) -> Option<(usize, usize)> {
+    let ws_idx = app.active?;
+    if workspace_chat_drawer_collapsed(app, ws_idx) {
+        return None;
+    }
+    let active_tab = app.workspaces.get(ws_idx)?.active_tab_index();
+    workspace_chat_rows_for(app, ws_idx)
+        .iter()
+        .position(|chat| {
+            app.find_resumed_chat_tab(&chat.session_id)
+                .is_some_and(|(w, tab)| w == ws_idx && tab == active_tab)
+        })
+        .map(|chat_idx| (ws_idx, chat_idx))
+}
+
 /// Append a workspace's chat drawer rows, if it is open.
 fn push_chat_drawer(app: &AppState, entries: &mut Vec<WorkspaceListEntry>, ws_idx: usize) {
     if workspace_chat_drawer_collapsed(app, ws_idx) {
@@ -1750,14 +1773,22 @@ fn render_workspace_list(
         let is_dragged = dragged_ws_idx == Some(i);
         let highlighted = selected || is_active || is_dragged;
         let (agg_state, agg_seen) = ws.aggregate_state(&app.terminals);
+        let chat_carries_accent =
+            is_active && visible_active_chat(app).is_some_and(|(w, _)| w == i);
 
         if highlighted {
-            // TP-TREE-11: the workspace you are in wears the accent outright,
-            // the same sentence the active agent card and the active tab
-            // already speak. Selection while navigating stays a tone apart, so
-            // "where I am" and "what I am pointing at" never read alike.
-            let bg = if is_active {
+            // TP-TREE-11: the accent lives on exactly one focus carrier. The
+            // workspace you are in wears it outright — the same sentence the
+            // active agent card and the active tab speak — unless the drawer
+            // below shows the very chat the active tab resumes; the accent
+            // then descends to that row (TP-FOCUS-01) and the card keeps a
+            // quiet active tone so the two never wear it at once. Selection
+            // while navigating stays a tone apart, so "where I am" and "what
+            // I am pointing at" never read alike.
+            let bg = if is_active && !chat_carries_accent {
                 p.accent
+            } else if is_active {
+                p.surface_dim
             } else if is_dragged {
                 p.surface1
             } else {
@@ -1774,11 +1805,13 @@ fn render_workspace_list(
             }
         }
 
-        let name_style = if is_active {
+        let name_style = if is_active && !chat_carries_accent {
             Style::default()
                 .fg(panel_contrast_fg(p))
                 .add_modifier(Modifier::BOLD)
-        } else if selected || is_dragged {
+        } else if is_active || selected || is_dragged {
+            // Active with the accent down on its chat row: bold carries the
+            // activeness, the contrast ink would be unreadable off-accent.
             Style::default().fg(p.text).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(p.subtext0)
@@ -2119,10 +2152,16 @@ fn render_workspace_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u1
                     .is_some_and(|ws| ws.active_tab_index() == tab_idx)
         });
         let marker = if wired.is_some() { "● " } else { "  " };
+        // TP-FOCUS-01: the focused chat now wears the accent background the
+        // workspace card gave up for it — one carrier, one answer to "where
+        // am I", read the same way the active agent card reads.
         let (title_style, marker_style) = if focused {
             (
-                Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
-                Style::default().fg(p.accent),
+                Style::default()
+                    .fg(panel_contrast_fg(p))
+                    .bg(p.accent)
+                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(panel_contrast_fg(p)).bg(p.accent),
             )
         } else if wired.is_some() {
             (Style::default().fg(p.text), Style::default().fg(p.accent))
@@ -5405,8 +5444,10 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     }
 
     // TP-TREE-11: the workspace you are in wears the accent outright — the
-    // same sentence the active tab and the active agent card speak. A chat row
-    // never takes it, so "which workspace am I in" stays a single answer.
+    // same sentence the active tab and the active agent card speak. In this
+    // fixture no chat is resumed by the active tab, so the accent stays on
+    // the card and no chat row takes it; when one is, the accent descends to
+    // that single row instead (TP-FOCUS-01) — one carrier either way.
     #[test]
     fn the_active_workspace_row_wears_the_accent_and_a_chat_row_never_does() {
         let mut app = app_with_worktree_tree(32);
@@ -5439,6 +5480,80 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 "a chat row must never take the accent background"
             );
         }
+    }
+
+    // TP-FOCUS-01: the accent marks the deepest visible focus object. With
+    // the active tab's chat shown in the open drawer, the chat row wears the
+    // accent and the card steps back to the quiet active tone.
+    #[test]
+    fn the_accent_descends_to_the_visible_active_chat_row() {
+        let (mut app, key) = app_with_chat_drawer(2);
+        app.expanded_chat_workspaces.insert(key);
+        app.workspaces[0].tabs[0].resumed_session_id = Some("session-0".to_string());
+
+        let area = Rect::new(0, 0, 100, 26);
+        crate::ui::compute_view(&mut app, area);
+        let backend = ratatui::backend::TestBackend::new(100, 26);
+        let mut terminal = ratatui::Terminal::new(backend).expect("test terminal");
+        let registry = TerminalRuntimeRegistry::new();
+        terminal
+            .draw(|frame| render_sidebar(&app, &registry, frame, app.view.sidebar_rect))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        let accent = app.palette.accent;
+
+        let card = app
+            .view
+            .workspace_card_areas
+            .first()
+            .expect("the workspace card is laid out");
+        assert!(
+            (card.rect.x..card.rect.x + card.rect.width)
+                .all(|x| buffer[(x, card.rect.y)].bg != accent),
+            "the card gives the accent up while its chat carries it"
+        );
+        let chat = app
+            .view
+            .workspace_chat_row_areas
+            .iter()
+            .find(|row| row.chat_idx == 0)
+            .expect("the resumed chat row is laid out");
+        assert!(
+            (chat.rect.x..chat.rect.x + chat.rect.width)
+                .any(|x| buffer[(x, chat.rect.y)].bg == accent),
+            "the focused chat row wears the accent"
+        );
+    }
+
+    // TP-FOCUS-02: with the drawer shut that chat row does not exist on
+    // screen, so the card keeps the accent — an invisible selection would be
+    // worse than a coarse one.
+    #[test]
+    fn the_card_keeps_the_accent_while_its_chat_is_hidden() {
+        let (mut app, _key) = app_with_chat_drawer(2);
+        app.workspaces[0].tabs[0].resumed_session_id = Some("session-0".to_string());
+
+        let area = Rect::new(0, 0, 100, 26);
+        crate::ui::compute_view(&mut app, area);
+        let backend = ratatui::backend::TestBackend::new(100, 26);
+        let mut terminal = ratatui::Terminal::new(backend).expect("test terminal");
+        let registry = TerminalRuntimeRegistry::new();
+        terminal
+            .draw(|frame| render_sidebar(&app, &registry, frame, app.view.sidebar_rect))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        let accent = app.palette.accent;
+
+        let card = app
+            .view
+            .workspace_card_areas
+            .first()
+            .expect("the workspace card is laid out");
+        assert!(
+            (card.rect.x..card.rect.x + card.rect.width)
+                .all(|x| buffer[(x, card.rect.y)].bg == accent),
+            "the card keeps the accent while no chat row is visible"
+        );
     }
 
     // TP-TREE-12: every checkout offers "start a chat here" — that is what the
