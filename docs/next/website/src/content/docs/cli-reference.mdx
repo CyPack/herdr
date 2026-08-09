@@ -132,6 +132,16 @@ herdr workspace create --cwd ~/project --label api --no-focus
 
 A workspace is the top-level project or work context. Creating one also creates its first tab and root pane. The JSON response exposes their IDs as `.result.workspace.workspace_id`, `.result.tab.tab_id`, and `.result.root_pane.pane_id`.
 
+## Spaces
+
+```bash
+herdr space promote <branch> [--repo ROOT] [--as module|project] [--label TEXT] [--icon GLYPH] [--key KEY] [--dry-run]
+herdr space demote <key|branch> [--dry-run]
+herdr space list
+```
+
+Promotion gives a branch its own sidebar module space — or, with `--as project`, a top-level project of its own. The rule lands in `spaces.managed.toml` next to your config, never in config.toml itself: hand-written `[[spaces.split]]` rules always win first-match against managed ones. A running server reloads immediately; without one the grouping applies on next start. `demote` removes managed entries only and tells you when the matching rule lives in your own config instead.
+
 ## Worktrees
 
 ```bash

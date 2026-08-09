@@ -43,6 +43,16 @@ Format and rules: [`README.md`](README.md).
 |---|---|---|---|
 | TP-PROJ-PERS-01 | Project folds ride the session file like space folds; a session written before projects existed still loads. | Every restart forgets the folds, or an old session file stops loading at all. | `capture_contract_tracks_project_folds` |
 
+## Rank promotion (`herdr space`)
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-RANK-01 | `herdr space promote <branch>` writes a managed rule — repo, exact branch match, key, label, icon — under the do-not-hand-edit header. | The one-command promotion an agent relies on stops producing a rule the loader can pick up. | `upsert_writes_a_managed_rule_with_the_header` |
+| TP-RANK-02 | `--as project` writes the rule and its umbrella together, the umbrella claiming exactly the promoted space. | Promotion past module rank lands the space with no project to sit under, or the umbrella grabs spaces it was never asked to. | `upsert_as_project_writes_the_umbrella_too` |
+| TP-RANK-03 | Promoting the same target twice updates the managed entry in place. | Every re-promotion stacks a duplicate rule and the first stale one keeps winning first-match. | `upsert_is_idempotent_per_key` |
+| TP-RANK-04 | Demote removes managed entries only — by key, branch, or slug — and a project that loses every member leaves with them; user config is never touched. | Demote either strands empty umbrellas in the sidebar or starts editing the user's own config.toml. | `remove_takes_the_rule_and_its_orphaned_project`, `remove_without_a_match_changes_nothing` |
+| TP-RANK-05 | The managed overlay loads after the user's own config, so hand-written rules win first-match; a broken overlay is reported and skipped, never fatal. | Promotion output silently outranks hand-written rules, or one bad managed file takes the whole config down. | `managed_spaces_overlay_merges_after_user_rules`, `managed_spaces_overlay_tolerates_a_broken_file` |
+
 ## Row icons
 
 | ID | Behavior | Breaks if lost | Verified by |

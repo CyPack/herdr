@@ -33,6 +33,7 @@ pub(super) fn command() -> Command {
         .subcommand(server_command())
         .subcommand(api_command())
         .subcommand(workspace_command())
+        .subcommand(space_command())
         .subcommand(worktree_command())
         .subcommand(tab_command())
         .subcommand(notification_command())
@@ -220,6 +221,41 @@ fn workspace_command() -> Command {
                 .arg(option("ttl-ms", "N")),
         )
         .subcommand(id_command("close", "workspace_id", "Close a workspace"))
+}
+
+fn space_command() -> Command {
+    Command::new("space")
+        .about("Manage sidebar space grouping: promote branches, curate managed rules")
+        .subcommand(
+            Command::new("promote")
+                .about("Give a branch its own module space, or a whole project of its own")
+                .arg(required("target", "BRANCH"))
+                .arg(
+                    path_option("repo", "ROOT").help(
+                        "Repository root; defaults to the checkout around the current directory",
+                    ),
+                )
+                .arg(
+                    option("as", "RANK")
+                        .value_parser(["module", "project"])
+                        .help("module: its own space; project: a top-level umbrella of its own"),
+                )
+                .arg(option("label", "TEXT").help("Header label; defaults to the branch name"))
+                .arg(option("icon", "GLYPH").help("Glyph drawn before the label"))
+                .arg(option("key", "KEY").help("Space key; defaults to <repo>:<branch-slug>"))
+                .arg(
+                    flag("dry-run").help("Print the resulting managed file instead of writing it"),
+                ),
+        )
+        .subcommand(
+            Command::new("demote")
+                .about("Remove managed rules for a key or branch (never touches config.toml)")
+                .arg(required("target", "KEY_OR_BRANCH"))
+                .arg(
+                    flag("dry-run").help("Print the resulting managed file instead of writing it"),
+                ),
+        )
+        .subcommand(Command::new("list").about("List space rules and projects with their source"))
 }
 
 fn worktree_command() -> Command {

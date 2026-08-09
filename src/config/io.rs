@@ -102,8 +102,54 @@ fn read_optional_config(path: &Path) -> std::io::Result<Option<String>> {
     }
 }
 
+/// The overlay file `herdr space promote` owns. Loaded after the user's own
+/// config so hand-written rules win first-match (TP-RANK-05).
+pub fn managed_spaces_path() -> PathBuf {
+    config_dir().join("spaces.managed.toml")
+}
+
+/// Merge a `spaces.managed.toml` document into an already-loaded config.
+/// Managed entries append after user-authored ones; a broken overlay is
+/// reported and skipped, never fatal (TP-RANK-05).
+pub(crate) fn merge_managed_spaces_str(config: &mut Config, content: &str) -> Vec<String> {
+    #[derive(Debug, Default, serde::Deserialize)]
+    #[serde(default)]
+    struct ManagedSpacesFile {
+        spaces: super::model::SpacesConfig,
+    }
+    match toml::from_str::<ManagedSpacesFile>(content) {
+        Ok(managed) => {
+            config.spaces.split.extend(managed.spaces.split);
+            config.spaces.project.extend(managed.spaces.project);
+            Vec::new()
+        }
+        Err(err) => vec![format!(
+            "spaces.managed.toml parse error: {err}; ignoring the managed overlay"
+        )],
+    }
+}
+
+/// Apply the managed overlay, if one exists, to a loaded config.
+fn finish_with_managed_overlay(mut loaded: LoadedConfig) -> LoadedConfig {
+    match read_optional_config(&managed_spaces_path()) {
+        Ok(Some(content)) => {
+            let diagnostics = merge_managed_spaces_str(&mut loaded.config, &content);
+            loaded.diagnostics.extend(diagnostics);
+        }
+        Ok(None) => {}
+        Err(err) => loaded
+            .diagnostics
+            .push(format!("spaces.managed.toml read error: {err}; ignoring")),
+    }
+    loaded
+}
+
 impl Config {
     pub fn load() -> LoadedConfig {
+        finish_with_managed_overlay(Self::load_inner())
+    }
+
+    fn load_inner() -> LoadedConfig {
         let path = config_path();
         let content = match read_optional_config(&path) {
             Ok(Some(content)) => content,
@@ -218,6 +264,10 @@ pub fn config_diagnostic_summary(diagnostics: &[String]) -> Option<String> {
 }
 
 pub fn load_live_config() -> Result<LoadedConfig, Vec<String>> {
+    load_live_config_inner().map(finish_with_managed_overlay)
+}
+
+fn load_live_config_inner() -> Result<LoadedConfig, Vec<String>> {
     let path = config_path();
     let content = match read_optional_config(&path) {
         Ok(Some(content)) => content,
@@ -1107,6 +1157,57 @@ label = "T4F"
             "known [spaces] section must not warn: {:?}",
             loaded.diagnostics
         );
+    }
+
+    // TP-RANK-05: the managed overlay loads after the user's own config, so a
+    // hand-written rule wins first-match against anything promotion wrote.
+    #[test]
+    fn managed_spaces_overlay_merges_after_user_rules() {
+        let mut loaded = load_live_config_from_str(
+            r#"
+[[spaces.split]]
+repo = "/home/a/panel"
+match = ["feat/*"]
+key = "panel:user"
+label = "User"
+"#,
+        )
+        .unwrap();
+
+        let diagnostics = merge_managed_spaces_str(
+            &mut loaded.config,
+            r#"
+[[spaces.split]]
+repo = "/home/a/panel"
+match = ["feat/x-*"]
+key = "panel:managed"
+label = "Managed"
+
+[[spaces.project]]
+key = "project:x"
+spaces = ["panel:managed"]
+"#,
+        );
+
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let rules = loaded.config.spaces.rules();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].key, "panel:user", "user rules stay first");
+        assert_eq!(rules[1].key, "panel:managed");
+        assert_eq!(loaded.config.spaces.projects()[0].key, "project:x");
+    }
+
+    // TP-RANK-05's failure half: a broken overlay is reported, never fatal.
+    #[test]
+    fn managed_spaces_overlay_tolerates_a_broken_file() {
+        let mut loaded = load_live_config_from_str("").unwrap();
+        let diagnostics = merge_managed_spaces_str(&mut loaded.config, "not toml [");
+        assert_eq!(diagnostics.len(), 1);
+        assert!(
+            diagnostics[0].contains("spaces.managed.toml"),
+            "{diagnostics:?}"
+        );
+        assert!(loaded.config.spaces.rules().is_empty());
         assert!(loaded.invalid_sections.is_empty());
     }
 
