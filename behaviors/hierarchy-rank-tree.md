@@ -48,6 +48,7 @@ Format and rules: [`README.md`](README.md).
 | ID | Behavior | Breaks if lost | Verified by |
 |---|---|---|---|
 | TP-MOB-98 | The phone drawer carries the project level: the umbrella row tops its spaces, every level under it steps in one, and tapping it folds the project through the row producer — position, not key. | The fourth level exists on the desktop only, and a phone reader sees the flat pre-project drawer again. | `the_drawer_tops_a_project_and_steps_its_levels_in`, `toggling_the_project_row_folds_the_project` |
+| TP-MOB-99 | The phone drawer's branch rows carry the configured branch glyph on the name and its chat rows lead with the chat glyph; empty icon strings keep both rows glyph-free. | The kind icons the user chose exist on the desktop only — a Termius reader loses the at-a-glance row typing the icons were added for. | `drawer_rows_carry_their_kind_glyphs` |
 
 ## Rank promotion (`herdr space`)
 

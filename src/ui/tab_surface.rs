@@ -387,10 +387,13 @@ mod tests {
         // verified by dumping the band rows: spaces boxed, projects and
         // files as words in their thirds. It moved once more when
         // workspace rows grew their menu dots (TP-MOB-94) — verified by
-        // dumping the row: it reads "▸ · name … ⋯ +".
+        // dumping the row: it reads "▸ · name … ⋯ +". And again on
+        // 2026-08-09 when the drawer's branch rows took the branch glyph
+        // and its chat rows the chat glyph (TP-MOB-99), the phone half of
+        // the desktop's kind icons — verified by the glyph parity test.
         assert_eq!(
             frame_digest(&frame),
-            "02e1876b10a02d742f8a8dab6304b1bd8bd8b45abae34c7994fd9aa40d19cd6a"
+            "44d55581cf10e3336420d8bfe268bb58d2c0a2fbf6d73bc8f525ff32239e5583"
         );
     }
 }
