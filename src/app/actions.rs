@@ -1482,8 +1482,12 @@ impl AppState {
     pub fn switch_workspace(&mut self, idx: usize) {
         if idx < self.workspaces.len() {
             let previous_focus = self.current_pane_focus_target();
+            let workspace_changed = self.active != Some(idx);
             self.active = Some(idx);
             self.selected = idx;
+            if workspace_changed {
+                self.reveal_chat_drawer_on_activation(idx);
+            }
             let workspace_id = self.workspaces[idx].id.clone();
             crate::logging::workspace_focused(&workspace_id);
             self.mark_session_dirty();
@@ -1518,6 +1522,9 @@ impl AppState {
         let workspace_changed = self.active != Some(ws_idx);
         self.active = Some(ws_idx);
         self.selected = ws_idx;
+        if workspace_changed {
+            self.reveal_chat_drawer_on_activation(ws_idx);
+        }
         let workspace_id = self.workspaces[ws_idx].id.clone();
         if workspace_changed {
             crate::logging::workspace_focused(&workspace_id);
@@ -2027,6 +2034,29 @@ impl AppState {
     /// Fold or unfold one branch's chats in the phone drawer, without
     /// switching to it.
     ///
+    /// TP-FOCUS-03: arriving at a workspace opens its chat drawer, so the row
+    /// the accent descends to (TP-FOCUS-01) never hides behind a fold the
+    /// reader has to know to open. Activation-time, not a render rule: a fold
+    /// made while standing in the workspace holds until the user leaves and
+    /// returns, and a branch with no history is left alone rather than opened
+    /// onto its placeholder.
+    fn reveal_chat_drawer_on_activation(&mut self, ws_idx: usize) {
+        let Some(workspace) = self.workspaces.get(ws_idx) else {
+            return;
+        };
+        let key = crate::persist::workspace_chats::ledger_key(&workspace.identity_cwd);
+        if self
+            .workspace_chat_rows
+            .get(&key)
+            .is_none_or(|rows| rows.is_empty())
+        {
+            return;
+        }
+        if self.expanded_chat_workspaces.insert(key) {
+            self.mark_session_dirty();
+        }
+    }
+
     /// The active workspace's chats are governed by the phone-only fold
     /// (TP-MOB-67); every other branch reuses the same per-workspace set the
     /// desktop's disclosure cell toggles, so the two surfaces can never
@@ -7347,5 +7377,83 @@ mod tests {
         assert!(!deferred);
         assert_eq!(state.workspaces.len(), 1);
         assert_eq!(state.workspaces[0].display_name(), "notes");
+    }
+
+    fn chat_history_for(state: &mut AppState, ws_idx: usize) -> String {
+        let key =
+            crate::persist::workspace_chats::ledger_key(&state.workspaces[ws_idx].identity_cwd);
+        state.workspace_chat_rows.insert(
+            key.clone(),
+            vec![crate::app::state::WorkspaceChatRow {
+                session_id: "sess-reveal".to_string(),
+                agent: "claude".to_string(),
+                title: Some("a remembered chat".to_string()),
+                last_seen_ms: 1_000,
+                last_modified: None,
+            }],
+        );
+        key
+    }
+
+    // TP-FOCUS-03: activating a workspace opens its chat drawer — the row the
+    // accent descends to must never sit behind a fold the reader has to know
+    // to open.
+    #[test]
+    fn activating_a_workspace_reveals_its_chat_drawer() {
+        let mut state = AppState::test_new();
+        state.workspaces = vec![Workspace::test_new("a"), Workspace::test_new("b")];
+        state.workspaces[1].identity_cwd = std::path::PathBuf::from("/repo/b");
+        let key = chat_history_for(&mut state, 1);
+        state.active = Some(0);
+
+        state.switch_workspace(1);
+        assert!(
+            state.expanded_chat_workspaces.contains(&key),
+            "arriving at a workspace must open its chat drawer"
+        );
+    }
+
+    // TP-FOCUS-03's other half: the reveal happens on arrival, not on every
+    // step taken inside — a fold made while standing in the workspace holds
+    // until the user leaves and comes back.
+    #[test]
+    fn a_fold_made_inside_the_workspace_holds_until_reactivation() {
+        let mut state = AppState::test_new();
+        state.workspaces = vec![Workspace::test_new("a"), Workspace::test_new("b")];
+        state.workspaces[1].identity_cwd = std::path::PathBuf::from("/repo/b");
+        let key = chat_history_for(&mut state, 1);
+        state.active = Some(0);
+
+        state.switch_workspace(1);
+        state.expanded_chat_workspaces.remove(&key);
+        assert!(state.switch_workspace_tab(1, 0));
+        assert!(
+            !state.expanded_chat_workspaces.contains(&key),
+            "moving between tabs of the workspace must not reopen a folded drawer"
+        );
+
+        state.switch_workspace(0);
+        state.switch_workspace(1);
+        assert!(
+            state.expanded_chat_workspaces.contains(&key),
+            "coming back to the workspace reveals the drawer again"
+        );
+    }
+
+    // A branch with no history is left alone: revealing it would only draw
+    // the no-chats placeholder the reader never asked for.
+    #[test]
+    fn an_empty_history_is_not_revealed_on_activation() {
+        let mut state = AppState::test_new();
+        state.workspaces = vec![Workspace::test_new("a"), Workspace::test_new("b")];
+        state.workspaces[1].identity_cwd = std::path::PathBuf::from("/repo/b");
+        let key = crate::persist::workspace_chats::ledger_key(&state.workspaces[1].identity_cwd);
+        state.active = Some(0);
+
+        state.switch_workspace(1);
+        assert!(
+            !state.expanded_chat_workspaces.contains(&key),
+            "no history, no reveal"
+        );
     }
 }
