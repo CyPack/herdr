@@ -1629,9 +1629,18 @@ fn render_mobile_drawer_content(
                     // `subtext0`, a colour layer above the detail lines:
                     // a chat title is tappable content, not commentary
                     // (TP-MOB-95).
+                    // TP-MOB-99: the configured chat glyph replaces the plain
+                    // bullet, mirroring the desktop chat rows (TP-ICON-03);
+                    // an empty icon keeps the bullet.
+                    let chat_icon = app.space_icons.chat.trim();
+                    let marker = if chat_icon.is_empty() {
+                        "·"
+                    } else {
+                        chat_icon
+                    };
                     frame.render_widget(
                         Paragraph::new(truncate_end(
-                            &format!("{:indent$}· {title}", "", indent = indent),
+                            &format!("{:indent$}{marker} {title}", "", indent = indent),
                             title_w as usize,
                         ))
                         .style(Style::default().fg(p.subtext0).bg(p.panel_bg)),
@@ -1912,6 +1921,14 @@ fn render_space_row(
         grouped_child_display_label(&raw_label, ws.branch().as_deref(), ws.custom_name.is_some())
     } else {
         raw_label
+    };
+    // TP-MOB-99: the branch glyph rides the label here exactly as it does on
+    // the desktop sidebar (TP-ICON-01's carrier) — an empty icon disables it.
+    let branch_icon = app.space_icons.branch.trim();
+    let name = if branch_icon.is_empty() {
+        name
+    } else {
+        format!("{branch_icon} {name}")
     };
     let name_budget = content
         .width
@@ -3642,6 +3659,53 @@ mod tests {
     // colour alone: the active branch name is the only bold branch name
     // (when every name is bold, none is), chat titles wear `subtext0` a
     // layer above the `overlay1` details, and decorations stay `overlay0`.
+    // TP-MOB-99: the phone drawer's branch and chat rows carry the same kind
+    // glyphs the desktop sidebar does — `[spaces.icons]`'s branch icon rides
+    // the branch name and its chat icon leads the chat line, and empty icon
+    // strings keep both rows glyph-free (the "empty = off" contract's mobile
+    // half; desktop halves are TP-ICON-01/TP-ICON-03).
+    #[test]
+    fn drawer_rows_carry_their_kind_glyphs() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let draw_all = |app: &AppState| -> String {
+            let mut term = Terminal::new(TestBackend::new(76, 63)).expect("terminal");
+            term.draw(|frame| render_mobile_drawer(app, &TerminalRuntimeRegistry::new(), frame))
+                .expect("draw");
+            let buffer = term.backend().buffer().clone();
+            (0..63)
+                .map(|y| {
+                    (0..76)
+                        .map(|x| buffer[(x, y)].symbol().to_string())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        let mut app = chat_app(1, 76, 63);
+        app.mobile_width_threshold = 90;
+        app.space_icons.branch = "\u{e0a0}".to_string();
+        app.space_icons.chat = "\u{f075}".to_string();
+        let with_icons = draw_all(&app);
+        assert!(
+            with_icons.contains('\u{e0a0}'),
+            "a branch row must carry the configured branch glyph"
+        );
+        assert!(
+            with_icons.contains('\u{f075}'),
+            "a chat row must carry the configured chat glyph"
+        );
+
+        app.space_icons.branch = String::new();
+        app.space_icons.chat = String::new();
+        let without = draw_all(&app);
+        assert!(
+            !without.contains('\u{e0a0}') && !without.contains('\u{f075}'),
+            "empty icon strings must leave both rows glyph-free"
+        );
+    }
+
     #[test]
     fn drawer_text_reads_in_layers() {
         use ratatui::{backend::TestBackend, Terminal};
