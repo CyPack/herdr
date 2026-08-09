@@ -18,7 +18,7 @@ mod plugin;
 mod protocol_guard;
 mod runtime;
 mod server;
-mod space;
+pub(crate) mod space;
 mod spec;
 mod status;
 mod tab;

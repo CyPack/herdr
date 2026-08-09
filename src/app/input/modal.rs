@@ -897,6 +897,20 @@ pub(super) fn apply_context_menu_action(
             state.request_remove_linked_worktree = Some(ws_idx);
             leave_modal(state);
         }
+        // TP-RANK-07: the mouse road to `herdr space promote` — write the
+        // managed rule and regroup in place, exactly like the CLI.
+        (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("Promote to module")) => {
+            state.promote_workspace_space(ws_idx, false);
+            leave_modal(state);
+        }
+        (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("Promote to project")) => {
+            state.promote_workspace_space(ws_idx, true);
+            leave_modal(state);
+        }
+        (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("Demote from module")) => {
+            state.demote_workspace_space(ws_idx);
+            leave_modal(state);
+        }
         (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("Open worktree...")) => {
             state.request_open_existing_worktree = Some(ws_idx);
             leave_modal(state);
@@ -1389,6 +1403,18 @@ impl App {
             }
             (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("Delete worktree checkout...")) => {
                 self.state.request_remove_linked_worktree = Some(ws_idx);
+                leave_modal(&mut self.state);
+            }
+            (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("Promote to module")) => {
+                self.state.promote_workspace_space(ws_idx, false);
+                leave_modal(&mut self.state);
+            }
+            (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("Promote to project")) => {
+                self.state.promote_workspace_space(ws_idx, true);
+                leave_modal(&mut self.state);
+            }
+            (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("Demote from module")) => {
+                self.state.demote_workspace_space(ws_idx);
                 leave_modal(&mut self.state);
             }
             (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("Open worktree...")) => {
@@ -2348,6 +2374,7 @@ mod tests {
                 is_linked_worktree: false,
                 has_worktree_children: true,
                 collapsed: false,
+                space_is_custom: false,
             },
             x: 0,
             y: 0,

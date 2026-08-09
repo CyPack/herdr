@@ -2220,6 +2220,9 @@ pub enum ContextMenuKind {
         is_linked_worktree: bool,
         has_worktree_children: bool,
         collapsed: bool,
+        /// Whether a `[[spaces.split]]` rule already claims this checkout —
+        /// the menu offers "Demote from module" only then (TP-RANK-06).
+        space_is_custom: bool,
     },
     Tab {
         ws_idx: usize,
@@ -2279,10 +2282,21 @@ impl ContextMenuState {
                 has_worktree_children: false,
                 ..
             } => vec!["Rename", "Close", "New worktree", "Open worktree..."],
+            // TP-RANK-06: a branch row can raise its own rank from the menu —
+            // the mouse road to `herdr space promote` — and offers the demote
+            // only when a rule actually claims it.
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: true,
+                space_is_custom,
                 ..
-            } => vec!["Rename", "Close", "Delete worktree checkout..."],
+            } => {
+                let mut items = vec!["Rename", "Close", "Promote to module", "Promote to project"];
+                if *space_is_custom {
+                    items.push("Demote from module");
+                }
+                items.push("Delete worktree checkout...");
+                items
+            }
             ContextMenuKind::GitWorkspace {
                 is_linked_worktree: false,
                 has_worktree_children: true,
@@ -5337,6 +5351,78 @@ mod tests {
         ));
     }
 
+    // TP-RANK-06: the branch row's menu offers promotion, and the demote
+    // only when a rule already claims the checkout.
+    #[test]
+    fn linked_worktree_menu_offers_promotion_and_conditional_demote() {
+        let plain = ContextMenuState {
+            kind: ContextMenuKind::GitWorkspace {
+                ws_idx: 0,
+                is_linked_worktree: true,
+                has_worktree_children: false,
+                collapsed: false,
+                space_is_custom: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::default(),
+        };
+        assert!(plain.items().contains(&"Promote to module"));
+        assert!(plain.items().contains(&"Promote to project"));
+        assert!(!plain.items().contains(&"Demote from module"));
+
+        let claimed = ContextMenuState {
+            kind: ContextMenuKind::GitWorkspace {
+                ws_idx: 0,
+                is_linked_worktree: true,
+                has_worktree_children: false,
+                collapsed: false,
+                space_is_custom: true,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::default(),
+        };
+        assert!(claimed.items().contains(&"Demote from module"));
+    }
+
+    // TP-RANK-07: the plan the menu writes matches what the CLI would write.
+    #[test]
+    fn promote_plan_from_a_workspace_row_matches_the_cli_shape() {
+        let mut state = AppState::test_new();
+        let mut ws = crate::workspace::Workspace::test_new("tiling");
+        ws.cached_git_branch = Some("worktree/Tiling".into());
+        ws.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr-tiling"),
+            is_linked_worktree: true,
+        });
+        state.workspaces = vec![ws];
+
+        let plan = state
+            .promote_plan_for_workspace(0, false)
+            .expect("a branch checkout is promotable");
+        assert_eq!(plan.key, "herdr:worktree-tiling");
+        assert_eq!(plan.branch, "worktree/Tiling");
+        assert_eq!(plan.repo_root, std::path::PathBuf::from("/repo/herdr"));
+        assert!(plan.project.is_none());
+
+        let project_plan = state
+            .promote_plan_for_workspace(0, true)
+            .expect("project rank is promotable too");
+        assert_eq!(
+            project_plan.project.as_ref().map(|p| p.key.as_str()),
+            Some("project:worktree-tiling")
+        );
+
+        assert!(
+            state.promote_plan_for_workspace(9, false).is_none(),
+            "a missing row promotes nothing"
+        );
+    }
+
     #[test]
     fn linked_worktree_context_menu_keeps_safe_close_and_explicit_remove() {
         let menu = ContextMenuState {
@@ -5345,15 +5431,24 @@ mod tests {
                 is_linked_worktree: true,
                 has_worktree_children: false,
                 collapsed: false,
+                space_is_custom: false,
             },
             x: 0,
             y: 0,
             list: MenuListState::new(0),
         };
 
+        // TP-RANK-06 added the promotion pair; the subject here — Close stays
+        // safe and checkout removal stays a separate explicit action — holds.
         assert_eq!(
             menu.items(),
-            &["Rename", "Close", "Delete worktree checkout..."]
+            &[
+                "Rename",
+                "Close",
+                "Promote to module",
+                "Promote to project",
+                "Delete worktree checkout..."
+            ]
         );
     }
 
@@ -5365,6 +5460,7 @@ mod tests {
                 is_linked_worktree: false,
                 has_worktree_children: false,
                 collapsed: false,
+                space_is_custom: false,
             },
             x: 0,
             y: 0,
@@ -5385,6 +5481,7 @@ mod tests {
                 is_linked_worktree: false,
                 has_worktree_children: true,
                 collapsed: false,
+                space_is_custom: false,
             },
             x: 0,
             y: 0,

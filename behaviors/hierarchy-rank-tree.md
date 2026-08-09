@@ -58,6 +58,8 @@ Format and rules: [`README.md`](README.md).
 | TP-RANK-03 | Promoting the same target twice updates the managed entry in place. | Every re-promotion stacks a duplicate rule and the first stale one keeps winning first-match. | `upsert_is_idempotent_per_key` |
 | TP-RANK-04 | Demote removes managed entries only — by key, branch, or slug — and a project that loses every member leaves with them; user config is never touched. | Demote either strands empty umbrellas in the sidebar or starts editing the user's own config.toml. | `remove_takes_the_rule_and_its_orphaned_project`, `remove_without_a_match_changes_nothing` |
 | TP-RANK-05 | The managed overlay loads after the user's own config, so hand-written rules win first-match; a broken overlay is reported and skipped, never fatal. | Promotion output silently outranks hand-written rules, or one bad managed file takes the whole config down. | `managed_spaces_overlay_merges_after_user_rules`, `managed_spaces_overlay_tolerates_a_broken_file` |
+| TP-RANK-06 | A branch row's context menu offers "Promote to module/project", and "Demote from module" only when a rule already claims the checkout. | The mouse road to promotion disappears, or every row dangles a demote that can do nothing. | `linked_worktree_menu_offers_promotion_and_conditional_demote`, `linked_worktree_context_menu_keeps_safe_close_and_explicit_remove` |
+| TP-RANK-07 | The menu writes exactly the plan the CLI would write — same key, branch match, and project shape — then re-reads the rules so the sidebar regroups in place. | Menu promotion and CLI promotion drift apart, and one of them stops round-tripping with demote. | `promote_plan_from_a_workspace_row_matches_the_cli_shape` |
 
 ## Row icons
 

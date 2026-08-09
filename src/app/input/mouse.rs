@@ -1356,6 +1356,8 @@ impl AppState {
                                 collapsed: group_state
                                     .as_ref()
                                     .is_some_and(|(_, collapsed)| *collapsed),
+                                space_is_custom: crate::ui::effective_space(self, idx)
+                                    .is_some_and(|space| space.is_custom),
                             })
                         })
                         .unwrap_or(ContextMenuKind::Workspace { ws_idx: idx });

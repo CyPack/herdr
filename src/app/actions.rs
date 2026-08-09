@@ -1664,6 +1664,8 @@ impl AppState {
                 collapsed: group_state
                     .as_ref()
                     .is_some_and(|(_, collapsed)| *collapsed),
+                space_is_custom: crate::ui::effective_space(self, ws_idx)
+                    .is_some_and(|space| space.is_custom),
             }
         } else {
             crate::app::state::ContextMenuKind::Workspace { ws_idx }
@@ -1881,6 +1883,85 @@ impl AppState {
     /// The index is resolved back through the row producer rather than carried
     /// as a key, so the drawer and the thing it folds can never describe
     /// different groups.
+    /// The promote plan a workspace row's menu would write, or `None` when
+    /// the row has no branch or no worktree membership to promote
+    /// (TP-RANK-06).
+    pub(crate) fn promote_plan_for_workspace(
+        &self,
+        ws_idx: usize,
+        as_project: bool,
+    ) -> Option<crate::cli::space::PromotePlan> {
+        let workspace = self.workspaces.get(ws_idx)?;
+        let membership = workspace.worktree_space()?;
+        let branch = workspace.branch()?;
+        let repo_root = membership.repo_root.clone();
+        let key = crate::cli::space::managed_key(&repo_root, &branch);
+        let label = branch.clone();
+        Some(crate::cli::space::PromotePlan {
+            project: as_project.then(|| crate::cli::space::ProjectPlan {
+                key: format!("project:{}", crate::cli::space::slug_for_branch(&branch)),
+                name: label.clone(),
+            }),
+            repo_root,
+            branch,
+            key,
+            label,
+            icon: None,
+        })
+    }
+
+    /// The menu road to `herdr space promote`: write the managed rule, then
+    /// re-read the rules so the sidebar regroups in place (TP-RANK-07).
+    pub(crate) fn promote_workspace_space(&mut self, ws_idx: usize, as_project: bool) {
+        let Some(plan) = self.promote_plan_for_workspace(ws_idx, as_project) else {
+            return;
+        };
+        let path = crate::config::managed_spaces_path();
+        let current = std::fs::read_to_string(&path).unwrap_or_default();
+        match crate::cli::space::upsert_managed(&current, &plan) {
+            Ok(updated) => {
+                if let Err(err) = std::fs::write(&path, updated) {
+                    tracing::warn!(error = %err, "managed overlay write failed");
+                    return;
+                }
+                self.reload_space_rules_from_disk();
+            }
+            Err(err) => tracing::warn!(error = %err, "managed overlay upsert failed"),
+        }
+    }
+
+    /// The menu road to `herdr space demote` — managed entries only.
+    pub(crate) fn demote_workspace_space(&mut self, ws_idx: usize) {
+        let Some(branch) = self
+            .workspaces
+            .get(ws_idx)
+            .and_then(|workspace| workspace.branch())
+        else {
+            return;
+        };
+        let path = crate::config::managed_spaces_path();
+        let current = std::fs::read_to_string(&path).unwrap_or_default();
+        match crate::cli::space::remove_managed(&current, &branch) {
+            Ok((_, 0)) => {
+                tracing::info!("no managed rule matches; a config.toml rule needs a hand-edit");
+            }
+            Ok((updated, _)) => {
+                if let Err(err) = std::fs::write(&path, updated) {
+                    tracing::warn!(error = %err, "managed overlay write failed");
+                    return;
+                }
+                self.reload_space_rules_from_disk();
+            }
+            Err(err) => tracing::warn!(error = %err, "managed overlay parse failed"),
+        }
+    }
+
+    fn reload_space_rules_from_disk(&mut self) {
+        let loaded = crate::config::Config::load();
+        self.space_split_rules = loaded.config.spaces.rules();
+        self.space_projects = loaded.config.spaces.projects();
+    }
+
     /// Fold or unfold the `[[spaces.project]]` umbrella at `project_group_idx`
     /// in the open drawer — `toggle_mobile_space_group`'s contract, one level
     /// up (TP-MOB-98).
