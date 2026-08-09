@@ -1711,6 +1711,10 @@ impl AppState {
                 // leaving it (TP-MOB-63).
                 self.toggle_mobile_space_group(group_idx);
             }
+            crate::ui::MobileSwitcherTarget::ToggleProjectGroup { project_group_idx } => {
+                // Same rule one level up: folding keeps the drawer open.
+                self.toggle_mobile_project_group(project_group_idx);
+            }
             crate::ui::MobileSwitcherTarget::Chat { ws_idx, chat_idx } => {
                 self.close_mobile_drawer();
                 self.open_workspace_chat(ws_idx, chat_idx);
@@ -1877,6 +1881,32 @@ impl AppState {
     /// The index is resolved back through the row producer rather than carried
     /// as a key, so the drawer and the thing it folds can never describe
     /// different groups.
+    /// Fold or unfold the `[[spaces.project]]` umbrella at `project_group_idx`
+    /// in the open drawer — `toggle_mobile_space_group`'s contract, one level
+    /// up (TP-MOB-98).
+    pub(crate) fn toggle_mobile_project_group(&mut self, project_group_idx: usize) {
+        let key = crate::ui::mobile_drawer_rows(self)
+            .into_iter()
+            .filter_map(|row| match row.content {
+                crate::ui::DrawerRowContent::ProjectGroup { project_key, .. } => Some(project_key),
+                _ => None,
+            })
+            .nth(project_group_idx);
+        let Some(key) = key else {
+            return;
+        };
+        if !self.collapsed_project_keys.remove(&key) {
+            self.collapsed_project_keys.insert(key);
+        }
+        let max_scroll = crate::ui::mobile_drawer_max_scroll(self);
+        self.mobile_switcher_scroll = self.mobile_switcher_scroll.min(max_scroll);
+        self.mobile_drawer_cursor = self.mobile_drawer_cursor.min(
+            crate::ui::mobile_drawer_cursor_stops(self)
+                .len()
+                .saturating_sub(1),
+        );
+    }
+
     pub(crate) fn toggle_mobile_space_group(&mut self, group_idx: usize) {
         let key = crate::ui::mobile_drawer_rows(self)
             .into_iter()

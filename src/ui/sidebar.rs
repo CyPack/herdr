@@ -361,7 +361,7 @@ pub(crate) fn workspace_project(
 }
 
 /// The project claiming `space_key`, resolved through the space's members.
-fn project_for_space_key<'a>(
+pub(crate) fn project_for_space_key<'a>(
     app: &'a AppState,
     space_key: &str,
 ) -> Option<&'a crate::spaces::SpaceProject> {
@@ -371,7 +371,7 @@ fn project_for_space_key<'a>(
 }
 
 /// The configured project behind a header row's key.
-fn project_for_key<'a>(
+pub(crate) fn project_for_key<'a>(
     app: &'a AppState,
     project_key: &str,
 ) -> Option<&'a crate::spaces::SpaceProject> {

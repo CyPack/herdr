@@ -87,6 +87,11 @@ pub(crate) enum MobileSwitcherTarget {
     ToggleSpaceGroup {
         group_idx: usize,
     },
+    /// Fold or unfold a `[[spaces.project]]` umbrella — the same position-not-
+    /// key contract as `ToggleSpaceGroup`, one level up (TP-MOB-98).
+    ToggleProjectGroup {
+        project_group_idx: usize,
+    },
     /// Open a remembered chat under a checkout.
     Chat {
         ws_idx: usize,
@@ -131,6 +136,11 @@ pub(crate) enum MobileSwitcherTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DrawerRowContent {
     SectionTitle(&'static str),
+    /// A `[[spaces.project]]` umbrella above the spaces it gathers.
+    ProjectGroup {
+        project_key: String,
+        collapsed: bool,
+    },
     /// The repository a group of checkouts belongs to.
     SpaceGroup {
         space_key: String,
@@ -513,20 +523,34 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
     // repositories landed in one flat list and a remembered chat could not be
     // reached from a phone at all (TP-MOB-60).
     let mut group_idx = 0usize;
+    let mut project_group_idx = 0usize;
     for entry in crate::ui::sidebar::workspace_list_entries(app) {
         match entry {
-            // The mobile drawer's project treatment lands with the mobile
-            // parity work on this branch; until then the drawer walks the
-            // spaces directly, exactly as it did before projects existed.
-            crate::ui::sidebar::WorkspaceListEntry::ProjectHeader { .. } => {}
+            // TP-MOB-98: the drawer carries the project level, the same
+            // position-not-key toggle contract as space groups.
+            crate::ui::sidebar::WorkspaceListEntry::ProjectHeader { project_key } => {
+                let collapsed = app.collapsed_project_keys.contains(&project_key);
+                rows.push(DrawerRow {
+                    height: entry_h,
+                    target: Some(MobileSwitcherTarget::ToggleProjectGroup { project_group_idx }),
+                    content: DrawerRowContent::ProjectGroup {
+                        project_key,
+                        collapsed,
+                    },
+                });
+                project_group_idx += 1;
+            }
             crate::ui::sidebar::WorkspaceListEntry::GroupHeader { space_key } => {
                 let collapsed = app.collapsed_space_keys.contains(&space_key);
+                // Inside a project every level steps in one (TP-MOB-98).
+                let depth =
+                    u8::from(crate::ui::sidebar::project_for_space_key(app, &space_key).is_some());
                 rows.push(DrawerRow {
                     height: entry_h,
                     target: Some(MobileSwitcherTarget::ToggleSpaceGroup { group_idx }),
                     content: DrawerRowContent::SpaceGroup {
                         space_key,
-                        depth: 0,
+                        depth,
                         collapsed,
                     },
                 });
@@ -534,6 +558,8 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
             }
             crate::ui::sidebar::WorkspaceListEntry::Workspace { ws_idx, indented } => {
                 let is_active = Some(ws_idx) == app.active;
+                let project_step =
+                    u8::from(crate::ui::sidebar::workspace_project(app, ws_idx).is_some());
                 rows.push(DrawerRow {
                     // Every workspace row spends the full entry height now,
                     // not only the active one. TP-MOB-70 traded thin rows for
@@ -554,7 +580,7 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
                     target: Some(MobileSwitcherTarget::Workspace(ws_idx)),
                     content: DrawerRowContent::Space {
                         ws_idx,
-                        depth: u8::from(indented),
+                        depth: u8::from(indented) + project_step,
                     },
                 });
                 // The desktop list already carries the chats of a workspace the
@@ -581,7 +607,7 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
                             content: DrawerRowContent::Chat {
                                 ws_idx,
                                 chat_idx,
-                                depth: 2,
+                                depth: 2 + project_step,
                             },
                         });
                     }
@@ -591,7 +617,7 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
                             height: 1,
                             target: None,
                             content: DrawerRowContent::ChatNote {
-                                depth: 2,
+                                depth: 2 + project_step,
                                 label: format!("… {hidden} older"),
                             },
                         });
@@ -605,16 +631,20 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
                     content: DrawerRowContent::Chat {
                         ws_idx,
                         chat_idx,
-                        depth: 2,
+                        depth: 2 + u8::from(
+                            crate::ui::sidebar::workspace_project(app, ws_idx).is_some(),
+                        ),
                     },
                 });
             }
-            crate::ui::sidebar::WorkspaceListEntry::NoChats { .. } => {
+            crate::ui::sidebar::WorkspaceListEntry::NoChats { ws_idx } => {
                 rows.push(DrawerRow {
                     height: 1,
                     target: None,
                     content: DrawerRowContent::ChatNote {
-                        depth: 2,
+                        depth: 2 + u8::from(
+                            crate::ui::sidebar::workspace_project(app, ws_idx).is_some(),
+                        ),
                         label: "no chats yet".into(),
                     },
                 });
@@ -627,7 +657,9 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
                     height: 1,
                     target: None,
                     content: DrawerRowContent::ChatNote {
-                        depth: 2,
+                        depth: 2 + u8::from(
+                            crate::ui::sidebar::workspace_project(app, ws_idx).is_some(),
+                        ),
                         label: format!("… {hidden} older"),
                     },
                 });
@@ -1393,6 +1425,41 @@ fn render_mobile_drawer_content(
             (viewport, content, scroll)
         };
         match &row.content {
+            DrawerRowContent::ProjectGroup {
+                project_key,
+                collapsed,
+            } => {
+                if let Some(y) = visible_y(viewport, scroll, doc_y) {
+                    let (icon, name) = match crate::ui::sidebar::project_for_key(app, project_key) {
+                        Some(project) => (
+                            project
+                                .icon
+                                .clone()
+                                .unwrap_or_else(|| app.space_icons.project.clone()),
+                            project.name.clone(),
+                        ),
+                        None => (app.space_icons.project.clone(), project_key.clone()),
+                    };
+                    let icon = icon.trim();
+                    let text = format!(
+                        "{} {}{name}",
+                        if *collapsed { "▸" } else { "▾" },
+                        if icon.is_empty() {
+                            String::new()
+                        } else {
+                            format!("{icon} ")
+                        },
+                    );
+                    let width = content.width as usize;
+                    frame.render_widget(
+                        Paragraph::new(Span::styled(
+                            truncate_end(&text, width),
+                            Style::default().fg(p.text).add_modifier(Modifier::BOLD),
+                        )),
+                        Rect::new(content.x, y, content.width, 1),
+                    );
+                }
+            }
             DrawerRowContent::SectionTitle(title) => {
                 let title = if *title == "agents" {
                     app.agent_view_override
@@ -2589,6 +2656,90 @@ mod tests {
             .expect("chat row");
 
         assert_eq!((group_depth, member_depth, chat_depth), (0, 1, 2));
+    }
+
+    fn herdr_project() -> crate::spaces::SpaceProject {
+        crate::spaces::SpaceProject {
+            key: "project:herdr".into(),
+            name: "herdr".into(),
+            icon: None,
+            repo_roots: vec![std::path::PathBuf::from("/repo/herdr")],
+            space_keys: Vec::new(),
+        }
+    }
+
+    // TP-MOB-98: the drawer carries the project level too — the umbrella row
+    // tops the spaces it gathers, and every level under it steps in by one.
+    #[test]
+    fn the_drawer_tops_a_project_and_steps_its_levels_in() {
+        let mut app = tree_app(76, 35);
+        app.space_projects = vec![herdr_project()];
+        let rows = mobile_drawer_rows(&app);
+
+        let project_pos = rows
+            .iter()
+            .position(|r| matches!(r.content, DrawerRowContent::ProjectGroup { .. }))
+            .expect("project row");
+        let group_pos = rows
+            .iter()
+            .position(|r| matches!(r.content, DrawerRowContent::SpaceGroup { .. }))
+            .expect("group row");
+        assert!(
+            project_pos < group_pos,
+            "the umbrella tops the spaces it gathers"
+        );
+
+        let group_depth = rows
+            .iter()
+            .find_map(|r| match r.content {
+                DrawerRowContent::SpaceGroup { depth, .. } => Some(depth),
+                _ => None,
+            })
+            .expect("group row");
+        let member_depth = rows
+            .iter()
+            .find_map(|r| match r.content {
+                DrawerRowContent::Space { ws_idx: 1, depth } => Some(depth),
+                _ => None,
+            })
+            .expect("member row");
+        let chat_depth = rows
+            .iter()
+            .find_map(|r| match r.content {
+                DrawerRowContent::Chat { depth, .. } => Some(depth),
+                _ => None,
+            })
+            .expect("chat row");
+        assert_eq!(
+            (group_depth, member_depth, chat_depth),
+            (1, 2, 3),
+            "every level steps in one under the umbrella"
+        );
+    }
+
+    // TP-MOB-98's fold half: the umbrella folds through the row producer,
+    // position-not-key, exactly like a space group.
+    #[test]
+    fn toggling_the_project_row_folds_the_project() {
+        let mut app = tree_app(76, 35);
+        app.space_projects = vec![herdr_project()];
+
+        app.toggle_mobile_project_group(0);
+        assert!(app.collapsed_project_keys.contains("project:herdr"));
+        let rows = mobile_drawer_rows(&app);
+        assert!(
+            rows.iter().any(|r| matches!(
+                &r.content,
+                DrawerRowContent::ProjectGroup {
+                    collapsed: true,
+                    ..
+                }
+            )),
+            "the folded umbrella stays so it can be opened again"
+        );
+
+        app.toggle_mobile_project_group(0);
+        assert!(!app.collapsed_project_keys.contains("project:herdr"));
     }
 
     // TP-MOB-62: a collapsed group hides its members, on the phone as on the

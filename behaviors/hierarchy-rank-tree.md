@@ -43,6 +43,12 @@ Format and rules: [`README.md`](README.md).
 |---|---|---|---|
 | TP-PROJ-PERS-01 | Project folds ride the session file like space folds; a session written before projects existed still loads. | Every restart forgets the folds, or an old session file stops loading at all. | `capture_contract_tracks_project_folds` |
 
+## Mobile drawer
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-MOB-98 | The phone drawer carries the project level: the umbrella row tops its spaces, every level under it steps in one, and tapping it folds the project through the row producer — position, not key. | The fourth level exists on the desktop only, and a phone reader sees the flat pre-project drawer again. | `the_drawer_tops_a_project_and_steps_its_levels_in`, `toggling_the_project_row_folds_the_project` |
+
 ## Rank promotion (`herdr space`)
 
 | ID | Behavior | Breaks if lost | Verified by |

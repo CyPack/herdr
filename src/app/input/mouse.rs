@@ -1525,6 +1525,9 @@ impl AppState {
             Some(crate::ui::MobileSwitcherTarget::ToggleSpaceGroup { group_idx }) => {
                 self.toggle_mobile_space_group(group_idx);
             }
+            Some(crate::ui::MobileSwitcherTarget::ToggleProjectGroup { project_group_idx }) => {
+                self.toggle_mobile_project_group(project_group_idx);
+            }
             Some(
                 target @ (crate::ui::MobileSwitcherTarget::DrawerSegment(_)
                 | crate::ui::MobileSwitcherTarget::ToggleProject { .. }
