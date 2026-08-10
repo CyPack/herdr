@@ -15,7 +15,11 @@ static INIT: Once = Once::new();
 static CLEANUP_GUARD: OnceLock<CleanupGuard> = OnceLock::new();
 const WATCHDOG_SCAN_INTERVAL: Duration = Duration::from_secs(1);
 const RUNTIME_OWNER_MARKER: &str = ".herdr-test-owner-pid";
-pub const CURRENT_PROTOCOL: u32 = 18;
+// Mirrors `src/protocol/wire.rs::PROTOCOL_VERSION` by hand, because the bin
+// crate exposes no lib for tests to import. The wire's own comment explains
+// why 19 was skipped. If this drifts, the protocol fixture tests fail fast —
+// which is exactly how the drift gets noticed.
+pub const CURRENT_PROTOCOL: u32 = 20;
 
 pub fn register_spawned_herdr_pid(pid: Option<u32>) {
     let Some(pid) = pid else {
