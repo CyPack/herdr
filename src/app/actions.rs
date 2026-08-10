@@ -1916,6 +1916,8 @@ impl AppState {
             key,
             label,
             icon: None,
+            parent: None,
+            node: None,
         })
     }
 

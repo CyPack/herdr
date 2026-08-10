@@ -17,6 +17,7 @@ const MANAGED_HEADER: &str = "# Managed by `herdr space promote` - do not hand-e
 pub(super) fn run_space_command(args: &[String]) -> std::io::Result<i32> {
     match args.first().map(|arg| arg.as_str()) {
         Some("promote") => space_promote(&args[1..]),
+        Some("move") => space_move(&args[1..]),
         Some("demote") => space_demote(&args[1..]),
         Some("list") => space_list(&args[1..]),
         Some("help" | "--help" | "-h") => {
@@ -35,8 +36,135 @@ fn print_space_help() {
     eprintln!(
         "                           [--label <text>] [--icon <glyph>] [--key <key>] [--dry-run]"
     );
+    eprintln!("       herdr space move <branch> (--under|--beside|--above <node-key> | --top |");
+    eprintln!("                           --new-group <name>) [--repo <root>] [--dry-run]");
     eprintln!("       herdr space demote <key|branch> [--dry-run]");
     eprintln!("       herdr space list");
+}
+
+/// Where a move sends the checkout: relative to an existing node, to top
+/// level, or under a group created on the way (K5).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum MoveDest {
+    Node {
+        key: String,
+        op: crate::spaces::MoveOp,
+    },
+    Top,
+    NewGroup {
+        name: String,
+    },
+}
+
+/// The `herdr space move` invocation, parsed but not yet resolved.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct MoveArgs {
+    pub branch: String,
+    pub dest: MoveDest,
+    pub repo: Option<String>,
+    pub dry_run: bool,
+}
+
+/// Parse `herdr space move` arguments. Exactly one destination is required —
+/// a move with none or two is a mistake to refuse, never to guess at
+/// (TP-RANK-11).
+pub(crate) fn parse_move_args(args: &[String]) -> Result<MoveArgs, String> {
+    let mut branch = None;
+    let mut dest: Option<MoveDest> = None;
+    let mut repo = None;
+    let mut dry_run = false;
+
+    fn claim_dest(slot: &mut Option<MoveDest>, new: MoveDest) -> Result<(), String> {
+        if slot.is_some() {
+            return Err("pick exactly one destination".to_string());
+        }
+        *slot = Some(new);
+        Ok(())
+    }
+
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            flag @ ("--under" | "--beside" | "--above" | "--new-group" | "--repo") => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(format!("missing value for {flag}"));
+                };
+                match flag {
+                    "--under" | "--beside" | "--above" => {
+                        let op = match flag {
+                            "--under" => crate::spaces::MoveOp::Under,
+                            "--beside" => crate::spaces::MoveOp::Beside,
+                            _ => crate::spaces::MoveOp::Above,
+                        };
+                        claim_dest(
+                            &mut dest,
+                            MoveDest::Node {
+                                key: value.clone(),
+                                op,
+                            },
+                        )?;
+                    }
+                    "--new-group" => {
+                        claim_dest(
+                            &mut dest,
+                            MoveDest::NewGroup {
+                                name: value.clone(),
+                            },
+                        )?;
+                    }
+                    _ => repo = Some(value.clone()),
+                }
+                index += 2;
+            }
+            "--top" => {
+                claim_dest(&mut dest, MoveDest::Top)?;
+                index += 1;
+            }
+            "--dry-run" => {
+                dry_run = true;
+                index += 1;
+            }
+            other if other.starts_with("--") => {
+                return Err(format!("unknown flag {other}"));
+            }
+            _ if branch.is_none() => {
+                branch = Some(args[index].clone());
+                index += 1;
+            }
+            other => {
+                return Err(format!("unexpected argument {other:?}"));
+            }
+        }
+    }
+
+    let branch = branch.ok_or_else(|| "a branch to move is required".to_string())?;
+    let dest = dest.ok_or_else(|| {
+        "pick a destination: --under/--beside/--above <node-key>, --top, or --new-group <name>"
+            .to_string()
+    })?;
+    Ok(MoveArgs {
+        branch,
+        dest,
+        repo,
+        dry_run,
+    })
+}
+
+/// The label and icon the managed overlay already carries for `key`, so a
+/// move re-writes the rule without losing what a promote once chose
+/// (TP-RANK-11).
+pub(crate) fn existing_rule_style(content: &str, key: &str) -> Option<(String, Option<String>)> {
+    let root: toml::Value = content.parse().ok()?;
+    let split = root.get("spaces")?.get("split")?.as_array()?;
+    let rule = split
+        .iter()
+        .find(|entry| entry.get("key").and_then(|k| k.as_str()) == Some(key))?;
+    let label = rule.get("label")?.as_str()?.to_string();
+    let icon = rule
+        .get("icon")
+        .and_then(|icon| icon.as_str())
+        .map(str::to_string);
+    Some((label, icon))
 }
 
 /// Everything a promote is going to write, decided before any file is touched.
@@ -50,6 +178,20 @@ pub(crate) struct PromotePlan {
     /// `Some` promotes past module rank: the space also becomes a top-level
     /// project of its own (TP-RANK-02).
     pub project: Option<ProjectPlan>,
+    /// The node the rule's bucket hangs under; `None` stays top level. A move
+    /// is a promote that carries a parent (TP-RANK-08).
+    pub parent: Option<String>,
+    /// A `[[spaces.node]]` entry written in the same update, so "move under a
+    /// new group" lands the group and the membership atomically (TP-RANK-10).
+    pub node: Option<NodePlan>,
+}
+
+/// A managed `[[spaces.node]]` entry a move may create on the way.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct NodePlan {
+    pub key: String,
+    pub name: String,
+    pub parent: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -110,11 +252,32 @@ pub(crate) fn upsert_managed(content: &str, plan: &PromotePlan) -> Result<String
     if let Some(icon) = &plan.icon {
         rule.insert("icon".into(), toml::Value::String(icon.clone()));
     }
+    // TP-RANK-08: the parent is written only when the plan carries one, so a
+    // plain promote (and a move back to top level) keeps the field out.
+    if let Some(parent) = &plan.parent {
+        rule.insert("parent".into(), toml::Value::String(parent.clone()));
+    }
     upsert_by_key(
         ensure_spaces_array(&mut root, "split")?,
         &plan.key,
         toml::Value::Table(rule),
     );
+
+    // TP-RANK-10: a move under a new group writes the `[[spaces.node]]` entry
+    // in the same document update as the membership that points at it.
+    if let Some(node) = &plan.node {
+        let mut entry = toml::map::Map::new();
+        entry.insert("key".into(), toml::Value::String(node.key.clone()));
+        entry.insert("name".into(), toml::Value::String(node.name.clone()));
+        if let Some(parent) = &node.parent {
+            entry.insert("parent".into(), toml::Value::String(parent.clone()));
+        }
+        upsert_by_key(
+            ensure_spaces_array(&mut root, "node")?,
+            &node.key,
+            toml::Value::Table(entry),
+        );
+    }
 
     if let Some(project) = &plan.project {
         let mut entry = toml::map::Map::new();
@@ -357,6 +520,8 @@ fn space_promote(args: &[String]) -> std::io::Result<i32> {
         key,
         label,
         icon,
+        parent: None,
+        node: None,
     };
 
     let path = crate::config::managed_spaces_path();
@@ -385,6 +550,102 @@ fn space_promote(args: &[String]) -> std::io::Result<i32> {
         },
         plan.key
     );
+    report_reload();
+    Ok(0)
+}
+
+/// `herdr space move` — re-hang a checkout's bucket relative to a node, on
+/// the same managed-overlay road a promote takes (TP-RANK-11).
+fn space_move(args: &[String]) -> std::io::Result<i32> {
+    let parsed = match parse_move_args(args) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            eprintln!("{err}");
+            print_space_help();
+            return Ok(2);
+        }
+    };
+
+    let repo_root = match parsed.repo {
+        Some(repo) => crate::worktree::expand_tilde_absolute_path(repo.trim()),
+        None => {
+            let cwd = std::env::current_dir()?;
+            match discover_repo_root(&cwd) {
+                Some(root) => root,
+                None => {
+                    eprintln!(
+                        "not inside a git checkout; pass --repo <root> to say which repository \
+                         the branch belongs to"
+                    );
+                    return Ok(1);
+                }
+            }
+        }
+    };
+
+    let loaded = crate::config::Config::load();
+    let (nodes, _) = crate::spaces::validate_node_forest(loaded.config.spaces.nodes());
+    let (parent, node) = match parsed.dest {
+        MoveDest::Node { key, op } => match crate::spaces::move_parent_for(&nodes, &key, op) {
+            Ok(parent) => (parent, None),
+            Err(err) => {
+                eprintln!("{err}");
+                return Ok(1);
+            }
+        },
+        MoveDest::Top => (None, None),
+        MoveDest::NewGroup { name } => {
+            let key = format!("group:{}", slug_for_branch(&name));
+            (
+                Some(key.clone()),
+                Some(NodePlan {
+                    key,
+                    name,
+                    parent: None,
+                }),
+            )
+        }
+    };
+
+    let path = crate::config::managed_spaces_path();
+    let current = std::fs::read_to_string(&path).unwrap_or_default();
+    let key = managed_key(&repo_root, &parsed.branch);
+    // A move is a re-hang, not a re-style: whatever label and icon the rule
+    // already carries stay with it.
+    let (label, icon) =
+        existing_rule_style(&current, &key).unwrap_or_else(|| (parsed.branch.clone(), None));
+    let plan = PromotePlan {
+        project: None,
+        repo_root,
+        branch: parsed.branch,
+        key,
+        label,
+        icon,
+        parent,
+        node,
+    };
+
+    let updated = match upsert_managed(&current, &plan) {
+        Ok(updated) => updated,
+        Err(err) => {
+            eprintln!("{err}");
+            return Ok(1);
+        }
+    };
+
+    if parsed.dry_run {
+        print!("{updated}");
+        return Ok(0);
+    }
+
+    std::fs::write(&path, &updated)?;
+    match &plan.parent {
+        Some(parent) => println!("moved {} under {parent} ({})", plan.branch, plan.key),
+        None => println!("moved {} to top level ({})", plan.branch, plan.key),
+    }
+    if user_config_mentions(&plan.branch) {
+        println!("note: config.toml also mentions this branch; hand-written rules win first-match");
+    }
     report_reload();
     Ok(0)
 }
@@ -522,6 +783,8 @@ mod tests {
                 key: "project:worktree-tiling".into(),
                 name: "Tiling arastirmasi".into(),
             }),
+            parent: None,
+            node: None,
         }
     }
 
@@ -612,5 +875,193 @@ mod tests {
         let (updated, removed) = remove_managed(&content, "no-such-branch").expect("remove");
         assert_eq!(removed, 0);
         assert_eq!(updated, content);
+    }
+
+    // TP-RANK-08: a move writes the parent onto the managed rule; a plan
+    // without one keeps the field out of the file entirely, so yesterday's
+    // promotes stay byte-compatible.
+    #[test]
+    fn upsert_writes_the_parent_the_plan_carries() {
+        let mut moved = plan(false);
+        moved.parent = Some("group:ops".into());
+        let updated = upsert_managed("", &moved).expect("upsert");
+        let value: toml::Value = updated.parse().expect("managed file parses");
+        let split = value["spaces"]["split"].as_array().expect("split array");
+        assert_eq!(split[0]["parent"].as_str(), Some("group:ops"));
+
+        let plain = upsert_managed("", &plan(false)).expect("upsert");
+        let value: toml::Value = plain.parse().expect("managed file parses");
+        let split = value["spaces"]["split"].as_array().expect("split array");
+        assert!(
+            split[0].get("parent").is_none(),
+            "no parent on the plan, no parent key in the file"
+        );
+    }
+
+    // TP-RANK-08: moving the same checkout again re-hangs it in place —
+    // one rule, the new parent — and moving to top level drops the field.
+    #[test]
+    fn moving_again_rehangs_the_same_rule() {
+        let mut first = plan(false);
+        first.parent = Some("group:ops".into());
+        let content = upsert_managed("", &first).expect("first move");
+
+        let mut second = plan(false);
+        second.parent = Some("group:infra".into());
+        let content = upsert_managed(&content, &second).expect("second move");
+        let value: toml::Value = content.parse().expect("managed file parses");
+        let split = value["spaces"]["split"].as_array().expect("split array");
+        assert_eq!(split.len(), 1, "no duplicate rule");
+        assert_eq!(split[0]["parent"].as_str(), Some("group:infra"));
+
+        let back_to_top = upsert_managed(&content, &plan(false)).expect("top-level move");
+        let value: toml::Value = back_to_top.parse().expect("managed file parses");
+        let split = value["spaces"]["split"].as_array().expect("split array");
+        assert_eq!(split.len(), 1);
+        assert!(
+            split[0].get("parent").is_none(),
+            "a top-level move removes the parent"
+        );
+    }
+
+    // TP-RANK-11: exactly one destination, spelled one of five ways.
+    #[test]
+    fn move_args_parse_the_five_destinations() {
+        let args = |list: &[&str]| -> Vec<String> { list.iter().map(|s| s.to_string()).collect() };
+
+        assert_eq!(
+            parse_move_args(&args(&["feat/x", "--under", "group:ops"])),
+            Ok(MoveArgs {
+                branch: "feat/x".into(),
+                dest: MoveDest::Node {
+                    key: "group:ops".into(),
+                    op: crate::spaces::MoveOp::Under,
+                },
+                repo: None,
+                dry_run: false,
+            })
+        );
+        assert_eq!(
+            parse_move_args(&args(&["feat/x", "--beside", "group:ops"]))
+                .expect("beside parses")
+                .dest,
+            MoveDest::Node {
+                key: "group:ops".into(),
+                op: crate::spaces::MoveOp::Beside,
+            }
+        );
+        assert_eq!(
+            parse_move_args(&args(&["feat/x", "--above", "group:ops"]))
+                .expect("above parses")
+                .dest,
+            MoveDest::Node {
+                key: "group:ops".into(),
+                op: crate::spaces::MoveOp::Above,
+            }
+        );
+        assert_eq!(
+            parse_move_args(&args(&["feat/x", "--top"]))
+                .expect("top parses")
+                .dest,
+            MoveDest::Top
+        );
+        let parsed = parse_move_args(&args(&[
+            "feat/x",
+            "--new-group",
+            "Ops",
+            "--repo",
+            "/repo/herdr",
+            "--dry-run",
+        ]))
+        .expect("new-group parses");
+        assert_eq!(parsed.dest, MoveDest::NewGroup { name: "Ops".into() });
+        assert_eq!(parsed.repo.as_deref(), Some("/repo/herdr"));
+        assert!(parsed.dry_run);
+    }
+
+    // TP-RANK-11: none or two destinations, a missing value, an unknown flag
+    // or a missing branch are refused — a move is never guessed at.
+    #[test]
+    fn move_args_refuse_ambiguous_or_incomplete_invocations() {
+        let args = |list: &[&str]| -> Vec<String> { list.iter().map(|s| s.to_string()).collect() };
+
+        assert!(
+            parse_move_args(&args(&["feat/x"])).is_err(),
+            "no destination"
+        );
+        assert!(
+            parse_move_args(&args(&["feat/x", "--under", "a", "--top"])).is_err(),
+            "two destinations"
+        );
+        assert!(
+            parse_move_args(&args(&["feat/x", "--under"])).is_err(),
+            "missing value"
+        );
+        assert!(
+            parse_move_args(&args(&["--top"])).is_err(),
+            "missing branch"
+        );
+        assert!(
+            parse_move_args(&args(&["feat/x", "--sideways", "a"])).is_err(),
+            "unknown flag"
+        );
+    }
+
+    // TP-RANK-11: a move is a re-hang, not a re-style — the label and icon a
+    // promote once wrote survive the rule being re-written.
+    #[test]
+    fn a_move_keeps_the_promoted_label_and_icon() {
+        let content = upsert_managed("", &plan(false)).expect("promote");
+        assert_eq!(
+            existing_rule_style(&content, "herdr:worktree-tiling"),
+            Some(("Tiling arastirmasi".to_string(), Some("🧱".to_string())))
+        );
+        assert_eq!(
+            existing_rule_style(&content, "no-such-key"),
+            None,
+            "an unknown key carries no style"
+        );
+        assert_eq!(existing_rule_style("", "any"), None, "an empty overlay too");
+    }
+
+    // TP-RANK-10: "move under a new group" lands the group and the
+    // membership in one write — a crash between the two cannot leave a
+    // parent pointing at a group that was never written.
+    #[test]
+    fn a_new_group_lands_with_its_member_in_one_write() {
+        let mut moved = plan(false);
+        moved.parent = Some("group:ops".into());
+        moved.node = Some(NodePlan {
+            key: "group:ops".into(),
+            name: "Ops".into(),
+            parent: None,
+        });
+        let updated = upsert_managed("", &moved).expect("upsert");
+        let value: toml::Value = updated.parse().expect("managed file parses");
+
+        let nodes = value["spaces"]["node"].as_array().expect("node array");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0]["key"].as_str(), Some("group:ops"));
+        assert_eq!(nodes[0]["name"].as_str(), Some("Ops"));
+        assert!(
+            nodes[0].get("parent").is_none(),
+            "a new group is born top level"
+        );
+
+        let split = value["spaces"]["split"].as_array().expect("split array");
+        assert_eq!(split[0]["parent"].as_str(), Some("group:ops"));
+
+        // Writing the same group again updates in place (TP-RANK-03's
+        // contract extended to nodes).
+        let again = upsert_managed(&updated, &moved).expect("second upsert");
+        let value: toml::Value = again.parse().expect("managed file parses");
+        assert_eq!(
+            value["spaces"]["node"]
+                .as_array()
+                .expect("node array")
+                .len(),
+            1,
+            "no duplicate node entry"
+        );
     }
 }

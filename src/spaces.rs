@@ -274,6 +274,41 @@ pub fn resolve_space_parent(
     })
 }
 
+/// The three ways a checkout can be re-hung relative to a node (K5): as its
+/// child, as its sibling, or one level above it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MoveOp {
+    Under,
+    Beside,
+    Above,
+}
+
+/// The parent a move lands on, resolved against the validated forest.
+///
+/// `Ok(None)` means top level. An unknown target is an error, never a silent
+/// drop to top level: a typo in a CLI key must not quietly flatten the tree.
+pub fn move_parent_for(
+    nodes: &[SpaceNode],
+    target_key: &str,
+    op: MoveOp,
+) -> Result<Option<String>, String> {
+    let target = nodes
+        .iter()
+        .find(|node| node.key == target_key)
+        .ok_or_else(|| format!("no spaces node has the key {target_key:?}"))?;
+    let parent_of = |key: &str| -> Option<String> {
+        nodes
+            .iter()
+            .find(|node| node.key == key)
+            .and_then(|node| node.parent.clone())
+    };
+    Ok(match op {
+        MoveOp::Under => Some(target.key.clone()),
+        MoveOp::Beside => target.parent.clone(),
+        MoveOp::Above => target.parent.as_deref().and_then(parent_of),
+    })
+}
+
 /// Glob match supporting `*` (any run of characters, including empty). No `?`,
 /// no character classes, no escaping: every other character is literal
 /// (TP-SPLIT-MATCH-05).
@@ -629,5 +664,66 @@ mod tests {
             None,
             "nothing claims it: top level"
         );
+    }
+
+    // TP-RANK-09: the three move operations resolve against the forest —
+    // under is the target itself, beside is the target's parent, above is
+    // the grandparent — and the top of the tree answers with top level.
+    #[test]
+    fn move_ops_resolve_under_beside_and_above() {
+        let forest = [
+            node("root", None),
+            node("mid", Some("root")),
+            node("leaf", Some("mid")),
+        ];
+
+        assert_eq!(
+            move_parent_for(&forest, "mid", MoveOp::Under),
+            Ok(Some("mid".to_string())),
+            "under X hangs the checkout on X itself"
+        );
+        assert_eq!(
+            move_parent_for(&forest, "leaf", MoveOp::Beside),
+            Ok(Some("mid".to_string())),
+            "beside X shares X's parent"
+        );
+        assert_eq!(
+            move_parent_for(&forest, "leaf", MoveOp::Above),
+            Ok(Some("root".to_string())),
+            "above X hangs on X's grandparent"
+        );
+    }
+
+    // TP-RANK-09: at the top of the tree the answers degrade to top level,
+    // never to an error — only a missing target is refused.
+    #[test]
+    fn move_ops_at_the_top_answer_top_level() {
+        let forest = [node("root", None), node("mid", Some("root"))];
+
+        assert_eq!(
+            move_parent_for(&forest, "root", MoveOp::Beside),
+            Ok(None),
+            "beside a top-level node is top level"
+        );
+        assert_eq!(
+            move_parent_for(&forest, "root", MoveOp::Above),
+            Ok(None),
+            "above a top-level node is still top level"
+        );
+        assert_eq!(
+            move_parent_for(&forest, "mid", MoveOp::Above),
+            Ok(None),
+            "above a child of a top-level node is top level"
+        );
+    }
+
+    // TP-RANK-09: a typo in the target key is an error, never a silent drop
+    // to top level — a CLI mistake must not quietly flatten the tree.
+    #[test]
+    fn an_unknown_move_target_is_refused() {
+        let forest = [node("root", None)];
+        let err = move_parent_for(&forest, "no-such-node", MoveOp::Under)
+            .expect_err("unknown target must refuse");
+        assert!(err.contains("no-such-node"), "{err}");
     }
 }
