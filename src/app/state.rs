@@ -3808,6 +3808,54 @@ impl AppState {
         })
     }
 
+    /// Whether `ws_idx`'s chat drawer is folded shut, under the configured
+    /// drawer mode. The single evaluation gate: every surface that draws,
+    /// counts, or toggles a drawer asks here.
+    ///
+    /// Closed is the default: opening every workspace at once would bury the
+    /// workspace list the tab exists for.
+    ///
+    /// TP-DRAWER-03: `all-active` derives an open drawer for every workspace
+    /// with a live agent entry, unless this display quieted it
+    /// (TP-DRAWER-04); the expanded set still opens agent-less drawers by
+    /// hand. `focused` and `manual` never derive — only the expanded set
+    /// speaks there (TP-DRAWER-05). Both sets are per-display surfaces, so
+    /// what this display derives or quiets moves no drawer on another one.
+    pub(crate) fn chat_drawer_collapsed(&self, ws_idx: usize) -> bool {
+        let Some(workspace) = self.workspaces.get(ws_idx) else {
+            return true;
+        };
+        let key = crate::persist::workspace_chats::ledger_key(&workspace.identity_cwd);
+        let opened_by_hand = self.expanded_chat_workspaces.contains(&key);
+        match self.chat_drawer_mode {
+            ChatDrawerMode::AllActive => {
+                let derived = !self.suppressed_chat_drawers.contains(&key)
+                    && self.workspace_has_agent_entries(ws_idx);
+                !(opened_by_hand || derived)
+            }
+            ChatDrawerMode::Focused | ChatDrawerMode::Manual => !opened_by_hand,
+        }
+    }
+
+    /// Whether any pane of `ws_idx` would put a row in the agents panel —
+    /// the panel's own has-an-agent criterion (an agent name, or a detected
+    /// agent label), so the drawer derivation and the panel can never
+    /// disagree about what "active agent" means.
+    fn workspace_has_agent_entries(&self, ws_idx: usize) -> bool {
+        let Some(workspace) = self.workspaces.get(ws_idx) else {
+            return false;
+        };
+        workspace.tabs.iter().any(|tab| {
+            tab.panes.values().any(|pane| {
+                self.terminals
+                    .get(&pane.attached_terminal_id)
+                    .is_some_and(|terminal| {
+                        terminal.agent_name.is_some() || terminal.effective_agent_label().is_some()
+                    })
+            })
+        })
+    }
+
     pub(crate) fn global_menu_attention_badge_visible(&self) -> bool {
         self.update_available.is_some() || self.integration_updates_available()
     }
@@ -6968,5 +7016,120 @@ mod viewer_context_tests {
         state.restore_viewer(None);
         state.enter_viewer(Some(2));
         assert_eq!(state.workspaces[1].viewer(), Some(2));
+    }
+}
+
+#[cfg(test)]
+mod chat_drawer_mode_tests {
+    use super::*;
+
+    fn state_with_workspace(cwd: &str) -> (AppState, String) {
+        let mut state = AppState::test_new();
+        let mut ws = crate::workspace::Workspace::test_new("a");
+        ws.identity_cwd = std::path::PathBuf::from(cwd);
+        let key = crate::persist::workspace_chats::ledger_key(&ws.identity_cwd);
+        state.workspaces.push(ws);
+        (state, key)
+    }
+
+    fn give_workspace_an_agent(state: &mut AppState, ws_idx: usize) {
+        let pane = state.workspaces[ws_idx].tabs[0].root_pane;
+        let id = state.workspaces[ws_idx].terminal_id(pane).unwrap().clone();
+        let mut terminal = crate::terminal::state::TerminalState::new(id.clone(), "/tmp".into());
+        terminal.set_agent_name("planner".into());
+        state.terminals.insert(id, terminal);
+    }
+
+    // TP-DRAWER-03
+    #[test]
+    fn an_agent_workspace_derives_an_open_drawer_in_all_active() {
+        let (mut state, _key) = state_with_workspace("/repo/a");
+        give_workspace_an_agent(&mut state, 0);
+
+        assert_eq!(state.chat_drawer_mode, ChatDrawerMode::AllActive);
+        assert!(
+            !state.chat_drawer_collapsed(0),
+            "a live agent derives an open drawer in all-active"
+        );
+    }
+
+    #[test]
+    fn an_agentless_workspace_opens_only_by_hand() {
+        let (mut state, key) = state_with_workspace("/repo/a");
+
+        assert!(
+            state.chat_drawer_collapsed(0),
+            "no agent, no derivation — closed stays the default"
+        );
+
+        state.expanded_chat_workspaces.insert(key);
+        assert!(
+            !state.chat_drawer_collapsed(0),
+            "the expanded set still opens a drawer by hand"
+        );
+    }
+
+    // TP-DRAWER-04
+    #[test]
+    fn a_quieted_drawer_stays_shut_despite_a_live_agent() {
+        let (mut state, key) = state_with_workspace("/repo/a");
+        give_workspace_an_agent(&mut state, 0);
+
+        state.suppressed_chat_drawers.insert(key);
+        assert!(
+            state.chat_drawer_collapsed(0),
+            "quieting beats the derivation — the person's hand wins"
+        );
+    }
+
+    // TP-DRAWER-05
+    #[test]
+    fn focused_and_manual_never_derive_an_open_drawer() {
+        for mode in [ChatDrawerMode::Focused, ChatDrawerMode::Manual] {
+            let (mut state, key) = state_with_workspace("/repo/a");
+            give_workspace_an_agent(&mut state, 0);
+            state.chat_drawer_mode = mode;
+
+            assert!(
+                state.chat_drawer_collapsed(0),
+                "{mode:?} must not derive an open drawer"
+            );
+
+            state.expanded_chat_workspaces.insert(key.clone());
+            assert!(
+                !state.chat_drawer_collapsed(0),
+                "{mode:?} still honours the expanded set"
+            );
+        }
+    }
+
+    // The derivation and the agents panel must speak the same criterion, or
+    // a drawer opens for a workspace the panel does not list (or the other
+    // way round) and the two surfaces argue about what "active agent" means.
+    #[test]
+    fn the_derivation_uses_the_panels_agent_criterion() {
+        let (mut state, _key) = state_with_workspace("/repo/a");
+        let pane = state.workspaces[0].tabs[0].root_pane;
+        let id = state.workspaces[0].terminal_id(pane).unwrap().clone();
+
+        // A terminal with no agent name and no detected agent puts no row in
+        // the agents panel, so it must not derive a drawer either.
+        state.terminals.insert(
+            id.clone(),
+            crate::terminal::state::TerminalState::new(id.clone(), "/tmp".into()),
+        );
+        assert!(
+            state.chat_drawer_collapsed(0),
+            "an agent-less terminal is not an agent entry"
+        );
+
+        // A detected agent with no name IS a panel row — and derives.
+        if let Some(terminal) = state.terminals.get_mut(&id) {
+            terminal.set_detected_state(Some(crate::detect::Agent::Claude), AgentState::Working);
+        }
+        assert!(
+            !state.chat_drawer_collapsed(0),
+            "a detected agent is a panel row, so it derives"
+        );
     }
 }

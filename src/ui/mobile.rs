@@ -4566,6 +4566,11 @@ mod tests {
         }
         app.active = Some(0);
         app.selected = 0;
+        // This test reads the drawer document's row arithmetic. The live
+        // agents above would make all-active derive an open chat drawer and
+        // slide every row it counts — drawer behaviour is TP-DRAWER's story,
+        // ordering is this one's, so the fixture pins the manual mode.
+        app.chat_drawer_mode = crate::app::state::ChatDrawerMode::Manual;
         app.view.mobile_header_rect = Rect::new(0, 0, 44, 2);
         app.view.terminal_area = Rect::new(0, 2, 44, 18);
         app.mobile_drawer = crate::app::state::MobileDrawer::Spaces;

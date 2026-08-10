@@ -642,14 +642,11 @@ pub(crate) fn workspace_chat_rows_for(
 
 /// Whether `ws_idx`'s drawer is folded shut.
 ///
-/// Closed is the default: opening every workspace at once would bury the
-/// workspace list the tab exists for.
+/// A thin delegate: the mode-aware answer lives on [`AppState`], the single
+/// evaluation gate, so the render path, the mobile drawer, and the input
+/// layer all read the same verdict.
 pub(crate) fn workspace_chat_drawer_collapsed(app: &AppState, ws_idx: usize) -> bool {
-    let Some(workspace) = app.workspaces.get(ws_idx) else {
-        return true;
-    };
-    let key = crate::persist::workspace_chats::ledger_key(&workspace.identity_cwd);
-    !app.expanded_chat_workspaces.contains(&key)
+    app.chat_drawer_collapsed(ws_idx)
 }
 
 /// The chat row the selection accent belongs to, when there is one.
