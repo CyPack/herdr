@@ -144,6 +144,36 @@ impl App {
         if let Some(dir) = crate::claude_sessions::default_claude_projects_dir() {
             self.state.merge_workspace_chat_rows_in(&dir);
         }
+        // TP-CHAT-MOVE-01: the user's re-homes are applied LAST — after the
+        // agent-store merge — or a moved chat would leak back into its source
+        // drawer on the very next refresh.
+        crate::persist::workspace_chats::apply_chat_moves(
+            &mut self.state.workspace_chat_rows,
+            &self.workspace_chat_ledger.moves,
+        );
+        self.state.chat_move_overrides = self.workspace_chat_ledger.moves.clone();
+    }
+
+    /// Write a chat re-home decision into the ledger and refresh the rows —
+    /// the App loop's answer to `request_chat_move` (TP-CHAT-MOVE-04).
+    pub(crate) fn apply_chat_move(&mut self, session_id: &str, target: Option<&str>) {
+        let changed = match target {
+            Some(target) => self.workspace_chat_ledger.set_move(session_id, target),
+            None => self.workspace_chat_ledger.clear_move(session_id),
+        };
+        if !changed {
+            return;
+        }
+        self.sync_workspace_chat_rows();
+        if self.no_session {
+            return;
+        }
+        let path = crate::persist::workspace_chats::default_ledger_path();
+        if let Err(err) =
+            crate::persist::workspace_chats::save_to_path(&path, &self.workspace_chat_ledger)
+        {
+            tracing::warn!(path = %path.display(), %err, "failed to save workspace chat ledger");
+        }
     }
 
     pub(crate) fn save_session_now(&mut self) {

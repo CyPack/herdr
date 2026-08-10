@@ -70,6 +70,12 @@ pub struct WorkspaceChatLedger {
     pub version: u32,
     #[serde(default)]
     pub workspaces: BTreeMap<String, WorkspaceChats>,
+    /// User-decided re-homes: session id → the ledger key whose drawer the
+    /// chat belongs to now (TP-CHAT-MOVE-01). Deliberately additive on the
+    /// version-1 schema: an older binary still reads the file and only loses
+    /// the moves if it saves — the observed history itself is never at risk.
+    #[serde(default)]
+    pub moves: BTreeMap<String, String>,
 }
 
 impl Default for WorkspaceChatLedger {
@@ -77,6 +83,7 @@ impl Default for WorkspaceChatLedger {
         Self {
             version: LEDGER_VERSION,
             workspaces: BTreeMap::new(),
+            moves: BTreeMap::new(),
         }
     }
 }
@@ -171,6 +178,70 @@ impl WorkspaceChatLedger {
             .get(workspace_key)
             .map(|entry| entry.chats.as_slice())
             .unwrap_or(&[])
+    }
+
+    /// Re-home a chat: from now on it belongs to `target_key`'s drawer, no
+    /// matter where it was observed (TP-CHAT-MOVE-01). Returns whether the
+    /// ledger changed, so an identical decision never schedules a write.
+    pub fn set_move(&mut self, session_id: &str, target_key: &str) -> bool {
+        if session_id.is_empty() || target_key.is_empty() {
+            return false;
+        }
+        if self.moves.get(session_id).map(String::as_str) == Some(target_key) {
+            return false;
+        }
+        self.moves
+            .insert(session_id.to_string(), target_key.to_string());
+        true
+    }
+
+    /// Withdraw a re-home: the chat returns to wherever it was observed
+    /// (TP-CHAT-MOVE-03).
+    pub fn clear_move(&mut self, session_id: &str) -> bool {
+        self.moves.remove(session_id).is_some()
+    }
+}
+
+/// Apply the user's re-homes to the assembled presentation rows.
+///
+/// This runs as the LAST step of the sync, after the ledger projection AND the
+/// agent-store merge: applying it inside `project_rows` alone would let the
+/// agent's own cwd-keyed store re-leak a moved chat back into its source
+/// drawer on the very next refresh (TP-CHAT-MOVE-01).
+pub fn apply_chat_moves(
+    rows: &mut std::collections::HashMap<String, Vec<crate::app::state::WorkspaceChatRow>>,
+    moves: &BTreeMap<String, String>,
+) {
+    for (session_id, target_key) in moves {
+        // Pull the chat out of every drawer, keeping its freshest copy —
+        // the target's own copy counts too, so re-inserting cannot duplicate.
+        let mut best: Option<crate::app::state::WorkspaceChatRow> = None;
+        for list in rows.values_mut() {
+            list.retain(|row| {
+                if row.session_id == *session_id {
+                    if best
+                        .as_ref()
+                        .is_none_or(|kept| row.last_seen_ms > kept.last_seen_ms)
+                    {
+                        best = Some(row.clone());
+                    }
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        // A session nobody shows moves nothing; the map never learns keys
+        // for ghosts.
+        let Some(moved) = best else {
+            continue;
+        };
+        let list = rows.entry(target_key.clone()).or_default();
+        let position = list
+            .iter()
+            .position(|row| row.last_seen_ms < moved.last_seen_ms)
+            .unwrap_or(list.len());
+        list.insert(position, moved);
     }
 }
 
@@ -554,6 +625,138 @@ mod tests {
         let loaded = load_from_path(&path.0);
         assert_eq!(loaded.chats_for("/repo").len(), 1);
         assert_eq!(loaded.chats_for("/repo")[0].session_id, "s2");
+    }
+
+    fn row(session_id: &str, last_seen_ms: u64) -> crate::app::state::WorkspaceChatRow {
+        crate::app::state::WorkspaceChatRow {
+            session_id: session_id.to_string(),
+            agent: "claude".to_string(),
+            title: None,
+            last_seen_ms,
+            last_modified: None,
+        }
+    }
+
+    // TP-CHAT-MOVE-01: a re-home wins over every source — the ledger's own
+    // projection and the agent-store merge alike — and the chat appears in
+    // exactly one drawer afterwards, in recency order.
+    #[test]
+    fn a_move_relocates_the_chat_out_of_every_source_drawer() {
+        let mut rows = std::collections::HashMap::from([
+            (
+                "/repo/main".to_string(),
+                vec![row("s1", 5_000), row("s2", 4_000)],
+            ),
+            // The agent-store merge attributed the same chat here too.
+            ("/repo/other".to_string(), vec![row("s1", 3_000)]),
+            (
+                "/repo/target".to_string(),
+                vec![row("t-new", 9_000), row("t-old", 1_000)],
+            ),
+        ]);
+        let moves = BTreeMap::from([("s1".to_string(), "/repo/target".to_string())]);
+
+        apply_chat_moves(&mut rows, &moves);
+
+        assert!(
+            !rows["/repo/main"].iter().any(|r| r.session_id == "s1"),
+            "the ledger-projected source lets go"
+        );
+        assert!(
+            !rows["/repo/other"].iter().any(|r| r.session_id == "s1"),
+            "the merge-attributed source lets go too"
+        );
+        let target_ids: Vec<_> = rows["/repo/target"]
+            .iter()
+            .map(|r| r.session_id.as_str())
+            .collect();
+        assert_eq!(
+            target_ids,
+            vec!["t-new", "s1", "t-old"],
+            "the freshest sighting (5000) lands in recency order"
+        );
+        assert_eq!(
+            rows["/repo/main"],
+            vec![row("s2", 4_000)],
+            "unmoved chats stay put"
+        );
+    }
+
+    // TP-CHAT-MOVE-01: a move to a drawer nobody has observed yet still
+    // lands — the target key may not exist in the map at all.
+    #[test]
+    fn a_move_to_an_unobserved_drawer_creates_it() {
+        let mut rows =
+            std::collections::HashMap::from([("/repo/main".to_string(), vec![row("s1", 5_000)])]);
+        let moves = BTreeMap::from([("s1".to_string(), "/repo/fresh".to_string())]);
+
+        apply_chat_moves(&mut rows, &moves);
+
+        assert!(rows["/repo/main"].is_empty());
+        assert_eq!(rows["/repo/fresh"], vec![row("s1", 5_000)]);
+    }
+
+    // TP-CHAT-MOVE-01: a chat already shown in its target must not double up,
+    // and a move naming a session nobody shows is a no-op.
+    #[test]
+    fn a_move_never_duplicates_and_tolerates_the_unknown() {
+        let mut rows =
+            std::collections::HashMap::from([("/repo/target".to_string(), vec![row("s1", 5_000)])]);
+        let moves = BTreeMap::from([
+            ("s1".to_string(), "/repo/target".to_string()),
+            ("ghost".to_string(), "/repo/target".to_string()),
+        ]);
+
+        apply_chat_moves(&mut rows, &moves);
+
+        assert_eq!(
+            rows["/repo/target"],
+            vec![row("s1", 5_000)],
+            "already home: one row, unchanged"
+        );
+    }
+
+    // TP-CHAT-MOVE-02: the decision survives a restart, and yesterday's file
+    // (no moves field) still loads — the additive-schema promise.
+    #[test]
+    fn moves_round_trip_and_an_old_file_loads_without_them() {
+        let path = TempPath(temp_ledger_path("moves"));
+        let mut ledger = WorkspaceChatLedger::default();
+        ledger.record_at("/repo", observation("s1"), 1_000);
+        assert!(ledger.set_move("s1", "/repo/target"));
+
+        save_to_path(&path.0, &ledger).expect("ledger should save");
+        let loaded = load_from_path(&path.0);
+        assert_eq!(loaded, ledger);
+        assert_eq!(
+            loaded.moves.get("s1").map(String::as_str),
+            Some("/repo/target")
+        );
+
+        let old = TempPath(temp_ledger_path("old-schema"));
+        std::fs::write(&old.0, br#"{"version":1,"workspaces":{}}"#).expect("write old fixture");
+        assert_eq!(load_from_path(&old.0).moves.len(), 0);
+    }
+
+    // TP-CHAT-MOVE-03: set and clear answer honestly — an identical decision
+    // or an unknown withdrawal must never schedule a disk write.
+    #[test]
+    fn set_and_clear_move_report_change_honestly() {
+        let mut ledger = WorkspaceChatLedger::default();
+
+        assert!(ledger.set_move("s1", "/repo/target"), "a new decision");
+        assert!(
+            !ledger.set_move("s1", "/repo/target"),
+            "the same decision again changes nothing"
+        );
+        assert!(
+            ledger.set_move("s1", "/repo/elsewhere"),
+            "a different target is a new decision"
+        );
+        assert!(ledger.clear_move("s1"), "withdrawing an existing move");
+        assert!(!ledger.clear_move("s1"), "withdrawing nothing");
+        assert!(!ledger.set_move("", "/repo/x"), "an empty session id");
+        assert!(!ledger.set_move("s1", ""), "an empty target");
     }
 
     fn snapshot_pane(session: Option<&str>) -> crate::persist::snapshot::PaneSnapshot {

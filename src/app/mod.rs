@@ -748,6 +748,8 @@ impl App {
             request_new_linked_worktree: None,
             request_open_existing_worktree: None,
             pending_move_new_group: None,
+            chat_move_overrides: Default::default(),
+            request_chat_move: None,
             request_new_workspace_cwd: None,
             request_remove_linked_worktree: None,
             request_submit_worktree_create: false,
@@ -1304,6 +1306,11 @@ impl App {
 
             if let Some(ws_idx) = self.state.request_open_existing_worktree.take() {
                 self.open_existing_worktree_dialog(ws_idx);
+                needs_render = true;
+            }
+
+            if let Some((session_id, target)) = self.state.request_chat_move.take() {
+                self.apply_chat_move(&session_id, target.as_deref());
                 needs_render = true;
             }
 

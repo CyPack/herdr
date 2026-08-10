@@ -989,6 +989,41 @@ pub(super) fn apply_context_menu_action(
             }
             leave_modal(state);
         }
+        // TP-CHAT-MOVE-04: the chat menu parks its decision for the App
+        // loop, which owns the ledger the decision is written into.
+        (
+            ContextMenuKind::WorkspaceChat {
+                ws_idx, session_id, ..
+            },
+            Some("Move to branch..."),
+        ) => {
+            let targets = state.chat_move_target_entries(ws_idx);
+            state.context_menu = Some(crate::app::state::ContextMenuState {
+                kind: ContextMenuKind::ChatMoveTarget {
+                    session_id,
+                    targets,
+                },
+                x: menu_x,
+                y: menu_y,
+                list: crate::app::state::MenuListState::new(0),
+            });
+        }
+        (ContextMenuKind::WorkspaceChat { session_id, .. }, Some("Move back")) => {
+            state.request_chat_move = Some((session_id, None));
+            leave_modal(state);
+        }
+        (
+            ContextMenuKind::ChatMoveTarget {
+                session_id,
+                targets,
+            },
+            Some(_),
+        ) => {
+            if let Some((key, _)) = targets.get(idx) {
+                state.request_chat_move = Some((session_id, Some(key.clone())));
+            }
+            leave_modal(state);
+        }
         (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("Open worktree...")) => {
             state.request_open_existing_worktree = Some(ws_idx);
             leave_modal(state);
@@ -1558,6 +1593,41 @@ impl App {
                         Ok(parent) => self.state.move_workspace_space(ws_idx, parent, None),
                         Err(err) => tracing::warn!(error = %err, "move target vanished"),
                     }
+                }
+                leave_modal(&mut self.state);
+            }
+            // TP-CHAT-MOVE-04: the chat menu on the mouse road — the same
+            // request-parking the keyboard dispatch does.
+            (
+                ContextMenuKind::WorkspaceChat {
+                    ws_idx, session_id, ..
+                },
+                Some("Move to branch..."),
+            ) => {
+                let targets = self.state.chat_move_target_entries(ws_idx);
+                self.state.context_menu = Some(crate::app::state::ContextMenuState {
+                    kind: ContextMenuKind::ChatMoveTarget {
+                        session_id,
+                        targets,
+                    },
+                    x: menu_x,
+                    y: menu_y,
+                    list: crate::app::state::MenuListState::new(0),
+                });
+            }
+            (ContextMenuKind::WorkspaceChat { session_id, .. }, Some("Move back")) => {
+                self.state.request_chat_move = Some((session_id, None));
+                leave_modal(&mut self.state);
+            }
+            (
+                ContextMenuKind::ChatMoveTarget {
+                    session_id,
+                    targets,
+                },
+                Some(_),
+            ) => {
+                if let Some((key, _)) = targets.get(idx) {
+                    self.state.request_chat_move = Some((session_id, Some(key.clone())));
                 }
                 leave_modal(&mut self.state);
             }
@@ -2758,6 +2828,80 @@ mod tests {
         assert_eq!(app.state.pending_move_new_group, Some(0));
         assert_eq!(app.state.name_input, "", "the name starts empty");
         assert!(app.state.context_menu.is_none(), "the menu chain is done");
+    }
+
+    // TP-CHAT-MOVE-04: the chat menu's move road — the picker lists the
+    // other open drawers by ledger key, and the selection parks a request
+    // for the App loop, which owns the ledger.
+    #[test]
+    fn chat_move_walks_the_picker_and_requests_the_move() {
+        let mut app = app_with_test_workspaces(&["tiling", "other"]);
+        app.state.workspaces[0].identity_cwd = std::path::PathBuf::from("/repo/a");
+        app.state.workspaces[1].identity_cwd = std::path::PathBuf::from("/repo/b");
+        app.state.mode = Mode::ContextMenu;
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::WorkspaceChat {
+                ws_idx: 0,
+                session_id: "s1".into(),
+                has_move: false,
+            },
+            x: 2,
+            y: 5,
+            list: MenuListState::new(0),
+        };
+        let idx = item_index(&menu, "Move to branch...");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        // The real dispatcher takes the menu out of the state before acting
+        // on a selection; the test mirrors that hand-off.
+        let picker = app.state.context_menu.take().expect("picker is open");
+        match &picker.kind {
+            ContextMenuKind::ChatMoveTarget {
+                session_id,
+                targets,
+            } => {
+                assert_eq!(session_id, "s1");
+                assert_eq!(
+                    targets.len(),
+                    1,
+                    "the chat's own drawer is not a destination"
+                );
+                assert_eq!(targets[0].0, "/repo/b");
+            }
+            other => panic!("expected the chat target picker, got {other:?}"),
+        }
+
+        app.apply_context_menu_action_via_api(picker, 0);
+
+        assert_eq!(
+            app.state.request_chat_move,
+            Some(("s1".to_string(), Some("/repo/b".to_string())))
+        );
+        assert!(app.state.context_menu.is_none(), "the chain is done");
+    }
+
+    // TP-CHAT-MOVE-04: "Move back" parks a withdrawal for the App loop.
+    #[test]
+    fn move_back_requests_a_clear() {
+        let mut app = app_with_test_workspaces(&["tiling"]);
+        app.state.mode = Mode::ContextMenu;
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::WorkspaceChat {
+                ws_idx: 0,
+                session_id: "s1".into(),
+                has_move: true,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = item_index(&menu, "Move back");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        assert_eq!(app.state.request_chat_move, Some(("s1".to_string(), None)));
+        assert!(app.state.context_menu.is_none());
     }
 
     // TP-RANK-13: an escaped name input disarms the move — the next plain

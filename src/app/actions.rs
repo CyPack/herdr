@@ -1988,6 +1988,31 @@ impl AppState {
             .collect()
     }
 
+    /// The open drawers a chat could move to, as `(ledger key, display
+    /// name)` — every workspace except the one the chat is shown in, keyed
+    /// the way the ledger keys them (TP-CHAT-MOVE-04).
+    pub(crate) fn chat_move_target_entries(&self, exclude_ws_idx: usize) -> Vec<(String, String)> {
+        self.workspaces
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| *idx != exclude_ws_idx)
+            .filter_map(|(_, workspace)| {
+                let key = crate::persist::workspace_chats::ledger_key(&workspace.identity_cwd);
+                if key.is_empty() {
+                    return None;
+                }
+                let label = workspace.branch().unwrap_or_else(|| {
+                    workspace
+                        .identity_cwd
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| key.clone())
+                });
+                Some((key, label))
+            })
+            .collect()
+    }
+
     /// Finish a "move under a new group": the collected name becomes a
     /// managed `[[spaces.node]]` entry and the branch re-hangs under it in
     /// one write (TP-RANK-10's road from the input modal).

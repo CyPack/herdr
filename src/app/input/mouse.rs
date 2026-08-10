@@ -1319,6 +1319,39 @@ impl AppState {
                         return None;
                     }
                 }
+                // TP-CHAT-MOVE-04: a chat row owns its own menu — checked
+                // before the workspace cards for the same reason the click
+                // road is: only one vector may own the row.
+                if let Some(hit) = self
+                    .view
+                    .workspace_chat_row_areas
+                    .iter()
+                    .find(|row| {
+                        mouse.row == row.rect.y
+                            && mouse.column >= row.rect.x
+                            && mouse.column < row.rect.x + row.rect.width
+                    })
+                    .cloned()
+                {
+                    if let Some(session_id) = crate::ui::workspace_chat_rows_for(self, hit.ws_idx)
+                        .get(hit.chat_idx)
+                        .map(|row| row.session_id.clone())
+                    {
+                        let has_move = self.chat_move_overrides.contains_key(&session_id);
+                        self.context_menu = Some(ContextMenuState {
+                            kind: ContextMenuKind::WorkspaceChat {
+                                ws_idx: hit.ws_idx,
+                                session_id,
+                                has_move,
+                            },
+                            x: mouse.column,
+                            y: mouse.row,
+                            list: MenuListState::new(0),
+                        });
+                        self.enter_overlay_mode(Mode::ContextMenu);
+                    }
+                    return None;
+                }
                 if let Some(idx) = self.workspace_at_row(mouse.row) {
                     self.selected = idx;
                     let kind = self

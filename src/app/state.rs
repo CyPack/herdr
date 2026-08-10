@@ -2250,6 +2250,20 @@ pub enum ContextMenuKind {
         op: crate::spaces::MoveOp,
         targets: Vec<(String, String)>,
     },
+    /// A chat row's own menu. The session id is resolved at open time so a
+    /// list refresh under an open menu can never re-target the move
+    /// (TP-CHAT-MOVE-04); `has_move` decides whether "Move back" shows.
+    WorkspaceChat {
+        ws_idx: usize,
+        session_id: String,
+        has_move: bool,
+    },
+    /// The drawer picker a chat move opens: open workspaces as
+    /// `(ledger key, display name)`, resolved by index like MoveTarget.
+    ChatMoveTarget {
+        session_id: String,
+        targets: Vec<(String, String)>,
+    },
     Tab {
         ws_idx: usize,
         tab_idx: usize,
@@ -2360,6 +2374,19 @@ impl ContextMenuState {
                 items
             }
             ContextMenuKind::MoveTarget { targets, .. } => {
+                targets.iter().map(|(_, label)| label.as_str()).collect()
+            }
+            // TP-CHAT-MOVE-04: the way back only shows while a re-home is in
+            // force — offering it otherwise would be a button that does
+            // nothing.
+            ContextMenuKind::WorkspaceChat { has_move, .. } => {
+                let mut items = vec!["Move to branch..."];
+                if *has_move {
+                    items.push("Move back");
+                }
+                items
+            }
+            ContextMenuKind::ChatMoveTarget { targets, .. } => {
                 targets.iter().map(|(_, label)| label.as_str()).collect()
             }
             ContextMenuKind::Tab { .. } => vec!["New tab", "Rename", "Close"],
@@ -3102,6 +3129,15 @@ pub struct AppState {
     /// the rename input collects the name. Client-local like every modal
     /// fact: naming a group on one display never opens an input on another.
     pub pending_move_new_group: Option<usize>,
+    /// Read-only mirror of the chat ledger's re-homes (session id → target
+    /// ledger key), refreshed by the same sync that projects the rows. The
+    /// state layer needs it to build the chat menu; the ledger itself lives
+    /// on the App and is the only writer.
+    pub chat_move_overrides: std::collections::BTreeMap<String, String>,
+    /// A chat re-home decision waiting for the App loop, which owns the
+    /// ledger: `(session_id, Some(target))` moves, `(session_id, None)`
+    /// withdraws (TP-CHAT-MOVE-04).
+    pub request_chat_move: Option<(String, Option<String>)>,
     pub request_new_workspace_cwd: Option<std::path::PathBuf>,
     pub request_remove_linked_worktree: Option<usize>,
     pub request_submit_worktree_create: bool,
@@ -4123,6 +4159,8 @@ impl AppState {
             request_new_linked_worktree: None,
             request_open_existing_worktree: None,
             pending_move_new_group: None,
+            chat_move_overrides: Default::default(),
+            request_chat_move: None,
             request_new_workspace_cwd: None,
             request_remove_linked_worktree: None,
             request_submit_worktree_create: false,
@@ -4627,8 +4665,13 @@ impl AppState {
                 ContextMenuKind::Workspace { ws_idx }
                 | ContextMenuKind::GitWorkspace { ws_idx, .. }
                 | ContextMenuKind::MoveWorkspace { ws_idx, .. }
-                | ContextMenuKind::MoveTarget { ws_idx, .. } => {
+                | ContextMenuKind::MoveTarget { ws_idx, .. }
+                | ContextMenuKind::WorkspaceChat { ws_idx, .. } => {
                     assert_workspace_index(ws_idx, "context menu workspace")
+                }
+                ContextMenuKind::ChatMoveTarget { .. } => {
+                    // Carries a session id and pre-resolved ledger keys; no
+                    // index-shaped identity to validate.
                 }
                 ContextMenuKind::Tab { ws_idx, tab_idx } => {
                     assert_tab_index(ws_idx, tab_idx, "context menu tab")
@@ -5655,6 +5698,46 @@ mod tests {
             &["Under a new group...", "To top level"],
             "verbs with nothing to point at do not render"
         );
+    }
+
+    // TP-CHAT-MOVE-04: a chat row's menu always offers the move road and
+    // only offers the way back while a re-home is actually in force.
+    #[test]
+    fn the_chat_menu_offers_move_and_conditionally_back() {
+        let plain = ContextMenuState {
+            kind: ContextMenuKind::WorkspaceChat {
+                ws_idx: 0,
+                session_id: "s1".into(),
+                has_move: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        assert_eq!(plain.items(), &["Move to branch..."]);
+
+        let moved = ContextMenuState {
+            kind: ContextMenuKind::WorkspaceChat {
+                ws_idx: 0,
+                session_id: "s1".into(),
+                has_move: true,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        assert_eq!(moved.items(), &["Move to branch...", "Move back"]);
+
+        let picker = ContextMenuState {
+            kind: ContextMenuKind::ChatMoveTarget {
+                session_id: "s1".into(),
+                targets: vec![("/repo/b".into(), "feature-b".into())],
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        assert_eq!(picker.items(), &["feature-b"]);
     }
 
     // TP-RANK-13: the target picker shows display names and resolves by
