@@ -139,6 +139,38 @@ spaces = []
 
 Projects follow the same rules as split rules: the first matching project wins in config order, resolution happens at render time so `herdr server reload-config` regroups immediately, an unusable entry — no `key`, a relative repo, no usable member — is reported and skipped, and a duplicate `key` is reported because two projects would share one collapse state. An empty project list leaves the sidebar exactly as it was.
 
+### Deeper trees with `[[spaces.node]]`
+
+When two levels are not enough, `[[spaces.node]]` containers give the tree its
+N-level shape. A node is a named header that hangs under another node by
+`parent`; a split rule may carry a `parent` of its own to hang its bucket under
+a node, and a project may too — a project *is* a node, just a parentless one by
+default:
+
+```toml
+[[spaces.node]]
+key = "node:ui"
+name = "UI Layer"
+icon = "🎨"
+parent = "project:herdr"
+
+[[spaces.split]]
+repo = "~/projects/herdr"
+match = ["feat/sidebar-*"]
+key = "herdr:sidebar"
+label = "Sidebar"
+parent = "node:ui"
+```
+
+`key` is the node's identity and its collapse state; `name` falls back to the
+key and `icon` to `spaces.icons.project`. An absent table changes nothing.
+Tree-shape problems degrade loudly instead of failing the load: a `parent`
+nobody defines keeps that node at top level, a parent cycle drops every member
+of the cycle to top level, and a chain deeper than eight is reported while the
+sidebar's indentation stops growing at six. A parented bucket with a single
+member draws no header of its own — the checkout hangs directly under the
+node, which is what "move this branch under X" should look like.
+
 ## Row icons in the Spaces tree
 
 `[spaces.icons]` sets the default glyph per row kind — project headers, workspace (branch) rows, and chat drawer rows. Every field has a working default, so the table is only written to change taste. An empty string disables that glyph.

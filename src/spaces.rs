@@ -38,6 +38,9 @@ pub struct SpaceSplitRule {
     /// the label alone — existing configs carry emoji inside their labels and
     /// keep rendering unchanged.
     pub icon: Option<String>,
+    /// Node key this bucket hangs under. `None` keeps today's placement:
+    /// a claiming project when one exists, top level otherwise.
+    pub parent: Option<String>,
 }
 
 impl SpaceSplitRule {
@@ -124,6 +127,153 @@ pub fn resolve_project<'a>(
         .find(|project| project.claims(space_key, repo_root))
 }
 
+/// One `[[spaces.node]]` container after validation: a named tree node that
+/// hangs under another node by `parent`, giving the sidebar its N-level shape.
+///
+/// A node carries no membership of its own — children point up at it, the
+/// way `parent` on a rule or another node does. That single direction is what
+/// keeps "move this under X" a one-line change wherever it is written
+/// (TP-NODE-*).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpaceNode {
+    /// Tree identity and collapse-state key. Unique across the forest.
+    pub key: String,
+    /// Header title.
+    pub name: String,
+    /// Glyph drawn before the name; `None` uses the configured default.
+    pub icon: Option<String>,
+    /// The node this one hangs under, or `None` for top level.
+    pub parent: Option<String>,
+}
+
+/// The forest, made safe to walk: duplicates dropped, unknown parents and
+/// cycles cut loose, excessive depth flagged — all loudly, none fatally.
+///
+/// TP-NODE-03: config problems in the tree shape degrade to a flatter tree
+/// plus a diagnostic, never to a failed load and never to a hung walker.
+pub fn validate_node_forest(nodes: Vec<SpaceNode>) -> (Vec<SpaceNode>, Vec<String>) {
+    let mut diagnostics = Vec::new();
+
+    // A duplicate key would make two rows share one identity and one fold.
+    let mut seen = std::collections::HashSet::new();
+    let mut forest: Vec<SpaceNode> = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        if !seen.insert(node.key.clone()) {
+            diagnostics.push(format!(
+                "spaces node {:?} is already defined; keeping the first definition",
+                node.key
+            ));
+            continue;
+        }
+        forest.push(node);
+    }
+
+    // A parent nobody defines is a typo, not a tree.
+    let keys: std::collections::HashSet<String> =
+        forest.iter().map(|node| node.key.clone()).collect();
+    for node in &mut forest {
+        if let Some(parent) = node.parent.as_deref() {
+            if !keys.contains(parent) {
+                diagnostics.push(format!(
+                    "spaces node {:?} names an unknown parent {parent:?}; \
+                     keeping it at top level",
+                    node.key
+                ));
+                node.parent = None;
+            }
+        }
+    }
+
+    // A cycle can never take the walker down: every member drops to top
+    // level. Walked per node with a seen-set; the forest is config-sized.
+    let parent_of: std::collections::HashMap<String, Option<String>> = forest
+        .iter()
+        .map(|node| (node.key.clone(), node.parent.clone()))
+        .collect();
+    let mut in_cycle = std::collections::HashSet::new();
+    for node in &forest {
+        let mut walked = std::collections::HashSet::new();
+        let mut current = Some(node.key.clone());
+        while let Some(key) = current {
+            if !walked.insert(key.clone()) {
+                // The walk came back around: everything walked from here on
+                // is in or above the cycle — mark only the true cycle by
+                // walking once more from the repeated key.
+                let mut member = key.clone();
+                loop {
+                    if !in_cycle.insert(member.clone()) {
+                        break;
+                    }
+                    match parent_of.get(&member).and_then(|p| p.clone()) {
+                        Some(next) => member = next,
+                        None => break,
+                    }
+                }
+                break;
+            }
+            current = parent_of.get(&key).and_then(|p| p.clone());
+        }
+    }
+    if !in_cycle.is_empty() {
+        let mut members: Vec<&str> = in_cycle.iter().map(String::as_str).collect();
+        members.sort_unstable();
+        diagnostics.push(format!(
+            "spaces nodes {} form a parent cycle; all of them move to top level",
+            members.join(", ")
+        ));
+        for node in &mut forest {
+            if in_cycle.contains(&node.key) {
+                node.parent = None;
+            }
+        }
+    }
+
+    // Depth eight is a warning, not a wall (K6): the chain keeps rendering,
+    // the author is told the tree has outgrown what a sidebar can indent.
+    let parent_of: std::collections::HashMap<String, Option<String>> = forest
+        .iter()
+        .map(|node| (node.key.clone(), node.parent.clone()))
+        .collect();
+    let mut deepest = 0usize;
+    for node in &forest {
+        let mut depth = 0usize;
+        let mut current = parent_of.get(&node.key).and_then(|p| p.clone());
+        while let Some(key) = current {
+            depth += 1;
+            if depth > forest.len() {
+                break; // Unreachable after the cycle pass; belt and braces.
+            }
+            current = parent_of.get(&key).and_then(|p| p.clone());
+        }
+        deepest = deepest.max(depth + 1);
+    }
+    if deepest > 8 {
+        diagnostics.push(format!(
+            "spaces nodes reach depth {deepest}; beyond 8 the sidebar's \
+             indentation stops growing"
+        ));
+    }
+
+    (forest, diagnostics)
+}
+
+/// The node key a space hangs under, if any.
+///
+/// The rule's own `parent` is the sharper claim and wins; a project claiming
+/// the space is the broad one (projects are parentless nodes, so this is how
+/// yesterday's two-level grouping becomes a plain tree edge); neither means
+/// top level.
+pub fn resolve_space_parent(
+    rule: Option<&SpaceSplitRule>,
+    projects: &[SpaceProject],
+    space_key: &str,
+    repo_root: Option<&Path>,
+) -> Option<String> {
+    rule.and_then(|rule| rule.parent.clone()).or_else(|| {
+        resolve_project(projects, space_key, repo_root).map(|project| project.key.clone())
+    })
+}
+
 /// Glob match supporting `*` (any run of characters, including empty). No `?`,
 /// no character classes, no escaping: every other character is literal
 /// (TP-SPLIT-MATCH-05).
@@ -175,6 +325,7 @@ mod tests {
             key: key.to_string(),
             label: label.to_string(),
             icon: None,
+            parent: None,
         }
     }
 
@@ -347,6 +498,136 @@ mod tests {
             hit.map(|p| p.key.as_str()),
             Some("project:first"),
             "config order decides, not claim kind"
+        );
+    }
+
+    fn node(key: &str, parent: Option<&str>) -> SpaceNode {
+        SpaceNode {
+            key: key.to_string(),
+            name: key.to_string(),
+            icon: None,
+            parent: parent.map(str::to_string),
+        }
+    }
+
+    // TP-NODE-03: a parent cycle can never take the load down. The nodes in
+    // the cycle drop to top level, the config author is told, and everything
+    // outside the cycle keeps its place.
+    #[test]
+    fn a_cycle_is_reported_and_its_nodes_go_top_level() {
+        let (forest, diagnostics) = validate_node_forest(vec![
+            node("a", Some("b")),
+            node("b", Some("a")),
+            node("c", Some("a")),
+        ]);
+
+        let parent_of = |key: &str| {
+            forest
+                .iter()
+                .find(|n| n.key == key)
+                .and_then(|n| n.parent.clone())
+        };
+        assert_eq!(parent_of("a"), None, "a cycle member goes top level");
+        assert_eq!(parent_of("b"), None, "both cycle members go top level");
+        assert_eq!(
+            parent_of("c"),
+            Some("a".to_string()),
+            "a child hanging off the cycle keeps its now-valid parent"
+        );
+        assert!(
+            diagnostics.iter().any(|d| d.contains("cycle")),
+            "the author is told about the cycle: {diagnostics:?}"
+        );
+    }
+
+    // A parent nobody defines is a typo, not a tree: report it, keep the node
+    // at top level, and never drop the node itself.
+    #[test]
+    fn an_unknown_parent_is_reported_and_the_node_stays_top_level() {
+        let (forest, diagnostics) =
+            validate_node_forest(vec![node("a", Some("ghost")), node("b", None)]);
+
+        assert_eq!(forest.len(), 2, "no node is dropped over a bad parent");
+        assert_eq!(
+            forest
+                .iter()
+                .find(|n| n.key == "a")
+                .and_then(|n| n.parent.clone()),
+            None
+        );
+        assert!(
+            diagnostics.iter().any(|d| d.contains("ghost")),
+            "the missing key is named: {diagnostics:?}"
+        );
+    }
+
+    // K6: depth eight is a warning, not a wall — the chain keeps rendering.
+    #[test]
+    fn depth_beyond_eight_warns_but_still_chains() {
+        let mut nodes = vec![node("n0", None)];
+        for i in 1..=9 {
+            nodes.push(node(&format!("n{i}"), Some(&format!("n{}", i - 1))));
+        }
+        let (forest, diagnostics) = validate_node_forest(nodes);
+
+        assert_eq!(
+            forest
+                .iter()
+                .find(|n| n.key == "n9")
+                .and_then(|n| n.parent.clone()),
+            Some("n8".to_string()),
+            "the deep chain is kept intact"
+        );
+        assert!(
+            diagnostics.iter().any(|d| d.contains("depth")),
+            "the author is warned about the depth: {diagnostics:?}"
+        );
+    }
+
+    // A duplicate node key would make two rows share one identity and one
+    // fold. The first definition wins, the second is dropped loudly.
+    #[test]
+    fn a_duplicate_node_key_keeps_the_first_and_drops_the_second() {
+        let (forest, diagnostics) = validate_node_forest(vec![
+            node("a", None),
+            SpaceNode {
+                key: "a".to_string(),
+                name: "impostor".to_string(),
+                icon: None,
+                parent: None,
+            },
+        ]);
+
+        assert_eq!(forest.len(), 1);
+        assert_eq!(forest[0].name, "a", "the first definition wins");
+        assert!(diagnostics.iter().any(|d| d.contains("already")));
+    }
+
+    // The parent chain a space hangs under: the rule's own parent is the
+    // sharper claim and wins; a project claiming the space is the broad one;
+    // neither means top level.
+    #[test]
+    fn resolve_space_parent_prefers_the_rules_own_parent() {
+        let mut with_parent = rule("/repo/a", &["feat/*"], "a:feat", "Feat");
+        with_parent.parent = Some("node:ui".to_string());
+        let projects = [project("project:x", &[], &["a:feat"])];
+
+        assert_eq!(
+            resolve_space_parent(Some(&with_parent), &projects, "a:feat", None),
+            Some("node:ui".to_string()),
+            "the rule's own parent outranks the project claim"
+        );
+
+        let without_parent = rule("/repo/a", &["feat/*"], "a:feat", "Feat");
+        assert_eq!(
+            resolve_space_parent(Some(&without_parent), &projects, "a:feat", None),
+            Some("project:x".to_string()),
+            "with no rule parent the claiming project answers"
+        );
+        assert_eq!(
+            resolve_space_parent(None, &[], "a:feat", None),
+            None,
+            "nothing claims it: top level"
         );
     }
 }

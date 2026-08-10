@@ -529,7 +529,7 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
             // TP-MOB-98: the drawer carries the project level, the same
             // position-not-key toggle contract as space groups.
             crate::ui::sidebar::WorkspaceListEntry::ProjectHeader { project_key } => {
-                let collapsed = app.collapsed_project_keys.contains(&project_key);
+                let collapsed = app.node_folded(&project_key);
                 rows.push(DrawerRow {
                     height: entry_h,
                     target: Some(MobileSwitcherTarget::ToggleProjectGroup { project_group_idx }),

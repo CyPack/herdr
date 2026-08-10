@@ -370,6 +370,80 @@ pub(crate) fn project_for_space_key<'a>(
         .and_then(|idx| workspace_project(app, idx))
 }
 
+/// The tree node behind a header row's key, whichever table authored it.
+pub(crate) fn node_for_key<'a>(
+    app: &'a AppState,
+    node_key: &str,
+) -> Option<&'a crate::spaces::SpaceNode> {
+    app.space_nodes.iter().find(|node| node.key == node_key)
+}
+
+/// How many indent steps `node_key` sits below the top, capped at six (K10):
+/// a deeper tree keeps folding correctly, it just stops eating name columns
+/// on a 76-column phone.
+pub(crate) fn node_depth(app: &AppState, node_key: &str) -> u16 {
+    let parent_of: std::collections::HashMap<&str, Option<&str>> = app
+        .space_nodes
+        .iter()
+        .map(|node| (node.key.as_str(), node.parent.as_deref()))
+        .collect();
+    let mut depth: u16 = 0;
+    let mut current = parent_of.get(node_key).copied().flatten();
+    while let Some(key) = current {
+        depth += 1;
+        if depth as usize > app.space_nodes.len() {
+            break; // The forest is validated; belt and braces.
+        }
+        current = parent_of.get(key).copied().flatten();
+    }
+    depth.min(6)
+}
+
+/// The node a workspace's space hangs under, if any: the claiming rule's own
+/// `parent` first, the claiming project second — the same chain the emitter
+/// walks, answered per workspace for the indent and hit-test paths.
+pub(crate) fn workspace_parent_node_key(app: &AppState, ws_idx: usize) -> Option<String> {
+    let space = effective_space(app, ws_idx)?;
+    let ws = app.workspaces.get(ws_idx)?;
+    let membership = ws.worktree_space()?;
+    let rule = crate::spaces::resolve_space_rule(
+        &app.space_split_rules,
+        &membership.repo_root,
+        &membership.checkout_path,
+        ws.branch().as_deref(),
+    );
+    crate::spaces::resolve_space_parent(
+        rule,
+        &app.space_projects,
+        &space.key,
+        Some(&membership.repo_root),
+    )
+    .filter(|parent| {
+        node_for_key(app, parent).is_some()
+            || app
+                .space_projects
+                .iter()
+                .any(|project| &project.key == parent)
+    })
+}
+
+/// Indent steps the node chain adds to a workspace row. Yesterday's
+/// "inside a project adds one step" is the depth-one case of this.
+pub(crate) fn workspace_node_shift(app: &AppState, ws_idx: usize) -> u16 {
+    match workspace_parent_node_key(app, ws_idx) {
+        Some(parent) => (node_depth(app, &parent) + 1).min(6),
+        None => 0,
+    }
+}
+
+/// Indent steps the node chain adds to a space's own header row.
+pub(crate) fn space_node_shift_for_key(app: &AppState, space_key: &str) -> u16 {
+    (0..app.workspaces.len())
+        .find(|idx| effective_space(app, *idx).is_some_and(|space| space.key == space_key))
+        .map(|idx| workspace_node_shift(app, idx))
+        .unwrap_or(0)
+}
+
 /// The configured project behind a header row's key.
 pub(crate) fn project_for_key<'a>(
     app: &'a AppState,
@@ -575,8 +649,8 @@ pub(crate) fn workspace_chat_toggle_cell(app: &AppState, card_rect: Rect, ws_idx
     if card_rect.width < 4 || workspace_chat_rows_for(app, ws_idx).is_empty() {
         return Rect::default();
     }
-    let depth = u16::from(workspace_is_group_member(app, ws_idx))
-        + u16::from(workspace_project(app, ws_idx).is_some());
+    let depth =
+        u16::from(workspace_is_group_member(app, ws_idx)) + workspace_node_shift(app, ws_idx);
     Rect::new(
         card_rect.x + depth * ROW_INDENT_STEP,
         card_rect.y,
@@ -745,33 +819,114 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
     let active_group =
         visible_group_idx.and_then(|idx| effective_space(app, idx).map(|space| space.key));
 
-    // TP-PROJ-MATCH-02: a space's project is resolved once, through the
-    // repository its members live in — so a config space split out of a repo
-    // follows that repo into its project, and a promoted space key matches
-    // regardless of repository.
-    let project_of_space: std::collections::HashMap<String, String> = members_by_key
+    // The node forest, prepared once per emit. TP-PROJ-MATCH-02 survives as
+    // the depth-one case: a space's owner is resolved once, through the
+    // claiming rule's own `parent` first and the claiming project second, so
+    // a config space split out of a repo still follows that repo's project
+    // and a promoted space key still matches regardless of repository.
+    let node_parent: std::collections::HashMap<&str, Option<&str>> = app
+        .space_nodes
         .iter()
-        .filter_map(|(key, members)| {
-            let repo_root = members
-                .first()
-                .and_then(|idx| app.workspaces.get(*idx))
+        .map(|node| (node.key.as_str(), node.parent.as_deref()))
+        .collect();
+    let mut node_children: std::collections::HashMap<&str, Vec<&str>> =
+        std::collections::HashMap::new();
+    for node in &app.space_nodes {
+        if let Some(parent) = node.parent.as_deref() {
+            node_children
+                .entry(parent)
+                .or_default()
+                .push(node.key.as_str());
+        }
+    }
+    let parent_of_space: std::collections::HashMap<String, Option<String>> = members_by_key
+        .iter()
+        .map(|(key, members)| {
+            let first = members.first().and_then(|idx| app.workspaces.get(*idx));
+            let repo_root = first
                 .and_then(|ws| ws.worktree_space())
                 .map(|space| space.repo_root.clone());
-            crate::spaces::resolve_project(&app.space_projects, key, repo_root.as_deref())
-                .map(|project| (key.clone(), project.key.clone()))
+            let rule = first.and_then(|ws| {
+                let membership = ws.worktree_space()?;
+                crate::spaces::resolve_space_rule(
+                    &app.space_split_rules,
+                    &membership.repo_root,
+                    &membership.checkout_path,
+                    ws.branch().as_deref(),
+                )
+            });
+            let owner = crate::spaces::resolve_space_parent(
+                rule,
+                &app.space_projects,
+                key,
+                repo_root.as_deref(),
+            )
+            // A parent nobody defines keeps the space at top level — the
+            // forest is validated, but a rule can still name a ghost. A
+            // claiming project counts as defined even when the node list was
+            // set by hand: a project IS a node (TP-NODE-02).
+            .filter(|parent| {
+                node_parent.contains_key(parent.as_str())
+                    || app
+                        .space_projects
+                        .iter()
+                        .any(|project| &project.key == parent)
+            });
+            (key.clone(), owner)
         })
         .collect();
+    let first_ws_of_space: std::collections::HashMap<String, usize> = members_by_key
+        .iter()
+        .map(|(key, members)| {
+            (
+                key.clone(),
+                members.iter().copied().min().unwrap_or(usize::MAX),
+            )
+        })
+        .collect();
+    let mut buckets_of_node: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for (key, owner) in &parent_of_space {
+        if let Some(owner) = owner {
+            buckets_of_node
+                .entry(owner.clone())
+                .or_default()
+                .push(key.clone());
+        }
+    }
+
+    // Whether ws_idx's space hangs anywhere under `target` — the folded-node
+    // active-checkout promise needs the whole chain, not just the owner.
+    let chain_hits = |space_key: &str, target: &str| -> bool {
+        let mut current = parent_of_space.get(space_key).cloned().flatten();
+        let mut steps = 0usize;
+        while let Some(key) = current {
+            if key == target {
+                return true;
+            }
+            steps += 1;
+            if steps > app.space_nodes.len() {
+                break;
+            }
+            current = node_parent
+                .get(key.as_str())
+                .copied()
+                .flatten()
+                .map(str::to_string);
+        }
+        false
+    };
 
     let mut emitted_groups = std::collections::HashSet::<String>::new();
-    let mut emitted_projects = std::collections::HashSet::<String>::new();
+    let mut emitted_nodes = std::collections::HashSet::<String>::new();
     let mut entries = Vec::new();
     for ws_idx in 0..app.workspaces.len() {
         let space = effective_space(app, ws_idx);
-        let project_key = space
+        let owner = space
             .as_ref()
-            .and_then(|space| project_of_space.get(&space.key));
+            .and_then(|space| parent_of_space.get(&space.key).cloned().flatten());
 
-        let Some(project_key) = project_key else {
+        let Some(owner) = owner else {
             push_space_block(
                 app,
                 &mut entries,
@@ -782,58 +937,139 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
                 force_expanded,
                 visible_group_idx,
                 active_group.as_deref(),
+                false,
             );
             continue;
         };
 
-        if !emitted_projects.insert(project_key.clone()) {
-            continue;
+        // TP-NODE-04, generalising TP-PROJ-GROUP-01: the chain's root takes
+        // its row where its first descendant sits, and the whole subtree
+        // follows pre-order — every ancestor header before its children,
+        // children in their own first-appearance order.
+        let mut root = owner;
+        while let Some(parent) = node_parent.get(root.as_str()).copied().flatten() {
+            root = parent.to_string();
         }
-        // TP-PROJ-GROUP-01: the project takes a row of its own above the
-        // spaces it gathers, emitted where its first member sits so
-        // workspace order keeps meaning what it meant.
-        entries.push(WorkspaceListEntry::ProjectHeader {
-            project_key: project_key.clone(),
-        });
-
-        if !force_expanded && app.collapsed_project_keys.contains(project_key) {
-            // TP-PROJ-GROUP-02: like a folded module (TP-TREE-03), a folded
-            // project keeps the checkout the user is standing in.
-            if let Some(active_idx) = visible_group_idx.filter(|idx| {
-                effective_space(app, *idx)
-                    .is_some_and(|space| project_of_space.get(&space.key) == Some(project_key))
-            }) {
-                entries.push(WorkspaceListEntry::Workspace {
-                    ws_idx: active_idx,
-                    indented: true,
-                });
-                push_chat_drawer(app, &mut entries, active_idx);
-            }
+        if !emitted_nodes.insert(root.clone()) {
             continue;
         }
 
-        // Every space the project claims, in workspace order, each laid out
-        // exactly as it would be top-level.
-        for member_idx in ws_idx..app.workspaces.len() {
-            let claimed = effective_space(app, member_idx)
-                .is_some_and(|space| project_of_space.get(&space.key) == Some(project_key));
-            if !claimed {
-                continue;
+        enum Job {
+            Node(String),
+            Bucket(String),
+        }
+        let mut stack = vec![Job::Node(root)];
+        while let Some(job) = stack.pop() {
+            match job {
+                Job::Bucket(space_key) => {
+                    let Some(first) = members_by_key
+                        .get(&space_key)
+                        .and_then(|members| members.first().copied())
+                    else {
+                        continue;
+                    };
+                    push_space_block(
+                        app,
+                        &mut entries,
+                        first,
+                        &members_by_key,
+                        &grouped_keys,
+                        &mut emitted_groups,
+                        force_expanded,
+                        visible_group_idx,
+                        active_group.as_deref(),
+                        true,
+                    );
+                }
+                Job::Node(node_key) => {
+                    entries.push(WorkspaceListEntry::ProjectHeader {
+                        project_key: node_key.clone(),
+                    });
+
+                    if !force_expanded && app.node_folded(&node_key) {
+                        // TP-PROJ-GROUP-02, generalised: a folded ancestor
+                        // keeps the checkout the user is standing in.
+                        if let Some(active_idx) = visible_group_idx.filter(|idx| {
+                            effective_space(app, *idx)
+                                .is_some_and(|space| chain_hits(&space.key, &node_key))
+                        }) {
+                            entries.push(WorkspaceListEntry::Workspace {
+                                ws_idx: active_idx,
+                                indented: true,
+                            });
+                            push_chat_drawer(app, &mut entries, active_idx);
+                        }
+                        continue;
+                    }
+
+                    let mut kids: Vec<(usize, Job)> = Vec::new();
+                    for bucket in buckets_of_node.get(&node_key).into_iter().flatten() {
+                        kids.push((
+                            first_ws_of_space.get(bucket).copied().unwrap_or(usize::MAX),
+                            Job::Bucket(bucket.clone()),
+                        ));
+                    }
+                    for child in node_children.get(node_key.as_str()).into_iter().flatten() {
+                        kids.push((
+                            subtree_first_ws(
+                                child,
+                                &node_children,
+                                &buckets_of_node,
+                                &first_ws_of_space,
+                                app.space_nodes.len() + 1,
+                            ),
+                            Job::Node((*child).to_string()),
+                        ));
+                    }
+                    kids.sort_by_key(|(first, _)| *first);
+                    for (_, kid) in kids.into_iter().rev() {
+                        stack.push(kid);
+                    }
+                }
             }
-            push_space_block(
-                app,
-                &mut entries,
-                member_idx,
-                &members_by_key,
-                &grouped_keys,
-                &mut emitted_groups,
-                force_expanded,
-                visible_group_idx,
-                active_group.as_deref(),
-            );
         }
     }
     entries
+}
+
+/// Where a node's subtree first appears in workspace order: the minimum over
+/// its own buckets and every descendant's — the recursive half of
+/// order-by-first-member (TP-NODE-04).
+fn subtree_first_ws(
+    node: &str,
+    node_children: &std::collections::HashMap<&str, Vec<&str>>,
+    buckets_of_node: &std::collections::HashMap<String, Vec<String>>,
+    first_ws_of_space: &std::collections::HashMap<String, usize>,
+    guard: usize,
+) -> usize {
+    if guard == 0 {
+        return usize::MAX;
+    }
+    let own = buckets_of_node
+        .get(node)
+        .into_iter()
+        .flatten()
+        .filter_map(|bucket| first_ws_of_space.get(bucket))
+        .copied()
+        .min();
+    let descendants = node_children
+        .get(node)
+        .into_iter()
+        .flatten()
+        .map(|child| {
+            subtree_first_ws(
+                child,
+                node_children,
+                buckets_of_node,
+                first_ws_of_space,
+                guard - 1,
+            )
+        })
+        .min();
+    own.into_iter()
+        .chain(descendants)
+        .min()
+        .unwrap_or(usize::MAX)
 }
 
 /// Lay out one workspace's contribution to the list: a plain row for an
@@ -851,13 +1087,17 @@ fn push_space_block(
     force_expanded: bool,
     visible_group_idx: Option<usize>,
     active_group: Option<&str>,
+    parented: bool,
 ) {
     let Some(space) =
         effective_space(app, ws_idx).filter(|space| grouped_keys.contains(&space.key))
     else {
+        // TP-NODE-05: under a node, a bucket too small for a header of its
+        // own hangs its member straight below the node, indented — "move
+        // this branch under X" reads as exactly that.
         entries.push(WorkspaceListEntry::Workspace {
             ws_idx,
-            indented: false,
+            indented: parented,
         });
         push_chat_drawer(app, entries, ws_idx);
         return;
@@ -1860,7 +2100,7 @@ fn render_workspace_list(
         // names of sibling checkouts line up instead of stepping in and out.
         // A project adds one more step for everything it gathers
         // (TP-PROJ-GROUP-01).
-        let project_shift = u16::from(workspace_project(app, i).is_some());
+        let project_shift = workspace_node_shift(app, i);
         let name_col =
             (project_shift + u16::from(card.indented)) * ROW_INDENT_STEP + DISCLOSURE_WIDTH;
 
@@ -2025,7 +2265,7 @@ fn render_workspace_project_headers(app: &AppState, frame: &mut Frame, list_bott
         let Some(project) = project_for_key(app, &head.project_key) else {
             continue;
         };
-        let collapsed = app.collapsed_project_keys.contains(&head.project_key);
+        let collapsed = app.node_folded(&head.project_key);
         let mut spans = vec![
             Span::styled(
                 if collapsed {
@@ -2076,10 +2316,12 @@ fn render_workspace_group_headers(app: &AppState, frame: &mut Frame, list_bottom
         }
         let collapsed = app.collapsed_space_keys.contains(&head.space_key);
         let mut spans = Vec::new();
-        // TP-PROJ-GROUP-01: inside a project the module header steps in once,
-        // so the umbrella, its modules and their checkouts read as one tree.
-        if project_for_space_key(app, &head.space_key).is_some() {
-            spans.push(Span::raw(" ".repeat(ROW_INDENT_STEP as usize)));
+        // TP-PROJ-GROUP-01, generalised: inside a node chain the module
+        // header steps in once per ancestor, so the umbrella, its nodes,
+        // their modules and the checkouts read as one tree.
+        let shift = space_node_shift_for_key(app, &head.space_key);
+        if shift > 0 {
+            spans.push(Span::raw(" ".repeat((shift * ROW_INDENT_STEP) as usize)));
         }
         spans.push(Span::styled(
             if collapsed {
@@ -2171,7 +2413,7 @@ fn render_workspace_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u1
         // by the checkout above them rather than floating under it. Inside a
         // project the whole block sits one step deeper (TP-PROJ-GROUP-01).
         let guide_indent = (u16::from(workspace_is_group_member(app, row.ws_idx))
-            + u16::from(workspace_project(app, row.ws_idx).is_some()))
+            + workspace_node_shift(app, row.ws_idx))
             * ROW_INDENT_STEP;
         let width = row.rect.width as usize;
         // TP-DRAW-05: every row carries an age. When the transcript itself
@@ -4819,6 +5061,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             key: key.to_string(),
             label: label.to_string(),
             icon: None,
+            parent: None,
         }
     }
 
@@ -4941,6 +5184,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 key: "herdr:web".to_string(),
                 label: "Web".to_string(),
                 icon: None,
+                parent: None,
             },
         ];
 
@@ -5309,6 +5553,191 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
 
     /// A repository with two checkouts, the main one active, each with an open
     /// chat drawer — the shape the whole tree exists to render.
+    fn node_over(key: &str, parent: Option<&str>) -> crate::spaces::SpaceNode {
+        crate::spaces::SpaceNode {
+            key: key.to_string(),
+            name: key.to_string(),
+            icon: None,
+            parent: parent.map(str::to_string),
+        }
+    }
+
+    /// Two checkouts of one repo, claimed by one parented rule — the smallest
+    /// world where a node chain has something to hang.
+    fn app_with_node_chain() -> AppState {
+        let mut app = app_with_worktree_tree(60);
+        app.space_nodes = vec![
+            node_over("node:root", None),
+            node_over("node:ui", Some("node:root")),
+        ];
+        let mut rule = split_rule(&["master", "fix/*"], "herdr:all", "All");
+        rule.parent = Some("node:ui".to_string());
+        app.space_split_rules = vec![rule];
+        app
+    }
+
+    // TP-NODE-04: the chain reads top-down — every ancestor header appears
+    // before the child, and the bucket sits under its own node.
+    #[test]
+    fn nested_nodes_emit_parent_before_child_before_the_bucket() {
+        let app = app_with_node_chain();
+
+        let entries = workspace_list_entries(&app);
+        let shape: Vec<String> = entries
+            .iter()
+            .map(|entry| match entry {
+                WorkspaceListEntry::ProjectHeader { project_key } => {
+                    format!("node({project_key})")
+                }
+                WorkspaceListEntry::GroupHeader { space_key } => format!("bucket({space_key})"),
+                WorkspaceListEntry::Workspace { ws_idx, indented } => {
+                    format!("ws({ws_idx},{indented})")
+                }
+                other => format!("{other:?}"),
+            })
+            .collect();
+
+        assert_eq!(
+            shape[..4].to_vec(),
+            vec![
+                "node(node:root)".to_string(),
+                "node(node:ui)".to_string(),
+                "bucket(herdr:all)".to_string(),
+                "ws(0,true)".to_string(),
+            ],
+            "root before child before bucket before member: {shape:?}"
+        );
+    }
+
+    // TP-NODE-05: a parented bucket with one member needs no header of its
+    // own — the checkout hangs straight under the node, indented, so "move
+    // this branch under X" reads as exactly that.
+    #[test]
+    fn a_single_member_parented_bucket_hangs_its_member_under_the_node() {
+        let mut app = app_with_node_chain();
+        app.workspaces.truncate(1);
+
+        let entries = workspace_list_entries(&app);
+        let shape: Vec<String> = entries
+            .iter()
+            .map(|entry| match entry {
+                WorkspaceListEntry::ProjectHeader { project_key } => {
+                    format!("node({project_key})")
+                }
+                WorkspaceListEntry::GroupHeader { space_key } => format!("bucket({space_key})"),
+                WorkspaceListEntry::Workspace { ws_idx, indented } => {
+                    format!("ws({ws_idx},{indented})")
+                }
+                other => format!("{other:?}"),
+            })
+            .collect();
+
+        assert!(
+            shape.contains(&"node(node:ui)".to_string())
+                && shape.contains(&"ws(0,true)".to_string())
+                && !shape.iter().any(|s| s.starts_with("bucket(")),
+            "one member, no bucket header, member indented under the node: {shape:?}"
+        );
+    }
+
+    // TP-NODE-06: folding a node is a statement about one screen.
+    #[test]
+    fn one_displays_node_fold_never_moves_anothers_tree() {
+        let mut app = app_with_node_chain();
+
+        // Both displays exist before either acts (TP-SUR-DEFAULT-01).
+        app.enter_viewer(Some(2));
+        app.restore_viewer(None);
+        app.enter_viewer(Some(3));
+        app.restore_viewer(None);
+
+        app.enter_viewer(Some(2));
+        app.fold_node("node:root".to_string());
+        let folded_len = workspace_list_entries(&app).len();
+        app.restore_viewer(None);
+
+        app.enter_viewer(Some(3));
+        let other = workspace_list_entries(&app);
+        assert!(
+            other.len() > folded_len,
+            "display 3 still sees the open subtree"
+        );
+        app.restore_viewer(None);
+
+        app.enter_viewer(Some(2));
+        assert_eq!(
+            workspace_list_entries(&app).len(),
+            folded_len,
+            "display 2 keeps the fold it made"
+        );
+        app.restore_viewer(None);
+    }
+
+    // TP-NODE-07: a fold recorded by the old session-wide project set still
+    // reads as folded, and unfolding it moves the truth into the per-display
+    // set — the one-way door of the migration.
+    #[test]
+    fn a_folded_legacy_project_key_still_reads_folded_and_unfolds_forward() {
+        let mut app = app_with_node_chain();
+        app.collapsed_project_keys.insert("node:root".to_string());
+
+        assert!(app.node_folded("node:root"), "the legacy fold is honoured");
+
+        assert!(app.unfold_node("node:root"), "unfolding reports the change");
+        assert!(!app.node_folded("node:root"));
+        assert!(
+            !app.collapsed_project_keys.contains("node:root"),
+            "the legacy record is withdrawn so it cannot re-fold every screen"
+        );
+
+        app.fold_node("node:root".to_string());
+        assert!(app.node_folded("node:root"), "the new fold lives forward");
+        assert!(
+            !app.collapsed_project_keys.contains("node:root"),
+            "and never writes the session-wide set again"
+        );
+    }
+
+    // Folding an ancestor keeps the checkout the user is standing in — the
+    // same promise a folded module and a folded project already make.
+    #[test]
+    fn folding_a_node_keeps_the_active_checkout_visible() {
+        let mut app = app_with_node_chain();
+        app.active = Some(1);
+        app.selected = 1;
+        app.fold_node("node:root".to_string());
+
+        let entries = workspace_list_entries(&app);
+        assert!(
+            entries
+                .iter()
+                .any(|entry| matches!(entry, WorkspaceListEntry::Workspace { ws_idx: 1, .. })),
+            "the active checkout survives the fold: {entries:?}"
+        );
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| matches!(entry, WorkspaceListEntry::Workspace { ws_idx: 0, .. })),
+            "its siblings do not: {entries:?}"
+        );
+    }
+
+    // K10: indentation follows the chain and stops growing at six, so a deep
+    // tree cannot starve a 76-column phone of its name space.
+    #[test]
+    fn node_depth_walks_the_chain_and_stops_growing_at_six() {
+        let mut app = app_with_node_chain();
+        let mut nodes = vec![node_over("n0", None)];
+        for i in 1..=8 {
+            nodes.push(node_over(&format!("n{i}"), Some(&format!("n{}", i - 1))));
+        }
+        app.space_nodes = nodes;
+
+        assert_eq!(node_depth(&app, "n0"), 0);
+        assert_eq!(node_depth(&app, "n3"), 3);
+        assert_eq!(node_depth(&app, "n8"), 6, "the visual depth is capped");
+    }
+
     fn app_with_worktree_tree(width: u16) -> AppState {
         let mut app = AppState::test_new();
         let mut main = Workspace::test_new("herdr");

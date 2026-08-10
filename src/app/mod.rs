@@ -769,6 +769,7 @@ impl App {
             collapsed_project_keys,
             space_split_rules: config.spaces.rules(),
             space_projects: config.spaces.projects(),
+            space_nodes: crate::spaces::validate_node_forest(config.spaces.nodes()).0,
             space_icons: config.spaces.icons.clone(),
             projects_pinned,
             projects_sessions: Vec::new(),
@@ -1874,6 +1875,7 @@ impl App {
         if !invalid_section("spaces") {
             self.state.space_split_rules = config.spaces.rules();
             self.state.space_projects = config.spaces.projects();
+            self.state.space_nodes = crate::spaces::validate_node_forest(config.spaces.nodes()).0;
             self.state.space_icons = config.spaces.icons.clone();
         }
 

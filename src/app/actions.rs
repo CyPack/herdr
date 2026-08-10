@@ -1969,6 +1969,7 @@ impl AppState {
         let loaded = crate::config::Config::load();
         self.space_split_rules = loaded.config.spaces.rules();
         self.space_projects = loaded.config.spaces.projects();
+        self.space_nodes = crate::spaces::validate_node_forest(loaded.config.spaces.nodes()).0;
     }
 
     /// Fold or unfold the `[[spaces.project]]` umbrella at `project_group_idx`

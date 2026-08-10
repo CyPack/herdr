@@ -807,8 +807,8 @@ impl AppState {
                         })
                         .cloned()
                     {
-                        if !self.collapsed_project_keys.remove(&head.project_key) {
-                            self.collapsed_project_keys.insert(head.project_key);
+                        if !self.unfold_node(&head.project_key) {
+                            self.fold_node(head.project_key);
                         }
                         self.mark_session_dirty();
                         return None;

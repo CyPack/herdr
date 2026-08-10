@@ -375,6 +375,9 @@ pub struct SpacesConfig {
     /// `[[spaces.project]]` umbrellas gathering repositories and spaces under
     /// one top-level header.
     pub project: Vec<SpaceProjectEntry>,
+    /// `[[spaces.node]]` containers: named tree nodes that hang under each
+    /// other by `parent`, giving the sidebar its N-level shape.
+    pub node: Vec<SpaceNodeEntry>,
     /// `[spaces.icons]` row-kind icon defaults for the Spaces tree.
     pub icons: SpaceIconsConfig,
 }
@@ -394,6 +397,9 @@ pub struct SpaceSplitEntry {
     pub label: String,
     /// Glyph drawn before the label. Blank means no icon of its own.
     pub icon: String,
+    /// Node key this bucket hangs under. Blank keeps today's placement
+    /// (a claiming project, or top level).
+    pub parent: String,
 }
 
 /// One authored `[[spaces.project]]` table, before validation.
@@ -411,6 +417,23 @@ pub struct SpaceProjectEntry {
     pub repos: Vec<String>,
     /// Individual space keys joining this project.
     pub spaces: Vec<String>,
+    /// Node key this project hangs under. A project IS a node (the sugar is
+    /// complete), so it may sit below another node like any other.
+    pub parent: String,
+}
+
+/// One authored `[[spaces.node]]` table, before validation.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct SpaceNodeEntry {
+    /// Tree identity and collapse-state key. Must be unique per node.
+    pub key: String,
+    /// Header title. Falls back to `key` when blank.
+    pub name: String,
+    /// Glyph drawn before the name; blank uses `[spaces.icons] project`.
+    pub icon: String,
+    /// Node key this node hangs under. Blank means top level.
+    pub parent: String,
 }
 
 /// Row-kind icons for the Spaces tree. Every field carries a working default,
@@ -461,9 +484,61 @@ impl SpacesConfig {
                         label.to_string()
                     },
                     icon: (!icon.is_empty()).then(|| icon.to_string()),
+                    parent: {
+                        let parent = entry.parent.trim();
+                        (!parent.is_empty()).then(|| parent.to_string())
+                    },
                 }
             })
             .collect()
+    }
+
+    /// Validated tree nodes in config order: the `[[spaces.node]]` tables
+    /// first, then every `[[spaces.project]]` doubled as a node — a project
+    /// IS a node, so the tree walker has one vocabulary (TP-NODE-02).
+    /// Unusable entries are dropped (see [`Self::diagnostics`]). The forest
+    /// shape itself (cycles, unknown parents, depth) is validated later by
+    /// [`crate::spaces::validate_node_forest`].
+    pub fn nodes(&self) -> Vec<crate::spaces::SpaceNode> {
+        let own = self
+            .node
+            .iter()
+            .filter(|entry| space_node_entry_problem(entry).is_none())
+            .map(|entry| {
+                let name = entry.name.trim();
+                let icon = entry.icon.trim();
+                let parent = entry.parent.trim();
+                crate::spaces::SpaceNode {
+                    key: entry.key.trim().to_string(),
+                    name: if name.is_empty() {
+                        entry.key.trim().to_string()
+                    } else {
+                        name.to_string()
+                    },
+                    icon: (!icon.is_empty()).then(|| icon.to_string()),
+                    parent: (!parent.is_empty()).then(|| parent.to_string()),
+                }
+            });
+        let from_projects = self
+            .project
+            .iter()
+            .filter(|entry| space_project_entry_problem(entry).is_none())
+            .map(|entry| {
+                let name = entry.name.trim();
+                let icon = entry.icon.trim();
+                let parent = entry.parent.trim();
+                crate::spaces::SpaceNode {
+                    key: entry.key.trim().to_string(),
+                    name: if name.is_empty() {
+                        entry.key.trim().to_string()
+                    } else {
+                        name.to_string()
+                    },
+                    icon: (!icon.is_empty()).then(|| icon.to_string()),
+                    parent: (!parent.is_empty()).then(|| parent.to_string()),
+                }
+            });
+        own.chain(from_projects).collect()
     }
 
     /// Validated projects in config order, `~` expanded. Unusable entries are
@@ -537,6 +612,14 @@ impl SpacesConfig {
                         .map(|problem| format!("spaces.project[{index}] {problem}; ignoring"))
                 }),
         );
+        diagnostics.extend(self.node.iter().enumerate().filter_map(|(index, entry)| {
+            space_node_entry_problem(entry)
+                .map(|problem| format!("spaces.node[{index}] {problem}; ignoring"))
+        }));
+        // Forest-shape problems (cycles, unknown parents, depth) surface with
+        // the same voice as entry problems, so one diagnostics reader sees
+        // the whole story (TP-NODE-03).
+        diagnostics.extend(crate::spaces::validate_node_forest(self.nodes()).1);
         // Same reasoning as duplicate rule keys: two projects sharing a key
         // share one collapse state, which reads as a folding bug.
         let mut seen_project_keys = std::collections::HashSet::new();
@@ -551,6 +634,16 @@ impl SpacesConfig {
         }
         diagnostics
     }
+}
+
+/// Why a node entry cannot be used, or `None` when it is usable. A node needs
+/// nothing but a key: an empty container is a legitimate place to move things
+/// under later.
+fn space_node_entry_problem(entry: &SpaceNodeEntry) -> Option<&'static str> {
+    if entry.key.trim().is_empty() {
+        return Some("has no key");
+    }
+    None
 }
 
 /// Why a project entry cannot be used, or `None` when it is usable
@@ -1766,6 +1859,121 @@ chat_drawer_mode = "all-active"
         assert_eq!(config.ui.chat_drawer_mode, ChatDrawerModeConfig::AllActive);
     }
 
+    // TP-NODE-01 (config half): no [[spaces.node]] table, no nodes — and the
+    // old tables still normalize exactly as they always have.
+    #[test]
+    fn an_absent_node_table_produces_no_nodes() {
+        let config: Config = toml::from_str(
+            r#"
+[[spaces.project]]
+key = "project:x"
+repos = ["~/repo"]
+"#,
+        )
+        .unwrap();
+
+        // The project entry doubles as a parentless node, so the tree
+        // walker has one vocabulary — and the claims machinery is untouched
+        // (projects() still answers membership).
+        let nodes = config.spaces.nodes();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].key, "project:x");
+        assert_eq!(nodes[0].parent, None);
+        assert_eq!(config.spaces.projects().len(), 1);
+    }
+
+    #[test]
+    fn a_spaces_node_table_parses_with_parent_and_falls_back_to_key() {
+        let config: Config = toml::from_str(
+            r#"
+[[spaces.node]]
+key = "node:ui"
+name = "UI Katmani"
+icon = "X"
+parent = "project:herdr"
+
+[[spaces.node]]
+key = "node:bare"
+"#,
+        )
+        .unwrap();
+
+        let nodes = config.spaces.nodes();
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0].key, "node:ui");
+        assert_eq!(nodes[0].name, "UI Katmani");
+        assert_eq!(nodes[0].icon.as_deref(), Some("X"));
+        assert_eq!(nodes[0].parent.as_deref(), Some("project:herdr"));
+        assert_eq!(nodes[1].name, "node:bare", "a blank name falls back to key");
+        assert_eq!(nodes[1].parent, None, "a blank parent means top level");
+    }
+
+    // TP-NODE-02
+    #[test]
+    fn a_project_entry_may_carry_a_parent_too() {
+        // The sugar is complete: a project is a node, so it can hang under
+        // another node the same way.
+        let config: Config = toml::from_str(
+            r#"
+[[spaces.node]]
+key = "node:root"
+
+[[spaces.project]]
+key = "project:x"
+repos = ["~/repo"]
+parent = "node:root"
+"#,
+        )
+        .unwrap();
+
+        let nodes = config.spaces.nodes();
+        let project_node = nodes.iter().find(|n| n.key == "project:x").unwrap();
+        assert_eq!(project_node.parent.as_deref(), Some("node:root"));
+    }
+
+    #[test]
+    fn split_parent_parses_and_reaches_the_rule() {
+        let config: Config = toml::from_str(
+            r#"
+[[spaces.split]]
+repo = "~/repo"
+match = ["feat/*"]
+key = "repo:feat"
+parent = "node:ui"
+"#,
+        )
+        .unwrap();
+
+        let rules = config.spaces.rules();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].parent.as_deref(), Some("node:ui"));
+    }
+
+    #[test]
+    fn node_diagnostics_report_unusable_entries() {
+        let config: Config = toml::from_str(
+            r#"
+[[spaces.node]]
+name = "keysiz"
+"#,
+        )
+        .unwrap();
+
+        assert!(
+            config.spaces.nodes().is_empty(),
+            "a keyless node is unusable"
+        );
+        assert!(
+            config
+                .spaces
+                .diagnostics()
+                .iter()
+                .any(|d| d.contains("spaces.node[0]")),
+            "and the author is told: {:?}",
+            config.spaces.diagnostics()
+        );
+    }
+
     #[test]
     fn pane_appearance_defaults_and_parse() {
         let default_config = Config::default();
@@ -2328,6 +2536,7 @@ key = "k5"
             key: "panel:feat".into(),
             label: String::new(),
             icon: String::new(),
+            parent: String::new(),
         };
         assert_eq!(space_split_entry_problem(&usable), None);
 
@@ -2479,6 +2688,7 @@ spaces = ["a:t4f", "   "]
             icon: String::new(),
             repos: vec!["~/panel".into()],
             spaces: Vec::new(),
+            parent: String::new(),
         };
         assert_eq!(space_project_entry_problem(&usable), None);
 

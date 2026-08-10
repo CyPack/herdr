@@ -3107,6 +3107,9 @@ pub struct AppState {
     /// claimed by one of these nests under the project's top-level header.
     /// Config-derived presentation state: refreshed on load and on reload.
     pub space_projects: Vec<crate::spaces::SpaceProject>,
+    /// The validated node forest (`[[spaces.node]]` + projects doubled as
+    /// parentless nodes), cycles and ghosts already cut loose.
+    pub space_nodes: Vec<crate::spaces::SpaceNode>,
     /// Row-kind icons for the Spaces tree (`[spaces.icons]`), defaults filled.
     /// Config-derived presentation state: refreshed on load and on reload.
     pub space_icons: crate::config::SpaceIconsConfig,
@@ -3837,6 +3840,46 @@ impl AppState {
         }
     }
 
+    /// Whether this display has folded `node_key`'s subtree away.
+    ///
+    /// TP-NODE-07: a fold recorded by the retired session-wide project set
+    /// still reads as folded — the migration's one-way door — but every new
+    /// fold and every unfold lives in the per-display set, so folding a node
+    /// is a statement about one screen (TP-NODE-06, HP18).
+    pub(crate) fn node_folded(&self, node_key: &str) -> bool {
+        self.collapsed_space_keys
+            .contains(&Self::node_fold_key(node_key))
+            || self.collapsed_project_keys.contains(node_key)
+    }
+
+    pub(crate) fn fold_node(&mut self, node_key: String) {
+        self.collapsed_space_keys
+            .insert(Self::node_fold_key(&node_key));
+        self.mark_session_dirty();
+    }
+
+    /// Withdraws a fold, wherever it was recorded, and reports whether
+    /// anything changed. Removing a legacy record is deliberate: leaving it
+    /// would re-fold every screen forever, which is the exact complaint the
+    /// per-display migration exists to end.
+    pub(crate) fn unfold_node(&mut self, node_key: &str) -> bool {
+        let forward = self
+            .collapsed_space_keys
+            .remove(&Self::node_fold_key(node_key));
+        let legacy = self.collapsed_project_keys.remove(node_key);
+        if forward || legacy {
+            self.mark_session_dirty();
+        }
+        forward || legacy
+    }
+
+    /// The per-display fold key for a tree node. The NUL byte cannot appear
+    /// in a TOML string, so no user-authored space key can ever collide with
+    /// a node's fold record.
+    fn node_fold_key(node_key: &str) -> String {
+        format!("\u{0}node:{node_key}")
+    }
+
     /// Whether any pane of `ws_idx` would put a row in the agents panel —
     /// the panel's own has-an-agent criterion (an agent name, or a detected
     /// agent label), so the drawer derivation and the panel can never
@@ -4066,6 +4109,7 @@ impl AppState {
             collapsed_project_keys: std::collections::HashSet::new(),
             space_split_rules: Vec::new(),
             space_projects: Vec::new(),
+            space_nodes: Vec::new(),
             space_icons: Default::default(),
             projects_pinned: Vec::new(),
             projects_sessions: Vec::new(),

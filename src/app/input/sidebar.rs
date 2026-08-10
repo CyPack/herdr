@@ -1603,7 +1603,10 @@ mod tests {
 
         assert_eq!(app.state.active, None);
         assert!(app.state.workspace_press.is_none());
-        assert!(app.state.collapsed_project_keys.contains("project:herdr"));
+        // The fold lands in the per-display set now (TP-NODE-06/07): the
+        // session-wide project set is read for legacy folds, never written.
+        assert!(app.state.node_folded("project:herdr"));
+        assert!(!app.state.collapsed_project_keys.contains("project:herdr"));
 
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
@@ -1611,7 +1614,7 @@ mod tests {
             header.y,
         ));
 
-        assert!(!app.state.collapsed_project_keys.contains("project:herdr"));
+        assert!(!app.state.node_folded("project:herdr"));
     }
 
     #[test]
