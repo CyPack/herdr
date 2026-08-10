@@ -7103,6 +7103,47 @@ mod chat_drawer_mode_tests {
         }
     }
 
+    // TP-DRAWER-08: the whole pipeline is per-display. One display quieting a
+    // derived drawer changes what IT sees and nothing about what any other
+    // LIVING display sees — the constitution's sentence, proven at the
+    // verdict level rather than set by set. (A display seen for the first
+    // time adopts the driven default on purpose — TP-SUR-DEFAULT-01 — which
+    // is why both displays are introduced before either acts.)
+    #[test]
+    fn one_displays_quieting_never_moves_anothers_derived_drawer() {
+        let (mut state, key) = state_with_workspace("/repo/a");
+        give_workspace_an_agent(&mut state, 0);
+        state.active = Some(0);
+
+        // Both displays exist before either touches anything.
+        state.enter_viewer(Some(2));
+        state.restore_viewer(None);
+        state.enter_viewer(Some(3));
+        state.restore_viewer(None);
+
+        // Display 2 quiets the derived drawer and parks.
+        state.enter_viewer(Some(2));
+        state.suppressed_chat_drawers.insert(key);
+        assert!(state.chat_drawer_collapsed(0), "display 2 closed its view");
+        state.restore_viewer(None);
+
+        // Display 3 still sees the derivation.
+        state.enter_viewer(Some(3));
+        assert!(
+            !state.chat_drawer_collapsed(0),
+            "display 3's derived drawer is untouched by display 2's quieting"
+        );
+        state.restore_viewer(None);
+
+        // And display 2 still sees its own quieting.
+        state.enter_viewer(Some(2));
+        assert!(
+            state.chat_drawer_collapsed(0),
+            "display 2 keeps the view it chose"
+        );
+        state.restore_viewer(None);
+    }
+
     // The derivation and the agents panel must speak the same criterion, or
     // a drawer opens for a workspace the panel does not list (or the other
     // way round) and the two surfaces argue about what "active agent" means.

@@ -847,13 +847,7 @@ impl AppState {
                             crate::ui::workspace_chat_toggle_cell(self, card.rect, card.ws_idx);
                         cell.width > 0 && mouse.row == cell.y && mouse.column == cell.x
                     }) {
-                        let workspace = self.workspaces.get(card.ws_idx)?;
-                        let key =
-                            crate::persist::workspace_chats::ledger_key(&workspace.identity_cwd);
-                        if !self.expanded_chat_workspaces.remove(&key) {
-                            self.expanded_chat_workspaces.insert(key);
-                        }
-                        self.mark_session_dirty();
+                        self.toggle_chat_drawer(card.ws_idx);
                         return None;
                     }
 

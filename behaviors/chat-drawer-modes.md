@@ -26,3 +26,12 @@ Format and rules: [`README.md`](README.md).
 | TP-DRAWER-03 | In all-active, a workspace whose panes would put a row in the agents panel derives an open chat drawer — the panel's own criterion, so the two surfaces never disagree about "active agent". | The default mode opens nothing: the drawers the user asked to see stay shut, and the feature quietly becomes manual. | `an_agent_workspace_derives_an_open_drawer_in_all_active` |
 | TP-DRAWER-04 | Quieting a drawer beats the derivation: a suppressed workspace stays shut with a live agent inside. | A drawer with a live agent cannot be closed at all — the derivation reopens it on the next frame and the disclosure click turns into a lie. | `a_quieted_drawer_stays_shut_despite_a_live_agent` |
 | TP-DRAWER-05 | Focused and manual never derive an open drawer; only the expanded set speaks there. | The modes stop meaning anything: drawers open by themselves in manual, and focused loses its one-drawer promise. | `focused_and_manual_never_derive_an_open_drawer` |
+
+## Mode movement
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-DRAWER-06 | Focused keeps a one-drawer promise: arriving at a workspace opens its drawer AND closes the one the focus left, on this display. | Drawers accumulate as the focus travels and focused decays into a slow all-active nobody chose. | `arriving_in_focused_opens_the_new_and_closes_the_old` |
+| TP-DRAWER-08 | The whole pipeline is per-display: one display quieting a derived drawer changes its own verdict and leaves every other living display's untouched (a display seen for the first time adopts the driven default on purpose — TP-SUR-DEFAULT-01). | The user's iron constraint — "what I do on one display must never interfere with the client on another" — silently breaks at the exact surface this feature was rebuilt to protect. | `one_displays_quieting_never_moves_anothers_derived_drawer` |
+| TP-DRAWER-07 | The disclosure click inverts what the person sees: closing a derived-open drawer quiets the derivation for this display (the expanded set is not faked), and reopening withdraws the quieting first. | Closing a derived drawer either does nothing or forges a hand-open that outlives its agent; either way the click stops meaning "toggle what I see". | `toggling_a_derived_drawer_quiets_it_instead_of_faking_a_hand_open` |
+

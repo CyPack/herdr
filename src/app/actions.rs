@@ -1482,11 +1482,12 @@ impl AppState {
     pub fn switch_workspace(&mut self, idx: usize) {
         if idx < self.workspaces.len() {
             let previous_focus = self.current_pane_focus_target();
+            let previous_active = self.active;
             let workspace_changed = self.active != Some(idx);
             self.active = Some(idx);
             self.selected = idx;
             if workspace_changed {
-                self.reveal_chat_drawer_on_activation(idx);
+                self.apply_drawer_mode_on_activation(previous_active, idx);
             }
             let workspace_id = self.workspaces[idx].id.clone();
             crate::logging::workspace_focused(&workspace_id);
@@ -1519,11 +1520,12 @@ impl AppState {
         }
 
         let previous_focus = self.current_pane_focus_target();
+        let previous_active = self.active;
         let workspace_changed = self.active != Some(ws_idx);
         self.active = Some(ws_idx);
         self.selected = ws_idx;
         if workspace_changed {
-            self.reveal_chat_drawer_on_activation(ws_idx);
+            self.apply_drawer_mode_on_activation(previous_active, ws_idx);
         }
         let workspace_id = self.workspaces[ws_idx].id.clone();
         if workspace_changed {
@@ -2031,16 +2033,30 @@ impl AppState {
         }
     }
 
-    /// Fold or unfold one branch's chats in the phone drawer, without
-    /// switching to it.
+    /// What arriving at a workspace does to the chat drawers, per mode.
     ///
-    /// TP-FOCUS-03: arriving at a workspace opens its chat drawer, so the row
-    /// the accent descends to (TP-FOCUS-01) never hides behind a fold the
-    /// reader has to know to open. Activation-time, not a render rule: a fold
-    /// made while standing in the workspace holds until the user leaves and
-    /// returns, and a branch with no history is left alone rather than opened
-    /// onto its placeholder.
-    fn reveal_chat_drawer_on_activation(&mut self, ws_idx: usize) {
+    /// TP-FOCUS-03 (mode-aware): in focused mode the drawer opens where the
+    /// focus arrives and closes where it left, so only the focused
+    /// workspace's chats stay open on this display (TP-DRAWER-06).
+    /// all-active needs no reveal — the derivation already draws every live
+    /// agent's drawer, and writing here would turn a derived drawer into a
+    /// hand-opened one that outlives its agent. manual never moves a drawer
+    /// on its own. Activation-time, not a render rule: a fold made while
+    /// standing in the workspace holds until the user leaves and returns,
+    /// and a branch with no history is left alone rather than opened onto
+    /// its placeholder.
+    fn apply_drawer_mode_on_activation(&mut self, previous: Option<usize>, ws_idx: usize) {
+        if self.chat_drawer_mode != crate::app::state::ChatDrawerMode::Focused {
+            return;
+        }
+        if let Some(prev_idx) = previous.filter(|prev| *prev != ws_idx) {
+            if let Some(prev_ws) = self.workspaces.get(prev_idx) {
+                let prev_key = crate::persist::workspace_chats::ledger_key(&prev_ws.identity_cwd);
+                if self.expanded_chat_workspaces.remove(&prev_key) {
+                    self.mark_session_dirty();
+                }
+            }
+        }
         let Some(workspace) = self.workspaces.get(ws_idx) else {
             return;
         };
@@ -2057,6 +2073,33 @@ impl AppState {
         }
     }
 
+    /// Fold or unfold one workspace's chat drawer, whatever mode governs it.
+    ///
+    /// TP-DRAWER-07: the click inverts what the person SEES. A drawer drawn
+    /// open by the all-active derivation has nothing in the expanded set to
+    /// remove, so closing it quiets the derivation for this display instead
+    /// of touching a set that was never consulted; opening a quieted drawer
+    /// withdraws the quieting first — the derivation returns on its own —
+    /// and only a drawer nothing would derive needs the expanded set.
+    pub(crate) fn toggle_chat_drawer(&mut self, ws_idx: usize) {
+        let Some(workspace) = self.workspaces.get(ws_idx) else {
+            return;
+        };
+        let key = crate::persist::workspace_chats::ledger_key(&workspace.identity_cwd);
+        if self.chat_drawer_collapsed(ws_idx) {
+            self.suppressed_chat_drawers.remove(&key);
+            if self.chat_drawer_collapsed(ws_idx) {
+                self.expanded_chat_workspaces.insert(key);
+            }
+        } else {
+            self.expanded_chat_workspaces.remove(&key);
+            if !self.chat_drawer_collapsed(ws_idx) {
+                self.suppressed_chat_drawers.insert(key);
+            }
+        }
+        self.mark_session_dirty();
+    }
+
     /// The active workspace's chats are governed by the phone-only fold
     /// (TP-MOB-67); every other branch reuses the same per-workspace set the
     /// desktop's disclosure cell toggles, so the two surfaces can never
@@ -2066,14 +2109,7 @@ impl AppState {
             self.toggle_mobile_active_chats();
             return;
         }
-        let Some(workspace) = self.workspaces.get(ws_idx) else {
-            return;
-        };
-        let key = crate::persist::workspace_chats::ledger_key(&workspace.identity_cwd);
-        if !self.expanded_chat_workspaces.remove(&key) {
-            self.expanded_chat_workspaces.insert(key);
-        }
-        self.mark_session_dirty();
+        self.toggle_chat_drawer(ws_idx);
         self.clamp_mobile_drawer_scroll_and_cursor();
     }
 
@@ -7395,12 +7431,14 @@ mod tests {
         key
     }
 
-    // TP-FOCUS-03: activating a workspace opens its chat drawer — the row the
-    // accent descends to must never sit behind a fold the reader has to know
-    // to open.
+    // TP-FOCUS-03 (re-based for the drawer modes): in focused mode, activating
+    // a workspace opens its chat drawer — the row the accent descends to must
+    // never sit behind a fold the reader has to know to open. all-active
+    // needs no reveal (the derivation draws it) and manual must not move.
     #[test]
     fn activating_a_workspace_reveals_its_chat_drawer() {
         let mut state = AppState::test_new();
+        state.chat_drawer_mode = crate::app::state::ChatDrawerMode::Focused;
         state.workspaces = vec![Workspace::test_new("a"), Workspace::test_new("b")];
         state.workspaces[1].identity_cwd = std::path::PathBuf::from("/repo/b");
         let key = chat_history_for(&mut state, 1);
@@ -7413,12 +7451,126 @@ mod tests {
         );
     }
 
+    // TP-DRAWER-06: focused keeps its one-drawer promise — arriving somewhere
+    // opens the new drawer AND closes the one left behind, so only the
+    // focused workspace's chats stay open on this display.
+    #[test]
+    fn arriving_in_focused_opens_the_new_and_closes_the_old() {
+        let mut state = AppState::test_new();
+        state.chat_drawer_mode = crate::app::state::ChatDrawerMode::Focused;
+        state.workspaces = vec![Workspace::test_new("a"), Workspace::test_new("b")];
+        state.workspaces[0].identity_cwd = std::path::PathBuf::from("/repo/a");
+        state.workspaces[1].identity_cwd = std::path::PathBuf::from("/repo/b");
+        let key_a = chat_history_for(&mut state, 0);
+        let key_b = chat_history_for(&mut state, 1);
+        state.active = Some(1);
+
+        state.switch_workspace(0);
+        assert!(
+            state.expanded_chat_workspaces.contains(&key_a),
+            "the drawer opens where the focus arrives"
+        );
+        assert!(
+            !state.expanded_chat_workspaces.contains(&key_b),
+            "and closes where the focus left"
+        );
+    }
+
+    // all-active derives its open drawers at render time, so activation must
+    // not write to the expanded set at all — a reveal there would turn a
+    // derived drawer into a hand-opened one that survives the agent it was
+    // derived from.
+    #[test]
+    fn all_active_activation_leaves_the_expanded_set_alone() {
+        let mut state = AppState::test_new();
+        assert_eq!(
+            state.chat_drawer_mode,
+            crate::app::state::ChatDrawerMode::AllActive
+        );
+        state.workspaces = vec![Workspace::test_new("a"), Workspace::test_new("b")];
+        state.workspaces[1].identity_cwd = std::path::PathBuf::from("/repo/b");
+        let _key = chat_history_for(&mut state, 1);
+        state.active = Some(0);
+
+        state.switch_workspace(1);
+        assert!(
+            state.expanded_chat_workspaces.is_empty(),
+            "all-active needs no reveal and must not dirty the expanded set"
+        );
+    }
+
+    // TP-DRAWER-07: the disclosure click inverts what the person SEES. A
+    // derived-open drawer has nothing in the expanded set to remove, so
+    // closing it quiets the derivation for this display instead; opening a
+    // quieted drawer withdraws the quieting first, and only a drawer nothing
+    // would derive needs the expanded set.
+    #[test]
+    fn toggling_a_derived_drawer_quiets_it_instead_of_faking_a_hand_open() {
+        let mut state = AppState::test_new();
+        state.workspaces = vec![Workspace::test_new("a")];
+        state.workspaces[0].identity_cwd = std::path::PathBuf::from("/repo/a");
+        let key = chat_history_for(&mut state, 0);
+        let pane = state.workspaces[0].tabs[0].root_pane;
+        let id = state.workspaces[0].terminal_id(pane).unwrap().clone();
+        let mut terminal = crate::terminal::state::TerminalState::new(id.clone(), "/tmp".into());
+        terminal.set_agent_name("planner".into());
+        state.terminals.insert(id, terminal);
+        assert!(!state.chat_drawer_collapsed(0), "derived open to start");
+
+        // Closing a derived drawer: the expanded set was never consulted, so
+        // the click lands in the suppress set — for this display only.
+        state.toggle_chat_drawer(0);
+        assert!(state.chat_drawer_collapsed(0), "the click closed it");
+        assert!(
+            state.suppressed_chat_drawers.contains(&key),
+            "by quieting the derivation"
+        );
+        assert!(
+            !state.expanded_chat_workspaces.contains(&key),
+            "not by touching the expanded set"
+        );
+
+        // Opening it again withdraws the quieting; the derivation returns on
+        // its own, so the expanded set stays clean.
+        state.toggle_chat_drawer(0);
+        assert!(!state.chat_drawer_collapsed(0), "the click reopened it");
+        assert!(
+            state.suppressed_chat_drawers.is_empty() && state.expanded_chat_workspaces.is_empty(),
+            "the derivation carries it — no hand-open was faked"
+        );
+    }
+
+    // The same click on a drawer nothing derives keeps its old meaning: the
+    // expanded set opens and closes it, whatever the mode.
+    #[test]
+    fn toggling_an_underived_drawer_still_speaks_through_the_expanded_set() {
+        let mut state = AppState::test_new();
+        state.workspaces = vec![Workspace::test_new("a")];
+        state.workspaces[0].identity_cwd = std::path::PathBuf::from("/repo/a");
+        let key = chat_history_for(&mut state, 0);
+        assert!(state.chat_drawer_collapsed(0), "no agent, closed");
+
+        state.toggle_chat_drawer(0);
+        assert!(
+            state.expanded_chat_workspaces.contains(&key),
+            "opening an underived drawer is a hand-open"
+        );
+
+        state.toggle_chat_drawer(0);
+        assert!(
+            !state.expanded_chat_workspaces.contains(&key)
+                && state.suppressed_chat_drawers.is_empty(),
+            "closing it just takes the hand-open back"
+        );
+    }
+
     // TP-FOCUS-03's other half: the reveal happens on arrival, not on every
     // step taken inside — a fold made while standing in the workspace holds
-    // until the user leaves and comes back.
+    // until the user leaves and comes back. Focused-mode contract.
     #[test]
     fn a_fold_made_inside_the_workspace_holds_until_reactivation() {
         let mut state = AppState::test_new();
+        state.chat_drawer_mode = crate::app::state::ChatDrawerMode::Focused;
         state.workspaces = vec![Workspace::test_new("a"), Workspace::test_new("b")];
         state.workspaces[1].identity_cwd = std::path::PathBuf::from("/repo/b");
         let key = chat_history_for(&mut state, 1);
@@ -7445,6 +7597,7 @@ mod tests {
     #[test]
     fn an_empty_history_is_not_revealed_on_activation() {
         let mut state = AppState::test_new();
+        state.chat_drawer_mode = crate::app::state::ChatDrawerMode::Focused;
         state.workspaces = vec![Workspace::test_new("a"), Workspace::test_new("b")];
         state.workspaces[1].identity_cwd = std::path::PathBuf::from("/repo/b");
         let key = crate::persist::workspace_chats::ledger_key(&state.workspaces[1].identity_cwd);
