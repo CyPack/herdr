@@ -308,6 +308,16 @@ fn agent_panel_sort_from_config(
     }
 }
 
+fn chat_drawer_mode_from_config(
+    mode: crate::config::ChatDrawerModeConfig,
+) -> state::ChatDrawerMode {
+    match mode {
+        crate::config::ChatDrawerModeConfig::AllActive => state::ChatDrawerMode::AllActive,
+        crate::config::ChatDrawerModeConfig::Focused => state::ChatDrawerMode::Focused,
+        crate::config::ChatDrawerModeConfig::Manual => state::ChatDrawerMode::Manual,
+    }
+}
+
 /// Parse the configured agent name list into a deduplicated set of `Agent`
 /// values. Unknown agent names are silently dropped so a typo cannot disable
 /// other valid entries.
@@ -615,6 +625,7 @@ impl App {
         };
 
         let agent_panel_sort = agent_panel_sort_from_config(config.ui.agent_panel_sort);
+        let chat_drawer_mode = chat_drawer_mode_from_config(config.ui.chat_drawer_mode);
 
         // Validate sidebar bounds before they reach any `u16::clamp(min, max)`
         // call: `clamp` panics when `min > max`. On bad config, fall back to
@@ -868,6 +879,7 @@ impl App {
             sidebar_collapsed_mode: config.ui.sidebar_collapsed_mode,
             sidebar_section_split,
             agent_panel_sort,
+            chat_drawer_mode,
             agent_view_override: None,
             sidebar_agents: config.ui.sidebar.agents.clone(),
             sidebar_spaces: config.ui.sidebar.spaces.clone(),
@@ -1768,6 +1780,8 @@ impl App {
                 self.state.hide_tab_bar_when_single_tab = config.ui.hide_tab_bar_when_single_tab;
                 self.state.agent_panel_sort =
                     agent_panel_sort_from_config(config.ui.agent_panel_sort);
+                self.state.chat_drawer_mode =
+                    chat_drawer_mode_from_config(config.ui.chat_drawer_mode);
                 self.state.sidebar_agents = config.ui.sidebar.agents.clone();
                 self.state.sidebar_spaces = config.ui.sidebar.spaces.clone();
                 self.state.agent_panel_scroll = 0;
@@ -2839,6 +2853,30 @@ mod tests {
         let app = App::new(&config, true, None, api_rx, crate::api::EventHub::default());
 
         assert_eq!(app.state.agent_panel_sort, state::AgentPanelSort::Priority);
+    }
+
+    #[test]
+    fn startup_uses_configured_chat_drawer_mode() {
+        let mut config = Config::default();
+        config.ui.chat_drawer_mode = crate::config::ChatDrawerModeConfig::Focused;
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let app = App::new(&config, true, None, api_rx, crate::api::EventHub::default());
+
+        assert_eq!(app.state.chat_drawer_mode, state::ChatDrawerMode::Focused);
+    }
+
+    // TP-DRAWER-02: a mode change lands on config reload, not on restart.
+    #[test]
+    fn reload_applies_chat_drawer_mode_without_restart() {
+        let mut app = test_app();
+        assert_eq!(app.state.chat_drawer_mode, state::ChatDrawerMode::AllActive);
+
+        let mut config = Config::default();
+        config.ui.chat_drawer_mode = crate::config::ChatDrawerModeConfig::Manual;
+        app.apply_live_config(&config, &[], &[], false);
+
+        assert_eq!(app.state.chat_drawer_mode, state::ChatDrawerMode::Manual);
     }
 
     #[test]

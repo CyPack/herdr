@@ -106,6 +106,20 @@ impl AgentPanelSortConfig {
     }
 }
 
+/// How workspace chat drawers decide to be open.
+///
+/// `all-active` derives an open drawer for every workspace with a live agent,
+/// `focused` follows the active workspace around, and `manual` only ever
+/// obeys the disclosure clicks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChatDrawerModeConfig {
+    #[default]
+    AllActive,
+    Focused,
+    Manual,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HostCursorModeConfig {
@@ -1211,6 +1225,9 @@ pub struct UiConfig {
     pub hide_tab_bar_when_single_tab: bool,
     /// Agent sidebar ordering. Saved values are "spaces" or "priority". Default: "spaces".
     pub agent_panel_sort: AgentPanelSortConfig,
+    /// How workspace chat drawers open and close. Saved values are
+    /// "all-active", "focused", or "manual". Default: "all-active".
+    pub chat_drawer_mode: ChatDrawerModeConfig,
     /// Expanded sidebar row composition.
     pub sidebar: SidebarConfig,
     /// Accent color for highlights, borders, and navigation UI.
@@ -1416,6 +1433,7 @@ impl Default for UiConfig {
             show_agent_labels_on_pane_borders: false,
             hide_tab_bar_when_single_tab: false,
             agent_panel_sort: AgentPanelSortConfig::Spaces,
+            chat_drawer_mode: ChatDrawerModeConfig::AllActive,
             sidebar: SidebarConfig::default(),
             accent: "cyan".into(),
             toast: ToastConfig::default(),
@@ -1715,6 +1733,37 @@ agent_panel_scope = "current"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.ui.agent_panel_sort, AgentPanelSortConfig::Spaces);
+    }
+
+    // TP-DRAWER-01: the drawer mode is a config surface — three values,
+    // all-active default.
+    #[test]
+    fn chat_drawer_mode_config_parses_and_defaults() {
+        assert_eq!(
+            Config::default().ui.chat_drawer_mode,
+            ChatDrawerModeConfig::AllActive
+        );
+
+        let toml = r#"
+[ui]
+chat_drawer_mode = "focused"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.ui.chat_drawer_mode, ChatDrawerModeConfig::Focused);
+
+        let toml = r#"
+[ui]
+chat_drawer_mode = "manual"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.ui.chat_drawer_mode, ChatDrawerModeConfig::Manual);
+
+        let toml = r#"
+[ui]
+chat_drawer_mode = "all-active"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.ui.chat_drawer_mode, ChatDrawerModeConfig::AllActive);
     }
 
     #[test]

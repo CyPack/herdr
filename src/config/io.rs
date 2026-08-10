@@ -1236,6 +1236,35 @@ mouse_capture = false
     }
 
     #[test]
+    fn load_live_config_isolates_invalid_chat_drawer_mode() {
+        let loaded = load_live_config_from_str(
+            r#"
+[ui]
+chat_drawer_mode = "bogus"
+
+[update]
+version_check = false
+"#,
+        )
+        .unwrap();
+
+        // An unknown drawer mode follows the section-isolation contract:
+        // [ui] falls back to defaults, the failure is reported, and the
+        // rest of the config still applies.
+        assert_eq!(
+            loaded.config.ui.chat_drawer_mode,
+            crate::config::ChatDrawerModeConfig::AllActive
+        );
+        assert!(!loaded.config.update.version_check);
+        assert!(loaded.invalid_sections.contains(&"ui".to_string()));
+        assert!(
+            loaded.diagnostics.iter().any(|d| d.contains("ui config")),
+            "invalid chat_drawer_mode should surface a ui diagnostic: {:?}",
+            loaded.diagnostics
+        );
+    }
+
+    #[test]
     fn load_live_config_isolates_invalid_projects_section() {
         let loaded = load_live_config_from_str(
             r#"

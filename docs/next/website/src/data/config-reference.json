@@ -699,6 +699,17 @@
           ]
         },
         {
+          "key": "ui.chat_drawer_mode",
+          "type": "enum",
+          "default": "\"all-active\"",
+          "description": "How workspace chat drawers open and close. \"all-active\" keeps a drawer open for every workspace with a live agent, \"focused\" follows the active workspace around, and \"manual\" only obeys the disclosure clicks.",
+          "values": [
+            "all-active",
+            "focused",
+            "manual"
+          ]
+        },
+        {
           "key": "ui.sidebar.agents.row_gap",
           "type": "integer",
           "default": "0",
