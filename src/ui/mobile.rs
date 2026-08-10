@@ -559,7 +559,8 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
             crate::ui::sidebar::WorkspaceListEntry::Workspace { ws_idx, indented } => {
                 let is_active = Some(ws_idx) == app.active;
                 let project_step =
-                    u8::from(crate::ui::sidebar::workspace_project(app, ws_idx).is_some());
+                    u8::try_from(crate::ui::sidebar::workspace_node_shift(app, ws_idx))
+                        .unwrap_or(6);
                 rows.push(DrawerRow {
                     // Every workspace row spends the full entry height now,
                     // not only the active one. TP-MOB-70 traded thin rows for
@@ -631,9 +632,10 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
                     content: DrawerRowContent::Chat {
                         ws_idx,
                         chat_idx,
-                        depth: 2 + u8::from(
-                            crate::ui::sidebar::workspace_project(app, ws_idx).is_some(),
-                        ),
+                        depth: 2 + u8::try_from(crate::ui::sidebar::workspace_node_shift(
+                            app, ws_idx,
+                        ))
+                        .unwrap_or(6),
                     },
                 });
             }
@@ -642,9 +644,10 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
                     height: 1,
                     target: None,
                     content: DrawerRowContent::ChatNote {
-                        depth: 2 + u8::from(
-                            crate::ui::sidebar::workspace_project(app, ws_idx).is_some(),
-                        ),
+                        depth: 2 + u8::try_from(crate::ui::sidebar::workspace_node_shift(
+                            app, ws_idx,
+                        ))
+                        .unwrap_or(6),
                         label: "no chats yet".into(),
                     },
                 });
@@ -657,9 +660,10 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
                     height: 1,
                     target: None,
                     content: DrawerRowContent::ChatNote {
-                        depth: 2 + u8::from(
-                            crate::ui::sidebar::workspace_project(app, ws_idx).is_some(),
-                        ),
+                        depth: 2 + u8::try_from(crate::ui::sidebar::workspace_node_shift(
+                            app, ws_idx,
+                        ))
+                        .unwrap_or(6),
                         label: format!("… {hidden} older"),
                     },
                 });
