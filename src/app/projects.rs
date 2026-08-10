@@ -207,7 +207,7 @@ impl super::App {
             .state
             .workspaces
             .iter()
-            .position(|ws| ws.identity_cwd == req.project_path)
+            .position(|ws| ws.effective_cwd() == req.project_path)
             .or(self.state.active)
             .filter(|ws_idx| *ws_idx < self.state.workspaces.len());
 

@@ -1245,6 +1245,21 @@ impl Workspace {
         self.worktree_space.as_ref()
     }
 
+    /// The directory this workspace MEANS — the single truth every data
+    /// operation (chat spawn cwd, drawer attribution, target lists) reads.
+    ///
+    /// A workspace born in one directory can later gain a checkout identity
+    /// (pane moves, w1F-class adoptions); its visual row then says "branch X"
+    /// while `identity_cwd` still says the birthplace. Splitting the two let
+    /// a "+" spawn agents in $HOME and one chat list appear under several
+    /// branch rows (TP-WSID-01) — so the checkout, when known, wins.
+    pub fn effective_cwd(&self) -> &std::path::Path {
+        self.worktree_space
+            .as_ref()
+            .map(|space| space.checkout_path.as_path())
+            .unwrap_or(&self.identity_cwd)
+    }
+
     /// Whether cached workspace metadata authorizes opening the existing
     /// worktree picker from a client-local affordance. This intentionally does
     /// no filesystem discovery so view computation and render remain pure.
@@ -2052,6 +2067,35 @@ mod per_client_tab_focus_tests {
             tab_name_seen_by(&mut right, 1),
             "b1",
             "each workspace remembers the tab this display left it on"
+        );
+    }
+
+    // TP-WSID-01: the checkout, when known, IS the workspace's directory —
+    // a row that reads "branch X" must never spawn or attribute in the
+    // directory the workspace happened to be born in.
+    #[test]
+    fn effective_cwd_prefers_the_checkout_over_the_birthplace() {
+        let mut ws = Workspace::test_new("adopted");
+        ws.identity_cwd = std::path::PathBuf::from("/home/user");
+        ws.worktree_space = Some(WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr-branch"),
+            is_linked_worktree: true,
+        });
+
+        assert_eq!(
+            ws.effective_cwd(),
+            std::path::Path::new("/repo/herdr-branch"),
+            "the visual identity and the data identity must agree"
+        );
+
+        ws.worktree_space = None;
+        assert_eq!(
+            ws.effective_cwd(),
+            std::path::Path::new("/home/user"),
+            "without a checkout the birthplace stays the answer"
         );
     }
 }

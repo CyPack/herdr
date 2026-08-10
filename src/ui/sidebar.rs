@@ -707,7 +707,9 @@ pub(crate) fn workspace_chat_rows_for(
     let Some(workspace) = app.workspaces.get(ws_idx) else {
         return &[];
     };
-    let key = crate::persist::workspace_chats::ledger_key(&workspace.identity_cwd);
+    // TP-WSID-03: the drawer reads by the directory the row MEANS — the
+    // checkout when known — never by the birthplace two rows may share.
+    let key = crate::persist::workspace_chats::ledger_key(workspace.effective_cwd());
     app.workspace_chat_rows
         .get(&key)
         .map(Vec::as_slice)
@@ -5638,6 +5640,41 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 && !shape.iter().any(|s| s.starts_with("bucket(")),
             "one member, no bucket header, member indented under the node: {shape:?}"
         );
+    }
+
+    // TP-WSID-03: the drawer reads by the directory the row MEANS. A
+    // workspace born in a shared directory but carrying a checkout shows the
+    // checkout's chats — the shared birthplace list never bleeds in.
+    #[test]
+    fn the_drawer_reads_by_the_checkout_not_the_birthplace() {
+        let mut app = crate::app::state::AppState::test_new();
+        let mut ws = crate::workspace::Workspace::test_new("adopted");
+        ws.identity_cwd = std::path::PathBuf::from("/home/user");
+        ws.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr-branch"),
+            is_linked_worktree: true,
+        });
+        app.workspaces = vec![ws];
+        let row = |id: &str| crate::app::state::WorkspaceChatRow {
+            session_id: id.to_string(),
+            agent: "claude".to_string(),
+            title: None,
+            last_seen_ms: 1,
+            last_modified: None,
+        };
+        app.workspace_chat_rows
+            .insert("/home/user".to_string(), vec![row("home-chat")]);
+        app.workspace_chat_rows
+            .insert("/repo/herdr-branch".to_string(), vec![row("branch-chat")]);
+
+        let ids: Vec<_> = workspace_chat_rows_for(&app, 0)
+            .iter()
+            .map(|r| r.session_id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["branch-chat"], "only the checkout's list shows");
     }
 
     // TP-NODE-06: folding a node is a statement about one screen.

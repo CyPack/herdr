@@ -264,7 +264,15 @@ pub fn observe_from_snapshot(snapshot: &super::SessionSnapshot) -> Vec<(String, 
     let mut observations = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for workspace in &snapshot.workspaces {
-        let key = ledger_key(&workspace.identity_cwd);
+        // TP-WSID-04: a sighting is attributed to the directory the row
+        // MEANS — the checkout when the workspace carries one.
+        let key = ledger_key(
+            workspace
+                .worktree_space
+                .as_ref()
+                .map(|space| space.checkout_path.as_path())
+                .unwrap_or(&workspace.identity_cwd),
+        );
         if key.is_empty() {
             continue;
         }
@@ -845,6 +853,29 @@ mod tests {
                 ("/repo/main", "s2"),
                 ("/repo/branch", "s3"),
             ]
+        );
+    }
+
+    // TP-WSID-04: a workspace that carries a checkout attributes its
+    // sightings to the checkout — never to the shared birthplace directory
+    // that let one chat list appear under several branch rows.
+    #[test]
+    fn the_observer_attributes_by_the_checkout_when_one_is_carried() {
+        let mut snapshot = snapshot_with(vec![("/home/user", vec![vec![Some("s1")]])]);
+        snapshot.workspaces[0].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: PathBuf::from("/repo/herdr"),
+            checkout_path: PathBuf::from("/repo/herdr-branch"),
+            is_linked_worktree: true,
+        });
+
+        let observations = observe_from_snapshot(&snapshot);
+
+        assert_eq!(observations.len(), 1);
+        assert_eq!(
+            observations[0].0, "/repo/herdr-branch",
+            "the sighting lands under the checkout, not the birthplace"
         );
     }
 

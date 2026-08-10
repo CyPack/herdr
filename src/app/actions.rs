@@ -1997,13 +1997,13 @@ impl AppState {
             .enumerate()
             .filter(|(idx, _)| *idx != exclude_ws_idx)
             .filter_map(|(_, workspace)| {
-                let key = crate::persist::workspace_chats::ledger_key(&workspace.identity_cwd);
+                let key = crate::persist::workspace_chats::ledger_key(workspace.effective_cwd());
                 if key.is_empty() {
                     return None;
                 }
                 let label = workspace.branch().unwrap_or_else(|| {
                     workspace
-                        .identity_cwd
+                        .effective_cwd()
                         .file_name()
                         .map(|name| name.to_string_lossy().into_owned())
                         .unwrap_or_else(|| key.clone())
@@ -2163,7 +2163,7 @@ impl AppState {
         }
         if let Some(prev_idx) = previous.filter(|prev| *prev != ws_idx) {
             if let Some(prev_ws) = self.workspaces.get(prev_idx) {
-                let prev_key = crate::persist::workspace_chats::ledger_key(&prev_ws.identity_cwd);
+                let prev_key = crate::persist::workspace_chats::ledger_key(prev_ws.effective_cwd());
                 if self.expanded_chat_workspaces.remove(&prev_key) {
                     self.mark_session_dirty();
                 }
@@ -2172,7 +2172,7 @@ impl AppState {
         let Some(workspace) = self.workspaces.get(ws_idx) else {
             return;
         };
-        let key = crate::persist::workspace_chats::ledger_key(&workspace.identity_cwd);
+        let key = crate::persist::workspace_chats::ledger_key(workspace.effective_cwd());
         if self
             .workspace_chat_rows
             .get(&key)
@@ -2197,7 +2197,7 @@ impl AppState {
         let Some(workspace) = self.workspaces.get(ws_idx) else {
             return;
         };
-        let key = crate::persist::workspace_chats::ledger_key(&workspace.identity_cwd);
+        let key = crate::persist::workspace_chats::ledger_key(workspace.effective_cwd());
         if self.chat_drawer_collapsed(ws_idx) {
             self.suppressed_chat_drawers.remove(&key);
             if self.chat_drawer_collapsed(ws_idx) {

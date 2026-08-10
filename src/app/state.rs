@@ -3762,8 +3762,8 @@ impl AppState {
             .iter()
             .map(|ws| {
                 (
-                    crate::persist::workspace_chats::ledger_key(&ws.identity_cwd),
-                    ws.identity_cwd.to_string_lossy().into_owned(),
+                    crate::persist::workspace_chats::ledger_key(ws.effective_cwd()),
+                    ws.effective_cwd().to_string_lossy().into_owned(),
                 )
             })
             .collect();
@@ -3899,7 +3899,10 @@ impl AppState {
         let Some(workspace) = self.workspaces.get(ws_idx) else {
             return true;
         };
-        let key = crate::persist::workspace_chats::ledger_key(&workspace.identity_cwd);
+        // TP-WSID-03: openness keys through the same directory the content
+        // reads by — a drawer whose rows come from the checkout must not
+        // track its open state under the birthplace.
+        let key = crate::persist::workspace_chats::ledger_key(workspace.effective_cwd());
         let opened_by_hand = self.expanded_chat_workspaces.contains(&key);
         match self.chat_drawer_mode {
             ChatDrawerMode::AllActive => {

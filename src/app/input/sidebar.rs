@@ -346,8 +346,10 @@ impl AppState {
         let Some(workspace) = self.workspaces.get(ws_idx) else {
             return;
         };
+        // TP-WSID-02: the chat starts where the row says it will — the
+        // checkout, never the directory the workspace was born in.
         self.request_project_chat_tab = Some(crate::app::state::ProjectChatTabRequest {
-            project_path: workspace.identity_cwd.clone(),
+            project_path: workspace.effective_cwd().to_path_buf(),
             session_id: None,
         });
     }
@@ -3431,5 +3433,32 @@ mod tests {
             .collapsed_project_paths
             .contains(std::path::Path::new("/home/x/proj")));
         assert_eq!(app.state.request_project_chat_tab, None);
+    }
+
+    // TP-WSID-02: the chat a "+" starts lives where the row says it will —
+    // the checkout — never in the directory the workspace was born in.
+    #[test]
+    fn a_new_chat_request_carries_the_checkout_not_the_birthplace() {
+        let mut state = crate::app::state::AppState::test_new();
+        let mut ws = crate::workspace::Workspace::test_new("adopted");
+        ws.identity_cwd = std::path::PathBuf::from("/home/user");
+        ws.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr-branch"),
+            is_linked_worktree: true,
+        });
+        state.workspaces = vec![ws];
+
+        state.request_workspace_chat(0);
+
+        assert_eq!(
+            state
+                .request_project_chat_tab
+                .as_ref()
+                .map(|req| req.project_path.clone()),
+            Some(std::path::PathBuf::from("/repo/herdr-branch"))
+        );
     }
 }

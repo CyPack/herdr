@@ -2900,7 +2900,9 @@ mod tests {
         app.state.active = Some(0);
         app.state.selected = 0;
         app.state.mobile_width_threshold = 0;
-        let key = crate::persist::workspace_chats::ledger_key(&std::env::temp_dir());
+        // TP-WSID-03 re-base: the drawer keys by the checkout the row means,
+        // so the remembered history lives under it, not the birthplace.
+        let key = crate::persist::workspace_chats::ledger_key(std::path::Path::new("/repo/herdr"));
         app.state.workspace_chat_rows.insert(
             key.clone(),
             vec![crate::app::state::WorkspaceChatRow {
@@ -2979,6 +2981,8 @@ mod tests {
         app.state.active = Some(0);
         app.state.selected = 0;
         app.state.mobile_width_threshold = 0;
+        // No checkout on this workspace, so the birthplace IS the effective
+        // directory (TP-WSID-05): the drawer keys by it unchanged.
         let key = crate::persist::workspace_chats::ledger_key(&std::env::temp_dir());
         app.state.workspace_chat_rows.insert(
             key.clone(),
