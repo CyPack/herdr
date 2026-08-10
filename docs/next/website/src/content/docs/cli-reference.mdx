@@ -136,11 +136,14 @@ A workspace is the top-level project or work context. Creating one also creates 
 
 ```bash
 herdr space promote <branch> [--repo ROOT] [--as module|project] [--label TEXT] [--icon GLYPH] [--key KEY] [--dry-run]
+herdr space move <branch> (--under|--beside|--above <node-key> | --top | --new-group NAME) [--repo ROOT] [--dry-run]
 herdr space demote <key|branch> [--dry-run]
 herdr space list
 ```
 
 Promotion gives a branch its own sidebar module space — or, with `--as project`, a top-level project of its own. The rule lands in `spaces.managed.toml` next to your config, never in config.toml itself: hand-written `[[spaces.split]]` rules always win first-match against managed ones. A running server reloads immediately; without one the grouping applies on next start. `demote` removes managed entries only and tells you when the matching rule lives in your own config instead.
+
+`move` re-hangs a branch's space in the node tree: `--under` makes it a child of the named `[[spaces.node]]`, `--beside` a sibling, `--above` lifts it one level, `--top` returns it to top level, and `--new-group` creates a managed node and moves the branch under it in one write. Exactly one destination is required, an unknown node key is refused rather than silently flattened, and a move keeps the label and icon a promote once wrote. The sidebar's branch-row menu offers the same three verbs under "Move...".
 
 ## Worktrees
 

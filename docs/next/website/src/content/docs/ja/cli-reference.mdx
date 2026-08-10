@@ -132,11 +132,14 @@ herdr workspace create --cwd ~/project --label api --no-focus
 
 ```bash
 herdr space promote <branch> [--repo ROOT] [--as module|project] [--label TEXT] [--icon GLYPH] [--key KEY] [--dry-run]
+herdr space move <branch> (--under|--beside|--above <node-key> | --top | --new-group NAME) [--repo ROOT] [--dry-run]
 herdr space demote <key|branch> [--dry-run]
 herdr space list
 ```
 
 promote はブランチに専用のサイドバーモジュールスペースを与えます。`--as project` を付けると、独立したトップレベルプロジェクトになります。ルールは config.toml ではなく、その隣の `spaces.managed.toml` に書き込まれます。手書きの `[[spaces.split]]` ルールは常に first-match で優先されます。サーバーが起動していれば即座にリロードされ、いなければ次回起動時に適用されます。`demote` は managed エントリだけを削除します。
+
+`move` はブランチのスペースをノードツリー内で掛け替えます。`--under` は指定した `[[spaces.node]]` の子に、`--beside` は兄弟に、`--above` は一段上に移し、`--top` はトップレベルへ戻します。`--new-group` は managed ノードを作成し、同じ書き込みでブランチをその下へ移動します。宛先はちょうど 1 つ必要で、未知のノードキーは黙って平坦化せず拒否されます。move しても promote が書いたラベルとアイコンは保持されます。サイドバーのブランチ行メニューの「Move...」からも同じ 3 つの操作が使えます。
 
 ## Worktree
 
