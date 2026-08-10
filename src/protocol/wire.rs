@@ -657,22 +657,6 @@ pub enum ServerMessage {
         reason: Option<String>,
     },
 
-    /// Where a wheel over this attached terminal would go, sent on attach and
-    /// again whenever it changes.
-    ///
-    /// The routing decision itself has always been the server's
-    /// (`wheel_routing()`): a pane whose application asked for the mouse gets
-    /// real wheel events, an alternate screen with alternate-scroll gets
-    /// arrow keys, everything else scrolls the host's scrollback. What was
-    /// missing was the client's ability to KNOW which of those it is talking
-    /// to — a web client deciding whether an upward gesture may be taken
-    /// locally (a reading mode) cannot make that call blind without stealing
-    /// vim's wheel or feeding claude's history-jog.
-    TerminalRouting {
-        /// The current wheel routing for the attached terminal.
-        routing: TerminalWheelRouting,
-    },
-
     /// A notification event (sound/toast) to be rendered locally by the client.
     Notify {
         /// What kind of notification.
@@ -716,6 +700,21 @@ pub enum ServerMessage {
     PrefixInputSource {
         /// Whether the ASCII input source should be active.
         active: bool,
+    },
+    /// Where a wheel over this attached terminal would go, sent on attach and
+    /// again whenever it changes.
+    ///
+    /// The routing decision itself has always been the server's
+    /// (`wheel_routing()`): a pane whose application asked for the mouse gets
+    /// real wheel events, an alternate screen with alternate-scroll gets
+    /// arrow keys, everything else scrolls the host's scrollback. What was
+    /// missing was the client's ability to KNOW which of those it is talking
+    /// to — a web client deciding whether an upward gesture may be taken
+    /// locally (a reading mode) cannot make that call blind without stealing
+    /// vim's wheel or feeding claude's history-jog.
+    TerminalRouting {
+        /// The current wheel routing for the attached terminal.
+        routing: TerminalWheelRouting,
     },
 }
 
