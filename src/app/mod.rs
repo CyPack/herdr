@@ -747,6 +747,7 @@ impl App {
             request_new_tab: false,
             request_new_linked_worktree: None,
             request_open_existing_worktree: None,
+            pending_move_new_group: None,
             request_new_workspace_cwd: None,
             request_remove_linked_worktree: None,
             request_submit_worktree_create: false,

@@ -382,6 +382,19 @@ pub(super) fn open_rename_workspace(
     state.enter_overlay_mode(Mode::RenameWorkspace);
 }
 
+/// Arm the rename input to collect a new group's name for a move
+/// (TP-RANK-13). The pending workspace rides in its own slot so a plain
+/// rename can never turn into a group creation.
+fn open_move_new_group_input(state: &mut AppState, ws_idx: usize) {
+    state.pending_move_new_group = Some(ws_idx);
+    state.pending_workspace_create_cwd = None;
+    state.rename_pane_target = None;
+    state.name_input = String::new();
+    state.name_input_replace_on_type = false;
+    state.context_menu = None;
+    state.enter_overlay_mode(Mode::RenameWorkspace);
+}
+
 pub(crate) fn open_new_workspace_dialog(state: &mut AppState, cwd: std::path::PathBuf) {
     let suggested_name = crate::workspace::derive_label_from_cwd(&cwd);
     state.creating_new_tab = false;
@@ -525,6 +538,12 @@ pub(super) fn apply_rename_action(state: &mut AppState, action: ModalAction) {
                 state.name_input.trim().to_string()
             };
             match state.mode {
+                // The move-naming road, mirrored from the live save path.
+                Mode::RenameWorkspace if state.pending_move_new_group.is_some() => {
+                    if let Some(ws_idx) = state.pending_move_new_group.take() {
+                        state.submit_move_to_new_group(ws_idx, &new_name);
+                    }
+                }
                 Mode::RenameWorkspace
                     if state.pending_workspace_create_cwd.is_none()
                         && !state.workspaces.is_empty()
@@ -837,6 +856,7 @@ pub(super) fn apply_context_menu_action(
     idx: usize,
 ) {
     let item = menu.items().get(idx).map(|item| (*item).to_string());
+    let (menu_x, menu_y) = (menu.x, menu.y);
     let file_intent = match &menu.kind {
         ContextMenuKind::File { model } => validated_file_context_action(state, model, idx),
         _ => None,
@@ -909,6 +929,64 @@ pub(super) fn apply_context_menu_action(
         }
         (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("Demote from module")) => {
             state.demote_workspace_space(ws_idx);
+            leave_modal(state);
+        }
+        // TP-RANK-13: the move chain — "Move..." opens the verb submenu in
+        // place, a verb opens the target picker, and the picker resolves by
+        // index so display names never have to be unique.
+        (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("Move...")) => {
+            let targets = state.move_target_entries();
+            state.context_menu = Some(crate::app::state::ContextMenuState {
+                kind: ContextMenuKind::MoveWorkspace {
+                    ws_idx,
+                    has_targets: !targets.is_empty(),
+                },
+                x: menu_x,
+                y: menu_y,
+                list: crate::app::state::MenuListState::new(0),
+            });
+        }
+        (
+            ContextMenuKind::MoveWorkspace { ws_idx, .. },
+            Some(verb @ ("Under a group..." | "Beside a group..." | "Above a group...")),
+        ) => {
+            let op = match verb {
+                "Under a group..." => crate::spaces::MoveOp::Under,
+                "Beside a group..." => crate::spaces::MoveOp::Beside,
+                _ => crate::spaces::MoveOp::Above,
+            };
+            state.context_menu = Some(crate::app::state::ContextMenuState {
+                kind: ContextMenuKind::MoveTarget {
+                    ws_idx,
+                    op,
+                    targets: state.move_target_entries(),
+                },
+                x: menu_x,
+                y: menu_y,
+                list: crate::app::state::MenuListState::new(0),
+            });
+        }
+        (ContextMenuKind::MoveWorkspace { ws_idx, .. }, Some("Under a new group...")) => {
+            open_move_new_group_input(state, ws_idx);
+        }
+        (ContextMenuKind::MoveWorkspace { ws_idx, .. }, Some("To top level")) => {
+            state.move_workspace_space(ws_idx, None, None);
+            leave_modal(state);
+        }
+        (
+            ContextMenuKind::MoveTarget {
+                ws_idx,
+                op,
+                targets,
+            },
+            Some(_),
+        ) => {
+            if let Some((key, _)) = targets.get(idx) {
+                match crate::spaces::move_parent_for(&state.space_nodes, key, op) {
+                    Ok(parent) => state.move_workspace_space(ws_idx, parent, None),
+                    Err(err) => tracing::warn!(error = %err, "move target vanished"),
+                }
+            }
             leave_modal(state);
         }
         (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("Open worktree...")) => {
@@ -1158,6 +1236,14 @@ impl App {
         };
 
         match self.state.mode {
+            // TP-RANK-13: a name collected for a move becomes the group and
+            // the re-hang in one write; the pending slot is consumed here so
+            // the shared cancel below stays a no-op for it.
+            Mode::RenameWorkspace if self.state.pending_move_new_group.is_some() => {
+                if let Some(ws_idx) = self.state.pending_move_new_group.take() {
+                    self.state.submit_move_to_new_group(ws_idx, &new_name);
+                }
+            }
             Mode::RenameWorkspace => {
                 if let Some(cwd) = self.state.pending_workspace_create_cwd.take() {
                     let suggested_name = crate::workspace::derive_label_from_cwd(&cwd);
@@ -1358,6 +1444,7 @@ impl App {
 
     pub(crate) fn apply_context_menu_action_via_api(&mut self, menu: ContextMenuState, idx: usize) {
         let item = menu.items().get(idx).map(|item| (*item).to_string());
+        let (menu_x, menu_y) = (menu.x, menu.y);
         let file_intent = match &menu.kind {
             ContextMenuKind::File { model } => {
                 validated_file_context_action(&self.state, model, idx)
@@ -1415,6 +1502,63 @@ impl App {
             }
             (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("Demote from module")) => {
                 self.state.demote_workspace_space(ws_idx);
+                leave_modal(&mut self.state);
+            }
+            // TP-RANK-13: the move chain, on the mouse road — the same three
+            // steps the keyboard dispatch walks.
+            (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("Move...")) => {
+                let targets = self.state.move_target_entries();
+                self.state.context_menu = Some(crate::app::state::ContextMenuState {
+                    kind: ContextMenuKind::MoveWorkspace {
+                        ws_idx,
+                        has_targets: !targets.is_empty(),
+                    },
+                    x: menu_x,
+                    y: menu_y,
+                    list: crate::app::state::MenuListState::new(0),
+                });
+            }
+            (
+                ContextMenuKind::MoveWorkspace { ws_idx, .. },
+                Some(verb @ ("Under a group..." | "Beside a group..." | "Above a group...")),
+            ) => {
+                let op = match verb {
+                    "Under a group..." => crate::spaces::MoveOp::Under,
+                    "Beside a group..." => crate::spaces::MoveOp::Beside,
+                    _ => crate::spaces::MoveOp::Above,
+                };
+                self.state.context_menu = Some(crate::app::state::ContextMenuState {
+                    kind: ContextMenuKind::MoveTarget {
+                        ws_idx,
+                        op,
+                        targets: self.state.move_target_entries(),
+                    },
+                    x: menu_x,
+                    y: menu_y,
+                    list: crate::app::state::MenuListState::new(0),
+                });
+            }
+            (ContextMenuKind::MoveWorkspace { ws_idx, .. }, Some("Under a new group...")) => {
+                open_move_new_group_input(&mut self.state, ws_idx);
+            }
+            (ContextMenuKind::MoveWorkspace { ws_idx, .. }, Some("To top level")) => {
+                self.state.move_workspace_space(ws_idx, None, None);
+                leave_modal(&mut self.state);
+            }
+            (
+                ContextMenuKind::MoveTarget {
+                    ws_idx,
+                    op,
+                    targets,
+                },
+                Some(_),
+            ) => {
+                if let Some((key, _)) = targets.get(idx) {
+                    match crate::spaces::move_parent_for(&self.state.space_nodes, key, op) {
+                        Ok(parent) => self.state.move_workspace_space(ws_idx, parent, None),
+                        Err(err) => tracing::warn!(error = %err, "move target vanished"),
+                    }
+                }
                 leave_modal(&mut self.state);
             }
             (ContextMenuKind::GitWorkspace { ws_idx, .. }, Some("Open worktree...")) => {
@@ -1579,6 +1723,9 @@ fn cancel_rename_modal(state: &mut AppState) {
     state.creating_new_tab = false;
     state.requested_new_tab_name = None;
     state.pending_workspace_create_cwd = None;
+    // Disarm a pending move: an escaped name input must never let the next
+    // plain rename create a group (TP-RANK-13).
+    state.pending_move_new_group = None;
     state.rename_pane_target = None;
     state.file_manager_rename = None;
     state.name_input.clear();
@@ -2499,6 +2646,144 @@ mod tests {
             .iter()
             .position(|item| *item == label)
             .unwrap_or_else(|| panic!("menu should offer {label:?}"))
+    }
+
+    fn app_with_movable_branch() -> crate::app::App {
+        let mut app = app_with_test_workspaces(&["tiling"]);
+        app.state.workspaces[0].cached_git_branch = Some("worktree/Tiling".into());
+        app.state.workspaces[0].worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr-tiling"),
+            is_linked_worktree: true,
+        });
+        app.state.space_nodes = vec![
+            crate::spaces::SpaceNode {
+                key: "group:ui".into(),
+                name: "UI".into(),
+                icon: None,
+                parent: None,
+            },
+            crate::spaces::SpaceNode {
+                key: "group:ops".into(),
+                name: "Ops".into(),
+                icon: None,
+                parent: Some("group:ui".into()),
+            },
+        ];
+        app
+    }
+
+    fn linked_branch_menu() -> ContextMenuState {
+        ContextMenuState {
+            kind: ContextMenuKind::GitWorkspace {
+                ws_idx: 0,
+                is_linked_worktree: true,
+                has_worktree_children: false,
+                collapsed: false,
+                space_is_custom: false,
+            },
+            x: 3,
+            y: 7,
+            list: MenuListState::new(0),
+        }
+    }
+
+    // TP-RANK-13: "Move..." opens the verb submenu in place, and a verb
+    // opens the target picker loaded with the forest — names shown, keys
+    // carried.
+    #[test]
+    fn move_walks_the_submenu_then_the_picker() {
+        let mut app = app_with_movable_branch();
+        // A menu selection always happens from inside the menu overlay.
+        app.state.mode = Mode::ContextMenu;
+        let menu = linked_branch_menu();
+        let idx = item_index(&menu, "Move...");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        assert_eq!(app.state.mode, Mode::ContextMenu, "the chain stays modal");
+        let submenu = app.state.context_menu.clone().expect("submenu is open");
+        assert!(
+            matches!(
+                submenu.kind,
+                ContextMenuKind::MoveWorkspace {
+                    ws_idx: 0,
+                    has_targets: true,
+                }
+            ),
+            "got {:?}",
+            submenu.kind
+        );
+        assert_eq!((submenu.x, submenu.y), (3, 7), "the chain stays anchored");
+
+        let idx = item_index(&submenu, "Under a group...");
+        app.apply_context_menu_action_via_api(submenu, idx);
+
+        let picker = app.state.context_menu.clone().expect("picker is open");
+        assert_eq!(picker.items(), &["UI", "Ops"], "names, never keys");
+        match &picker.kind {
+            ContextMenuKind::MoveTarget {
+                ws_idx: 0,
+                op: crate::spaces::MoveOp::Under,
+                targets,
+            } => {
+                assert_eq!(targets[0].0, "group:ui");
+                assert_eq!(targets[1].0, "group:ops");
+            }
+            other => panic!("expected the under-picker, got {other:?}"),
+        }
+    }
+
+    // TP-RANK-13: naming road — the new-group entry closes the menu chain
+    // and opens the rename input armed for the move.
+    #[test]
+    fn a_new_group_pick_opens_the_name_input() {
+        let mut app = app_with_movable_branch();
+        let submenu = ContextMenuState {
+            kind: ContextMenuKind::MoveWorkspace {
+                ws_idx: 0,
+                has_targets: true,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = item_index(&submenu, "Under a new group...");
+
+        app.apply_context_menu_action_via_api(submenu, idx);
+
+        assert_eq!(app.state.mode, Mode::RenameWorkspace);
+        assert_eq!(app.state.pending_move_new_group, Some(0));
+        assert_eq!(app.state.name_input, "", "the name starts empty");
+        assert!(app.state.context_menu.is_none(), "the menu chain is done");
+    }
+
+    // TP-RANK-13: an escaped name input disarms the move — the next plain
+    // rename must never turn into a group creation.
+    #[test]
+    fn an_escaped_group_name_never_leaks_into_the_next_rename() {
+        let mut app = app_with_movable_branch();
+        let submenu = ContextMenuState {
+            kind: ContextMenuKind::MoveWorkspace {
+                ws_idx: 0,
+                has_targets: true,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = item_index(&submenu, "Under a new group...");
+        app.apply_context_menu_action_via_api(submenu, idx);
+        assert_eq!(app.state.pending_move_new_group, Some(0));
+
+        app.apply_rename_mouse_action_via_api(ModalAction::Cancel);
+
+        assert_eq!(
+            app.state.pending_move_new_group, None,
+            "cancel disarms the pending move"
+        );
     }
 
     #[test]

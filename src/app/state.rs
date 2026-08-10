@@ -2234,6 +2234,22 @@ pub enum ContextMenuKind {
         /// the menu offers "Demote from module" only then (TP-RANK-06).
         space_is_custom: bool,
     },
+    /// The move submenu a branch row's "Move..." opens: pick which of the
+    /// three verbs (K5) — or a new group, or top level. `has_targets` is
+    /// false when no node exists yet, which hides the three verbs that would
+    /// have nothing to point at.
+    MoveWorkspace {
+        ws_idx: usize,
+        has_targets: bool,
+    },
+    /// The target picker one of the three verbs opens: every node in the
+    /// forest as `(key, display name)`. Selection resolves by index, so the
+    /// names never have to be unique.
+    MoveTarget {
+        ws_idx: usize,
+        op: crate::spaces::MoveOp,
+        targets: Vec<(String, String)>,
+    },
     Tab {
         ws_idx: usize,
         tab_idx: usize,
@@ -2304,6 +2320,8 @@ impl ContextMenuState {
                 if *space_is_custom {
                     items.push("Demote from module");
                 }
+                // TP-RANK-13: the mouse road to `herdr space move` starts here.
+                items.push("Move...");
                 items.push("Delete worktree checkout...");
                 items
             }
@@ -2331,6 +2349,19 @@ impl ContextMenuState {
                 "Open worktree...",
                 "Collapse",
             ],
+            // TP-RANK-13: the verbs only show when a node exists to point
+            // them at; the naming and top-level roads always do.
+            ContextMenuKind::MoveWorkspace { has_targets, .. } => {
+                let mut items = Vec::new();
+                if *has_targets {
+                    items.extend(["Under a group...", "Beside a group...", "Above a group..."]);
+                }
+                items.extend(["Under a new group...", "To top level"]);
+                items
+            }
+            ContextMenuKind::MoveTarget { targets, .. } => {
+                targets.iter().map(|(_, label)| label.as_str()).collect()
+            }
             ContextMenuKind::Tab { .. } => vec!["New tab", "Rename", "Close"],
             ContextMenuKind::ProjectNewChat {
                 has_workspace: false,
@@ -3067,6 +3098,10 @@ pub struct AppState {
     pub request_new_tab: bool,
     pub request_new_linked_worktree: Option<usize>,
     pub request_open_existing_worktree: Option<usize>,
+    /// The workspace a "move under a new group" is naming a group for while
+    /// the rename input collects the name. Client-local like every modal
+    /// fact: naming a group on one display never opens an input on another.
+    pub pending_move_new_group: Option<usize>,
     pub request_new_workspace_cwd: Option<std::path::PathBuf>,
     pub request_remove_linked_worktree: Option<usize>,
     pub request_submit_worktree_create: bool,
@@ -4087,6 +4122,7 @@ impl AppState {
             request_new_tab: false,
             request_new_linked_worktree: None,
             request_open_existing_worktree: None,
+            pending_move_new_group: None,
             request_new_workspace_cwd: None,
             request_remove_linked_worktree: None,
             request_submit_worktree_create: false,
@@ -4589,7 +4625,9 @@ impl AppState {
         if let Some(menu) = &self.context_menu {
             match menu.kind {
                 ContextMenuKind::Workspace { ws_idx }
-                | ContextMenuKind::GitWorkspace { ws_idx, .. } => {
+                | ContextMenuKind::GitWorkspace { ws_idx, .. }
+                | ContextMenuKind::MoveWorkspace { ws_idx, .. }
+                | ContextMenuKind::MoveTarget { ws_idx, .. } => {
                     assert_workspace_index(ws_idx, "context menu workspace")
                 }
                 ContextMenuKind::Tab { ws_idx, tab_idx } => {
@@ -5543,6 +5581,102 @@ mod tests {
         );
     }
 
+    // TP-RANK-12: the move plan is the promote plan carrying a parent (and
+    // possibly the group it creates) — never a project rank.
+    #[test]
+    fn move_plan_carries_the_parent_and_the_new_group() {
+        let mut state = AppState::test_new();
+        let mut ws = crate::workspace::Workspace::test_new("tiling");
+        ws.cached_git_branch = Some("worktree/Tiling".into());
+        ws.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr-tiling"),
+            is_linked_worktree: true,
+        });
+        state.workspaces = vec![ws];
+
+        let node = crate::cli::space::NodePlan {
+            key: "group:ops".into(),
+            name: "Ops".into(),
+            parent: None,
+        };
+        let plan = state
+            .move_plan_for_workspace(0, Some("group:ops".into()), Some(node.clone()))
+            .expect("a branch checkout is movable");
+        assert_eq!(plan.parent.as_deref(), Some("group:ops"));
+        assert_eq!(plan.node.as_ref(), Some(&node));
+        assert_eq!(plan.key, "herdr:worktree-tiling");
+        assert_eq!(plan.branch, "worktree/Tiling");
+        assert!(plan.project.is_none(), "a move never changes rank");
+
+        assert!(
+            state.move_plan_for_workspace(9, None, None).is_none(),
+            "a missing row moves nothing"
+        );
+    }
+
+    // TP-RANK-13: the move submenu offers the three verbs only when a node
+    // exists to point them at; the group and top-level roads always show.
+    #[test]
+    fn the_move_menu_hides_the_verbs_without_targets() {
+        let with_targets = ContextMenuState {
+            kind: ContextMenuKind::MoveWorkspace {
+                ws_idx: 0,
+                has_targets: true,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        assert_eq!(
+            with_targets.items(),
+            &[
+                "Under a group...",
+                "Beside a group...",
+                "Above a group...",
+                "Under a new group...",
+                "To top level",
+            ]
+        );
+
+        let without = ContextMenuState {
+            kind: ContextMenuKind::MoveWorkspace {
+                ws_idx: 0,
+                has_targets: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        assert_eq!(
+            without.items(),
+            &["Under a new group...", "To top level"],
+            "verbs with nothing to point at do not render"
+        );
+    }
+
+    // TP-RANK-13: the target picker shows display names and resolves by
+    // index, so duplicate names can never mis-route a move.
+    #[test]
+    fn the_target_picker_lists_the_forest_by_name() {
+        let picker = ContextMenuState {
+            kind: ContextMenuKind::MoveTarget {
+                ws_idx: 0,
+                op: crate::spaces::MoveOp::Under,
+                targets: vec![
+                    ("group:ui".into(), "UI".into()),
+                    ("group:ops".into(), "Ops".into()),
+                ],
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        assert_eq!(picker.items(), &["UI", "Ops"]);
+    }
+
     #[test]
     fn linked_worktree_context_menu_keeps_safe_close_and_explicit_remove() {
         let menu = ContextMenuState {
@@ -5558,8 +5692,9 @@ mod tests {
             list: MenuListState::new(0),
         };
 
-        // TP-RANK-06 added the promotion pair; the subject here — Close stays
-        // safe and checkout removal stays a separate explicit action — holds.
+        // TP-RANK-06 added the promotion pair and TP-RANK-13 the move road;
+        // the subject here — Close stays safe and checkout removal stays a
+        // separate explicit action — holds.
         assert_eq!(
             menu.items(),
             &[
@@ -5567,6 +5702,7 @@ mod tests {
                 "Close",
                 "Promote to module",
                 "Promote to project",
+                "Move...",
                 "Delete worktree checkout..."
             ]
         );

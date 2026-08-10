@@ -1921,6 +1921,90 @@ impl AppState {
         })
     }
 
+    /// The move plan a workspace row's menu would write: the promote plan
+    /// carrying a parent (and possibly a new group), never a project rank
+    /// (TP-RANK-12).
+    pub(crate) fn move_plan_for_workspace(
+        &self,
+        ws_idx: usize,
+        parent: Option<String>,
+        node: Option<crate::cli::space::NodePlan>,
+    ) -> Option<crate::cli::space::PromotePlan> {
+        let workspace = self.workspaces.get(ws_idx)?;
+        let membership = workspace.worktree_space()?;
+        let branch = workspace.branch()?;
+        let repo_root = membership.repo_root.clone();
+        let key = crate::cli::space::managed_key(&repo_root, &branch);
+        let label = branch.clone();
+        Some(crate::cli::space::PromotePlan {
+            project: None,
+            repo_root,
+            branch,
+            key,
+            label,
+            icon: None,
+            parent,
+            node,
+        })
+    }
+
+    /// The menu road to `herdr space move`: write the managed rule with its
+    /// new parent, then re-read the rules so the tree re-hangs in place.
+    pub(crate) fn move_workspace_space(
+        &mut self,
+        ws_idx: usize,
+        parent: Option<String>,
+        node: Option<crate::cli::space::NodePlan>,
+    ) {
+        let Some(mut plan) = self.move_plan_for_workspace(ws_idx, parent, node) else {
+            return;
+        };
+        let path = crate::config::managed_spaces_path();
+        let current = std::fs::read_to_string(&path).unwrap_or_default();
+        // A move is a re-hang, not a re-style (TP-RANK-11): the label and
+        // icon a promote once wrote stay with the rule.
+        if let Some((label, icon)) = crate::cli::space::existing_rule_style(&current, &plan.key) {
+            plan.label = label;
+            plan.icon = icon;
+        }
+        match crate::cli::space::upsert_managed(&current, &plan) {
+            Ok(updated) => {
+                if let Err(err) = std::fs::write(&path, updated) {
+                    tracing::warn!(error = %err, "managed overlay write failed");
+                    return;
+                }
+                self.reload_space_rules_from_disk();
+            }
+            Err(err) => tracing::warn!(error = %err, "managed overlay upsert failed"),
+        }
+    }
+
+    /// Every node in the forest as a `(key, display name)` pair, in config
+    /// order — the target list the move picker offers.
+    pub(crate) fn move_target_entries(&self) -> Vec<(String, String)> {
+        self.space_nodes
+            .iter()
+            .map(|node| (node.key.clone(), node.name.clone()))
+            .collect()
+    }
+
+    /// Finish a "move under a new group": the collected name becomes a
+    /// managed `[[spaces.node]]` entry and the branch re-hangs under it in
+    /// one write (TP-RANK-10's road from the input modal).
+    pub(crate) fn submit_move_to_new_group(&mut self, ws_idx: usize, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        let key = format!("group:{}", crate::cli::space::slug_for_branch(name));
+        let node = crate::cli::space::NodePlan {
+            key: key.clone(),
+            name: name.to_string(),
+            parent: None,
+        };
+        self.move_workspace_space(ws_idx, Some(key), Some(node));
+    }
+
     /// The menu road to `herdr space promote`: write the managed rule, then
     /// re-read the rules so the sidebar regroups in place (TP-RANK-07).
     pub(crate) fn promote_workspace_space(&mut self, ws_idx: usize, as_project: bool) {
