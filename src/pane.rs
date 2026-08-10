@@ -1116,6 +1116,16 @@ pub enum WheelRouting {
     AlternateScroll,
 }
 
+impl From<WheelRouting> for crate::protocol::TerminalWheelRouting {
+    fn from(routing: WheelRouting) -> Self {
+        match routing {
+            WheelRouting::HostScroll => Self::HostScroll,
+            WheelRouting::AlternateScroll => Self::AlternateScroll,
+            WheelRouting::MouseReport => Self::MouseReport,
+        }
+    }
+}
+
 impl Drop for PaneRuntime {
     fn drop(&mut self) {
         // Abort detection task immediately and terminate the owned session.

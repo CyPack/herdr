@@ -13,7 +13,13 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 /// Current protocol version. Bumped when wire format changes incompatibly.
-pub const PROTOCOL_VERSION: u32 = 18;
+///
+/// 20, not 19: the latest released tag (preview-2026-08-04) already shipped a
+/// wire that calls itself 19 while this source line said 18. The check below
+/// is exact-match, so reusing 19 would let a released client speak a
+/// different dialect under the same number. Numbers are cheap; collisions are
+/// not.
+pub const PROTOCOL_VERSION: u32 = 20;
 
 /// Maximum allowed frame payload size (2 MB). Frames larger than this are
 /// rejected to prevent denial-of-service via oversized length prefixes.
@@ -426,6 +432,21 @@ pub enum AttachScrollSource {
 // Server → Client messages
 // ---------------------------------------------------------------------------
 
+/// Wheel routing states, as the wire spells them.
+///
+/// A wire-owned copy rather than `crate::pane::WheelRouting` because the
+/// protocol layer must not depend upward on pane internals; `pane` maps into
+/// this with a `From` impl and the compiler keeps the two in step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TerminalWheelRouting {
+    /// The wheel scrolls the host's scrollback.
+    HostScroll,
+    /// The wheel becomes arrow keys (alternate screen + alternate scroll).
+    AlternateScroll,
+    /// The application asked for the mouse and receives real wheel events.
+    MouseReport,
+}
+
 /// A single cell in a rendered frame, serialized independently from ratatui's
 /// `Cell` type to keep the wire protocol stable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -634,6 +655,22 @@ pub enum ServerMessage {
     ServerShutdown {
         /// Optional reason for the shutdown.
         reason: Option<String>,
+    },
+
+    /// Where a wheel over this attached terminal would go, sent on attach and
+    /// again whenever it changes.
+    ///
+    /// The routing decision itself has always been the server's
+    /// (`wheel_routing()`): a pane whose application asked for the mouse gets
+    /// real wheel events, an alternate screen with alternate-scroll gets
+    /// arrow keys, everything else scrolls the host's scrollback. What was
+    /// missing was the client's ability to KNOW which of those it is talking
+    /// to — a web client deciding whether an upward gesture may be taken
+    /// locally (a reading mode) cannot make that call blind without stealing
+    /// vim's wheel or feeding claude's history-jog.
+    TerminalRouting {
+        /// The current wheel routing for the attached terminal.
+        routing: TerminalWheelRouting,
     },
 
     /// A notification event (sound/toast) to be rendered locally by the client.
@@ -957,6 +994,28 @@ mod tests {
     use ratatui::style::{Color, Modifier};
 
     // ---- Round-trip: ClientMessage ----
+
+    // TP-WHEELMODE-01
+    #[test]
+    fn terminal_routing_roundtrip() {
+        // The variant is appended at the end of ServerMessage on purpose —
+        // bincode discriminants are positional — and this pins that a mode
+        // message survives the wire byte-for-byte.
+        for routing in [
+            TerminalWheelRouting::HostScroll,
+            TerminalWheelRouting::AlternateScroll,
+            TerminalWheelRouting::MouseReport,
+        ] {
+            let msg = ServerMessage::TerminalRouting { routing };
+            let encoded = bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
+            let (decoded, _): (ServerMessage, _) =
+                bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+            match decoded {
+                ServerMessage::TerminalRouting { routing: got } => assert_eq!(got, routing),
+                other => panic!("expected TerminalRouting, got {other:?}"),
+            }
+        }
+    }
 
     #[test]
     fn client_hello_roundtrip() {

@@ -62,6 +62,9 @@ pub(crate) struct ClientConnection {
     pub(crate) render_pending: bool,
     /// Whether a pane-graphics-only render was skipped because the channel was full.
     pane_graphics_render_pending: bool,
+    /// Last wheel routing sent to this attach/observe client, so the mode
+    /// line travels once on attach and once per change rather than per frame.
+    pub(crate) terminal_wheel_routing_sent: Option<crate::protocol::TerminalWheelRouting>,
     /// Last host mouse capture mode sent to this client.
     pub(crate) host_mouse_capture_active: Option<bool>,
     /// Last Kitty report-all mode sent to this client's host terminal.
@@ -128,6 +131,7 @@ impl ClientConnection {
             graphics_surface_reset_pending: false,
             render_pending: false,
             pane_graphics_render_pending: false,
+            terminal_wheel_routing_sent: None,
             host_mouse_capture_active: None,
             host_keyboard_report_all_active: None,
             staged_clipboard_files: Vec::new(),

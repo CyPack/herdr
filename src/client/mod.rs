@@ -1140,10 +1140,32 @@ fn connect_terminal_session_stream(
     Ok(stream)
 }
 
+/// The line a routing state travels as, on the CLI's json-lines output.
+///
+/// Snake_case strings rather than serde's enum encoding, because this is the
+/// sidecar's wire and the names are load-bearing on the web side: the browser
+/// gates its reading-mode gesture on exactly these words.
+fn terminal_routing_line(routing: protocol::TerminalWheelRouting) -> serde_json::Value {
+    let name = match routing {
+        protocol::TerminalWheelRouting::HostScroll => "host_scroll",
+        protocol::TerminalWheelRouting::AlternateScroll => "alternate_scroll",
+        protocol::TerminalWheelRouting::MouseReport => "mouse_report",
+    };
+    serde_json::json!({
+        "type": "terminal.routing",
+        "routing": name,
+    })
+}
+
 fn write_terminal_session_output(mut stream: LocalStream) -> io::Result<()> {
     let mut stdout = io::stdout().lock();
     loop {
         match protocol::read_message(&mut stream, MAX_GRAPHICS_FRAME_SIZE) {
+            Ok(ServerMessage::TerminalRouting { routing }) => {
+                serde_json::to_writer(&mut stdout, &terminal_routing_line(routing))?;
+                stdout.write_all(b"\n")?;
+                stdout.flush()?;
+            }
             Ok(ServerMessage::Terminal(frame)) => {
                 let encoded = base64::engine::general_purpose::STANDARD.encode(&frame.bytes);
                 let line = serde_json::json!({
@@ -1700,6 +1722,11 @@ async fn run_client_loop(
                 }
             }
             ClientLoopEvent::ServerMessage(msg) => match msg {
+                // The server only emits this to attach/observe connections;
+                // an app-mode client renders whole app frames and has nothing
+                // to route. Ignored explicitly rather than through a wildcard
+                // so the next variant still has to face this match.
+                ServerMessage::TerminalRouting { .. } => {}
                 ServerMessage::Frame(frame_data) => {
                     let frame_data = if state.draw_host_cursor {
                         render_ansi::frame_with_drawn_cursor(frame_data)
@@ -2777,6 +2804,26 @@ mod tests {
     }
 
     #[cfg(unix)]
+    // TP-WHEELMODE-02
+    #[test]
+    fn terminal_routing_line_spells_the_routing_in_snake_case() {
+        // The web side gates its reading-mode gesture on exactly these
+        // words; a serde rename or enum reshuffle must not be able to change
+        // them silently.
+        for (routing, expected) in [
+            (protocol::TerminalWheelRouting::HostScroll, "host_scroll"),
+            (
+                protocol::TerminalWheelRouting::AlternateScroll,
+                "alternate_scroll",
+            ),
+            (protocol::TerminalWheelRouting::MouseReport, "mouse_report"),
+        ] {
+            let line = terminal_routing_line(routing);
+            assert_eq!(line["type"], "terminal.routing");
+            assert_eq!(line["routing"], expected);
+        }
+    }
+
     #[test]
     fn attach_escape_turns_wheel_into_scroll_action() {
         let mut escape = AttachEscapeState::default();

@@ -3820,6 +3820,7 @@ impl HeadlessServer {
             // Filled inside the App arm, where the encode runs in this
             // client's viewer window; committed after a successful send.
             let mut encoded_graphics_cache: Option<crate::kitty_graphics::HostGraphicsCache> = None;
+            let mut attach_wheel_routing: Option<crate::protocol::TerminalWheelRouting> = None;
             let mut frame = match mode {
                 ClientConnectionMode::App => {
                     // Render resolves this client's view for the whole arm.
@@ -3934,6 +3935,14 @@ impl HeadlessServer {
                         broken_clients.push(client_id);
                         continue;
                     };
+                    // The routing travels with the render tick: a mode flip
+                    // (vim opening, claude entering its alt screen) always
+                    // redraws, so piggybacking on the tick catches every
+                    // change a client could observe — and the None-to-Some
+                    // edge on the first tick doubles as the attach greeting.
+                    attach_wheel_routing = runtime
+                        .wheel_routing()
+                        .map(crate::protocol::TerminalWheelRouting::from);
                     let render_started = crate::render_prof::timer();
                     let (buffer, cursor) =
                         crate::server::render_stream::render_terminal_virtual(runtime, area);
@@ -3957,6 +3966,19 @@ impl HeadlessServer {
                     frame
                 }
             };
+
+            if let Some(now) = attach_wheel_routing {
+                let already = self
+                    .clients
+                    .get(&client_id)
+                    .and_then(|client| client.terminal_wheel_routing_sent);
+                if already != Some(now) {
+                    self.send_to_client(client_id, ServerMessage::TerminalRouting { routing: now });
+                    if let Some(client) = self.clients.get_mut(&client_id) {
+                        client.terminal_wheel_routing_sent = Some(now);
+                    }
+                }
+            }
 
             let Some(client) = self.clients.get_mut(&client_id) else {
                 continue;
