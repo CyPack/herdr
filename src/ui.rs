@@ -353,7 +353,11 @@ fn compute_view_internal(
     // the revision and the identity now come FROM the derivation instead of
     // being asserted next to it, which is what lets a configured tree key the
     // cache correctly the day one exists.
-    let derived = shell::derive_desktop_shell_layout(None);
+    // The request comes from the presentation, which the session file fills in
+    // on restore. It is `None` today for everyone, so the answer is still the
+    // legacy tree and nothing on screen moves; what ended is the era where the
+    // file recorded a composition the draw path never asked for.
+    let derived = shell::derive_desktop_shell_layout(app.shell_presentation.shell_template());
     let shell_layout = derived.layout;
     let shell_key = ShellGeometryKey::new(
         area,
@@ -1222,6 +1226,44 @@ mod tests {
             app.view.shell.regions.get(RegionId::TopBar),
             Rect::default()
         );
+    }
+
+    // T10b · the restored identity reaches geometry, not just the file.
+    //
+    // The read half of a round trip is the half that can be quietly skipped:
+    // the writer keeps working, the file keeps looking right, and nothing ever
+    // goes red. This asserts the draw path asks the presentation which tree to
+    // derive — the default answer is still the legacy tree, which is why the
+    // composition baselines are untouched.
+    #[test]
+    fn the_draw_path_derives_the_tree_the_presentation_restored() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        let frame = Rect::new(0, 0, 100, 30);
+
+        compute_view(&mut app, frame);
+        assert_eq!(
+            app.view.shell.regions.get(RegionId::AppDock),
+            Rect::default(),
+            "the default presentation is the legacy tree, which has no dock"
+        );
+
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            Some(crate::ui::shell::ShellTemplateId::DockSidebarStage),
+        );
+        compute_view(&mut app, frame);
+
+        let dock = app.view.shell.regions.get(RegionId::AppDock);
+        assert!(
+            dock.width > 0 && dock.height > 0,
+            "a restored template must reach the projection, not stop at the file"
+        );
+        assert_eq!(dock.x, frame.x, "the dock owns the leading edge");
     }
 
     #[test]

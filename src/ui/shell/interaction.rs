@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use ratatui::layout::Position;
 
-use super::{RegionId, ShellDirection};
+use super::{RegionId, ShellDirection, ShellTemplateId};
 
 /// Stable identity for one divider between adjacent shell regions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -261,6 +261,14 @@ pub(crate) enum ScrollDecision {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ShellPresentationState {
     left_panel: RegionCollapseState,
+    /// Which shell tree this client is presenting. `None` is the legacy desktop
+    /// tree, which is what production restores and draws today.
+    ///
+    /// It lives here rather than beside the runtime because a tree choice is a
+    /// presentation preference: it is client-local, it belongs in the session
+    /// file next to the panel width, and it never appears in `protocol` or
+    /// `api::schema`.
+    shell_template: Option<ShellTemplateId>,
 }
 
 impl ResizeUpdate {
@@ -522,12 +530,26 @@ impl ShellPresentationState {
     }
 
     pub(crate) const fn from_restored_left_panel(left_panel_width: u16, collapsed: bool) -> Self {
+        Self::from_restored(left_panel_width, collapsed, None)
+    }
+
+    /// Rebuild the presentation from everything a session file remembers.
+    ///
+    /// The template is passed explicitly so that a caller who restores one has
+    /// to say so; defaulting it silently is how the write half ended up
+    /// disagreeing with the screen in the first place.
+    pub(crate) const fn from_restored(
+        left_panel_width: u16,
+        collapsed: bool,
+        shell_template: Option<ShellTemplateId>,
+    ) -> Self {
         Self {
             left_panel: if collapsed {
                 RegionCollapseState::collapsed(RegionId::LeftPanel, left_panel_width)
             } else {
                 RegionCollapseState::expanded(RegionId::LeftPanel, left_panel_width)
             },
+            shell_template,
         }
     }
 
@@ -549,6 +571,12 @@ impl ShellPresentationState {
 
     pub(crate) const fn left_panel_collapse_revision(&self) -> u64 {
         self.left_panel.revision
+    }
+
+    /// The tree this client presents — the value the draw path hands to the
+    /// derivation, and the value the session file records.
+    pub(crate) const fn shell_template(&self) -> Option<ShellTemplateId> {
+        self.shell_template
     }
 }
 

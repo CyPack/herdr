@@ -35,22 +35,43 @@ pub(crate) use interaction::{
 };
 pub(crate) use layout::ResponsiveDegradation;
 pub(crate) use model::{
-    ComponentPlacement, RegionId, RegionRects, RegionSize, ShellChild, ShellComponentId,
-    ShellDirection, ShellLayout, ShellNode, TrackPolicy,
+    ComponentPlacement, RegionId, RegionRects, RegionSize, ShellChild, ShellDirection, ShellLayout,
+    ShellNode, TrackPolicy,
 };
 pub(crate) use source::derive_desktop_shell_layout;
 pub(crate) use template::ShellTemplateId;
 pub(crate) use view::{compute_empty_shell_view, compute_shell_view, ShellGeometryKey, ShellView};
 
-pub(crate) fn template_persistence_parts(
-    template: ShellTemplateId,
-) -> (
-    ShellNode,
-    BTreeMap<RegionId, TrackPolicy>,
-    Vec<ComponentPlacement>,
-) {
-    let layout = template.build();
-    (layout.root, layout.tracks, layout.component_placements)
+/// The parts of a shell tree that belong in a session file, together with the
+/// identity of the tree they actually came from.
+///
+/// `template` is deliberately the *effective* one rather than the requested
+/// one: a template that fails validation falls back to the legacy tree, and
+/// recording the request in that case would write a fresh lie into the file we
+/// are trying to make honest.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PersistedShellParts {
+    /// `None` is the legacy desktop tree, which is not a built-in template.
+    pub template: Option<ShellTemplateId>,
+    pub root: ShellNode,
+    pub region_constraints: BTreeMap<RegionId, TrackPolicy>,
+    pub component_placements: Vec<ComponentPlacement>,
+}
+
+/// Take the persistable parts of whatever [`derive_desktop_shell_layout`] answers.
+///
+/// The session file and the screen therefore come from one derivation. The
+/// previous seam took a `ShellTemplateId` and called `build()` directly, which
+/// let the writer name a tree the app had never drawn — and it did: production
+/// derives the legacy tree while every file on disk claimed `DockSidebarStage`.
+pub(crate) fn shell_persistence_parts(requested: Option<ShellTemplateId>) -> PersistedShellParts {
+    let derived = derive_desktop_shell_layout(requested);
+    PersistedShellParts {
+        template: derived.template,
+        root: derived.layout.root,
+        region_constraints: derived.layout.tracks,
+        component_placements: derived.layout.component_placements,
+    }
 }
 
 pub(crate) fn validate_persisted_shell_parts(

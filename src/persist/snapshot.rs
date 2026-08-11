@@ -7,15 +7,26 @@ use serde::{Deserialize, Serialize};
 use crate::layout::Node;
 use crate::terminal::TerminalRuntimeRegistry;
 use crate::ui::shell::{
-    template_persistence_parts, validate_persisted_shell_parts, ComponentPlacement, RegionId,
-    ShellComponentId, ShellNode, ShellPresentationState, ShellTemplateId, TrackPolicy,
+    shell_persistence_parts, validate_persisted_shell_parts, ComponentPlacement, RegionId,
+    ShellNode, ShellPresentationState, ShellTemplateId, TrackPolicy,
 };
 use crate::workspace::Workspace;
 
 /// Current snapshot format version.
 pub(super) const SNAPSHOT_VERSION: u32 = 4;
 
-const SHELL_SNAPSHOT_VERSION: u16 = 1;
+/// Version 1 wrote a tree the app had never drawn.
+///
+/// Its writer hardcoded `DockSidebarStage` and that template's root and tracks
+/// while production ran the legacy `sidebar | stage` tree with no tracks at
+/// all, so every version-1 file claims an AppDock column that was never on
+/// screen. Version 2 records whatever the derivation actually produced.
+///
+/// The number is what makes the two distinguishable: once a tree can be chosen,
+/// a file that says `DockSidebarStage` may be telling the truth, and there is no
+/// other way to tell that file from today's fabricated one.
+const SHELL_SNAPSHOT_VERSION: u16 = 2;
+const FABRICATED_TREE_SHELL_SNAPSHOT_VERSION: u16 = 1;
 const LEGACY_LEFT_PANEL_MIN_WIDTH: u16 = 4;
 const LEGACY_LEFT_PANEL_DEFAULT_WIDTH: u16 = 26;
 const LEGACY_LEFT_PANEL_MAX_WIDTH: u16 = 40;
@@ -28,7 +39,15 @@ const LEGACY_LEFT_PANEL_MAX_WIDTH: u16 = 40;
 #[serde(deny_unknown_fields)]
 pub struct ShellSnapshotV1 {
     pub(crate) schema_version: u16,
-    pub(crate) template: ShellTemplateId,
+    /// The tree the app was presenting. `None` is the legacy desktop tree,
+    /// mirroring the derivation's own vocabulary; it is also what a migrated
+    /// version-1 file becomes, because that file's template claim was invented
+    /// by the writer rather than observed.
+    ///
+    /// Omitted when absent so a legacy session file stays small and reads as
+    /// "no template", not as "template: null".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) template: Option<ShellTemplateId>,
     pub(crate) root: ShellNode,
     #[serde(default)]
     pub(crate) region_constraints: BTreeMap<RegionId, TrackPolicy>,
@@ -67,13 +86,25 @@ impl ShellSnapshotV1 {
         } else {
             sidebar_width
         };
-        Self::from_left_panel_preference(width, collapsed)
+        Self::from_presented_tree(shell_presentation.shell_template(), width, collapsed)
     }
 
     fn from_left_panel_preference(width: u16, collapsed: bool) -> Self {
+        Self::from_presented_tree(None, width, collapsed)
+    }
+
+    /// Record the tree the app is presenting, plus the one preference the user
+    /// sets by hand.
+    ///
+    /// The tree comes from the same derivation the screen came from, so the
+    /// file can no longer name a composition nobody drew. The left panel entry
+    /// is written even when the presented tree has no such region: it is the
+    /// person's preference, and dropping it because today's tree hides the
+    /// panel would lose it the moment they switch back.
+    fn from_presented_tree(template: Option<ShellTemplateId>, width: u16, collapsed: bool) -> Self {
         let preferred = width.clamp(LEGACY_LEFT_PANEL_MIN_WIDTH, LEGACY_LEFT_PANEL_MAX_WIDTH);
-        let template = ShellTemplateId::DockSidebarStage;
-        let (root, mut region_constraints, _) = template_persistence_parts(template);
+        let parts = shell_persistence_parts(template);
+        let mut region_constraints = parts.region_constraints;
         region_constraints.insert(
             RegionId::LeftPanel,
             if collapsed {
@@ -88,39 +119,44 @@ impl ShellSnapshotV1 {
         );
         Self {
             schema_version: SHELL_SNAPSHOT_VERSION,
-            template,
-            root,
+            template: parts.template,
+            root: parts.root,
             region_constraints,
-            component_placements: vec![
-                ComponentPlacement {
-                    component: ShellComponentId::AppDock,
-                    region: RegionId::AppDock,
-                },
-                ComponentPlacement {
-                    component: ShellComponentId::AgentSidebar,
-                    region: RegionId::LeftPanel,
-                },
-                ComponentPlacement {
-                    component: ShellComponentId::WorkspaceStage,
-                    region: RegionId::WorkspaceStage,
-                },
-            ],
-            collapse_restore_widths: BTreeMap::from([
-                (RegionId::AppDock, 5),
-                (RegionId::LeftPanel, preferred),
-            ]),
+            component_placements: parts.component_placements,
+            collapse_restore_widths: BTreeMap::from([(RegionId::LeftPanel, preferred)]),
             pinned_dock_order: vec![PinnedBuiltinAppV1::Terminal, PinnedBuiltinAppV1::Files],
         }
     }
 
+    /// Keep the half of a version-1 file that was ever true.
+    ///
+    /// The left panel width and collapse state came from the running app. The
+    /// template, root, tracks and placements were invented by the writer, so
+    /// applying them on upgrade would silently add a column to a composition
+    /// the layout lock froze.
+    fn migrated_from_fabricated_tree(&self) -> Self {
+        let preference = self.restored_left_panel_preference();
+        Self::from_presented_tree(
+            None,
+            preference.map_or(LEGACY_LEFT_PANEL_DEFAULT_WIDTH, |value| value.width),
+            preference.is_some_and(|value| value.collapsed),
+        )
+    }
+
     fn from_value(value: serde_json::Value) -> Result<Self, String> {
         let snapshot = serde_json::from_value::<Self>(value).map_err(|error| error.to_string())?;
-        if snapshot.schema_version != SHELL_SNAPSHOT_VERSION {
-            return Err(format!(
-                "shell snapshot version {} is unsupported",
-                snapshot.schema_version
-            ));
-        }
+        let snapshot = match snapshot.schema_version {
+            SHELL_SNAPSHOT_VERSION => snapshot,
+            // A newer herdr wrote this. Refusing is the whole point of the
+            // version: guessing at a shape we do not know would put a tree on
+            // screen that nobody has drawn. The caller keeps the session and
+            // falls back to compatibility preferences.
+            version if version > SHELL_SNAPSHOT_VERSION => {
+                return Err(format!("shell snapshot version {version} is unsupported"))
+            }
+            FABRICATED_TREE_SHELL_SNAPSHOT_VERSION => snapshot.migrated_from_fabricated_tree(),
+            version => return Err(format!("shell snapshot version {version} is unsupported")),
+        };
         validate_persisted_shell_parts(
             &snapshot.root,
             &snapshot.region_constraints,
@@ -207,6 +243,14 @@ impl SessionSnapshot {
                     collapsed: false,
                 })
             })
+    }
+
+    /// The shell tree this session was last presenting.
+    ///
+    /// `None` is the legacy desktop tree — which is what a session file without
+    /// a shell block, and every migrated version-1 file, resolves to.
+    pub(crate) fn restored_shell_template(&self) -> Option<ShellTemplateId> {
+        self.shell.as_ref().and_then(|shell| shell.template)
     }
 }
 
@@ -855,6 +899,9 @@ mod tests {
         })
     }
 
+    /// A shell block exactly as the version-1 writer produced it: a
+    /// `DockSidebarStage` tree, written by a build whose screen was the legacy
+    /// tree. Kept verbatim because it is what is on every real disk today.
     fn valid_v4_shell_json() -> serde_json::Value {
         serde_json::json!({
             "schema_version": 1,
@@ -898,6 +945,16 @@ mod tests {
             },
             "pinned_dock_order": ["Terminal", "Files"]
         })
+    }
+
+    /// The same block claimed at the current schema, i.e. a file whose tree the
+    /// reader is meant to believe. Tree-shaped gates have to be exercised here:
+    /// a version-1 tree never reaches validation any more, because it is
+    /// discarded before it can.
+    fn shell_json_at_current_schema() -> serde_json::Value {
+        let mut shell = valid_v4_shell_json();
+        shell["schema_version"] = serde_json::json!(SHELL_SNAPSHOT_VERSION);
+        shell
     }
 
     fn v4_session_with_shell_json(
@@ -1260,13 +1317,79 @@ mod tests {
         let first = parse_snapshot(&input.to_string())
             .expect("snapshot v4 with a bounded shell must be supported");
         let first_value = serde_json::to_value(&first).unwrap();
-        assert_eq!(first_value["shell"], shell);
+        // A version-1 block is migrated on the way in, so the file that comes
+        // back is at the current schema with the fabricated tree dropped. What
+        // makes the round trip stable is the reader, not the file's own claim.
+        assert_eq!(
+            first_value["shell"]["schema_version"],
+            serde_json::json!(SHELL_SNAPSHOT_VERSION)
+        );
+        assert_eq!(first_value["shell"].get("template"), None);
         assert_eq!(first.sidebar_width, Some(19));
         assert_eq!(first.sidebar_section_split, Some(0.4));
 
         let second = parse_snapshot(&first_value.to_string()).unwrap();
         let second_value = serde_json::to_value(&second).unwrap();
         assert_eq!(second_value, first_value);
+    }
+
+    // The other half of idempotency: a file already at the current schema comes
+    // back byte for byte, because nothing rewrites a tree the reader believes.
+    #[test]
+    fn a_current_schema_shell_block_round_trips_verbatim() {
+        let shell = shell_json_at_current_schema();
+        let input = serde_json::json!({
+            "version": 4,
+            "workspaces": [],
+            "active": null,
+            "selected": 0,
+            "shell": shell.clone(),
+            "sidebar_width": 19,
+            "sidebar_section_split": 0.4
+        });
+
+        let restored =
+            parse_snapshot(&input.to_string()).expect("a current-schema shell must be supported");
+        let value = serde_json::to_value(&restored).unwrap();
+
+        assert_eq!(value["shell"], shell);
+        assert_eq!(
+            restored.restored_shell_template(),
+            Some(ShellTemplateId::DockSidebarStage),
+            "a believable file gets believed"
+        );
+    }
+
+    // A corrupt version-1 tree is no longer a reason to lose the panel width:
+    // the tree was going to be discarded either way, so the migration keeps the
+    // half that was real instead of falling back over the half that was not.
+    #[test]
+    fn a_corrupt_version_one_tree_still_yields_its_panel_width() {
+        let mut shell = valid_v4_shell_json();
+        shell["root"] = serde_json::json!({
+            "Split": {
+                "direction": "Horizontal",
+                "children": (0..9)
+                    .map(|_| serde_json::json!({
+                        "size": "Fill",
+                        "node": { "Slot": { "region": "WorkspaceStage" } }
+                    }))
+                    .collect::<Vec<_>>()
+            }
+        });
+        let input = v4_session_with_shell_json(shell, "w-corrupt-v1", 27);
+
+        let restored = parse_snapshot(&input.to_string())
+            .expect("a corrupt v1 tree must not discard valid session data");
+
+        assert_eq!(restored.restored_shell_template(), None);
+        assert_eq!(
+            restored.restored_left_panel_preference(),
+            Some(RestoredLeftPanelPreference {
+                width: 31,
+                collapsed: false
+            })
+        );
     }
 
     #[test]
@@ -1392,7 +1515,7 @@ mod tests {
                 })
             })
             .collect::<Vec<_>>();
-        let mut shell = valid_v4_shell_json();
+        let mut shell = shell_json_at_current_schema();
         shell["root"] = serde_json::json!({
             "Split": {
                 "direction": "Horizontal",
@@ -1417,7 +1540,7 @@ mod tests {
         ]);
 
         for (label, placements, width) in [("duplicate", duplicate, 30), ("unknown", unknown, 31)] {
-            let mut shell = valid_v4_shell_json();
+            let mut shell = shell_json_at_current_schema();
             shell["component_placements"] = placements;
             let workspace_id = format!("w-{label}");
             let input = v4_session_with_shell_json(shell, &workspace_id, width);
@@ -1986,5 +2109,131 @@ mod tests {
             restored.workspaces[0].tabs[0].panes[&0].cwd,
             PathBuf::from("/tmp/this-directory-does-not-exist-for-herdr-test")
         );
+    }
+
+    // T10 · the file stops claiming a composition nobody drew.
+    #[test]
+    fn a_captured_shell_records_the_tree_the_app_is_actually_presenting() {
+        // Version 1 hardcoded `DockSidebarStage` and that template's root while
+        // production drew the legacy `sidebar | stage` tree. Nothing went red:
+        // the writer was internally consistent and the reader ignored the tree,
+        // so the disagreement could only be found by reading both sides.
+        let presentation = ShellPresentationState::new(26);
+        let shell = ShellSnapshotV1::from_presentation(26, &presentation);
+
+        assert_eq!(shell.template, None, "production presents the legacy tree");
+        assert_eq!(shell.schema_version, SHELL_SNAPSHOT_VERSION);
+        assert_eq!(shell.root, shell_persistence_parts(None).root);
+        assert!(
+            !shell.region_constraints.contains_key(&RegionId::AppDock),
+            "the legacy tree has no dock, so the file must not size one"
+        );
+        assert!(
+            !shell
+                .collapse_restore_widths
+                .contains_key(&RegionId::AppDock),
+            "nor remember a restore width for a region that is not on screen"
+        );
+    }
+
+    // T10c · a fail-closed fallback must not write a fresh lie.
+    #[test]
+    fn a_template_that_cannot_be_composed_is_recorded_as_the_legacy_tree() {
+        // The derivation falls back when a template does not validate. If the
+        // snapshot recorded the *request* rather than the result, the file
+        // would name a tree the app had just refused to draw — the same class
+        // of untruth this layer exists to end.
+        let requested = ShellTemplateId::DesktopWorkspace;
+        let parts = shell_persistence_parts(Some(requested));
+        let presented = ShellPresentationState::from_restored(26, false, parts.template);
+        let shell = ShellSnapshotV1::from_presentation(26, &presented);
+
+        assert_eq!(shell.template, parts.template);
+        assert_eq!(shell.root, parts.root);
+    }
+
+    // T11 · the write half is worthless without the read half.
+    #[test]
+    fn a_shell_snapshot_survives_a_round_trip_as_the_same_derivation() {
+        for template in [
+            None,
+            Some(ShellTemplateId::StageOnly),
+            Some(ShellTemplateId::DockSidebarStage),
+            Some(ShellTemplateId::InspectorWorkspace),
+        ] {
+            let presented = ShellPresentationState::from_restored(31, false, template);
+            let written = ShellSnapshotV1::from_presentation(31, &presented);
+            let value = serde_json::to_value(&written).expect("a shell snapshot serializes");
+            let read = ShellSnapshotV1::from_value(value).expect("and reads back");
+
+            assert_eq!(read.template, written.template, "{template:?}");
+            assert_eq!(
+                shell_persistence_parts(read.template).root,
+                shell_persistence_parts(written.template).root,
+                "{template:?} derives a different tree after a round trip"
+            );
+            assert_eq!(
+                read.restored_left_panel_preference(),
+                Some(RestoredLeftPanelPreference {
+                    width: 31,
+                    collapsed: false
+                }),
+                "{template:?} lost the one preference the person set by hand"
+            );
+        }
+    }
+
+    // T12 · the upgrade must not believe the old file's tree, and must not
+    // throw away the part of it that was true.
+    #[test]
+    fn a_fabricated_version_one_tree_is_dropped_but_its_panel_width_survives() {
+        // Every session file written before this layer says `DockSidebarStage`
+        // and carries that template's AppDock column. Applying it on upgrade
+        // would add a column to a composition the layout lock froze — a V2
+        // change arriving as a silent side effect of a bug fix.
+        let value = valid_v4_shell_json();
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["template"], "DockSidebarStage");
+
+        let migrated = ShellSnapshotV1::from_value(value).expect("a v1 file still loads");
+
+        assert_eq!(migrated.template, None, "the claim was never observed");
+        assert_eq!(migrated.schema_version, SHELL_SNAPSHOT_VERSION);
+        assert_eq!(migrated.root, shell_persistence_parts(None).root);
+        assert_eq!(
+            migrated.restored_left_panel_preference(),
+            Some(RestoredLeftPanelPreference {
+                width: 31,
+                collapsed: false
+            }),
+            "the width came from the running app and is the person's own setting"
+        );
+    }
+
+    // T13 · a file from a newer herdr is refused, not guessed at.
+    #[test]
+    fn a_future_shell_schema_is_refused_without_destroying_the_session() {
+        let mut shell = valid_v4_shell_json();
+        shell["schema_version"] = serde_json::json!(SHELL_SNAPSHOT_VERSION + 1);
+        let input = v4_session_with_shell_json(shell, "w-future-schema", 28);
+
+        let restored = parse_snapshot(&input.to_string())
+            .expect("a future shell schema must not discard valid session data");
+
+        assert_compatible_shell_fallback(&restored, "w-future-schema", 28);
+    }
+
+    // T13b · the disk is untrusted input, including at version 2.
+    #[test]
+    fn a_version_two_tree_without_a_stage_is_refused() {
+        let mut shell = valid_v4_shell_json();
+        shell["schema_version"] = serde_json::json!(SHELL_SNAPSHOT_VERSION);
+        shell["root"] = serde_json::json!({ "Slot": { "region": "LeftPanel" } });
+        let input = v4_session_with_shell_json(shell, "w-no-stage", 28);
+
+        let restored = parse_snapshot(&input.to_string())
+            .expect("an unusable tree must not discard valid session data");
+
+        assert_compatible_shell_fallback(&restored, "w-no-stage", 28);
     }
 }

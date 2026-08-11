@@ -519,6 +519,10 @@ impl App {
         // Try to restore previous session
         let mut restored_terminals = std::collections::HashMap::new();
         let mut restored_terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        // The tree the last session presented. It stays `None` without a
+        // session file, which is the legacy desktop tree — the one on screen
+        // today either way.
+        let mut restored_shell_template = None;
         let (
             workspaces,
             active,
@@ -544,6 +548,7 @@ impl App {
                 None,
             )
         } else if let Some(snap) = crate::persist::load() {
+            restored_shell_template = snap.restored_shell_template();
             let restored_left_panel = snap.restored_left_panel_preference();
             let restored_sidebar_width = restored_left_panel.map(|preference| preference.width);
             let restored_sidebar_collapsed = restored_left_panel
@@ -850,9 +855,10 @@ impl App {
                 split_borders: Vec::new(),
             },
             shell_interaction: Default::default(),
-            shell_presentation: crate::ui::shell::ShellPresentationState::from_restored_left_panel(
+            shell_presentation: crate::ui::shell::ShellPresentationState::from_restored(
                 sidebar_width,
                 sidebar_collapsed,
+                restored_shell_template,
             ),
             drag: None,
             workspace_press: None,
@@ -1146,11 +1152,11 @@ impl App {
             app.state.sidebar_width = preference.width;
             app.state.sidebar_collapsed = preference.collapsed;
             app.state.sidebar_width_source = state::SidebarWidthSource::Persisted;
-            app.state.shell_presentation =
-                crate::ui::shell::ShellPresentationState::from_restored_left_panel(
-                    preference.width,
-                    preference.collapsed,
-                );
+            app.state.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+                preference.width,
+                preference.collapsed,
+                snapshot.restored_shell_template(),
+            );
         }
         if let Some(split) = snapshot.sidebar_section_split {
             app.state.sidebar_section_split = split;
