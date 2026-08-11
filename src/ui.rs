@@ -1240,6 +1240,73 @@ mod tests {
         );
     }
 
+    // The question a person asks about this feature is "what do I see?", and
+    // the answer differs per edge today: the dock is a finished component that
+    // was only ever missing a rectangle, while the other three edges have no
+    // renderer yet. Pinning both halves keeps the next layer honest about which
+    // of those it is closing, and stops "the bar works" from being said about
+    // an edge that draws nothing.
+    #[test]
+    fn a_configured_left_bar_puts_the_finished_dock_on_screen() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let frame = Rect::new(0, 0, 100, 30);
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        // Built from a config table rather than from the internal type, so
+        // this walks the same path a person's `[shell.bars]` walks.
+        let bars = crate::ui::shell::ShellBars::from_config(&crate::config::ShellBarsConfig {
+            left: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 5,
+            },
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 1,
+            },
+            ..Default::default()
+        });
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            None,
+            bars,
+        );
+
+        compute_view(&mut app, frame);
+        let dock = app.view.shell.regions.get(RegionId::AppDock);
+        let top = app.view.shell.regions.get(RegionId::TopBar);
+        assert_eq!(dock.width, 5, "the left bar owns the columns it asked for");
+        assert_eq!(top.height, 1, "and the top bar the rows it asked for");
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("the shell draws with bars configured");
+        let buffer = terminal.backend().buffer().clone();
+
+        let painted = |rect: Rect| {
+            (rect.y..rect.y + rect.height).any(|y| {
+                (rect.x..rect.x + rect.width)
+                    .any(|x| buffer.cell((x, y)).is_some_and(|cell| cell.symbol() != " "))
+            })
+        };
+
+        assert!(
+            painted(dock),
+            "the dock is a finished component; a rectangle is all it was missing"
+        );
+        assert!(
+            !painted(top),
+            "the top bar has no renderer yet — when one lands, this line is the \
+             reminder to change it deliberately rather than discover it"
+        );
+    }
+
     // T10b · the restored identity reaches geometry, not just the file.
     //
     // The read half of a round trip is the half that can be quietly skipped:
