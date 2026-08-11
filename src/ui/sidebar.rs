@@ -2162,10 +2162,15 @@ fn render_workspace_list(
             if show_plus {
                 let plus = workspace_new_chat_cell(card.rect);
                 if plus.width > 0 {
+                    // TP-FOCUS-04: the chrome speaks the name's sentence —
+                    // contrast ink on the accent, text ink on the quiet
+                    // active tone the card steps back to.
                     frame.buffer_mut()[(plus.x, plus.y)]
                         .set_symbol("+")
-                        .set_style(Style::default().fg(if is_active {
+                        .set_style(Style::default().fg(if is_active && !chat_carries_accent {
                             panel_contrast_fg(p)
+                        } else if is_active {
+                            p.text
                         } else if selected {
                             p.accent
                         } else {
@@ -2183,8 +2188,10 @@ fn render_workspace_list(
                     frame.render_widget(
                         Paragraph::new(Span::styled(
                             text.clone(),
-                            Style::default().fg(if is_active {
+                            Style::default().fg(if is_active && !chat_carries_accent {
                                 panel_contrast_fg(p)
+                            } else if is_active {
+                                p.text
                             } else {
                                 p.overlay1
                             }),
@@ -5985,6 +5992,81 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             (chat.rect.x..chat.rect.x + chat.rect.width)
                 .any(|x| buffer[(x, chat.rect.y)].bg == accent),
             "the focused chat row wears the accent"
+        );
+    }
+
+    // TP-FOCUS-04: when the accent descends to the chat row, the card's
+    // trailing chrome — the "+" and the chat count — steps back with the
+    // name. Contrast ink belongs on the accent; left behind on the quiet
+    // active tone it reads as a broken highlight in the row's corner.
+    #[test]
+    fn the_plus_and_count_follow_the_card_off_the_accent() {
+        let (mut app, key) = app_with_chat_drawer(2);
+        app.expanded_chat_workspaces.insert(key);
+        app.workspaces[0].tabs[0].resumed_session_id = Some("session-0".to_string());
+        app.mouse_capture = true;
+
+        let area = Rect::new(0, 0, 100, 26);
+        crate::ui::compute_view(&mut app, area);
+        let backend = ratatui::backend::TestBackend::new(100, 26);
+        let mut terminal = ratatui::Terminal::new(backend).expect("test terminal");
+        let registry = TerminalRuntimeRegistry::new();
+        terminal
+            .draw(|frame| render_sidebar(&app, &registry, frame, app.view.sidebar_rect))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+
+        let card = app
+            .view
+            .workspace_card_areas
+            .first()
+            .expect("the workspace card is laid out");
+        let plus = workspace_new_chat_cell(card.rect);
+        let plus_cell = &buffer[(plus.x, plus.y)];
+        assert_eq!(plus_cell.symbol(), "+", "the plus is drawn in its cell");
+        assert_eq!(
+            plus_cell.fg, app.palette.text,
+            "off the accent the plus wears the text ink, not the contrast ink"
+        );
+
+        let badge_x = card.rect.x + card.rect.width - 3;
+        let badge_cell = &buffer[(badge_x, card.rect.y)];
+        assert_eq!(badge_cell.symbol(), "2", "the chat count is drawn");
+        assert_eq!(
+            badge_cell.fg, app.palette.text,
+            "off the accent the count wears the text ink too"
+        );
+    }
+
+    // The companion invariant: while the card itself wears the accent, the
+    // plus keeps the contrast ink — that pairing was always right.
+    #[test]
+    fn the_plus_keeps_the_contrast_ink_on_the_accent() {
+        let (mut app, _key) = app_with_chat_drawer(2);
+        app.mouse_capture = true;
+
+        let area = Rect::new(0, 0, 100, 26);
+        crate::ui::compute_view(&mut app, area);
+        let backend = ratatui::backend::TestBackend::new(100, 26);
+        let mut terminal = ratatui::Terminal::new(backend).expect("test terminal");
+        let registry = TerminalRuntimeRegistry::new();
+        terminal
+            .draw(|frame| render_sidebar(&app, &registry, frame, app.view.sidebar_rect))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+
+        let card = app
+            .view
+            .workspace_card_areas
+            .first()
+            .expect("the workspace card is laid out");
+        let plus = workspace_new_chat_cell(card.rect);
+        let plus_cell = &buffer[(plus.x, plus.y)];
+        assert_eq!(plus_cell.symbol(), "+", "the plus is drawn in its cell");
+        assert_eq!(
+            plus_cell.fg,
+            panel_contrast_fg(&app.palette),
+            "on the accent the plus keeps the contrast ink"
         );
     }
 
