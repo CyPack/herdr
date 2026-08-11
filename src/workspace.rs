@@ -39,6 +39,44 @@ pub struct WorktreeSpaceMembership {
     pub is_linked_worktree: bool,
 }
 
+/// The membership a workspace is born with: when its directory is the main
+/// checkout of a repository, the workspace claims that checkout so the
+/// sidebar groups it under its repo from the first frame (TP-WSID-07).
+/// Linked worktrees stay with the explicit worktree-attach flow, and a
+/// home-directory repo (the dotfiles pattern) never becomes a project block.
+pub fn derive_initial_worktree_membership(
+    cwd: &std::path::Path,
+) -> Option<WorktreeSpaceMembership> {
+    derive_initial_worktree_membership_against_home(
+        cwd,
+        std::env::var("HOME").ok().map(PathBuf::from),
+    )
+}
+
+fn derive_initial_worktree_membership_against_home(
+    cwd: &std::path::Path,
+    home: Option<PathBuf>,
+) -> Option<WorktreeSpaceMembership> {
+    let space = git_space_metadata(cwd)?;
+    if space.is_linked_worktree {
+        return None;
+    }
+    let repo_root = crate::worktree::canonical_or_original(&space.repo_root);
+    if home
+        .map(|home| crate::worktree::canonical_or_original(&home))
+        .is_some_and(|home| home == repo_root)
+    {
+        return None;
+    }
+    Some(WorktreeSpaceMembership {
+        key: space.key,
+        label: space.label,
+        repo_root: repo_root.clone(),
+        checkout_path: repo_root,
+        is_linked_worktree: false,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceGitStatus {
     pub workspace_id: String,
@@ -1876,6 +1914,98 @@ mod tests {
             Arc::new(AtomicBool::new(false)),
         );
         assert!(!ws.tabs[new_idx].unseen);
+    }
+
+    /// The cheapest thing git discovery accepts as a repository: a directory
+    /// with a `.git` dir carrying a HEAD file (no `git` binary involved).
+    fn scratch_repo(dir: &std::path::Path) {
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        std::fs::write(dir.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    }
+
+    // TP-WSID-07: a workspace born at the main checkout of a repository
+    // claims that checkout at birth — the sidebar must group it under its
+    // repo from the first frame, not only after a worktree attach.
+    #[test]
+    fn a_workspace_born_at_a_repo_root_claims_the_checkout() {
+        let root = std::env::temp_dir().join(format!("herdr-wsid07-{}", std::process::id()));
+        let repo = root.join("project");
+        scratch_repo(&repo);
+
+        let space = derive_initial_worktree_membership(&repo)
+            .expect("a main-checkout cwd claims its repository");
+
+        let canon = crate::worktree::canonical_or_original(&repo);
+        assert_eq!(space.label, "project");
+        assert_eq!(
+            space.checkout_path, canon,
+            "the checkout is the birthplace itself"
+        );
+        assert_eq!(
+            space.repo_root, canon,
+            "a main checkout is its own repo root"
+        );
+        assert!(!space.is_linked_worktree);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // TP-WSID-08: a cwd outside any repository stays unclaimed — the
+    // standalone workspace behavior must not change.
+    #[test]
+    fn a_workspace_born_outside_any_repo_stays_unclaimed() {
+        let dir = std::env::temp_dir().join(format!("herdr-wsid08-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        assert_eq!(derive_initial_worktree_membership(&dir), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // TP-WSID-09: a home directory that is itself a repository (the dotfiles
+    // pattern) must not become a project block — every workspace born in
+    // $HOME would pile into it. Repos nested under home still claim.
+    #[test]
+    fn a_home_directory_repo_never_becomes_a_project_block() {
+        let root = std::env::temp_dir().join(format!("herdr-wsid09-{}", std::process::id()));
+        let home = root.join("home");
+        scratch_repo(&home);
+
+        assert_eq!(
+            derive_initial_worktree_membership_against_home(&home, Some(home.clone())),
+            None,
+            "the home repo is a dotfiles pattern, not a project"
+        );
+
+        let nested = home.join("projects/app");
+        scratch_repo(&nested);
+        assert!(
+            derive_initial_worktree_membership_against_home(&nested, Some(home.clone())).is_some(),
+            "a repo nested under home is a normal project"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // TP-WSID-11: a cwd inside a linked worktree is the worktree-attach
+    // flow's business; birth-claiming stays out so two owners never fight
+    // over repo_root/checkout semantics.
+    #[test]
+    fn a_linked_worktree_cwd_is_left_to_the_attach_flow() {
+        let root = std::env::temp_dir().join(format!("herdr-wsid11-{}", std::process::id()));
+        let repo = root.join("repo");
+        scratch_repo(&repo);
+        let wt_gitdir = repo.join(".git/worktrees/wt");
+        std::fs::create_dir_all(&wt_gitdir).unwrap();
+        std::fs::write(wt_gitdir.join("HEAD"), "ref: refs/heads/wt\n").unwrap();
+        std::fs::write(wt_gitdir.join("commondir"), "../..\n").unwrap();
+        let wt = root.join("wt");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::write(
+            wt.join(".git"),
+            format!("gitdir: {}\n", wt_gitdir.display()),
+        )
+        .unwrap();
+
+        assert_eq!(derive_initial_worktree_membership(&wt), None);
+        std::fs::remove_dir_all(&root).ok();
     }
 }
 

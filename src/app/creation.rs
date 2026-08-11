@@ -243,7 +243,7 @@ impl App {
         extra_env: Vec<(String, String)>,
     ) -> std::io::Result<usize> {
         let (rows, cols) = self.state.estimate_pane_size();
-        let (ws, terminal, runtime) = Workspace::new_with_extra_env(
+        let (mut ws, terminal, runtime) = Workspace::new_with_extra_env(
             initial_cwd,
             rows,
             cols,
@@ -255,6 +255,12 @@ impl App {
             self.render_dirty.clone(),
             extra_env,
         )?;
+        // TP-WSID-07: a workspace born at a main checkout claims it at birth,
+        // so the sidebar groups it under its repo without a worktree attach.
+        if ws.worktree_space.is_none() {
+            ws.worktree_space =
+                crate::workspace::derive_initial_worktree_membership(&ws.identity_cwd);
+        }
         self.terminal_runtimes.insert(terminal.id.clone(), runtime);
         self.state.terminals.insert(terminal.id.clone(), terminal);
         self.state.workspaces.push(ws);
