@@ -57,7 +57,11 @@ fn sidebar_section_heights(total_h: u16, split_ratio: f32) -> (u16, u16) {
     (ws_h, detail_h)
 }
 
-pub(crate) fn expanded_sidebar_sections(area: Rect, split_ratio: f32) -> (Rect, Rect) {
+pub(crate) fn expanded_sidebar_sections(
+    area: Rect,
+    split_ratio: f32,
+    chrome: crate::ui::shell::SidebarChrome,
+) -> (Rect, Rect) {
     let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
     if content.width == 0 || content.height == 0 {
         return (Rect::default(), Rect::default());
@@ -66,7 +70,38 @@ pub(crate) fn expanded_sidebar_sections(area: Rect, split_ratio: f32) -> (Rect, 
     let (ws_h, detail_h) = sidebar_section_heights(content.height, split_ratio);
     let ws_area = Rect::new(content.x, content.y, content.width, ws_h);
     let detail_area = Rect::new(content.x, content.y + ws_h, content.width, detail_h);
-    (ws_area, detail_area)
+    // The inset lands here, in the one place both section rectangles come from,
+    // so what is painted and what a click resolves to can never disagree.
+    (
+        section_content_rect(ws_area, chrome.spaces),
+        section_content_rect(detail_area, chrome.agents),
+    )
+}
+
+/// What a framed section leaves for its content.
+///
+/// A section too small to hold a frame keeps its full rectangle instead: losing
+/// the border on a short panel is a cosmetic disappointment, losing the panel
+/// is not.
+pub(crate) fn section_content_rect(outer: Rect, tint: Option<crate::ui::shell::BarTint>) -> Rect {
+    if tint.is_none() || outer.width < 3 || outer.height < 3 {
+        return outer;
+    }
+    Rect::new(outer.x + 1, outer.y + 1, outer.width - 2, outer.height - 2)
+}
+
+/// The outer rectangles, before any frame took its cells — what the frames
+/// themselves are drawn into.
+pub(crate) fn expanded_sidebar_section_frames(area: Rect, split_ratio: f32) -> (Rect, Rect) {
+    let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
+    if content.width == 0 || content.height == 0 {
+        return (Rect::default(), Rect::default());
+    }
+    let (ws_h, detail_h) = sidebar_section_heights(content.height, split_ratio);
+    (
+        Rect::new(content.x, content.y, content.width, ws_h),
+        Rect::new(content.x, content.y + ws_h, content.width, detail_h),
+    )
 }
 
 pub(crate) fn sidebar_section_divider_rect(area: Rect, split_ratio: f32) -> Rect {
@@ -807,7 +842,7 @@ fn push_chat_drawer(app: &AppState, entries: &mut Vec<WorkspaceListEntry>, ws_id
 }
 
 pub(crate) fn normalized_workspace_scroll(app: &AppState, area: Rect, requested: usize) -> usize {
-    let ws_area = workspace_list_rect(area, app.sidebar_section_split);
+    let ws_area = workspace_list_rect(area, app.sidebar_section_split, app.sidebar_chrome);
     let body = workspace_list_body_rect(ws_area, false);
     if body.height == 0 {
         return requested;
@@ -1258,8 +1293,12 @@ fn push_space_block(
     }
 }
 
-pub(crate) fn workspace_list_rect(area: Rect, split_ratio: f32) -> Rect {
-    let (ws_area, _) = expanded_sidebar_sections(area, split_ratio);
+pub(crate) fn workspace_list_rect(
+    area: Rect,
+    split_ratio: f32,
+    chrome: crate::ui::shell::SidebarChrome,
+) -> Rect {
+    let (ws_area, _) = expanded_sidebar_sections(area, split_ratio, chrome);
     ws_area
 }
 
@@ -1555,7 +1594,7 @@ pub(crate) fn compute_workspace_list_areas(
     Vec<crate::app::state::WorkspaceGroupHeaderArea>,
     Vec<crate::app::state::WorkspaceProjectHeaderArea>,
 ) {
-    let ws_area = workspace_list_rect(area, app.sidebar_section_split);
+    let ws_area = workspace_list_rect(area, app.sidebar_section_split, app.sidebar_chrome);
     if ws_area == Rect::default() {
         return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     }
@@ -1815,7 +1854,23 @@ pub(super) fn render_sidebar(
         buf[(sep_x, y)].set_style(sep_style);
     }
 
-    let (ws_area, detail_area) = expanded_sidebar_sections(area, app.sidebar_section_split);
+    let (ws_area, detail_area) =
+        expanded_sidebar_sections(area, app.sidebar_section_split, app.sidebar_chrome);
+
+    // Each half wears its frame before its content draws, into the rectangle
+    // the content was already inset out of — the same inset the hit areas came
+    // from, because both read `expanded_sidebar_sections`.
+    let (ws_frame, detail_frame) = expanded_sidebar_section_frames(area, app.sidebar_section_split);
+    for (frame_area, tint) in [
+        (ws_frame, app.sidebar_chrome.spaces),
+        (detail_frame, app.sidebar_chrome.agents),
+    ] {
+        let Some(tint) = tint else { continue };
+        if frame_area.width < 3 || frame_area.height < 3 {
+            continue;
+        }
+        crate::ui::widgets::render_bar_shell(frame, frame_area, tint, app.palette.panel_bg);
+    }
 
     render_workspace_list(app, terminal_runtimes, frame, ws_area, is_navigating);
     render_agent_detail(app, terminal_runtimes, frame, detail_area);
@@ -3224,7 +3279,8 @@ mod tests {
             .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
             .unwrap();
         let buffer = terminal.backend().buffer();
-        let (_, agent_area) = expanded_sidebar_sections(area, app.sidebar_section_split);
+        let (_, agent_area) =
+            expanded_sidebar_sections(area, app.sidebar_section_split, app.sidebar_chrome);
         let body = agent_panel_body_rect(agent_area, false);
 
         let first = row_text(buffer, body.y, 25);
@@ -3278,7 +3334,8 @@ rows = [[{ token = "workspace", bold = false }, { token = "agent", dim = false }
         terminal
             .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
             .unwrap();
-        let (_, agent_area) = expanded_sidebar_sections(area, app.sidebar_section_split);
+        let (_, agent_area) =
+            expanded_sidebar_sections(area, app.sidebar_section_split, app.sidebar_chrome);
         let body = agent_panel_body_rect(agent_area, false);
         let buffer = terminal.backend().buffer();
         let workspace = buffer[(find_symbol_x(buffer, body.y, body.width, "o"), body.y)].style();
@@ -3471,7 +3528,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
             .unwrap();
         let buffer = terminal.backend().buffer();
-        let (_, agent_area) = expanded_sidebar_sections(area, app.sidebar_section_split);
+        let (_, agent_area) =
+            expanded_sidebar_sections(area, app.sidebar_section_split, app.sidebar_chrome);
         let body = agent_panel_body_rect(agent_area, false);
         let first = row_text(buffer, body.y, 17);
 
@@ -3501,7 +3559,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         renderer
             .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
             .unwrap();
-        let (_, agent_area) = expanded_sidebar_sections(area, app.sidebar_section_split);
+        let (_, agent_area) =
+            expanded_sidebar_sections(area, app.sidebar_section_split, app.sidebar_chrome);
         let body = agent_panel_body_rect(agent_area, false);
         let rendered = row_text(renderer.backend().buffer(), body.y, 9);
 
@@ -3577,7 +3636,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.workspaces = vec![Workspace::test_new("one"), Workspace::test_new("two")];
         app.sidebar_spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]; 6];
         let area = Rect::new(0, 0, 20, 10);
-        let workspace_area = workspace_list_rect(area, app.sidebar_section_split);
+        let workspace_area =
+            workspace_list_rect(area, app.sidebar_section_split, app.sidebar_chrome);
         let body = workspace_list_body_rect(workspace_area, false);
 
         let metrics = workspace_list_scroll_metrics(&app, workspace_area);
@@ -5103,9 +5163,73 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         );
     }
 
+    // T46 · nobody who did not ask for a frame pays for one.
+    #[test]
+    fn without_a_frame_the_two_sections_keep_exactly_their_old_rectangles() {
+        let area = Rect::new(0, 0, 30, 24);
+        let bare = expanded_sidebar_sections(area, 0.5, crate::ui::shell::SidebarChrome::NONE);
+        let raw = expanded_sidebar_section_frames(area, 0.5);
+        assert_eq!(bare, raw, "an unframed section is its own frame");
+    }
+
+    // T47 · the two halves are independent surfaces, not one decision.
+    #[test]
+    fn framing_one_section_leaves_the_other_untouched() {
+        let area = Rect::new(0, 0, 30, 24);
+        let tint = Some(crate::ui::shell::BarTint::solid(
+            ratatui::style::Color::Rgb(250, 179, 135),
+        ));
+        let (raw_ws, raw_detail) = expanded_sidebar_section_frames(area, 0.5);
+
+        let spaces_only = crate::ui::shell::SidebarChrome {
+            spaces: tint,
+            agents: None,
+        };
+        let (ws, detail) = expanded_sidebar_sections(area, 0.5, spaces_only);
+        assert_eq!(
+            ws.width,
+            raw_ws.width - 2,
+            "the frame takes a column each side"
+        );
+        assert_eq!(ws.height, raw_ws.height - 2);
+        assert_eq!(ws.x, raw_ws.x + 1);
+        assert_eq!(detail, raw_detail, "the other half did not move");
+
+        let agents_only = crate::ui::shell::SidebarChrome {
+            spaces: None,
+            agents: tint,
+        };
+        let (ws2, detail2) = expanded_sidebar_sections(area, 0.5, agents_only);
+        assert_eq!(ws2, raw_ws);
+        assert_eq!(detail2.height, raw_detail.height - 2);
+    }
+
+    // T49 · a panel too short for a frame keeps its content, not its decoration.
+    #[test]
+    fn a_section_too_small_for_a_frame_keeps_its_whole_rectangle() {
+        let tint = Some(crate::ui::shell::BarTint::solid(
+            ratatui::style::Color::Rgb(1, 2, 3),
+        ));
+        for outer in [
+            Rect::new(0, 0, 2, 10),
+            Rect::new(0, 0, 10, 2),
+            Rect::new(0, 0, 1, 1),
+        ] {
+            assert_eq!(
+                section_content_rect(outer, tint),
+                outer,
+                "losing the border is cosmetic; losing the panel is not"
+            );
+        }
+    }
+
     #[test]
     fn expanded_sidebar_sections_handle_tiny_heights() {
-        let (ws_area, detail_area) = expanded_sidebar_sections(Rect::new(0, 0, 20, 5), 0.9);
+        let (ws_area, detail_area) = expanded_sidebar_sections(
+            Rect::new(0, 0, 20, 5),
+            0.9,
+            crate::ui::shell::SidebarChrome::NONE,
+        );
 
         assert_eq!(ws_area, Rect::new(0, 0, 19, 3));
         assert_eq!(detail_area, Rect::new(0, 3, 19, 2));
@@ -6701,7 +6825,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.sidebar_spaces.row_gap = 0;
         let area = Rect::new(0, 0, 30, 20);
         app.view.workspace_card_areas = compute_workspace_card_areas(&app, area);
-        let list_area = workspace_list_rect(area, app.sidebar_section_split);
+        let list_area = workspace_list_rect(area, app.sidebar_section_split, app.sidebar_chrome);
         let indicator_row =
             workspace_drop_indicator_row(&app.view.workspace_card_areas, list_area, 2).unwrap();
         assert_eq!(indicator_row, app.view.workspace_card_areas[1].rect.y);

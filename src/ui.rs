@@ -30,7 +30,7 @@ mod tailscale_send;
 mod text;
 #[cfg(test)]
 pub(crate) mod visual_fixture;
-mod widgets;
+pub(crate) mod widgets;
 
 use self::dialogs::{
     render_confirm_close_overlay, render_file_delete_confirmation_overlay,
@@ -428,7 +428,8 @@ fn compute_view_internal(
 
     if !app.sidebar_collapsed {
         app.workspace_scroll = normalized_workspace_scroll(app, sidebar_area, app.workspace_scroll);
-        let (_, detail_area) = expanded_sidebar_sections(sidebar_area, app.sidebar_section_split);
+        let (_, detail_area) =
+            expanded_sidebar_sections(sidebar_area, app.sidebar_section_split, app.sidebar_chrome);
         let max_agent_scroll = agent_panel_scroll_metrics(app, detail_area).max_offset_from_bottom;
         app.agent_panel_scroll = app.agent_panel_scroll.min(max_agent_scroll);
     } else {
@@ -459,6 +460,7 @@ fn compute_view_internal(
         sidebar::compute_sidebar_tab_areas(sidebar::workspace_list_rect(
             sidebar_area,
             app.sidebar_section_split,
+            app.sidebar_chrome,
         ))
     };
     // The Projects tab owns its own row layout. Lay it out here (geometry only)
@@ -467,7 +469,11 @@ fn compute_view_internal(
         if app.sidebar_collapsed || app.sidebar_tab != crate::app::state::SidebarTab::Projects {
             Vec::new()
         } else {
-            let list_rect = sidebar::workspace_list_rect(sidebar_area, app.sidebar_section_split);
+            let list_rect = sidebar::workspace_list_rect(
+                sidebar_area,
+                app.sidebar_section_split,
+                app.sidebar_chrome,
+            );
             // The projects list length changes underneath the scroll offset
             // via the session polls; re-normalize before laying out so the
             // viewport can never point past the end of the list.

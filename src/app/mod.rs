@@ -706,6 +706,10 @@ impl App {
         let (theme_palette, theme_name) = resolve_effective_theme(&theme_runtime, None);
 
         let mut state = AppState {
+            sidebar_chrome: crate::ui::shell::SidebarChrome::from_config(
+                &config.ui.sidebar,
+                &theme_palette,
+            ),
             terminals: std::collections::HashMap::new(),
             direct_attach_resize_locks: std::collections::HashSet::new(),
             pane_id_aliases: std::collections::HashMap::new(),

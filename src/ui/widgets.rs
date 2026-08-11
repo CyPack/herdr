@@ -42,7 +42,7 @@ pub(super) fn render_panel_shell(
 /// heavy box-drawing set: Unicode has no thick *rounded* corner, so asking for
 /// `┏` would square the corners off. Bold keeps `╭╮╰╯` and lets the terminal
 /// render the run with weight, which is the only way to have both.
-pub(super) fn render_bar_shell(
+pub(crate) fn render_bar_shell(
     frame: &mut Frame,
     area: Rect,
     tint: BarTint,
