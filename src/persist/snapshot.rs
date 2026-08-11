@@ -8,7 +8,7 @@ use crate::layout::Node;
 use crate::terminal::TerminalRuntimeRegistry;
 use crate::ui::shell::{
     shell_persistence_parts, validate_persisted_shell_parts, ComponentPlacement, RegionId,
-    ShellNode, ShellPresentationState, ShellTemplateId, TrackPolicy,
+    ShellBars, ShellNode, ShellPresentationState, ShellTemplateId, TrackPolicy,
 };
 use crate::workspace::Workspace;
 
@@ -86,11 +86,16 @@ impl ShellSnapshotV1 {
         } else {
             sidebar_width
         };
-        Self::from_presented_tree(shell_presentation.shell_template(), width, collapsed)
+        Self::from_presented_tree(
+            shell_presentation.shell_template(),
+            shell_presentation.bars(),
+            width,
+            collapsed,
+        )
     }
 
     fn from_left_panel_preference(width: u16, collapsed: bool) -> Self {
-        Self::from_presented_tree(None, width, collapsed)
+        Self::from_presented_tree(None, ShellBars::NONE, width, collapsed)
     }
 
     /// Record the tree the app is presenting, plus the one preference the user
@@ -101,9 +106,14 @@ impl ShellSnapshotV1 {
     /// is written even when the presented tree has no such region: it is the
     /// person's preference, and dropping it because today's tree hides the
     /// panel would lose it the moment they switch back.
-    fn from_presented_tree(template: Option<ShellTemplateId>, width: u16, collapsed: bool) -> Self {
+    fn from_presented_tree(
+        template: Option<ShellTemplateId>,
+        bars: ShellBars,
+        width: u16,
+        collapsed: bool,
+    ) -> Self {
         let preferred = width.clamp(LEGACY_LEFT_PANEL_MIN_WIDTH, LEGACY_LEFT_PANEL_MAX_WIDTH);
-        let parts = shell_persistence_parts(template);
+        let parts = shell_persistence_parts(template, bars);
         let mut region_constraints = parts.region_constraints;
         region_constraints.insert(
             RegionId::LeftPanel,
@@ -138,6 +148,7 @@ impl ShellSnapshotV1 {
         let preference = self.restored_left_panel_preference();
         Self::from_presented_tree(
             None,
+            ShellBars::NONE,
             preference.map_or(LEGACY_LEFT_PANEL_DEFAULT_WIDTH, |value| value.width),
             preference.is_some_and(|value| value.collapsed),
         )
@@ -2123,7 +2134,10 @@ mod tests {
 
         assert_eq!(shell.template, None, "production presents the legacy tree");
         assert_eq!(shell.schema_version, SHELL_SNAPSHOT_VERSION);
-        assert_eq!(shell.root, shell_persistence_parts(None).root);
+        assert_eq!(
+            shell.root,
+            shell_persistence_parts(None, ShellBars::NONE).root
+        );
         assert!(
             !shell.region_constraints.contains_key(&RegionId::AppDock),
             "the legacy tree has no dock, so the file must not size one"
@@ -2144,8 +2158,9 @@ mod tests {
         // would name a tree the app had just refused to draw — the same class
         // of untruth this layer exists to end.
         let requested = ShellTemplateId::DesktopWorkspace;
-        let parts = shell_persistence_parts(Some(requested));
-        let presented = ShellPresentationState::from_restored(26, false, parts.template);
+        let parts = shell_persistence_parts(Some(requested), ShellBars::NONE);
+        let presented =
+            ShellPresentationState::from_restored(26, false, parts.template, ShellBars::NONE);
         let shell = ShellSnapshotV1::from_presentation(26, &presented);
 
         assert_eq!(shell.template, parts.template);
@@ -2161,15 +2176,16 @@ mod tests {
             Some(ShellTemplateId::DockSidebarStage),
             Some(ShellTemplateId::InspectorWorkspace),
         ] {
-            let presented = ShellPresentationState::from_restored(31, false, template);
+            let presented =
+                ShellPresentationState::from_restored(31, false, template, ShellBars::NONE);
             let written = ShellSnapshotV1::from_presentation(31, &presented);
             let value = serde_json::to_value(&written).expect("a shell snapshot serializes");
             let read = ShellSnapshotV1::from_value(value).expect("and reads back");
 
             assert_eq!(read.template, written.template, "{template:?}");
             assert_eq!(
-                shell_persistence_parts(read.template).root,
-                shell_persistence_parts(written.template).root,
+                shell_persistence_parts(read.template, ShellBars::NONE).root,
+                shell_persistence_parts(written.template, ShellBars::NONE).root,
                 "{template:?} derives a different tree after a round trip"
             );
             assert_eq!(
@@ -2199,7 +2215,10 @@ mod tests {
 
         assert_eq!(migrated.template, None, "the claim was never observed");
         assert_eq!(migrated.schema_version, SHELL_SNAPSHOT_VERSION);
-        assert_eq!(migrated.root, shell_persistence_parts(None).root);
+        assert_eq!(
+            migrated.root,
+            shell_persistence_parts(None, ShellBars::NONE).root
+        );
         assert_eq!(
             migrated.restored_left_panel_preference(),
             Some(RestoredLeftPanelPreference {

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use ratatui::layout::Position;
 
-use super::{RegionId, ShellDirection, ShellTemplateId};
+use super::{RegionId, ShellBars, ShellDirection, ShellTemplateId};
 
 /// Stable identity for one divider between adjacent shell regions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -269,6 +269,10 @@ pub(crate) struct ShellPresentationState {
     /// file next to the panel width, and it never appears in `protocol` or
     /// `api::schema`.
     shell_template: Option<ShellTemplateId>,
+    /// Which edges carry a strip. Config owns this rather than the session
+    /// file, so it is restored from the config the app started with, not from
+    /// the snapshot — two files claiming the same fact is how they drift.
+    bars: ShellBars,
 }
 
 impl ResizeUpdate {
@@ -530,7 +534,7 @@ impl ShellPresentationState {
     }
 
     pub(crate) const fn from_restored_left_panel(left_panel_width: u16, collapsed: bool) -> Self {
-        Self::from_restored(left_panel_width, collapsed, None)
+        Self::from_restored(left_panel_width, collapsed, None, ShellBars::NONE)
     }
 
     /// Rebuild the presentation from everything a session file remembers.
@@ -542,6 +546,7 @@ impl ShellPresentationState {
         left_panel_width: u16,
         collapsed: bool,
         shell_template: Option<ShellTemplateId>,
+        bars: ShellBars,
     ) -> Self {
         Self {
             left_panel: if collapsed {
@@ -550,6 +555,7 @@ impl ShellPresentationState {
                 RegionCollapseState::expanded(RegionId::LeftPanel, left_panel_width)
             },
             shell_template,
+            bars,
         }
     }
 
@@ -577,6 +583,11 @@ impl ShellPresentationState {
     /// derivation, and the value the session file records.
     pub(crate) const fn shell_template(&self) -> Option<ShellTemplateId> {
         self.shell_template
+    }
+
+    /// The edge strips this client is presenting.
+    pub(crate) const fn bars(&self) -> ShellBars {
+        self.bars
     }
 }
 

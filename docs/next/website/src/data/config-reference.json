@@ -1229,6 +1229,60 @@
           "description": "Devices pinned to the top of the file manager send picker, in order. Each entry is a tailnet DNS name (for example \"laptop.tailnet.ts.net\"), because host names can repeat. Written by pressing p in the picker."
         }
       ]
+    },
+    {
+      "id": "shell",
+      "title": "Shell",
+      "keys": [
+        {
+          "key": "shell.bars.top.enabled",
+          "type": "boolean",
+          "default": "false",
+          "description": "Draw a strip along the top edge of the frame."
+        },
+        {
+          "key": "shell.bars.top.size",
+          "type": "integer",
+          "default": "1",
+          "description": "Height of the top bar in rows. Values outside 1-32 leave the bar undrawn."
+        },
+        {
+          "key": "shell.bars.bottom.enabled",
+          "type": "boolean",
+          "default": "false",
+          "description": "Draw a strip along the bottom edge of the frame."
+        },
+        {
+          "key": "shell.bars.bottom.size",
+          "type": "integer",
+          "default": "1",
+          "description": "Height of the bottom bar in rows. Values outside 1-32 leave the bar undrawn."
+        },
+        {
+          "key": "shell.bars.left.enabled",
+          "type": "boolean",
+          "default": "false",
+          "description": "Draw a strip along the left edge, outside the agent panel."
+        },
+        {
+          "key": "shell.bars.left.size",
+          "type": "integer",
+          "default": "12",
+          "description": "Width of the left bar in columns. Values outside 1-32 leave the bar undrawn."
+        },
+        {
+          "key": "shell.bars.right.enabled",
+          "type": "boolean",
+          "default": "false",
+          "description": "Draw a strip along the right edge of the frame."
+        },
+        {
+          "key": "shell.bars.right.size",
+          "type": "integer",
+          "default": "12",
+          "description": "Width of the right bar in columns. Values outside 1-32 leave the bar undrawn."
+        }
+      ]
     }
   ]
 }

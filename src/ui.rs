@@ -357,7 +357,10 @@ fn compute_view_internal(
     // on restore. It is `None` today for everyone, so the answer is still the
     // legacy tree and nothing on screen moves; what ended is the era where the
     // file recorded a composition the draw path never asked for.
-    let derived = shell::derive_desktop_shell_layout(app.shell_presentation.shell_template());
+    let derived = shell::derive_desktop_shell_layout(
+        app.shell_presentation.shell_template(),
+        app.shell_presentation.bars(),
+    );
     let shell_layout = derived.layout;
     let shell_key = ShellGeometryKey::new(
         area,
@@ -365,6 +368,7 @@ fn compute_view_internal(
         u64::from(sidebar_w),
         app.shell_presentation.left_panel_collapse_revision(),
         derived.template,
+        app.shell_presentation.bars(),
     );
     let previous_shell_view = std::mem::take(&mut app.view.shell);
     let shell_view =
@@ -690,7 +694,14 @@ fn compute_mobile_view(
         .map(|_| mobile_toast_banner_rect(area, app.config_diagnostic.is_some()))
         .unwrap_or_default();
     let shell_view = shell::compute_empty_shell_view(
-        ShellGeometryKey::new(area, MOBILE_EMPTY_SHELL_LAYOUT_REVISION, 0, 0, None),
+        ShellGeometryKey::new(
+            area,
+            MOBILE_EMPTY_SHELL_LAYOUT_REVISION,
+            0,
+            0,
+            None,
+            shell::ShellBars::NONE,
+        ),
         std::mem::take(&mut app.view.shell),
     );
 
@@ -1255,6 +1266,7 @@ mod tests {
             app.sidebar_width,
             false,
             Some(crate::ui::shell::ShellTemplateId::DockSidebarStage),
+            crate::ui::shell::ShellBars::NONE,
         );
         compute_view(&mut app, frame);
 

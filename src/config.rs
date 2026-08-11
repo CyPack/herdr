@@ -21,9 +21,9 @@ pub use self::{
     model::{
         validated_sidebar_bounds, AgentPanelSortConfig, ChatDrawerModeConfig, Config,
         ConfigReloadReport, ConfigReloadStatus, HostCursorModeConfig, NewTerminalCwdConfig,
-        PreviewPlacement, ShellModeConfig, SidebarCollapsedModeConfig, SpaceIconsConfig,
-        ToastClipboardPosition, ToastConfig, ToastDelivery, ToastHerdrPosition,
-        UpdateChannelConfig, MAX_TOAST_DELAY_SECONDS,
+        PreviewPlacement, ShellBarConfig, ShellBarsConfig, ShellModeConfig,
+        SidebarCollapsedModeConfig, SpaceIconsConfig, ToastClipboardPosition, ToastConfig,
+        ToastDelivery, ToastHerdrPosition, UpdateChannelConfig, MAX_TOAST_DELAY_SECONDS,
     },
     sidebar::{
         AgentSidebarToken, AgentsSidebarConfig, SidebarConfig, SidebarTokenStyle,

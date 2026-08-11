@@ -1,5 +1,6 @@
 use ratatui::layout::{Position, Rect};
 
+use super::source::ShellBars;
 use super::template::ShellTemplateId;
 use super::{RegionId, RegionRects, ResponsiveDegradation, ShellLayout};
 
@@ -30,6 +31,9 @@ pub(crate) struct ShellGeometryKey {
     pub constraints_revision: u64,
     pub collapse_revision: u64,
     pub template: Option<ShellTemplateId>,
+    /// The exact edge composition, not a digest of it. Two different screens
+    /// must never answer to one identity, and this is small enough to compare.
+    pub bars: ShellBars,
 }
 
 impl ShellGeometryKey {
@@ -39,6 +43,7 @@ impl ShellGeometryKey {
         constraints_revision: u64,
         collapse_revision: u64,
         template: Option<ShellTemplateId>,
+        bars: ShellBars,
     ) -> Self {
         Self {
             area,
@@ -46,13 +51,14 @@ impl ShellGeometryKey {
             constraints_revision,
             collapse_revision,
             template,
+            bars,
         }
     }
 }
 
 impl Default for ShellGeometryKey {
     fn default() -> Self {
-        Self::new(Rect::ZERO, 0, 0, 0, None)
+        Self::new(Rect::ZERO, 0, 0, 0, None, ShellBars::NONE)
     }
 }
 
@@ -201,8 +207,10 @@ mod tests {
     #[test]
     fn geometry_cache_profile_counts_desktop_and_empty_hits_and_misses() {
         let layout = ShellLayout::default();
-        let desktop_key = ShellGeometryKey::new(Rect::new(0, 0, 120, 40), 1, 2, 3, None);
-        let mobile_key = ShellGeometryKey::new(Rect::new(0, 0, 40, 20), 4, 5, 6, None);
+        let desktop_key =
+            ShellGeometryKey::new(Rect::new(0, 0, 120, 40), 1, 2, 3, None, ShellBars::NONE);
+        let mobile_key =
+            ShellGeometryKey::new(Rect::new(0, 0, 40, 20), 4, 5, 6, None, ShellBars::NONE);
 
         let (_, profile) = crate::render_prof::observe_for_test(|| {
             let desktop =
@@ -227,15 +235,69 @@ mod tests {
         // when that happens — the wrong region simply replies, which is why the
         // catalogue files it as a silent-loss anti-pattern.
         let area = Rect::new(0, 0, 120, 40);
-        let legacy = ShellGeometryKey::new(area, 1, 2, 3, None);
-        let dock = ShellGeometryKey::new(area, 1, 2, 3, Some(ShellTemplateId::DockStage));
-        let desktop = ShellGeometryKey::new(area, 1, 2, 3, Some(ShellTemplateId::DesktopWorkspace));
+        let legacy = ShellGeometryKey::new(area, 1, 2, 3, None, ShellBars::NONE);
+        let dock = ShellGeometryKey::new(
+            area,
+            1,
+            2,
+            3,
+            Some(ShellTemplateId::DockStage),
+            ShellBars::NONE,
+        );
+        let desktop = ShellGeometryKey::new(
+            area,
+            1,
+            2,
+            3,
+            Some(ShellTemplateId::DesktopWorkspace),
+            ShellBars::NONE,
+        );
 
         assert_ne!(legacy, dock);
         assert_ne!(dock, desktop);
         assert_eq!(
             dock,
-            ShellGeometryKey::new(area, 1, 2, 3, Some(ShellTemplateId::DockStage))
+            ShellGeometryKey::new(
+                area,
+                1,
+                2,
+                3,
+                Some(ShellTemplateId::DockStage),
+                ShellBars::NONE
+            )
+        );
+    }
+
+    // CLA3 again, one level down: the revision only names WHICH edges are on,
+    // so two bars of different thickness share it. The key carries the exact
+    // composition for precisely this case — drop that field and a one-row top
+    // bar would hand back a three-row bar's rectangles.
+    #[test]
+    fn two_bars_of_different_thickness_are_two_different_authorities() {
+        let area = Rect::new(0, 0, 120, 40);
+        let thin = ShellBars {
+            top: super::super::source::BarTrack::of(1),
+            ..ShellBars::NONE
+        };
+        let thick = ShellBars {
+            top: super::super::source::BarTrack::of(3),
+            ..ShellBars::NONE
+        };
+
+        let thin_derived = super::super::derive_desktop_shell_layout(None, thin);
+        let thick_derived = super::super::derive_desktop_shell_layout(None, thick);
+        assert_eq!(
+            thin_derived.revision, thick_derived.revision,
+            "this test is only interesting while the revisions agree"
+        );
+        assert_ne!(
+            thin_derived.layout, thick_derived.layout,
+            "and while the trees do not"
+        );
+
+        assert_ne!(
+            ShellGeometryKey::new(area, thin_derived.revision, 2, 3, None, thin),
+            ShellGeometryKey::new(area, thick_derived.revision, 2, 3, None, thick),
         );
     }
 
@@ -244,8 +306,22 @@ mod tests {
     fn a_template_change_misses_the_cache_and_advances_the_generation_once() {
         let layout = ShellLayout::default();
         let area = Rect::new(0, 0, 120, 40);
-        let dock = ShellGeometryKey::new(area, 1, 2, 3, Some(ShellTemplateId::DockStage));
-        let desktop = ShellGeometryKey::new(area, 1, 2, 3, Some(ShellTemplateId::DesktopWorkspace));
+        let dock = ShellGeometryKey::new(
+            area,
+            1,
+            2,
+            3,
+            Some(ShellTemplateId::DockStage),
+            ShellBars::NONE,
+        );
+        let desktop = ShellGeometryKey::new(
+            area,
+            1,
+            2,
+            3,
+            Some(ShellTemplateId::DesktopWorkspace),
+            ShellBars::NONE,
+        );
 
         let (generations, profile) = crate::render_prof::observe_for_test(|| {
             let first = compute_shell_view(&layout, dock, ShellView::default(), &|_region| 0);
@@ -270,12 +346,12 @@ mod tests {
     fn the_legacy_path_keeps_its_identity() {
         let area = Rect::new(0, 0, 120, 40);
         assert_eq!(
-            ShellGeometryKey::new(area, 1, 2, 3, None),
-            ShellGeometryKey::new(area, 1, 2, 3, None)
+            ShellGeometryKey::new(area, 1, 2, 3, None, ShellBars::NONE),
+            ShellGeometryKey::new(area, 1, 2, 3, None, ShellBars::NONE)
         );
         assert_eq!(
             ShellGeometryKey::default(),
-            ShellGeometryKey::new(Rect::ZERO, 0, 0, 0, None)
+            ShellGeometryKey::new(Rect::ZERO, 0, 0, 0, None, ShellBars::NONE)
         );
     }
 }

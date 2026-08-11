@@ -719,6 +719,82 @@ pub struct Config {
     pub spaces: SpacesConfig,
     pub preview: PreviewConfig,
     pub tailscale: TailscaleConfig,
+    pub shell: ShellConfig,
+}
+
+/// `[shell]` — the outer composition around the panes.
+///
+/// Nothing here is on by default. Most people never want an edge bar, and the
+/// ones who do should not have to pay for it with a changed screen until they
+/// ask; every field below is inert until it is set.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ShellConfig {
+    pub bars: ShellBarsConfig,
+}
+
+/// `[shell.bars]` — one optional strip per edge of the frame.
+///
+/// The four edges are named rather than listed so that a typo cannot silently
+/// become a fifth bar, and so each edge keeps its own default size: a row is a
+/// sensible top bar, a row is a useless side bar.
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct ShellBarsConfig {
+    pub top: ShellBarConfig,
+    pub bottom: ShellBarConfig,
+    // Named per field rather than through the struct's own `Default`, because
+    // `serde(default)` fills each *missing field* from that field's type: with
+    // only the struct default, writing `[shell.bars.top]` would quietly give
+    // the side bars a one-column default they never asked for.
+    #[serde(default = "ShellBarConfig::vertical")]
+    pub left: ShellBarConfig,
+    #[serde(default = "ShellBarConfig::vertical")]
+    pub right: ShellBarConfig,
+}
+
+impl Default for ShellBarsConfig {
+    fn default() -> Self {
+        Self {
+            top: ShellBarConfig::horizontal(),
+            bottom: ShellBarConfig::horizontal(),
+            left: ShellBarConfig::vertical(),
+            right: ShellBarConfig::vertical(),
+        }
+    }
+}
+
+/// `[shell.bars.<edge>]` — whether that edge has a strip, and how thick it is.
+///
+/// `size` counts terminal cells along the edge's own axis: rows for the top and
+/// bottom bars, columns for the left and right ones.
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct ShellBarConfig {
+    pub enabled: bool,
+    pub size: u16,
+}
+
+impl ShellBarConfig {
+    const fn horizontal() -> Self {
+        Self {
+            enabled: false,
+            size: 1,
+        }
+    }
+
+    fn vertical() -> Self {
+        Self {
+            enabled: false,
+            size: 12,
+        }
+    }
+}
+
+impl Default for ShellBarConfig {
+    fn default() -> Self {
+        Self::horizontal()
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]

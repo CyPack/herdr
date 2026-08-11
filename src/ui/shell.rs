@@ -38,7 +38,7 @@ pub(crate) use model::{
     ComponentPlacement, RegionId, RegionRects, RegionSize, ShellChild, ShellDirection, ShellLayout,
     ShellNode, TrackPolicy,
 };
-pub(crate) use source::derive_desktop_shell_layout;
+pub(crate) use source::{derive_desktop_shell_layout, ShellBars};
 pub(crate) use template::ShellTemplateId;
 pub(crate) use view::{compute_empty_shell_view, compute_shell_view, ShellGeometryKey, ShellView};
 
@@ -64,8 +64,11 @@ pub(crate) struct PersistedShellParts {
 /// previous seam took a `ShellTemplateId` and called `build()` directly, which
 /// let the writer name a tree the app had never drawn — and it did: production
 /// derives the legacy tree while every file on disk claimed `DockSidebarStage`.
-pub(crate) fn shell_persistence_parts(requested: Option<ShellTemplateId>) -> PersistedShellParts {
-    let derived = derive_desktop_shell_layout(requested);
+pub(crate) fn shell_persistence_parts(
+    requested: Option<ShellTemplateId>,
+    bars: ShellBars,
+) -> PersistedShellParts {
+    let derived = derive_desktop_shell_layout(requested, bars);
     PersistedShellParts {
         template: derived.template,
         root: derived.layout.root,
@@ -1117,6 +1120,50 @@ mod tests {
         );
     }
 
+    // T21 · when the frame runs out, the composition steps down by name.
+    #[test]
+    fn configured_bars_degrade_by_named_step_instead_of_collapsing() {
+        let bars = ShellBars {
+            top: source::BarTrack::of(1),
+            bottom: source::BarTrack::of(1),
+            left: source::BarTrack::of(6),
+            right: source::BarTrack::of(12),
+        };
+        let layout = derive_desktop_shell_layout(None, bars).layout;
+
+        // Measured against a real sidebar width: the default helper resolves
+        // every dynamic region to zero, which makes even a narrow frame roomy
+        // and would have let this test pass without the ladder doing anything.
+        let sidebar = legacy_sidebar_resolver(26);
+
+        // Roomy: everything the person asked for fits, and the ladder says so.
+        assert_eq!(
+            degradation_for_test_with(&layout, Rect::new(0, 0, 160, 48), &sidebar),
+            "Workspace"
+        );
+
+        // 6 + 26 + 12 + one stage cell needs 45 columns. At 30 the ladder has
+        // to give something up, and it must say which step it stopped on —
+        // "responsive" is an ordered word here, not a boolean.
+        assert_eq!(
+            degradation_for_test_with(&layout, Rect::new(0, 0, 30, 48), &sidebar),
+            "Compact"
+        );
+
+        // And the smallest frames still answer, rather than underflowing.
+        assert_eq!(
+            degradation_for_test_with(&layout, Rect::new(0, 0, 4, 2), &sidebar),
+            "TooSmall"
+        );
+
+        // The stage is the one thing the ladder may never trade away.
+        let regions = layout.compute_regions(Rect::new(0, 0, 30, 48), &sidebar);
+        assert!(
+            regions.get(RegionId::WorkspaceStage).width > 0,
+            "a cramped frame gave the stage no columns at all"
+        );
+    }
+
     #[test]
     fn unchanged_geometry_key_reuses_shell_generation() {
         let resolver_calls = std::cell::Cell::new(0);
@@ -1128,7 +1175,7 @@ mod tests {
             regions: layout.compute_regions(area, legacy_sidebar_resolver(26)),
             hits: Vec::new(),
             degradation: ResponsiveDegradation::Workspace,
-            geometry_key: ShellGeometryKey::new(area, 0, 26, 0, None),
+            geometry_key: ShellGeometryKey::new(area, 0, 26, 0, None, ShellBars::NONE),
         };
 
         let current = compute_shell_view(&layout, previous.geometry_key, previous.clone(), &|_| {
@@ -1152,7 +1199,7 @@ mod tests {
             regions: layout.compute_regions(area, legacy_sidebar_resolver(26)),
             hits: Vec::new(),
             degradation: ResponsiveDegradation::Workspace,
-            geometry_key: ShellGeometryKey::new(area, 0, 26, 0, None),
+            geometry_key: ShellGeometryKey::new(area, 0, 26, 0, None, ShellBars::NONE),
         };
 
         let area_changed =
@@ -1246,7 +1293,7 @@ mod tests {
 
         // Hidden collapse (zero width): the LeftPanel exposes no hit target,
         // and its former position belongs to the current WorkspaceStage.
-        let hidden_key = ShellGeometryKey::new(area, 0, 0, 1, None);
+        let hidden_key = ShellGeometryKey::new(area, 0, 0, 1, None, ShellBars::NONE);
         let resolver = legacy_sidebar_resolver(0);
         let hidden = compute_shell_view(&layout, hidden_key, expanded.clone(), &resolver);
         assert!(
@@ -1268,7 +1315,7 @@ mod tests {
 
         // Compact rail: visible collapsed geometry keeps its hit authority,
         // so inertness cannot over-apply to a real on-screen affordance.
-        let compact_key = ShellGeometryKey::new(area, 0, 4, 2, None);
+        let compact_key = ShellGeometryKey::new(area, 0, 4, 2, None, ShellBars::NONE);
         let rail_resolver = legacy_sidebar_resolver(4);
         let compact = compute_shell_view(&layout, compact_key, hidden, &rail_resolver);
         assert_eq!(
@@ -1278,7 +1325,7 @@ mod tests {
         );
 
         // Zero-area outer geometry: no region can expose any target.
-        let zero_key = ShellGeometryKey::new(Rect::ZERO, 0, 26, 3, None);
+        let zero_key = ShellGeometryKey::new(Rect::ZERO, 0, 26, 3, None, ShellBars::NONE);
         let full_resolver = legacy_sidebar_resolver(26);
         let zero = compute_shell_view(&layout, zero_key, compact, &full_resolver);
         assert!(
@@ -1301,7 +1348,7 @@ mod tests {
                 rect,
             }],
             degradation: ResponsiveDegradation::Workspace,
-            geometry_key: ShellGeometryKey::new(rect, 0, 5, 0, None),
+            geometry_key: ShellGeometryKey::new(rect, 0, 5, 0, None, ShellBars::NONE),
         };
 
         assert_eq!(shell_hit_for_test(&view, 9, 2, 2), Some(RegionId::AppDock));
@@ -1329,7 +1376,8 @@ mod tests {
         assert!(!desktop.hits.is_empty());
         let desktop_generation = desktop.generation;
 
-        let mobile_key = ShellGeometryKey::new(Rect::new(0, 0, 30, 20), 2, 0, 0, None);
+        let mobile_key =
+            ShellGeometryKey::new(Rect::new(0, 0, 30, 20), 2, 0, 0, None, ShellBars::NONE);
         let mobile = compute_empty_shell_view(mobile_key, desktop);
         assert_eq!(mobile.generation, desktop_generation + 1);
         assert_eq!(mobile.area, mobile_key.area);
@@ -1356,7 +1404,7 @@ mod tests {
                 rect: Rect::new(0, 0, 26, 24),
             }],
             degradation: ResponsiveDegradation::Workspace,
-            geometry_key: ShellGeometryKey::new(old_area, 0, 26, 0, None),
+            geometry_key: ShellGeometryKey::new(old_area, 0, 26, 0, None, ShellBars::NONE),
         };
         let new_area = Rect::new(0, 0, 81, 24);
 
@@ -1379,7 +1427,7 @@ mod tests {
         let resolver = legacy_sidebar_resolver(sidebar_width);
         compute_shell_view(
             layout,
-            ShellGeometryKey::new(area, 0, u64::from(sidebar_width), 0, None),
+            ShellGeometryKey::new(area, 0, u64::from(sidebar_width), 0, None, ShellBars::NONE),
             previous.cloned().unwrap_or_default(),
             &resolver,
         )

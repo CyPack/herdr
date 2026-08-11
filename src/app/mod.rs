@@ -859,6 +859,7 @@ impl App {
                 sidebar_width,
                 sidebar_collapsed,
                 restored_shell_template,
+                crate::ui::shell::ShellBars::from_config(&config.shell.bars),
             ),
             drag: None,
             workspace_press: None,
@@ -1156,6 +1157,9 @@ impl App {
                 preference.width,
                 preference.collapsed,
                 snapshot.restored_shell_template(),
+                // Bars come from config, which this path does not reload, so
+                // the ones already in hand are the current ones.
+                app.state.shell_presentation.bars(),
             );
         }
         if let Some(split) = snapshot.sidebar_section_split {
