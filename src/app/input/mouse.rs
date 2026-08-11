@@ -802,6 +802,13 @@ impl AppState {
                             self.enter_overlay_mode(Mode::ContextMenu);
                             return None;
                         }
+                        // TP-DOTS-17: the header's "+" starts the module's
+                        // "New branch..." — the same body the menu walks.
+                        let plus = crate::ui::header_new_branch_cell(head.rect);
+                        if self.mouse_capture && plus.width > 0 && mouse.column == plus.x {
+                            super::modal::start_branch_from_module(self, head.space_key);
+                            return None;
+                        }
                         if !self.collapsed_space_keys.remove(&head.space_key) {
                             self.collapsed_space_keys.insert(head.space_key);
                         }
@@ -838,6 +845,12 @@ impl AppState {
                                 list: MenuListState::new(0),
                             });
                             self.enter_overlay_mode(Mode::ContextMenu);
+                            return None;
+                        }
+                        // TP-DOTS-17: the node header's "+", same body.
+                        let plus = crate::ui::header_new_branch_cell(head.rect);
+                        if self.mouse_capture && plus.width > 0 && mouse.column == plus.x {
+                            super::modal::start_branch_from_module(self, head.project_key);
                             return None;
                         }
                         if !self.unfold_node(&head.project_key) {
@@ -3149,6 +3162,119 @@ mod tests {
             ),
             "the card dots open the branch menu; got {:?}",
             app.state.context_menu.as_ref().map(|menu| &menu.kind)
+        );
+    }
+
+    // TP-DOTS-17: the header's "+" is a second door to the module's
+    // "New branch..." — the press walks the same body the menu item walks
+    // (source workspace resolved, module armed, worktree dialog requested),
+    // never folds, and stays mouse chrome: without capture the press on
+    // that column folds like the rest of the row.
+    #[test]
+    fn a_left_press_on_the_header_plus_starts_the_branch_road() {
+        let mut app = app_for_mouse_test();
+        let mut main = crate::workspace::Workspace::test_new("main");
+        main.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr"),
+            is_linked_worktree: false,
+        });
+        main.identity_cwd = std::env::temp_dir();
+        // A second member so both header rows are born (a single-member
+        // bucket folds into its row — recorded behavior, TP-NODE-05).
+        let mut child = crate::workspace::Workspace::test_new("issue");
+        child.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr-issue"),
+            is_linked_worktree: true,
+        });
+        app.state.workspaces = vec![main, child];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mobile_width_threshold = 0;
+        app.state.space_projects = vec![crate::spaces::SpaceProject {
+            key: "project:herdr".into(),
+            name: "herdr".into(),
+            icon: None,
+            repo_roots: vec![std::path::PathBuf::from("/repo/herdr")],
+            space_keys: Vec::new(),
+        }];
+        app.state.mouse_capture = true;
+
+        let area = ratatui::layout::Rect::new(0, 0, 106, 20);
+        crate::ui::compute_view(&mut app.state, area);
+        let project_head = app.state.view.workspace_project_header_areas[0].clone();
+
+        // The node header's "+" arms the module and requests the dialog.
+        let head_plus = crate::ui::header_new_branch_cell(project_head.rect);
+        assert!(head_plus.width > 0, "the node header reserves a '+' cell");
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            head_plus.x,
+            head_plus.y,
+        ));
+        assert_eq!(
+            app.state.pending_branch_module,
+            Some("project:herdr".to_string()),
+            "the plus arms the module exactly like the menu item"
+        );
+        assert_eq!(
+            app.state.request_new_linked_worktree,
+            Some(0),
+            "the plus resolves the same source workspace the menu resolves"
+        );
+        assert!(
+            !app.state.node_folded("project:herdr"),
+            "the plus never folds the node"
+        );
+
+        // The bucket header's "+" walks the same road for its own key.
+        app.state.pending_branch_module = None;
+        app.state.request_new_linked_worktree = None;
+        crate::ui::compute_view(&mut app.state, area);
+        let group_head = app.state.view.workspace_group_header_areas[0].clone();
+        let group_plus = crate::ui::header_new_branch_cell(group_head.rect);
+        assert!(
+            group_plus.width > 0,
+            "the bucket header reserves a '+' cell"
+        );
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            group_plus.x,
+            group_plus.y,
+        ));
+        assert_eq!(
+            app.state.pending_branch_module,
+            Some("repo-key".to_string()),
+            "the bucket plus arms the bucket as the module"
+        );
+        assert_eq!(app.state.request_new_linked_worktree, Some(0));
+        assert!(
+            !app.state.collapsed_space_keys.contains("repo-key"),
+            "the plus never folds the group"
+        );
+
+        // Without the mouse the chrome is gone and the column folds again.
+        app.state.pending_branch_module = None;
+        app.state.request_new_linked_worktree = None;
+        app.state.mouse_capture = false;
+        crate::ui::compute_view(&mut app.state, area);
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            group_plus.x,
+            group_plus.y,
+        ));
+        assert!(
+            app.state.collapsed_space_keys.contains("repo-key"),
+            "without capture the '+' column is plain header and folds"
+        );
+        assert_eq!(
+            app.state.pending_branch_module, None,
+            "without capture nothing arms"
         );
     }
 

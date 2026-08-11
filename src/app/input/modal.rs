@@ -410,6 +410,28 @@ fn open_new_module_input(state: &mut AppState, parent: Option<String>) {
     state.enter_overlay_mode(Mode::RenameWorkspace);
 }
 
+/// TP-DOTS-17: the one branch-road every door walks. The header menu's
+/// "New branch..." (keyboard and mouse dispatch) and the header's trailing
+/// "+" all share this body, so the doors can never drift apart: resolve a
+/// source workspace under the module (ancestors included, TP-DOTS-14),
+/// arm the module and request the proven worktree dialog — or report the
+/// missing repository instead of silently doing nothing.
+pub(super) fn start_branch_from_module(state: &mut AppState, module_key: String) {
+    match crate::ui::worktree_source_for_module(state, &module_key) {
+        Some(ws_idx) => {
+            state.pending_branch_module = Some(module_key);
+            state.request_new_linked_worktree = Some(ws_idx);
+            state.context_menu = None;
+        }
+        None => {
+            state.config_diagnostic = Some(format!(
+                "no repository under module {module_key:?} yet — move a branch \
+                 under it first, then branch from there"
+            ));
+        }
+    }
+}
+
 pub(crate) fn open_new_workspace_dialog(state: &mut AppState, cwd: std::path::PathBuf) {
     let suggested_name = crate::workspace::derive_label_from_cwd(&cwd);
     state.creating_new_tab = false;
@@ -1001,21 +1023,10 @@ pub(super) fn apply_context_menu_action(
             ContextMenuKind::NodeHeader { node_key: key, .. }
             | ContextMenuKind::SpaceHeader { space_key: key, .. },
             Some("New branch..."),
-        ) => match crate::ui::worktree_source_for_module(state, &key) {
-            Some(ws_idx) => {
-                state.pending_branch_module = Some(key);
-                state.request_new_linked_worktree = Some(ws_idx);
-                state.context_menu = None;
-                leave_modal(state);
-            }
-            None => {
-                state.config_diagnostic = Some(format!(
-                    "no repository under module {key:?} yet — move a branch \
-                         under it first, then branch from there"
-                ));
-                leave_modal(state);
-            }
-        },
+        ) => {
+            start_branch_from_module(state, key);
+            leave_modal(state);
+        }
         // TP-DOTS-05/07: the header's creation road — sub hangs under the
         // header itself, parallel beside it (the header's own parent) — and
         // the fold verbs mirror what a left press does on the row.
@@ -1678,21 +1689,10 @@ impl App {
                 ContextMenuKind::NodeHeader { node_key: key, .. }
                 | ContextMenuKind::SpaceHeader { space_key: key, .. },
                 Some("New branch..."),
-            ) => match crate::ui::worktree_source_for_module(&self.state, &key) {
-                Some(ws_idx) => {
-                    self.state.pending_branch_module = Some(key);
-                    self.state.request_new_linked_worktree = Some(ws_idx);
-                    self.state.context_menu = None;
-                    leave_modal(&mut self.state);
-                }
-                None => {
-                    self.state.config_diagnostic = Some(format!(
-                        "no repository under module {key:?} yet — move a branch \
-                             under it first, then branch from there"
-                    ));
-                    leave_modal(&mut self.state);
-                }
-            },
+            ) => {
+                start_branch_from_module(&mut self.state, key);
+                leave_modal(&mut self.state);
+            }
             // TP-DOTS-05/07: the header's creation road on the mouse dispatch
             // — the same arms the keyboard road walks.
             (ContextMenuKind::NodeHeader { node_key, .. }, Some("New sub-module...")) => {
