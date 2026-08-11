@@ -783,15 +783,20 @@ pub struct ShellBarConfig {
     /// active theme; anything else is read as a literal colour. Empty means the
     /// subdued separator tone.
     pub color: String,
+    /// Two or more stops to fade the border between, along the bar's long
+    /// axis. Both ends have to resolve to real channel values, so named
+    /// terminal colours fall back to `color` rather than being guessed at.
+    pub gradient: Vec<String>,
 }
 
 impl ShellBarConfig {
-    const fn horizontal() -> Self {
+    fn horizontal() -> Self {
         Self {
             enabled: false,
             size: 3,
             border: true,
             color: String::new(),
+            gradient: Vec::new(),
         }
     }
 
@@ -801,6 +806,7 @@ impl ShellBarConfig {
             size: 12,
             border: true,
             color: String::new(),
+            gradient: Vec::new(),
         }
     }
 }

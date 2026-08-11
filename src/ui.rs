@@ -1293,12 +1293,14 @@ mod tests {
                 size: 5,
                 border: false,
                 color: String::new(),
+                gradient: Vec::new(),
             },
             top: crate::config::ShellBarConfig {
                 enabled: true,
                 size: 1,
                 border: false,
                 color: String::new(),
+                gradient: Vec::new(),
             },
             ..Default::default()
         });
@@ -1361,6 +1363,7 @@ mod tests {
                 size: 3,
                 border: true,
                 color: "orange".to_string(),
+                gradient: Vec::new(),
             },
             ..Default::default()
         };

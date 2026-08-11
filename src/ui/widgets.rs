@@ -6,6 +6,7 @@ use ratatui::{
     Frame,
 };
 
+use super::shell::BarTint;
 use super::size_class::{HeightClass, SizeClass, WidthClass};
 use crate::app::state::Palette;
 
@@ -44,7 +45,7 @@ pub(super) fn render_panel_shell(
 pub(super) fn render_bar_shell(
     frame: &mut Frame,
     area: Rect,
-    border_color: Color,
+    tint: BarTint,
     bg: Color,
 ) -> Option<Rect> {
     if area.width < 2 || area.height < 2 {
@@ -55,7 +56,7 @@ pub(super) fn render_bar_shell(
         .borders(Borders::ALL)
         .border_style(
             Style::default()
-                .fg(border_color)
+                .fg(tint.at(0, 1))
                 .add_modifier(Modifier::BOLD),
         )
         .border_set(ratatui::symbols::border::ROUNDED)
@@ -63,6 +64,29 @@ pub(super) fn render_bar_shell(
     let inner = block.inner(area);
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
+
+    // The block draws the glyphs; the fade only re-tints them, so the shape is
+    // never a function of the colour. It walks the long axis, because a
+    // gradient across the short one would finish inside a single cell.
+    let horizontal = area.width >= area.height;
+    let span = if horizontal { area.width } else { area.height };
+    let buffer = frame.buffer_mut();
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            let on_border = x == area.x
+                || x + 1 == area.x + area.width
+                || y == area.y
+                || y + 1 == area.y + area.height;
+            if !on_border {
+                continue;
+            }
+            let position = if horizontal { x - area.x } else { y - area.y };
+            if let Some(cell) = buffer.cell_mut((x, y)) {
+                cell.set_fg(tint.at(position, span));
+            }
+        }
+    }
+
     Some(inner)
 }
 

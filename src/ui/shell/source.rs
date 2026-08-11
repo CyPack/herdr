@@ -205,6 +205,51 @@ impl ShellBars {
     }
 }
 
+/// What one edge's border is painted with: a tone, or a fade between two.
+///
+/// A fade needs real channel values at both ends. A named terminal colour has
+/// none — `Color::Yellow` is whatever the terminal decides — so a gradient that
+/// names one falls back to the solid tone instead of inventing numbers for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BarTint {
+    start: Color,
+    end: Option<Color>,
+}
+
+impl BarTint {
+    pub(crate) const fn solid(color: Color) -> Self {
+        Self {
+            start: color,
+            end: None,
+        }
+    }
+
+    /// The tone at `position` of `span` cells along the bar's long axis.
+    ///
+    /// A solid tint ignores both, which is what makes this the only colour
+    /// lookup the renderer needs.
+    pub(crate) fn at(self, position: u16, span: u16) -> Color {
+        let (Some(end), true) = (self.end, span > 1) else {
+            return self.start;
+        };
+        let (Color::Rgb(r0, g0, b0), Color::Rgb(r1, g1, b1)) = (self.start, end) else {
+            return self.start;
+        };
+        let t = f32::from(position.min(span - 1)) / f32::from(span - 1);
+        let mix = |a: u8, b: u8| {
+            (f32::from(a) + (f32::from(b) - f32::from(a)) * t)
+                .round()
+                .clamp(0.0, 255.0) as u8
+        };
+        Color::Rgb(mix(r0, r1), mix(g0, g1), mix(b0, b1))
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn fades(self) -> bool {
+        self.end.is_some()
+    }
+}
+
 /// What each edge's border is painted with.
 ///
 /// Kept beside the geometry rather than inside it: a colour never moves a
@@ -212,23 +257,35 @@ impl ShellBars {
 /// projection every time somebody edited a theme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BarColors {
-    pub top: Color,
-    pub bottom: Color,
-    pub left: Color,
-    pub right: Color,
+    pub top: BarTint,
+    pub bottom: BarTint,
+    pub left: BarTint,
+    pub right: BarTint,
 }
 
 impl BarColors {
+    /// The warm default, spelled as a constant so a presentation can be built
+    /// in a const context before any palette exists.
+    pub(crate) const DEFAULT_CONST: Self = {
+        let peach = BarTint::solid(Color::Rgb(250, 179, 135));
+        Self {
+            top: peach,
+            bottom: peach,
+            left: peach,
+            right: peach,
+        }
+    };
+
     pub(crate) fn from_config(config: &ShellBarsConfig, palette: &Palette) -> Self {
         Self {
-            top: bar_color(&config.top.color, palette),
-            bottom: bar_color(&config.bottom.color, palette),
-            left: bar_color(&config.left.color, palette),
-            right: bar_color(&config.right.color, palette),
+            top: bar_tint(&config.top, palette, "top"),
+            bottom: bar_tint(&config.bottom, palette, "bottom"),
+            left: bar_tint(&config.left, palette, "left"),
+            right: bar_tint(&config.right, palette, "right"),
         }
     }
 
-    pub(crate) const fn for_region(self, region: RegionId) -> Color {
+    pub(crate) const fn for_region(self, region: RegionId) -> BarTint {
         match region {
             RegionId::TopBar => self.top,
             RegionId::BottomBar => self.bottom,
@@ -238,23 +295,47 @@ impl BarColors {
     }
 }
 
-impl BarColors {
-    /// The warm default, spelled as a constant so a presentation can be built
-    /// in a const context before any palette exists.
-    pub(crate) const DEFAULT_CONST: Self = {
-        let peach = Color::Rgb(250, 179, 135);
-        Self {
-            top: peach,
-            bottom: peach,
-            left: peach,
-            right: peach,
-        }
-    };
-}
-
 impl Default for BarColors {
     fn default() -> Self {
         Self::DEFAULT_CONST
+    }
+}
+
+/// Read one edge's tint: a fade when both ends carry channel values, the solid
+/// tone otherwise.
+fn bar_tint(config: &ShellBarConfig, palette: &Palette, edge: &'static str) -> BarTint {
+    let solid = bar_color(&config.color, palette);
+    let stops: Vec<Color> = config
+        .gradient
+        .iter()
+        .map(|spec| bar_color(spec, palette))
+        .collect();
+    match stops.as_slice() {
+        [] => BarTint::solid(solid),
+        [only] => {
+            tracing::warn!(
+                edge,
+                "a gradient needs two ends; the single stop is used as a solid tone"
+            );
+            BarTint::solid(*only)
+        }
+        [first, .., last] => {
+            if matches!(first, Color::Rgb(..)) && matches!(last, Color::Rgb(..)) {
+                BarTint {
+                    start: *first,
+                    end: Some(*last),
+                }
+            } else {
+                // A named terminal colour has no channel values to walk
+                // between; guessing them would paint a fade the person never
+                // described.
+                tracing::warn!(
+                    edge,
+                    "a gradient end has no channel values; falling back to the solid tone"
+                );
+                BarTint::solid(solid)
+            }
+        }
     }
 }
 
@@ -525,6 +606,7 @@ mod tests {
             size,
             border: false,
             color: String::new(),
+            gradient: Vec::new(),
         }
     }
 
@@ -534,6 +616,7 @@ mod tests {
             size,
             border: true,
             color: String::new(),
+            gradient: Vec::new(),
         }
     }
 
@@ -766,6 +849,93 @@ mod tests {
         assert_eq!(bar_color("#fab387", &palette), parse_color("#fab387"));
         // Unreadable input must still answer with a colour.
         let _ = bar_color("not-a-colour-at-all", &palette);
+    }
+
+    fn gradient_config(stops: &[&str]) -> ShellBarConfig {
+        ShellBarConfig {
+            enabled: true,
+            size: 3,
+            border: true,
+            color: String::new(),
+            gradient: stops.iter().map(|s| (*s).to_string()).collect(),
+        }
+    }
+
+    // T41 · a fade that ends where it began is not a fade.
+    #[test]
+    fn a_two_stop_gradient_changes_colour_across_the_span() {
+        let palette = Palette::tokyo_night();
+        let config = ShellBarsConfig {
+            top: gradient_config(&["#000000", "#ffffff"]),
+            ..ShellBarsConfig::default()
+        };
+        let tint = BarColors::from_config(&config, &palette).top;
+
+        assert!(tint.fades());
+        assert_eq!(
+            tint.at(0, 11),
+            Color::Rgb(0, 0, 0),
+            "the first cell is the first stop"
+        );
+        assert_eq!(
+            tint.at(10, 11),
+            Color::Rgb(255, 255, 255),
+            "and the last cell is the last stop"
+        );
+        let middle = tint.at(5, 11);
+        assert_ne!(middle, tint.at(0, 11));
+        assert_ne!(middle, tint.at(10, 11));
+    }
+
+    // T42 · a one-cell span has nowhere to fade, and must not divide by zero.
+    #[test]
+    fn a_gradient_over_a_single_cell_answers_with_its_first_stop() {
+        let palette = Palette::tokyo_night();
+        let config = ShellBarsConfig {
+            top: gradient_config(&["#102030", "#405060"]),
+            ..ShellBarsConfig::default()
+        };
+        let tint = BarColors::from_config(&config, &palette).top;
+        assert_eq!(tint.at(0, 1), Color::Rgb(16, 32, 48));
+        assert_eq!(
+            tint.at(9, 1),
+            Color::Rgb(16, 32, 48),
+            "clamped, not wrapped"
+        );
+    }
+
+    // T43 · a named terminal colour has no channels to walk between.
+    #[test]
+    fn a_gradient_that_names_a_channelless_colour_falls_back_to_solid() {
+        let palette = Palette::tokyo_night();
+        let config = ShellBarsConfig {
+            // `magenta` is a terminal slot, not a value: what it looks like is
+            // the terminal's business. Inventing channels for it would paint a
+            // fade nobody described. (`yellow` and friends are palette tokens
+            // here and DO carry channels — the distinction is the point.)
+            top: ShellBarConfig {
+                color: "accent".to_string(),
+                ..gradient_config(&["magenta", "#ffffff"])
+            },
+            ..ShellBarsConfig::default()
+        };
+        let tint = BarColors::from_config(&config, &palette).top;
+        assert!(!tint.fades());
+        assert_eq!(tint.at(0, 10), palette.accent, "the solid tone stands in");
+        assert_eq!(tint.at(9, 10), palette.accent);
+    }
+
+    // T44 · one stop is a colour, not a gradient.
+    #[test]
+    fn a_single_stop_gradient_is_read_as_a_solid_tone() {
+        let palette = Palette::tokyo_night();
+        let config = ShellBarsConfig {
+            top: gradient_config(&["mauve"]),
+            ..ShellBarsConfig::default()
+        };
+        let tint = BarColors::from_config(&config, &palette).top;
+        assert!(!tint.fades());
+        assert_eq!(tint.at(0, 10), palette.mauve);
     }
 
     // T20b · a disabled edge is inert no matter what size it names.

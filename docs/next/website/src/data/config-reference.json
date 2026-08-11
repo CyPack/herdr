@@ -1253,6 +1253,12 @@
           "description": "Draw a strip along the bottom edge of the frame."
         },
         {
+          "key": "shell.bars.bottom.gradient",
+          "type": "array",
+          "default": "[]",
+          "description": "Two or more colour stops to fade the bottom bar's border between, along its long axis. Stops accept the same palette tokens and literals as `color`. Both ends must carry channel values, so a named terminal colour falls back to `color`."
+        },
+        {
           "key": "shell.bars.bottom.size",
           "type": "integer",
           "default": "3",
@@ -1275,6 +1281,12 @@
           "type": "boolean",
           "default": "false",
           "description": "Draw a strip along the left edge, outside the agent panel."
+        },
+        {
+          "key": "shell.bars.left.gradient",
+          "type": "array",
+          "default": "[]",
+          "description": "Two or more colour stops to fade the left bar's border between, along its long axis. Stops accept the same palette tokens and literals as `color`. Both ends must carry channel values, so a named terminal colour falls back to `color`."
         },
         {
           "key": "shell.bars.left.size",
@@ -1301,6 +1313,12 @@
           "description": "Draw a strip along the right edge of the frame."
         },
         {
+          "key": "shell.bars.right.gradient",
+          "type": "array",
+          "default": "[]",
+          "description": "Two or more colour stops to fade the right bar's border between, along its long axis. Stops accept the same palette tokens and literals as `color`. Both ends must carry channel values, so a named terminal colour falls back to `color`."
+        },
+        {
           "key": "shell.bars.right.size",
           "type": "integer",
           "default": "12",
@@ -1323,6 +1341,12 @@
           "type": "boolean",
           "default": "false",
           "description": "Draw a strip along the top edge of the frame."
+        },
+        {
+          "key": "shell.bars.top.gradient",
+          "type": "array",
+          "default": "[]",
+          "description": "Two or more colour stops to fade the top bar's border between, along its long axis. Stops accept the same palette tokens and literals as `color`. Both ends must carry channel values, so a named terminal colour falls back to `color`."
         },
         {
           "key": "shell.bars.top.size",
