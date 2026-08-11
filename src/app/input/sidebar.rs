@@ -10,11 +10,10 @@ impl AppState {
         if self.sidebar_collapsed || sidebar.width <= 1 || sidebar.height == 0 {
             return Rect::default();
         }
-        crate::ui::workspace_list_rect(
-            sidebar,
-            self.sidebar_section_split,
-            crate::ui::shell::SidebarChrome::NONE,
-        )
+        // The frame is drawn out of this same rectangle, so the hit test has to
+        // read the same chrome the renderer did -- passing NONE here would put
+        // every row one cell off the row the user can see.
+        crate::ui::workspace_list_rect(sidebar, self.sidebar_section_split, self.sidebar_chrome)
     }
 
     pub(super) fn agent_panel_rect(&self) -> Rect {
@@ -25,7 +24,7 @@ impl AppState {
         let (_, detail_area) = crate::ui::expanded_sidebar_sections(
             sidebar,
             self.sidebar_section_split,
-            crate::ui::shell::SidebarChrome::NONE,
+            self.sidebar_chrome,
         );
         detail_area
     }
@@ -1479,6 +1478,52 @@ mod tests {
         assert!(app.state.sidebar_collapsed);
         assert!(app.state.session_dirty);
         assert!(app.state.drag.is_none());
+    }
+
+    // T58b · the two halves are hit-tested through the same inset they were
+    // drawn through. A frame steals a row and a column from its half; if only
+    // the drawing knows that, every row in the panel answers for its neighbour
+    // and no assertion in the suite notices, because both rectangles are still
+    // inside the sidebar and still non-empty.
+    #[test]
+    fn a_framed_half_is_clicked_through_the_inset_it_was_drawn_through() {
+        let mut app = app_for_mouse_test();
+        app.state.sidebar_collapsed = false;
+        app.state.view.sidebar_rect = Rect::new(0, 0, 26, 20);
+        let tint = crate::ui::shell::BarTint::solid(ratatui::style::Color::Rgb(1, 2, 3));
+
+        for chrome in [
+            crate::ui::shell::SidebarChrome {
+                spaces: Some(tint),
+                agents: None,
+            },
+            crate::ui::shell::SidebarChrome {
+                spaces: None,
+                agents: Some(tint),
+            },
+            crate::ui::shell::SidebarChrome {
+                spaces: Some(tint),
+                agents: Some(tint),
+            },
+        ] {
+            app.state.sidebar_chrome = chrome;
+            let (drawn_spaces, drawn_agents) = crate::ui::expanded_sidebar_sections(
+                app.state.view.sidebar_rect,
+                app.state.sidebar_section_split,
+                chrome,
+            );
+
+            assert_eq!(
+                app.state.workspace_list_rect(),
+                drawn_spaces,
+                "the spaces half is clicked where it is drawn"
+            );
+            assert_eq!(
+                app.state.agent_panel_rect(),
+                drawn_agents,
+                "the agents half is clicked where it is drawn"
+            );
+        }
     }
 
     // T58 · when the agents half wears a frame the collapse icon moves, and the
