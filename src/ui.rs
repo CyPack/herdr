@@ -90,7 +90,7 @@ pub(crate) use self::scrollbar::{
     scrollbar_offset_from_row, scrollbar_thumb_grab_offset, should_show_scrollbar,
 };
 use self::settings::render_settings_overlay;
-use self::shell::{RegionId, ShellGeometryKey, ShellLayout};
+use self::shell::{RegionId, ShellGeometryKey};
 use self::sidebar::{render_sidebar, render_sidebar_collapsed};
 use self::status::{
     copy_feedback_rect, render_config_diagnostic, render_copy_feedback, render_toast_notification,
@@ -149,7 +149,6 @@ use crate::app::{AppState, Mode};
 use crate::terminal::TerminalRuntimeRegistry;
 
 const COLLAPSED_WIDTH: u16 = 4; // num + space + dot + separator
-const LEGACY_DESKTOP_SHELL_LAYOUT_REVISION: u64 = 1;
 const MOBILE_EMPTY_SHELL_LAYOUT_REVISION: u64 = 2;
 
 // Braille spinner frames — smooth rotation
@@ -349,17 +348,19 @@ fn compute_view_internal(
     // encodes exactly today's `sidebar | main` layout, so this stays
     // behavior-identical to `Layout::horizontal([Length(sidebar_w), Min(1)])`
     // while making the regions individually addressable for future composition.
-    let shell_layout = ShellLayout::default();
+    // One home for "which tree is this". Asking for nothing still answers with
+    // the legacy desktop tree, so this path is unchanged; what changed is that
+    // the revision and the identity now come FROM the derivation instead of
+    // being asserted next to it, which is what lets a configured tree key the
+    // cache correctly the day one exists.
+    let derived = shell::derive_desktop_shell_layout(None);
+    let shell_layout = derived.layout;
     let shell_key = ShellGeometryKey::new(
         area,
-        LEGACY_DESKTOP_SHELL_LAYOUT_REVISION,
+        derived.revision,
         u64::from(sidebar_w),
         app.shell_presentation.left_panel_collapse_revision(),
-        // No template yet: this path still derives its regions from
-        // `ShellLayout::default()`. The key carries the answer explicitly so
-        // that the day a template is chosen here, the cache cannot mistake the
-        // new geometry for the old one.
-        None,
+        derived.template,
     );
     let previous_shell_view = std::mem::take(&mut app.view.shell);
     let shell_view =
