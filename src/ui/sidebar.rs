@@ -805,9 +805,20 @@ pub(crate) fn workspace_menu_cell(card_rect: Rect) -> Rect {
     Rect::new(card_rect.x + card_rect.width - 3, card_rect.y, 1, 1)
 }
 
-/// The header rows' "manage" cell: the trailing edge of a node or bucket
-/// header (TP-DOTS-03). Same contract as [`workspace_menu_cell`].
+/// The header rows' "manage" cell: a breathing cell left of the header "+"
+/// (TP-DOTS-03), mirroring the card's `[⋯] [+]` layout. Same contract as
+/// [`workspace_menu_cell`].
 pub(crate) fn header_menu_cell(head_rect: Rect) -> Rect {
+    if head_rect.width < 6 {
+        return Rect::default();
+    }
+    Rect::new(head_rect.x + head_rect.width - 3, head_rect.y, 1, 1)
+}
+
+/// The header rows' "+": the trailing edge of a node or bucket header,
+/// starting the module's "New branch..." road (TP-DOTS-17 — the same body
+/// the header menu walks, so the two doors can never drift apart).
+pub(crate) fn header_new_branch_cell(head_rect: Rect) -> Rect {
     if head_rect.width < 6 {
         return Rect::default();
     }
@@ -2514,9 +2525,9 @@ fn render_workspace_project_headers(app: &AppState, frame: &mut Frame, list_bott
             .iter()
             .map(|span| super::text::display_width(span.content.as_ref()))
             .sum::<usize>();
-        // TP-DOTS-09: the manage cell is reserved, so a long project name
-        // truncates short of it instead of bleeding underneath.
-        let reserved = if app.mouse_capture { 2 } else { 0 };
+        // TP-DOTS-09: the manage chrome `[⋯] [+]` is reserved, so a long
+        // project name truncates short of it instead of bleeding underneath.
+        let reserved = if app.mouse_capture { 4 } else { 0 };
         spans.push(Span::styled(
             super::text::truncate_end(
                 &project.name,
@@ -2531,6 +2542,8 @@ fn render_workspace_project_headers(app: &AppState, frame: &mut Frame, list_bott
 
 /// TP-DOTS-03: the "⋯" every header row wears while the mouse owns the
 /// sidebar — the visible door to the menu right-click already opens.
+/// TP-DOTS-17: the "+" beside it, one breathing cell to the right — the
+/// visible door to the module's "New branch..." road.
 fn draw_header_menu_dots(app: &AppState, frame: &mut Frame, head_rect: Rect) {
     if !app.mouse_capture {
         return;
@@ -2541,6 +2554,13 @@ fn draw_header_menu_dots(app: &AppState, frame: &mut Frame, head_rect: Rect) {
     }
     frame.buffer_mut()[(dots.x, dots.y)]
         .set_symbol("⋯")
+        .set_style(Style::default().fg(app.palette.overlay0));
+    let plus = header_new_branch_cell(head_rect);
+    if plus.width == 0 {
+        return;
+    }
+    frame.buffer_mut()[(plus.x, plus.y)]
+        .set_symbol("+")
         .set_style(Style::default().fg(app.palette.overlay0));
 }
 
@@ -2588,7 +2608,7 @@ fn render_workspace_group_headers(app: &AppState, frame: &mut Frame, list_bottom
             .map(|span| super::text::display_width(span.content.as_ref()))
             .sum::<usize>();
         // TP-DOTS-09: same reservation as the project header above.
-        let reserved = if app.mouse_capture { 2 } else { 0 };
+        let reserved = if app.mouse_capture { 4 } else { 0 };
         spans.push(Span::styled(
             super::text::truncate_end(
                 &space_label_for_key(app, &head.space_key),
@@ -5904,6 +5924,24 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             "⋯",
             "the project header draws the manage dots"
         );
+        // TP-DOTS-17: the header carries a "+" on its trailing edge — the
+        // card layout `[⋯] [+]`, one level up — and the dots sit a breathing
+        // cell to its left.
+        let head_plus = header_new_branch_cell(project_head);
+        assert!(
+            head_plus.width > 0,
+            "the project header reserves a '+' cell"
+        );
+        assert_eq!(
+            buffer[(head_plus.x, head_plus.y)].symbol(),
+            "+",
+            "the project header draws the new-branch plus"
+        );
+        assert_eq!(
+            head_dots.x,
+            head_plus.x - 2,
+            "one breathing cell separates the header dots from the plus"
+        );
 
         let group_head = app.view.workspace_group_header_areas[0].rect;
         let group_dots = header_menu_cell(group_head);
@@ -5911,6 +5949,12 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             buffer[(group_dots.x, group_dots.y)].symbol(),
             "⋯",
             "the bucket header draws the manage dots"
+        );
+        let group_plus = header_new_branch_cell(group_head);
+        assert_eq!(
+            buffer[(group_plus.x, group_plus.y)].symbol(),
+            "+",
+            "the bucket header draws the new-branch plus"
         );
 
         app.mouse_capture = false;
@@ -5924,6 +5968,11 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             buffer[(head_dots.x, head_dots.y)].symbol(),
             "⋯",
             "without the mouse the header cell holds no dots"
+        );
+        assert_ne!(
+            buffer[(head_plus.x, head_plus.y)].symbol(),
+            "+",
+            "without the mouse the header cell holds no plus"
         );
     }
 
