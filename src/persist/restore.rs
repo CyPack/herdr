@@ -402,7 +402,8 @@ fn restore_workspace(
         return (None, failed_imports);
     }
 
-    let worktree_space = restored_worktree_space_membership(snap.worktree_space.clone());
+    let worktree_space =
+        worktree_space_for_restore(snap.worktree_space.clone(), &snap.identity_cwd);
 
     (
         Some(Workspace {
@@ -430,6 +431,19 @@ fn restore_workspace(
         .map(|workspace| (workspace, terminals, terminal_runtimes)),
         failed_imports,
     )
+}
+
+/// What the restored workspace carries as its space membership: the persisted
+/// membership when it still points at a live checkout — otherwise nothing.
+/// TP-WSID-10 extends this into a self-heal (derive from the identity cwd)
+/// so workspaces that predate birth-claiming pick up their repo on restore
+/// and on live-handoff imports.
+fn worktree_space_for_restore(
+    persisted: Option<crate::workspace::WorktreeSpaceMembership>,
+    identity_cwd: &std::path::Path,
+) -> Option<crate::workspace::WorktreeSpaceMembership> {
+    restored_worktree_space_membership(persisted)
+        .or_else(|| crate::workspace::derive_initial_worktree_membership(identity_cwd))
 }
 
 fn restored_worktree_space_membership(
@@ -1046,6 +1060,56 @@ mod tests {
         };
 
         assert_eq!(restored_worktree_space_membership(Some(membership)), None);
+    }
+
+    // TP-WSID-10: restore heals a workspace that predates birth-claiming —
+    // when nothing was persisted but the identity cwd is a main checkout,
+    // the membership is derived instead of staying empty forever. The same
+    // path runs on live-handoff imports, so the heal lands without a restart.
+    #[test]
+    fn restore_derives_the_membership_when_none_was_persisted() {
+        let root = std::env::temp_dir().join(format!("herdr-wsid10-{}", std::process::id()));
+        let repo = root.join("project");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+
+        let healed = worktree_space_for_restore(None, &repo)
+            .expect("a main-checkout identity heals into its membership");
+        assert_eq!(
+            healed.checkout_path,
+            crate::worktree::canonical_or_original(&repo)
+        );
+        assert!(!healed.is_linked_worktree);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // The persisted membership stays authoritative: derivation only fills
+    // silence, it never overrides what the session already knew.
+    #[test]
+    fn restore_prefers_the_persisted_membership_over_derivation() {
+        let root = std::env::temp_dir().join(format!("herdr-wsid10b-{}", std::process::id()));
+        let checkout = root.join("checkout");
+        std::fs::create_dir_all(checkout.join(".git")).unwrap();
+        std::fs::write(checkout.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        let persisted_key = crate::workspace::git_space_metadata(&checkout)
+            .expect("fixture checkout is a repo")
+            .key;
+        let persisted = crate::workspace::WorktreeSpaceMembership {
+            key: persisted_key,
+            label: "persisted-label".into(),
+            repo_root: checkout.clone(),
+            checkout_path: checkout.clone(),
+            is_linked_worktree: false,
+        };
+
+        let identity = root.join("another-repo");
+        std::fs::create_dir_all(identity.join(".git")).unwrap();
+        std::fs::write(identity.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+
+        let kept = worktree_space_for_restore(Some(persisted), &identity)
+            .expect("a live persisted membership survives");
+        assert_eq!(kept.label, "persisted-label");
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

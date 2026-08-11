@@ -364,6 +364,69 @@ mod tests {
         let _ = std::fs::remove_dir_all(&focused_cwd);
     }
 
+    // TP-WSID-07: the create path itself stamps the birth identity — a
+    // workspace created with a repository cwd reports its checkout without
+    // any worktree attach happening first.
+    #[tokio::test]
+    async fn workspace_create_stamps_git_identity_for_a_repo_cwd() {
+        use super::super::test_support::{exiting_test_command, shutdown_test_runtimes};
+        use crate::config::ShellModeConfig;
+
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.default_shell = exiting_test_command().into();
+        app.state.shell_mode = ShellModeConfig::NonLogin;
+        app.state.workspaces = vec![Workspace::test_new("seed")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.ensure_test_terminals();
+
+        let repo = std::env::temp_dir().join(format!(
+            "herdr-wsid07-create-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+
+        let response = app.handle_workspace_create(
+            "req".into(),
+            WorkspaceCreateParams {
+                cwd: Some(repo.display().to_string()),
+                focus: false,
+                label: None,
+                env: Default::default(),
+            },
+        );
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        assert!(matches!(
+            success.result,
+            ResponseResult::WorkspaceCreated { .. }
+        ));
+
+        let created = &app.state.workspaces[1];
+        let space = created
+            .worktree_space()
+            .expect("a repo cwd stamps the birth identity");
+        assert_eq!(
+            space.checkout_path,
+            crate::worktree::canonical_or_original(&repo)
+        );
+        assert!(!space.is_linked_worktree);
+
+        shutdown_test_runtimes(&mut app);
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
     fn app_with_linked_worktree() -> App {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
