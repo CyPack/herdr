@@ -146,12 +146,48 @@ pub struct SpaceNode {
     pub parent: Option<String>,
 }
 
+/// One edge reader for the whole tree the sidebar walks: a node's configured
+/// parent, or — when the key belongs to a split rule (a module bucket) —
+/// that rule's own parent. Modules and buckets are one forest to the person
+/// using them (TP-NODE-08); every chain walker reads its edges here so none
+/// of them can stop halfway up a mixed chain.
+pub fn tree_parent_of<'a>(
+    nodes: &'a [SpaceNode],
+    rules: &'a [SpaceSplitRule],
+    key: &str,
+) -> Option<&'a str> {
+    if let Some(node) = nodes.iter().find(|node| node.key == key) {
+        return node.parent.as_deref();
+    }
+    rules
+        .iter()
+        .find(|rule| rule.key == key)
+        .and_then(|rule| rule.parent.as_deref())
+}
+
+/// The bucket-side edges of the tree, in the shape the forest validator
+/// wants them: split-rule key → that rule's own parent.
+pub fn split_parent_map(
+    rules: &[SpaceSplitRule],
+) -> std::collections::HashMap<String, Option<String>> {
+    rules
+        .iter()
+        .map(|rule| (rule.key.clone(), rule.parent.clone()))
+        .collect()
+}
+
 /// The forest, made safe to walk: duplicates dropped, unknown parents and
 /// cycles cut loose, excessive depth flagged — all loudly, none fatally.
 ///
 /// TP-NODE-03: config problems in the tree shape degrade to a flatter tree
 /// plus a diagnostic, never to a failed load and never to a hung walker.
-pub fn validate_node_forest(nodes: Vec<SpaceNode>) -> (Vec<SpaceNode>, Vec<String>) {
+/// `split_parents` names the split-rule keys (with their own parents): a
+/// node may hang under a bucket (TP-NODE-08), and a cycle that runs through
+/// a bucket is still a cycle (TP-NODE-09).
+pub fn validate_node_forest(
+    nodes: Vec<SpaceNode>,
+    split_parents: &std::collections::HashMap<String, Option<String>>,
+) -> (Vec<SpaceNode>, Vec<String>) {
     let mut diagnostics = Vec::new();
 
     // A duplicate key would make two rows share one identity and one fold.
@@ -168,12 +204,13 @@ pub fn validate_node_forest(nodes: Vec<SpaceNode>) -> (Vec<SpaceNode>, Vec<Strin
         forest.push(node);
     }
 
-    // A parent nobody defines is a typo, not a tree.
+    // A parent nobody defines is a typo, not a tree. A bucket (split-rule
+    // key) is defined too: modules hang under buckets (TP-NODE-08).
     let keys: std::collections::HashSet<String> =
         forest.iter().map(|node| node.key.clone()).collect();
     for node in &mut forest {
         if let Some(parent) = node.parent.as_deref() {
-            if !keys.contains(parent) {
+            if !keys.contains(parent) && !split_parents.contains_key(parent) {
                 diagnostics.push(format!(
                     "spaces node {:?} names an unknown parent {parent:?}; \
                      keeping it at top level",
@@ -186,10 +223,14 @@ pub fn validate_node_forest(nodes: Vec<SpaceNode>) -> (Vec<SpaceNode>, Vec<Strin
 
     // A cycle can never take the walker down: every member drops to top
     // level. Walked per node with a seen-set; the forest is config-sized.
-    let parent_of: std::collections::HashMap<String, Option<String>> = forest
-        .iter()
-        .map(|node| (node.key.clone(), node.parent.clone()))
-        .collect();
+    // The walk crosses bucket edges too — a loop that runs through a split
+    // rule is still a loop (TP-NODE-09); node entries override on key clash.
+    let mut parent_of: std::collections::HashMap<String, Option<String>> = split_parents.clone();
+    parent_of.extend(
+        forest
+            .iter()
+            .map(|node| (node.key.clone(), node.parent.clone())),
+    );
     let mut in_cycle = std::collections::HashSet::new();
     for node in &forest {
         let mut walked = std::collections::HashSet::new();
@@ -230,17 +271,21 @@ pub fn validate_node_forest(nodes: Vec<SpaceNode>) -> (Vec<SpaceNode>, Vec<Strin
 
     // Depth eight is a warning, not a wall (K6): the chain keeps rendering,
     // the author is told the tree has outgrown what a sidebar can indent.
-    let parent_of: std::collections::HashMap<String, Option<String>> = forest
-        .iter()
-        .map(|node| (node.key.clone(), node.parent.clone()))
-        .collect();
+    // Mixed chains count bucket steps too.
+    let mut parent_of: std::collections::HashMap<String, Option<String>> = split_parents.clone();
+    parent_of.extend(
+        forest
+            .iter()
+            .map(|node| (node.key.clone(), node.parent.clone())),
+    );
+    let guard = forest.len() + split_parents.len();
     let mut deepest = 0usize;
     for node in &forest {
         let mut depth = 0usize;
         let mut current = parent_of.get(&node.key).and_then(|p| p.clone());
         while let Some(key) = current {
             depth += 1;
-            if depth > forest.len() {
+            if depth > guard {
                 break; // Unreachable after the cycle pass; belt and braces.
             }
             current = parent_of.get(&key).and_then(|p| p.clone());
@@ -550,11 +595,14 @@ mod tests {
     // outside the cycle keeps its place.
     #[test]
     fn a_cycle_is_reported_and_its_nodes_go_top_level() {
-        let (forest, diagnostics) = validate_node_forest(vec![
-            node("a", Some("b")),
-            node("b", Some("a")),
-            node("c", Some("a")),
-        ]);
+        let (forest, diagnostics) = validate_node_forest(
+            vec![
+                node("a", Some("b")),
+                node("b", Some("a")),
+                node("c", Some("a")),
+            ],
+            &Default::default(),
+        );
 
         let parent_of = |key: &str| {
             forest
@@ -579,8 +627,10 @@ mod tests {
     // at top level, and never drop the node itself.
     #[test]
     fn an_unknown_parent_is_reported_and_the_node_stays_top_level() {
-        let (forest, diagnostics) =
-            validate_node_forest(vec![node("a", Some("ghost")), node("b", None)]);
+        let (forest, diagnostics) = validate_node_forest(
+            vec![node("a", Some("ghost")), node("b", None)],
+            &Default::default(),
+        );
 
         assert_eq!(forest.len(), 2, "no node is dropped over a bad parent");
         assert_eq!(
@@ -596,6 +646,47 @@ mod tests {
         );
     }
 
+    // TP-NODE-08: a module bucket is a parent like any other — a node
+    // hanging under a split rule's key is a valid tree, not a typo.
+    #[test]
+    fn a_node_may_hang_under_a_bucket() {
+        let split_parents =
+            std::collections::HashMap::from([("herdr:tiling".to_string(), None::<String>)]);
+        let (forest, diagnostics) = validate_node_forest(
+            vec![node("group:probe", Some("herdr:tiling"))],
+            &split_parents,
+        );
+
+        assert!(
+            diagnostics.is_empty(),
+            "a bucket parent is defined, not a ghost: {diagnostics:?}"
+        );
+        assert_eq!(
+            forest[0].parent.as_deref(),
+            Some("herdr:tiling"),
+            "the bucket parent survives validation"
+        );
+    }
+
+    // TP-NODE-09: a cycle that runs through a bucket is still a cycle — the
+    // walker can never be handed a loop just because one edge is a rule's.
+    #[test]
+    fn a_cycle_through_a_bucket_is_still_caught() {
+        let split_parents =
+            std::collections::HashMap::from([("bucket".to_string(), Some("group:a".to_string()))]);
+        let (forest, diagnostics) =
+            validate_node_forest(vec![node("group:a", Some("bucket"))], &split_parents);
+
+        assert_eq!(
+            forest[0].parent, None,
+            "the node side of the loop drops to top level"
+        );
+        assert!(
+            diagnostics.iter().any(|d| d.contains("cycle")),
+            "the author is told about the cycle: {diagnostics:?}"
+        );
+    }
+
     // K6: depth eight is a warning, not a wall — the chain keeps rendering.
     #[test]
     fn depth_beyond_eight_warns_but_still_chains() {
@@ -603,7 +694,7 @@ mod tests {
         for i in 1..=9 {
             nodes.push(node(&format!("n{i}"), Some(&format!("n{}", i - 1))));
         }
-        let (forest, diagnostics) = validate_node_forest(nodes);
+        let (forest, diagnostics) = validate_node_forest(nodes, &Default::default());
 
         assert_eq!(
             forest
@@ -623,15 +714,18 @@ mod tests {
     // fold. The first definition wins, the second is dropped loudly.
     #[test]
     fn a_duplicate_node_key_keeps_the_first_and_drops_the_second() {
-        let (forest, diagnostics) = validate_node_forest(vec![
-            node("a", None),
-            SpaceNode {
-                key: "a".to_string(),
-                name: "impostor".to_string(),
-                icon: None,
-                parent: None,
-            },
-        ]);
+        let (forest, diagnostics) = validate_node_forest(
+            vec![
+                node("a", None),
+                SpaceNode {
+                    key: "a".to_string(),
+                    name: "impostor".to_string(),
+                    icon: None,
+                    parent: None,
+                },
+            ],
+            &Default::default(),
+        );
 
         assert_eq!(forest.len(), 1);
         assert_eq!(forest[0].name, "a", "the first definition wins");

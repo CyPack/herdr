@@ -327,13 +327,13 @@ mod tests {
         // change this digest exists to surface. The structural assertions
         // above are untouched.
         //
-        // Re-baselined 2026-08-11: every workspace row now carries a "⋯"
-        // one column left of the "+" (TP-DOTS-03), the visible door to the
-        // row menu. One more painted glyph per row; the structural
-        // assertions above are untouched.
+        // Re-baselined 2026-08-11 (twice): every workspace row now carries a
+        // "⋯" left of the "+" (TP-DOTS-03), the visible door to the row
+        // menu — then a breathing cell went between the two glyphs. The
+        // structural assertions above are untouched both times.
         assert_eq!(
             frame_digest(&frame),
-            "ee70adbfc55b82f7f7976f5afe9d68f6306501041f9a9c05a23eeb093ff8bc2a"
+            "9750cf1a3881b61b4a084fce8ffc054a23d3af0552149deb2eb4531ea54352b9"
         );
     }
 

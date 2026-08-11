@@ -1016,6 +1016,16 @@ pub(super) fn apply_context_menu_action(
             state.unfold_node(&node_key);
             leave_modal(state);
         }
+        // TP-DOTS-10/11/12: the bucket header creates too — sub hangs under
+        // the bucket itself (TP-NODE-08), parallel beside it, under the
+        // bucket's own owner (none resolvable = top level).
+        (ContextMenuKind::SpaceHeader { space_key, .. }, Some("New sub-module...")) => {
+            open_new_module_input(state, Some(space_key));
+        }
+        (ContextMenuKind::SpaceHeader { space_key, .. }, Some("New parallel module...")) => {
+            let parent = crate::ui::space_owner_for_key(state, &space_key);
+            open_new_module_input(state, parent);
+        }
         (ContextMenuKind::SpaceHeader { space_key, .. }, Some("Collapse")) => {
             state.collapsed_space_keys.insert(space_key);
             state.mark_session_dirty();
@@ -1661,6 +1671,15 @@ impl App {
             (ContextMenuKind::NodeHeader { node_key, .. }, Some("Expand")) => {
                 self.state.unfold_node(&node_key);
                 leave_modal(&mut self.state);
+            }
+            // TP-DOTS-10/11/12: the bucket's creation road on the mouse
+            // dispatch — the same arms the keyboard road walks.
+            (ContextMenuKind::SpaceHeader { space_key, .. }, Some("New sub-module...")) => {
+                open_new_module_input(&mut self.state, Some(space_key));
+            }
+            (ContextMenuKind::SpaceHeader { space_key, .. }, Some("New parallel module...")) => {
+                let parent = crate::ui::space_owner_for_key(&self.state, &space_key);
+                open_new_module_input(&mut self.state, parent);
             }
             (ContextMenuKind::SpaceHeader { space_key, .. }, Some("Collapse")) => {
                 self.state.collapsed_space_keys.insert(space_key);
@@ -3048,6 +3067,8 @@ mod tests {
             vec!["New sub-module...", "New parallel module...", "Expand"]
         );
 
+        // TP-DOTS-10: the bucket header is a module to the person using it —
+        // it creates exactly like the node header does.
         let space_menu = ContextMenuState {
             kind: ContextMenuKind::SpaceHeader {
                 space_key: "repo-key".into(),
@@ -3057,7 +3078,62 @@ mod tests {
             y: 0,
             list: MenuListState::new(0),
         };
-        assert_eq!(space_menu.items(), vec!["Collapse"]);
+        assert_eq!(
+            space_menu.items(),
+            vec!["New sub-module...", "New parallel module...", "Collapse"]
+        );
+    }
+
+    // TP-DOTS-11: a bucket's "New sub-module..." arms with the bucket itself
+    // as the parent — modules hang under buckets like they hang under nodes.
+    #[test]
+    fn a_bucket_sub_module_arms_with_the_bucket_itself() {
+        let mut app = app_with_movable_branch();
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::SpaceHeader {
+                space_key: "herdr:tiling".into(),
+                collapsed: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = item_index(&menu, "New sub-module...");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        assert_eq!(app.state.mode, Mode::RenameWorkspace);
+        assert_eq!(
+            app.state.pending_new_module,
+            Some(crate::app::state::PendingNewModule {
+                parent: Some("herdr:tiling".into()),
+            })
+        );
+    }
+
+    // TP-DOTS-12: a bucket's "New parallel module..." arms with the bucket's
+    // own owner — and with no resolvable owner the sibling is top level.
+    #[test]
+    fn a_bucket_parallel_module_arms_with_the_buckets_owner() {
+        let mut app = app_with_movable_branch();
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::SpaceHeader {
+                space_key: "herdr:tiling".into(),
+                collapsed: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = item_index(&menu, "New parallel module...");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        assert_eq!(
+            app.state.pending_new_module,
+            Some(crate::app::state::PendingNewModule { parent: None }),
+            "no resolvable owner makes a top-level sibling"
+        );
     }
 
     // TP-DOTS-05: "New sub-module..." closes the menu chain and arms the

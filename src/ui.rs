@@ -124,11 +124,11 @@ pub(crate) use self::{
         collapsed_sidebar_toggle_rect, compute_workspace_card_areas, effective_space,
         expanded_sidebar_sections, expanded_sidebar_toggle_rect, header_menu_cell,
         normalized_workspace_scroll, projects_scroll_metrics, projects_scrollbar_rect,
-        sidebar_section_divider_rect, workspace_chat_rows_for, workspace_chat_toggle_cell,
-        workspace_drop_indicator_row, workspace_list_entries, workspace_list_entries_expanded,
-        workspace_list_rect, workspace_list_scroll_metrics, workspace_list_scrollbar_rect,
-        workspace_menu_cell, workspace_new_chat_cell, workspace_parent_group_state,
-        AgentPanelEntry, WorkspaceListEntry,
+        sidebar_section_divider_rect, space_owner_for_key, workspace_chat_rows_for,
+        workspace_chat_toggle_cell, workspace_drop_indicator_row, workspace_list_entries,
+        workspace_list_entries_expanded, workspace_list_rect, workspace_list_scroll_metrics,
+        workspace_list_scrollbar_rect, workspace_menu_cell, workspace_new_chat_cell,
+        workspace_parent_group_state, AgentPanelEntry, WorkspaceListEntry,
     },
 };
 pub(crate) use self::{
