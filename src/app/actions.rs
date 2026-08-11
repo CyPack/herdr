@@ -2104,7 +2104,7 @@ impl AppState {
         }
     }
 
-    fn reload_space_rules_from_disk(&mut self) {
+    pub(crate) fn reload_space_rules_from_disk(&mut self) {
         let loaded = crate::config::Config::load();
         self.space_split_rules = loaded.config.spaces.rules();
         self.space_projects = loaded.config.spaces.projects();

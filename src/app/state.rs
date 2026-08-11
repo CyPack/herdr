@@ -2418,7 +2418,13 @@ impl ContextMenuState {
             // state calls for. Buckets can parent modules (TP-NODE-08).
             ContextMenuKind::NodeHeader { collapsed, .. }
             | ContextMenuKind::SpaceHeader { collapsed, .. } => {
-                let mut items = vec!["New sub-module...", "New parallel module..."];
+                // TP-DOTS-13: the branch road leads — the point of a module
+                // is the branches inside it.
+                let mut items = vec![
+                    "New branch...",
+                    "New sub-module...",
+                    "New parallel module...",
+                ];
                 items.push(if *collapsed { "Expand" } else { "Collapse" });
                 items
             }
@@ -3162,6 +3168,10 @@ pub struct AppState {
     /// the rename input collects the name. Client-local like every modal
     /// fact: naming a group on one display never opens an input on another.
     pub pending_move_new_group: Option<usize>,
+    /// The module a "New branch..." will hang its rule under while the
+    /// worktree dialog collects the branch name (TP-DOTS-14/15). Client-local
+    /// like every dialog fact; consumed at submit, disarmed on cancel.
+    pub pending_branch_module: Option<String>,
     /// The parent a "new sub/parallel module" is collecting a name for
     /// (TP-DOTS-05): `Some(PendingNewModule)` arms the rename input, the
     /// inner parent is where the new node hangs (`None` = top level).
@@ -4201,6 +4211,7 @@ impl AppState {
             request_open_existing_worktree: None,
             pending_move_new_group: None,
             pending_new_module: None,
+            pending_branch_module: None,
             chat_move_overrides: Default::default(),
             request_chat_move: None,
             request_new_workspace_cwd: None,

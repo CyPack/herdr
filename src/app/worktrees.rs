@@ -478,6 +478,9 @@ impl App {
     }
 
     fn close_worktree_create_dialog(&mut self) {
+        // TP-DOTS-16: an escaped dialog disarms the pending module — the
+        // next plain worktree must never inherit a stale rule target.
+        self.state.pending_branch_module = None;
         self.state.worktree_create = None;
         self.state.name_input.clear();
         self.state.name_input_replace_on_type = false;
@@ -589,6 +592,38 @@ impl App {
         create.error = None;
         let workspace_id = create.source_workspace_id.clone();
         let checkout_path = create.checkout_path.display().to_string();
+        let rule_repo_root = create.source_repo_root.clone();
+
+        // TP-DOTS-15: a branch born from a module's menu carries its rule
+        // from the start. The rule is written the moment the name is final —
+        // rules match branch NAMES at render time, so the checkout joins its
+        // module the instant it exists, with no post-create synchronisation.
+        // A failed create leaves a member-less rule behind, which draws
+        // nothing and `herdr space demote` removes.
+        if let Some(module) = self.state.pending_branch_module.take() {
+            let plan = crate::cli::space::PromotePlan {
+                key: crate::cli::space::managed_key(&rule_repo_root, &branch),
+                repo_root: rule_repo_root,
+                branch: branch.clone(),
+                label: branch.clone(),
+                icon: None,
+                project: None,
+                parent: Some(module),
+                node: None,
+            };
+            let path = crate::config::managed_spaces_path();
+            let current = std::fs::read_to_string(&path).unwrap_or_default();
+            match crate::cli::space::upsert_managed(&current, &plan) {
+                Ok(updated) => {
+                    if let Err(err) = std::fs::write(&path, updated) {
+                        tracing::warn!(error = %err, "managed overlay write failed");
+                    } else {
+                        self.state.reload_space_rules_from_disk();
+                    }
+                }
+                Err(err) => tracing::warn!(error = %err, "managed overlay upsert failed"),
+            }
+        }
 
         let immediate_response = self.runtime_worktree_create_deferred(
             "tui.worktree.create",

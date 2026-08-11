@@ -128,7 +128,8 @@ pub(crate) use self::{
         workspace_chat_toggle_cell, workspace_drop_indicator_row, workspace_list_entries,
         workspace_list_entries_expanded, workspace_list_rect, workspace_list_scroll_metrics,
         workspace_list_scrollbar_rect, workspace_menu_cell, workspace_new_chat_cell,
-        workspace_parent_group_state, AgentPanelEntry, WorkspaceListEntry,
+        workspace_parent_group_state, worktree_source_for_module, AgentPanelEntry,
+        WorkspaceListEntry,
     },
 };
 pub(crate) use self::{

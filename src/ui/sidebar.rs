@@ -465,6 +465,51 @@ pub(crate) fn space_owner_for_key(app: &AppState, space_key: &str) -> Option<Str
     )
 }
 
+/// The workspace a module's "New branch..." should branch from: a direct
+/// member of the module first, then any workspace whose bucket chain runs
+/// through it, then the same search up the module's own ancestor chain — a
+/// freshly created (still invisible) module borrows its ancestors' repo
+/// (TP-DOTS-14).
+pub(crate) fn worktree_source_for_module(app: &AppState, module_key: &str) -> Option<usize> {
+    let chain_hits_module = |idx: usize, target: &str| -> bool {
+        let Some(space) = effective_space(app, idx) else {
+            return false;
+        };
+        if space.key == target {
+            return true;
+        }
+        let mut current = space_owner_for_key(app, &space.key);
+        let mut steps = 0usize;
+        while let Some(key) = current {
+            if key == target {
+                return true;
+            }
+            steps += 1;
+            if steps > app.space_nodes.len() + app.space_split_rules.len() {
+                break;
+            }
+            current = crate::spaces::tree_parent_of(&app.space_nodes, &app.space_split_rules, &key)
+                .map(str::to_string);
+        }
+        false
+    };
+
+    let mut target = module_key.to_string();
+    let mut climbed = 0usize;
+    loop {
+        if let Some(idx) = (0..app.workspaces.len()).find(|&idx| chain_hits_module(idx, &target)) {
+            return Some(idx);
+        }
+        let parent =
+            crate::spaces::tree_parent_of(&app.space_nodes, &app.space_split_rules, &target)?;
+        target = parent.to_string();
+        climbed += 1;
+        if climbed > app.space_nodes.len() + app.space_split_rules.len() {
+            return None;
+        }
+    }
+}
+
 /// The configured project behind a header row's key.
 pub(crate) fn project_for_key<'a>(
     app: &'a AppState,

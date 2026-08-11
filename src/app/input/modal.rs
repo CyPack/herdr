@@ -994,6 +994,28 @@ pub(super) fn apply_context_menu_action(
             state.move_workspace_space(ws_idx, None, None);
             leave_modal(state);
         }
+        // TP-DOTS-13/14: the branch road — resolve a source workspace under
+        // the module (ancestors included) and reuse the proven worktree
+        // dialog; the module rides in its own pending slot to the submit.
+        (
+            ContextMenuKind::NodeHeader { node_key: key, .. }
+            | ContextMenuKind::SpaceHeader { space_key: key, .. },
+            Some("New branch..."),
+        ) => match crate::ui::worktree_source_for_module(state, &key) {
+            Some(ws_idx) => {
+                state.pending_branch_module = Some(key);
+                state.request_new_linked_worktree = Some(ws_idx);
+                state.context_menu = None;
+                leave_modal(state);
+            }
+            None => {
+                state.config_diagnostic = Some(format!(
+                    "no repository under module {key:?} yet — move a branch \
+                         under it first, then branch from there"
+                ));
+                leave_modal(state);
+            }
+        },
         // TP-DOTS-05/07: the header's creation road — sub hangs under the
         // header itself, parallel beside it (the header's own parent) — and
         // the fold verbs mirror what a left press does on the row.
@@ -1650,6 +1672,27 @@ impl App {
                 self.state.move_workspace_space(ws_idx, None, None);
                 leave_modal(&mut self.state);
             }
+            // TP-DOTS-13/14: the branch road on the mouse dispatch — the
+            // same arm the keyboard road walks.
+            (
+                ContextMenuKind::NodeHeader { node_key: key, .. }
+                | ContextMenuKind::SpaceHeader { space_key: key, .. },
+                Some("New branch..."),
+            ) => match crate::ui::worktree_source_for_module(&self.state, &key) {
+                Some(ws_idx) => {
+                    self.state.pending_branch_module = Some(key);
+                    self.state.request_new_linked_worktree = Some(ws_idx);
+                    self.state.context_menu = None;
+                    leave_modal(&mut self.state);
+                }
+                None => {
+                    self.state.config_diagnostic = Some(format!(
+                        "no repository under module {key:?} yet — move a branch \
+                             under it first, then branch from there"
+                    ));
+                    leave_modal(&mut self.state);
+                }
+            },
             // TP-DOTS-05/07: the header's creation road on the mouse dispatch
             // — the same arms the keyboard road walks.
             (ContextMenuKind::NodeHeader { node_key, .. }, Some("New sub-module...")) => {
@@ -3060,11 +3103,21 @@ mod tests {
         };
         assert_eq!(
             node_menu(false).items(),
-            vec!["New sub-module...", "New parallel module...", "Collapse"]
+            vec![
+                "New branch...",
+                "New sub-module...",
+                "New parallel module...",
+                "Collapse"
+            ]
         );
         assert_eq!(
             node_menu(true).items(),
-            vec!["New sub-module...", "New parallel module...", "Expand"]
+            vec![
+                "New branch...",
+                "New sub-module...",
+                "New parallel module...",
+                "Expand"
+            ]
         );
 
         // TP-DOTS-10: the bucket header is a module to the person using it —
@@ -3080,8 +3133,89 @@ mod tests {
         };
         assert_eq!(
             space_menu.items(),
-            vec!["New sub-module...", "New parallel module...", "Collapse"]
+            vec![
+                "New branch...",
+                "New sub-module...",
+                "New parallel module...",
+                "Collapse"
+            ]
         );
+    }
+
+    // TP-DOTS-13: every module header leads with the branch road — the
+    // point of a module is the branches inside it.
+    #[test]
+    fn module_menus_lead_with_new_branch() {
+        let node_menu = ContextMenuState {
+            kind: ContextMenuKind::NodeHeader {
+                node_key: "group:docs".into(),
+                collapsed: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        assert_eq!(
+            node_menu.items(),
+            vec![
+                "New branch...",
+                "New sub-module...",
+                "New parallel module...",
+                "Collapse"
+            ]
+        );
+        let space_menu = ContextMenuState {
+            kind: ContextMenuKind::SpaceHeader {
+                space_key: "repo-key".into(),
+                collapsed: true,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        assert_eq!(
+            space_menu.items(),
+            vec![
+                "New branch...",
+                "New sub-module...",
+                "New parallel module...",
+                "Expand"
+            ]
+        );
+    }
+
+    // TP-DOTS-14: "New branch..." resolves a source workspace under the
+    // module and opens the proven worktree dialog with the module pending.
+    #[test]
+    fn a_new_branch_pick_opens_the_worktree_dialog_with_the_module_pending() {
+        let mut app = app_with_movable_branch();
+        let key = crate::ui::effective_space(&app.state, 0)
+            .expect("the fixture branch has a space")
+            .key;
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::SpaceHeader {
+                space_key: key.clone(),
+                collapsed: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = item_index(&menu, "New branch...");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        assert_eq!(
+            app.state.pending_branch_module,
+            Some(key),
+            "the module rides along to the submit"
+        );
+        assert_eq!(
+            app.state.request_new_linked_worktree,
+            Some(0),
+            "the proven dialog road is reused, not reinvented"
+        );
+        assert!(app.state.context_menu.is_none(), "the menu chain is done");
     }
 
     // TP-DOTS-11: a bucket's "New sub-module..." arms with the bucket itself
