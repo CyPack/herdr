@@ -694,6 +694,25 @@ pub(crate) fn workspace_new_chat_cell(card_rect: Rect) -> Rect {
     Rect::new(card_rect.x + card_rect.width - 1, card_rect.y, 1, 1)
 }
 
+/// The "manage this row" cell: one column left of the "+", opening the same
+/// menu a right-click does (TP-DOTS-04 — one menu source, two roads to it).
+/// Mouse chrome like the "+": drawn only while the mouse owns the sidebar.
+pub(crate) fn workspace_menu_cell(card_rect: Rect) -> Rect {
+    if card_rect.width < 6 {
+        return Rect::default();
+    }
+    Rect::new(card_rect.x + card_rect.width - 2, card_rect.y, 1, 1)
+}
+
+/// The header rows' "manage" cell: the trailing edge of a node or bucket
+/// header (TP-DOTS-03). Same contract as [`workspace_menu_cell`].
+pub(crate) fn header_menu_cell(head_rect: Rect) -> Rect {
+    if head_rect.width < 6 {
+        return Rect::default();
+    }
+    Rect::new(head_rect.x + head_rect.width - 1, head_rect.y, 1, 1)
+}
+
 /// The Spaces rows the mobile switcher lays out: workspaces only.
 ///
 /// Its geometry is a strict two rows per workspace and it is a switcher rather
@@ -2117,8 +2136,9 @@ fn render_workspace_list(
         // The trailing chrome is reserved, not overdrawn: before the tree the
         // "+" was painted over whatever the name had already written there, so
         // a long enough workspace name simply lost its last character to it.
-        // A row with no history pays one column, not four.
-        let trailing = u16::from(show_plus)
+        // The "⋯" rides with the "+" (TP-DOTS-03/09), so mouse chrome costs
+        // two columns; a row with no history pays those two, not five.
+        let trailing = u16::from(show_plus) * 2
             + badge
                 .as_ref()
                 .map(|text| text.len() as u16 + 2)
@@ -2160,28 +2180,37 @@ fn render_workspace_list(
             // TP-WSCHAT-23: the create affordance, mirroring the Projects tab's
             // per-project "+". Mouse chrome only, like every other button here.
             if show_plus {
+                // TP-FOCUS-04: the chrome speaks the name's sentence —
+                // contrast ink on the accent, text ink on the quiet
+                // active tone the card steps back to.
+                let chrome_fg = if is_active && !chat_carries_accent {
+                    panel_contrast_fg(p)
+                } else if is_active {
+                    p.text
+                } else if selected {
+                    p.accent
+                } else {
+                    p.overlay0
+                };
                 let plus = workspace_new_chat_cell(card.rect);
                 if plus.width > 0 {
-                    // TP-FOCUS-04: the chrome speaks the name's sentence —
-                    // contrast ink on the accent, text ink on the quiet
-                    // active tone the card steps back to.
                     frame.buffer_mut()[(plus.x, plus.y)]
                         .set_symbol("+")
-                        .set_style(Style::default().fg(if is_active && !chat_carries_accent {
-                            panel_contrast_fg(p)
-                        } else if is_active {
-                            p.text
-                        } else if selected {
-                            p.accent
-                        } else {
-                            p.overlay0
-                        }));
+                        .set_style(Style::default().fg(chrome_fg));
+                }
+                // TP-DOTS-03: the manage road, one column in — the second
+                // door to the menu the right-click already opens.
+                let dots = workspace_menu_cell(card.rect);
+                if dots.width > 0 {
+                    frame.buffer_mut()[(dots.x, dots.y)]
+                        .set_symbol("⋯")
+                        .set_style(Style::default().fg(chrome_fg));
                 }
             }
             if let Some(text) = badge.as_ref() {
                 let width = text.len() as u16;
                 let x = right
-                    .saturating_sub(if show_plus { 2 } else { 0 })
+                    .saturating_sub(if show_plus { 3 } else { 0 })
                     .saturating_sub(width);
                 let x = x.max(card.rect.x);
                 if x > card.rect.x {
@@ -2306,15 +2335,34 @@ fn render_workspace_project_headers(app: &AppState, frame: &mut Frame, list_bott
             .iter()
             .map(|span| super::text::display_width(span.content.as_ref()))
             .sum::<usize>();
+        // TP-DOTS-09: the manage cell is reserved, so a long project name
+        // truncates short of it instead of bleeding underneath.
+        let reserved = if app.mouse_capture { 2 } else { 0 };
         spans.push(Span::styled(
             super::text::truncate_end(
                 &project.name,
-                (head.rect.width as usize).saturating_sub(used),
+                (head.rect.width as usize).saturating_sub(used + reserved),
             ),
             Style::default().fg(p.text).add_modifier(Modifier::BOLD),
         ));
         frame.render_widget(Paragraph::new(Line::from(spans)), head.rect);
+        draw_header_menu_dots(app, frame, head.rect);
     }
+}
+
+/// TP-DOTS-03: the "⋯" every header row wears while the mouse owns the
+/// sidebar — the visible door to the menu right-click already opens.
+fn draw_header_menu_dots(app: &AppState, frame: &mut Frame, head_rect: Rect) {
+    if !app.mouse_capture {
+        return;
+    }
+    let dots = header_menu_cell(head_rect);
+    if dots.width == 0 {
+        return;
+    }
+    frame.buffer_mut()[(dots.x, dots.y)]
+        .set_symbol("⋯")
+        .set_style(Style::default().fg(app.palette.overlay0));
 }
 
 fn render_workspace_group_headers(app: &AppState, frame: &mut Frame, list_bottom: u16) {
@@ -2360,14 +2408,17 @@ fn render_workspace_group_headers(app: &AppState, frame: &mut Frame, list_bottom
             .iter()
             .map(|span| super::text::display_width(span.content.as_ref()))
             .sum::<usize>();
+        // TP-DOTS-09: same reservation as the project header above.
+        let reserved = if app.mouse_capture { 2 } else { 0 };
         spans.push(Span::styled(
             super::text::truncate_end(
                 &space_label_for_key(app, &head.space_key),
-                (head.rect.width as usize).saturating_sub(used),
+                (head.rect.width as usize).saturating_sub(used + reserved),
             ),
             Style::default().fg(p.text).add_modifier(Modifier::BOLD),
         ));
         frame.render_widget(Paragraph::new(Line::from(spans)), head.rect);
+        draw_header_menu_dots(app, frame, head.rect);
     }
 }
 
@@ -5437,6 +5488,72 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         terminal.backend().buffer().clone()
     }
 
+    // TP-DOTS-03: the manage chrome is mouse chrome — "⋯" appears on the
+    // workspace card (one column left of the "+") and on both header rows
+    // while the mouse owns the sidebar, and on none of them otherwise.
+    // TP-DOTS-09: the chrome is reserved, not overdrawn — a long name is
+    // truncated short of it instead of bleeding into its cells.
+    #[test]
+    fn the_manage_dots_are_mouse_chrome_on_every_tree_level() {
+        let mut app = app_with_worktree_tree(40);
+        app.space_projects = vec![project_over("project:herdr", &["/repo/herdr"], &[])];
+        app.workspaces[0]
+            .set_custom_name("a very long workspace name that would bleed into the chrome".into());
+        app.mouse_capture = true;
+
+        let area = Rect::new(0, 0, 40, 24);
+        let buffer = draw_tree(&mut app, area);
+
+        let card = app
+            .view
+            .workspace_card_areas
+            .first()
+            .expect("a card is laid out");
+        let dots = workspace_menu_cell(card.rect);
+        assert!(dots.width > 0, "the card reserves a manage cell");
+        assert_eq!(
+            buffer[(dots.x, dots.y)].symbol(),
+            "⋯",
+            "the card draws the manage dots while the mouse owns the sidebar"
+        );
+        let plus = workspace_new_chat_cell(card.rect);
+        assert_eq!(
+            buffer[(plus.x, plus.y)].symbol(),
+            "+",
+            "the long name stays short of the plus (TP-DOTS-09)"
+        );
+
+        let project_head = app.view.workspace_project_header_areas[0].rect;
+        let head_dots = header_menu_cell(project_head);
+        assert!(head_dots.width > 0, "the project header reserves the cell");
+        assert_eq!(
+            buffer[(head_dots.x, head_dots.y)].symbol(),
+            "⋯",
+            "the project header draws the manage dots"
+        );
+
+        let group_head = app.view.workspace_group_header_areas[0].rect;
+        let group_dots = header_menu_cell(group_head);
+        assert_eq!(
+            buffer[(group_dots.x, group_dots.y)].symbol(),
+            "⋯",
+            "the bucket header draws the manage dots"
+        );
+
+        app.mouse_capture = false;
+        let buffer = draw_tree(&mut app, area);
+        assert_ne!(
+            buffer[(dots.x, dots.y)].symbol(),
+            "⋯",
+            "without the mouse the card cell holds no dots"
+        );
+        assert_ne!(
+            buffer[(head_dots.x, head_dots.y)].symbol(),
+            "⋯",
+            "without the mouse the header cell holds no dots"
+        );
+    }
+
     // TP-PROJ-GROUP-01 (render): the umbrella row wears chevron, icon, name.
     #[test]
     fn project_header_row_draws_chevron_icon_and_name() {
@@ -6029,7 +6146,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             "off the accent the plus wears the text ink, not the contrast ink"
         );
 
-        let badge_x = card.rect.x + card.rect.width - 3;
+        // The count sits one column past the chrome pair ("⋯" then "+").
+        let badge_x = card.rect.x + card.rect.width - 4;
         let badge_cell = &buffer[(badge_x, card.rect.y)];
         assert_eq!(badge_cell.symbol(), "2", "the chat count is drawn");
         assert_eq!(

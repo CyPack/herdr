@@ -326,9 +326,14 @@ mod tests {
         // (TP-ICON-01), one more painted glyph per row — again exactly the
         // change this digest exists to surface. The structural assertions
         // above are untouched.
+        //
+        // Re-baselined 2026-08-11: every workspace row now carries a "⋯"
+        // one column left of the "+" (TP-DOTS-03), the visible door to the
+        // row menu. One more painted glyph per row; the structural
+        // assertions above are untouched.
         assert_eq!(
             frame_digest(&frame),
-            "763a4111a23e08a7092b75e0c8005df1ac6fd23e2fb1460a299e7a189e2cbb88"
+            "ee70adbfc55b82f7f7976f5afe9d68f6306501041f9a9c05a23eeb093ff8bc2a"
         );
     }
 

@@ -785,6 +785,23 @@ impl AppState {
                         })
                         .cloned()
                     {
+                        // TP-DOTS-04: the header's "⋯" opens the menu the
+                        // right-click already owns; the rest still folds.
+                        let dots = crate::ui::header_menu_cell(head.rect);
+                        if self.mouse_capture && dots.width > 0 && mouse.column == dots.x {
+                            let collapsed = self.collapsed_space_keys.contains(&head.space_key);
+                            self.context_menu = Some(ContextMenuState {
+                                kind: ContextMenuKind::SpaceHeader {
+                                    space_key: head.space_key,
+                                    collapsed,
+                                },
+                                x: mouse.column,
+                                y: mouse.row,
+                                list: MenuListState::new(0),
+                            });
+                            self.enter_overlay_mode(Mode::ContextMenu);
+                            return None;
+                        }
                         if !self.collapsed_space_keys.remove(&head.space_key) {
                             self.collapsed_space_keys.insert(head.space_key);
                         }
@@ -807,11 +824,49 @@ impl AppState {
                         })
                         .cloned()
                     {
+                        // TP-DOTS-04: the node header's "⋯", same contract.
+                        let dots = crate::ui::header_menu_cell(head.rect);
+                        if self.mouse_capture && dots.width > 0 && mouse.column == dots.x {
+                            let collapsed = self.node_folded(&head.project_key);
+                            self.context_menu = Some(ContextMenuState {
+                                kind: ContextMenuKind::NodeHeader {
+                                    node_key: head.project_key,
+                                    collapsed,
+                                },
+                                x: mouse.column,
+                                y: mouse.row,
+                                list: MenuListState::new(0),
+                            });
+                            self.enter_overlay_mode(Mode::ContextMenu);
+                            return None;
+                        }
                         if !self.unfold_node(&head.project_key) {
                             self.fold_node(head.project_key);
                         }
                         self.mark_session_dirty();
                         return None;
+                    }
+
+                    // TP-DOTS-04: the card's "⋯" is the visible door to the
+                    // menu the right-click already opens — same builder, so
+                    // the two roads can never drift apart.
+                    if self.mouse_capture {
+                        if let Some(card) = cards
+                            .iter()
+                            .find(|card| {
+                                let cell = crate::ui::workspace_menu_cell(card.rect);
+                                cell.width > 0 && mouse.row == cell.y && mouse.column == cell.x
+                            })
+                            .cloned()
+                        {
+                            self.open_workspace_row_menu(
+                                terminal_runtimes,
+                                card.ws_idx,
+                                mouse.column,
+                                mouse.row,
+                            );
+                            return None;
+                        }
                     }
 
                     // "+" on the trailing edge starts a chat in that workspace.
@@ -1405,48 +1460,7 @@ impl AppState {
                     return None;
                 }
                 if let Some(idx) = self.workspace_at_row(mouse.row) {
-                    self.selected = idx;
-                    let kind = self
-                        .workspaces
-                        .get(idx)
-                        .and_then(|ws| {
-                            let group_state = crate::ui::workspace_parent_group_state(self, idx);
-                            let git_space = ws.git_space().cloned().or_else(|| {
-                                ws.resolved_identity_cwd_from(&self.terminals, terminal_runtimes)
-                                    .as_deref()
-                                    .and_then(crate::workspace::git_space_metadata)
-                            });
-                            let is_linked_worktree = ws.worktree_space().map_or_else(
-                                || {
-                                    git_space
-                                        .as_ref()
-                                        .is_some_and(|space| space.is_linked_worktree)
-                                },
-                                |space| space.is_linked_worktree,
-                            );
-                            let show_git_menu = ws.worktree_space().is_some()
-                                || git_space
-                                    .as_ref()
-                                    .is_some_and(|space| !space.is_linked_worktree);
-                            show_git_menu.then_some(ContextMenuKind::GitWorkspace {
-                                ws_idx: idx,
-                                is_linked_worktree,
-                                has_worktree_children: group_state.is_some(),
-                                collapsed: group_state
-                                    .as_ref()
-                                    .is_some_and(|(_, collapsed)| *collapsed),
-                                space_is_custom: crate::ui::effective_space(self, idx)
-                                    .is_some_and(|space| space.is_custom),
-                            })
-                        })
-                        .unwrap_or(ContextMenuKind::Workspace { ws_idx: idx });
-                    self.context_menu = Some(ContextMenuState {
-                        kind,
-                        x: mouse.column,
-                        y: mouse.row,
-                        list: MenuListState::new(0),
-                    });
-                    self.enter_overlay_mode(Mode::ContextMenu);
+                    self.open_workspace_row_menu(terminal_runtimes, idx, mouse.column, mouse.row);
                 }
             }
 
@@ -1982,6 +1996,59 @@ impl AppState {
         self.active
             .and_then(|i| self.runtime_for_pane_in_workspace(terminal_runtimes, i, pane_id))
             .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
+    }
+
+    /// The branch/workspace row's menu, shared by the right-click and the
+    /// "⋯" cell so the two roads can never drift apart (TP-DOTS-04).
+    fn open_workspace_row_menu(
+        &mut self,
+        terminal_runtimes: &TerminalRuntimeRegistry,
+        idx: usize,
+        x: u16,
+        y: u16,
+    ) {
+        self.selected = idx;
+        let kind = self
+            .workspaces
+            .get(idx)
+            .and_then(|ws| {
+                let group_state = crate::ui::workspace_parent_group_state(self, idx);
+                let git_space = ws.git_space().cloned().or_else(|| {
+                    ws.resolved_identity_cwd_from(&self.terminals, terminal_runtimes)
+                        .as_deref()
+                        .and_then(crate::workspace::git_space_metadata)
+                });
+                let is_linked_worktree = ws.worktree_space().map_or_else(
+                    || {
+                        git_space
+                            .as_ref()
+                            .is_some_and(|space| space.is_linked_worktree)
+                    },
+                    |space| space.is_linked_worktree,
+                );
+                let show_git_menu = ws.worktree_space().is_some()
+                    || git_space
+                        .as_ref()
+                        .is_some_and(|space| !space.is_linked_worktree);
+                show_git_menu.then_some(ContextMenuKind::GitWorkspace {
+                    ws_idx: idx,
+                    is_linked_worktree,
+                    has_worktree_children: group_state.is_some(),
+                    collapsed: group_state
+                        .as_ref()
+                        .is_some_and(|(_, collapsed)| *collapsed),
+                    space_is_custom: crate::ui::effective_space(self, idx)
+                        .is_some_and(|space| space.is_custom),
+                })
+            })
+            .unwrap_or(ContextMenuKind::Workspace { ws_idx: idx });
+        self.context_menu = Some(ContextMenuState {
+            kind,
+            x,
+            y,
+            list: MenuListState::new(0),
+        });
+        self.enter_overlay_mode(Mode::ContextMenu);
     }
 
     fn handle_right_click_passthrough(
@@ -2992,6 +3059,95 @@ mod tests {
                     if space_key == "repo-key"
             ),
             "a bucket header owns its fold menu; got {:?}",
+            app.state.context_menu.as_ref().map(|menu| &menu.kind)
+        );
+    }
+
+    // TP-DOTS-04: the "⋯" is a second road to the SAME menu the right-click
+    // opens — a left press on it must never fold, switch, or invent a menu
+    // of its own; and a left press on the rest of the header row still folds.
+    #[test]
+    fn a_left_press_on_the_dots_opens_the_row_menu_and_the_rest_still_folds() {
+        let mut app = app_for_mouse_test();
+        let mut main = crate::workspace::Workspace::test_new("main");
+        main.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr"),
+            is_linked_worktree: false,
+        });
+        main.identity_cwd = std::env::temp_dir();
+        let mut child = crate::workspace::Workspace::test_new("issue");
+        child.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr-issue"),
+            is_linked_worktree: true,
+        });
+        app.state.workspaces = vec![main, child];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mobile_width_threshold = 0;
+        app.state.mouse_capture = true;
+
+        let area = ratatui::layout::Rect::new(0, 0, 106, 20);
+        crate::ui::compute_view(&mut app.state, area);
+        let group_head = app.state.view.workspace_group_header_areas[0].clone();
+        let card = app.state.view.workspace_card_areas[0];
+
+        // The header's dots open the bucket menu instead of folding.
+        let head_dots = crate::ui::header_menu_cell(group_head.rect);
+        assert!(head_dots.width > 0, "the header reserves a manage cell");
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            head_dots.x,
+            head_dots.y,
+        ));
+        assert!(
+            matches!(
+                app.state.context_menu.as_ref().map(|menu| &menu.kind),
+                Some(crate::app::state::ContextMenuKind::SpaceHeader { space_key, .. })
+                    if space_key == "repo-key"
+            ),
+            "the dots open the same menu the right-click does; got {:?}",
+            app.state.context_menu.as_ref().map(|menu| &menu.kind)
+        );
+        assert!(
+            !app.state.collapsed_space_keys.contains("repo-key"),
+            "the dots never fold the group"
+        );
+
+        // The rest of the header row keeps its fold behavior.
+        app.state.context_menu = None;
+        app.state.mode = crate::app::state::Mode::Terminal;
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            group_head.rect.x,
+            group_head.rect.y,
+        ));
+        assert!(
+            app.state.collapsed_space_keys.contains("repo-key"),
+            "a press outside the dots still folds"
+        );
+        app.state.collapsed_space_keys.remove("repo-key");
+
+        // The card's dots open the branch row's own (git) menu.
+        crate::ui::compute_view(&mut app.state, area);
+        let card_dots = crate::ui::workspace_menu_cell(card.rect);
+        assert!(card_dots.width > 0, "the card reserves a manage cell");
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            card_dots.x,
+            card_dots.y,
+        ));
+        assert!(
+            matches!(
+                app.state.context_menu.as_ref().map(|menu| &menu.kind),
+                Some(crate::app::state::ContextMenuKind::GitWorkspace { .. })
+            ),
+            "the card dots open the branch menu; got {:?}",
             app.state.context_menu.as_ref().map(|menu| &menu.kind)
         );
     }
