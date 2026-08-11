@@ -715,14 +715,14 @@ pub(crate) fn workspace_new_chat_cell(card_rect: Rect) -> Rect {
     Rect::new(card_rect.x + card_rect.width - 1, card_rect.y, 1, 1)
 }
 
-/// The "manage this row" cell: one column left of the "+", opening the same
-/// menu a right-click does (TP-DOTS-04 — one menu source, two roads to it).
+/// The "manage this row" cell: a breathing cell left of the "+", opening the
+/// same menu a right-click does (TP-DOTS-04 — one menu source, two roads).
 /// Mouse chrome like the "+": drawn only while the mouse owns the sidebar.
 pub(crate) fn workspace_menu_cell(card_rect: Rect) -> Rect {
     if card_rect.width < 6 {
         return Rect::default();
     }
-    Rect::new(card_rect.x + card_rect.width - 2, card_rect.y, 1, 1)
+    Rect::new(card_rect.x + card_rect.width - 3, card_rect.y, 1, 1)
 }
 
 /// The header rows' "manage" cell: the trailing edge of a node or bucket
@@ -2215,9 +2215,9 @@ fn render_workspace_list(
         // The trailing chrome is reserved, not overdrawn: before the tree the
         // "+" was painted over whatever the name had already written there, so
         // a long enough workspace name simply lost its last character to it.
-        // The "⋯" rides with the "+" (TP-DOTS-03/09), so mouse chrome costs
-        // two columns; a row with no history pays those two, not five.
-        let trailing = u16::from(show_plus) * 2
+        // The "⋯" rides with the "+" with one breathing cell between them
+        // (TP-DOTS-03/09), so mouse chrome costs three columns.
+        let trailing = u16::from(show_plus) * 3
             + badge
                 .as_ref()
                 .map(|text| text.len() as u16 + 2)
@@ -2289,7 +2289,7 @@ fn render_workspace_list(
             if let Some(text) = badge.as_ref() {
                 let width = text.len() as u16;
                 let x = right
-                    .saturating_sub(if show_plus { 3 } else { 0 })
+                    .saturating_sub(if show_plus { 4 } else { 0 })
                     .saturating_sub(width);
                 let x = x.max(card.rect.x);
                 if x > card.rect.x {
@@ -5721,6 +5721,11 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             "+",
             "the long name stays short of the plus (TP-DOTS-09)"
         );
+        assert_eq!(
+            buffer[(dots.x + 1, dots.y)].symbol(),
+            " ",
+            "one breathing cell separates the dots from the plus"
+        );
 
         let project_head = app.view.workspace_project_header_areas[0].rect;
         let head_dots = header_menu_cell(project_head);
@@ -6345,8 +6350,9 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             "off the accent the plus wears the text ink, not the contrast ink"
         );
 
-        // The count sits one column past the chrome pair ("⋯" then "+").
-        let badge_x = card.rect.x + card.rect.width - 4;
+        // The count sits one column past the chrome trio ("⋯", a breathing
+        // cell, then "+").
+        let badge_x = card.rect.x + card.rect.width - 5;
         let badge_cell = &buffer[(badge_x, card.rect.y)];
         assert_eq!(badge_cell.symbol(), "2", "the chat count is drawn");
         assert_eq!(
