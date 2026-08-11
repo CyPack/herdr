@@ -355,6 +355,11 @@ fn compute_view_internal(
         LEGACY_DESKTOP_SHELL_LAYOUT_REVISION,
         u64::from(sidebar_w),
         app.shell_presentation.left_panel_collapse_revision(),
+        // No template yet: this path still derives its regions from
+        // `ShellLayout::default()`. The key carries the answer explicitly so
+        // that the day a template is chosen here, the cache cannot mistake the
+        // new geometry for the old one.
+        None,
     );
     let previous_shell_view = std::mem::take(&mut app.view.shell);
     let shell_view =
@@ -680,7 +685,7 @@ fn compute_mobile_view(
         .map(|_| mobile_toast_banner_rect(area, app.config_diagnostic.is_some()))
         .unwrap_or_default();
     let shell_view = shell::compute_empty_shell_view(
-        ShellGeometryKey::new(area, MOBILE_EMPTY_SHELL_LAYOUT_REVISION, 0, 0),
+        ShellGeometryKey::new(area, MOBILE_EMPTY_SHELL_LAYOUT_REVISION, 0, 0, None),
         std::mem::take(&mut app.view.shell),
     );
 

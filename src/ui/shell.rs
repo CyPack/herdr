@@ -1105,7 +1105,7 @@ mod tests {
             regions: layout.compute_regions(area, legacy_sidebar_resolver(26)),
             hits: Vec::new(),
             degradation: ResponsiveDegradation::Workspace,
-            geometry_key: ShellGeometryKey::new(area, 0, 26, 0),
+            geometry_key: ShellGeometryKey::new(area, 0, 26, 0, None),
         };
 
         let current = compute_shell_view(&layout, previous.geometry_key, previous.clone(), &|_| {
@@ -1129,7 +1129,7 @@ mod tests {
             regions: layout.compute_regions(area, legacy_sidebar_resolver(26)),
             hits: Vec::new(),
             degradation: ResponsiveDegradation::Workspace,
-            geometry_key: ShellGeometryKey::new(area, 0, 26, 0),
+            geometry_key: ShellGeometryKey::new(area, 0, 26, 0, None),
         };
 
         let area_changed =
@@ -1223,7 +1223,7 @@ mod tests {
 
         // Hidden collapse (zero width): the LeftPanel exposes no hit target,
         // and its former position belongs to the current WorkspaceStage.
-        let hidden_key = ShellGeometryKey::new(area, 0, 0, 1);
+        let hidden_key = ShellGeometryKey::new(area, 0, 0, 1, None);
         let resolver = legacy_sidebar_resolver(0);
         let hidden = compute_shell_view(&layout, hidden_key, expanded.clone(), &resolver);
         assert!(
@@ -1245,7 +1245,7 @@ mod tests {
 
         // Compact rail: visible collapsed geometry keeps its hit authority,
         // so inertness cannot over-apply to a real on-screen affordance.
-        let compact_key = ShellGeometryKey::new(area, 0, 4, 2);
+        let compact_key = ShellGeometryKey::new(area, 0, 4, 2, None);
         let rail_resolver = legacy_sidebar_resolver(4);
         let compact = compute_shell_view(&layout, compact_key, hidden, &rail_resolver);
         assert_eq!(
@@ -1255,7 +1255,7 @@ mod tests {
         );
 
         // Zero-area outer geometry: no region can expose any target.
-        let zero_key = ShellGeometryKey::new(Rect::ZERO, 0, 26, 3);
+        let zero_key = ShellGeometryKey::new(Rect::ZERO, 0, 26, 3, None);
         let full_resolver = legacy_sidebar_resolver(26);
         let zero = compute_shell_view(&layout, zero_key, compact, &full_resolver);
         assert!(
@@ -1278,7 +1278,7 @@ mod tests {
                 rect,
             }],
             degradation: ResponsiveDegradation::Workspace,
-            geometry_key: ShellGeometryKey::new(rect, 0, 5, 0),
+            geometry_key: ShellGeometryKey::new(rect, 0, 5, 0, None),
         };
 
         assert_eq!(shell_hit_for_test(&view, 9, 2, 2), Some(RegionId::AppDock));
@@ -1306,7 +1306,7 @@ mod tests {
         assert!(!desktop.hits.is_empty());
         let desktop_generation = desktop.generation;
 
-        let mobile_key = ShellGeometryKey::new(Rect::new(0, 0, 30, 20), 2, 0, 0);
+        let mobile_key = ShellGeometryKey::new(Rect::new(0, 0, 30, 20), 2, 0, 0, None);
         let mobile = compute_empty_shell_view(mobile_key, desktop);
         assert_eq!(mobile.generation, desktop_generation + 1);
         assert_eq!(mobile.area, mobile_key.area);
@@ -1333,7 +1333,7 @@ mod tests {
                 rect: Rect::new(0, 0, 26, 24),
             }],
             degradation: ResponsiveDegradation::Workspace,
-            geometry_key: ShellGeometryKey::new(old_area, 0, 26, 0),
+            geometry_key: ShellGeometryKey::new(old_area, 0, 26, 0, None),
         };
         let new_area = Rect::new(0, 0, 81, 24);
 
@@ -1356,7 +1356,7 @@ mod tests {
         let resolver = legacy_sidebar_resolver(sidebar_width);
         compute_shell_view(
             layout,
-            ShellGeometryKey::new(area, 0, u64::from(sidebar_width), 0),
+            ShellGeometryKey::new(area, 0, u64::from(sidebar_width), 0, None),
             previous.cloned().unwrap_or_default(),
             &resolver,
         )

@@ -802,7 +802,7 @@ mod tests {
         let mut state = AppState::test_new();
         state.view.shell = crate::ui::shell::compute_shell_view(
             &layout,
-            crate::ui::shell::ShellGeometryKey::new(area, 0, 26, 0),
+            crate::ui::shell::ShellGeometryKey::new(area, 0, 26, 0, None),
             crate::ui::shell::ShellView::default(),
             &|region| u16::from(region == RegionId::LeftPanel) * 26,
         );
@@ -829,7 +829,7 @@ mod tests {
         let previous = std::mem::take(&mut state.view.shell);
         state.view.shell = crate::ui::shell::compute_shell_view(
             &layout,
-            crate::ui::shell::ShellGeometryKey::new(area, 0, 4, 0),
+            crate::ui::shell::ShellGeometryKey::new(area, 0, 4, 0, None),
             previous,
             &|region| u16::from(region == RegionId::LeftPanel) * 4,
         );
