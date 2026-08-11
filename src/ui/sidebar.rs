@@ -3242,13 +3242,29 @@ pub(crate) fn collapsed_sidebar_toggle_rect(area: Rect) -> Rect {
     Rect::new(x, bottom_y, 1, 1)
 }
 
-pub(crate) fn expanded_sidebar_toggle_rect(area: Rect) -> Rect {
+/// The collapse control's cell, in the bottom-right of the sidebar's own
+/// content.
+///
+/// The control belongs *inside* the agents half; it is not part of that half's
+/// decoration. So when the agents half wears a frame, the last row and column
+/// are the frame's own and the control steps one cell inwards — otherwise the
+/// icon lands on the corner glyph and the border reads as broken. Both the
+/// drawing and the hit test call this one function, so the inset can never
+/// drift between what is painted and what is clickable.
+pub(crate) fn expanded_sidebar_toggle_rect(
+    area: Rect,
+    chrome: crate::ui::shell::SidebarChrome,
+) -> Rect {
     if area.width <= 1 || area.height == 0 {
         return Rect::default();
     }
+    let inset = u16::from(chrome.agents.is_some());
+    if area.width <= 2 + inset || area.height <= inset {
+        return Rect::default();
+    }
     Rect::new(
-        area.x + area.width.saturating_sub(2),
-        area.y + area.height.saturating_sub(1),
+        area.x + area.width.saturating_sub(2 + inset),
+        area.y + area.height.saturating_sub(1 + inset),
         1,
         1,
     )
@@ -3264,7 +3280,7 @@ fn render_sidebar_toggle(
     let toggle_area = if collapsed {
         collapsed_sidebar_toggle_rect(area)
     } else {
-        expanded_sidebar_toggle_rect(area)
+        expanded_sidebar_toggle_rect(area, app.sidebar_chrome)
     };
     if toggle_area == Rect::default() {
         return;
@@ -3733,7 +3749,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             .draw(|frame| render_sidebar_toggle(&app, frame, area, false, &app.palette))
             .expect("sidebar toggle should render");
 
-        let toggle = expanded_sidebar_toggle_rect(area);
+        let toggle = expanded_sidebar_toggle_rect(area, app.sidebar_chrome);
         assert_eq!(
             terminal.backend().buffer()[(toggle.x, toggle.y)].symbol(),
             "«"
@@ -3743,10 +3759,59 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
     #[test]
     fn expanded_sidebar_toggle_sits_inside_sidebar_content() {
         let area = Rect::new(0, 0, 26, 20);
-        let toggle = expanded_sidebar_toggle_rect(area);
+        let bare = crate::ui::shell::SidebarChrome {
+            spaces: None,
+            agents: None,
+        };
+        let toggle = expanded_sidebar_toggle_rect(area, bare);
 
+        // T56 · the unframed path is the one every user sees today, and it does
+        // not move.
         assert_eq!(toggle.x, area.x + area.width - 2);
         assert_eq!(toggle.y, area.y + area.height - 1);
+
+        let framed = crate::ui::shell::SidebarChrome {
+            spaces: None,
+            agents: Some(crate::ui::shell::BarTint::solid(
+                ratatui::style::Color::Rgb(1, 2, 3),
+            )),
+        };
+        let inside = expanded_sidebar_toggle_rect(area, framed);
+        assert_eq!(inside.x, toggle.x - 1, "the frame owns the last column");
+        assert_eq!(inside.y, toggle.y - 1, "the frame owns the last row");
+    }
+
+    // T57 · a framed panel owns its own corner. The collapse icon is a control
+    // inside the panel, not a glyph that overwrites the frame it sits in — an
+    // icon on the corner reads as a broken border, not as a button.
+    #[test]
+    fn the_collapse_icon_keeps_off_a_framed_panels_corner() {
+        let area = Rect::new(0, 0, 30, 24);
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.ensure_test_terminals();
+        app.active = Some(0);
+        app.sidebar_chrome = crate::ui::shell::SidebarChrome {
+            spaces: None,
+            agents: Some(crate::ui::shell::BarTint::solid(
+                ratatui::style::Color::Rgb(250, 179, 135),
+            )),
+        };
+
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal
+            .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        let (_, detail_frame) = expanded_sidebar_section_frames(area, app.sidebar_section_split);
+        let corner_x = detail_frame.x + detail_frame.width - 1;
+        let corner_y = detail_frame.y + detail_frame.height - 1;
+        assert_eq!(
+            buffer[(corner_x, corner_y)].symbol(),
+            "╯",
+            "the frame's own corner survived the collapse icon"
+        );
     }
 
     #[test]

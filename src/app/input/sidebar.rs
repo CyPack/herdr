@@ -517,7 +517,7 @@ impl AppState {
             return false;
         }
         let sidebar = self.view.sidebar_rect;
-        let toggle = crate::ui::expanded_sidebar_toggle_rect(sidebar);
+        let toggle = crate::ui::expanded_sidebar_toggle_rect(sidebar, self.sidebar_chrome);
         let on_toggle = toggle.width > 0
             && col >= toggle.x
             && col < toggle.x + toggle.width
@@ -534,7 +534,7 @@ impl AppState {
         let rect = if self.sidebar_collapsed {
             crate::ui::collapsed_sidebar_toggle_rect(self.view.sidebar_rect)
         } else {
-            crate::ui::expanded_sidebar_toggle_rect(self.view.sidebar_rect)
+            crate::ui::expanded_sidebar_toggle_rect(self.view.sidebar_rect, self.sidebar_chrome)
         };
         rect.width > 0
             && col >= rect.x
@@ -1466,7 +1466,10 @@ mod tests {
         app.state.view.sidebar_rect = Rect::new(0, 0, 26, 20);
         app.state.view.terminal_area = Rect::new(26, 0, 80, 20);
 
-        let toggle = crate::ui::expanded_sidebar_toggle_rect(app.state.view.sidebar_rect);
+        let toggle = crate::ui::expanded_sidebar_toggle_rect(
+            app.state.view.sidebar_rect,
+            app.state.sidebar_chrome,
+        );
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             toggle.x,
@@ -1476,6 +1479,51 @@ mod tests {
         assert!(app.state.sidebar_collapsed);
         assert!(app.state.session_dirty);
         assert!(app.state.drag.is_none());
+    }
+
+    // T58 · when the agents half wears a frame the collapse icon moves, and the
+    // click has to move with it. Nothing else in the suite would notice a drift
+    // here: the icon would still be painted, the old cell would still be inside
+    // the sidebar, and the click would simply land on the frame and do nothing.
+    #[test]
+    fn a_framed_sidebar_takes_the_collapse_click_where_the_icon_was_drawn() {
+        let mut app = app_for_mouse_test();
+        app.state.sidebar_collapsed = false;
+        app.state.view.sidebar_rect = Rect::new(0, 0, 26, 20);
+        app.state.view.terminal_area = Rect::new(26, 0, 80, 20);
+        app.state.sidebar_chrome = crate::ui::shell::SidebarChrome {
+            spaces: None,
+            agents: Some(crate::ui::shell::BarTint::solid(
+                ratatui::style::Color::Rgb(1, 2, 3),
+            )),
+        };
+
+        let drawn = crate::ui::expanded_sidebar_toggle_rect(
+            app.state.view.sidebar_rect,
+            app.state.sidebar_chrome,
+        );
+
+        // The cell the icon used to occupy is now the frame's corner, and it
+        // must no longer collapse anything.
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            drawn.x + 1,
+            drawn.y + 1,
+        ));
+        assert!(
+            !app.state.sidebar_collapsed,
+            "the frame's corner is decoration, not a button"
+        );
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            drawn.x,
+            drawn.y,
+        ));
+        assert!(
+            app.state.sidebar_collapsed,
+            "the click follows the icon into the frame"
+        );
     }
 
     #[test]
