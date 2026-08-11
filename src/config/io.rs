@@ -4,15 +4,27 @@ use tracing::warn;
 
 use super::{model::LoadedConfig, Config, CONFIG_PATH_ENV_VAR};
 
+/// Every top-level key `Config` accepts.
+///
+/// This list only feeds diagnostics — deserialization happens first and is
+/// unaffected — but a section missing here is reported to the reader as
+/// "ignoring section", which is a lie that costs them the setting they just
+/// wrote. It drifted before: `preview` and `tailscale` shipped without being
+/// added, so both told that lie until `shell` arrived and the same trap caught
+/// a third one. `scripts/config_reference_check.py` now fails when this list
+/// and the config model disagree.
 const KNOWN_TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
     "advanced",
     "experimental",
     "keys",
     "onboarding",
+    "preview",
     "projects",
     "remote",
     "session",
+    "shell",
     "spaces",
+    "tailscale",
     "terminal",
     "theme",
     "ui",
@@ -409,6 +421,20 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
         &mut invalid_sections,
         |section| config.spaces = section,
     );
+    // Startup reads the whole struct through serde; this path is hand written
+    // per section, so a section added to `Config` alone loads at startup and
+    // silently vanishes on reload. `[shell]` was in exactly that state, and
+    // `[preview]` and `[tailscale]` still are — recorded rather than fixed
+    // here, because `tailscale.pinned_devices` is written by the app and
+    // changing when it is re-read is a separate measurement.
+    load_live_section(
+        table,
+        "shell",
+        "shell config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.shell = section,
+    );
 
     Ok(LoadedConfig {
         config,
@@ -782,6 +808,62 @@ fn upsert_section_raw(content: &str, section: &str, key: &str, value: &str) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The layer that added `[shell.bars]` tested the config MODEL and never a
+    // config FILE, so nobody noticed the reader would be told the section was
+    // being ignored. A person who writes a setting and is told it was ignored
+    // stops there — the lie is more expensive than a missing feature.
+    #[test]
+    fn a_shell_bars_table_is_read_and_not_reported_as_unknown() {
+        let content = "\
+[shell.bars.top]
+enabled = true
+size = 3
+
+[shell.bars.right]
+enabled = true
+size = 14
+";
+        let loaded = load_live_config_from_str(content).expect("a bars table parses");
+
+        assert!(loaded.config.shell.bars.top.enabled);
+        assert_eq!(loaded.config.shell.bars.top.size, 3);
+        assert!(loaded.config.shell.bars.right.enabled);
+        assert_eq!(loaded.config.shell.bars.right.size, 14);
+        assert!(
+            !loaded.config.shell.bars.bottom.enabled,
+            "an edge nobody named stays off"
+        );
+        assert!(
+            loaded.diagnostics.is_empty(),
+            "a valid bars table must not produce diagnostics: {:?}",
+            loaded.diagnostics
+        );
+    }
+
+    // Every section the model accepts has to be in the diagnostic list, or the
+    // reader is told their setting was dropped when it was not.
+    #[test]
+    fn every_documented_section_is_known_to_the_diagnostics() {
+        for section in [
+            "preview",
+            "shell",
+            "tailscale",
+            "ui",
+            "theme",
+            "terminal",
+            "spaces",
+        ] {
+            let content = format!("[{section}]\n");
+            let loaded = load_live_config_from_str(&content)
+                .unwrap_or_else(|error| panic!("[{section}] must parse: {error:?}"));
+            assert!(
+                loaded.diagnostics.is_empty(),
+                "[{section}] is a real section but was reported: {:?}",
+                loaded.diagnostics
+            );
+        }
+    }
 
     #[test]
     fn upsert_top_level_bool_replaces_existing_value() {

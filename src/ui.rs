@@ -526,7 +526,10 @@ fn compute_view_internal(
     // projects no dock region, so this stays empty until one is live.
     let app_dock_entry_areas = app_dock::app_dock_entry_areas(
         &app_dock::AppDockModel::for_state(app),
-        shell_view.regions.get(RegionId::AppDock),
+        app.shell_presentation
+            .bars()
+            .left
+            .inner(shell_view.regions.get(RegionId::AppDock)),
     );
 
     let toast_hit_area = app
@@ -944,7 +947,33 @@ impl compose::Component for BaseLayer {
         // The AppDock renders only when the current shell projects it a
         // non-empty region (the legacy default template projects none, so
         // this stays a no-op until a dock-bearing template is live).
-        let dock_area = app.view.shell.regions.get(RegionId::AppDock);
+        // Each configured edge wears its own shell first, then whatever lives
+        // inside it draws into what the border left. The dock reads the same
+        // inner rectangle the hit areas were built from, so a click lands where
+        // the icon is rather than one cell off it.
+        let bars = app.shell_presentation.bars();
+        let colors = app.shell_presentation.bar_colors();
+        for region in [
+            RegionId::TopBar,
+            RegionId::BottomBar,
+            RegionId::AppDock,
+            RegionId::RightPanel,
+        ] {
+            let outer = app.view.shell.regions.get(region);
+            if outer.is_empty() || !bars.track_for(region).has_border() {
+                continue;
+            }
+            widgets::render_bar_shell(
+                frame,
+                outer,
+                colors.for_region(region),
+                app.palette.panel_bg,
+            );
+        }
+
+        let dock_area = bars
+            .left
+            .inner(app.view.shell.regions.get(RegionId::AppDock));
         if !dock_area.is_empty() {
             app_dock::render_app_dock(
                 app,
@@ -1262,10 +1291,14 @@ mod tests {
             left: crate::config::ShellBarConfig {
                 enabled: true,
                 size: 5,
+                border: false,
+                color: String::new(),
             },
             top: crate::config::ShellBarConfig {
                 enabled: true,
                 size: 1,
+                border: false,
+                color: String::new(),
             },
             ..Default::default()
         });
@@ -1304,6 +1337,72 @@ mod tests {
             !painted(top),
             "the top bar has no renderer yet — when one lands, this line is the \
              reminder to change it deliberately rather than discover it"
+        );
+    }
+
+    // T36 · the reader asked for rounded corners in a warm tone, and asked to
+    // be sure they were there. Unicode has no thick *rounded* corner, so the
+    // weight comes from BOLD on the rounded set; squaring the corners to get a
+    // heavy glyph would trade away the thing that was actually requested.
+    #[test]
+    fn a_bordered_bar_draws_rounded_corners_in_its_configured_tone() {
+        use ratatui::{backend::TestBackend, style::Modifier, Terminal};
+
+        let frame = Rect::new(0, 0, 100, 30);
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+
+        let table = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 3,
+                border: true,
+                color: "orange".to_string(),
+            },
+            ..Default::default()
+        };
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&table),
+        )
+        .with_bar_colors(crate::ui::shell::BarColors::from_config(
+            &table,
+            &app.palette,
+        ));
+
+        compute_view(&mut app, frame);
+        let bar = app.view.shell.regions.get(RegionId::TopBar);
+        assert_eq!(bar.height, 3, "three rows: border, content, border");
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("a bordered bar draws");
+        let buffer = terminal.backend().buffer().clone();
+
+        let cell = |x: u16, y: u16| buffer.cell((x, y)).expect("inside the frame").clone();
+        let top_left = cell(bar.x, bar.y);
+        assert_eq!(top_left.symbol(), "╭", "the corner is round, not square");
+        assert_eq!(cell(bar.x + bar.width - 1, bar.y).symbol(), "╮");
+        assert_eq!(cell(bar.x, bar.y + bar.height - 1).symbol(), "╰");
+        assert_eq!(
+            cell(bar.x + bar.width - 1, bar.y + bar.height - 1).symbol(),
+            "╯"
+        );
+
+        assert_eq!(
+            top_left.fg, app.palette.peach,
+            "`orange` resolves through the palette, so the tone follows the theme"
+        );
+        assert!(
+            top_left.modifier.contains(Modifier::BOLD),
+            "weight comes from BOLD, since a thick rounded corner does not exist"
         );
     }
 

@@ -35,6 +35,37 @@ pub(super) fn render_panel_shell(
     Some(inner)
 }
 
+/// Draw one edge bar's own shell and hand back what is left inside it.
+///
+/// Rounded, like every other framed surface here, and BOLD rather than the
+/// heavy box-drawing set: Unicode has no thick *rounded* corner, so asking for
+/// `┏` would square the corners off. Bold keeps `╭╮╰╯` and lets the terminal
+/// render the run with weight, which is the only way to have both.
+pub(super) fn render_bar_shell(
+    frame: &mut Frame,
+    area: Rect,
+    border_color: Color,
+    bg: Color,
+) -> Option<Rect> {
+    if area.width < 2 || area.height < 2 {
+        return None;
+    }
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(
+            Style::default()
+                .fg(border_color)
+                .add_modifier(Modifier::BOLD),
+        )
+        .border_set(ratatui::symbols::border::ROUNDED)
+        .style(Style::default().bg(bg));
+    let inner = block.inner(area);
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+    Some(inner)
+}
+
 pub(super) fn panel_contrast_fg(p: &Palette) -> Color {
     match p.panel_bg {
         Color::Reset => p.surface_dim,

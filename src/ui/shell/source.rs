@@ -15,7 +15,11 @@
 //! the legacy tree rather than propagating an error to a renderer that has no
 //! way to answer it. A shell that cannot be composed must still show a shell.
 
-use crate::config::{ShellBarConfig, ShellBarsConfig};
+use ratatui::layout::Rect;
+use ratatui::style::Color;
+
+use crate::app::state::Palette;
+use crate::config::{parse_color, ShellBarConfig, ShellBarsConfig};
 
 use super::model::{
     RegionId, RegionSize, ShellChild, ShellDirection, ShellLayout, ShellNode, ShellValidationError,
@@ -29,6 +33,10 @@ use super::template::ShellTemplateId;
 /// mistake, and quietly resizing it to something they did not write would hide
 /// the mistake behind a layout they did not ask for.
 pub(crate) const MAX_BAR_CELLS: u16 = 32;
+
+/// The thinnest a bordered strip can be and still hold anything: one cell of
+/// border on each side, one of content.
+pub(crate) const MIN_BORDERED_BAR_CELLS: u16 = 3;
 
 /// Identity of the tree the desktop shell has always drawn.
 ///
@@ -63,16 +71,53 @@ pub(crate) struct DerivedShellLayout {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub(crate) struct BarTrack {
     cells: Option<u16>,
+    /// Whether the strip wears a panel border. It costs one cell on each side,
+    /// which is why a bordered bar is refused below three.
+    bordered: bool,
 }
 
 impl BarTrack {
-    pub(crate) const NONE: Self = Self { cells: None };
+    pub(crate) const NONE: Self = Self {
+        cells: None,
+        bordered: false,
+    };
 
     /// A strip of exactly this many cells. Bounds live in [`BarTrack::from_config`],
     /// where the number arrives from somebody's config file; a caller that
     /// already holds a checked number does not re-check it here.
     pub(crate) const fn of(cells: u16) -> Self {
-        Self { cells: Some(cells) }
+        Self {
+            cells: Some(cells),
+            bordered: false,
+        }
+    }
+
+    /// A bordered strip of exactly this many cells, border included.
+    pub(crate) const fn bordered(cells: u16) -> Self {
+        Self {
+            cells: Some(cells),
+            bordered: true,
+        }
+    }
+
+    pub(crate) const fn has_border(self) -> bool {
+        self.bordered
+    }
+
+    /// The area left for content once the border has taken its cells.
+    ///
+    /// One function for both the drawing and the hit testing: if those two ever
+    /// computed the inset separately they would drift, and a click would land
+    /// one cell away from what the person aimed at — the quiet failure CL5 is
+    /// written against.
+    pub(crate) fn inner(self, outer: Rect) -> Rect {
+        if !self.bordered {
+            return outer;
+        }
+        if outer.width < 3 || outer.height < 3 {
+            return Rect::new(outer.x, outer.y, 0, 0);
+        }
+        Rect::new(outer.x + 1, outer.y + 1, outer.width - 2, outer.height - 2)
     }
 
     /// Read one edge, refusing rather than repairing.
@@ -93,7 +138,24 @@ impl BarTrack {
             );
             return Self::NONE;
         }
-        Self::of(config.size)
+        if config.border && config.size < MIN_BORDERED_BAR_CELLS {
+            // Refused rather than drawn borderless: someone who asked for a
+            // bordered bar and got a bare band would read it as the border
+            // failing, not as their size being impossible.
+            tracing::warn!(
+                edge,
+                size = config.size,
+                minimum = MIN_BORDERED_BAR_CELLS,
+                "a bordered shell bar needs room for its border and its content; \
+                 the bar is not drawn"
+            );
+            return Self::NONE;
+        }
+        if config.border {
+            Self::bordered(config.size)
+        } else {
+            Self::of(config.size)
+        }
     }
 
     const fn enabled(self) -> bool {
@@ -128,8 +190,94 @@ impl ShellBars {
         }
     }
 
+    /// The track that owns one edge region.
+    pub(crate) const fn track_for(self, region: RegionId) -> BarTrack {
+        match region {
+            RegionId::TopBar => self.top,
+            RegionId::BottomBar => self.bottom,
+            RegionId::AppDock => self.left,
+            _ => self.right,
+        }
+    }
+
     const fn any_enabled(self) -> bool {
         self.top.enabled() || self.bottom.enabled() || self.left.enabled() || self.right.enabled()
+    }
+}
+
+/// What each edge's border is painted with.
+///
+/// Kept beside the geometry rather than inside it: a colour never moves a
+/// rectangle, so putting it in the cache key would throw away a correct
+/// projection every time somebody edited a theme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BarColors {
+    pub top: Color,
+    pub bottom: Color,
+    pub left: Color,
+    pub right: Color,
+}
+
+impl BarColors {
+    pub(crate) fn from_config(config: &ShellBarsConfig, palette: &Palette) -> Self {
+        Self {
+            top: bar_color(&config.top.color, palette),
+            bottom: bar_color(&config.bottom.color, palette),
+            left: bar_color(&config.left.color, palette),
+            right: bar_color(&config.right.color, palette),
+        }
+    }
+
+    pub(crate) const fn for_region(self, region: RegionId) -> Color {
+        match region {
+            RegionId::TopBar => self.top,
+            RegionId::BottomBar => self.bottom,
+            RegionId::AppDock => self.left,
+            _ => self.right,
+        }
+    }
+}
+
+impl BarColors {
+    /// The warm default, spelled as a constant so a presentation can be built
+    /// in a const context before any palette exists.
+    pub(crate) const DEFAULT_CONST: Self = {
+        let peach = Color::Rgb(250, 179, 135);
+        Self {
+            top: peach,
+            bottom: peach,
+            left: peach,
+            right: peach,
+        }
+    };
+}
+
+impl Default for BarColors {
+    fn default() -> Self {
+        Self::DEFAULT_CONST
+    }
+}
+
+/// A palette token first, a literal colour second.
+///
+/// Writing `accent` should follow the theme the way every other herdr surface
+/// does; writing `#fab387` should mean exactly that. An empty setting is the
+/// warm default, which is what makes an unconfigured bar look deliberate
+/// rather than like a rendering fault.
+fn bar_color(spec: &str, palette: &Palette) -> Color {
+    match spec.trim().to_lowercase().as_str() {
+        "" => palette.peach,
+        "accent" => palette.accent,
+        "text" => palette.text,
+        "mauve" => palette.mauve,
+        "green" => palette.green,
+        "yellow" => palette.yellow,
+        "red" => palette.red,
+        "blue" => palette.blue,
+        "teal" => palette.teal,
+        "peach" | "orange" => palette.peach,
+        "surface" | "dim" => palette.surface_dim,
+        other => parse_color(other),
     }
 }
 
@@ -372,7 +520,21 @@ mod tests {
     }
 
     fn config_bar(enabled: bool, size: u16) -> ShellBarConfig {
-        ShellBarConfig { enabled, size }
+        ShellBarConfig {
+            enabled,
+            size,
+            border: false,
+            color: String::new(),
+        }
+    }
+
+    fn bordered_config_bar(size: u16) -> ShellBarConfig {
+        ShellBarConfig {
+            enabled: true,
+            size,
+            border: true,
+            color: String::new(),
+        }
     }
 
     // T17 · most people never want an edge bar, and must not pay for one.
@@ -533,6 +695,77 @@ mod tests {
             ..ShellBarsConfig::default()
         };
         assert_eq!(ShellBars::from_config(&usable).top, bar(MAX_BAR_CELLS));
+    }
+
+    // T34 · a border needs room, and a bar that cannot have one is refused
+    // rather than quietly drawn bare.
+    #[test]
+    fn a_bordered_bar_thinner_than_its_border_is_refused() {
+        // Drawing it borderless instead would read as the border failing, not
+        // as the size being impossible — and the person would go looking in the
+        // wrong place.
+        for size in [1, 2] {
+            let config = ShellBarsConfig {
+                top: bordered_config_bar(size),
+                ..ShellBarsConfig::default()
+            };
+            assert_eq!(
+                ShellBars::from_config(&config).top,
+                BarTrack::NONE,
+                "size {size} leaves nothing inside the border"
+            );
+        }
+
+        let usable = ShellBarsConfig {
+            top: bordered_config_bar(MIN_BORDERED_BAR_CELLS),
+            ..ShellBarsConfig::default()
+        };
+        let track = ShellBars::from_config(&usable).top;
+        assert!(track.has_border());
+        assert_eq!(track.cells, Some(MIN_BORDERED_BAR_CELLS));
+    }
+
+    // T35 · a bare one-cell strip stays legal; the border is a choice.
+    #[test]
+    fn an_unbordered_bar_may_be_a_single_cell() {
+        let config = ShellBarsConfig {
+            top: config_bar(true, 1),
+            ..ShellBarsConfig::default()
+        };
+        let track = ShellBars::from_config(&config).top;
+        assert_eq!(track.cells, Some(1));
+        assert!(!track.has_border());
+    }
+
+    // T39 · one inset, so drawing and hit testing can never disagree.
+    #[test]
+    fn the_inner_area_is_the_same_answer_for_drawing_and_for_hits() {
+        let outer = Rect::new(4, 2, 5, 10);
+        assert_eq!(BarTrack::of(5).inner(outer), outer, "no border, no inset");
+        assert_eq!(
+            BarTrack::bordered(5).inner(outer),
+            Rect::new(5, 3, 3, 8),
+            "a border takes one cell on every side"
+        );
+        // Too small to hold anything: an empty rect, never a wrapped one.
+        assert_eq!(
+            BarTrack::bordered(2).inner(Rect::new(4, 2, 2, 2)),
+            Rect::new(4, 2, 0, 0)
+        );
+    }
+
+    // T37/T38 · a palette token follows the theme, a literal is taken at its
+    // word, and something unreadable falls back instead of panicking.
+    #[test]
+    fn a_bar_colour_reads_palette_tokens_then_literals() {
+        let palette = Palette::tokyo_night();
+        assert_eq!(bar_color("", &palette), palette.peach, "the warm default");
+        assert_eq!(bar_color("accent", &palette), palette.accent);
+        assert_eq!(bar_color("  Mauve ", &palette), palette.mauve);
+        assert_eq!(bar_color("orange", &palette), palette.peach);
+        assert_eq!(bar_color("#fab387", &palette), parse_color("#fab387"));
+        // Unreadable input must still answer with a colour.
+        let _ = bar_color("not-a-colour-at-all", &palette);
     }
 
     // T20b · a disabled edge is inert no matter what size it names.

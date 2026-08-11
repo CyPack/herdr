@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use ratatui::layout::Position;
 
-use super::{RegionId, ShellBars, ShellDirection, ShellTemplateId};
+use super::{BarColors, RegionId, ShellBars, ShellDirection, ShellTemplateId};
 
 /// Stable identity for one divider between adjacent shell regions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -273,6 +273,9 @@ pub(crate) struct ShellPresentationState {
     /// file, so it is restored from the config the app started with, not from
     /// the snapshot — two files claiming the same fact is how they drift.
     bars: ShellBars,
+    /// Border tones per edge. Presentation, not geometry — deliberately absent
+    /// from the cache key.
+    bar_colors: BarColors,
 }
 
 impl ResizeUpdate {
@@ -556,7 +559,14 @@ impl ShellPresentationState {
             },
             shell_template,
             bars,
+            bar_colors: BarColors::DEFAULT_CONST,
         }
+    }
+
+    /// Attach the palette-resolved border tones.
+    pub(crate) const fn with_bar_colors(mut self, bar_colors: BarColors) -> Self {
+        self.bar_colors = bar_colors;
+        self
     }
 
     pub(crate) fn collapse_left_panel(&mut self, committed_width: u16) -> CollapseUpdate {
@@ -588,6 +598,10 @@ impl ShellPresentationState {
     /// The edge strips this client is presenting.
     pub(crate) const fn bars(&self) -> ShellBars {
         self.bars
+    }
+
+    pub(crate) const fn bar_colors(&self) -> BarColors {
+        self.bar_colors
     }
 }
 

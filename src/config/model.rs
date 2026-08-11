@@ -773,13 +773,25 @@ impl Default for ShellBarsConfig {
 pub struct ShellBarConfig {
     pub enabled: bool,
     pub size: u16,
+    /// Draw the strip as a bordered panel rather than a bare band.
+    ///
+    /// On by default because a bar that is only a gap reads as a rendering
+    /// fault rather than a surface. A border costs one cell on each side, so a
+    /// bordered bar needs `size >= 3` to have anything left to put inside it.
+    pub border: bool,
+    /// Border tone. A palette token (`accent`, `mauve`, `blue`, …) follows the
+    /// active theme; anything else is read as a literal colour. Empty means the
+    /// subdued separator tone.
+    pub color: String,
 }
 
 impl ShellBarConfig {
     const fn horizontal() -> Self {
         Self {
             enabled: false,
-            size: 1,
+            size: 3,
+            border: true,
+            color: String::new(),
         }
     }
 
@@ -787,6 +799,8 @@ impl ShellBarConfig {
         Self {
             enabled: false,
             size: 12,
+            border: true,
+            color: String::new(),
         }
     }
 }

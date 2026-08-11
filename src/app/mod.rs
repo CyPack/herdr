@@ -861,7 +861,11 @@ impl App {
                 sidebar_collapsed,
                 restored_shell_template,
                 crate::ui::shell::ShellBars::from_config(&config.shell.bars),
-            ),
+            )
+            .with_bar_colors(crate::ui::shell::BarColors::from_config(
+                &config.shell.bars,
+                &theme_palette,
+            )),
             drag: None,
             workspace_press: None,
             tab_press: None,

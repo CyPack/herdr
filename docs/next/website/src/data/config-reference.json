@@ -1235,16 +1235,16 @@
       "title": "Shell",
       "keys": [
         {
-          "key": "shell.bars.top.enabled",
+          "key": "shell.bars.bottom.border",
           "type": "boolean",
-          "default": "false",
-          "description": "Draw a strip along the top edge of the frame."
+          "default": "true",
+          "description": "Draw the bottom bar as a bordered panel with rounded corners."
         },
         {
-          "key": "shell.bars.top.size",
-          "type": "integer",
-          "default": "1",
-          "description": "Height of the top bar in rows. Values outside 1-32 leave the bar undrawn."
+          "key": "shell.bars.bottom.color",
+          "type": "string",
+          "default": "\"\"",
+          "description": "Border tone for the bottom bar. A palette token (accent, mauve, blue, teal, green, yellow, red, peach/orange, text, dim) follows the theme; anything else is read as a literal colour. Empty uses the warm default."
         },
         {
           "key": "shell.bars.bottom.enabled",
@@ -1255,8 +1255,20 @@
         {
           "key": "shell.bars.bottom.size",
           "type": "integer",
-          "default": "1",
-          "description": "Height of the bottom bar in rows. Values outside 1-32 leave the bar undrawn."
+          "default": "3",
+          "description": "Thickness of the bottom bar in rows, border included. Values outside 1-32 leave the bar undrawn, and a bordered bar needs at least 3."
+        },
+        {
+          "key": "shell.bars.left.border",
+          "type": "boolean",
+          "default": "true",
+          "description": "Draw the left bar as a bordered panel with rounded corners."
+        },
+        {
+          "key": "shell.bars.left.color",
+          "type": "string",
+          "default": "\"\"",
+          "description": "Border tone for the left bar. A palette token (accent, mauve, blue, teal, green, yellow, red, peach/orange, text, dim) follows the theme; anything else is read as a literal colour. Empty uses the warm default."
         },
         {
           "key": "shell.bars.left.enabled",
@@ -1268,7 +1280,19 @@
           "key": "shell.bars.left.size",
           "type": "integer",
           "default": "12",
-          "description": "Width of the left bar in columns. Values outside 1-32 leave the bar undrawn."
+          "description": "Thickness of the left bar in columns, border included. Values outside 1-32 leave the bar undrawn, and a bordered bar needs at least 3."
+        },
+        {
+          "key": "shell.bars.right.border",
+          "type": "boolean",
+          "default": "true",
+          "description": "Draw the right bar as a bordered panel with rounded corners."
+        },
+        {
+          "key": "shell.bars.right.color",
+          "type": "string",
+          "default": "\"\"",
+          "description": "Border tone for the right bar. A palette token (accent, mauve, blue, teal, green, yellow, red, peach/orange, text, dim) follows the theme; anything else is read as a literal colour. Empty uses the warm default."
         },
         {
           "key": "shell.bars.right.enabled",
@@ -1280,7 +1304,31 @@
           "key": "shell.bars.right.size",
           "type": "integer",
           "default": "12",
-          "description": "Width of the right bar in columns. Values outside 1-32 leave the bar undrawn."
+          "description": "Thickness of the right bar in columns, border included. Values outside 1-32 leave the bar undrawn, and a bordered bar needs at least 3."
+        },
+        {
+          "key": "shell.bars.top.border",
+          "type": "boolean",
+          "default": "true",
+          "description": "Draw the top bar as a bordered panel with rounded corners."
+        },
+        {
+          "key": "shell.bars.top.color",
+          "type": "string",
+          "default": "\"\"",
+          "description": "Border tone for the top bar. A palette token (accent, mauve, blue, teal, green, yellow, red, peach/orange, text, dim) follows the theme; anything else is read as a literal colour. Empty uses the warm default."
+        },
+        {
+          "key": "shell.bars.top.enabled",
+          "type": "boolean",
+          "default": "false",
+          "description": "Draw a strip along the top edge of the frame."
+        },
+        {
+          "key": "shell.bars.top.size",
+          "type": "integer",
+          "default": "3",
+          "description": "Thickness of the top bar in rows, border included. Values outside 1-32 leave the bar undrawn, and a bordered bar needs at least 3."
         }
       ]
     }
