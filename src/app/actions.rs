@@ -5350,6 +5350,13 @@ mod tests {
         let live_cwd = root.join("herdr");
         std::fs::create_dir_all(stale_cwd.join(".git")).unwrap();
         std::fs::create_dir_all(live_cwd.join(".git")).unwrap();
+        // A bare empty `.git` directory is not a repository to git: discovery
+        // walks PAST it and, when temp_dir sits inside a real checkout (any
+        // TMPDIR under $HOME on a machine where $HOME is one), adopts THAT
+        // repo — the label stops being "herdr" and the match dies. A HEAD
+        // file makes each fixture a repo in its own right, deterministically.
+        std::fs::write(stale_cwd.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(live_cwd.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
 
         let mut state = AppState::test_new();
         let mut workspace = Workspace::test_new("stale-name");
