@@ -387,6 +387,21 @@ pub(super) fn open_rename_workspace(
 /// rename can never turn into a group creation.
 fn open_move_new_group_input(state: &mut AppState, ws_idx: usize) {
     state.pending_move_new_group = Some(ws_idx);
+    state.pending_new_module = None;
+    state.pending_workspace_create_cwd = None;
+    state.rename_pane_target = None;
+    state.name_input = String::new();
+    state.name_input_replace_on_type = false;
+    state.context_menu = None;
+    state.enter_overlay_mode(Mode::RenameWorkspace);
+}
+
+/// Arm the rename input to collect a new module's name (TP-DOTS-05). The
+/// parent rides in its own slot so a plain rename can never write a node —
+/// the same isolation the move-naming road relies on.
+fn open_new_module_input(state: &mut AppState, parent: Option<String>) {
+    state.pending_new_module = Some(crate::app::state::PendingNewModule { parent });
+    state.pending_move_new_group = None;
     state.pending_workspace_create_cwd = None;
     state.rename_pane_target = None;
     state.name_input = String::new();
@@ -542,6 +557,12 @@ pub(super) fn apply_rename_action(state: &mut AppState, action: ModalAction) {
                 Mode::RenameWorkspace if state.pending_move_new_group.is_some() => {
                     if let Some(ws_idx) = state.pending_move_new_group.take() {
                         state.submit_move_to_new_group(ws_idx, &new_name);
+                    }
+                }
+                // The module-naming road (TP-DOTS-05), mirrored the same way.
+                Mode::RenameWorkspace if state.pending_new_module.is_some() => {
+                    if let Some(pending) = state.pending_new_module.take() {
+                        state.submit_new_module(pending.parent, &new_name);
                     }
                 }
                 Mode::RenameWorkspace
@@ -973,6 +994,38 @@ pub(super) fn apply_context_menu_action(
             state.move_workspace_space(ws_idx, None, None);
             leave_modal(state);
         }
+        // TP-DOTS-05/07: the header's creation road — sub hangs under the
+        // header itself, parallel beside it (the header's own parent) — and
+        // the fold verbs mirror what a left press does on the row.
+        (ContextMenuKind::NodeHeader { node_key, .. }, Some("New sub-module...")) => {
+            open_new_module_input(state, Some(node_key));
+        }
+        (ContextMenuKind::NodeHeader { node_key, .. }, Some("New parallel module...")) => {
+            let parent = state
+                .space_nodes
+                .iter()
+                .find(|node| node.key == node_key)
+                .and_then(|node| node.parent.clone());
+            open_new_module_input(state, parent);
+        }
+        (ContextMenuKind::NodeHeader { node_key, .. }, Some("Collapse")) => {
+            state.fold_node(node_key);
+            leave_modal(state);
+        }
+        (ContextMenuKind::NodeHeader { node_key, .. }, Some("Expand")) => {
+            state.unfold_node(&node_key);
+            leave_modal(state);
+        }
+        (ContextMenuKind::SpaceHeader { space_key, .. }, Some("Collapse")) => {
+            state.collapsed_space_keys.insert(space_key);
+            state.mark_session_dirty();
+            leave_modal(state);
+        }
+        (ContextMenuKind::SpaceHeader { space_key, .. }, Some("Expand")) => {
+            state.collapsed_space_keys.remove(&space_key);
+            state.mark_session_dirty();
+            leave_modal(state);
+        }
         (
             ContextMenuKind::MoveTarget {
                 ws_idx,
@@ -1279,6 +1332,13 @@ impl App {
                     self.state.submit_move_to_new_group(ws_idx, &new_name);
                 }
             }
+            // TP-DOTS-05: a name collected for a new module becomes one
+            // managed node entry; consumed here for the same reason.
+            Mode::RenameWorkspace if self.state.pending_new_module.is_some() => {
+                if let Some(pending) = self.state.pending_new_module.take() {
+                    self.state.submit_new_module(pending.parent, &new_name);
+                }
+            }
             Mode::RenameWorkspace => {
                 if let Some(cwd) = self.state.pending_workspace_create_cwd.take() {
                     let suggested_name = crate::workspace::derive_label_from_cwd(&cwd);
@@ -1580,6 +1640,38 @@ impl App {
                 self.state.move_workspace_space(ws_idx, None, None);
                 leave_modal(&mut self.state);
             }
+            // TP-DOTS-05/07: the header's creation road on the mouse dispatch
+            // — the same arms the keyboard road walks.
+            (ContextMenuKind::NodeHeader { node_key, .. }, Some("New sub-module...")) => {
+                open_new_module_input(&mut self.state, Some(node_key));
+            }
+            (ContextMenuKind::NodeHeader { node_key, .. }, Some("New parallel module...")) => {
+                let parent = self
+                    .state
+                    .space_nodes
+                    .iter()
+                    .find(|node| node.key == node_key)
+                    .and_then(|node| node.parent.clone());
+                open_new_module_input(&mut self.state, parent);
+            }
+            (ContextMenuKind::NodeHeader { node_key, .. }, Some("Collapse")) => {
+                self.state.fold_node(node_key);
+                leave_modal(&mut self.state);
+            }
+            (ContextMenuKind::NodeHeader { node_key, .. }, Some("Expand")) => {
+                self.state.unfold_node(&node_key);
+                leave_modal(&mut self.state);
+            }
+            (ContextMenuKind::SpaceHeader { space_key, .. }, Some("Collapse")) => {
+                self.state.collapsed_space_keys.insert(space_key);
+                self.state.mark_session_dirty();
+                leave_modal(&mut self.state);
+            }
+            (ContextMenuKind::SpaceHeader { space_key, .. }, Some("Expand")) => {
+                self.state.collapsed_space_keys.remove(&space_key);
+                self.state.mark_session_dirty();
+                leave_modal(&mut self.state);
+            }
             (
                 ContextMenuKind::MoveTarget {
                     ws_idx,
@@ -1796,6 +1888,8 @@ fn cancel_rename_modal(state: &mut AppState) {
     // Disarm a pending move: an escaped name input must never let the next
     // plain rename create a group (TP-RANK-13).
     state.pending_move_new_group = None;
+    // Disarm a pending module the same way (TP-DOTS-06).
+    state.pending_new_module = None;
     state.rename_pane_target = None;
     state.file_manager_rename = None;
     state.name_input.clear();
@@ -2927,6 +3021,186 @@ mod tests {
         assert_eq!(
             app.state.pending_move_new_group, None,
             "cancel disarms the pending move"
+        );
+    }
+
+    // TP-DOTS-01: the node header's menu — creation plus the one fold verb
+    // the current state calls for. The bucket header only folds: a split
+    // rule cannot parent a node, so offering creation there would be a
+    // promise the tree cannot keep.
+    #[test]
+    fn header_menus_offer_creation_and_the_right_fold_verb() {
+        let node_menu = |collapsed| ContextMenuState {
+            kind: ContextMenuKind::NodeHeader {
+                node_key: "group:docs".into(),
+                collapsed,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        assert_eq!(
+            node_menu(false).items(),
+            vec!["New sub-module...", "New parallel module...", "Collapse"]
+        );
+        assert_eq!(
+            node_menu(true).items(),
+            vec!["New sub-module...", "New parallel module...", "Expand"]
+        );
+
+        let space_menu = ContextMenuState {
+            kind: ContextMenuKind::SpaceHeader {
+                space_key: "repo-key".into(),
+                collapsed: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        assert_eq!(space_menu.items(), vec!["Collapse"]);
+    }
+
+    // TP-DOTS-05: "New sub-module..." closes the menu chain and arms the
+    // rename input with the header itself as the parent.
+    #[test]
+    fn a_new_sub_module_pick_opens_the_name_input_with_the_header_as_parent() {
+        let mut app = app_with_movable_branch();
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::NodeHeader {
+                node_key: "group:ui".into(),
+                collapsed: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = item_index(&menu, "New sub-module...");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        assert_eq!(app.state.mode, Mode::RenameWorkspace);
+        assert_eq!(
+            app.state.pending_new_module,
+            Some(crate::app::state::PendingNewModule {
+                parent: Some("group:ui".into()),
+            })
+        );
+        assert_eq!(app.state.name_input, "", "the name starts empty");
+        assert!(app.state.context_menu.is_none(), "the menu chain is done");
+    }
+
+    // TP-DOTS-07: "parallel" hangs the new module beside the header — the
+    // parent is the header's OWN parent, and a top-level header makes a
+    // top-level sibling.
+    #[test]
+    fn a_parallel_module_pick_arms_with_the_headers_own_parent() {
+        let mut app = app_with_movable_branch();
+        app.state.space_nodes = vec![
+            crate::spaces::SpaceNode {
+                key: "group:ops".into(),
+                name: "Ops".into(),
+                icon: None,
+                parent: None,
+            },
+            crate::spaces::SpaceNode {
+                key: "group:ui".into(),
+                name: "UI".into(),
+                icon: None,
+                parent: Some("group:ops".into()),
+            },
+        ];
+        let menu_for = |key: &str| ContextMenuState {
+            kind: ContextMenuKind::NodeHeader {
+                node_key: key.into(),
+                collapsed: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+
+        let menu = menu_for("group:ui");
+        let idx = item_index(&menu, "New parallel module...");
+        app.apply_context_menu_action_via_api(menu, idx);
+        assert_eq!(
+            app.state.pending_new_module,
+            Some(crate::app::state::PendingNewModule {
+                parent: Some("group:ops".into()),
+            }),
+            "a nested header's sibling shares its parent"
+        );
+
+        app.state.pending_new_module = None;
+        let menu = menu_for("group:ops");
+        let idx = item_index(&menu, "New parallel module...");
+        app.apply_context_menu_action_via_api(menu, idx);
+        assert_eq!(
+            app.state.pending_new_module,
+            Some(crate::app::state::PendingNewModule { parent: None }),
+            "a top-level header's sibling is top level"
+        );
+    }
+
+    // TP-DOTS-06: an escaped name input disarms the pending module — the
+    // next plain rename must never write a node.
+    #[test]
+    fn an_escaped_module_name_never_creates_on_the_next_rename() {
+        let mut app = app_with_movable_branch();
+        app.state.pending_new_module = Some(crate::app::state::PendingNewModule {
+            parent: Some("group:ui".into()),
+        });
+        app.state.enter_overlay_mode(Mode::RenameWorkspace);
+
+        app.apply_rename_mouse_action_via_api(ModalAction::Cancel);
+
+        assert_eq!(
+            app.state.pending_new_module, None,
+            "cancel disarms the pending module"
+        );
+    }
+
+    // TP-DOTS-02 companion: the fold verbs do from the menu exactly what a
+    // left press does on the row, for both header kinds.
+    #[test]
+    fn header_menu_fold_verbs_fold_and_unfold() {
+        let mut app = app_with_movable_branch();
+
+        let node_menu = |collapsed| ContextMenuState {
+            kind: ContextMenuKind::NodeHeader {
+                node_key: "group:ui".into(),
+                collapsed,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let menu = node_menu(false);
+        let idx = item_index(&menu, "Collapse");
+        app.apply_context_menu_action_via_api(menu, idx);
+        assert!(app.state.node_folded("group:ui"), "the menu folds the node");
+
+        let menu = node_menu(true);
+        let idx = item_index(&menu, "Expand");
+        app.apply_context_menu_action_via_api(menu, idx);
+        assert!(
+            !app.state.node_folded("group:ui"),
+            "the menu unfolds the node"
+        );
+
+        let space_menu = ContextMenuState {
+            kind: ContextMenuKind::SpaceHeader {
+                space_key: "repo-key".into(),
+                collapsed: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = item_index(&space_menu, "Collapse");
+        app.apply_context_menu_action_via_api(space_menu, idx);
+        assert!(
+            app.state.collapsed_space_keys.contains("repo-key"),
+            "the menu folds the bucket the way a left press does"
         );
     }
 

@@ -232,6 +232,26 @@ pub(crate) fn managed_key(repo_root: &Path, branch: &str) -> String {
     format!("{repo}:{}", slug_for_branch(branch))
 }
 
+/// Upsert one managed `[[spaces.node]]` entry on its own — the 2-click
+/// module road (TP-DOTS-05). No split rule rides along: a module born from
+/// a header has no branch yet, and writing an empty rule would steal the
+/// first matching branch from whatever rule owns it today.
+pub(crate) fn upsert_managed_node(content: &str, node: &NodePlan) -> Result<String, String> {
+    let mut root = parse_managed(content)?;
+    let mut entry = toml::map::Map::new();
+    entry.insert("key".into(), toml::Value::String(node.key.clone()));
+    entry.insert("name".into(), toml::Value::String(node.name.clone()));
+    if let Some(parent) = &node.parent {
+        entry.insert("parent".into(), toml::Value::String(parent.clone()));
+    }
+    upsert_by_key(
+        ensure_spaces_array(&mut root, "node")?,
+        &node.key,
+        toml::Value::Table(entry),
+    );
+    serialize_managed(&root)
+}
+
 /// Upsert the plan into the managed overlay document. Replaces the rule (and
 /// project) that already carries the plan's key, so promoting twice updates in
 /// place instead of stacking duplicates (TP-RANK-03).
@@ -771,6 +791,67 @@ fn report_reload() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // TP-DOTS-05: the module road writes one node entry and nothing else —
+    // no split rule, no project — and a re-write with the same key updates
+    // in place instead of stacking duplicates.
+    #[test]
+    fn upsert_managed_node_writes_only_the_node_entry() {
+        let updated = upsert_managed_node(
+            "",
+            &NodePlan {
+                key: "group:docs".into(),
+                name: "Docs".into(),
+                parent: Some("project:herdr".into()),
+            },
+        )
+        .expect("a clean overlay accepts the node");
+        let root: toml::Value = updated.parse().expect("the overlay stays valid toml");
+        let spaces = root.get("spaces").expect("a spaces table is written");
+        let nodes = spaces
+            .get("node")
+            .and_then(|n| n.as_array())
+            .expect("a node array is written");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(
+            nodes[0].get("key").and_then(|v| v.as_str()),
+            Some("group:docs")
+        );
+        assert_eq!(nodes[0].get("name").and_then(|v| v.as_str()), Some("Docs"));
+        assert_eq!(
+            nodes[0].get("parent").and_then(|v| v.as_str()),
+            Some("project:herdr")
+        );
+        assert!(
+            spaces.get("split").is_none(),
+            "no split rule rides along with a branchless module"
+        );
+
+        let renamed = upsert_managed_node(
+            &updated,
+            &NodePlan {
+                key: "group:docs".into(),
+                name: "Docs Render".into(),
+                parent: None,
+            },
+        )
+        .expect("a re-write with the same key is an update");
+        let root: toml::Value = renamed.parse().expect("still valid toml");
+        let nodes = root
+            .get("spaces")
+            .and_then(|s| s.get("node"))
+            .and_then(|n| n.as_array())
+            .expect("the node array survives");
+        assert_eq!(nodes.len(), 1, "the same key updates in place");
+        assert_eq!(
+            nodes[0].get("name").and_then(|v| v.as_str()),
+            Some("Docs Render")
+        );
+        assert!(
+            nodes[0].get("parent").is_none(),
+            "top level drops the parent field"
+        );
+    }
 
     fn plan(as_project: bool) -> PromotePlan {
         PromotePlan {

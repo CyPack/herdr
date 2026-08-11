@@ -2030,6 +2030,34 @@ impl AppState {
         self.move_workspace_space(ws_idx, Some(key), Some(node));
     }
 
+    /// The header's 2-click module road (TP-DOTS-05): write one managed
+    /// `[[spaces.node]]` entry and re-read the rules. The node arrives
+    /// empty, and an empty node draws nothing until a branch joins it —
+    /// that is the tree's standing rule, not a failure of this write.
+    pub(crate) fn submit_new_module(&mut self, parent: Option<String>, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        let node = crate::cli::space::NodePlan {
+            key: format!("group:{}", crate::cli::space::slug_for_branch(name)),
+            name: name.to_string(),
+            parent,
+        };
+        let path = crate::config::managed_spaces_path();
+        let current = std::fs::read_to_string(&path).unwrap_or_default();
+        match crate::cli::space::upsert_managed_node(&current, &node) {
+            Ok(updated) => {
+                if let Err(err) = std::fs::write(&path, updated) {
+                    tracing::warn!(error = %err, "managed overlay write failed");
+                    return;
+                }
+                self.reload_space_rules_from_disk();
+            }
+            Err(err) => tracing::warn!(error = %err, "managed overlay upsert failed"),
+        }
+    }
+
     /// The menu road to `herdr space promote`: write the managed rule, then
     /// re-read the rules so the sidebar regroups in place (TP-RANK-07).
     pub(crate) fn promote_workspace_space(&mut self, ws_idx: usize, as_project: bool) {

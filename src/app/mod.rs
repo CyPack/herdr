@@ -753,6 +753,7 @@ impl App {
             request_new_linked_worktree: None,
             request_open_existing_worktree: None,
             pending_move_new_group: None,
+            pending_new_module: None,
             chat_move_overrides: Default::default(),
             request_chat_move: None,
             request_new_workspace_cwd: None,

@@ -2212,6 +2212,14 @@ pub(crate) struct WorkspacePressState {
     pub start_row: u16,
 }
 
+/// What a "new sub/parallel module" is collecting a name for: the node key
+/// the new `[[spaces.node]]` entry will hang under, `None` for top level
+/// (TP-DOTS-05/07).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingNewModule {
+    pub parent: Option<String>,
+}
+
 #[derive(Clone)]
 pub(crate) struct TabPressState {
     pub ws_idx: usize,
@@ -2263,6 +2271,21 @@ pub enum ContextMenuKind {
     ChatMoveTarget {
         session_id: String,
         targets: Vec<(String, String)>,
+    },
+    /// A node header's own menu — the module and project rows the tree draws
+    /// from `[[spaces.node]]` / `[[spaces.project]]` entries. Creation lands
+    /// here because the header IS the parent a new module would hang under;
+    /// `collapsed` picks which fold verb the menu offers (TP-DOTS-01).
+    NodeHeader {
+        node_key: String,
+        collapsed: bool,
+    },
+    /// A repository/bucket header's menu. A split rule cannot parent a node,
+    /// so offering "new sub-module" here would be a promise the tree cannot
+    /// keep — the menu carries the fold verbs only (TP-DOTS-01).
+    SpaceHeader {
+        space_key: String,
+        collapsed: bool,
     },
     Tab {
         ws_idx: usize,
@@ -2388,6 +2411,19 @@ impl ContextMenuState {
             }
             ContextMenuKind::ChatMoveTarget { targets, .. } => {
                 targets.iter().map(|(_, label)| label.as_str()).collect()
+            }
+            // TP-DOTS-01: creation lands on the node header — it IS the
+            // parent — plus the one fold verb the current state calls for.
+            ContextMenuKind::NodeHeader { collapsed, .. } => {
+                let mut items = vec!["New sub-module...", "New parallel module..."];
+                items.push(if *collapsed { "Expand" } else { "Collapse" });
+                items
+            }
+            // A split rule cannot parent a node, so the bucket header only
+            // folds — offering creation here would be a promise the tree
+            // cannot keep (TP-DOTS-01).
+            ContextMenuKind::SpaceHeader { collapsed, .. } => {
+                vec![if *collapsed { "Expand" } else { "Collapse" }]
             }
             ContextMenuKind::Tab { .. } => vec!["New tab", "Rename", "Close"],
             ContextMenuKind::ProjectNewChat {
@@ -3129,6 +3165,11 @@ pub struct AppState {
     /// the rename input collects the name. Client-local like every modal
     /// fact: naming a group on one display never opens an input on another.
     pub pending_move_new_group: Option<usize>,
+    /// The parent a "new sub/parallel module" is collecting a name for
+    /// (TP-DOTS-05): `Some(PendingNewModule)` arms the rename input, the
+    /// inner parent is where the new node hangs (`None` = top level).
+    /// Client-local for the same reason as `pending_move_new_group`.
+    pub pending_new_module: Option<PendingNewModule>,
     /// Read-only mirror of the chat ledger's re-homes (session id → target
     /// ledger key), refreshed by the same sync that projects the rows. The
     /// state layer needs it to build the chat menu; the ledger itself lives
@@ -4162,6 +4203,7 @@ impl AppState {
             request_new_linked_worktree: None,
             request_open_existing_worktree: None,
             pending_move_new_group: None,
+            pending_new_module: None,
             chat_move_overrides: Default::default(),
             request_chat_move: None,
             request_new_workspace_cwd: None,
@@ -4729,6 +4771,11 @@ impl AppState {
                 ContextMenuKind::AppDock { .. } => {
                     // The dock popover references only a closed built-in app
                     // id; there is no index-shaped identity to validate.
+                }
+                ContextMenuKind::NodeHeader { .. } | ContextMenuKind::SpaceHeader { .. } => {
+                    // Header menus carry config keys, not indices; a key that
+                    // stops resolving degrades to a no-op menu, never to an
+                    // out-of-bounds index (TP-DOTS-01).
                 }
             }
         }

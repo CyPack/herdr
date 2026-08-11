@@ -1352,6 +1352,58 @@ impl AppState {
                     }
                     return None;
                 }
+                // TP-DOTS-02: the tree's header rows own menus of their own —
+                // matched from their own vectors, like the click road, so a
+                // header can never resolve through a workspace sharing its
+                // row. The bucket header folds; the node header also creates.
+                if let Some(head) = self
+                    .view
+                    .workspace_group_header_areas
+                    .iter()
+                    .find(|head| {
+                        mouse.row == head.rect.y
+                            && mouse.column >= head.rect.x
+                            && mouse.column < head.rect.x + head.rect.width
+                    })
+                    .cloned()
+                {
+                    let collapsed = self.collapsed_space_keys.contains(&head.space_key);
+                    self.context_menu = Some(ContextMenuState {
+                        kind: ContextMenuKind::SpaceHeader {
+                            space_key: head.space_key,
+                            collapsed,
+                        },
+                        x: mouse.column,
+                        y: mouse.row,
+                        list: MenuListState::new(0),
+                    });
+                    self.enter_overlay_mode(Mode::ContextMenu);
+                    return None;
+                }
+                if let Some(head) = self
+                    .view
+                    .workspace_project_header_areas
+                    .iter()
+                    .find(|head| {
+                        mouse.row == head.rect.y
+                            && mouse.column >= head.rect.x
+                            && mouse.column < head.rect.x + head.rect.width
+                    })
+                    .cloned()
+                {
+                    let collapsed = self.node_folded(&head.project_key);
+                    self.context_menu = Some(ContextMenuState {
+                        kind: ContextMenuKind::NodeHeader {
+                            node_key: head.project_key,
+                            collapsed,
+                        },
+                        x: mouse.column,
+                        y: mouse.row,
+                        list: MenuListState::new(0),
+                    });
+                    self.enter_overlay_mode(Mode::ContextMenu);
+                    return None;
+                }
                 if let Some(idx) = self.workspace_at_row(mouse.row) {
                     self.selected = idx;
                     let kind = self
@@ -2868,6 +2920,80 @@ mod tests {
             Bytes::from_static(b"\x1b[<2;4;5m")
         );
         assert!(input_rx.try_recv().is_err());
+    }
+
+    // TP-DOTS-02: right-click on the tree's header rows opens their own
+    // menus — the node header carries creation, the bucket header carries
+    // the fold verbs. Before this road existed the press fell through to
+    // nothing, so the tree could only be managed from branch rows.
+    #[test]
+    fn right_click_on_headers_opens_their_menus() {
+        let mut app = app_for_mouse_test();
+        let mut main = crate::workspace::Workspace::test_new("main");
+        main.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr"),
+            is_linked_worktree: false,
+        });
+        main.identity_cwd = std::env::temp_dir();
+        let mut child = crate::workspace::Workspace::test_new("issue");
+        child.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr-issue"),
+            is_linked_worktree: true,
+        });
+        app.state.workspaces = vec![main, child];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mobile_width_threshold = 0;
+        app.state.space_projects = vec![crate::spaces::SpaceProject {
+            key: "project:herdr".into(),
+            name: "herdr".into(),
+            icon: None,
+            repo_roots: vec![std::path::PathBuf::from("/repo/herdr")],
+            space_keys: Vec::new(),
+        }];
+
+        let area = ratatui::layout::Rect::new(0, 0, 106, 20);
+        crate::ui::compute_view(&mut app.state, area);
+        let project_head = app.state.view.workspace_project_header_areas[0].clone();
+        let group_head = app.state.view.workspace_group_header_areas[0].clone();
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            project_head.rect.x,
+            project_head.rect.y,
+        ));
+        assert!(
+            matches!(
+                app.state.context_menu.as_ref().map(|menu| &menu.kind),
+                Some(crate::app::state::ContextMenuKind::NodeHeader { node_key, .. })
+                    if node_key == "project:herdr"
+            ),
+            "a node header owns its own menu; got {:?}",
+            app.state.context_menu.as_ref().map(|menu| &menu.kind)
+        );
+
+        app.state.context_menu = None;
+        app.state.mode = crate::app::state::Mode::Terminal;
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Right),
+            group_head.rect.x,
+            group_head.rect.y,
+        ));
+        assert!(
+            matches!(
+                app.state.context_menu.as_ref().map(|menu| &menu.kind),
+                Some(crate::app::state::ContextMenuKind::SpaceHeader { space_key, .. })
+                    if space_key == "repo-key"
+            ),
+            "a bucket header owns its fold menu; got {:?}",
+            app.state.context_menu.as_ref().map(|menu| &menu.kind)
+        );
     }
 
     // TP-TREE-14 + TP-TREE-15: the two disclosures the Spaces tab owns now sit
