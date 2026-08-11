@@ -382,19 +382,18 @@ pub(crate) fn node_for_key<'a>(
 /// a deeper tree keeps folding correctly, it just stops eating name columns
 /// on a 76-column phone.
 pub(crate) fn node_depth(app: &AppState, node_key: &str) -> u16 {
-    let parent_of: std::collections::HashMap<&str, Option<&str>> = app
-        .space_nodes
-        .iter()
-        .map(|node| (node.key.as_str(), node.parent.as_deref()))
-        .collect();
+    // The chain may run through buckets (TP-NODE-08): every edge is read
+    // through the one tree-edge reader so mixed chains count fully.
+    let guard = app.space_nodes.len() + app.space_split_rules.len();
     let mut depth: u16 = 0;
-    let mut current = parent_of.get(node_key).copied().flatten();
+    let mut current =
+        crate::spaces::tree_parent_of(&app.space_nodes, &app.space_split_rules, node_key);
     while let Some(key) = current {
         depth += 1;
-        if depth as usize > app.space_nodes.len() {
+        if depth as usize > guard {
             break; // The forest is validated; belt and braces.
         }
-        current = parent_of.get(key).copied().flatten();
+        current = crate::spaces::tree_parent_of(&app.space_nodes, &app.space_split_rules, key);
     }
     depth.min(6)
 }
@@ -442,6 +441,28 @@ pub(crate) fn space_node_shift_for_key(app: &AppState, space_key: &str) -> u16 {
         .find(|idx| effective_space(app, *idx).is_some_and(|space| space.key == space_key))
         .map(|idx| workspace_node_shift(app, idx))
         .unwrap_or(0)
+}
+
+/// The owner a bucket header hangs under: the claiming rule's own parent
+/// first, the claiming project second — the single-key form of the walk the
+/// emitter does per space (TP-DOTS-12).
+pub(crate) fn space_owner_for_key(app: &AppState, space_key: &str) -> Option<String> {
+    let ws_idx = (0..app.workspaces.len())
+        .find(|idx| effective_space(app, *idx).is_some_and(|space| space.key == space_key))?;
+    let ws = app.workspaces.get(ws_idx)?;
+    let membership = ws.worktree_space()?;
+    let rule = crate::spaces::resolve_space_rule(
+        &app.space_split_rules,
+        &membership.repo_root,
+        &membership.checkout_path,
+        ws.branch().as_deref(),
+    );
+    crate::spaces::resolve_space_parent(
+        rule,
+        &app.space_projects,
+        space_key,
+        Some(&membership.repo_root),
+    )
 }
 
 /// The configured project behind a header row's key.
@@ -892,6 +913,13 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
                         .space_projects
                         .iter()
                         .any(|project| &project.key == parent)
+                    // A defined split rule is a real parent too: a bucket can
+                    // hang under a bucket once modules hang under buckets
+                    // (TP-NODE-08); only the truly undefined stays a ghost.
+                    || app
+                        .space_split_rules
+                        .iter()
+                        .any(|rule| &rule.key == parent)
             });
             (key.clone(), owner)
         })
@@ -929,10 +957,7 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
             if steps > app.space_nodes.len() {
                 break;
             }
-            current = node_parent
-                .get(key.as_str())
-                .copied()
-                .flatten()
+            current = crate::spaces::tree_parent_of(&app.space_nodes, &app.space_split_rules, &key)
                 .map(str::to_string);
         }
         false
@@ -947,42 +972,62 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
             .as_ref()
             .and_then(|space| parent_of_space.get(&space.key).cloned().flatten());
 
-        let Some(owner) = owner else {
-            push_space_block(
-                app,
-                &mut entries,
-                ws_idx,
-                &members_by_key,
-                &grouped_keys,
-                &mut emitted_groups,
-                force_expanded,
-                visible_group_idx,
-                active_group.as_deref(),
-                false,
-            );
-            continue;
+        // TP-TREE-16: a bucket with no owner may still carry child modules —
+        // it rides the same stack machine so its subtree follows its block.
+        let root_seed = match (&space, owner) {
+            (_, Some(owner)) => owner,
+            (Some(space), None) if node_children.contains_key(space.key.as_str()) => {
+                space.key.clone()
+            }
+            _ => {
+                push_space_block(
+                    app,
+                    &mut entries,
+                    ws_idx,
+                    &members_by_key,
+                    &grouped_keys,
+                    &mut emitted_groups,
+                    force_expanded,
+                    visible_group_idx,
+                    active_group.as_deref(),
+                    false,
+                );
+                continue;
+            }
         };
 
         // TP-NODE-04, generalising TP-PROJ-GROUP-01: the chain's root takes
         // its row where its first descendant sits, and the whole subtree
         // follows pre-order — every ancestor header before its children,
-        // children in their own first-appearance order.
-        let mut root = owner;
-        while let Some(parent) = node_parent.get(root.as_str()).copied().flatten() {
+        // children in their own first-appearance order. The climb crosses
+        // bucket edges too (TP-NODE-08), so a mixed chain finds its true top.
+        let mut root = root_seed;
+        let mut climbed = 0usize;
+        while let Some(parent) =
+            crate::spaces::tree_parent_of(&app.space_nodes, &app.space_split_rules, &root)
+        {
             root = parent.to_string();
-        }
-        if !emitted_nodes.insert(root.clone()) {
-            continue;
+            climbed += 1;
+            if climbed > app.space_nodes.len() + app.space_split_rules.len() {
+                break; // The forest is validated; belt and braces.
+            }
         }
 
         enum Job {
             Node(String),
-            Bucket(String),
+            /// A bucket block plus, when it is open, the modules hanging
+            /// under it. The flag says whether an ancestor indents it.
+            Bucket(String, bool),
         }
-        let mut stack = vec![Job::Node(root)];
+        // The top of a mixed chain can itself be a bucket (TP-TREE-16).
+        let mut stack = vec![if members_by_key.contains_key(&root) {
+            Job::Bucket(root, false)
+        } else {
+            Job::Node(root)
+        }];
         while let Some(job) = stack.pop() {
             match job {
-                Job::Bucket(space_key) => {
+                Job::Bucket(space_key, parented) => {
                     let Some(first) = members_by_key
                         .get(&space_key)
                         .and_then(|members| members.first().copied())
@@ -999,10 +1044,44 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
                         force_expanded,
                         visible_group_idx,
                         active_group.as_deref(),
-                        true,
+                        parented,
                     );
+                    // TP-TREE-16/17: an open bucket walks the modules (and
+                    // through them, buckets) hanging under it; a folded one
+                    // hides its whole subtree, exactly like its members.
+                    if !force_expanded && app.collapsed_space_keys.contains(&space_key) {
+                        continue;
+                    }
+                    let mut kids: Vec<(usize, Job)> = Vec::new();
+                    for bucket in buckets_of_node.get(&space_key).into_iter().flatten() {
+                        kids.push((
+                            first_ws_of_space.get(bucket).copied().unwrap_or(usize::MAX),
+                            Job::Bucket(bucket.clone(), true),
+                        ));
+                    }
+                    for child in node_children.get(space_key.as_str()).into_iter().flatten() {
+                        kids.push((
+                            subtree_first_ws(
+                                child,
+                                &node_children,
+                                &buckets_of_node,
+                                &first_ws_of_space,
+                                app.space_nodes.len() + 1,
+                            ),
+                            Job::Node((*child).to_string()),
+                        ));
+                    }
+                    kids.sort_by_key(|(first, _)| *first);
+                    for (_, kid) in kids.into_iter().rev() {
+                        stack.push(kid);
+                    }
                 }
                 Job::Node(node_key) => {
+                    // Several member workspaces climb to the same top; the
+                    // subtree is emitted once and later climbs skip here.
+                    if !emitted_nodes.insert(node_key.clone()) {
+                        continue;
+                    }
                     entries.push(WorkspaceListEntry::ProjectHeader {
                         project_key: node_key.clone(),
                     });
@@ -1027,7 +1106,7 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
                     for bucket in buckets_of_node.get(&node_key).into_iter().flatten() {
                         kids.push((
                             first_ws_of_space.get(bucket).copied().unwrap_or(usize::MAX),
-                            Job::Bucket(bucket.clone()),
+                            Job::Bucket(bucket.clone(), true),
                         ));
                     }
                     for child in node_children.get(node_key.as_str()).into_iter().flatten() {
@@ -5486,6 +5565,126 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             .draw(|frame| render_sidebar(app, &TerminalRuntimeRegistry::new(), frame, area))
             .expect("draw");
         terminal.backend().buffer().clone()
+    }
+
+    // TP-TREE-16: a module bucket can carry modules of its own — a node
+    // whose parent is a split rule's key is drawn under that bucket,
+    // pre-order, with its own buckets following. Modules and buckets are
+    // one tree to the person using them (TP-NODE-08).
+    #[test]
+    fn a_node_under_a_bucket_is_drawn_inside_that_bucket() {
+        let mut app = AppState::test_new();
+        app.mobile_width_threshold = 0;
+        app.workspaces = vec![
+            worktree_on_branch("alpha", "feat/t4f-alpha"),
+            worktree_on_branch("beta", "feat/t4f-beta"),
+            // Two members, so the child bucket keeps its own header —
+            // a single-member parented bucket folds into the row (TP-NODE-05).
+            worktree_on_branch("probe", "probe/one"),
+            worktree_on_branch("probe2", "probe/two"),
+        ];
+        let mut inner_rule = split_rule(&["probe/*"], "herdr:probe", "Probe");
+        inner_rule.parent = Some("group:inner".into());
+        app.space_split_rules = vec![split_rule(&["feat/t4f-*"], "herdr:t4f", "T4F"), inner_rule];
+        app.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "group:inner".into(),
+            name: "Inner".into(),
+            icon: None,
+            parent: Some("herdr:t4f".into()),
+        }];
+
+        let entries: Vec<String> = workspace_list_entries(&app)
+            .into_iter()
+            .filter_map(|entry| match entry {
+                WorkspaceListEntry::GroupHeader { space_key } => Some(format!("group:{space_key}")),
+                WorkspaceListEntry::ProjectHeader { project_key } => {
+                    Some(format!("node:{project_key}"))
+                }
+                WorkspaceListEntry::Workspace { ws_idx, .. } => Some(format!("ws:{ws_idx}")),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            entries,
+            vec![
+                "group:herdr:t4f",
+                "ws:0",
+                "ws:1",
+                "node:group:inner",
+                "group:herdr:probe",
+                "ws:2",
+                "ws:3",
+            ],
+            "the bucket's own block leads, then its child module and that module's bucket"
+        );
+    }
+
+    // TP-TREE-17: folding the bucket hides the modules hanging under it,
+    // exactly as it hides its member checkouts.
+    #[test]
+    fn a_folded_bucket_hides_the_modules_under_it() {
+        let mut app = AppState::test_new();
+        app.mobile_width_threshold = 0;
+        app.workspaces = vec![
+            worktree_on_branch("alpha", "feat/t4f-alpha"),
+            worktree_on_branch("probe", "probe/one"),
+        ];
+        let mut inner_rule = split_rule(&["probe/*"], "herdr:probe", "Probe");
+        inner_rule.parent = Some("group:inner".into());
+        app.space_split_rules = vec![split_rule(&["feat/t4f-*"], "herdr:t4f", "T4F"), inner_rule];
+        app.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "group:inner".into(),
+            name: "Inner".into(),
+            icon: None,
+            parent: Some("herdr:t4f".into()),
+        }];
+        app.collapsed_space_keys.insert("herdr:t4f".into());
+
+        let entries = workspace_list_entries(&app);
+        assert!(
+            !entries.iter().any(|entry| matches!(
+                entry,
+                WorkspaceListEntry::ProjectHeader { project_key } if project_key == "group:inner"
+            )),
+            "a folded bucket hides its child modules"
+        );
+        assert!(
+            !entries.iter().any(|entry| matches!(
+                entry,
+                WorkspaceListEntry::GroupHeader { space_key } if space_key == "herdr:probe"
+            )),
+            "and the buckets hanging under those modules"
+        );
+    }
+
+    // TP-TREE-16 companion: depth is counted across mixed chains — a node
+    // under a bucket under a node is two steps in, not one.
+    #[test]
+    fn node_depth_walks_through_buckets() {
+        let mut app = AppState::test_new();
+        let mut mid = split_rule(&["x*"], "bucket:mid", "Mid");
+        mid.parent = Some("group:top".into());
+        app.space_split_rules = vec![mid];
+        app.space_nodes = vec![
+            crate::spaces::SpaceNode {
+                key: "group:top".into(),
+                name: "Top".into(),
+                icon: None,
+                parent: None,
+            },
+            crate::spaces::SpaceNode {
+                key: "group:leaf".into(),
+                name: "Leaf".into(),
+                icon: None,
+                parent: Some("bucket:mid".into()),
+            },
+        ];
+
+        assert_eq!(
+            node_depth(&app, "group:leaf"),
+            2,
+            "leaf hangs under the bucket, the bucket under top"
+        );
     }
 
     // TP-DOTS-03: the manage chrome is mouse chrome — "⋯" appears on the

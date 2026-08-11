@@ -604,7 +604,10 @@ fn space_move(args: &[String]) -> std::io::Result<i32> {
     };
 
     let loaded = crate::config::Config::load();
-    let (nodes, _) = crate::spaces::validate_node_forest(loaded.config.spaces.nodes());
+    let (nodes, _) = crate::spaces::validate_node_forest(
+        loaded.config.spaces.nodes(),
+        &crate::spaces::split_parent_map(&loaded.config.spaces.rules()),
+    );
     let (parent, node) = match parsed.dest {
         MoveDest::Node { key, op } => match crate::spaces::move_parent_for(&nodes, &key, op) {
             Ok(parent) => (parent, None),

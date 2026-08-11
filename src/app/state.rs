@@ -2412,18 +2412,15 @@ impl ContextMenuState {
             ContextMenuKind::ChatMoveTarget { targets, .. } => {
                 targets.iter().map(|(_, label)| label.as_str()).collect()
             }
-            // TP-DOTS-01: creation lands on the node header — it IS the
-            // parent — plus the one fold verb the current state calls for.
-            ContextMenuKind::NodeHeader { collapsed, .. } => {
+            // TP-DOTS-01/10: every module header creates — the node header
+            // and the bucket header alike, because to the person using the
+            // tree both ARE modules — plus the one fold verb the current
+            // state calls for. Buckets can parent modules (TP-NODE-08).
+            ContextMenuKind::NodeHeader { collapsed, .. }
+            | ContextMenuKind::SpaceHeader { collapsed, .. } => {
                 let mut items = vec!["New sub-module...", "New parallel module..."];
                 items.push(if *collapsed { "Expand" } else { "Collapse" });
                 items
-            }
-            // A split rule cannot parent a node, so the bucket header only
-            // folds — offering creation here would be a promise the tree
-            // cannot keep (TP-DOTS-01).
-            ContextMenuKind::SpaceHeader { collapsed, .. } => {
-                vec![if *collapsed { "Expand" } else { "Collapse" }]
             }
             ContextMenuKind::Tab { .. } => vec!["New tab", "Rename", "Close"],
             ContextMenuKind::ProjectNewChat {

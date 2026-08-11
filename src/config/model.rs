@@ -619,7 +619,13 @@ impl SpacesConfig {
         // Forest-shape problems (cycles, unknown parents, depth) surface with
         // the same voice as entry problems, so one diagnostics reader sees
         // the whole story (TP-NODE-03).
-        diagnostics.extend(crate::spaces::validate_node_forest(self.nodes()).1);
+        diagnostics.extend(
+            crate::spaces::validate_node_forest(
+                self.nodes(),
+                &crate::spaces::split_parent_map(&self.rules()),
+            )
+            .1,
+        );
         // Same reasoning as duplicate rule keys: two projects sharing a key
         // share one collapse state, which reads as a folding bug.
         let mut seen_project_keys = std::collections::HashSet::new();
