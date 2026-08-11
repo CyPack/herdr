@@ -566,127 +566,10 @@
       "title": "UI and sidebar",
       "keys": [
         {
-          "key": "ui.sidebar_width",
-          "type": "integer",
-          "default": "26",
-          "description": "Default expanded sidebar width in columns. Auto-scales based on workspace names."
-        },
-        {
-          "key": "ui.sidebar_min_width",
-          "type": "integer",
-          "default": "18",
-          "description": "Minimum sidebar width (columns) when expanded."
-        },
-        {
-          "key": "ui.sidebar_max_width",
-          "type": "integer",
-          "default": "36",
-          "description": "Maximum sidebar width (columns) when expanded."
-        },
-        {
-          "key": "ui.sidebar_start_collapsed",
-          "type": "boolean",
-          "default": "false",
-          "description": "Start Herdr with the sidebar collapsed. Changes take effect on the next launch."
-        },
-        {
-          "key": "ui.sidebar_collapsed_mode",
-          "type": "enum",
-          "default": "compact",
-          "description": "Collapsed sidebar presentation.",
-          "values": [
-            "compact",
-            "hidden"
-          ]
-        },
-        {
-          "key": "ui.mobile_width_threshold",
-          "type": "integer",
-          "default": "64",
-          "description": "Terminal width at or below which Herdr uses the mobile single-column layout."
-        },
-        {
-          "key": "ui.mouse_capture",
-          "type": "boolean",
-          "default": "true",
-          "description": "Capture mouse input for Herdr's mouse UI."
-        },
-        {
-          "key": "ui.copy_on_select",
-          "type": "boolean",
-          "default": "true",
-          "description": "Copy text selected with the mouse."
-        },
-        {
-          "key": "ui.host_cursor",
-          "type": "enum",
-          "default": "auto",
-          "description": "Host cursor policy.",
-          "values": [
-            "auto",
-            "native",
-            "drawn"
-          ]
-        },
-        {
-          "key": "ui.right_click_passthrough_modifier",
-          "type": "string",
-          "default": "\"\"",
-          "description": "Modifier that lets right-click gestures pass through to pane apps. Empty disables it. Accepts ctrl, alt, cmd, super, meta, hyper, or a + separated combination; shift is rejected because many terminals reserve Shift+mouse."
-        },
-        {
-          "key": "ui.redraw_on_focus_gained",
-          "type": "boolean",
-          "default": "true",
-          "description": "Force a full host-terminal redraw when the outer terminal regains focus."
-        },
-        {
-          "key": "ui.mouse_scroll_lines",
-          "type": "integer",
-          "default": "3",
-          "description": "Lines to scroll per mouse wheel notch."
-        },
-        {
-          "key": "ui.confirm_close",
-          "type": "boolean",
-          "default": "true",
-          "description": "Ask for confirmation before closing a workspace."
-        },
-        {
-          "key": "ui.prompt_new_tab_name",
-          "type": "boolean",
-          "default": "true",
-          "description": "Ask for a tab name before creating a new tab."
-        },
-        {
-          "key": "ui.prompt_new_workspace_name",
-          "type": "boolean",
-          "default": "false",
-          "description": "Ask for a workspace name before interactive TUI creation."
-        },
-        {
-          "key": "ui.pane_borders",
-          "type": "boolean",
-          "default": "true",
-          "description": "Draw borders around split panes."
-        },
-        {
-          "key": "ui.pane_gaps",
-          "type": "boolean",
-          "default": "true",
-          "description": "Keep split panes visually separated instead of sharing divider borders."
-        },
-        {
-          "key": "ui.show_agent_labels_on_pane_borders",
-          "type": "boolean",
-          "default": "false",
-          "description": "Show agent labels in split pane borders when no manual pane label is set."
-        },
-        {
-          "key": "ui.hide_tab_bar_when_single_tab",
-          "type": "boolean",
-          "default": "false",
-          "description": "Hide the tab row when the workspace has one tab."
+          "key": "ui.accent",
+          "type": "color",
+          "default": "\"cyan\"",
+          "description": "Accent color for highlights, borders, and navigation UI. Accepts hex (#89b4fa), named colors (cyan, blue), or RGB (rgb(137,180,250))."
         },
         {
           "key": "ui.agent_panel_sort",
@@ -710,6 +593,113 @@
           ]
         },
         {
+          "key": "ui.confirm_close",
+          "type": "boolean",
+          "default": "true",
+          "description": "Ask for confirmation before closing a workspace."
+        },
+        {
+          "key": "ui.copy_on_select",
+          "type": "boolean",
+          "default": "true",
+          "description": "Copy text selected with the mouse."
+        },
+        {
+          "key": "ui.hide_tab_bar_when_single_tab",
+          "type": "boolean",
+          "default": "false",
+          "description": "Hide the tab row when the workspace has one tab."
+        },
+        {
+          "key": "ui.host_cursor",
+          "type": "enum",
+          "default": "auto",
+          "description": "Host cursor policy.",
+          "values": [
+            "auto",
+            "native",
+            "drawn"
+          ]
+        },
+        {
+          "key": "ui.mobile_width_threshold",
+          "type": "integer",
+          "default": "64",
+          "description": "Terminal width at or below which Herdr uses the mobile single-column layout."
+        },
+        {
+          "key": "ui.mouse_capture",
+          "type": "boolean",
+          "default": "true",
+          "description": "Capture mouse input for Herdr's mouse UI."
+        },
+        {
+          "key": "ui.mouse_scroll_lines",
+          "type": "integer",
+          "default": "3",
+          "description": "Lines to scroll per mouse wheel notch."
+        },
+        {
+          "key": "ui.pane_borders",
+          "type": "boolean",
+          "default": "true",
+          "description": "Draw borders around split panes."
+        },
+        {
+          "key": "ui.pane_gaps",
+          "type": "boolean",
+          "default": "true",
+          "description": "Keep split panes visually separated instead of sharing divider borders."
+        },
+        {
+          "key": "ui.prompt_new_tab_name",
+          "type": "boolean",
+          "default": "true",
+          "description": "Ask for a tab name before creating a new tab."
+        },
+        {
+          "key": "ui.prompt_new_workspace_name",
+          "type": "boolean",
+          "default": "false",
+          "description": "Ask for a workspace name before interactive TUI creation."
+        },
+        {
+          "key": "ui.redraw_on_focus_gained",
+          "type": "boolean",
+          "default": "true",
+          "description": "Force a full host-terminal redraw when the outer terminal regains focus."
+        },
+        {
+          "key": "ui.right_click_passthrough_modifier",
+          "type": "string",
+          "default": "\"\"",
+          "description": "Modifier that lets right-click gestures pass through to pane apps. Empty disables it. Accepts ctrl, alt, cmd, super, meta, hyper, or a + separated combination; shift is rejected because many terminals reserve Shift+mouse."
+        },
+        {
+          "key": "ui.show_agent_labels_on_pane_borders",
+          "type": "boolean",
+          "default": "false",
+          "description": "Show agent labels in split pane borders when no manual pane label is set."
+        },
+        {
+          "key": "ui.sidebar.agents.border.color",
+          "type": "string",
+          "default": "\"\"",
+          "description": "Frame tone for the agents half. Same vocabulary as the shell bars: a palette token follows the theme, anything else is a literal colour."
+        },
+        {
+          "key": "ui.sidebar.agents.border.enabled",
+          "type": "boolean",
+          "default": "false",
+          "description": "Draw a rounded frame around the agents half of the left panel. It costs two cells on each axis of that half."
+        },
+        {
+          "key": "ui.sidebar.agents.border.gradient",
+          "type": "array",
+          "default": "[]",
+          "description": "Two or more stops to fade the agents frame between along its long axis. Both ends must carry channel values."
+        },
+        {
           "key": "ui.sidebar.agents.row_gap",
           "type": "integer",
           "default": "0",
@@ -728,6 +718,24 @@
           "description": "Complete Agent-row overrides keyed by strict canonical agent id. Agents without an override use ui.sidebar.agents.rows."
         },
         {
+          "key": "ui.sidebar.spaces.border.color",
+          "type": "string",
+          "default": "\"\"",
+          "description": "Frame tone for the spaces half. Same vocabulary as the shell bars: a palette token follows the theme, anything else is a literal colour."
+        },
+        {
+          "key": "ui.sidebar.spaces.border.enabled",
+          "type": "boolean",
+          "default": "false",
+          "description": "Draw a rounded frame around the spaces half of the left panel. It costs two cells on each axis of that half."
+        },
+        {
+          "key": "ui.sidebar.spaces.border.gradient",
+          "type": "array",
+          "default": "[]",
+          "description": "Two or more stops to fade the spaces frame between along its long axis. Both ends must carry channel values."
+        },
+        {
           "key": "ui.sidebar.spaces.row_gap",
           "type": "integer",
           "default": "0",
@@ -740,10 +748,38 @@
           "description": "Expanded Space sidebar layout. Entries may be token strings or inline { token, fg, bold, dim } style tables. Supports built-in and $name metadata tokens; at most 16 rows and 16 tokens per row."
         },
         {
-          "key": "ui.accent",
-          "type": "color",
-          "default": "\"cyan\"",
-          "description": "Accent color for highlights, borders, and navigation UI. Accepts hex (#89b4fa), named colors (cyan, blue), or RGB (rgb(137,180,250))."
+          "key": "ui.sidebar_collapsed_mode",
+          "type": "enum",
+          "default": "compact",
+          "description": "Collapsed sidebar presentation.",
+          "values": [
+            "compact",
+            "hidden"
+          ]
+        },
+        {
+          "key": "ui.sidebar_max_width",
+          "type": "integer",
+          "default": "36",
+          "description": "Maximum sidebar width (columns) when expanded."
+        },
+        {
+          "key": "ui.sidebar_min_width",
+          "type": "integer",
+          "default": "18",
+          "description": "Minimum sidebar width (columns) when expanded."
+        },
+        {
+          "key": "ui.sidebar_start_collapsed",
+          "type": "boolean",
+          "default": "false",
+          "description": "Start Herdr with the sidebar collapsed. Changes take effect on the next launch."
+        },
+        {
+          "key": "ui.sidebar_width",
+          "type": "integer",
+          "default": "26",
+          "description": "Default expanded sidebar width in columns. Auto-scales based on workspace names."
         }
       ]
     },

@@ -3378,6 +3378,10 @@ pub struct AppState {
     pub sidebar_collapsed_mode: crate::config::SidebarCollapsedModeConfig,
     /// Ratio of sidebar height allocated to the workspaces section.
     pub sidebar_section_split: f32,
+    /// Whether each half of the left panel wears a frame. Travels beside the
+    /// split ratio because the same function projects both section rectangles
+    /// from the pair.
+    pub sidebar_chrome: crate::ui::shell::SidebarChrome,
     pub agent_panel_sort: AgentPanelSort,
     /// Which of the drawer modes governs `workspace_chat_drawer_collapsed`.
     pub chat_drawer_mode: ChatDrawerMode,
@@ -4166,6 +4170,7 @@ impl AppState {
     /// Create an AppState for testing — no channels, no PTYs.
     pub fn test_new() -> Self {
         Self {
+            sidebar_chrome: crate::ui::shell::SidebarChrome::NONE,
             terminals: std::collections::HashMap::new(),
             direct_attach_resize_locks: std::collections::HashSet::new(),
             pane_id_aliases: std::collections::HashMap::new(),

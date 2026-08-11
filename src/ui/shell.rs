@@ -38,7 +38,9 @@ pub(crate) use model::{
     ComponentPlacement, RegionId, RegionRects, RegionSize, ShellChild, ShellDirection, ShellLayout,
     ShellNode, TrackPolicy,
 };
-pub(crate) use source::{derive_desktop_shell_layout, BarColors, BarTint, ShellBars};
+pub(crate) use source::{
+    derive_desktop_shell_layout, BarColors, BarTint, ShellBars, SidebarChrome,
+};
 pub(crate) use template::ShellTemplateId;
 pub(crate) use view::{compute_empty_shell_view, compute_shell_view, ShellGeometryKey, ShellView};
 

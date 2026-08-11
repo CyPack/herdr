@@ -372,6 +372,8 @@ where
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct AgentsSidebarConfig {
+    /// Optional frame around this section of the left panel.
+    pub border: SectionBorderConfig,
     #[serde(deserialize_with = "deserialize_sidebar_rows")]
     pub rows: AgentSidebarRows,
     #[serde(default, deserialize_with = "deserialize_rows_by_agent")]
@@ -390,6 +392,7 @@ impl AgentsSidebarConfig {
 impl Default for AgentsSidebarConfig {
     fn default() -> Self {
         Self {
+            border: SectionBorderConfig::default(),
             rows: vec![
                 vec![
                     AgentSidebarToken::StateIcon,
@@ -407,6 +410,8 @@ impl Default for AgentsSidebarConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SpacesSidebarConfig {
+    /// Optional frame around this section of the left panel.
+    pub border: SectionBorderConfig,
     #[serde(deserialize_with = "deserialize_sidebar_rows")]
     pub rows: SpaceSidebarRows,
     pub row_gap: u16,
@@ -415,6 +420,7 @@ pub struct SpacesSidebarConfig {
 impl Default for SpacesSidebarConfig {
     fn default() -> Self {
         Self {
+            border: SectionBorderConfig::default(),
             rows: vec![
                 vec![SpaceSidebarToken::StateIcon, SpaceSidebarToken::Workspace],
                 vec![SpaceSidebarToken::Branch, SpaceSidebarToken::GitStatus],
@@ -429,6 +435,23 @@ impl Default for SpacesSidebarConfig {
 pub struct SidebarConfig {
     pub agents: AgentsSidebarConfig,
     pub spaces: SpacesSidebarConfig,
+}
+
+/// `[ui.sidebar.<section>.border]` — an optional frame around one half of the
+/// left panel.
+///
+/// Off by default. A border costs two cells on each axis of a panel that is
+/// already the narrowest surface here, so turning one on is a composition
+/// choice rather than a restyle, and nobody gets it without asking.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SectionBorderConfig {
+    pub enabled: bool,
+    /// Same vocabulary as the shell bars: a palette token follows the theme,
+    /// anything else is read as a literal colour.
+    pub color: String,
+    /// Two or more stops to fade between along the section's long axis.
+    pub gradient: Vec<String>,
 }
 
 #[cfg(test)]

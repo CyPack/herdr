@@ -42,7 +42,7 @@ pub(super) fn render_panel_shell(
 /// heavy box-drawing set: Unicode has no thick *rounded* corner, so asking for
 /// `┏` would square the corners off. Bold keeps `╭╮╰╯` and lets the terminal
 /// render the run with weight, which is the only way to have both.
-pub(super) fn render_bar_shell(
+pub(crate) fn render_bar_shell(
     frame: &mut Frame,
     area: Rect,
     tint: BarTint,
@@ -88,6 +88,59 @@ pub(super) fn render_bar_shell(
     }
 
     Some(inner)
+}
+
+// Lands with its tests before the surfaces that will place it, the way this
+// module's interaction reducers did: the geometry cost of a boxed control is
+// three rows, and deciding where a panel can afford them is a separate change
+// (F33-L5b). Marked rather than hidden, so the gap is a recorded state and not
+// a silent one.
+#[allow(dead_code)]
+/// The smallest framed surface: a control that reads as a button.
+///
+/// Three rows, because a rounded frame spends one on each side and the label
+/// needs the one between them. That cost is why this returns `None` instead of
+/// drawing something shorter — a caller that cannot afford a box has to know,
+/// so it can fall back to a cheaper style rather than ship half a border.
+///
+/// The drawn rectangle comes back so the caller registers the same rectangle it
+/// painted. Hit testing that recomputes its own is how a button ends up
+/// clickable one cell away from where it looks.
+pub(crate) fn render_chip(
+    frame: &mut Frame,
+    area: Rect,
+    label: &str,
+    tint: BarTint,
+    label_style: Style,
+    bg: Color,
+) -> Option<Rect> {
+    let width = chip_width(label).min(area.width);
+    if area.height < CHIP_ROWS || width < 3 {
+        return None;
+    }
+
+    let chip = Rect::new(area.x, area.y, width, CHIP_ROWS);
+    let inner = render_bar_shell(frame, chip, tint, bg)?;
+    // Clipped rather than wrapped: a second row would break the frame this
+    // function just promised.
+    let text: String = label.chars().take(usize::from(inner.width)).collect();
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(text, label_style))).alignment(Alignment::Center),
+        inner,
+    );
+    Some(chip)
+}
+
+/// Rows a boxed chip occupies: border, label, border.
+#[allow(dead_code)]
+pub(crate) const CHIP_ROWS: u16 = 3;
+
+/// Cells a boxed chip wants for a label: the frame's two, plus a space either
+/// side so the text never touches the border.
+#[allow(dead_code)]
+pub(crate) fn chip_width(label: &str) -> u16 {
+    let label_cells = u16::try_from(label.chars().count()).unwrap_or(u16::MAX);
+    label_cells.saturating_add(4)
 }
 
 pub(super) fn panel_contrast_fg(p: &Palette) -> Color {
@@ -432,6 +485,106 @@ pub(super) fn centered_button_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn draw<F: FnOnce(&mut Frame)>(width: u16, height: u16, f: F) -> ratatui::buffer::Buffer {
+        use ratatui::{backend::TestBackend, Terminal};
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test backend");
+        terminal.draw(|frame| f(frame)).expect("draw");
+        terminal.backend().buffer().clone()
+    }
+
+    fn peach() -> BarTint {
+        BarTint::solid(Color::Rgb(250, 179, 135))
+    }
+
+    // T51/T52 · a control has to stay readable inside the frame that makes it
+    // look like a control.
+    #[test]
+    fn a_chip_keeps_its_label_inside_its_own_frame() {
+        let mut drawn = None;
+        let buffer = draw(20, 5, |frame| {
+            drawn = render_chip(
+                frame,
+                Rect::new(0, 0, 20, 5),
+                "menu",
+                peach(),
+                Style::default(),
+                Color::Reset,
+            );
+        });
+        let chip = drawn.expect("a chip fits in twenty by five");
+        assert_eq!(chip.height, CHIP_ROWS);
+        assert_eq!(chip.width, chip_width("menu"));
+
+        let row: String = (chip.x..chip.x + chip.width)
+            .filter_map(|x| buffer.cell((x, chip.y + 1)).map(|c| c.symbol().to_string()))
+            .collect();
+        assert!(
+            row.contains("menu"),
+            "the label survived its own border: {row:?}"
+        );
+        assert!(
+            row.starts_with('│') && row.ends_with('│'),
+            "and stayed inside it"
+        );
+
+        // The frame is a shape, not a function of the text.
+        assert_eq!(buffer.cell((chip.x, chip.y)).unwrap().symbol(), "╭");
+        assert_eq!(
+            buffer
+                .cell((chip.x + chip.width - 1, chip.y + CHIP_ROWS - 1))
+                .unwrap()
+                .symbol(),
+            "╯"
+        );
+    }
+
+    // T52 · too narrow clips the label; the corners are not negotiable.
+    #[test]
+    fn a_narrow_chip_clips_its_label_rather_than_its_frame() {
+        let mut drawn = None;
+        let buffer = draw(8, 3, |frame| {
+            drawn = render_chip(
+                frame,
+                Rect::new(0, 0, 8, 3),
+                "a very long control name",
+                peach(),
+                Style::default(),
+                Color::Reset,
+            );
+        });
+        let chip = drawn.expect("eight columns still hold a chip");
+        assert_eq!(chip.width, 8, "the chip takes what it is given, no more");
+        assert_eq!(buffer.cell((chip.x, chip.y)).unwrap().symbol(), "╭");
+        assert_eq!(
+            buffer.cell((chip.x + 7, chip.y + 2)).unwrap().symbol(),
+            "╯",
+            "a clipped label must not eat the corner"
+        );
+    }
+
+    // T53 · a caller that cannot afford a box is told, not handed half of one.
+    #[test]
+    fn a_chip_refuses_a_space_too_short_for_its_frame() {
+        for (w, h) in [(20, 2), (20, 1), (2, 3)] {
+            let mut drawn = Some(Rect::default());
+            let _ = draw(20.max(w), 3.max(h), |frame| {
+                drawn = render_chip(
+                    frame,
+                    Rect::new(0, 0, w, h),
+                    "new",
+                    peach(),
+                    Style::default(),
+                    Color::Reset,
+                );
+            });
+            assert!(
+                drawn.is_none(),
+                "{w}x{h} cannot hold a boxed chip, and saying so is what lets the \
+                 caller choose a cheaper style"
+            );
+        }
+    }
 
     // TP-SUR-SHELL-01: every floating panel shell wears rounded corners.
     // What floats above the surface is drawn as floating — the pattern the

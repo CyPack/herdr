@@ -304,9 +304,19 @@ impl Default for BarColors {
 /// Read one edge's tint: a fade when both ends carry channel values, the solid
 /// tone otherwise.
 fn bar_tint(config: &ShellBarConfig, palette: &Palette, edge: &'static str) -> BarTint {
-    let solid = bar_color(&config.color, palette);
-    let stops: Vec<Color> = config
-        .gradient
+    tint_from_parts(&config.color, &config.gradient, palette, edge)
+}
+
+/// One tint reader for every framed surface, so a colour written for a bar and
+/// a colour written for the left panel mean the same thing.
+fn tint_from_parts(
+    color: &str,
+    gradient: &[String],
+    palette: &Palette,
+    edge: &'static str,
+) -> BarTint {
+    let solid = bar_color(color, palette);
+    let stops: Vec<Color> = gradient
         .iter()
         .map(|spec| bar_color(spec, palette))
         .collect();
@@ -360,6 +370,44 @@ fn bar_color(spec: &str, palette: &Palette) -> Color {
         "surface" | "dim" => palette.surface_dim,
         other => parse_color(other),
     }
+}
+
+/// Whether each half of the left panel wears a frame, and in what tone.
+///
+/// Copy and tiny so the one function that projects both section rectangles can
+/// take it directly. That matters more than it looks: drawing and hit testing
+/// read those rectangles from the same place, so an inset applied there cannot
+/// drift between what is painted and what a click resolves to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct SidebarChrome {
+    pub spaces: Option<BarTint>,
+    pub agents: Option<BarTint>,
+}
+
+impl SidebarChrome {
+    pub(crate) const NONE: Self = Self {
+        spaces: None,
+        agents: None,
+    };
+
+    pub(crate) fn from_config(config: &crate::config::SidebarConfig, palette: &Palette) -> Self {
+        Self {
+            spaces: section_tint(&config.spaces.border, palette),
+            agents: section_tint(&config.agents.border, palette),
+        }
+    }
+}
+
+fn section_tint(config: &crate::config::SectionBorderConfig, palette: &Palette) -> Option<BarTint> {
+    if !config.enabled {
+        return None;
+    }
+    Some(tint_from_parts(
+        &config.color,
+        &config.gradient,
+        palette,
+        "sidebar",
+    ))
 }
 
 /// Derive the desktop shell tree from what the user asked for.
