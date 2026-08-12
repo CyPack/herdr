@@ -261,7 +261,20 @@ impl SessionSnapshot {
     /// `None` is the legacy desktop tree — which is what a session file without
     /// a shell block, and every migrated version-1 file, resolves to.
     pub(crate) fn restored_shell_template(&self) -> Option<ShellTemplateId> {
-        self.shell.as_ref().and_then(|shell| shell.template)
+        // Deliberately not the stored value. Nothing in the config names a
+        // template, so a file that claims one is not reporting a choice
+        // somebody made — earlier builds wrote `DockSidebarStage` into every
+        // session unconditionally. That was harmless only for as long as
+        // nothing read it back; the moment the read half was connected it put
+        // a region on screen that its owner never asked for and had no key to
+        // turn off, which is precisely the composition change the layout lock
+        // reserves for a V2 decision.
+        //
+        // The stored field stays: when a config key can name a template, this
+        // is the line that reads that choice back, and a file claiming one will
+        // finally mean what it says.
+        let _stored = self.shell.as_ref().and_then(|shell| shell.template);
+        None
     }
 }
 
@@ -1364,10 +1377,58 @@ mod tests {
         let value = serde_json::to_value(&restored).unwrap();
 
         assert_eq!(value["shell"], shell);
+
+        // The file round-trips byte for byte, and its template is still not
+        // applied: nothing can ask for one yet, so a template on disk is a
+        // leftover rather than a preference. See the test below.
+        assert_eq!(restored.restored_shell_template(), None);
+    }
+
+    // A template on disk that nobody could have asked for is not somebody's
+    // choice. Earlier builds wrote `DockSidebarStage` into every session file
+    // unconditionally, and while nothing read it back that was merely untrue.
+    // Once the read half was connected it became a column on screen -- an
+    // AppDock, with its own two buttons -- that appeared without being asked
+    // for and could not be turned off, because no config key names a template.
+    //
+    // The field stays in the schema. When a config key can name a template,
+    // this is where that choice gets read back, and then a file claiming one
+    // will mean what it says.
+    #[test]
+    fn a_template_this_build_cannot_be_asked_for_is_not_restored() {
+        let shell = shell_json_at_current_schema();
+        assert_eq!(
+            shell["template"], "DockSidebarStage",
+            "the fixture has to carry the claim for this test to mean anything"
+        );
+
+        let input = serde_json::json!({
+            "version": 4,
+            "workspaces": [],
+            "active": null,
+            "selected": 0,
+            "shell": shell,
+            "sidebar_width": 21,
+            "sidebar_section_split": 0.4
+        });
+
+        let restored = parse_snapshot(&input.to_string()).expect("the session is still valid");
+
         assert_eq!(
             restored.restored_shell_template(),
-            Some(ShellTemplateId::DockSidebarStage),
-            "a believable file gets believed"
+            None,
+            "a claim nothing can make is a claim nothing should honour"
+        );
+        // The half that was real survives: the panel width is a preference the
+        // person actually expressed, by dragging the divider, and it comes from
+        // the shell block's own LeftPanel policy rather than the compatibility
+        // field beside it.
+        let restored_width = restored
+            .restored_left_panel_preference()
+            .map(|preference| preference.width);
+        assert!(
+            restored_width.is_some_and(|width| width != 21),
+            "the width came from the shell block, not the compatibility field: {restored_width:?}"
         );
     }
 
