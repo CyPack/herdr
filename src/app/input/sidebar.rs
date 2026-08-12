@@ -239,13 +239,20 @@ impl AppState {
         if ws_area == Rect::default() {
             return Rect::default();
         }
-        let y = ws_area.y + ws_area.height.saturating_sub(1);
-        Rect::new(ws_area.x, y, ws_area.width, 1)
+        // Chips are frames, so the footer is as tall as `footer_rows` says --
+        // never a locally chosen number, or the list and the buttons would
+        // disagree about where one ends and the other begins.
+        let rows = self.sidebar_chrome.footer_rows().min(ws_area.height);
+        let y = ws_area.y + ws_area.height.saturating_sub(rows);
+        Rect::new(ws_area.x, y, ws_area.width, rows)
     }
 
     pub(crate) fn sidebar_new_button_rect(&self) -> Rect {
         let footer = self.sidebar_footer_rect();
-        let width = 5u16.min(footer.width.max(1));
+        let width = self
+            .sidebar_chrome
+            .control_width(5, "new")
+            .min(footer.width.max(1));
         Rect::new(footer.x, footer.y, width, footer.height)
     }
 
@@ -259,7 +266,7 @@ impl AppState {
         }
         let chat = self.sidebar_new_button_rect();
         let menu = self.global_launcher_rect();
-        let label_w: u16 = 7; // "actives"
+        let label_w = self.sidebar_chrome.control_width(7, "actives");
         let left = chat.x + chat.width + 1;
         let right = menu.x.saturating_sub(1);
         if right <= left || right - left < label_w {
@@ -277,12 +284,15 @@ impl AppState {
         }
 
         let footer = self.sidebar_footer_rect();
-        let width = if self.global_menu_attention_badge_visible() {
+        let label_cells = if self.global_menu_attention_badge_visible() {
             8
         } else {
             6
-        }
-        .min(footer.width.max(1));
+        };
+        let width = self
+            .sidebar_chrome
+            .control_width(label_cells, "menu")
+            .min(footer.width.max(1));
         let x = footer.x + footer.width.saturating_sub(width);
         Rect::new(x, footer.y, width, footer.height)
     }
@@ -666,8 +676,12 @@ impl AppState {
 
         let mut best: Option<(usize, u16)> = None;
         for insert_idx in insert_indices {
-            let Some(slot_row) = crate::ui::workspace_drop_indicator_row(&cards, area, insert_idx)
-            else {
+            let Some(slot_row) = crate::ui::workspace_drop_indicator_row(
+                &cards,
+                area,
+                insert_idx,
+                self.sidebar_chrome,
+            ) else {
                 continue;
             };
             let distance = row.abs_diff(slot_row);
@@ -1480,6 +1494,70 @@ mod tests {
         assert!(app.state.drag.is_none());
     }
 
+    // T59/T60/T61 · a chip is a frame and a frame needs rows of its own. Asking
+    // for chips grows the footer from one row to CHIP_ROWS, and the list gives
+    // up exactly those rows — no more, and never onto the buttons. The bare
+    // path is asserted first because it is the one every user sees today.
+    #[test]
+    fn chips_grow_the_footer_and_the_list_gives_up_exactly_those_rows() {
+        let mut app = app_for_mouse_test();
+        app.state.sidebar_collapsed = false;
+        app.state.view.sidebar_rect = Rect::new(0, 0, 26, 24);
+
+        let ws = app.state.workspace_list_rect();
+        let bare_footer = app.state.sidebar_footer_rect();
+        assert_eq!(bare_footer.height, 1, "today's footer is one row");
+        assert_eq!(
+            bare_footer.y + bare_footer.height,
+            ws.y + ws.height,
+            "the footer ends where the list section ends"
+        );
+
+        app.state.sidebar_chrome = crate::ui::shell::SidebarChrome {
+            spaces: None,
+            agents: None,
+            chips: Some(crate::ui::shell::BarTint::solid(
+                ratatui::style::Color::Rgb(1, 2, 3),
+            )),
+        };
+
+        let chip_footer = app.state.sidebar_footer_rect();
+        let grown = crate::ui::widgets::CHIP_ROWS;
+
+        assert_eq!(chip_footer.height, grown, "the footer holds a whole frame");
+        assert_eq!(
+            app.state.workspace_list_rect(),
+            ws,
+            "the section itself did not move; only the split inside it did"
+        );
+        assert_eq!(
+            chip_footer.y,
+            bare_footer.y - (grown - 1),
+            "the footer grew upwards into the list, not downwards off the panel"
+        );
+        assert_eq!(
+            chip_footer.y + chip_footer.height,
+            ws.y + ws.height,
+            "and it still ends where the list section ends"
+        );
+
+        // The three controls stay inside the taller footer and stay disjoint.
+        let new = app.state.sidebar_new_button_rect();
+        let menu = app.state.global_launcher_rect();
+        for (name, rect) in [("new", new), ("menu", menu)] {
+            assert!(
+                rect.y >= chip_footer.y
+                    && rect.y + rect.height <= chip_footer.y + chip_footer.height,
+                "{name} left the footer: {rect:?} vs {chip_footer:?}"
+            );
+            assert_eq!(rect.height, grown, "{name} is as tall as its frame");
+        }
+        assert!(
+            new.x + new.width <= menu.x,
+            "the buttons do not overlap: {new:?} {menu:?}"
+        );
+    }
+
     // T58b · the two halves are hit-tested through the same inset they were
     // drawn through. A frame steals a row and a column from its half; if only
     // the drawing knows that, every row in the panel answers for its neighbour
@@ -1496,14 +1574,17 @@ mod tests {
             crate::ui::shell::SidebarChrome {
                 spaces: Some(tint),
                 agents: None,
+                chips: None,
             },
             crate::ui::shell::SidebarChrome {
                 spaces: None,
                 agents: Some(tint),
+                chips: None,
             },
             crate::ui::shell::SidebarChrome {
                 spaces: Some(tint),
                 agents: Some(tint),
+                chips: None,
             },
         ] {
             app.state.sidebar_chrome = chrome;
@@ -1541,6 +1622,7 @@ mod tests {
             agents: Some(crate::ui::shell::BarTint::solid(
                 ratatui::style::Color::Rgb(1, 2, 3),
             )),
+            chips: None,
         };
 
         let drawn = crate::ui::expanded_sidebar_toggle_rect(
@@ -1780,6 +1862,7 @@ mod tests {
             &app.state.view.workspace_card_areas,
             app.state.workspace_list_rect(),
             0,
+            app.state.sidebar_chrome,
         )
         .unwrap();
 
@@ -2032,6 +2115,7 @@ mod tests {
             cards,
             app.state.workspace_list_rect(),
             cards.len(),
+            app.state.sidebar_chrome,
         )
         .unwrap();
 
@@ -2060,7 +2144,12 @@ mod tests {
 
         assert_eq!(app.state.workspace_drop_index_at_row(issue.rect.y), Some(1));
         assert_eq!(
-            crate::ui::workspace_drop_indicator_row(cards, app.state.workspace_list_rect(), 2),
+            crate::ui::workspace_drop_indicator_row(
+                cards,
+                app.state.workspace_list_rect(),
+                2,
+                app.state.sidebar_chrome,
+            ),
             Some(normal.rect.y + normal.rect.height)
         );
     }
@@ -2089,6 +2178,7 @@ mod tests {
             &app.state.view.workspace_card_areas,
             app.state.workspace_list_rect(),
             0,
+            app.state.sidebar_chrome,
         )
         .unwrap();
 

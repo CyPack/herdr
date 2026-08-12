@@ -435,6 +435,10 @@ impl Default for SpacesSidebarConfig {
 pub struct SidebarConfig {
     pub agents: AgentsSidebarConfig,
     pub spaces: SpacesSidebarConfig,
+    /// `[ui.sidebar.chips]` — draw the panel's own controls as small framed
+    /// buttons instead of bare labels. Shares the section border's vocabulary
+    /// because it is the same decision: one frame, one colour, one gradient.
+    pub chips: SectionBorderConfig,
 }
 
 /// `[ui.sidebar.<section>.border]` — an optional frame around one half of the

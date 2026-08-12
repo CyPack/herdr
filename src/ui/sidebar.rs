@@ -899,7 +899,7 @@ fn push_chat_drawer(app: &AppState, entries: &mut Vec<WorkspaceListEntry>, ws_id
 
 pub(crate) fn normalized_workspace_scroll(app: &AppState, area: Rect, requested: usize) -> usize {
     let ws_area = workspace_list_rect(area, app.sidebar_section_split, app.sidebar_chrome);
-    let body = workspace_list_body_rect(ws_area, false);
+    let body = workspace_list_body_rect(ws_area, false, app.sidebar_chrome);
     if body.height == 0 {
         return requested;
     }
@@ -1389,20 +1389,24 @@ pub(crate) fn compute_sidebar_tab_areas(ws_area: Rect) -> Vec<Rect> {
     rects
 }
 
-pub(crate) fn workspace_list_body_rect(area: Rect, has_scrollbar: bool) -> Rect {
+pub(crate) fn workspace_list_body_rect(
+    area: Rect,
+    has_scrollbar: bool,
+    chrome: crate::ui::shell::SidebarChrome,
+) -> Rect {
     if area.width == 0 || area.height <= WORKSPACE_SECTION_HEADER_ROWS {
         return Rect::default();
     }
 
     let body_y = area.y.saturating_add(WORKSPACE_SECTION_HEADER_ROWS);
-    let footer_y = area.y + area.height.saturating_sub(1);
+    let footer_y = area.y + area.height.saturating_sub(chrome.footer_rows());
     let body_height = footer_y.saturating_sub(body_y);
     let body_width = area.width.saturating_sub(u16::from(has_scrollbar));
     Rect::new(area.x, body_y, body_width, body_height)
 }
 
 fn workspace_list_visible_count(app: &AppState, area: Rect, scroll: usize) -> usize {
-    let body = workspace_list_body_rect(area, false);
+    let body = workspace_list_body_rect(area, false, app.sidebar_chrome);
     if body.width == 0 || body.height == 0 {
         return 0;
     }
@@ -1465,7 +1469,7 @@ fn entry_row_metrics(
 }
 
 fn workspace_list_bottom_start(app: &AppState, area: Rect) -> usize {
-    let body = workspace_list_body_rect(area, false);
+    let body = workspace_list_body_rect(area, false, app.sidebar_chrome);
     let entries = workspace_list_entries(app);
     let mut used_rows = 0u16;
     let mut start = entries.len();
@@ -1501,7 +1505,7 @@ pub(crate) fn workspace_list_scroll_metrics(
 
 pub(crate) fn workspace_list_scrollbar_rect(app: &AppState, area: Rect) -> Option<Rect> {
     let metrics = workspace_list_scroll_metrics(app, area);
-    let body = workspace_list_body_rect(area, true);
+    let body = workspace_list_body_rect(area, true, app.sidebar_chrome);
     (should_show_scrollbar(metrics) && body.width > 0 && body.height > 0).then_some(Rect::new(
         area.x + area.width.saturating_sub(1),
         body.y,
@@ -1656,7 +1660,8 @@ pub(crate) fn compute_workspace_list_areas(
     }
 
     let metrics = workspace_list_scroll_metrics(app, ws_area);
-    let body = workspace_list_body_rect(ws_area, should_show_scrollbar(metrics));
+    let body =
+        workspace_list_body_rect(ws_area, should_show_scrollbar(metrics), app.sidebar_chrome);
     if body.width == 0 || body.height == 0 {
         return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     }
@@ -1862,11 +1867,12 @@ pub(crate) fn workspace_drop_indicator_row(
     cards: &[crate::app::state::WorkspaceCardArea],
     area: Rect,
     insert_idx: usize,
+    chrome: crate::ui::shell::SidebarChrome,
 ) -> Option<u16> {
     if area.height == 0 {
         return None;
     }
-    let list_bottom = area.y + area.height.saturating_sub(1);
+    let list_bottom = area.y + area.height.saturating_sub(chrome.footer_rows());
 
     let first = cards.first()?;
     if insert_idx == first.ws_idx {
@@ -2190,11 +2196,16 @@ fn render_workspace_list(
         Some(crate::app::state::DragTarget::WorkspaceReorder {
             insert_idx: Some(insert_idx),
             ..
-        }) => workspace_drop_indicator_row(&app.view.workspace_card_areas, area, *insert_idx),
+        }) => workspace_drop_indicator_row(
+            &app.view.workspace_card_areas,
+            area,
+            *insert_idx,
+            app.sidebar_chrome,
+        ),
         _ => None,
     };
 
-    let list_bottom = area.y + area.height.saturating_sub(1);
+    let list_bottom = area.y + area.height.saturating_sub(app.sidebar_chrome.footer_rows());
     render_sidebar_tabs(app, frame, area);
 
     // Projects alone owns an alternate global-sidebar body. Files is hosted in
@@ -2733,28 +2744,61 @@ fn render_workspace_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u1
 /// is disabled or the area has no footer row.
 fn render_sidebar_footer_buttons(app: &AppState, frame: &mut Frame, area: Rect, new_label: &str) {
     let p = &app.palette;
-    let list_bottom = area.y + area.height.saturating_sub(1);
+    let list_bottom = area.y + area.height.saturating_sub(app.sidebar_chrome.footer_rows());
     if !(app.mouse_capture && list_bottom > area.y) {
         return;
     }
 
     let new_rect = app.sidebar_new_button_rect();
+    let menu_rect = app.global_launcher_rect();
+    let label_style = Style::default().fg(p.overlay0);
+
+    // A chip is asked for, not assumed. Both controls are checked before either
+    // is drawn: a half-applied decision would leave one framed button and one
+    // bare label, and two frames that overlap interleave into something that
+    // reads as neither. Whenever the answer is no, the footer keeps the labels
+    // it has always drawn.
+    if let Some(tint) = app.sidebar_chrome.chips {
+        let disjoint = new_rect.x + new_rect.width <= menu_rect.x;
+        let tall_enough = new_rect.height >= crate::ui::widgets::CHIP_ROWS;
+        if disjoint && tall_enough {
+            let drew_new = crate::ui::widgets::render_chip(
+                frame,
+                new_rect,
+                new_label.trim(),
+                tint,
+                label_style,
+                p.panel_bg,
+            );
+            let drew_menu = crate::ui::widgets::render_chip(
+                frame,
+                menu_rect,
+                "menu",
+                tint,
+                label_style,
+                p.panel_bg,
+            );
+            if drew_new.is_some() && drew_menu.is_some() {
+                return;
+            }
+        }
+    }
+
     frame.render_widget(
-        Paragraph::new(Span::styled(new_label, Style::default().fg(p.overlay0))),
+        Paragraph::new(Span::styled(new_label, label_style)),
         new_rect,
     );
 
-    let menu_rect = app.global_launcher_rect();
     let menu_line = if app.global_menu_attention_badge_visible() {
         Line::from(vec![
             Span::styled(
                 "● ",
                 Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
             ),
-            Span::styled("menu", Style::default().fg(p.overlay0)),
+            Span::styled("menu", label_style),
         ])
     } else {
-        Line::from(vec![Span::styled("menu", Style::default().fg(p.overlay0))])
+        Line::from(vec![Span::styled("menu", label_style)])
     };
     frame.render_widget(
         Paragraph::new(menu_line).alignment(Alignment::Right),
@@ -2824,7 +2868,7 @@ pub(crate) fn project_row_lines(app: &AppState) -> Vec<ProjectRowLine> {
 }
 
 pub(crate) fn projects_scroll_metrics(app: &AppState, area: Rect) -> crate::pane::ScrollMetrics {
-    let viewport_rows = workspace_list_body_rect(area, false).height as usize;
+    let viewport_rows = workspace_list_body_rect(area, false, app.sidebar_chrome).height as usize;
     let total_rows = project_row_lines(app).len();
     let max_offset_from_bottom = total_rows.saturating_sub(viewport_rows);
     let offset_from_bottom = total_rows
@@ -2840,7 +2884,7 @@ pub(crate) fn projects_scroll_metrics(app: &AppState, area: Rect) -> crate::pane
 
 pub(crate) fn projects_scrollbar_rect(app: &AppState, area: Rect) -> Option<Rect> {
     let metrics = projects_scroll_metrics(app, area);
-    let body = workspace_list_body_rect(area, true);
+    let body = workspace_list_body_rect(area, true, app.sidebar_chrome);
     (should_show_scrollbar(metrics) && body.width > 0 && body.height > 0).then_some(Rect::new(
         area.x + area.width.saturating_sub(1),
         body.y,
@@ -2858,7 +2902,7 @@ pub(crate) fn normalized_projects_scroll(app: &AppState, area: Rect, scroll: usi
 
 pub(crate) fn compute_project_row_areas(app: &AppState, area: Rect) -> Vec<ProjectRowArea> {
     let has_scrollbar = should_show_scrollbar(projects_scroll_metrics(app, area));
-    let body = workspace_list_body_rect(area, has_scrollbar);
+    let body = workspace_list_body_rect(area, has_scrollbar, app.sidebar_chrome);
     if body.width == 0 || body.height == 0 {
         return Vec::new();
     }
@@ -3719,7 +3763,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let area = Rect::new(0, 0, 20, 10);
         let workspace_area =
             workspace_list_rect(area, app.sidebar_section_split, app.sidebar_chrome);
-        let body = workspace_list_body_rect(workspace_area, false);
+        let body = workspace_list_body_rect(workspace_area, false, app.sidebar_chrome);
 
         let metrics = workspace_list_scroll_metrics(&app, workspace_area);
         let (cards, _, _headers, _) = compute_workspace_list_areas(&app, area);
@@ -3782,6 +3826,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let bare = crate::ui::shell::SidebarChrome {
             spaces: None,
             agents: None,
+            chips: None,
         };
         let toggle = expanded_sidebar_toggle_rect(area, bare);
 
@@ -3795,10 +3840,97 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             agents: Some(crate::ui::shell::BarTint::solid(
                 ratatui::style::Color::Rgb(1, 2, 3),
             )),
+            chips: None,
         };
         let inside = expanded_sidebar_toggle_rect(area, framed);
         assert_eq!(inside.x, toggle.x - 1, "the frame owns the last column");
         assert_eq!(inside.y, toggle.y - 1, "the frame owns the last row");
+    }
+
+    fn app_with_footer_chips(area: Rect, chips: bool) -> crate::app::state::AppState {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.ensure_test_terminals();
+        app.active = Some(0);
+        app.mouse_capture = true;
+        app.view.sidebar_rect = area;
+        app.sidebar_chrome = crate::ui::shell::SidebarChrome {
+            spaces: None,
+            agents: None,
+            chips: chips.then(|| {
+                crate::ui::shell::BarTint::solid(ratatui::style::Color::Rgb(250, 179, 135))
+            }),
+        };
+        app
+    }
+
+    // T60 · with chips asked for, the footer's controls are drawn as framed
+    // buttons — the frame is the whole point of the request, so its corners are
+    // what the test looks for, not the label.
+    #[test]
+    fn footer_controls_wear_their_own_frames_when_chips_are_on() {
+        let area = Rect::new(0, 0, 30, 24);
+        let app = app_with_footer_chips(area, true);
+
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal
+            .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        for (name, rect) in [
+            ("new", app.sidebar_new_button_rect()),
+            ("menu", app.global_launcher_rect()),
+        ] {
+            assert_eq!(
+                buffer[(rect.x, rect.y)].symbol(),
+                "╭",
+                "{name} has no top-left corner at {rect:?}"
+            );
+            assert_eq!(
+                buffer[(rect.x + rect.width - 1, rect.y + rect.height - 1)].symbol(),
+                "╯",
+                "{name} has no bottom-right corner at {rect:?}"
+            );
+            // The corners alone would still be satisfied by a rectangle too
+            // narrow to say anything -- a chip sized independently of its label
+            // clips to a frame around nothing.
+            let label_row: String = (rect.x..rect.x + rect.width)
+                .map(|x| buffer[(x, rect.y + 1)].symbol())
+                .collect();
+            assert!(
+                label_row.contains(name),
+                "{name} lost its label inside its own frame: {label_row:?}"
+            );
+        }
+    }
+
+    // T62 · a control that cannot fit a frame keeps its label. Half a border is
+    // worse than no border, and a vanished button is worse than both.
+    #[test]
+    fn a_footer_too_narrow_for_chips_still_draws_its_labels() {
+        let area = Rect::new(0, 0, 12, 24);
+        let app = app_with_footer_chips(area, true);
+
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal
+            .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        let footer = app.sidebar_new_button_rect();
+        let rows: Vec<String> = (footer.y..footer.y + footer.height)
+            .map(|y| (0..area.width).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect();
+        let footer_text = rows.join(" / ");
+        assert!(
+            footer_text.contains("new") || footer_text.contains("menu"),
+            "the footer lost its controls entirely: {footer_text:?}"
+        );
+        assert!(
+            !footer_text.contains('╭'),
+            "two frames cannot share this width, so neither should have been drawn: {footer_text:?}"
+        );
     }
 
     // T57 · a framed panel owns its own corner. The collapse icon is a control
@@ -3816,6 +3948,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             agents: Some(crate::ui::shell::BarTint::solid(
                 ratatui::style::Color::Rgb(250, 179, 135),
             )),
+            chips: None,
         };
 
         let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
@@ -5314,6 +5447,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let spaces_only = crate::ui::shell::SidebarChrome {
             spaces: tint,
             agents: None,
+            chips: None,
         };
         let (ws, detail) = expanded_sidebar_sections(area, 0.5, spaces_only);
         assert_eq!(
@@ -5328,6 +5462,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let agents_only = crate::ui::shell::SidebarChrome {
             spaces: None,
             agents: tint,
+            chips: None,
         };
         let (ws2, detail2) = expanded_sidebar_sections(area, 0.5, agents_only);
         assert_eq!(ws2, raw_ws);
@@ -6985,8 +7120,13 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let area = Rect::new(0, 0, 30, 20);
         app.view.workspace_card_areas = compute_workspace_card_areas(&app, area);
         let list_area = workspace_list_rect(area, app.sidebar_section_split, app.sidebar_chrome);
-        let indicator_row =
-            workspace_drop_indicator_row(&app.view.workspace_card_areas, list_area, 2).unwrap();
+        let indicator_row = workspace_drop_indicator_row(
+            &app.view.workspace_card_areas,
+            list_area,
+            2,
+            app.sidebar_chrome,
+        )
+        .unwrap();
         assert_eq!(indicator_row, app.view.workspace_card_areas[1].rect.y);
         app.drag = Some(crate::app::state::DragState {
             target: crate::app::state::DragTarget::WorkspaceReorder {

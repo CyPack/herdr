@@ -382,18 +382,55 @@ fn bar_color(spec: &str, palette: &Palette) -> Color {
 pub(crate) struct SidebarChrome {
     pub spaces: Option<BarTint>,
     pub agents: Option<BarTint>,
+    /// When set, the panel's own controls are drawn as framed chips, and the
+    /// footer grows from one row to `CHIP_ROWS` to hold them.
+    pub chips: Option<BarTint>,
 }
 
 impl SidebarChrome {
     pub(crate) const NONE: Self = Self {
         spaces: None,
         agents: None,
+        chips: None,
     };
 
     pub(crate) fn from_config(config: &crate::config::SidebarConfig, palette: &Palette) -> Self {
         Self {
             spaces: section_tint(&config.spaces.border, palette),
             agents: section_tint(&config.agents.border, palette),
+            chips: section_tint(&config.chips, palette),
+        }
+    }
+
+    /// How many rows the sidebar footer occupies — the single source both the
+    /// list's bottom edge and the footer's own rectangle read.
+    ///
+    /// A chip is a frame, and a frame needs its own rows; a bare label needs
+    /// one. Every place that carves the footer out of the list must ask here,
+    /// because a row counted differently in two places puts the list and the
+    /// buttons on top of each other without any of them being empty or
+    /// out of bounds — the failure C80 describes.
+    pub(crate) fn footer_rows(self) -> u16 {
+        if self.chips.is_some() {
+            crate::ui::widgets::CHIP_ROWS
+        } else {
+            1
+        }
+    }
+
+    /// How wide a control is: `bare_cells` as a plain label, or exactly what a
+    /// chip around `label` asks for.
+    ///
+    /// A chip sizes itself to its label and clips to whatever it is given, so
+    /// handing it this width makes the drawn frame and the clickable rectangle
+    /// the same rectangle for both a short label and one too long to fit. A
+    /// rectangle chosen independently would leave cells that look like nothing
+    /// and click like a button.
+    pub(crate) fn control_width(self, bare_cells: u16, label: &str) -> u16 {
+        if self.chips.is_some() {
+            crate::ui::widgets::chip_width(label)
+        } else {
+            bare_cells
         }
     }
 }

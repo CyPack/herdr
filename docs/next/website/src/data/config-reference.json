@@ -718,6 +718,24 @@
           "description": "Complete Agent-row overrides keyed by strict canonical agent id. Agents without an override use ui.sidebar.agents.rows."
         },
         {
+          "key": "ui.sidebar.chips.color",
+          "type": "string",
+          "default": "\"\"",
+          "description": "Frame tone for the left panel's own controls. Same vocabulary as the shell bars: a palette token follows the theme, anything else is a literal colour."
+        },
+        {
+          "key": "ui.sidebar.chips.enabled",
+          "type": "boolean",
+          "default": "false",
+          "description": "Draw the left panel's controls as small framed buttons. The footer grows from one row to three to hold them, and controls that cannot fit a frame keep their plain labels."
+        },
+        {
+          "key": "ui.sidebar.chips.gradient",
+          "type": "array",
+          "default": "[]",
+          "description": "Two or more stops to fade the control frames between along their long axis. Both ends must carry channel values."
+        },
+        {
           "key": "ui.sidebar.spaces.border.color",
           "type": "string",
           "default": "\"\"",

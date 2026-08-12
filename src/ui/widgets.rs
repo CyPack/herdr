@@ -132,15 +132,16 @@ pub(crate) fn render_chip(
 }
 
 /// Rows a boxed chip occupies: border, label, border.
-#[allow(dead_code)]
 pub(crate) const CHIP_ROWS: u16 = 3;
 
-/// Cells a boxed chip wants for a label: the frame's two, plus a space either
+/// Columns a chip adds around its label: the frame's two, plus a space either
 /// side so the text never touches the border.
-#[allow(dead_code)]
+pub(crate) const CHIP_SIDE_CELLS: u16 = 4;
+
+/// Cells a boxed chip wants for a label.
 pub(crate) fn chip_width(label: &str) -> u16 {
     let label_cells = u16::try_from(label.chars().count()).unwrap_or(u16::MAX);
-    label_cells.saturating_add(4)
+    label_cells.saturating_add(CHIP_SIDE_CELLS)
 }
 
 pub(super) fn panel_contrast_fg(p: &Palette) -> Color {
