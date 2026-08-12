@@ -5,6 +5,7 @@ use crate::app::state::{AppState, SidebarTab, ViewLayout};
 use super::ScrollbarClickTarget;
 
 impl AppState {
+    // TP-CHROME-14: hit tests read the same chrome the renderer drew through.
     pub(super) fn workspace_list_rect(&self) -> Rect {
         let sidebar = self.view.sidebar_rect;
         if self.sidebar_collapsed || sidebar.width <= 1 || sidebar.height == 0 {

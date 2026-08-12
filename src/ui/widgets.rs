@@ -42,6 +42,8 @@ pub(super) fn render_panel_shell(
 /// heavy box-drawing set: Unicode has no thick *rounded* corner, so asking for
 /// `┏` would square the corners off. Bold keeps `╭╮╰╯` and lets the terminal
 /// render the run with weight, which is the only way to have both.
+// TP-CHROME-11: rounded corners; weight comes from bold, because no
+// thick-and-rounded glyph exists.
 pub(crate) fn render_bar_shell(
     frame: &mut Frame,
     area: Rect,
@@ -90,12 +92,6 @@ pub(crate) fn render_bar_shell(
     Some(inner)
 }
 
-// Lands with its tests before the surfaces that will place it, the way this
-// module's interaction reducers did: the geometry cost of a boxed control is
-// three rows, and deciding where a panel can afford them is a separate change
-// (F33-L5b). Marked rather than hidden, so the gap is a recorded state and not
-// a silent one.
-#[allow(dead_code)]
 /// The smallest framed surface: a control that reads as a button.
 ///
 /// Three rows, because a rounded frame spends one on each side and the label
@@ -106,6 +102,8 @@ pub(crate) fn render_bar_shell(
 /// The drawn rectangle comes back so the caller registers the same rectangle it
 /// painted. Hit testing that recomputes its own is how a button ends up
 /// clickable one cell away from where it looks.
+// TP-CHROME-22: a chip clips rather than wraps, and refuses rather than
+// drawing half a frame.
 pub(crate) fn render_chip(
     frame: &mut Frame,
     area: Rect,

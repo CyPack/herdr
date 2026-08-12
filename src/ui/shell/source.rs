@@ -125,6 +125,7 @@ impl BarTrack {
     /// A disabled bar and a bar with an impossible size are the same answer —
     /// no strip — but only the second one is worth saying out loud, so the
     /// caller gets told which edge it was.
+    // TP-CHROME-04/05: an impossible size is refused, never repaired.
     fn from_config(config: &ShellBarConfig, edge: &'static str) -> Self {
         if !config.enabled {
             return Self::NONE;
@@ -309,6 +310,8 @@ fn bar_tint(config: &ShellBarConfig, palette: &Palette, edge: &'static str) -> B
 
 /// One tint reader for every framed surface, so a colour written for a bar and
 /// a colour written for the left panel mean the same thing.
+// TP-CHROME-08..10: palette token first, literal second, and a gradient that
+// cannot interpolate says so instead of fading to nothing.
 fn tint_from_parts(
     color: &str,
     gradient: &[String],
@@ -410,6 +413,7 @@ impl SidebarChrome {
     /// because a row counted differently in two places puts the list and the
     /// buttons on top of each other without any of them being empty or
     /// out of bounds — the failure C80 describes.
+    // TP-CHROME-17: one answer for how many rows the footer owns.
     pub(crate) fn footer_rows(self) -> u16 {
         if self.chips.is_some() {
             crate::ui::widgets::CHIP_ROWS
@@ -454,6 +458,8 @@ fn section_tint(config: &crate::config::SectionBorderConfig, palette: &Palette) 
 /// bars are not composed onto it — a template already names every region it
 /// wants, and adding an edge it already owns would produce a duplicate region
 /// and fail the whole tree rather than the one bar.
+// TP-CHROME-01..03/06/07: the edges a person asked for, the identity that
+// tells two compositions apart, and the fallback when one does not validate.
 pub(crate) fn derive_desktop_shell_layout(
     requested: Option<ShellTemplateId>,
     bars: ShellBars,

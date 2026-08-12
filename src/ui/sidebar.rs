@@ -57,6 +57,8 @@ fn sidebar_section_heights(total_h: u16, split_ratio: f32) -> (u16, u16) {
     (ws_h, detail_h)
 }
 
+// TP-CHROME-12/13: framing one half leaves the other alone, and a half with no
+// room for a frame keeps its content instead of its decoration.
 pub(crate) fn expanded_sidebar_sections(
     area: Rect,
     split_ratio: f32,
@@ -134,6 +136,8 @@ pub(crate) fn agent_panel_toggle_rect(
 /// The header already reserves [`AGENT_PANEL_HEADER_ROWS`] rows, which is
 /// exactly what a chip needs, so asking for chips costs the list nothing here —
 /// the frame simply takes the rows the separator and its blank line were using.
+// TP-CHROME-20/21: the header's controls become corner chips, hit-tested where
+// they were drawn.
 fn agent_panel_header_label_rect(
     area: Rect,
     label: &str,
@@ -2779,6 +2783,7 @@ fn render_workspace_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u1
 /// tabs so the footer chrome stays identical. `new_label` names the left button
 /// (" new" workspace on Spaces, "new chat" on Projects). No-op when the mouse UI
 /// is disabled or the area has no footer row.
+// TP-CHROME-18/19: framed buttons when they fit, plain labels when they do not.
 fn render_sidebar_footer_buttons(app: &AppState, frame: &mut Frame, area: Rect, new_label: &str) {
     let p = &app.palette;
     let list_bottom = area.y + area.height.saturating_sub(app.sidebar_chrome.footer_rows());
@@ -3384,6 +3389,7 @@ pub(crate) fn collapsed_sidebar_toggle_rect(area: Rect) -> Rect {
 /// icon lands on the corner glyph and the border reads as broken. Both the
 /// drawing and the hit test call this one function, so the inset can never
 /// drift between what is painted and what is clickable.
+// TP-CHROME-15/16: the control steps inside the frame, and the click follows it.
 pub(crate) fn expanded_sidebar_toggle_rect(
     area: Rect,
     chrome: crate::ui::shell::SidebarChrome,
