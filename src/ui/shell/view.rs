@@ -428,6 +428,138 @@ mod tests {
         );
     }
 
+    // F34-L0 · M2 · a divided bar costs nothing on the steady path
+    #[test]
+    fn sections_cost_nothing_on_the_retained_path() {
+        // The whole isolation argument for bar sections rests on this: they are
+        // resolved when the geometry is resolved, and a screen that has not
+        // changed resolves nothing at all. If a section ever made the retained
+        // path do work, every frame would pay for every section — which is
+        // exactly the load the person asked never to be put on herdr.
+        let area = Rect::new(0, 0, 120, 40);
+        let sections = BarSections::from_policies(
+            &[
+                TrackPolicy::Fixed { cells: 12 },
+                TrackPolicy::Fill { weight: 1 },
+                TrackPolicy::Fill { weight: 3 },
+            ],
+            "top",
+        );
+        let bars = ShellBars {
+            top: BarTrack::bordered(3).with_sections(sections),
+            ..ShellBars::NONE
+        };
+        let derived = derive_desktop_shell_layout(None, bars);
+        let key = ShellGeometryKey::new(area, derived.revision, 0, 0, derived.template, bars);
+        let resolver = |region: RegionId| u16::from(region == RegionId::LeftPanel) * 26;
+
+        let (views, profile) = crate::render_prof::observe_for_test(|| {
+            let first = compute_shell_view(&derived.layout, key, ShellView::default(), &resolver);
+            let second = compute_shell_view(&derived.layout, key, first.clone(), &resolver);
+            (first, second)
+        });
+
+        assert_eq!(profile.counter("shell.geometry_cache.miss"), 1);
+        assert_eq!(profile.counter("shell.geometry_cache.hit"), 1);
+
+        let (first, second) = views;
+        assert_eq!(
+            first.generation, second.generation,
+            "an unchanged screen must not advance the generation, or every hit \
+             target in the bar is rebuilt for nothing"
+        );
+        assert_eq!(
+            first.hits, second.hits,
+            "the retained path must return the same targets it already had"
+        );
+        assert!(
+            second
+                .hits
+                .iter()
+                .any(|hit| matches!(hit.target, ShellHitTarget::BarSection { .. })),
+            "the bar has to actually be divided for this measurement to mean anything"
+        );
+    }
+
+    // F34-L0 · M1 · what dividing a bar costs the geometry solver
+    //
+    // A measurement, not a gate: a test that asserts a duration is a test that
+    // fails when somebody else's build is running, and a flaky gate teaches
+    // people to rerun rather than to read. The numbers belong in
+    // `.local/prd/f34-l0-budget-measurement.md`; a threshold can only be named
+    // after there is something to name it against.
+    //
+    //   cargo nextest run -E 'test(l0_section_geometry_cost)' --run-ignored all --no-capture
+    #[test]
+    #[ignore = "measurement, not a gate — see the command above"]
+    fn l0_section_geometry_cost() {
+        use std::time::Instant;
+
+        const ROUNDS: u32 = 20_000;
+        let resolver = |region: RegionId| u16::from(region == RegionId::LeftPanel) * 26;
+
+        println!("\n=== M1 · geometry solve time by section count ===");
+        println!(
+            "{:>9} {:>14} {:>12} {:>10}",
+            "sections", "total(ms)", "solve(us)", "vs 0"
+        );
+
+        let mut baseline = 0f64;
+        for count in [0usize, 1, 2, 4, 8] {
+            let policies: Vec<TrackPolicy> = (0..count)
+                .map(|index| {
+                    if index == 0 {
+                        TrackPolicy::Fixed { cells: 12 }
+                    } else {
+                        TrackPolicy::Fill {
+                            weight: (index as u16) % 3 + 1,
+                        }
+                    }
+                })
+                .collect();
+            let bars = ShellBars {
+                top: BarTrack::bordered(3)
+                    .with_sections(BarSections::from_policies(&policies, "top")),
+                ..ShellBars::NONE
+            };
+            let derived = derive_desktop_shell_layout(None, bars);
+
+            // Every round asks a different question, so what is measured is the
+            // solve and not the cache: a run that hit the cache would report the
+            // cost of comparing two keys and call it the cost of sections.
+            let started = Instant::now();
+            let mut previous = ShellView::default();
+            for round in 0..ROUNDS {
+                let width = 180 + u16::try_from(round % 20).unwrap_or(0);
+                let key = ShellGeometryKey::new(
+                    Rect::new(0, 0, width, 50),
+                    derived.revision,
+                    0,
+                    0,
+                    derived.template,
+                    bars,
+                );
+                previous = compute_shell_view(&derived.layout, key, previous, &resolver);
+            }
+            let elapsed = started.elapsed();
+            let per_solve = elapsed.as_nanos() as f64 / f64::from(ROUNDS);
+            if count == 0 {
+                baseline = per_solve;
+            }
+            println!(
+                "{count:>9} {:>14.1} {:>12.3} {:>9.2}x",
+                elapsed.as_secs_f64() * 1000.0,
+                per_solve / 1000.0,
+                per_solve / baseline
+            );
+            assert!(previous.generation > 0, "the solver has to have run");
+        }
+        println!(
+            "\nnote: sections draw nothing yet, so this is the FLOOR. Re-measure \
+             once a widget catalogue puts content in them."
+        );
+    }
+
     // T26 · an undivided bar produces no section targets at all
     #[test]
     fn an_undivided_bar_contributes_no_section_hits() {
