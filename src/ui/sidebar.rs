@@ -6170,6 +6170,79 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         }
     }
 
+    /// The rows a tree emits, flattened to strings a person can read.
+    fn tree_rows(app: &AppState) -> Vec<String> {
+        workspace_list_entries(app)
+            .into_iter()
+            .filter_map(|entry| match entry {
+                WorkspaceListEntry::GroupHeader { space_key } => Some(format!("group:{space_key}")),
+                WorkspaceListEntry::ProjectHeader { project_key } => {
+                    Some(format!("node:{project_key}"))
+                }
+                WorkspaceListEntry::Workspace { ws_idx, .. } => Some(format!("ws:{ws_idx}")),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // TP-MOD-01: a module the user created takes a row even with nothing in
+    // it yet, so the scaffolding can be built before the branches exist.
+    //
+    // This is the shape a person actually hits: they open the header menu,
+    // name a module, and expect to see it. It reached the tree only after the
+    // managed overlay learned to carry containers (TP-MOVL-01); before that
+    // the entry never left the file. The row is pinned here because the
+    // emission that draws it is incidental — an empty node is walked as a
+    // child of an emitted parent, and nothing else says it must be.
+    #[test]
+    fn an_empty_module_under_a_drawn_project_takes_a_row_of_its_own() {
+        let mut app = AppState::test_new();
+        app.mobile_width_threshold = 0;
+        // Two members: a single-member parented bucket folds its header into
+        // the row (TP-NODE-05), and this test is about where headers sit.
+        app.workspaces = vec![
+            worktree_on_branch("alpha", "feat/tui-alpha"),
+            worktree_on_branch("beta", "feat/tui-beta"),
+        ];
+        app.space_split_rules = vec![split_rule(&["feat/tui-*"], "herdr:tui", "TUI")];
+        app.space_projects = vec![project_over("project:herdr", &["/repo/herdr"], &[])];
+        app.space_nodes = vec![
+            crate::spaces::SpaceNode {
+                key: "group:remote-audio".into(),
+                name: "UZAKTAN SES".into(),
+                icon: None,
+                parent: Some("project:herdr".into()),
+            },
+            crate::spaces::SpaceNode {
+                key: "group:remote-video".into(),
+                name: "UZAKTAN FILM".into(),
+                icon: None,
+                parent: Some("project:herdr".into()),
+            },
+        ];
+
+        let rows = tree_rows(&app);
+        assert!(
+            rows.contains(&"node:group:remote-audio".to_string()),
+            "an empty module the user created must be visible: {rows:?}"
+        );
+        assert!(
+            rows.contains(&"node:group:remote-video".to_string()),
+            "a second empty module is visible too: {rows:?}"
+        );
+        // TP-NODE-04's ordering half: what has members comes first, so making
+        // a module never pushes the work the user is doing down the list.
+        let bucket = rows
+            .iter()
+            .position(|row| row == "group:herdr:tui")
+            .expect("the populated bucket is drawn");
+        let empty = rows
+            .iter()
+            .position(|row| row == "node:group:remote-audio")
+            .expect("the empty module is drawn");
+        assert!(bucket < empty, "populated before empty: {rows:?}");
+    }
+
     fn foreign_repo_workspace(name: &str, repo: &str) -> crate::workspace::Workspace {
         let mut ws = Workspace::test_new(name);
         ws.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {

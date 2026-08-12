@@ -26,6 +26,7 @@ Format and rules: [`README.md`](README.md).
 | TP-NODE-09 | A cycle that runs through a bucket is still a cycle: the validator walks bucket edges too, reports it, and drops the node side to top level. | A loop with one rule-edge slips past validation and hands the sidebar walker an infinite chain. | `a_cycle_through_a_bucket_is_still_caught` |
 | TP-TREE-16 | A node under a bucket is drawn inside that bucket's block, pre-order — the bucket's own members lead, then the child module, then that module's buckets. An unowned bucket with child modules rides the same walk. | Modules hanging under buckets are drawn at top level, out of order, or not at all. | `a_node_under_a_bucket_is_drawn_inside_that_bucket` |
 | TP-TREE-17 | Folding a bucket hides the modules (and their buckets) hanging under it, exactly as it hides its member checkouts. | A folded bucket keeps leaking its subtree below itself. | `a_folded_bucket_hides_the_modules_under_it` |
+| TP-MOD-01 | A module with no members yet still takes a row under its drawn parent, after the parent's populated buckets. | Making a module produces nothing on screen, so a tree cannot be built before its branches exist — the person names a module, sees no change, and makes a second one with a different name. Ordering matters too: an empty module that sorted first would push the work in progress down the list every time one was created. | `an_empty_module_under_a_drawn_project_takes_a_row_of_its_own` |
 
 ## Folds
 
