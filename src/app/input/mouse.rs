@@ -1363,6 +1363,25 @@ impl AppState {
                 {
                     return None;
                 }
+                // TP-AGPANEL-03: the agents panel is the sidebar's lower half
+                // on every tab, so its rows are matched before the per-tab
+                // roads below — and matched through their own resolver, which
+                // is bounded to the panel body and cannot claim a row that
+                // belongs to the list above it.
+                if let Some((ws_idx, tab_idx, pane_id)) = self.agent_detail_target_at(mouse.row) {
+                    self.context_menu = Some(ContextMenuState {
+                        kind: ContextMenuKind::AgentEntry {
+                            ws_idx,
+                            tab_idx,
+                            pane_id,
+                        },
+                        x: mouse.column,
+                        y: mouse.row,
+                        list: MenuListState::new(0),
+                    });
+                    self.enter_overlay_mode(Mode::ContextMenu);
+                    return None;
+                }
                 // The Projects tab owns its rows: right-click on a project
                 // header or its "+" button opens the agent selector; other
                 // rows are inert. Never fall through to the workspace-card
@@ -1406,11 +1425,15 @@ impl AppState {
                         .map(|row| row.session_id.clone())
                     {
                         let has_move = self.chat_move_overrides.contains_key(&session_id);
+                        // TP-AGPANEL-05: the close verb is offered only when
+                        // this chat still has a tab running behind it.
+                        let has_live = self.find_resumed_chat_tab(&session_id).is_some();
                         self.context_menu = Some(ContextMenuState {
                             kind: ContextMenuKind::WorkspaceChat {
                                 ws_idx: hit.ws_idx,
                                 session_id,
                                 has_move,
+                                has_live,
                             },
                             x: mouse.column,
                             y: mouse.row,
@@ -3163,6 +3186,72 @@ mod tests {
             "the card dots open the branch menu; got {:?}",
             app.state.context_menu.as_ref().map(|menu| &menu.kind)
         );
+    }
+
+    // TP-AGPANEL-03: a right-click on an agents-panel row opens that row's
+    // own menu carrying its pane; the empty space below the last row opens
+    // nothing, because there is no agent there to act on. Before this road
+    // existed the press fell through to the workspace list's resolver, which
+    // reads by row and answers for a different section entirely.
+    #[test]
+    fn right_click_on_an_agent_row_opens_its_menu_and_the_panel_gap_stays_inert() {
+        let mut app = app_for_mouse_test();
+        let workspace = crate::workspace::Workspace::test_new("one");
+        let root = workspace.tabs[0].root_pane;
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mobile_width_threshold = 0;
+        app.state.ensure_test_terminals();
+        let terminal_id = app.state.workspaces[0].tabs[0]
+            .panes
+            .get(&root)
+            .map(|pane| pane.attached_terminal_id.clone())
+            .expect("the root pane has a terminal");
+        if let Some(terminal) = app.state.terminals.get_mut(&terminal_id) {
+            terminal.set_detected_state(
+                Some(crate::detect::Agent::Pi),
+                crate::detect::AgentState::Idle,
+            );
+        }
+
+        let area = ratatui::layout::Rect::new(0, 0, 106, 20);
+        crate::ui::compute_view(&mut app.state, area);
+        let entries = crate::ui::agent_panel_entries(&app.state);
+        assert_eq!(entries.len(), 1, "the fixture lists one agent");
+
+        let panel = app.state.agent_panel_rect();
+        let row = (panel.y..panel.y + panel.height)
+            .find(|row| app.state.agent_detail_target_at(*row) == Some((0, 0, root)))
+            .expect("the agent row is laid out");
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 2, row));
+        assert!(
+            matches!(
+                app.state.context_menu.as_ref().map(|menu| &menu.kind),
+                Some(crate::app::state::ContextMenuKind::AgentEntry { ws_idx: 0, tab_idx: 0, pane_id })
+                    if *pane_id == root
+            ),
+            "the agent row owns a menu carrying its own pane; got {:?}",
+            app.state.context_menu.as_ref().map(|menu| &menu.kind)
+        );
+
+        // The empty space under the last row belongs to no agent.
+        app.state.context_menu = None;
+        app.state.mode = crate::app::state::Mode::Terminal;
+        if let Some(gap) = (panel.y..panel.y + panel.height)
+            .find(|row| app.state.agent_detail_target_at(*row).is_none())
+        {
+            app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 2, gap));
+            assert!(
+                !matches!(
+                    app.state.context_menu.as_ref().map(|menu| &menu.kind),
+                    Some(crate::app::state::ContextMenuKind::AgentEntry { .. })
+                ),
+                "the panel's empty space invents no agent menu; got {:?}",
+                app.state.context_menu.as_ref().map(|menu| &menu.kind)
+            );
+        }
     }
 
     // TP-DOTS-17: the header's "+" is a second door to the module's

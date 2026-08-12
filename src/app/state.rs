@@ -2260,11 +2260,22 @@ pub enum ContextMenuKind {
     },
     /// A chat row's own menu. The session id is resolved at open time so a
     /// list refresh under an open menu can never re-target the move
-    /// (TP-CHAT-MOVE-04); `has_move` decides whether "Move back" shows.
+    /// (TP-CHAT-MOVE-04); `has_move` decides whether "Move back" shows and
+    /// `has_live` whether the chat has a running tab to close (TP-AGPANEL-05).
     WorkspaceChat {
         ws_idx: usize,
         session_id: String,
         has_move: bool,
+        has_live: bool,
+    },
+    /// An agents-panel row's own menu. The row already stands for one pane,
+    /// so the target rides in the menu rather than being re-derived from
+    /// whatever happens to be focused when the item is picked
+    /// (TP-AGPANEL-03).
+    AgentEntry {
+        ws_idx: usize,
+        tab_idx: usize,
+        pane_id: crate::layout::PaneId,
     },
     /// The drawer picker a chat move opens: open workspaces as
     /// `(ledger key, display name)`, resolved by index like MoveTarget.
@@ -2402,13 +2413,24 @@ impl ContextMenuState {
             // TP-CHAT-MOVE-04: the way back only shows while a re-home is in
             // force — offering it otherwise would be a button that does
             // nothing.
-            ContextMenuKind::WorkspaceChat { has_move, .. } => {
+            ContextMenuKind::WorkspaceChat {
+                has_move, has_live, ..
+            } => {
                 let mut items = vec!["Move to branch..."];
                 if *has_move {
                     items.push("Move back");
                 }
+                // TP-AGPANEL-05: the close verb only appears while the chat
+                // has a tab running behind it, and it comes last — the one
+                // item here that cannot be undone.
+                if *has_live {
+                    items.push("Close agent");
+                }
                 items
             }
+            // TP-AGPANEL-03: the agents panel lists what is running, so the
+            // single verb it owns is ending one.
+            ContextMenuKind::AgentEntry { .. } => vec!["Close agent"],
             ContextMenuKind::ChatMoveTarget { targets, .. } => {
                 targets.iter().map(|(_, label)| label.as_str()).collect()
             }
@@ -4781,6 +4803,25 @@ impl AppState {
                         assert_live_pane(source_pane_id, "context menu source pane");
                     }
                 }
+                ContextMenuKind::AgentEntry {
+                    ws_idx,
+                    tab_idx,
+                    pane_id,
+                } => {
+                    // TP-AGPANEL-03: the row's target is the menu's identity —
+                    // it must still name a live pane, or the close would fire
+                    // at a slot something else has moved into.
+                    assert_tab_index(ws_idx, tab_idx, "context menu agent tab");
+                    assert!(
+                        self.workspaces[ws_idx].tabs[tab_idx]
+                            .panes
+                            .contains_key(&pane_id),
+                        "agent menu references pane {:?} outside workspace {} tab {}",
+                        pane_id,
+                        ws_idx,
+                        tab_idx
+                    );
+                }
                 ContextMenuKind::AppDock { .. } => {
                     // The dock popover references only a closed built-in app
                     // id; there is no index-shaped identity to validate.
@@ -5772,6 +5813,7 @@ mod tests {
                 ws_idx: 0,
                 session_id: "s1".into(),
                 has_move: false,
+                has_live: false,
             },
             x: 0,
             y: 0,
@@ -5784,6 +5826,7 @@ mod tests {
                 ws_idx: 0,
                 session_id: "s1".into(),
                 has_move: true,
+                has_live: false,
             },
             x: 0,
             y: 0,

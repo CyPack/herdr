@@ -1303,6 +1303,47 @@ pub(super) fn apply_context_menu_action(
                 };
             }
         }
+        // TP-AGPANEL-04: the keyboard road to the same close, aimed at the
+        // agent row's own pane.
+        (
+            ContextMenuKind::AgentEntry {
+                ws_idx,
+                tab_idx,
+                pane_id,
+            },
+            Some("Close agent"),
+        ) => {
+            state.selected = ws_idx;
+            state.active = Some(ws_idx);
+            state.switch_tab(tab_idx);
+            state.focus_pane_in_workspace(ws_idx, pane_id);
+            if !state.close_pane() {
+                state.mode = if state.active.is_some() {
+                    Mode::Terminal
+                } else {
+                    Mode::Navigate
+                };
+            }
+        }
+        // TP-AGPANEL-06: the chat road on the keyboard dispatch — the session
+        // is resolved now, so a menu that outlived its agent closes nothing.
+        (ContextMenuKind::WorkspaceChat { session_id, .. }, Some("Close agent")) => {
+            match state.find_resumed_chat_tab(&session_id) {
+                Some((ws_idx, tab_idx)) => {
+                    state.selected = ws_idx;
+                    state.active = Some(ws_idx);
+                    state.switch_tab(tab_idx);
+                    if !state.close_tab() {
+                        state.mode = if state.active.is_some() {
+                            Mode::Terminal
+                        } else {
+                            Mode::Navigate
+                        };
+                    }
+                }
+                None => leave_modal(state),
+            }
+        }
         _ => leave_modal(state),
     }
 }
@@ -1936,6 +1977,40 @@ impl App {
                     } else {
                         Mode::Navigate
                     };
+                }
+            }
+            // TP-AGPANEL-04: the agents panel closes through the pane road
+            // the pane menu already owns — a graceful close with its
+            // confirmation gate intact, never a kill — aimed at the row's
+            // own pane rather than whatever is focused.
+            (
+                ContextMenuKind::AgentEntry {
+                    ws_idx, pane_id, ..
+                },
+                Some("Close agent"),
+            ) => {
+                self.focus_pane_internal_via_api(ws_idx, pane_id);
+                if !self.close_focused_pane_via_api_requires_confirmation() {
+                    self.state.mode = if self.state.active.is_some() {
+                        Mode::Terminal
+                    } else {
+                        Mode::Navigate
+                    };
+                }
+            }
+            // TP-AGPANEL-06: the chat road resolves the session's tab NOW,
+            // not at open time — a menu can outlive the agent it was opened
+            // for, and a stale index would close a bystander.
+            (ContextMenuKind::WorkspaceChat { session_id, .. }, Some("Close agent")) => {
+                match self.state.find_resumed_chat_tab(&session_id) {
+                    Some((ws_idx, tab_idx)) => {
+                        self.focus_workspace_idx_via_api(ws_idx);
+                        self.focus_tab_idx_via_api(tab_idx);
+                        if !self.close_active_tab_via_api_requires_confirmation() {
+                            leave_modal(&mut self.state);
+                        }
+                    }
+                    None => leave_modal(&mut self.state),
                 }
             }
             _ => leave_modal(&mut self.state),
@@ -3000,6 +3075,7 @@ mod tests {
                 ws_idx: 0,
                 session_id: "s1".into(),
                 has_move: false,
+                has_live: false,
             },
             x: 2,
             y: 5,
@@ -3047,6 +3123,7 @@ mod tests {
                 ws_idx: 0,
                 session_id: "s1".into(),
                 has_move: true,
+                has_live: false,
             },
             x: 0,
             y: 0,
@@ -3477,6 +3554,155 @@ mod tests {
             Some(std::path::PathBuf::from("/proj/herdr"))
         );
         assert_eq!(app.state.request_new_linked_worktree, None);
+    }
+
+    // TP-AGPANEL-03: an agents-panel row owns a menu with exactly one verb.
+    // The panel is a list of running agents, so the question it can answer
+    // that no other surface answers is "close this one" — and a longer menu
+    // here would duplicate the pane menu the row's own pane already has.
+    #[test]
+    fn the_agent_row_menu_offers_exactly_the_close_verb() {
+        let workspace = Workspace::test_new("one");
+        let pane_id = workspace.tabs[0].root_pane;
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::AgentEntry {
+                ws_idx: 0,
+                tab_idx: 0,
+                pane_id,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+
+        assert_eq!(menu.items(), vec!["Close agent"]);
+    }
+
+    // TP-AGPANEL-04: closing from an agent row closes THAT row's pane, not
+    // whichever pane happens to be focused — the row is the target, and it
+    // travels in the menu. It closes through the same proper close road the
+    // pane menu uses (a graceful close, never a kill).
+    #[test]
+    fn closing_an_agent_row_closes_that_row_pane_not_the_focused_one() {
+        let mut app = app_with_test_workspaces(&["one"]);
+        let root = app.state.workspaces[0].tabs[0].root_pane;
+        let second = app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
+        app.state.ensure_test_terminals();
+        app.state.workspaces[0].tabs[0].layout.focus_pane(root);
+        app.state.mode = Mode::ContextMenu;
+
+        let menu = ContextMenuState {
+            kind: ContextMenuKind::AgentEntry {
+                ws_idx: 0,
+                tab_idx: 0,
+                pane_id: second,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = item_index(&menu, "Close agent");
+
+        app.apply_context_menu_action_via_api(menu, idx);
+
+        assert_eq!(
+            app.state.workspaces[0].tabs[0].layout.pane_count(),
+            1,
+            "the row's own pane is the one that closed"
+        );
+        assert_eq!(
+            app.state.workspaces[0].focused_pane_id(),
+            Some(root),
+            "the pane that was focused survives — it was not the target"
+        );
+    }
+
+    // TP-AGPANEL-05: a chat row offers the close verb only while the chat has
+    // a running tab behind it. A drawer lists finished chats too, and a
+    // "Close agent" on a transcript with nothing running would be a button
+    // that does nothing — the same rule "Move back" already follows.
+    #[test]
+    fn a_chat_row_offers_close_only_while_something_is_running() {
+        let live = ContextMenuState {
+            kind: ContextMenuKind::WorkspaceChat {
+                ws_idx: 0,
+                session_id: "s1".into(),
+                has_move: false,
+                has_live: true,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        assert_eq!(live.items(), vec!["Move to branch...", "Close agent"]);
+
+        let finished = ContextMenuState {
+            kind: ContextMenuKind::WorkspaceChat {
+                ws_idx: 0,
+                session_id: "s1".into(),
+                has_move: true,
+                has_live: false,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        assert_eq!(
+            finished.items(),
+            vec!["Move to branch...", "Move back"],
+            "a finished chat is never offered a close it cannot perform"
+        );
+    }
+
+    // TP-AGPANEL-06: the chat road re-resolves the session's tab when the
+    // item is picked. A menu can stay open while the agent exits, and firing
+    // a close at the tab index captured at open time would close whatever
+    // moved into that slot; a session that is gone closes nothing at all.
+    #[test]
+    fn closing_a_chat_agent_targets_the_session_tab_and_a_stale_menu_is_inert() {
+        let mut app = app_with_test_workspaces(&["one"]);
+        let logs = app.state.workspaces[0].test_add_tab(Some("logs"));
+        app.state.workspaces[0].tabs[logs].resumed_session_id = Some("s1".into());
+        app.state.ensure_test_terminals();
+        app.state.workspaces[0].switch_tab(0);
+        app.state.mode = Mode::ContextMenu;
+
+        let menu = |session: &str| ContextMenuState {
+            kind: ContextMenuKind::WorkspaceChat {
+                ws_idx: 0,
+                session_id: session.into(),
+                has_move: false,
+                has_live: true,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        let idx = item_index(&menu("s1"), "Close agent");
+
+        app.apply_context_menu_action_via_api(menu("s1"), idx);
+
+        assert_eq!(
+            app.state.workspaces[0].tabs.len(),
+            1,
+            "the tab wired to the session closed"
+        );
+        assert!(
+            app.state.workspaces[0]
+                .tabs
+                .iter()
+                .all(|tab| tab.resumed_session_id.as_deref() != Some("s1")),
+            "no tab still claims the closed session"
+        );
+
+        // A menu left open for a session that no longer runs closes nothing.
+        app.state.mode = Mode::ContextMenu;
+        app.apply_context_menu_action_via_api(menu("s1"), idx);
+        assert_eq!(
+            app.state.workspaces[0].tabs.len(),
+            1,
+            "a stale close is inert rather than closing a bystander"
+        );
     }
 
     #[test]
