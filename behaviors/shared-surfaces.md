@@ -9,13 +9,23 @@ reverted without a conflict; these can.
 `src/ui.rs`, `src/app/input/sidebar.rs`, `src/client/mod.rs` or `src/ui/panes.rs`, the
 "Breaks if lost" column is what decides whether a resolution is acceptable.
 
-Three families live in their own files but sit in upstream-owned code all the same —
+Four families live in their own files but sit in upstream-owned code all the same —
 consult them under the same rule during a sync:
 [`tab-attention.md`](tab-attention.md) (`workspace.rs`, `workspace/tab.rs`,
 `ui/tabs.rs`, `api/tabs.rs`, `api/plugins/panes.rs`, `persist/restore.rs`,
-`app/runtime.rs`), [`agent-panel.md`](agent-panel.md) (`ui/sidebar.rs`) and
+`app/runtime.rs`), [`agent-panel.md`](agent-panel.md) (`ui/sidebar.rs`),
 [`workspace-chats.md`](workspace-chats.md) (`app/session.rs`, plus the fork-only
-`persist/workspace_chats.rs`).
+`persist/workspace_chats.rs`) and [`surface-chrome.md`](surface-chrome.md)
+(`ui/sidebar.rs`, `ui/widgets.rs`, `ui.rs`, `app/input/sidebar.rs`, plus the
+fork-only `ui/shell/source.rs`).
+
+`surface-chrome.md` is the one to watch hardest in `ui/widgets.rs`: the chip and
+bar shells sit beside upstream's own popup and modal helpers in that file, and a
+merge that takes upstream's version of the module drops them without a conflict
+anywhere. Its geometry also reaches into `app/input/sidebar.rs`, where drawing
+and hit testing have to keep reading the same chrome — a resolution that
+restores a constant there compiles, passes, and silently moves every row in the
+left panel one cell off what the person can see.
 
 Format and rules: [`README.md`](README.md).
 
