@@ -39,7 +39,8 @@ pub(crate) use model::{
     ShellNode, TrackPolicy,
 };
 pub(crate) use source::{
-    derive_desktop_shell_layout, BarColors, BarTint, ShellBars, SidebarChrome,
+    derive_desktop_shell_layout, shell_bar_config_problems, BarColors, BarTint, ShellBars,
+    SidebarChrome,
 };
 pub(crate) use template::ShellTemplateId;
 pub(crate) use view::{compute_empty_shell_view, compute_shell_view, ShellGeometryKey, ShellView};

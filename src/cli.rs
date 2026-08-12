@@ -277,7 +277,18 @@ fn config_check(args: &[String]) -> std::io::Result<i32> {
         }
     }
 
-    let diagnostics = crate::config::Config::load().diagnostics;
+    let loaded = crate::config::Config::load();
+    let mut diagnostics = loaded.diagnostics;
+    // Parsing only sees keys it does not recognise. A key spelled correctly
+    // and given a value this build can never draw parsed perfectly well, and
+    // used to be answered with "ok" — which sends somebody looking at their
+    // terminal instead of at the line they just wrote.
+    diagnostics.extend(
+        crate::ui::shell::shell_bar_config_problems(&loaded.config.shell.bars)
+            .into_iter()
+            .map(|problem| problem.to_string()),
+    );
+
     if diagnostics.is_empty() {
         println!("config: ok");
     } else {

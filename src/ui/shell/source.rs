@@ -320,26 +320,8 @@ impl BarTrack {
         if !config.enabled {
             return Self::NONE;
         }
-        if config.size == 0 || config.size > MAX_BAR_CELLS {
-            tracing::warn!(
-                edge,
-                size = config.size,
-                max = MAX_BAR_CELLS,
-                "shell bar size is out of range; the bar is not drawn"
-            );
-            return Self::NONE;
-        }
-        if config.border && config.size < MIN_BORDERED_BAR_CELLS {
-            // Refused rather than drawn borderless: someone who asked for a
-            // bordered bar and got a bare band would read it as the border
-            // failing, not as their size being impossible.
-            tracing::warn!(
-                edge,
-                size = config.size,
-                minimum = MIN_BORDERED_BAR_CELLS,
-                "a bordered shell bar needs room for its border and its content; \
-                 the bar is not drawn"
-            );
+        if let Some(problem) = bar_size_problem(config, edge) {
+            tracing::warn!(%problem, "shell bar size refused; the bar is not drawn");
             return Self::NONE;
         }
         let track = if config.border {
@@ -355,6 +337,177 @@ impl BarTrack {
     }
 }
 
+/// Something written under `[shell.bars]` that this build cannot draw.
+///
+/// Carried as a typed value rather than a formatted string because two callers
+/// need the same verdict from it: the derivation, which decides what to draw,
+/// and `herdr config check`, which decides what to say. A second copy of these
+/// range rules would drift the first time one of them changed and nothing
+/// would go red — the failure C80 names, in its config-facing form.
+///
+/// Every variant here is *unusable*: a value that can never work, whatever
+/// else the person does. That distinction is deliberate and load-bearing. A
+/// setting that is merely *empty for now* — legitimate, and waiting on
+/// something the person has not built yet — must not be reported as an issue,
+/// because a false alarm on every new setup teaches people to stop reading the
+/// checker. If such a case is ever added here, it needs its own severity
+/// rather than a seat in this enum.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BarConfigProblem {
+    SizeOutOfRange {
+        edge: &'static str,
+        size: u16,
+        max: u16,
+    },
+    BorderedBarTooThin {
+        edge: &'static str,
+        size: u16,
+        minimum: u16,
+    },
+    TooManySections {
+        edge: &'static str,
+        sections: usize,
+        max: usize,
+    },
+    UnknownSectionKind {
+        edge: &'static str,
+        index: usize,
+        kind: String,
+    },
+    FixedSectionWithoutCells {
+        edge: &'static str,
+        index: usize,
+    },
+    ContentSectionMaxBelowMin {
+        edge: &'static str,
+        index: usize,
+        min: u16,
+        max: u16,
+    },
+}
+
+impl std::fmt::Display for BarConfigProblem {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Each message names the edge, and a section's message names its index
+        // too: telling somebody that "a section is wrong" when a bar may hold
+        // eight of them sends them looking through all eight.
+        match self {
+            Self::SizeOutOfRange { edge, size, max } => write!(
+                formatter,
+                "shell.bars.{edge}.size is {size}; a bar must be between 1 and {max} cells, \
+                 so this bar is not drawn"
+            ),
+            Self::BorderedBarTooThin {
+                edge,
+                size,
+                minimum,
+            } => write!(
+                formatter,
+                "shell.bars.{edge}.size is {size} with a border; a bordered bar needs at least \
+                 {minimum} cells to hold its border and a row of content, so this bar is not \
+                 drawn"
+            ),
+            Self::TooManySections {
+                edge,
+                sections,
+                max,
+            } => write!(
+                formatter,
+                "shell.bars.{edge} has {sections} sections; a bar may hold at most {max}, \
+                 so this bar is drawn undivided"
+            ),
+            Self::UnknownSectionKind { edge, index, kind } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].kind is \"{kind}\"; expected \"fixed\", \
+                 \"fill\" or \"content\", so this bar is drawn undivided"
+            ),
+            Self::FixedSectionWithoutCells { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}] is fixed but asks for no cells, \
+                 so this bar is drawn undivided"
+            ),
+            Self::ContentSectionMaxBelowMin {
+                edge,
+                index,
+                min,
+                max,
+            } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}] allows at most {max} cells but demands \
+                 at least {min}, so this bar is drawn undivided"
+            ),
+        }
+    }
+}
+
+/// Why this edge's size cannot be drawn, if it cannot.
+fn bar_size_problem(config: &ShellBarConfig, edge: &'static str) -> Option<BarConfigProblem> {
+    if config.size == 0 || config.size > MAX_BAR_CELLS {
+        return Some(BarConfigProblem::SizeOutOfRange {
+            edge,
+            size: config.size,
+            max: MAX_BAR_CELLS,
+        });
+    }
+    // Refused rather than drawn borderless: someone who asked for a bordered
+    // bar and got a bare band would read it as the border failing, not as
+    // their size being impossible — which is why this is its own message.
+    if config.border && config.size < MIN_BORDERED_BAR_CELLS {
+        return Some(BarConfigProblem::BorderedBarTooThin {
+            edge,
+            size: config.size,
+            minimum: MIN_BORDERED_BAR_CELLS,
+        });
+    }
+    None
+}
+
+fn section_count_problem(sections: usize, edge: &'static str) -> Option<BarConfigProblem> {
+    (sections > MAX_BAR_SECTIONS).then_some(BarConfigProblem::TooManySections {
+        edge,
+        sections,
+        max: MAX_BAR_SECTIONS,
+    })
+}
+
+// TP-CHROME-35/36: the checker and the deriver read one predicate, so a
+// setting that will not be drawn is also a setting that gets said out loud.
+/// Everything under `[shell.bars]` that this build will refuse to draw.
+///
+/// Only enabled edges are examined: a disabled bar is not drawn either, but
+/// that is what the person asked for, and reporting it would bury the real
+/// complaints under noise.
+pub(crate) fn shell_bar_config_problems(config: &ShellBarsConfig) -> Vec<BarConfigProblem> {
+    let mut problems = Vec::new();
+    for (bar, edge) in [
+        (&config.top, "top"),
+        (&config.bottom, "bottom"),
+        (&config.left, "left"),
+        (&config.right, "right"),
+    ] {
+        if !bar.enabled {
+            continue;
+        }
+        if let Some(problem) = bar_size_problem(bar, edge) {
+            problems.push(problem);
+            // A bar that will not be drawn has nothing to divide, so its
+            // sections are not examined: reporting them would ask somebody to
+            // fix a table that is not the reason their bar is missing.
+            continue;
+        }
+        if let Some(problem) = section_count_problem(bar.sections.len(), edge) {
+            problems.push(problem);
+            continue;
+        }
+        for (index, section) in bar.sections.iter().enumerate() {
+            if let Err(problem) = section_policy(section, edge, index) {
+                problems.push(problem);
+            }
+        }
+    }
+    problems
+}
+
 /// Read one edge's sections, refusing the whole division if any part of it is
 /// not something this build can draw.
 ///
@@ -366,69 +519,66 @@ fn sections_from_config(configs: &[ShellBarSectionConfig], edge: &'static str) -
     if configs.is_empty() {
         return BarSections::NONE;
     }
+    if let Some(problem) = section_count_problem(configs.len(), edge) {
+        tracing::warn!(%problem, "the bar is drawn undivided");
+        return BarSections::NONE;
+    }
     let mut policies = Vec::with_capacity(configs.len());
     for (index, config) in configs.iter().enumerate() {
-        let Some(policy) = section_policy(config, edge, index) else {
-            return BarSections::NONE;
-        };
-        policies.push(policy);
+        match section_policy(config, edge, index) {
+            Ok(policy) => policies.push(policy),
+            Err(problem) => {
+                tracing::warn!(%problem, "the bar is drawn undivided");
+                return BarSections::NONE;
+            }
+        }
     }
     BarSections::from_policies(&policies, edge)
 }
 
-/// One section's table as a sizing policy, or nothing if it does not describe
-/// a size this solver knows how to honour.
+/// One section's table as a sizing policy, or what is wrong with it.
+///
+/// Returning the problem rather than swallowing it is what lets `herdr config
+/// check` and the drawing path reach the same verdict from the same predicate.
 fn section_policy(
     config: &ShellBarSectionConfig,
     edge: &'static str,
     index: usize,
-) -> Option<TrackPolicy> {
+) -> Result<TrackPolicy, BarConfigProblem> {
     match config.kind.as_str() {
         "fixed" => {
             if config.cells == 0 {
-                tracing::warn!(
-                    edge,
-                    index,
-                    "a fixed bar section needs a cell count; the bar is drawn undivided"
-                );
-                return None;
+                return Err(BarConfigProblem::FixedSectionWithoutCells { edge, index });
             }
-            Some(TrackPolicy::Fixed {
+            Ok(TrackPolicy::Fixed {
                 cells: config.cells,
             })
         }
         // A fill with no weight is the common shape of "just take the rest",
         // and refusing it would make the simplest section the one that needs
         // the most typing.
-        "fill" => Some(TrackPolicy::Fill {
+        "fill" => Ok(TrackPolicy::Fill {
             weight: config.weight.max(1),
         }),
         "content" => {
             if config.max < config.min {
-                tracing::warn!(
+                return Err(BarConfigProblem::ContentSectionMaxBelowMin {
                     edge,
                     index,
-                    min = config.min,
-                    max = config.max,
-                    "a content bar section cannot have a maximum below its minimum; \
-                     the bar is drawn undivided"
-                );
-                return None;
+                    min: config.min,
+                    max: config.max,
+                });
             }
-            Some(TrackPolicy::ContentBounded {
+            Ok(TrackPolicy::ContentBounded {
                 min: config.min,
                 max: config.max,
             })
         }
-        other => {
-            tracing::warn!(
-                edge,
-                index,
-                kind = other,
-                "unknown bar section kind; the bar is drawn undivided"
-            );
-            None
-        }
+        other => Err(BarConfigProblem::UnknownSectionKind {
+            edge,
+            index,
+            kind: other.to_string(),
+        }),
     }
 }
 
@@ -1551,24 +1701,192 @@ mod tests {
     // T22d · a section whose numbers cannot describe a size is refused
     #[test]
     fn a_section_with_impossible_numbers_is_refused() {
-        assert!(section_policy(&fixed_section(0), "top", 0).is_none());
-        assert!(section_policy(
-            &ShellBarSectionConfig {
-                kind: "content".to_string(),
+        assert_eq!(
+            section_policy(&fixed_section(0), "top", 0),
+            Err(BarConfigProblem::FixedSectionWithoutCells {
+                edge: "top",
+                index: 0
+            })
+        );
+        assert_eq!(
+            section_policy(
+                &ShellBarSectionConfig {
+                    kind: "content".to_string(),
+                    min: 10,
+                    max: 4,
+                    ..Default::default()
+                },
+                "top",
+                0
+            ),
+            Err(BarConfigProblem::ContentSectionMaxBelowMin {
+                edge: "top",
+                index: 0,
                 min: 10,
-                max: 4,
-                ..Default::default()
-            },
-            "top",
-            0
-        )
-        .is_none());
+                max: 4
+            })
+        );
         // A fill with no weight written is the commonest section there is, and
         // asking for it must not require typing a number.
         assert_eq!(
             section_policy(&section_config("fill"), "top", 0),
-            Some(TrackPolicy::Fill { weight: 1 })
+            Ok(TrackPolicy::Fill { weight: 1 })
         );
+    }
+
+    // ---- #54 · a refused setting is reported, not just a misspelled one ----
+
+    fn bars_with_top(bar: ShellBarConfig) -> ShellBarsConfig {
+        ShellBarsConfig {
+            top: bar,
+            ..Default::default()
+        }
+    }
+
+    fn enabled_bar(size: u16, border: bool) -> ShellBarConfig {
+        ShellBarConfig {
+            enabled: true,
+            size,
+            border,
+            color: String::new(),
+            gradient: Vec::new(),
+            sections: Vec::new(),
+        }
+    }
+
+    // T-CFG-1 · a size nothing can draw is said out loud, with its edge named
+    #[test]
+    fn an_out_of_range_bar_size_is_reported_with_its_edge() {
+        // Before this, the value parsed perfectly, the checker said "ok", and
+        // the bar simply never appeared — sending the person to look at their
+        // terminal rather than at the line they had just written.
+        let problems = shell_bar_config_problems(&bars_with_top(enabled_bar(999, false)));
+        assert_eq!(problems.len(), 1);
+        let text = problems[0].to_string();
+        assert!(text.contains("shell.bars.top.size"), "{text}");
+        assert!(text.contains("999"), "{text}");
+    }
+
+    // T-CFG-2 · two different mistakes must not read as the same mistake
+    #[test]
+    fn a_bordered_bar_too_thin_reads_differently_from_one_out_of_range() {
+        let thin = shell_bar_config_problems(&bars_with_top(enabled_bar(1, true)));
+        assert_eq!(thin.len(), 1);
+        assert_eq!(
+            thin[0],
+            BarConfigProblem::BorderedBarTooThin {
+                edge: "top",
+                size: 1,
+                minimum: MIN_BORDERED_BAR_CELLS
+            }
+        );
+
+        // The same thickness without a border is perfectly drawable, so it
+        // must produce nothing at all: a person told to fix a working setting
+        // learns to stop reading.
+        assert!(shell_bar_config_problems(&bars_with_top(enabled_bar(1, false))).is_empty());
+    }
+
+    // T-CFG-3 · a section's complaint names which section it is
+    #[test]
+    fn an_unknown_section_kind_is_reported_with_its_index() {
+        let mut bar = enabled_bar(3, true);
+        bar.sections = vec![fixed_section(4), section_config("nonsense")];
+        let problems = shell_bar_config_problems(&bars_with_top(bar));
+
+        assert_eq!(problems.len(), 1);
+        let text = problems[0].to_string();
+        // A bar may hold eight sections; "a section is wrong" sends somebody
+        // through all eight of them.
+        assert!(text.contains("sections[1]"), "{text}");
+        assert!(text.contains("nonsense"), "{text}");
+    }
+
+    // T-CFG-4/5 · the remaining refusals are reported too
+    #[test]
+    fn an_impossible_content_section_and_too_many_sections_are_reported() {
+        let mut narrow = enabled_bar(3, true);
+        narrow.sections = vec![ShellBarSectionConfig {
+            kind: "content".to_string(),
+            min: 10,
+            max: 4,
+            ..Default::default()
+        }];
+        assert_eq!(shell_bar_config_problems(&bars_with_top(narrow)).len(), 1);
+
+        let mut crowded = enabled_bar(3, true);
+        crowded.sections = (0..=MAX_BAR_SECTIONS)
+            .map(|_| section_config("fill"))
+            .collect();
+        let problems = shell_bar_config_problems(&bars_with_top(crowded));
+        assert_eq!(problems.len(), 1);
+        assert!(
+            problems[0].to_string().contains("at most"),
+            "{}",
+            problems[0]
+        );
+    }
+
+    // T-CFG-6 · a configuration this build can draw says nothing
+    #[test]
+    fn a_drawable_configuration_produces_no_complaints() {
+        let mut bar = enabled_bar(3, true);
+        bar.sections = vec![fixed_section(12), section_config("fill")];
+        assert!(shell_bar_config_problems(&bars_with_top(bar)).is_empty());
+
+        // A disabled bar is not drawn either, but that is what was asked for.
+        // Reporting it would bury the real complaints under noise.
+        let mut disabled = enabled_bar(999, false);
+        disabled.enabled = false;
+        assert!(shell_bar_config_problems(&bars_with_top(disabled)).is_empty());
+
+        // And a bar nobody configured at all.
+        assert!(shell_bar_config_problems(&ShellBarsConfig::default()).is_empty());
+    }
+
+    // T-CFG-7 · what is reported and what is drawn come from one predicate
+    #[test]
+    fn every_reported_problem_is_a_bar_that_is_actually_refused() {
+        // This is the guard, not the messages. If the checker ever grew its own
+        // copy of these range rules, the two would agree on the day it was
+        // written and drift on the first change to either — and nothing would
+        // go red, because each side stays internally consistent. So the test
+        // asserts the equivalence itself, across every case in both directions.
+        let cases: Vec<(ShellBarConfig, bool)> = vec![
+            (enabled_bar(3, true), true),
+            (enabled_bar(1, false), true),
+            (enabled_bar(32, false), true),
+            (enabled_bar(0, false), false),
+            (enabled_bar(33, false), false),
+            (enabled_bar(999, true), false),
+            (enabled_bar(2, true), false),
+            (enabled_bar(1, true), false),
+        ];
+
+        for (bar, expected_drawn) in cases {
+            let size = bar.size;
+            let border = bar.border;
+            let reported = shell_bar_config_problems(&bars_with_top(ShellBarConfig {
+                enabled: true,
+                size,
+                border,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections: Vec::new(),
+            }))
+            .is_empty();
+            let drawn = BarTrack::from_config(&bar, "top").enabled();
+
+            assert_eq!(
+                drawn, expected_drawn,
+                "size={size} border={border}: drawing disagrees with the case table"
+            );
+            assert_eq!(
+                reported, drawn,
+                "size={size} border={border}: the checker says {reported} but the bar is \
+                 drawn={drawn} — the two read different rules"
+            );
+        }
     }
 
     // T28a · a bar that is divided differently is a different bar
