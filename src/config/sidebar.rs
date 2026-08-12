@@ -415,6 +415,10 @@ pub struct SpacesSidebarConfig {
     #[serde(deserialize_with = "deserialize_sidebar_rows")]
     pub rows: SpaceSidebarRows,
     pub row_gap: u16,
+    /// Whether a new client starts with the tree focused: only the checkout
+    /// being worked in and the ones running an agent, ancestors included.
+    /// The live toggle is per display; this is only where a display starts.
+    pub focus_only: bool,
 }
 
 impl Default for SpacesSidebarConfig {
@@ -426,6 +430,7 @@ impl Default for SpacesSidebarConfig {
                 vec![SpaceSidebarToken::Branch, SpaceSidebarToken::GitStatus],
             ],
             row_gap: DEFAULT_SIDEBAR_ROW_GAP,
+            focus_only: false,
         }
     }
 }

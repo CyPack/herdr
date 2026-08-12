@@ -43,6 +43,7 @@ pub(super) enum MouseAction {
     },
     FocusToastTarget,
     ToggleProjectsActives,
+    ToggleSpacesFocus,
     MoveWorkspace {
         source_ws_idx: usize,
         insert_idx: usize,
@@ -717,6 +718,22 @@ impl AppState {
                             // it must never create a workspace like Spaces'
                             // " new" underneath it would.
                             return None;
+                        }
+                    }
+
+                    // TP-FOCUS-SW-04: the Spaces tab's own filter toggle sits
+                    // in the footer slot the Projects tab keeps "actives" in,
+                    // and only this tab reads it — one slot, two owners, and
+                    // neither ever flips the other's filter.
+                    if self.sidebar_tab == crate::app::state::SidebarTab::Spaces {
+                        let focus = self.sidebar_focus_toggle_rect();
+                        if focus.width > 0
+                            && mouse.row >= focus.y
+                            && mouse.row < focus.y + focus.height
+                            && mouse.column >= focus.x
+                            && mouse.column < focus.x + focus.width
+                        {
+                            return Some(MouseAction::ToggleSpacesFocus);
                         }
                     }
 

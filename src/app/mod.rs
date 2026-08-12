@@ -670,6 +670,9 @@ impl App {
             .clone()
             .unwrap_or_else(|| "claude".to_string());
         let projects_actives_only = config.projects.actives_only.unwrap_or(true);
+        // TP-FOCUS-SW-05: only where a display STARTS — once running, the
+        // toggle is this client's own and never reaches another screen.
+        let spaces_focus_only = config.ui.sidebar.spaces.focus_only;
 
         info!(
             pane_scrollback_limit_bytes = config.advanced.scrollback_limit_bytes,
@@ -801,6 +804,7 @@ impl App {
             sessions_parse_cache: Default::default(),
             default_chat_agent,
             projects_actives_only,
+            spaces_focus_only,
             request_complete_onboarding: false,
             name_input: String::new(),
             name_input_replace_on_type: false,

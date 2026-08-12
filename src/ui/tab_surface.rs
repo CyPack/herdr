@@ -331,9 +331,16 @@ mod tests {
         // "⋯" left of the "+" (TP-DOTS-03), the visible door to the row
         // menu — then a breathing cell went between the two glyphs. The
         // structural assertions above are untouched both times.
+        //
+        // Re-baselined 2026-08-12: the Spaces footer gained its "focus"
+        // toggle (TP-FOCUS-SW-04), the switch that narrows the tree to what
+        // is being worked in. One more painted control in a footer whose
+        // rects are unchanged — again the kind of change this digest exists
+        // to surface rather than hide, and again every structural assertion
+        // above still holds.
         assert_eq!(
             frame_digest(&frame),
-            "9750cf1a3881b61b4a084fce8ffc054a23d3af0552149deb2eb4531ea54352b9"
+            "ec297df7e32799ec66160455c2971bc62d00d719dff6404020b3710ca4f3db8d"
         );
     }
 

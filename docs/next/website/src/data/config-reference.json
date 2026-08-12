@@ -754,6 +754,12 @@
           "description": "Two or more stops to fade the spaces frame between along its long axis. Both ends must carry channel values."
         },
         {
+          "key": "ui.sidebar.spaces.focus_only",
+          "type": "boolean",
+          "default": "false",
+          "description": "Start new clients with the Spaces tree focused: only the checkout being worked in and the ones running an agent, with the modules above them. The footer's focus switch toggles it live, per display; this is only where a display begins."
+        },
+        {
           "key": "ui.sidebar.spaces.row_gap",
           "type": "integer",
           "default": "0",

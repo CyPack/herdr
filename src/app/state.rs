@@ -3282,6 +3282,11 @@ pub struct AppState {
     /// would bury the workspace list the tab exists for. So closed is the
     /// default and this records the exceptions.
     pub expanded_chat_workspaces: std::collections::HashSet<String>,
+    /// Whether this display shows only the tree it is working in: the active
+    /// checkout and the ones running an agent, with the module chain above
+    /// them. Per display for the same reason the folds are — focusing one
+    /// screen must not narrow another (TP-FOCUS-SW-05).
+    pub spaces_focus_only: bool,
     /// Drawers this display has quieted while a mode derives them open.
     ///
     /// The all-active drawer mode opens every branch holding a live agent;
@@ -4271,6 +4276,7 @@ impl AppState {
             preview_placement: crate::config::PreviewPlacement::default(),
             collapsed_project_paths: std::collections::HashSet::new(),
             workspace_chat_rows: std::collections::HashMap::new(),
+            spaces_focus_only: false,
             expanded_chat_workspaces: std::collections::HashSet::new(),
             suppressed_chat_drawers: std::collections::HashSet::new(),
             tab_branch_cache: std::collections::HashMap::new(),
