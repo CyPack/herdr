@@ -32,6 +32,16 @@ SOURCE_DIRS = ("src", "tests")
 # limited to Rust would call every visually-pinned behavior undocumented.
 SOURCE_SUFFIXES = {".rs", ".ts"}
 
+# Maintenance-script tests can pin a behavior too: a rule about how the tree
+# is built is only holdable by a test that reads the tree, and those are
+# Python. They are read for test *names* only, never for markers — the
+# registry checker's own fixtures quote ids like `TP-DOC-01` as test data, and
+# scanning them for markers would report every fixture as an undocumented
+# behavior. Declaring a behavior stays a source-file act; pinning one does not.
+SCRIPT_TEST_DIR = "scripts"
+SCRIPT_TEST_PREFIX = "test_"
+SCRIPT_TEST_SUFFIX = ".py"
+
 # `TP-FLF-MOUSE-01`, `TP-C4.1`, and the `TP-DCLICK-01/02/04` run form all
 # appear in the tree today; the pattern has to accept every one of them.
 _MARKER = re.compile(
@@ -48,6 +58,8 @@ _TABLE_ROW = re.compile(r"^\|(?P<cells>.+)\|\s*$")
 _BACKTICKED = re.compile(r"`([A-Za-z0-9_][A-Za-z0-9_ -]*)`")
 _RUST_FN = re.compile(r"\bfn\s+([A-Za-z0-9_]+)")
 _SPEC_TEST = re.compile(r"\btest\(\s*['\"]([A-Za-z0-9_ -]+)['\"]")
+# Maintenance-script tests declare themselves with `def`, not `fn`.
+_PY_FN = re.compile(r"\bdef\s+([A-Za-z0-9_]+)")
 
 
 def _iter_marker_tokens(text: str):
@@ -139,6 +151,16 @@ def _iter_source_files(root: Path):
                 yield path
 
 
+def _iter_script_test_files(root: Path):
+    """Maintenance-script test files, read for the names they define only."""
+    base = root / SCRIPT_TEST_DIR
+    if not base.is_dir():
+        return
+    for path in sorted(base.glob(f"{SCRIPT_TEST_PREFIX}*{SCRIPT_TEST_SUFFIX}")):
+        if path.is_file():
+            yield path
+
+
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
@@ -212,6 +234,10 @@ def check(root: Path) -> list[str]:
             malformed.setdefault(token, str(path.relative_to(root)))
         defined_fns |= set(_RUST_FN.findall(text))
         defined_fns |= set(_SPEC_TEST.findall(text))
+
+    # Names only: these files are never scanned for markers (see the constant).
+    for path in _iter_script_test_files(root):
+        defined_fns |= set(_PY_FN.findall(_read(path)))
 
     # C6: a marker that does not follow `TP-<FAMILY>-<NN>` cannot be traced
     # from the registry back to the code, and its prefix collides with real ids.

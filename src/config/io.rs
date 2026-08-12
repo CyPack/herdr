@@ -123,6 +123,14 @@ pub fn managed_spaces_path() -> PathBuf {
 /// Merge a `spaces.managed.toml` document into an already-loaded config.
 /// Managed entries append after user-authored ones; a broken overlay is
 /// reported and skipped, never fatal (TP-RANK-05).
+///
+/// Every collection the overlay can carry is appended here, and
+/// `scripts/managed_overlay_check.py` fails the build when one is missed. A
+/// forgotten collection is invisible without that gate: the file parses, the
+/// value is valid, `herdr config check` answers "ok", and the entry is
+/// dropped when this function returns. That is how `[[spaces.node]]` — every
+/// module created from the sidebar or by `space move --new-group` — lived on
+/// disk and nowhere else (TP-MOVL-01).
 pub(crate) fn merge_managed_spaces_str(config: &mut Config, content: &str) -> Vec<String> {
     #[derive(Debug, Default, serde::Deserialize)]
     #[serde(default)]
@@ -133,6 +141,7 @@ pub(crate) fn merge_managed_spaces_str(config: &mut Config, content: &str) -> Ve
         Ok(managed) => {
             config.spaces.split.extend(managed.spaces.split);
             config.spaces.project.extend(managed.spaces.project);
+            config.spaces.node.extend(managed.spaces.node);
             Vec::new()
         }
         Err(err) => vec![format!(
@@ -1318,6 +1327,81 @@ spaces = ["panel:managed"]
         assert_eq!(loaded.config.spaces.projects()[0].key, "project:x");
     }
 
+    // TP-MOVL-01/02/03: the overlay carries containers too, and every
+    // collection it can hold reaches the live config in one merge.
+    //
+    // A `[[spaces.node]]` written by `herdr space move --new-group`, by the
+    // header's two-click module road, or by hand parsed perfectly well and was
+    // then dropped on the floor: the merge copied `split` and `project` and
+    // never touched `node`. Nothing reported it, because nothing was wrong —
+    // the value was valid and simply unread. The module the user had just
+    // created existed on disk and nowhere else.
+    #[test]
+    fn managed_spaces_overlay_merges_containers_after_user_ones() {
+        let mut loaded = load_live_config_from_str(
+            r#"
+[[spaces.node]]
+key = "hand"
+name = "Hand written"
+"#,
+        )
+        .unwrap();
+
+        let diagnostics = merge_managed_spaces_str(
+            &mut loaded.config,
+            r#"
+[[spaces.split]]
+repo = "/home/a/panel"
+match = ["feat/*"]
+key = "panel:managed"
+label = "Managed"
+
+[[spaces.project]]
+key = "project:x"
+spaces = ["panel:managed"]
+
+[[spaces.node]]
+key = "group:remote-audio"
+name = "UZAKTAN SES"
+parent = "project:x"
+"#,
+        );
+
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+
+        // TP-MOVL-01: all three collections travel together. A merge that
+        // copies some of them is exactly the shape of the bug this test owns,
+        // and a single-collection assertion cannot see it.
+        assert_eq!(loaded.config.spaces.rules().len(), 1, "split merged");
+        assert_eq!(loaded.config.spaces.projects().len(), 1, "project merged");
+
+        let nodes = &loaded.config.spaces.node;
+        assert_eq!(nodes.len(), 2, "node merged: {nodes:?}");
+
+        // TP-MOVL-02: hand-written entries keep their place at the front, so
+        // first-match still favours what the user wrote by hand (TP-RANK-05).
+        assert_eq!(nodes[0].key, "hand", "hand-written node stays first");
+        assert_eq!(nodes[1].key, "group:remote-audio");
+        assert_eq!(nodes[1].name, "UZAKTAN SES", "the name survives the merge");
+        assert_eq!(
+            nodes[1].parent, "project:x",
+            "the parent survives the merge — without it the module lands at \
+             top level instead of under the project the user chose"
+        );
+    }
+
+    // TP-MOVL-04: an overlay with no `spaces` table at all adds nothing and
+    // panics on nothing. The `#[serde(default)]` path regresses silently.
+    #[test]
+    fn managed_spaces_overlay_accepts_an_empty_document() {
+        let mut loaded = load_live_config_from_str("").unwrap();
+        let diagnostics = merge_managed_spaces_str(&mut loaded.config, "");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(loaded.config.spaces.rules().is_empty());
+        assert!(loaded.config.spaces.projects().is_empty());
+        assert!(loaded.config.spaces.node.is_empty());
+    }
+
     // TP-RANK-05's failure half: a broken overlay is reported, never fatal.
     #[test]
     fn managed_spaces_overlay_tolerates_a_broken_file() {
@@ -1329,6 +1413,9 @@ spaces = ["panel:managed"]
             "{diagnostics:?}"
         );
         assert!(loaded.config.spaces.rules().is_empty());
+        // TP-MOVL-04: the failure half covers the containers too. A merge that
+        // grew a new collection must not start half-applying a broken file.
+        assert!(loaded.config.spaces.node.is_empty());
         assert!(loaded.invalid_sections.is_empty());
     }
 

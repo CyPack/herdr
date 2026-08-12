@@ -737,36 +737,76 @@ fn space_list(args: &[String]) -> std::io::Result<i32> {
         return Ok(2);
     }
     let loaded = crate::config::Config::load();
-    if loaded.config.spaces.split.is_empty() && loaded.config.spaces.project.is_empty() {
-        println!("no space rules configured");
-        return Ok(0);
-    }
     let managed = std::fs::read_to_string(crate::config::managed_spaces_path()).unwrap_or_default();
-    for rule in loaded.config.spaces.rules() {
-        let source = if managed.contains(&format!("key = \"{}\"", rule.key)) {
-            "managed"
-        } else {
-            "config"
-        };
-        println!(
-            "rule    {:<28} {:<20} [{source}] {}",
-            rule.key,
-            rule.label,
-            rule.repo_root.display()
-        );
-    }
-    for project in loaded.config.spaces.projects() {
-        let source = if managed.contains(&format!("key = \"{}\"", project.key)) {
-            "managed"
-        } else {
-            "config"
-        };
-        println!(
-            "project {:<28} {:<20} [{source}]",
-            project.key, project.name
-        );
+    for line in space_list_lines(&loaded.config, &managed) {
+        println!("{line}");
     }
     Ok(0)
+}
+
+/// The lines `herdr space list` prints, as data.
+///
+/// Kept apart from printing so the listing is testable, and because this is
+/// the only surface that answers "did the thing I just created land?". A
+/// module written into the managed overlay is otherwise invisible until a
+/// branch happens to join it: it draws no header of its own, so a listing
+/// that skipped containers left the user with no way to tell a module that
+/// exists from one that was never written (TP-MOVL-05).
+pub(crate) fn space_list_lines(config: &crate::config::Config, managed: &str) -> Vec<String> {
+    // `key = "x"` is how both files spell an entry's identity, so a hit in
+    // the overlay text is what makes an entry managed rather than authored.
+    let source_of = |key: &str| {
+        if managed.contains(&format!("key = \"{key}\"")) {
+            "managed"
+        } else {
+            "config"
+        }
+    };
+
+    let spaces = &config.spaces;
+    if spaces.split.is_empty() && spaces.project.is_empty() && spaces.node.is_empty() {
+        return vec!["no space rules configured".to_owned()];
+    }
+
+    let mut lines = Vec::new();
+    for rule in spaces.rules() {
+        lines.push(format!(
+            "rule    {:<28} {:<20} [{}] {}",
+            rule.key,
+            rule.label,
+            source_of(&rule.key),
+            rule.repo_root.display()
+        ));
+    }
+    for project in spaces.projects() {
+        lines.push(format!(
+            "project {:<28} {:<20} [{}]",
+            project.key,
+            project.name,
+            source_of(&project.key)
+        ));
+    }
+    // Containers last: they are the tree's scaffolding, and reading the rules
+    // that claim branches first matches how the sidebar is built.
+    for node in &spaces.node {
+        let name = if node.name.is_empty() {
+            node.key.as_str()
+        } else {
+            node.name.as_str()
+        };
+        let parent = if node.parent.is_empty() {
+            "top level".to_owned()
+        } else {
+            format!("under {}", node.parent)
+        };
+        lines.push(format!(
+            "node    {:<28} {:<20} [{}] {parent}",
+            node.key,
+            name,
+            source_of(&node.key)
+        ));
+    }
+    lines
 }
 
 /// Does the user's own config.toml (not the merged view) mention this target?
@@ -794,6 +834,129 @@ fn report_reload() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A config carrying exactly the spaces entries a test needs.
+    fn config_with(spaces_toml: &str) -> crate::config::Config {
+        toml::from_str(spaces_toml).expect("the fixture is valid config")
+    }
+
+    // TP-MOVL-05: a container the user created is listed. Without this the
+    // only way to tell "my module was written" from "my module was lost" is
+    // to open a file the user is told never to hand-edit.
+    #[test]
+    fn space_list_names_the_containers_too() {
+        let config = config_with(
+            r#"
+[[spaces.split]]
+repo = "/home/a/panel"
+match = ["feat/*"]
+key = "panel:user"
+label = "User"
+
+[[spaces.node]]
+key = "group:remote-audio"
+name = "UZAKTAN SES"
+parent = "project:herdr"
+"#,
+        );
+
+        let lines = space_list_lines(&config, "");
+        let node_lines: Vec<&String> = lines
+            .iter()
+            .filter(|line| line.starts_with("node "))
+            .collect();
+        assert_eq!(node_lines.len(), 1, "{lines:?}");
+        assert!(
+            node_lines[0].contains("group:remote-audio"),
+            "{node_lines:?}"
+        );
+        assert!(node_lines[0].contains("UZAKTAN SES"), "{node_lines:?}");
+        assert!(
+            node_lines[0].contains("under project:herdr"),
+            "the parent is what tells the user where the module went: {node_lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line.starts_with("rule ")),
+            "rules still listed: {lines:?}"
+        );
+    }
+
+    // TP-MOVL-06: the source tag separates the two writing homes. Pointing a
+    // user at the wrong one sends them to hand-edit `spaces.managed.toml`,
+    // which the promote/move commands own and will overwrite.
+    #[test]
+    fn space_list_marks_where_each_container_was_written() {
+        let config = config_with(
+            r#"
+[[spaces.node]]
+key = "group:by-hand"
+name = "By hand"
+
+[[spaces.node]]
+key = "group:by-tool"
+name = "By tool"
+"#,
+        );
+
+        let managed = "[[spaces.node]]\nkey = \"group:by-tool\"\n";
+        let lines = space_list_lines(&config, managed);
+        let by_hand = lines
+            .iter()
+            .find(|line| line.contains("group:by-hand"))
+            .expect("the hand-written node is listed");
+        let by_tool = lines
+            .iter()
+            .find(|line| line.contains("group:by-tool"))
+            .expect("the tool-written node is listed");
+        assert!(by_hand.contains("[config]"), "{by_hand}");
+        assert!(by_tool.contains("[managed]"), "{by_tool}");
+    }
+
+    // TP-MOVL-07: a tree made only of containers is a configured tree. The
+    // empty check counted rules and projects, so a config holding nothing but
+    // modules reported "no space rules configured" — telling the user their
+    // work was gone while it sat two lines below in the same file.
+    #[test]
+    fn space_list_does_not_call_a_container_only_tree_empty() {
+        let config = config_with(
+            r#"
+[[spaces.node]]
+key = "group:only"
+name = "Only"
+"#,
+        );
+
+        let lines = space_list_lines(&config, "");
+        assert_ne!(
+            lines,
+            vec!["no space rules configured".to_owned()],
+            "containers count as configuration"
+        );
+        assert!(lines.iter().any(|line| line.contains("group:only")));
+    }
+
+    // The empty answer still exists, and still says so.
+    #[test]
+    fn space_list_reports_an_empty_tree_as_empty() {
+        let config = config_with("");
+        assert_eq!(
+            space_list_lines(&config, ""),
+            vec!["no space rules configured".to_owned()]
+        );
+    }
+
+    // A container with no name falls back to its key rather than printing a
+    // blank column the reader cannot match to anything.
+    #[test]
+    fn space_list_falls_back_to_the_key_when_a_container_has_no_name() {
+        let config = config_with("[[spaces.node]]\nkey = \"group:nameless\"\n");
+        let line = space_list_lines(&config, "")
+            .into_iter()
+            .find(|line| line.starts_with("node "))
+            .expect("listed");
+        assert!(line.contains("group:nameless"), "{line}");
+        assert!(line.contains("top level"), "{line}");
+    }
 
     // TP-DOTS-05: the module road writes one node entry and nothing else —
     // no split rule, no project — and a re-write with the same key updates

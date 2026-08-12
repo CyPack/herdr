@@ -62,6 +62,27 @@ Format and rules: [`README.md`](README.md).
 | TP-RANK-06 | A branch row's context menu offers "Promote to module/project", and "Demote from module" only when a rule already claims the checkout. | The mouse road to promotion disappears, or every row dangles a demote that can do nothing. | `linked_worktree_menu_offers_promotion_and_conditional_demote`, `linked_worktree_context_menu_keeps_safe_close_and_explicit_remove` |
 | TP-RANK-07 | The menu writes exactly the plan the CLI would write — same key, branch match, and project shape — then re-reads the rules so the sidebar regroups in place. | Menu promotion and CLI promotion drift apart, and one of them stops round-tripping with demote. | `promote_plan_from_a_workspace_row_matches_the_cli_shape` |
 
+## Managed overlay coverage
+
+The overlay is the only home for what the tool writes, so anything the tool can
+write has to survive the trip back in. `[[spaces.node]]` did not: it was added
+to the model for the N-level tree and never added to the merge, so every module
+created from the sidebar or by `space move --new-group` was parsed, held in a
+local variable, and dropped when the merge returned. Nothing reported it,
+because nothing was invalid — the value was simply never read, and `herdr
+config check` was right to answer "ok". The module existed on disk and nowhere
+else.
+
+| ID | Behavior | Breaks if lost | Verified by |
+|---|---|---|---|
+| TP-MOVL-01 | Every collection the managed overlay can carry — rules, projects and containers — reaches the live config in one merge. | A field is added to the model, the merge is not extended, and everything written into it is silently discarded on load: the user's module exists on disk and nowhere else. | `managed_spaces_overlay_merges_containers_after_user_ones` |
+| TP-MOVL-02 | Overlay containers append after hand-written ones, and a container keeps its key, name and parent through the merge. | Managed entries outrank hand-written ones against first-match, or a module loses the parent the user chose and silently reappears at top level. | `managed_spaces_overlay_merges_containers_after_user_ones` |
+| TP-MOVL-03 | A source-level gate fails the build when the model grows a collection the merge does not copy. | The next field added to the spaces model repeats this defect, and no test can see it because the file is valid and the value is well-formed. | `test_a_collection_the_merge_forgot_is_named`, `test_the_real_sources_are_covered` |
+| TP-MOVL-04 | An empty or broken overlay adds nothing at all — no partial merge, no panic. | A merge that grew a collection starts half-applying a file it was supposed to reject whole. | `managed_spaces_overlay_accepts_an_empty_document`, `managed_spaces_overlay_tolerates_a_broken_file` |
+| TP-MOVL-05 | `herdr space list` names containers as well as rules and projects, with the parent each one hangs under. | The only surface that can answer "did the module I just created land?" stays silent, and the user is left comparing an unchanged screen against a file they are told never to hand-edit. | `space_list_names_the_containers_too`, `space_list_falls_back_to_the_key_when_a_container_has_no_name` |
+| TP-MOVL-06 | The listing marks which of the two writing homes each entry came from. | A user sent to fix a managed entry edits `spaces.managed.toml` by hand, and the next promote or move overwrites it. | `space_list_marks_where_each_container_was_written` |
+| TP-MOVL-07 | A tree made only of containers counts as configured. | A config holding nothing but modules reports "no space rules configured", telling the user their work is gone while it sits in the same file. | `space_list_does_not_call_a_container_only_tree_empty`, `space_list_reports_an_empty_tree_as_empty` |
+
 ## Row icons
 
 | ID | Behavior | Breaks if lost | Verified by |
