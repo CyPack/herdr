@@ -754,6 +754,11 @@ impl App {
                         let enabled = self.state.projects_actives_only;
                         self.save_projects_actives_only(enabled);
                     }
+                    MouseAction::ToggleSpacesFocus => {
+                        self.state.spaces_focus_only = !self.state.spaces_focus_only;
+                        let enabled = self.state.spaces_focus_only;
+                        self.save_spaces_focus_only(enabled);
+                    }
                 }
             }
             if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))

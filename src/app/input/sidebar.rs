@@ -261,13 +261,29 @@ impl AppState {
     /// buttons; collapses to an empty rect when the footer is too narrow to
     /// keep all three hit areas disjoint.
     pub(crate) fn sidebar_actives_toggle_rect(&self) -> Rect {
+        self.sidebar_filter_toggle_rect(7, "actives")
+    }
+
+    /// The Spaces tab's own filter toggle, in the same footer slot the
+    /// Projects tab keeps its "actives" in (TP-FOCUS-SW-04). One slot, one
+    /// meaning — "narrow the list above me" — and the tab decides which list
+    /// that is; a second control position for the same idea would read as a
+    /// second idea.
+    pub(crate) fn sidebar_focus_toggle_rect(&self) -> Rect {
+        self.sidebar_filter_toggle_rect(5, "focus")
+    }
+
+    /// Shared geometry for the footer's filter toggle: centered between the
+    /// chat and menu buttons, collapsing to an empty rect when the footer is
+    /// too narrow to keep all three hit areas disjoint.
+    fn sidebar_filter_toggle_rect(&self, cells: u16, label: &str) -> Rect {
         let footer = self.sidebar_footer_rect();
         if footer.width == 0 || footer.height == 0 {
             return Rect::default();
         }
         let chat = self.sidebar_new_button_rect();
         let menu = self.global_launcher_rect();
-        let label_w = self.sidebar_chrome.control_width(7, "actives");
+        let label_w = self.sidebar_chrome.control_width(cells, label);
         let left = chat.x + chat.width + 1;
         let right = menu.x.saturating_sub(1);
         if right <= left || right - left < label_w {
@@ -3566,6 +3582,61 @@ mod tests {
         ));
 
         assert!(app.state.projects_actives_only, "click turns the filter on");
+    }
+
+    // TP-FOCUS-SW-04: the footer slot belongs to whichever tab is showing.
+    // On Spaces the click flips the tree's focus and leaves the Projects
+    // filter exactly where it was — one rectangle, two owners, no crosstalk.
+    #[test]
+    fn clicking_the_footer_toggle_on_spaces_flips_focus_only() {
+        let mut app = projects_tab_app(vec![test_chat("sess-1")]);
+        app.state.sidebar_tab = crate::app::state::SidebarTab::Spaces;
+        crate::ui::compute_view(&mut app.state, Rect::new(0, 0, 106, 20));
+        let toggle = app.state.sidebar_focus_toggle_rect();
+        assert!(toggle.width > 0, "toggle must fit in the test footer");
+        assert!(!app.state.spaces_focus_only);
+        assert!(!app.state.projects_actives_only);
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            toggle.x + 1,
+            toggle.y,
+        ));
+
+        assert!(app.state.spaces_focus_only, "the click narrows this tree");
+        assert!(
+            !app.state.projects_actives_only,
+            "the neighbouring tab's filter is not this button's business"
+        );
+
+        // And back: a switch that cannot be switched off is not a switch.
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            toggle.x + 1,
+            toggle.y,
+        ));
+        assert!(!app.state.spaces_focus_only);
+    }
+
+    // TP-FOCUS-SW-04 (the other half): the same rectangle on the Projects tab
+    // still means "actives", and never touches the tree's focus.
+    #[test]
+    fn clicking_the_footer_toggle_on_projects_leaves_focus_alone() {
+        let mut app = projects_tab_app(vec![test_chat("sess-1")]);
+        let toggle = app.state.sidebar_actives_toggle_rect();
+        assert!(toggle.width > 0);
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            toggle.x + 1,
+            toggle.y,
+        ));
+
+        assert!(app.state.projects_actives_only);
+        assert!(
+            !app.state.spaces_focus_only,
+            "the Projects filter never narrows the Spaces tree"
+        );
     }
 
     // FEAT-A: with the project also open as a workspace, the same menu grows

@@ -43,6 +43,7 @@ pub(super) enum MouseAction {
     },
     FocusToastTarget,
     ToggleProjectsActives,
+    ToggleSpacesFocus,
     MoveWorkspace {
         source_ws_idx: usize,
         insert_idx: usize,
@@ -720,6 +721,22 @@ impl AppState {
                         }
                     }
 
+                    // TP-FOCUS-SW-04: the Spaces tab's own filter toggle sits
+                    // in the footer slot the Projects tab keeps "actives" in,
+                    // and only this tab reads it — one slot, two owners, and
+                    // neither ever flips the other's filter.
+                    if self.sidebar_tab == crate::app::state::SidebarTab::Spaces {
+                        let focus = self.sidebar_focus_toggle_rect();
+                        if focus.width > 0
+                            && mouse.row >= focus.y
+                            && mouse.row < focus.y + focus.height
+                            && mouse.column >= focus.x
+                            && mouse.column < focus.x + focus.width
+                        {
+                            return Some(MouseAction::ToggleSpacesFocus);
+                        }
+                    }
+
                     let new_button = self.sidebar_new_button_rect();
                     let on_new_button = mouse.row >= new_button.y
                         && mouse.row < new_button.y + new_button.height
@@ -750,6 +767,24 @@ impl AppState {
                     } else {
                         self.view.workspace_card_areas.clone()
                     };
+                    // TP-DRAW-11: the "older chats" row opens the rest of
+                    // this drawer and closes it again. Matched from its own
+                    // vector, before the chat rows, for the same reason the
+                    // chat rows are matched before the cards.
+                    if let Some(hit) = self
+                        .view
+                        .workspace_more_chats_areas
+                        .iter()
+                        .find(|row| {
+                            mouse.row == row.rect.y
+                                && mouse.column >= row.rect.x
+                                && mouse.column < row.rect.x + row.rect.width
+                        })
+                        .cloned()
+                    {
+                        self.toggle_full_chat_drawer(hit.ws_idx);
+                        return None;
+                    }
                     // A chat row resumes its session. Checked before the
                     // workspace cards because the two vectors describe
                     // different rows and only one of them can own a click.
@@ -1363,6 +1398,25 @@ impl AppState {
                 {
                     return None;
                 }
+                // TP-AGPANEL-03: the agents panel is the sidebar's lower half
+                // on every tab, so its rows are matched before the per-tab
+                // roads below — and matched through their own resolver, which
+                // is bounded to the panel body and cannot claim a row that
+                // belongs to the list above it.
+                if let Some((ws_idx, tab_idx, pane_id)) = self.agent_detail_target_at(mouse.row) {
+                    self.context_menu = Some(ContextMenuState {
+                        kind: ContextMenuKind::AgentEntry {
+                            ws_idx,
+                            tab_idx,
+                            pane_id,
+                        },
+                        x: mouse.column,
+                        y: mouse.row,
+                        list: MenuListState::new(0),
+                    });
+                    self.enter_overlay_mode(Mode::ContextMenu);
+                    return None;
+                }
                 // The Projects tab owns its rows: right-click on a project
                 // header or its "+" button opens the agent selector; other
                 // rows are inert. Never fall through to the workspace-card
@@ -1406,11 +1460,15 @@ impl AppState {
                         .map(|row| row.session_id.clone())
                     {
                         let has_move = self.chat_move_overrides.contains_key(&session_id);
+                        // TP-AGPANEL-05: the close verb is offered only when
+                        // this chat still has a tab running behind it.
+                        let has_live = self.find_resumed_chat_tab(&session_id).is_some();
                         self.context_menu = Some(ContextMenuState {
                             kind: ContextMenuKind::WorkspaceChat {
                                 ws_idx: hit.ws_idx,
                                 session_id,
                                 has_move,
+                                has_live,
                             },
                             x: mouse.column,
                             y: mouse.row,
@@ -3163,6 +3221,153 @@ mod tests {
             "the card dots open the branch menu; got {:?}",
             app.state.context_menu.as_ref().map(|menu| &menu.kind)
         );
+    }
+
+    // TP-DRAW-11: a press on the "older chats" row opens the drawer the rest
+    // of the way and a second press folds it back. It is matched from its own
+    // vector, so it can never resume the chat drawn above it.
+    #[test]
+    fn a_press_on_the_older_chats_row_opens_the_drawer_and_folds_it_back() {
+        let mut app = app_for_mouse_test();
+        let mut main = crate::workspace::Workspace::test_new("main");
+        main.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr"),
+            is_linked_worktree: false,
+        });
+        main.identity_cwd = std::path::PathBuf::from("/repo/herdr");
+        app.state.workspaces = vec![main];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mobile_width_threshold = 0;
+        let key =
+            crate::persist::workspace_chats::ledger_key(&std::path::PathBuf::from("/repo/herdr"));
+        app.state.workspace_chat_rows.insert(
+            key.clone(),
+            (0..9)
+                .map(|i| crate::app::state::WorkspaceChatRow {
+                    session_id: format!("session-{i}"),
+                    agent: "claude".to_string(),
+                    title: Some(format!("chat {i}")),
+                    last_seen_ms: 1_000 + i as u64,
+                    last_modified: None,
+                })
+                .collect(),
+        );
+        app.state.expanded_chat_workspaces.insert(key);
+
+        let area = ratatui::layout::Rect::new(0, 0, 106, 30);
+        crate::ui::compute_view(&mut app.state, area);
+        let row = app
+            .state
+            .view
+            .workspace_more_chats_areas
+            .first()
+            .cloned()
+            .expect("the deep drawer lays out its older-chats row");
+        let ledger =
+            crate::persist::workspace_chats::ledger_key(&std::path::PathBuf::from("/repo/herdr"));
+        assert!(!app.state.fully_open_chat_drawers.contains(&ledger));
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            row.rect.x + 4,
+            row.rect.y,
+        ));
+        assert!(
+            app.state.fully_open_chat_drawers.contains(&ledger),
+            "the press opens the drawer the rest of the way"
+        );
+        assert_eq!(
+            app.state.request_project_chat_tab, None,
+            "it resumes nothing — the row above it owns that click"
+        );
+
+        crate::ui::compute_view(&mut app.state, area);
+        let row = app
+            .state
+            .view
+            .workspace_more_chats_areas
+            .first()
+            .cloned()
+            .expect("the row stays as the way back");
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            row.rect.x + 4,
+            row.rect.y,
+        ));
+        assert!(
+            !app.state.fully_open_chat_drawers.contains(&ledger),
+            "a second press folds it back"
+        );
+    }
+
+    // TP-AGPANEL-03: a right-click on an agents-panel row opens that row's
+    // own menu carrying its pane; the empty space below the last row opens
+    // nothing, because there is no agent there to act on. Before this road
+    // existed the press fell through to the workspace list's resolver, which
+    // reads by row and answers for a different section entirely.
+    #[test]
+    fn right_click_on_an_agent_row_opens_its_menu_and_the_panel_gap_stays_inert() {
+        let mut app = app_for_mouse_test();
+        let workspace = crate::workspace::Workspace::test_new("one");
+        let root = workspace.tabs[0].root_pane;
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mobile_width_threshold = 0;
+        app.state.ensure_test_terminals();
+        let terminal_id = app.state.workspaces[0].tabs[0]
+            .panes
+            .get(&root)
+            .map(|pane| pane.attached_terminal_id.clone())
+            .expect("the root pane has a terminal");
+        if let Some(terminal) = app.state.terminals.get_mut(&terminal_id) {
+            terminal.set_detected_state(
+                Some(crate::detect::Agent::Pi),
+                crate::detect::AgentState::Idle,
+            );
+        }
+
+        let area = ratatui::layout::Rect::new(0, 0, 106, 20);
+        crate::ui::compute_view(&mut app.state, area);
+        let entries = crate::ui::agent_panel_entries(&app.state);
+        assert_eq!(entries.len(), 1, "the fixture lists one agent");
+
+        let panel = app.state.agent_panel_rect();
+        let row = (panel.y..panel.y + panel.height)
+            .find(|row| app.state.agent_detail_target_at(*row) == Some((0, 0, root)))
+            .expect("the agent row is laid out");
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 2, row));
+        assert!(
+            matches!(
+                app.state.context_menu.as_ref().map(|menu| &menu.kind),
+                Some(crate::app::state::ContextMenuKind::AgentEntry { ws_idx: 0, tab_idx: 0, pane_id })
+                    if *pane_id == root
+            ),
+            "the agent row owns a menu carrying its own pane; got {:?}",
+            app.state.context_menu.as_ref().map(|menu| &menu.kind)
+        );
+
+        // The empty space under the last row belongs to no agent.
+        app.state.context_menu = None;
+        app.state.mode = crate::app::state::Mode::Terminal;
+        if let Some(gap) = (panel.y..panel.y + panel.height)
+            .find(|row| app.state.agent_detail_target_at(*row).is_none())
+        {
+            app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Right), 2, gap));
+            assert!(
+                !matches!(
+                    app.state.context_menu.as_ref().map(|menu| &menu.kind),
+                    Some(crate::app::state::ContextMenuKind::AgentEntry { .. })
+                ),
+                "the panel's empty space invents no agent menu; got {:?}",
+                app.state.context_menu.as_ref().map(|menu| &menu.kind)
+            );
+        }
     }
 
     // TP-DOTS-17: the header's "+" is a second door to the module's

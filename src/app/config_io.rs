@@ -115,6 +115,17 @@ impl App {
         }
     }
 
+    /// Persist the Spaces tab's focus filter as the starting point for new
+    /// clients. The live toggle stays this display's own (TP-FOCUS-SW-05);
+    /// what lands on disk is only where the next screen begins.
+    pub(super) fn save_spaces_focus_only(&mut self, enabled: bool) {
+        if self.update_config_file("spaces focus filter", |content| {
+            crate::config::upsert_section_bool(content, "ui.sidebar.spaces", "focus_only", enabled)
+        }) {
+            self.apply_config_from_disk(false);
+        }
+    }
+
     /// Persist the preview placement mode picked in settings. Only available
     /// modes reach this point (the "soon" rows are inert in the UI).
     pub(super) fn save_preview_placement(&mut self, placement: crate::config::PreviewPlacement) {

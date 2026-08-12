@@ -745,6 +745,10 @@ pub(crate) enum WorkspaceListEntry {
     /// lists.
     MoreChats {
         ws_idx: usize,
+        /// Whether this display has already opened the drawer all the way.
+        /// The row is the way in AND the way back (TP-DRAW-11) — a switch
+        /// with no off position is not a switch.
+        expanded: bool,
     },
 }
 
@@ -897,6 +901,18 @@ pub(crate) fn workspace_chat_drawer_collapsed(app: &AppState, ws_idx: usize) -> 
     app.chat_drawer_collapsed(ws_idx)
 }
 
+/// Whether this display asked to see the whole of `ws_idx`'s drawer.
+///
+/// TP-DRAW-12: keyed through the same ledger key the drawer's openness is
+/// keyed by, and held per display for the same reason — one screen reading
+/// an old chat must not stretch the drawer on another.
+pub(crate) fn workspace_chat_drawer_expanded(app: &AppState, ws_idx: usize) -> bool {
+    app.workspaces
+        .get(ws_idx)
+        .map(|ws| crate::persist::workspace_chats::ledger_key(ws.effective_cwd()))
+        .is_some_and(|key| app.fully_open_chat_drawers.contains(&key))
+}
+
 /// The chat row the selection accent belongs to, when there is one.
 ///
 /// TP-FOCUS-01: the accent marks the deepest *visible* focus object. When the
@@ -930,11 +946,19 @@ fn push_chat_drawer(app: &AppState, entries: &mut Vec<WorkspaceListEntry>, ws_id
         entries.push(WorkspaceListEntry::NoChats { ws_idx });
         return;
     }
-    for chat_idx in 0..chats.len().min(WORKSPACE_CHAT_ROW_LIMIT) {
+    // TP-DRAW-10: a drawer this display asked to see whole shows every chat
+    // it holds; otherwise the glance surface keeps its five.
+    let expanded = workspace_chat_drawer_expanded(app, ws_idx);
+    let shown = if expanded {
+        chats.len()
+    } else {
+        chats.len().min(WORKSPACE_CHAT_ROW_LIMIT)
+    };
+    for chat_idx in 0..shown {
         entries.push(WorkspaceListEntry::Chat { ws_idx, chat_idx });
     }
     if chats.len() > WORKSPACE_CHAT_ROW_LIMIT {
-        entries.push(WorkspaceListEntry::MoreChats { ws_idx });
+        entries.push(WorkspaceListEntry::MoreChats { ws_idx, expanded });
     }
 }
 
@@ -950,6 +974,42 @@ pub(crate) fn normalized_workspace_scroll(app: &AppState, area: Rect, requested:
     } else {
         requested.min(workspace_list_bottom_start(app, ws_area))
     }
+}
+
+/// The checkouts a focused tree keeps, or `None` when the whole tree shows.
+///
+/// TP-FOCUS-SW-02: focus answers "what am I working in right now" — the
+/// active checkout (the selected one while navigating, since that is what the
+/// screen is pointing at) plus every checkout running an agent. The module
+/// chain above them survives on its own, because headers are drawn from their
+/// members: filter the members and the empty modules go quiet by themselves.
+///
+/// TP-FOCUS-SW-03: a filter that would empty the tree keeps its hands off it.
+/// With nothing active and nothing running there is no noise to remove, and a
+/// blank list reads as a broken sidebar rather than a focused one.
+pub(crate) fn focus_visible_workspaces(app: &AppState) -> Option<std::collections::HashSet<usize>> {
+    if !app.spaces_focus_only {
+        return None;
+    }
+    let mut visible = std::collections::HashSet::new();
+    // While navigating, the selection is what the screen is pointing at; in
+    // every other mode the active checkout is. This is the same pair the
+    // tree already uses to decide which group counts as the visible one.
+    let pointed = if matches!(app.mode, Mode::Navigate) {
+        Some(app.selected)
+    } else {
+        app.active
+    };
+    if let Some(idx) = pointed.filter(|idx| *idx < app.workspaces.len()) {
+        visible.insert(idx);
+    }
+    // "Running" is borrowed from the agents panel rather than defined again:
+    // two surfaces answering the same question from two definitions drift,
+    // and the tree would start disagreeing with the list right below it.
+    for entry in agent_panel_entries(app) {
+        visible.insert(entry.ws_idx);
+    }
+    (!visible.is_empty()).then_some(visible)
 }
 
 pub(crate) fn workspace_list_entries(app: &AppState) -> Vec<WorkspaceListEntry> {
@@ -968,8 +1028,18 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
     // several rules over one repository produce several sibling groups.
     // TP-SPLIT-GROUP-03/04: the two-member threshold and the untouched repo
     // group are shared with upstream's behaviour.
+    // TP-FOCUS-SW-01/02: the focus filter is applied at the source, not in
+    // the renderer. Everything downstream — group membership, the two-member
+    // threshold, the header rows — is derived from this set, so a module
+    // whose checkouts are all filtered out loses its header the same way an
+    // empty module never gets one.
+    let focused = focus_visible_workspaces(app);
+    let shows = |ws_idx: usize| focused.as_ref().is_none_or(|set| set.contains(&ws_idx));
     let mut members_by_key = std::collections::HashMap::<String, Vec<usize>>::new();
     for ws_idx in 0..app.workspaces.len() {
+        if !shows(ws_idx) {
+            continue;
+        }
         if let Some(space) = effective_space(app, ws_idx) {
             members_by_key.entry(space.key).or_default().push(ws_idx);
         }
@@ -1099,6 +1169,9 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
     let mut emitted_nodes = std::collections::HashSet::<String>::new();
     let mut entries = Vec::new();
     for ws_idx in 0..app.workspaces.len() {
+        if !shows(ws_idx) {
+            continue;
+        }
         let space = effective_space(app, ws_idx);
         let owner = space
             .as_ref()
@@ -1500,7 +1573,7 @@ fn entry_row_metrics(
         }
         WorkspaceListEntry::Chat { ws_idx, .. }
         | WorkspaceListEntry::NoChats { ws_idx }
-        | WorkspaceListEntry::MoreChats { ws_idx } => {
+        | WorkspaceListEntry::MoreChats { ws_idx, .. } => {
             app.workspaces.get(*ws_idx)?;
             // A drawer's last row still has to separate its block from the
             // next one, or two repositories run together while a drawer is open.
@@ -1686,25 +1759,29 @@ pub(crate) fn agent_panel_scrollbar_rect(app: &AppState, area: Rect) -> Option<R
 /// workspace-indexed — folding a chat or a header into it would make that
 /// click resolve as a workspace, the same trap the tab strip already documents
 /// for its stage entries (TP-FTAB-ENTRY-05). TP-TREE-05.
-pub(crate) fn compute_workspace_list_areas(
-    app: &AppState,
-    area: Rect,
-) -> (
+/// Every laid-out row of the Spaces list, split by what a press there means:
+/// cards switch, chat rows resume, headers fold, and the "older chats" rows
+/// open a drawer the rest of the way. One vector per meaning, so a press can
+/// never resolve as the wrong kind of row.
+pub(crate) type WorkspaceListAreas = (
     Vec<crate::app::state::WorkspaceCardArea>,
     Vec<crate::app::state::WorkspaceChatRowArea>,
     Vec<crate::app::state::WorkspaceGroupHeaderArea>,
     Vec<crate::app::state::WorkspaceProjectHeaderArea>,
-) {
+    Vec<crate::app::state::WorkspaceMoreChatsArea>,
+);
+
+pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> WorkspaceListAreas {
     let ws_area = workspace_list_rect(area, app.sidebar_section_split, app.sidebar_chrome);
     if ws_area == Rect::default() {
-        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     }
 
     let metrics = workspace_list_scroll_metrics(app, ws_area);
     let body =
         workspace_list_body_rect(ws_area, should_show_scrollbar(metrics), app.sidebar_chrome);
     if body.width == 0 || body.height == 0 {
-        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     }
 
     let scroll = app.workspace_scroll;
@@ -1714,6 +1791,7 @@ pub(crate) fn compute_workspace_list_areas(
     let mut chat_rows = Vec::new();
     let mut group_headers = Vec::new();
     let mut project_headers = Vec::new();
+    let mut more_chats = Vec::new();
 
     let entries = workspace_list_entries(app);
     for (entry_idx, entry) in entries.iter().enumerate().skip(scroll) {
@@ -1752,8 +1830,19 @@ pub(crate) fn compute_workspace_list_areas(
                     chat_idx: *chat_idx,
                 });
             }
-            // Placeholders occupy a row but are inert: nothing to click.
-            WorkspaceListEntry::NoChats { .. } | WorkspaceListEntry::MoreChats { .. } => {}
+            // TP-DRAW-11: the "older" row is the way into the rest of the
+            // drawer and back out again, so it earns a rect of its own — in
+            // its own vector, because a click here must never resolve as the
+            // chat row above it.
+            WorkspaceListEntry::MoreChats { ws_idx, .. } => {
+                more_chats.push(crate::app::state::WorkspaceMoreChatsArea {
+                    rect,
+                    ws_idx: *ws_idx,
+                });
+            }
+            // The empty-drawer placeholder occupies a row but stays inert:
+            // there is nothing behind it to open.
+            WorkspaceListEntry::NoChats { .. } => {}
         }
         row_y = row_y
             .saturating_add(row_height)
@@ -1761,7 +1850,7 @@ pub(crate) fn compute_workspace_list_areas(
             .min(body_bottom);
     }
 
-    (cards, chat_rows, group_headers, project_headers)
+    (cards, chat_rows, group_headers, project_headers, more_chats)
 }
 
 pub(crate) fn compute_workspace_card_areas(
@@ -2499,6 +2588,7 @@ fn render_workspace_list(
     render_workspace_group_headers(app, frame, list_bottom);
 
     render_workspace_chat_rows(app, frame, list_bottom);
+    render_workspace_more_chats_rows(app, frame, list_bottom);
 
     if let Some(y) = insertion_row.filter(|y| *y < list_bottom) {
         let indicator_right = scrollbar_rect
@@ -2516,6 +2606,26 @@ fn render_workspace_list(
     }
 
     render_sidebar_footer_buttons(app, frame, area, " new");
+
+    // TP-FOCUS-SW-04: the Spaces tab's filter toggle wears the same clothes
+    // as the Projects tab's "actives" in the same slot — accent while the
+    // tree is narrowed, dim while it is whole, and mouse chrome either way.
+    if app.mouse_capture {
+        let toggle = app.sidebar_focus_toggle_rect();
+        if toggle.width > 0 {
+            let style = if app.spaces_focus_only {
+                Style::default().fg(p.accent).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(p.overlay0)
+            };
+            let framed = app.sidebar_chrome.chips.and_then(|tint| {
+                crate::ui::widgets::render_chip(frame, toggle, "focus", tint, style, p.panel_bg)
+            });
+            if framed.is_none() {
+                frame.render_widget(Paragraph::new(Span::styled("focus", style)), toggle);
+            }
+        }
+    }
 }
 
 /// The label a worktree space is known by, or the key itself as a last resort.
@@ -2679,6 +2789,37 @@ fn render_workspace_group_headers(app: &AppState, frame: &mut Frame, list_bottom
 /// as a workspace itself — it is indented past the branch children, carries a
 /// chat glyph rather than a state dot, and never takes the accent BACKGROUND
 /// that marks the active workspace and the active agent card.
+/// Draw the "older chats" row of every drawer that has one.
+///
+/// TP-DRAW-11: the row says which way it goes — how many chats are still
+/// hidden, or that the drawer can be folded back. Before this it was laid
+/// out but never painted, so the desktop drawer ended in a blank line the
+/// reader could neither understand nor act on.
+fn render_workspace_more_chats_rows(app: &AppState, frame: &mut Frame, list_bottom: u16) {
+    let p = &app.palette;
+    for row in &app.view.workspace_more_chats_areas {
+        if row.rect.width == 0 || row.rect.y >= list_bottom {
+            continue;
+        }
+        let total = workspace_chat_rows_for(app, row.ws_idx).len();
+        let label = if workspace_chat_drawer_expanded(app, row.ws_idx) {
+            "   … fewer".to_string()
+        } else {
+            format!(
+                "   … {} older",
+                total.saturating_sub(WORKSPACE_CHAT_ROW_LIMIT)
+            )
+        };
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                super::text::truncate_end(&label, row.rect.width as usize),
+                Style::default().fg(p.overlay0),
+            )),
+            row.rect,
+        );
+    }
+}
+
 fn render_workspace_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u16) {
     let p = &app.palette;
     let now = std::time::SystemTime::now();
@@ -3841,7 +3982,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let body = workspace_list_body_rect(workspace_area, false, app.sidebar_chrome);
 
         let metrics = workspace_list_scroll_metrics(&app, workspace_area);
-        let (cards, _, _headers, _) = compute_workspace_list_areas(&app, area);
+        let (cards, _, _headers, _, _) = compute_workspace_list_areas(&app, area);
 
         assert_eq!(metrics.viewport_rows, 1);
         assert_eq!(cards.len(), 1);
@@ -3978,6 +4119,64 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 "{name} lost its label inside its own frame: {label_row:?}"
             );
         }
+    }
+
+    // TP-FOCUS-SW-04 (render): the Spaces footer draws its focus toggle,
+    // accented while the tree is narrowed and dim while it is whole — the
+    // switch has to say which way it is thrown. Like every other control in
+    // this footer it is mouse chrome: no mouse, no button.
+    #[test]
+    fn the_spaces_footer_draws_its_focus_toggle_and_says_which_way_it_is_thrown() {
+        let area = Rect::new(0, 0, 30, 24);
+        let mut app = app_with_footer_chips(area, false);
+        app.sidebar_tab = crate::app::state::SidebarTab::Spaces;
+
+        let draw = |app: &crate::app::state::AppState| {
+            let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+            terminal
+                .draw(|frame| render_sidebar(app, &TerminalRuntimeRegistry::new(), frame, area))
+                .unwrap();
+            let rect = app.sidebar_focus_toggle_rect();
+            assert!(rect.width > 0, "the footer keeps room for the toggle");
+            let buffer = terminal.backend().buffer();
+            let label: String = (rect.x..rect.x + rect.width)
+                .map(|x| buffer[(x, rect.y)].symbol())
+                .collect();
+            (label, buffer[(rect.x, rect.y)].style().fg)
+        };
+
+        let (off_label, off_fg) = draw(&app);
+        assert!(off_label.contains("focus"), "got {off_label:?}");
+        assert_eq!(
+            off_fg,
+            Some(app.palette.overlay0),
+            "an unfocused tree keeps its switch dim"
+        );
+
+        app.spaces_focus_only = true;
+        let (on_label, on_fg) = draw(&app);
+        assert!(on_label.contains("focus"), "got {on_label:?}");
+        assert_eq!(
+            on_fg,
+            Some(app.palette.accent),
+            "a narrowed tree wears its switch in the accent"
+        );
+
+        // Without the mouse the footer chrome is gone, like every control
+        // beside it (TP-REPAINT-2B).
+        app.mouse_capture = false;
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal
+            .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
+        let rect = app.sidebar_focus_toggle_rect();
+        let label: String = (rect.x..rect.x + rect.width)
+            .map(|x| terminal.backend().buffer()[(x, rect.y)].symbol())
+            .collect();
+        assert!(
+            !label.contains("focus"),
+            "without the mouse the toggle is not drawn: {label:?}"
+        );
     }
 
     // T62 · a control that cannot fit a frame keeps its label. Half a border is
@@ -5341,7 +5540,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let area = Rect::new(0, 0, 30, 24);
 
         let entries = workspace_list_entries(&app);
-        let (cards, chat_rows, _headers, _) = compute_workspace_list_areas(&app, area);
+        let (cards, chat_rows, _headers, _, _) = compute_workspace_list_areas(&app, area);
 
         assert_eq!(entries.len(), 3, "one workspace plus its two chats");
         assert_eq!(cards.len(), 1);
@@ -5366,7 +5565,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let (mut app, key) = app_with_chat_drawer(3);
         app.expanded_chat_workspaces.insert(key);
 
-        let (cards, chat_rows, _headers, _) =
+        let (cards, chat_rows, _headers, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 24));
 
         assert_eq!(cards.len(), 1, "only real workspaces become cards");
@@ -6207,6 +6406,296 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
             node_depth(&app, "group:leaf"),
             2,
             "leaf hangs under the bucket, the bucket under top"
+        );
+    }
+
+    /// A third checkout under the same repository, so the fixture has a row
+    /// that focus can legitimately hide.
+    fn app_with_three_checkouts() -> AppState {
+        let mut app = app_with_worktree_tree(40);
+        let mut idle = Workspace::test_new("docs");
+        idle.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr-docs"),
+            is_linked_worktree: true,
+        });
+        idle.custom_name = None;
+        idle.identity_cwd = std::path::PathBuf::from("/repo/herdr-docs");
+        idle.cached_git_branch = Some("docs/readme".into());
+        app.workspaces.push(idle);
+        app
+    }
+
+    fn workspace_indices(entries: &[WorkspaceListEntry]) -> Vec<usize> {
+        entries
+            .iter()
+            .filter_map(|entry| match entry {
+                WorkspaceListEntry::Workspace { ws_idx, .. } => Some(*ws_idx),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn mark_agent_in(app: &mut AppState, ws_idx: usize) {
+        app.ensure_test_terminals();
+        let pane_id = app.workspaces[ws_idx].tabs[0].root_pane;
+        let terminal_id = app.workspaces[ws_idx].tabs[0]
+            .panes
+            .get(&pane_id)
+            .map(|pane| pane.attached_terminal_id.clone())
+            .expect("the root pane has a terminal");
+        if let Some(terminal) = app.terminals.get_mut(&terminal_id) {
+            terminal.set_detected_state(
+                Some(crate::detect::Agent::Pi),
+                crate::detect::AgentState::Idle,
+            );
+        }
+    }
+
+    /// A workspace whose drawer holds more chats than the glance limit.
+    fn app_with_a_deep_drawer(chat_count: usize) -> AppState {
+        let mut app = app_with_worktree_tree(40);
+        let key =
+            crate::persist::workspace_chats::ledger_key(&std::path::PathBuf::from("/repo/herdr"));
+        let rows = (0..chat_count)
+            .map(|i| crate::app::state::WorkspaceChatRow {
+                session_id: format!("session-{i}"),
+                agent: "claude".to_string(),
+                title: Some(format!("chat {i}")),
+                last_seen_ms: 1_000 + i as u64,
+                last_modified: None,
+            })
+            .collect();
+        app.workspace_chat_rows.insert(key.clone(), rows);
+        app.expanded_chat_workspaces.insert(key);
+        app
+    }
+
+    fn drawer_rows(app: &AppState, ws_idx: usize) -> (usize, Option<bool>) {
+        let entries = workspace_list_entries(app);
+        let chats = entries
+            .iter()
+            .filter(
+                |entry| matches!(entry, WorkspaceListEntry::Chat { ws_idx: w, .. } if *w == ws_idx),
+            )
+            .count();
+        let more = entries.iter().find_map(|entry| match entry {
+            WorkspaceListEntry::MoreChats {
+                ws_idx: w,
+                expanded,
+            } if *w == ws_idx => Some(*expanded),
+            _ => None,
+        });
+        (chats, more)
+    }
+
+    // TP-DRAW-10: the drawer is a glance surface until asked otherwise — five
+    // rows and a way to see the rest. Opened all the way it shows every chat
+    // it holds, and the row that opened it stays as the way back.
+    #[test]
+    fn a_deep_drawer_shows_five_until_it_is_opened_all_the_way() {
+        let mut app = app_with_a_deep_drawer(9);
+
+        assert_eq!(
+            drawer_rows(&app, 0),
+            (WORKSPACE_CHAT_ROW_LIMIT, Some(false)),
+            "the glance surface keeps its five and offers the rest"
+        );
+
+        app.toggle_full_chat_drawer(0);
+        assert_eq!(
+            drawer_rows(&app, 0),
+            (9, Some(true)),
+            "opened all the way, every chat is drawn and the row stays as the way back"
+        );
+
+        app.toggle_full_chat_drawer(0);
+        assert_eq!(
+            drawer_rows(&app, 0),
+            (WORKSPACE_CHAT_ROW_LIMIT, Some(false)),
+            "the same row folds it back — a switch with no off position is not a switch"
+        );
+    }
+
+    // TP-DRAW-11: the row is drawn, and it says which way it goes. It was laid
+    // out but never painted before, so the drawer ended in a blank line.
+    #[test]
+    fn the_older_chats_row_is_painted_and_says_which_way_it_goes() {
+        let mut app = app_with_a_deep_drawer(9);
+        let rows = drawn_sidebar_rows(&mut app, 24);
+        assert!(
+            rows.iter().any(|row| row.contains("… 4 older")),
+            "the folded drawer names how many chats it is hiding: {rows:?}"
+        );
+
+        // Opened, the drawer is nine rows deeper, so the assertion needs a
+        // panel tall enough to reach its last row — the row's existence is
+        // proven by the entries test; this one is about what it says.
+        app.toggle_full_chat_drawer(0);
+        let rows = drawn_sidebar_rows(&mut app, 34);
+        assert!(
+            rows.iter().any(|row| row.contains("… fewer")),
+            "the opened drawer offers the way back: {rows:?}"
+        );
+    }
+
+    // TP-DRAW-12: how deep a drawer is opened belongs to the screen doing the
+    // reading — one display digging through old chats must not stretch the
+    // drawer on another.
+    #[test]
+    fn opening_a_drawer_all_the_way_stays_on_this_display() {
+        let mut here = app_with_a_deep_drawer(9);
+        let there = app_with_a_deep_drawer(9);
+
+        here.toggle_full_chat_drawer(0);
+
+        assert_eq!(drawer_rows(&here, 0).0, 9);
+        assert_eq!(
+            drawer_rows(&there, 0).0,
+            WORKSPACE_CHAT_ROW_LIMIT,
+            "the other screen keeps the drawer it was reading"
+        );
+    }
+
+    // TP-FOCUS-SW-01: focus is opt-in. While it is off the tree is exactly
+    // the tree it has always been — the filter may not change what an
+    // unfocused screen shows, or every reader would have to check a toggle
+    // before trusting the list.
+    #[test]
+    fn an_unfocused_tree_is_the_whole_tree() {
+        let mut app = app_with_three_checkouts();
+        app.spaces_focus_only = false;
+
+        assert_eq!(focus_visible_workspaces(&app), None);
+        assert_eq!(
+            workspace_indices(&workspace_list_entries(&app)),
+            vec![0, 1, 2]
+        );
+    }
+
+    // TP-FOCUS-SW-02: focus keeps what is being worked in — the active
+    // checkout and every checkout running an agent — and drops the rest.
+    // This is the complaint the switch exists for: a tree that grows past
+    // the screen while the work happens in two of its rows.
+    #[test]
+    fn a_focused_tree_keeps_the_active_checkout_and_the_running_ones() {
+        let mut app = app_with_three_checkouts();
+        mark_agent_in(&mut app, 2);
+        app.active = Some(0);
+        app.selected = 0;
+        app.spaces_focus_only = true;
+
+        let visible = focus_visible_workspaces(&app).expect("focus narrows the tree");
+        assert!(visible.contains(&0), "the active checkout always stays");
+        assert!(visible.contains(&2), "a checkout running an agent stays");
+        assert!(
+            !visible.contains(&1),
+            "an idle checkout nobody is in is exactly the noise focus removes"
+        );
+
+        let entries = workspace_list_entries(&app);
+        assert_eq!(workspace_indices(&entries), vec![0, 2]);
+    }
+
+    // TP-FOCUS-SW-02 (headers): a module survives on its members. With every
+    // member of a group hidden the group header goes with them — a header
+    // over nothing is the noise the switch was asked to remove.
+    #[test]
+    fn a_focused_tree_drops_the_headers_left_without_members() {
+        let mut app = app_with_three_checkouts();
+        // A module earns a header at two members (TP-SPLIT-GROUP-03), so the
+        // fixture gives docs a second checkout — otherwise the test would be
+        // asserting against a header the tree never draws.
+        let mut second_doc = Workspace::test_new("api-docs");
+        second_doc.worktree_space = Some(crate::workspace::WorktreeSpaceMembership {
+            key: "repo-key".into(),
+            label: "herdr".into(),
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            checkout_path: std::path::PathBuf::from("/repo/herdr-docs-api"),
+            is_linked_worktree: true,
+        });
+        second_doc.custom_name = None;
+        second_doc.identity_cwd = std::path::PathBuf::from("/repo/herdr-docs-api");
+        second_doc.cached_git_branch = Some("docs/api".into());
+        app.workspaces.push(second_doc);
+        app.space_split_rules = vec![crate::spaces::SpaceSplitRule {
+            repo_root: std::path::PathBuf::from("/repo/herdr"),
+            patterns: vec!["docs/*".into()],
+            key: "herdr:docs".into(),
+            label: "Docs".into(),
+            icon: None,
+            parent: None,
+        }];
+        app.active = Some(0);
+        app.selected = 0;
+
+        app.spaces_focus_only = false;
+        let open = workspace_list_entries(&app);
+        assert!(
+            open.iter().any(|entry| matches!(
+                entry,
+                WorkspaceListEntry::GroupHeader { space_key } if space_key == "herdr:docs"
+            )),
+            "the docs module is drawn while the tree is open"
+        );
+
+        app.spaces_focus_only = true;
+        let focused = workspace_list_entries(&app);
+        assert!(
+            !focused.iter().any(|entry| matches!(
+                entry,
+                WorkspaceListEntry::GroupHeader { space_key } if space_key == "herdr:docs"
+            )),
+            "with its only member hidden the module header goes quiet too"
+        );
+    }
+
+    // TP-FOCUS-SW-03: a filter that would empty the tree keeps its hands off
+    // it. With nothing active and nothing running there is no noise to
+    // remove, and a blank sidebar reads as broken rather than focused.
+    #[test]
+    fn a_focus_with_nothing_to_show_shows_everything() {
+        let mut app = app_with_three_checkouts();
+        app.active = None;
+        app.mode = crate::app::state::Mode::Terminal;
+        app.spaces_focus_only = true;
+
+        assert_eq!(
+            focus_visible_workspaces(&app),
+            None,
+            "no candidates means no filter, not an empty tree"
+        );
+        assert_eq!(
+            workspace_indices(&workspace_list_entries(&app)),
+            vec![0, 1, 2]
+        );
+    }
+
+    // TP-FOCUS-SW-05: focus is a property of the screen doing the looking.
+    // Two clients share the same workspaces; narrowing one must leave the
+    // other's tree exactly as it was.
+    #[test]
+    fn focusing_one_display_leaves_the_other_tree_alone() {
+        let mut focused = app_with_three_checkouts();
+        let mut wide = app_with_three_checkouts();
+        mark_agent_in(&mut focused, 2);
+        mark_agent_in(&mut wide, 2);
+
+        focused.spaces_focus_only = true;
+        // The second display never touched the toggle, so its own state
+        // still answers "show everything".
+        assert!(!wide.spaces_focus_only);
+
+        assert_eq!(
+            workspace_indices(&workspace_list_entries(&focused)),
+            vec![0, 2]
+        );
+        assert_eq!(
+            workspace_indices(&workspace_list_entries(&wide)),
+            vec![0, 1, 2],
+            "the other screen keeps the tree it was reading"
         );
     }
 
@@ -7114,7 +7603,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.sidebar_spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
 
         let area = Rect::new(0, 0, 30, 20);
-        let (cards, _, group_headers, _) = compute_workspace_list_areas(&app, area);
+        let (cards, _, group_headers, _, _) = compute_workspace_list_areas(&app, area);
         let drawn_rows: u16 = cards.iter().map(|card| card.rect.height).sum::<u16>()
             + group_headers
                 .iter()
@@ -7171,7 +7660,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         ];
         app.sidebar_spaces.row_gap = 1;
 
-        let (cards, chat_rows, group_headers, _) =
+        let (cards, chat_rows, group_headers, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 20));
 
         assert!(chat_rows.is_empty());
@@ -7207,7 +7696,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.sidebar_spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
         app.sidebar_spaces.row_gap = 2;
 
-        let (spacious, _, _headers, _) =
+        let (spacious, _, _headers, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
         // TP-TREE-06: the three checkouts of one repository are one block and
         // stay compact; the gap falls where the next top-level unit begins.
@@ -7230,7 +7719,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(spacious_metrics.max_offset_from_bottom, 3);
 
         app.sidebar_spaces.row_gap = 0;
-        let (packed, _, _headers, _) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
+        let (packed, _, _headers, _, _) =
+            compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
         assert!(packed
             .windows(2)
             .all(|pair| pair[1].rect.y == pair[0].rect.y + pair[0].rect.height));
@@ -7324,7 +7814,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let area = Rect::new(0, 0, 30, 20);
         app.workspace_scroll = normalized_workspace_scroll(&app, area, 2);
 
-        let (cards, headers, _headers, _) = compute_workspace_list_areas(&app, area);
+        let (cards, headers, _headers, _, _) = compute_workspace_list_areas(&app, area);
 
         assert!(headers.is_empty());
         assert_eq!(app.workspace_scroll, 0);
@@ -7371,7 +7861,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.mode = Mode::Terminal;
         app.workspace_scroll = 1;
 
-        let (cards, headers, _headers, _) =
+        let (cards, headers, _headers, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 12));
 
         assert!(headers.is_empty());

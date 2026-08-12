@@ -699,6 +699,13 @@ pub struct WorkspaceChatRowArea {
     pub chat_idx: usize,
 }
 
+/// The laid-out "… N older" / "… fewer" row of one drawer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceMoreChatsArea {
+    pub rect: Rect,
+    pub ws_idx: usize,
+}
+
 /// One laid-out worktree-group header row in the Spaces tab.
 ///
 /// TP-TREE-05: a third vector, for the same reason the chat rows got a second
@@ -1610,6 +1617,9 @@ pub struct ViewState {
     /// vector is workspace-indexed: a chat folded into it would resolve as a
     /// workspace switch on click.
     pub workspace_chat_row_areas: Vec<WorkspaceChatRowArea>,
+    /// The "older chats" rows, in their own vector so a press there can never
+    /// resolve as the chat above it (TP-DRAW-11).
+    pub workspace_more_chats_areas: Vec<WorkspaceMoreChatsArea>,
     /// Worktree-group header rows, kept apart for the same reason: a header is
     /// not a workspace, so it must never be resolvable through a ws_idx.
     pub workspace_group_header_areas: Vec<WorkspaceGroupHeaderArea>,
@@ -2260,11 +2270,22 @@ pub enum ContextMenuKind {
     },
     /// A chat row's own menu. The session id is resolved at open time so a
     /// list refresh under an open menu can never re-target the move
-    /// (TP-CHAT-MOVE-04); `has_move` decides whether "Move back" shows.
+    /// (TP-CHAT-MOVE-04); `has_move` decides whether "Move back" shows and
+    /// `has_live` whether the chat has a running tab to close (TP-AGPANEL-05).
     WorkspaceChat {
         ws_idx: usize,
         session_id: String,
         has_move: bool,
+        has_live: bool,
+    },
+    /// An agents-panel row's own menu. The row already stands for one pane,
+    /// so the target rides in the menu rather than being re-derived from
+    /// whatever happens to be focused when the item is picked
+    /// (TP-AGPANEL-03).
+    AgentEntry {
+        ws_idx: usize,
+        tab_idx: usize,
+        pane_id: crate::layout::PaneId,
     },
     /// The drawer picker a chat move opens: open workspaces as
     /// `(ledger key, display name)`, resolved by index like MoveTarget.
@@ -2402,13 +2423,24 @@ impl ContextMenuState {
             // TP-CHAT-MOVE-04: the way back only shows while a re-home is in
             // force — offering it otherwise would be a button that does
             // nothing.
-            ContextMenuKind::WorkspaceChat { has_move, .. } => {
+            ContextMenuKind::WorkspaceChat {
+                has_move, has_live, ..
+            } => {
                 let mut items = vec!["Move to branch..."];
                 if *has_move {
                     items.push("Move back");
                 }
+                // TP-AGPANEL-05: the close verb only appears while the chat
+                // has a tab running behind it, and it comes last — the one
+                // item here that cannot be undone.
+                if *has_live {
+                    items.push("Close agent");
+                }
                 items
             }
+            // TP-AGPANEL-03: the agents panel lists what is running, so the
+            // single verb it owns is ending one.
+            ContextMenuKind::AgentEntry { .. } => vec!["Close agent"],
             ContextMenuKind::ChatMoveTarget { targets, .. } => {
                 targets.iter().map(|(_, label)| label.as_str()).collect()
             }
@@ -3260,6 +3292,15 @@ pub struct AppState {
     /// would bury the workspace list the tab exists for. So closed is the
     /// default and this records the exceptions.
     pub expanded_chat_workspaces: std::collections::HashSet<String>,
+    /// Whether this display shows only the tree it is working in: the active
+    /// checkout and the ones running an agent, with the module chain above
+    /// them. Per display for the same reason the folds are — focusing one
+    /// screen must not narrow another (TP-FOCUS-SW-05).
+    pub spaces_focus_only: bool,
+    /// Drawers this display has opened all the way, past the five rows the
+    /// glance surface keeps (TP-DRAW-10). Per display, like every other
+    /// drawer set here.
+    pub fully_open_chat_drawers: std::collections::HashSet<String>,
     /// Drawers this display has quieted while a mode derives them open.
     ///
     /// The all-active drawer mode opens every branch holding a live agent;
@@ -3809,6 +3850,10 @@ impl AppState {
         // Only slightly more than the drawer shows: parsing opens whole files,
         // and a busy directory holds hundreds of them.
         const DRAWER_FETCH_LIMIT: usize = 12;
+        // TP-DRAW-10: a drawer opened all the way reads deeper, because
+        // otherwise "show older" would promise chats the parse never fetched.
+        // Still bounded: parsing opens whole files.
+        const DRAWER_FETCH_LIMIT_FULL: usize = 60;
         let keys: Vec<(String, String)> = self
             .workspaces
             .iter()
@@ -3821,10 +3866,15 @@ impl AppState {
             .collect();
 
         for (key, cwd) in &keys {
+            let limit = if self.fully_open_chat_drawers.contains(key) {
+                DRAWER_FETCH_LIMIT_FULL
+            } else {
+                DRAWER_FETCH_LIMIT
+            };
             let (sessions, _) = crate::claude_sessions::read_recent_sessions_for_project_cached(
                 projects_dir,
                 cwd,
-                DRAWER_FETCH_LIMIT,
+                limit,
                 &mut self.sessions_parse_cache,
             );
             let rows = self.workspace_chat_rows.entry(key.clone()).or_default();
@@ -4249,6 +4299,8 @@ impl AppState {
             preview_placement: crate::config::PreviewPlacement::default(),
             collapsed_project_paths: std::collections::HashSet::new(),
             workspace_chat_rows: std::collections::HashMap::new(),
+            spaces_focus_only: false,
+            fully_open_chat_drawers: std::collections::HashSet::new(),
             expanded_chat_workspaces: std::collections::HashSet::new(),
             suppressed_chat_drawers: std::collections::HashSet::new(),
             tab_branch_cache: std::collections::HashMap::new(),
@@ -4283,6 +4335,7 @@ impl AppState {
                 sidebar_rect: Rect::default(),
                 workspace_card_areas: Vec::new(),
                 workspace_chat_row_areas: Vec::new(),
+                workspace_more_chats_areas: Vec::new(),
                 workspace_group_header_areas: Vec::new(),
                 workspace_project_header_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),
@@ -4780,6 +4833,25 @@ impl AppState {
                     if let Some(source_pane_id) = source_pane_id {
                         assert_live_pane(source_pane_id, "context menu source pane");
                     }
+                }
+                ContextMenuKind::AgentEntry {
+                    ws_idx,
+                    tab_idx,
+                    pane_id,
+                } => {
+                    // TP-AGPANEL-03: the row's target is the menu's identity —
+                    // it must still name a live pane, or the close would fire
+                    // at a slot something else has moved into.
+                    assert_tab_index(ws_idx, tab_idx, "context menu agent tab");
+                    assert!(
+                        self.workspaces[ws_idx].tabs[tab_idx]
+                            .panes
+                            .contains_key(&pane_id),
+                        "agent menu references pane {:?} outside workspace {} tab {}",
+                        pane_id,
+                        ws_idx,
+                        tab_idx
+                    );
                 }
                 ContextMenuKind::AppDock { .. } => {
                     // The dock popover references only a closed built-in app
@@ -5772,6 +5844,7 @@ mod tests {
                 ws_idx: 0,
                 session_id: "s1".into(),
                 has_move: false,
+                has_live: false,
             },
             x: 0,
             y: 0,
@@ -5784,6 +5857,7 @@ mod tests {
                 ws_idx: 0,
                 session_id: "s1".into(),
                 has_move: true,
+                has_live: false,
             },
             x: 0,
             y: 0,
