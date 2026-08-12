@@ -673,6 +673,7 @@ impl App {
         // TP-FOCUS-SW-05: only where a display STARTS — once running, the
         // toggle is this client's own and never reaches another screen.
         let spaces_focus_only = config.ui.sidebar.spaces.focus_only;
+        let fully_open_chat_drawers = std::collections::HashSet::new();
 
         info!(
             pane_scrollback_limit_bytes = config.advanced.scrollback_limit_bytes,
@@ -805,6 +806,7 @@ impl App {
             default_chat_agent,
             projects_actives_only,
             spaces_focus_only,
+            fully_open_chat_drawers,
             request_complete_onboarding: false,
             name_input: String::new(),
             name_input_replace_on_type: false,
@@ -839,6 +841,7 @@ impl App {
                 sidebar_rect: Rect::default(),
                 workspace_card_areas: Vec::new(),
                 workspace_chat_row_areas: Vec::new(),
+                workspace_more_chats_areas: Vec::new(),
                 workspace_group_header_areas: Vec::new(),
                 workspace_project_header_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),

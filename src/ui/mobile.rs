@@ -652,7 +652,7 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
                     },
                 });
             }
-            crate::ui::sidebar::WorkspaceListEntry::MoreChats { ws_idx } => {
+            crate::ui::sidebar::WorkspaceListEntry::MoreChats { ws_idx, .. } => {
                 let hidden = crate::ui::sidebar::workspace_chat_rows_for(app, ws_idx)
                     .len()
                     .saturating_sub(crate::ui::sidebar::WORKSPACE_CHAT_ROW_LIMIT);

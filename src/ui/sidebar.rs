@@ -745,6 +745,10 @@ pub(crate) enum WorkspaceListEntry {
     /// lists.
     MoreChats {
         ws_idx: usize,
+        /// Whether this display has already opened the drawer all the way.
+        /// The row is the way in AND the way back (TP-DRAW-11) — a switch
+        /// with no off position is not a switch.
+        expanded: bool,
     },
 }
 
@@ -897,6 +901,18 @@ pub(crate) fn workspace_chat_drawer_collapsed(app: &AppState, ws_idx: usize) -> 
     app.chat_drawer_collapsed(ws_idx)
 }
 
+/// Whether this display asked to see the whole of `ws_idx`'s drawer.
+///
+/// TP-DRAW-12: keyed through the same ledger key the drawer's openness is
+/// keyed by, and held per display for the same reason — one screen reading
+/// an old chat must not stretch the drawer on another.
+pub(crate) fn workspace_chat_drawer_expanded(app: &AppState, ws_idx: usize) -> bool {
+    app.workspaces
+        .get(ws_idx)
+        .map(|ws| crate::persist::workspace_chats::ledger_key(ws.effective_cwd()))
+        .is_some_and(|key| app.fully_open_chat_drawers.contains(&key))
+}
+
 /// The chat row the selection accent belongs to, when there is one.
 ///
 /// TP-FOCUS-01: the accent marks the deepest *visible* focus object. When the
@@ -930,11 +946,19 @@ fn push_chat_drawer(app: &AppState, entries: &mut Vec<WorkspaceListEntry>, ws_id
         entries.push(WorkspaceListEntry::NoChats { ws_idx });
         return;
     }
-    for chat_idx in 0..chats.len().min(WORKSPACE_CHAT_ROW_LIMIT) {
+    // TP-DRAW-10: a drawer this display asked to see whole shows every chat
+    // it holds; otherwise the glance surface keeps its five.
+    let expanded = workspace_chat_drawer_expanded(app, ws_idx);
+    let shown = if expanded {
+        chats.len()
+    } else {
+        chats.len().min(WORKSPACE_CHAT_ROW_LIMIT)
+    };
+    for chat_idx in 0..shown {
         entries.push(WorkspaceListEntry::Chat { ws_idx, chat_idx });
     }
     if chats.len() > WORKSPACE_CHAT_ROW_LIMIT {
-        entries.push(WorkspaceListEntry::MoreChats { ws_idx });
+        entries.push(WorkspaceListEntry::MoreChats { ws_idx, expanded });
     }
 }
 
@@ -1549,7 +1573,7 @@ fn entry_row_metrics(
         }
         WorkspaceListEntry::Chat { ws_idx, .. }
         | WorkspaceListEntry::NoChats { ws_idx }
-        | WorkspaceListEntry::MoreChats { ws_idx } => {
+        | WorkspaceListEntry::MoreChats { ws_idx, .. } => {
             app.workspaces.get(*ws_idx)?;
             // A drawer's last row still has to separate its block from the
             // next one, or two repositories run together while a drawer is open.
@@ -1735,25 +1759,29 @@ pub(crate) fn agent_panel_scrollbar_rect(app: &AppState, area: Rect) -> Option<R
 /// workspace-indexed — folding a chat or a header into it would make that
 /// click resolve as a workspace, the same trap the tab strip already documents
 /// for its stage entries (TP-FTAB-ENTRY-05). TP-TREE-05.
-pub(crate) fn compute_workspace_list_areas(
-    app: &AppState,
-    area: Rect,
-) -> (
+/// Every laid-out row of the Spaces list, split by what a press there means:
+/// cards switch, chat rows resume, headers fold, and the "older chats" rows
+/// open a drawer the rest of the way. One vector per meaning, so a press can
+/// never resolve as the wrong kind of row.
+pub(crate) type WorkspaceListAreas = (
     Vec<crate::app::state::WorkspaceCardArea>,
     Vec<crate::app::state::WorkspaceChatRowArea>,
     Vec<crate::app::state::WorkspaceGroupHeaderArea>,
     Vec<crate::app::state::WorkspaceProjectHeaderArea>,
-) {
+    Vec<crate::app::state::WorkspaceMoreChatsArea>,
+);
+
+pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> WorkspaceListAreas {
     let ws_area = workspace_list_rect(area, app.sidebar_section_split, app.sidebar_chrome);
     if ws_area == Rect::default() {
-        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     }
 
     let metrics = workspace_list_scroll_metrics(app, ws_area);
     let body =
         workspace_list_body_rect(ws_area, should_show_scrollbar(metrics), app.sidebar_chrome);
     if body.width == 0 || body.height == 0 {
-        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     }
 
     let scroll = app.workspace_scroll;
@@ -1763,6 +1791,7 @@ pub(crate) fn compute_workspace_list_areas(
     let mut chat_rows = Vec::new();
     let mut group_headers = Vec::new();
     let mut project_headers = Vec::new();
+    let mut more_chats = Vec::new();
 
     let entries = workspace_list_entries(app);
     for (entry_idx, entry) in entries.iter().enumerate().skip(scroll) {
@@ -1801,8 +1830,19 @@ pub(crate) fn compute_workspace_list_areas(
                     chat_idx: *chat_idx,
                 });
             }
-            // Placeholders occupy a row but are inert: nothing to click.
-            WorkspaceListEntry::NoChats { .. } | WorkspaceListEntry::MoreChats { .. } => {}
+            // TP-DRAW-11: the "older" row is the way into the rest of the
+            // drawer and back out again, so it earns a rect of its own — in
+            // its own vector, because a click here must never resolve as the
+            // chat row above it.
+            WorkspaceListEntry::MoreChats { ws_idx, .. } => {
+                more_chats.push(crate::app::state::WorkspaceMoreChatsArea {
+                    rect,
+                    ws_idx: *ws_idx,
+                });
+            }
+            // The empty-drawer placeholder occupies a row but stays inert:
+            // there is nothing behind it to open.
+            WorkspaceListEntry::NoChats { .. } => {}
         }
         row_y = row_y
             .saturating_add(row_height)
@@ -1810,7 +1850,7 @@ pub(crate) fn compute_workspace_list_areas(
             .min(body_bottom);
     }
 
-    (cards, chat_rows, group_headers, project_headers)
+    (cards, chat_rows, group_headers, project_headers, more_chats)
 }
 
 pub(crate) fn compute_workspace_card_areas(
@@ -2548,6 +2588,7 @@ fn render_workspace_list(
     render_workspace_group_headers(app, frame, list_bottom);
 
     render_workspace_chat_rows(app, frame, list_bottom);
+    render_workspace_more_chats_rows(app, frame, list_bottom);
 
     if let Some(y) = insertion_row.filter(|y| *y < list_bottom) {
         let indicator_right = scrollbar_rect
@@ -2748,6 +2789,37 @@ fn render_workspace_group_headers(app: &AppState, frame: &mut Frame, list_bottom
 /// as a workspace itself — it is indented past the branch children, carries a
 /// chat glyph rather than a state dot, and never takes the accent BACKGROUND
 /// that marks the active workspace and the active agent card.
+/// Draw the "older chats" row of every drawer that has one.
+///
+/// TP-DRAW-11: the row says which way it goes — how many chats are still
+/// hidden, or that the drawer can be folded back. Before this it was laid
+/// out but never painted, so the desktop drawer ended in a blank line the
+/// reader could neither understand nor act on.
+fn render_workspace_more_chats_rows(app: &AppState, frame: &mut Frame, list_bottom: u16) {
+    let p = &app.palette;
+    for row in &app.view.workspace_more_chats_areas {
+        if row.rect.width == 0 || row.rect.y >= list_bottom {
+            continue;
+        }
+        let total = workspace_chat_rows_for(app, row.ws_idx).len();
+        let label = if workspace_chat_drawer_expanded(app, row.ws_idx) {
+            "   … fewer".to_string()
+        } else {
+            format!(
+                "   … {} older",
+                total.saturating_sub(WORKSPACE_CHAT_ROW_LIMIT)
+            )
+        };
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                super::text::truncate_end(&label, row.rect.width as usize),
+                Style::default().fg(p.overlay0),
+            )),
+            row.rect,
+        );
+    }
+}
+
 fn render_workspace_chat_rows(app: &AppState, frame: &mut Frame, list_bottom: u16) {
     let p = &app.palette;
     let now = std::time::SystemTime::now();
@@ -3910,7 +3982,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let body = workspace_list_body_rect(workspace_area, false, app.sidebar_chrome);
 
         let metrics = workspace_list_scroll_metrics(&app, workspace_area);
-        let (cards, _, _headers, _) = compute_workspace_list_areas(&app, area);
+        let (cards, _, _headers, _, _) = compute_workspace_list_areas(&app, area);
 
         assert_eq!(metrics.viewport_rows, 1);
         assert_eq!(cards.len(), 1);
@@ -5468,7 +5540,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let area = Rect::new(0, 0, 30, 24);
 
         let entries = workspace_list_entries(&app);
-        let (cards, chat_rows, _headers, _) = compute_workspace_list_areas(&app, area);
+        let (cards, chat_rows, _headers, _, _) = compute_workspace_list_areas(&app, area);
 
         assert_eq!(entries.len(), 3, "one workspace plus its two chats");
         assert_eq!(cards.len(), 1);
@@ -5493,7 +5565,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let (mut app, key) = app_with_chat_drawer(3);
         app.expanded_chat_workspaces.insert(key);
 
-        let (cards, chat_rows, _headers, _) =
+        let (cards, chat_rows, _headers, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 24));
 
         assert_eq!(cards.len(), 1, "only real workspaces become cards");
@@ -6380,6 +6452,111 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 crate::detect::AgentState::Idle,
             );
         }
+    }
+
+    /// A workspace whose drawer holds more chats than the glance limit.
+    fn app_with_a_deep_drawer(chat_count: usize) -> AppState {
+        let mut app = app_with_worktree_tree(40);
+        let key =
+            crate::persist::workspace_chats::ledger_key(&std::path::PathBuf::from("/repo/herdr"));
+        let rows = (0..chat_count)
+            .map(|i| crate::app::state::WorkspaceChatRow {
+                session_id: format!("session-{i}"),
+                agent: "claude".to_string(),
+                title: Some(format!("chat {i}")),
+                last_seen_ms: 1_000 + i as u64,
+                last_modified: None,
+            })
+            .collect();
+        app.workspace_chat_rows.insert(key.clone(), rows);
+        app.expanded_chat_workspaces.insert(key);
+        app
+    }
+
+    fn drawer_rows(app: &AppState, ws_idx: usize) -> (usize, Option<bool>) {
+        let entries = workspace_list_entries(app);
+        let chats = entries
+            .iter()
+            .filter(
+                |entry| matches!(entry, WorkspaceListEntry::Chat { ws_idx: w, .. } if *w == ws_idx),
+            )
+            .count();
+        let more = entries.iter().find_map(|entry| match entry {
+            WorkspaceListEntry::MoreChats {
+                ws_idx: w,
+                expanded,
+            } if *w == ws_idx => Some(*expanded),
+            _ => None,
+        });
+        (chats, more)
+    }
+
+    // TP-DRAW-10: the drawer is a glance surface until asked otherwise — five
+    // rows and a way to see the rest. Opened all the way it shows every chat
+    // it holds, and the row that opened it stays as the way back.
+    #[test]
+    fn a_deep_drawer_shows_five_until_it_is_opened_all_the_way() {
+        let mut app = app_with_a_deep_drawer(9);
+
+        assert_eq!(
+            drawer_rows(&app, 0),
+            (WORKSPACE_CHAT_ROW_LIMIT, Some(false)),
+            "the glance surface keeps its five and offers the rest"
+        );
+
+        app.toggle_full_chat_drawer(0);
+        assert_eq!(
+            drawer_rows(&app, 0),
+            (9, Some(true)),
+            "opened all the way, every chat is drawn and the row stays as the way back"
+        );
+
+        app.toggle_full_chat_drawer(0);
+        assert_eq!(
+            drawer_rows(&app, 0),
+            (WORKSPACE_CHAT_ROW_LIMIT, Some(false)),
+            "the same row folds it back — a switch with no off position is not a switch"
+        );
+    }
+
+    // TP-DRAW-11: the row is drawn, and it says which way it goes. It was laid
+    // out but never painted before, so the drawer ended in a blank line.
+    #[test]
+    fn the_older_chats_row_is_painted_and_says_which_way_it_goes() {
+        let mut app = app_with_a_deep_drawer(9);
+        let rows = drawn_sidebar_rows(&mut app, 24);
+        assert!(
+            rows.iter().any(|row| row.contains("… 4 older")),
+            "the folded drawer names how many chats it is hiding: {rows:?}"
+        );
+
+        // Opened, the drawer is nine rows deeper, so the assertion needs a
+        // panel tall enough to reach its last row — the row's existence is
+        // proven by the entries test; this one is about what it says.
+        app.toggle_full_chat_drawer(0);
+        let rows = drawn_sidebar_rows(&mut app, 34);
+        assert!(
+            rows.iter().any(|row| row.contains("… fewer")),
+            "the opened drawer offers the way back: {rows:?}"
+        );
+    }
+
+    // TP-DRAW-12: how deep a drawer is opened belongs to the screen doing the
+    // reading — one display digging through old chats must not stretch the
+    // drawer on another.
+    #[test]
+    fn opening_a_drawer_all_the_way_stays_on_this_display() {
+        let mut here = app_with_a_deep_drawer(9);
+        let there = app_with_a_deep_drawer(9);
+
+        here.toggle_full_chat_drawer(0);
+
+        assert_eq!(drawer_rows(&here, 0).0, 9);
+        assert_eq!(
+            drawer_rows(&there, 0).0,
+            WORKSPACE_CHAT_ROW_LIMIT,
+            "the other screen keeps the drawer it was reading"
+        );
     }
 
     // TP-FOCUS-SW-01: focus is opt-in. While it is off the tree is exactly
@@ -7426,7 +7603,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.sidebar_spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
 
         let area = Rect::new(0, 0, 30, 20);
-        let (cards, _, group_headers, _) = compute_workspace_list_areas(&app, area);
+        let (cards, _, group_headers, _, _) = compute_workspace_list_areas(&app, area);
         let drawn_rows: u16 = cards.iter().map(|card| card.rect.height).sum::<u16>()
             + group_headers
                 .iter()
@@ -7483,7 +7660,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         ];
         app.sidebar_spaces.row_gap = 1;
 
-        let (cards, chat_rows, group_headers, _) =
+        let (cards, chat_rows, group_headers, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 20));
 
         assert!(chat_rows.is_empty());
@@ -7519,7 +7696,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.sidebar_spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
         app.sidebar_spaces.row_gap = 2;
 
-        let (spacious, _, _headers, _) =
+        let (spacious, _, _headers, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
         // TP-TREE-06: the three checkouts of one repository are one block and
         // stay compact; the gap falls where the next top-level unit begins.
@@ -7542,7 +7719,8 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(spacious_metrics.max_offset_from_bottom, 3);
 
         app.sidebar_spaces.row_gap = 0;
-        let (packed, _, _headers, _) = compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
+        let (packed, _, _headers, _, _) =
+            compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
         assert!(packed
             .windows(2)
             .all(|pair| pair[1].rect.y == pair[0].rect.y + pair[0].rect.height));
@@ -7636,7 +7814,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let area = Rect::new(0, 0, 30, 20);
         app.workspace_scroll = normalized_workspace_scroll(&app, area, 2);
 
-        let (cards, headers, _headers, _) = compute_workspace_list_areas(&app, area);
+        let (cards, headers, _headers, _, _) = compute_workspace_list_areas(&app, area);
 
         assert!(headers.is_empty());
         assert_eq!(app.workspace_scroll, 0);
@@ -7683,7 +7861,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.mode = Mode::Terminal;
         app.workspace_scroll = 1;
 
-        let (cards, headers, _headers, _) =
+        let (cards, headers, _headers, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 12));
 
         assert!(headers.is_empty());

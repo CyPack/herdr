@@ -2225,6 +2225,22 @@ impl AppState {
     /// of touching a set that was never consulted; opening a quieted drawer
     /// withdraws the quieting first — the derivation returns on its own —
     /// and only a drawer nothing would derive needs the expanded set.
+    /// Open this drawer past the glance limit, or fold it back to it.
+    ///
+    /// TP-DRAW-11: the "older chats" row is both doors. Per display and keyed
+    /// through the same ledger key the drawer's openness uses, so stretching
+    /// one screen's drawer stretches no other (TP-DRAW-12).
+    pub(crate) fn toggle_full_chat_drawer(&mut self, ws_idx: usize) {
+        let Some(workspace) = self.workspaces.get(ws_idx) else {
+            return;
+        };
+        let key = crate::persist::workspace_chats::ledger_key(workspace.effective_cwd());
+        if !self.fully_open_chat_drawers.remove(&key) {
+            self.fully_open_chat_drawers.insert(key);
+        }
+        self.mark_session_dirty();
+    }
+
     pub(crate) fn toggle_chat_drawer(&mut self, ws_idx: usize) {
         let Some(workspace) = self.workspaces.get(ws_idx) else {
             return;

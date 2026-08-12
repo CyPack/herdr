@@ -450,8 +450,9 @@ fn compute_view_internal(
         workspace_chat_row_areas,
         workspace_group_header_areas,
         workspace_project_header_areas,
+        workspace_more_chats_areas,
     ) = if app.sidebar_collapsed || !show_spaces_content {
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new())
     } else {
         sidebar::compute_workspace_list_areas(app, sidebar_area)
     };
@@ -558,6 +559,7 @@ fn compute_view_internal(
         sidebar_rect: sidebar_area,
         workspace_card_areas,
         workspace_chat_row_areas,
+        workspace_more_chats_areas,
         workspace_group_header_areas,
         workspace_project_header_areas,
         sidebar_tab_hit_areas,
@@ -724,6 +726,7 @@ fn compute_mobile_view(
         sidebar_rect: Rect::default(),
         workspace_card_areas: Vec::new(),
         workspace_chat_row_areas: Vec::new(),
+        workspace_more_chats_areas: Vec::new(),
         workspace_group_header_areas: Vec::new(),
         workspace_project_header_areas: Vec::new(),
         sidebar_tab_hit_areas: Vec::new(),
