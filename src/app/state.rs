@@ -3309,6 +3309,19 @@ pub struct AppState {
     /// here instead. Per display for the same reason the folds are: one
     /// screen quieting a drawer must not quiet it anywhere else.
     pub suppressed_chat_drawers: std::collections::HashSet<String>,
+    /// The directory whose chats belong to no checkout — the daily ones.
+    ///
+    /// `$HOME` in practice, and stated rather than derived at the point of use
+    /// so tests can point it somewhere harmless and so a client that has no
+    /// home has an honest `None` instead of a guess. `None` means the section
+    /// does not exist at all, which is also what an empty directory produces.
+    ///
+    /// Why this exists: a chat started outside any repository files itself
+    /// under `$HOME`, and since TP-WSID-01 made `effective_cwd` prefer the
+    /// checkout, no workspace claims that directory any more. Measured
+    /// 2026-08-12: 1266 transcripts there, 0 workspaces holding it — those
+    /// chats were reachable from nowhere in the sidebar.
+    pub daily_chat_cwd: Option<std::path::PathBuf>,
     /// Git branch per live terminal cwd, for the agent panel's secondary
     /// label. Kept fresh by the runtime's HEAD-mtime fingerprint poll;
     /// read-only during render.
@@ -3854,7 +3867,7 @@ impl AppState {
         // otherwise "show older" would promise chats the parse never fetched.
         // Still bounded: parsing opens whole files.
         const DRAWER_FETCH_LIMIT_FULL: usize = 60;
-        let keys: Vec<(String, String)> = self
+        let mut keys: Vec<(String, String)> = self
             .workspaces
             .iter()
             .map(|ws| {
@@ -3864,6 +3877,23 @@ impl AppState {
                 )
             })
             .collect();
+
+        // TP-DAILY-01: the daily directory is read whether or not anything
+        // lives there. Every other key on this list is here because a
+        // workspace asked for it; this one is here because nothing ever will
+        // — since TP-WSID-01 made `effective_cwd` prefer the checkout, no
+        // workspace holds `$HOME`, and the chats started there had become
+        // reachable from nowhere in the sidebar.
+        //
+        // Skipped when a workspace already claims that same directory: it is
+        // then that workspace's drawer, and reading it twice would say the
+        // same thing twice.
+        if let Some(daily) = self.daily_chat_cwd.clone() {
+            let key = crate::persist::workspace_chats::ledger_key(&daily);
+            if !keys.iter().any(|(existing, _)| existing == &key) {
+                keys.push((key, daily.to_string_lossy().into_owned()));
+            }
+        }
 
         for (key, cwd) in &keys {
             let limit = if self.fully_open_chat_drawers.contains(key) {
@@ -4299,6 +4329,10 @@ impl AppState {
             preview_placement: crate::config::PreviewPlacement::default(),
             collapsed_project_paths: std::collections::HashSet::new(),
             workspace_chat_rows: std::collections::HashMap::new(),
+            // Tests point this at a scratch directory when they mean to; the
+            // default is no daily section at all, so every existing fixture
+            // keeps producing exactly the list it produced before.
+            daily_chat_cwd: None,
             spaces_focus_only: false,
             fully_open_chat_drawers: std::collections::HashSet::new(),
             expanded_chat_workspaces: std::collections::HashSet::new(),
@@ -5406,6 +5440,157 @@ mod tests {
                 .and_then(|row| row.title.as_deref()),
             Some("in both"),
             "the store is authoritative for the title"
+        );
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    /// A scratch directory standing in for `$HOME`, plus its ledger key.
+    ///
+    /// Never the real home: these tests write transcripts, and the one
+    /// directory a user cannot afford to have a test write into is theirs.
+    fn daily_probe_dir(state: &mut AppState, tag: &str) -> (std::path::PathBuf, String) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let cwd = std::env::temp_dir().join(format!(
+            "herdr-daily-{}-{}-{}",
+            std::process::id(),
+            tag,
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&cwd).expect("daily probe dir");
+        let key = crate::persist::workspace_chats::ledger_key(&cwd);
+        state.daily_chat_cwd = Some(cwd.clone());
+        (cwd, key)
+    }
+
+    // TP-DAILY-01: the whole point. Every other drawer is read because a
+    // workspace asked for it; this directory has no workspace and never will,
+    // so a read that follows the workspace list finds nothing. Measured
+    // 2026-08-12: 1266 transcripts under $HOME, 0 workspaces holding it.
+    #[test]
+    fn daily_chats_are_read_even_when_no_workspace_lives_in_that_directory() {
+        let fake = FakeProjectsRoot::new("daily-nows");
+        let mut state = AppState::test_new();
+        let (cwd, key) = daily_probe_dir(&mut state, "nows");
+        for (id, title) in [("d1", "quick question"), ("d2", "scratch thought")] {
+            fake.write_session(
+                &cwd.to_string_lossy(),
+                id,
+                &[format!(r#"{{"type":"custom-title","customTitle":"{title}"}}"#).as_str()],
+            );
+        }
+        assert!(
+            state.workspaces.is_empty(),
+            "the premise: nothing claims this directory"
+        );
+
+        state.merge_workspace_chat_rows_in(&fake.root);
+
+        let rows = state.workspace_chat_rows.get(&key).expect("daily rows");
+        assert_eq!(rows.len(), 2, "both spontaneous chats are listed: {rows:?}");
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    // TP-DAILY-01: a client with no home, or one whose home holds no chats,
+    // must not be a client with a broken sidebar.
+    #[test]
+    fn a_daily_directory_that_is_not_there_costs_nothing() {
+        let fake = FakeProjectsRoot::new("daily-missing");
+        let mut state = AppState::test_new();
+        state.daily_chat_cwd = Some(std::env::temp_dir().join("herdr-daily-does-not-exist"));
+        state.merge_workspace_chat_rows_in(&fake.root);
+        let key = crate::persist::workspace_chats::ledger_key(
+            state.daily_chat_cwd.as_deref().expect("set above"),
+        );
+        assert!(
+            state
+                .workspace_chat_rows
+                .get(&key)
+                .is_none_or(Vec::is_empty),
+            "a directory with no transcripts contributes no rows"
+        );
+
+        // And with no home at all the merge is simply the merge it always was.
+        let mut homeless = AppState::test_new();
+        assert!(homeless.daily_chat_cwd.is_none(), "the default is None");
+        homeless.merge_workspace_chat_rows_in(&fake.root);
+        assert!(
+            homeless.workspace_chat_rows.is_empty(),
+            "no home, no daily section, no change to anything else"
+        );
+    }
+
+    // TP-DAILY-01: the read budget is the drawer's, not a second one. The
+    // glance surface reads twelve; a section opened all the way reads sixty,
+    // or "show older" would promise chats the parse never fetched. Two
+    // different answers to "how many" would be two different mental models of
+    // one drawer. The rows those chats become belong to the emission layer
+    // and carry their own id there; naming it here would register a gate that
+    // has no test behind it yet.
+    #[test]
+    fn an_open_daily_drawer_reads_past_the_glance_limit() {
+        let fake = FakeProjectsRoot::new("daily-deep");
+        let mut state = AppState::test_new();
+        let (cwd, key) = daily_probe_dir(&mut state, "deep");
+        for index in 0..14 {
+            fake.write_session(
+                &cwd.to_string_lossy(),
+                &format!("d{index:02}"),
+                &[format!(r#"{{"type":"custom-title","customTitle":"chat {index}"}}"#).as_str()],
+            );
+        }
+
+        state.merge_workspace_chat_rows_in(&fake.root);
+        assert_eq!(
+            state.workspace_chat_rows.get(&key).map(Vec::len),
+            Some(12),
+            "closed, the section reads the glance budget"
+        );
+
+        let mut open = AppState::test_new();
+        open.daily_chat_cwd = Some(cwd.clone());
+        open.fully_open_chat_drawers.insert(key.clone());
+        open.merge_workspace_chat_rows_in(&fake.root);
+        assert_eq!(
+            open.workspace_chat_rows.get(&key).map(Vec::len),
+            Some(14),
+            "opened all the way, it reads everything it could show"
+        );
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    // TP-DAILY-01 + TP-DRAW-03: one row per chat here too. A chat the ledger
+    // witnessed and the store also holds is one conversation, and two rows
+    // for it raise the question "which one is live" that has no answer.
+    #[test]
+    fn a_daily_chat_the_ledger_also_saw_stays_one_row() {
+        let fake = FakeProjectsRoot::new("daily-union");
+        let mut state = AppState::test_new();
+        let (cwd, key) = daily_probe_dir(&mut state, "union");
+        fake.write_session(
+            &cwd.to_string_lossy(),
+            "both",
+            &[r#"{"type":"custom-title","customTitle":"seen twice"}"#],
+        );
+        state.workspace_chat_rows.insert(
+            key.clone(),
+            vec![WorkspaceChatRow {
+                session_id: "both".into(),
+                agent: "claude".into(),
+                title: None,
+                last_seen_ms: 1,
+                last_modified: None,
+            }],
+        );
+
+        state.merge_workspace_chat_rows_in(&fake.root);
+
+        let rows = state.workspace_chat_rows.get(&key).expect("daily rows");
+        assert_eq!(rows.len(), 1, "one conversation, one row: {rows:?}");
+        assert_eq!(
+            rows[0].title.as_deref(),
+            Some("seen twice"),
+            "the store is authoritative for the title, exactly as elsewhere"
         );
         let _ = std::fs::remove_dir_all(&cwd);
     }

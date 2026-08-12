@@ -799,6 +799,10 @@ impl App {
             preview_bindings: Vec::new(),
             collapsed_project_paths: std::collections::HashSet::new(),
             workspace_chat_rows: std::collections::HashMap::new(),
+            // The same directory `super+t` starts a chat in — the reading half
+            // of a verb that already exists (`queue_home_chat_tab`). A client
+            // with no home simply has no daily section.
+            daily_chat_cwd: crate::integration::home_dir().ok(),
             expanded_chat_workspaces: std::collections::HashSet::new(),
             suppressed_chat_drawers: std::collections::HashSet::new(),
             tab_branch_cache: std::collections::HashMap::new(),
