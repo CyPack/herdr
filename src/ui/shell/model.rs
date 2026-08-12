@@ -266,6 +266,8 @@ impl ShellLayout {
             if !placed_components.insert(placement.component) {
                 return Err(ShellValidationError::DuplicateComponentPlacement);
             }
+            // TP-CHROME-34: a placement into a region the tree does not have
+            // draws nothing and reports nothing; the gate has to notice.
             let region = canonical_region(placement.region);
             if !regions.contains(&region) {
                 return Err(ShellValidationError::PlacementRegionNotInTree(region));

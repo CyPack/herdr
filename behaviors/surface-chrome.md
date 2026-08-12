@@ -25,6 +25,27 @@ Design rationale and the measurements behind each decision:
 | TP-CHROME-06 | Every enabled-edge composition carries its own revision, and the exact composition is in the geometry key | Two different screens answering to one identity is CLA3: the cache returns the old geometry and hit testing goes to the wrong region | `every_edge_composition_has_its_own_revision` |
 | TP-CHROME-07 | A composition that fails validation falls back to the legacy tree instead of propagating an error | A shell that cannot be composed must still show a shell; config is untrusted input | `a_bar_composition_that_does_not_validate_falls_back_to_the_legacy_tree` |
 
+## Bar sections — `[[shell.bars.<edge>.sections]]`
+
+A bar can be divided into at most eight parts along its long axis. A section is
+an address: what fills it and what a click on it does are answered by later
+layers, and the number it was written at is the only stable name it has.
+
+| ID | Behavior | What breaks if it is lost | Verified by |
+|---|---|---|---|
+| TP-CHROME-23 | More sections than a bar may hold leaves it undivided with a warning, rather than keeping the first eight | Truncation hands someone a layout they did not write and renumbers every section after the one that vanished | `a_bar_refuses_a_ninth_section_rather_than_dropping_it` |
+| TP-CHROME-24 | Exactly the maximum number of sections is accepted | A ceiling that cannot be reached is an off-by-one that silently destroys a section | `a_bar_accepts_exactly_its_maximum_number_of_sections` |
+| TP-CHROME-25 | Section widths come from the shell solver's own three phases, including its largest-remainder tie-break | A second distribution implementation drifts by one cell the first time two remainders tie, and both answers stay internally consistent | `section_widths_come_from_the_shell_solvers_own_arithmetic`, `an_odd_remainder_goes_to_the_earlier_section_every_time` |
+| TP-CHROME-26 | A top or bottom bar is divided across its width; a left or right bar down its height | The wrong axis collapses every section onto the same cells and still looks plausible | `a_side_bar_divides_its_height_and_an_edge_bar_divides_its_width` |
+| TP-CHROME-27 | Sections account for the bar's content area exactly, and stay inside its border | A short division leaves an undrawn strip; a long one writes into the region next door; either escapes the frame it was promised | `sections_fill_the_bar_exactly_without_overrunning_it`, `sections_of_a_bordered_bar_stay_inside_its_border` |
+| TP-CHROME-28 | A section squeezed to no cells is not a target | A zero-width rectangle that still answers clicks answers for its neighbour | `a_section_squeezed_to_nothing_is_not_reported_as_occupied` |
+| TP-CHROME-29 | A section is clicked exactly where it is drawn, framed or not, and only against the generation that drew it | This is the fourth place the same defect could appear: drawing reads the live value, hit testing is handed a constant, and both rectangles stay plausible | `every_bar_section_is_clicked_exactly_where_it_is_drawn`, `a_bar_section_answers_only_for_the_generation_that_drew_it` |
+| TP-CHROME-30 | A different division is a different geometry identity, and re-dividing advances the generation exactly once | Same key means the cache returns the previous rectangles and every click in that bar answers for the wrong section | `changing_only_a_sections_policy_changes_the_bars_identity`, `redividing_a_bar_misses_the_cache_and_advances_the_generation_once` |
+| TP-CHROME-31 | One unreadable section leaves the whole bar undivided rather than dropping just that entry | Dropping one entry shifts every later index, silently moving whatever those indices address | `an_unreadable_section_leaves_the_bar_undivided_rather_than_renumbered`, `a_section_with_impossible_numbers_is_refused` |
+| TP-CHROME-32 | A sections array survives the live config reader, not just the model | The layer that added `[shell.bars]` tested the model and never a file; a dropped array reloads as an undivided bar while the file plainly says otherwise | `a_bars_sections_array_survives_the_live_reader` |
+| TP-CHROME-33 | An undivided bar projects no section targets at all, and is still a target itself | Everyone who never divides a bar must pay nothing for the feature | `an_undivided_bar_contributes_no_section_hits`, `a_bar_without_sections_divides_into_nothing` |
+| TP-CHROME-34 | A component placement naming a region the tree does not contain is refused | Such a placement draws nothing and reports nothing; the gate is the only place that can notice | `shell_rejects_a_placement_whose_region_is_not_in_the_tree` |
+
 ## Frame tone — one vocabulary for every framed surface
 
 | ID | Behavior | What breaks if it is lost | Verified by |

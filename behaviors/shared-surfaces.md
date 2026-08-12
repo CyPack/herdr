@@ -16,8 +16,9 @@ consult them under the same rule during a sync:
 `app/runtime.rs`), [`agent-panel.md`](agent-panel.md) (`ui/sidebar.rs`),
 [`workspace-chats.md`](workspace-chats.md) (`app/session.rs`, plus the fork-only
 `persist/workspace_chats.rs`) and [`surface-chrome.md`](surface-chrome.md)
-(`ui/sidebar.rs`, `ui/widgets.rs`, `ui.rs`, `app/input/sidebar.rs`, plus the
-fork-only `ui/shell/source.rs`).
+(`ui/sidebar.rs`, `ui/widgets.rs`, `ui.rs`, `app/input/sidebar.rs`,
+`ui/shell/model.rs`, `ui/shell/layout.rs`, `ui/shell/view.rs`,
+`config/model.rs`, `config/io.rs`, plus the fork-only `ui/shell/source.rs`).
 
 `surface-chrome.md` is the one to watch hardest in `ui/widgets.rs`: the chip and
 bar shells sit beside upstream's own popup and modal helpers in that file, and a
@@ -26,6 +27,18 @@ anywhere. Its geometry also reaches into `app/input/sidebar.rs`, where drawing
 and hit testing have to keep reading the same chrome — a resolution that
 restores a constant there compiles, passes, and silently moves every row in the
 left panel one cell off what the person can see.
+
+The bar-section half of that family reaches deeper into upstream's own shell
+module, and each of those three files loses something different if a merge
+takes upstream's side. `ui/shell/layout.rs` holds `allocate_tracks`, the
+extracted three-phase core: restoring upstream's inlined version compiles
+cleanly and leaves the section allocator behind, at which point sections are
+divided by nothing at all. `ui/shell/view.rs` holds the `BarSection` hit target
+and the pass that produces it from the key's own bars — losing it leaves the
+sections drawn but unclickable, which reads as an input bug rather than a lost
+merge. `ui/shell/model.rs` holds `Hash` on `TrackPolicy` and the placement
+reachability check; without the first, the sections cannot live in the geometry
+key at all.
 
 Format and rules: [`README.md`](README.md).
 

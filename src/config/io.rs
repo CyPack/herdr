@@ -427,6 +427,8 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
     // `[preview]` and `[tailscale]` still are — recorded rather than fixed
     // here, because `tailscale.pinned_devices` is written by the app and
     // changing when it is re-read is a separate measurement.
+    // TP-CHROME-32: this one section carries the whole shell subtree, arrays of
+    // section tables included, so a bar's division survives a reload intact.
     load_live_section(
         table,
         "shell",

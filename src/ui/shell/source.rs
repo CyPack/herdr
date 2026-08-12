@@ -90,6 +90,8 @@ impl BarSections {
         len: 0,
     };
 
+    // TP-CHROME-23/24/31: the ceiling is reachable, exceeding it is refused,
+    // and one unreadable entry costs the division rather than the numbering.
     /// Read an ordered list of sections, refusing rather than truncating.
     ///
     /// Nine sections is somebody's mistake, and silently keeping the first
@@ -193,6 +195,8 @@ pub(crate) struct BarTrack {
     /// Whether the strip wears a panel border. It costs one cell on each side,
     /// which is why a bordered bar is refused below three.
     bordered: bool,
+    // TP-CHROME-30: the division lives inside the value the geometry key
+    // compares, so a differently divided bar cannot share an identity.
     sections: BarSections,
 }
 
@@ -232,6 +236,8 @@ impl BarTrack {
         self.sections
     }
 
+    // TP-CHROME-25..28: the shell's own allocator, the edge's own axis, the
+    // border's own inset, and no target for a section that got no cells.
     /// Divide this bar's content area among its sections.
     ///
     /// `outer` is the whole strip as the shell solver placed it; the border is

@@ -242,6 +242,8 @@ const BAR_REGIONS: [RegionId; 4] = [
     RegionId::RightPanel,
 ];
 
+// TP-CHROME-29/33: sections are clicked where they are drawn, against this
+// generation only, and an undivided bar contributes nothing here.
 /// Put each bar's sections on top of the bar itself.
 ///
 /// Appended after the region hits so that `hit_at`'s reverse scan finds the
