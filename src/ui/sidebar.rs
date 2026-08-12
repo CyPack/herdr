@@ -121,22 +121,59 @@ fn agent_panel_sort_label(sort: AgentPanelSort) -> &'static str {
     }
 }
 
-pub(crate) fn agent_panel_toggle_rect(area: Rect, sort: AgentPanelSort) -> Rect {
-    agent_panel_header_label_rect(area, agent_panel_sort_label(sort))
+pub(crate) fn agent_panel_toggle_rect(
+    area: Rect,
+    sort: AgentPanelSort,
+    chrome: crate::ui::shell::SidebarChrome,
+) -> Rect {
+    agent_panel_header_label_rect(area, agent_panel_sort_label(sort), chrome)
 }
 
-fn agent_panel_header_label_rect(area: Rect, label: &str) -> Rect {
+/// Where a header control sits, top-right of the agents half.
+///
+/// The header already reserves [`AGENT_PANEL_HEADER_ROWS`] rows, which is
+/// exactly what a chip needs, so asking for chips costs the list nothing here —
+/// the frame simply takes the rows the separator and its blank line were using.
+fn agent_panel_header_label_rect(
+    area: Rect,
+    label: &str,
+    chrome: crate::ui::shell::SidebarChrome,
+) -> Rect {
     if area.width == 0 || area.height < 2 {
         return Rect::default();
     }
 
-    let width = display_width_u16(label).min(area.width);
-    Rect::new(
-        area.x + area.width.saturating_sub(width),
-        area.y + 1,
-        width,
-        1,
-    )
+    let width = chrome
+        .control_width(display_width_u16(label), label)
+        .min(area.width);
+    let (y, height) = if chrome.chips.is_some() {
+        (area.y, crate::ui::widgets::CHIP_ROWS.min(area.height))
+    } else {
+        (area.y + 1, 1)
+    };
+    Rect::new(area.x + area.width.saturating_sub(width), y, width, height)
+}
+
+/// The mirror of [`agent_panel_header_label_rect`] on the left edge: where the
+/// half's own name is written.
+fn agent_panel_header_name_rect(
+    area: Rect,
+    label: &str,
+    chrome: crate::ui::shell::SidebarChrome,
+) -> Rect {
+    if area.width == 0 || area.height < 2 {
+        return Rect::default();
+    }
+
+    let width = chrome
+        .control_width(display_width_u16(label), label)
+        .min(area.width);
+    let (y, height) = if chrome.chips.is_some() {
+        (area.y, crate::ui::widgets::CHIP_ROWS.min(area.height))
+    } else {
+        (area.y + 1, 1)
+    };
+    Rect::new(area.x, y, width, height)
 }
 
 fn active_agent_view_label(app: &AppState) -> Option<&str> {
@@ -3126,7 +3163,16 @@ fn render_projects_list(app: &AppState, frame: &mut Frame, area: Rect) {
             } else {
                 Style::default().fg(p.overlay0)
             };
-            frame.render_widget(Paragraph::new(Span::styled("actives", style)), toggle);
+            // This control shares the footer with the two beside it, so it
+            // wears the same clothes: a rectangle already sized for a chip and
+            // then drawn as a bare label would leave the frame's cells empty
+            // and still clickable.
+            let framed = app.sidebar_chrome.chips.and_then(|tint| {
+                crate::ui::widgets::render_chip(frame, toggle, "actives", tint, style, p.panel_bg)
+            });
+            if framed.is_none() {
+                frame.render_widget(Paragraph::new(Span::styled("actives", style)), toggle);
+            }
         }
     }
 }
@@ -3175,36 +3221,59 @@ fn render_agent_detail(
         return;
     }
 
-    let sep_line = "─".repeat(area.width as usize);
-    frame.render_widget(
-        Paragraph::new(Span::styled(&sep_line, Style::default().fg(p.surface_dim))),
-        Rect::new(area.x, area.y, area.width, 1),
-    );
-
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![Span::styled(
-            " agents",
-            Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD),
-        )])),
-        Rect::new(area.x, area.y + 1, area.width, 1),
-    );
     let control_label = active_agent_view_label(app)
         .unwrap_or_else(|| agent_panel_sort_label(app.agent_panel_sort));
-    let toggle_rect = agent_panel_header_label_rect(area, control_label);
-    if toggle_rect != Rect::default() {
-        let color = if app.agent_view_override.is_some() {
+    let name_style = Style::default().fg(p.overlay0).add_modifier(Modifier::BOLD);
+    let control_style = Style::default()
+        .fg(if app.agent_view_override.is_some() {
             p.accent
         } else {
             p.overlay0
-        };
-        frame.render_widget(
-            Paragraph::new(Span::styled(
-                control_label,
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
-            ))
-            .alignment(Alignment::Right),
-            toggle_rect,
+        })
+        .add_modifier(Modifier::BOLD);
+    let name_rect = agent_panel_header_name_rect(area, "agents", app.sidebar_chrome);
+    let toggle_rect = agent_panel_header_label_rect(area, control_label, app.sidebar_chrome);
+
+    // With chips, the two labels become buttons in the header's own top
+    // corners, and the frames replace the separator that used to divide the
+    // halves -- so the list keeps every row it had. Either both are framed or
+    // neither is: one boxed label beside one bare one reads as a rendering bug.
+    let framed = app.sidebar_chrome.chips.filter(|_| {
+        name_rect.x + name_rect.width <= toggle_rect.x && toggle_rect != Rect::default()
+    });
+    let drew_chips = framed.is_some_and(|tint| {
+        let name = crate::ui::widgets::render_chip(
+            frame, name_rect, "agents", tint, name_style, p.panel_bg,
         );
+        let control = crate::ui::widgets::render_chip(
+            frame,
+            toggle_rect,
+            control_label,
+            tint,
+            control_style,
+            p.panel_bg,
+        );
+        name.is_some() && control.is_some()
+    });
+
+    if !drew_chips {
+        let sep_line = "─".repeat(area.width as usize);
+        frame.render_widget(
+            Paragraph::new(Span::styled(&sep_line, Style::default().fg(p.surface_dim))),
+            Rect::new(area.x, area.y, area.width, 1),
+        );
+
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![Span::styled(" agents", name_style)])),
+            Rect::new(area.x, area.y + 1, area.width, 1),
+        );
+        if toggle_rect != Rect::default() {
+            frame.render_widget(
+                Paragraph::new(Span::styled(control_label, control_style))
+                    .alignment(Alignment::Right),
+                toggle_rect,
+            );
+        }
     }
 
     let details = agent_panel_entries_from(app, terminal_runtimes);
@@ -3930,6 +3999,65 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert!(
             !footer_text.contains('╭'),
             "two frames cannot share this width, so neither should have been drawn: {footer_text:?}"
+        );
+    }
+
+    // T63 · the agents half's own two labels become buttons in its top corners,
+    // and they cost the list nothing: the header already reserved the rows a
+    // frame needs, so the frames simply take the ones the separator was using.
+    #[test]
+    fn the_agents_header_wears_its_labels_as_corner_chips() {
+        let area = Rect::new(0, 0, 34, 26);
+        let app = app_with_footer_chips(area, true);
+
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal
+            .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        let (_, detail) =
+            expanded_sidebar_sections(area, app.sidebar_section_split, app.sidebar_chrome);
+        let name = agent_panel_header_name_rect(detail, "agents", app.sidebar_chrome);
+        let sort = agent_panel_toggle_rect(detail, app.agent_panel_sort, app.sidebar_chrome);
+
+        assert_eq!(name.x, detail.x, "the name sits in the left corner");
+        assert_eq!(
+            sort.x + sort.width,
+            detail.x + detail.width,
+            "the sort control sits in the right corner"
+        );
+        assert_eq!(name.y, detail.y, "and both sit at the top");
+        assert_eq!(sort.y, detail.y);
+        assert!(
+            name.x + name.width <= sort.x,
+            "the two chips do not overlap: {name:?} {sort:?}"
+        );
+
+        for (label, rect) in [("agents", name), ("grouped", sort)] {
+            assert_eq!(
+                buffer[(rect.x, rect.y)].symbol(),
+                "╭",
+                "{label} has no frame at {rect:?}"
+            );
+            let row: String = (rect.x..rect.x + rect.width)
+                .map(|x| buffer[(x, rect.y + 1)].symbol())
+                .collect();
+            assert!(
+                row.contains(label),
+                "{label} lost its text inside its frame: {row:?}"
+            );
+        }
+
+        // AGENT_PANEL_HEADER_ROWS already covered these rows, so the list below
+        // must start exactly where it always did.
+        let bare = app_with_footer_chips(area, false);
+        let (_, bare_detail) =
+            expanded_sidebar_sections(area, bare.sidebar_section_split, bare.sidebar_chrome);
+        assert_eq!(
+            agent_panel_body_rect(detail, false).height,
+            agent_panel_body_rect(bare_detail, false).height,
+            "chips in the header cost the agent list nothing"
         );
     }
 

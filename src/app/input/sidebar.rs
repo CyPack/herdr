@@ -704,9 +704,13 @@ impl AppState {
         let (_, detail_area) = crate::ui::expanded_sidebar_sections(
             self.view.sidebar_rect,
             self.sidebar_section_split,
-            crate::ui::shell::SidebarChrome::NONE,
+            self.sidebar_chrome,
         );
-        let rect = crate::ui::agent_panel_toggle_rect(detail_area, self.agent_panel_sort);
+        let rect = crate::ui::agent_panel_toggle_rect(
+            detail_area,
+            self.agent_panel_sort,
+            self.sidebar_chrome,
+        );
         rect.width > 0
             && col >= rect.x
             && col < rect.x + rect.width
@@ -1107,7 +1111,11 @@ mod tests {
             app.state.sidebar_section_split,
             app.state.sidebar_chrome,
         );
-        let toggle = crate::ui::agent_panel_toggle_rect(detail_area, app.state.agent_panel_sort);
+        let toggle = crate::ui::agent_panel_toggle_rect(
+            detail_area,
+            app.state.agent_panel_sort,
+            app.state.sidebar_chrome,
+        );
         app.handle_mouse(mouse(
             MouseEventKind::Down(MouseButton::Left),
             toggle.x,
@@ -1556,6 +1564,51 @@ mod tests {
             new.x + new.width <= menu.x,
             "the buttons do not overlap: {new:?} {menu:?}"
         );
+    }
+
+    // T58c · the agents header's sort control is the third place that recomputed
+    // the panel geometry from a constant chrome. Its rectangle must come from
+    // the live one, or the control is clickable where it used to be rather than
+    // where it is.
+    #[test]
+    fn the_agents_sort_control_is_clicked_where_the_header_drew_it() {
+        let mut app = app_for_mouse_test();
+        app.state.sidebar_collapsed = false;
+        app.state.view.sidebar_rect = Rect::new(0, 0, 34, 26);
+        let tint = crate::ui::shell::BarTint::solid(ratatui::style::Color::Rgb(1, 2, 3));
+
+        for chrome in [
+            crate::ui::shell::SidebarChrome {
+                spaces: None,
+                agents: Some(tint),
+                chips: None,
+            },
+            crate::ui::shell::SidebarChrome {
+                spaces: None,
+                agents: None,
+                chips: Some(tint),
+            },
+        ] {
+            app.state.sidebar_chrome = chrome;
+            let (_, detail) = crate::ui::expanded_sidebar_sections(
+                app.state.view.sidebar_rect,
+                app.state.sidebar_section_split,
+                chrome,
+            );
+            let drawn =
+                crate::ui::agent_panel_toggle_rect(detail, app.state.agent_panel_sort, chrome);
+
+            assert!(
+                app.state
+                    .on_agent_panel_sort_toggle(drawn.x, drawn.y + drawn.height - 1),
+                "the control did not answer at its own bottom row: {drawn:?}"
+            );
+            assert!(
+                !app.state
+                    .on_agent_panel_sort_toggle(drawn.x.saturating_sub(1), drawn.y),
+                "and it answered for a cell that is not its own: {drawn:?}"
+            );
+        }
     }
 
     // T58b · the two halves are hit-tested through the same inset they were
