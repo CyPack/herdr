@@ -793,6 +793,13 @@ pub struct ShellBarConfig {
     /// axis. Both ends have to resolve to real channel values, so named
     /// terminal colours fall back to `color` rather than being guessed at.
     pub gradient: Vec<String>,
+    /// The parts this bar is divided into, in the order they appear along it.
+    ///
+    /// Empty means one undivided strip, which is what every bar is until
+    /// somebody writes sections. A section is an address: what fills it and
+    /// what a click on it does are answered elsewhere, so that adding either
+    /// later does not have to reopen the division itself.
+    pub sections: Vec<ShellBarSectionConfig>,
 }
 
 impl ShellBarConfig {
@@ -803,6 +810,7 @@ impl ShellBarConfig {
             border: true,
             color: String::new(),
             gradient: Vec::new(),
+            sections: Vec::new(),
         }
     }
 
@@ -813,8 +821,28 @@ impl ShellBarConfig {
             border: true,
             color: String::new(),
             gradient: Vec::new(),
+            sections: Vec::new(),
         }
     }
+}
+
+/// `[[shell.bars.<edge>.sections]]` — how much of the bar one part asks for.
+///
+/// Deliberately a plain table rather than an expression language: the request
+/// is a choice among named sizing behaviours the layout solver already speaks,
+/// so the config carries data and the meaning stays in one place.
+///
+/// - `fixed` — exactly `cells` cells, whatever else happens.
+/// - `fill` — share whatever is left, in proportion to `weight`.
+/// - `content` — at least `min`, at most `max`, as much as there is room for.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ShellBarSectionConfig {
+    pub kind: String,
+    pub cells: u16,
+    pub weight: u16,
+    pub min: u16,
+    pub max: u16,
 }
 
 impl Default for ShellBarConfig {

@@ -841,6 +841,43 @@ size = 14
         );
     }
 
+    // The same trap, one level deeper: sections arrive as an array of tables
+    // under an edge, and an array that the live reader silently dropped would
+    // leave the bar undivided on reload while the file plainly says otherwise.
+    #[test]
+    fn a_bars_sections_array_survives_the_live_reader() {
+        let content = "\
+[shell.bars.top]
+enabled = true
+size = 3
+
+[[shell.bars.top.sections]]
+kind = \"fixed\"
+cells = 12
+
+[[shell.bars.top.sections]]
+kind = \"fill\"
+weight = 3
+";
+        let loaded = load_live_config_from_str(content).expect("a sections array parses");
+
+        let sections = &loaded.config.shell.bars.top.sections;
+        assert_eq!(sections.len(), 2, "both sections must survive the reader");
+        assert_eq!(sections[0].kind, "fixed");
+        assert_eq!(sections[0].cells, 12);
+        assert_eq!(sections[1].kind, "fill");
+        assert_eq!(sections[1].weight, 3);
+        assert!(
+            loaded.config.shell.bars.bottom.sections.is_empty(),
+            "an edge nobody divided stays undivided"
+        );
+        assert!(
+            loaded.diagnostics.is_empty(),
+            "a valid sections array must not produce diagnostics: {:?}",
+            loaded.diagnostics
+        );
+    }
+
     // Every section the model accepts has to be in the diagnostic list, or the
     // reader is told their setting was dropped when it was not.
     #[test]

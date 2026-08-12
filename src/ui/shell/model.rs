@@ -28,7 +28,11 @@ pub(crate) enum RegionId {
 }
 
 /// Bounded sizing policy consumed by the SF2.3 solver.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Hash` is derived because a bar's sections carry these policies inside the
+/// geometry cache key, and that key may only be reused when every input that
+/// decided the geometry is the same one (CL3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) enum TrackPolicy {
     Fixed { cells: u16 },
     ContentBounded { min: u16, max: u16 },
@@ -127,6 +131,14 @@ pub(crate) enum ShellValidationError {
     StackChildrenExceeded,
     ComponentPlacementsExceeded,
     DuplicateComponentPlacement,
+    /// A component was placed into a region this tree does not contain.
+    ///
+    /// Nothing draws for such a placement and nothing complains, so the gate
+    /// has to be the thing that notices. Until bars could be divided the only
+    /// author of placements was the built-in templates, which are consistent by
+    /// construction; the moment a placement can name something a person wrote,
+    /// an unreachable one becomes a typo that silently does nothing.
+    PlacementRegionNotInTree(RegionId),
     DuplicateRegion(RegionId),
     InvalidTrackBounds,
     MissingWorkspaceStage,
@@ -253,6 +265,10 @@ impl ShellLayout {
         for placement in &self.component_placements {
             if !placed_components.insert(placement.component) {
                 return Err(ShellValidationError::DuplicateComponentPlacement);
+            }
+            let region = canonical_region(placement.region);
+            if !regions.contains(&region) {
+                return Err(ShellValidationError::PlacementRegionNotInTree(region));
             }
         }
         if let Some(region) = duplicate_region {

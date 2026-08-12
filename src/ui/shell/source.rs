@@ -19,11 +19,12 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 
 use crate::app::state::Palette;
-use crate::config::{parse_color, ShellBarConfig, ShellBarsConfig};
+use crate::config::{parse_color, ShellBarConfig, ShellBarSectionConfig, ShellBarsConfig};
 
+use super::layout::allocate_section_lengths;
 use super::model::{
     RegionId, RegionSize, ShellChild, ShellDirection, ShellLayout, ShellNode, ShellValidationError,
-    TrackPolicy, ValidatedShellLayout,
+    TrackPolicy, ValidatedShellLayout, MAX_SPLIT_CHILDREN,
 };
 use super::template::ShellTemplateId;
 
@@ -62,24 +63,144 @@ pub(crate) struct DerivedShellLayout {
     pub template: Option<ShellTemplateId>,
 }
 
-/// How thick one edge's strip is, or that there is none.
+/// The most parts one bar may be divided into.
+///
+/// The same number the shell tree allows a split, because it is the same
+/// question with the same answer: an unbounded number of sections is CLA7's
+/// unbounded visible chain wearing an edge bar for a hat.
+pub(crate) const MAX_BAR_SECTIONS: usize = MAX_SPLIT_CHILDREN;
+
+/// How one bar is divided along its long axis.
+///
+/// A fixed array rather than a `Vec` because this value travels inside the
+/// geometry cache key, and the key must stay `Copy` and comparable by value:
+/// putting the sections here is what makes CL3's rule ("the key contains every
+/// input that decided the geometry") true by construction rather than by
+/// somebody remembering to bump a revision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub(crate) struct BarSections {
+    policies: [Option<TrackPolicy>; MAX_BAR_SECTIONS],
+    len: u8,
+}
+
+impl BarSections {
+    /// An undivided bar: one strip, no sections, exactly what every bar is today.
+    pub(crate) const NONE: Self = Self {
+        policies: [None; MAX_BAR_SECTIONS],
+        len: 0,
+    };
+
+    /// Read an ordered list of sections, refusing rather than truncating.
+    ///
+    /// Nine sections is somebody's mistake, and silently keeping the first
+    /// eight hands them a layout they did not write — the same reasoning that
+    /// makes an out-of-range bar size a refusal rather than a clamp. The bar
+    /// still draws; it just draws undivided, and the warning names the edge.
+    pub(super) fn from_policies(policies: &[TrackPolicy], edge: &'static str) -> Self {
+        if policies.len() > MAX_BAR_SECTIONS {
+            tracing::warn!(
+                edge,
+                sections = policies.len(),
+                max = MAX_BAR_SECTIONS,
+                "a shell bar may not have this many sections; the bar is drawn undivided"
+            );
+            return Self::NONE;
+        }
+        let mut stored = [None; MAX_BAR_SECTIONS];
+        for (slot, policy) in stored.iter_mut().zip(policies) {
+            *slot = Some(*policy);
+        }
+        Self {
+            policies: stored,
+            len: policies.len() as u8,
+        }
+    }
+
+    // How many parts a bar was divided into is what a caller asks before
+    // addressing one; the production caller arrives with the widget catalogue
+    // (F32-L7), which is the first thing that has anything to put in a section.
+    #[allow(dead_code)]
+    pub(crate) const fn len(self) -> usize {
+        self.len as usize
+    }
+
+    pub(crate) const fn is_empty(self) -> bool {
+        self.len == 0
+    }
+
+    /// The policies in the order they were written, which is the order they are
+    /// laid out and the order their indices address them by.
+    fn policies(self) -> Vec<TrackPolicy> {
+        self.policies.into_iter().flatten().collect()
+    }
+}
+
+/// Where each of a bar's sections ended up.
+///
+/// Allocation-free for the same reason the sections themselves are: this is
+/// answered on the geometry path and read on the drawing and hit-testing paths,
+/// and none of the three should be paying for a heap allocation per bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct BarSectionRects {
+    rects: [Rect; MAX_BAR_SECTIONS],
+    len: u8,
+}
+
+impl BarSectionRects {
+    pub(crate) const EMPTY: Self = Self {
+        rects: [Rect::ZERO; MAX_BAR_SECTIONS],
+        len: 0,
+    };
+
+    pub(crate) const fn len(self) -> usize {
+        self.len as usize
+    }
+
+    // Both read a resolved division by index rather than by iteration, which is
+    // what drawing one section's contents needs (F32-L7). The hit path uses
+    // `occupied`, so these have no production caller until then.
+    #[allow(dead_code)]
+    pub(crate) const fn is_empty(self) -> bool {
+        self.len == 0
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn get(self, index: usize) -> Option<Rect> {
+        (index < self.len()).then(|| self.rects[index])
+    }
+
+    /// Every section that actually got cells, with the index that addresses it.
+    ///
+    /// A section resolved to nothing is skipped rather than reported empty: a
+    /// zero-width rectangle that still answered clicks would take its
+    /// neighbour's, which is the quiet failure CL5 exists to prevent.
+    pub(crate) fn occupied(self) -> impl Iterator<Item = (usize, Rect)> {
+        (0..self.len())
+            .map(move |index| (index, self.rects[index]))
+            .filter(|(_, rect)| rect.width > 0 && rect.height > 0)
+    }
+}
+
+/// How thick one edge's strip is, whether it is divided, or that there is none.
 ///
 /// The cache keys on this value directly rather than on a digest of it: the
 /// whole point of the geometry key is that two different screens can never
 /// answer to the same identity, and a hash trades that certainty for brevity
-/// nobody needs at four small fields.
+/// nobody needs at a handful of small fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub(crate) struct BarTrack {
     cells: Option<u16>,
     /// Whether the strip wears a panel border. It costs one cell on each side,
     /// which is why a bordered bar is refused below three.
     bordered: bool,
+    sections: BarSections,
 }
 
 impl BarTrack {
     pub(crate) const NONE: Self = Self {
         cells: None,
         bordered: false,
+        sections: BarSections::NONE,
     };
 
     /// A strip of exactly this many cells. Bounds live in [`BarTrack::from_config`],
@@ -89,6 +210,7 @@ impl BarTrack {
         Self {
             cells: Some(cells),
             bordered: false,
+            sections: BarSections::NONE,
         }
     }
 
@@ -97,6 +219,68 @@ impl BarTrack {
         Self {
             cells: Some(cells),
             bordered: true,
+            sections: BarSections::NONE,
+        }
+    }
+
+    /// The same strip, divided as asked.
+    pub(super) fn with_sections(self, sections: BarSections) -> Self {
+        Self { sections, ..self }
+    }
+
+    pub(crate) const fn sections(self) -> BarSections {
+        self.sections
+    }
+
+    /// Divide this bar's content area among its sections.
+    ///
+    /// `outer` is the whole strip as the shell solver placed it; the border is
+    /// taken off here through the one function that knows how thick it is, so
+    /// that drawing a section and clicking a section can never disagree about
+    /// where it starts. That disagreement is C79/C80, and this line is where it
+    /// would be born if the inset were computed anywhere else.
+    ///
+    /// The axis follows the edge: a top or bottom bar is divided across its
+    /// width, a left or right bar down its height. Getting this backwards
+    /// collapses every section onto the same cells and still looks like it
+    /// works from a distance, which is why T29 names it.
+    pub(crate) fn section_rects(self, region: RegionId, outer: Rect) -> BarSectionRects {
+        if self.sections.is_empty() {
+            return BarSectionRects::EMPTY;
+        }
+        let inner = self.inner(outer);
+        if inner.width == 0 || inner.height == 0 {
+            return BarSectionRects::EMPTY;
+        }
+
+        let horizontal = matches!(region, RegionId::TopBar | RegionId::BottomBar);
+        let available = if horizontal {
+            inner.width
+        } else {
+            inner.height
+        };
+        let lengths = allocate_section_lengths(&self.sections.policies(), available);
+
+        let mut rects = [Rect::ZERO; MAX_BAR_SECTIONS];
+        let mut offset = 0u16;
+        for (slot, length) in rects.iter_mut().zip(&lengths) {
+            let length = (*length).min(available.saturating_sub(offset));
+            *slot = if horizontal {
+                Rect::new(
+                    inner.x.saturating_add(offset),
+                    inner.y,
+                    length,
+                    inner.height,
+                )
+            } else {
+                Rect::new(inner.x, inner.y.saturating_add(offset), inner.width, length)
+            };
+            offset = offset.saturating_add(length);
+        }
+
+        BarSectionRects {
+            rects,
+            len: self.sections.len,
         }
     }
 
@@ -152,15 +336,93 @@ impl BarTrack {
             );
             return Self::NONE;
         }
-        if config.border {
+        let track = if config.border {
             Self::bordered(config.size)
         } else {
             Self::of(config.size)
-        }
+        };
+        track.with_sections(sections_from_config(&config.sections, edge))
     }
 
     const fn enabled(self) -> bool {
         self.cells.is_some()
+    }
+}
+
+/// Read one edge's sections, refusing the whole division if any part of it is
+/// not something this build can draw.
+///
+/// All-or-nothing on purpose. Dropping only the section that did not parse
+/// would silently renumber every section after it, and the indices are what
+/// everything downstream addresses a section by — a config typo would then move
+/// somebody's content rather than reporting itself.
+fn sections_from_config(configs: &[ShellBarSectionConfig], edge: &'static str) -> BarSections {
+    if configs.is_empty() {
+        return BarSections::NONE;
+    }
+    let mut policies = Vec::with_capacity(configs.len());
+    for (index, config) in configs.iter().enumerate() {
+        let Some(policy) = section_policy(config, edge, index) else {
+            return BarSections::NONE;
+        };
+        policies.push(policy);
+    }
+    BarSections::from_policies(&policies, edge)
+}
+
+/// One section's table as a sizing policy, or nothing if it does not describe
+/// a size this solver knows how to honour.
+fn section_policy(
+    config: &ShellBarSectionConfig,
+    edge: &'static str,
+    index: usize,
+) -> Option<TrackPolicy> {
+    match config.kind.as_str() {
+        "fixed" => {
+            if config.cells == 0 {
+                tracing::warn!(
+                    edge,
+                    index,
+                    "a fixed bar section needs a cell count; the bar is drawn undivided"
+                );
+                return None;
+            }
+            Some(TrackPolicy::Fixed {
+                cells: config.cells,
+            })
+        }
+        // A fill with no weight is the common shape of "just take the rest",
+        // and refusing it would make the simplest section the one that needs
+        // the most typing.
+        "fill" => Some(TrackPolicy::Fill {
+            weight: config.weight.max(1),
+        }),
+        "content" => {
+            if config.max < config.min {
+                tracing::warn!(
+                    edge,
+                    index,
+                    min = config.min,
+                    max = config.max,
+                    "a content bar section cannot have a maximum below its minimum; \
+                     the bar is drawn undivided"
+                );
+                return None;
+            }
+            Some(TrackPolicy::ContentBounded {
+                min: config.min,
+                max: config.max,
+            })
+        }
+        other => {
+            tracing::warn!(
+                edge,
+                index,
+                kind = other,
+                "unknown bar section kind; the bar is drawn undivided"
+            );
+            None
+        }
     }
 }
 
@@ -698,6 +960,7 @@ mod tests {
             border: false,
             color: String::new(),
             gradient: Vec::new(),
+            sections: Vec::new(),
         }
     }
 
@@ -708,6 +971,7 @@ mod tests {
             border: true,
             color: String::new(),
             gradient: Vec::new(),
+            sections: Vec::new(),
         }
     }
 
@@ -949,6 +1213,7 @@ mod tests {
             border: true,
             color: String::new(),
             gradient: stops.iter().map(|s| (*s).to_string()).collect(),
+            sections: Vec::new(),
         }
     }
 
@@ -1085,5 +1350,239 @@ mod tests {
         assert_eq!(derived.layout, ShellLayout::default());
         assert_eq!(derived.revision, LEGACY_DESKTOP_REVISION);
         assert_eq!(derived.template, None);
+    }
+
+    // ---- F32-L6 · dividing a bar into bounded sections ----
+
+    fn section_config(kind: &str) -> ShellBarSectionConfig {
+        ShellBarSectionConfig {
+            kind: kind.to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn fixed_section(cells: u16) -> ShellBarSectionConfig {
+        ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells,
+            ..Default::default()
+        }
+    }
+
+    fn sections_of(policies: &[TrackPolicy]) -> BarSections {
+        BarSections::from_policies(policies, "test")
+    }
+
+    // T22 · a ninth section is somebody's mistake, and mistakes are refused
+    #[test]
+    fn a_bar_refuses_a_ninth_section_rather_than_dropping_it() {
+        // Truncating would hand the person a layout they did not write, and
+        // renumber every section after the one that vanished — and the number
+        // is the only name a section has.
+        let too_many = vec![TrackPolicy::Fill { weight: 1 }; MAX_BAR_SECTIONS + 1];
+        let sections = sections_of(&too_many);
+        assert!(
+            sections.is_empty(),
+            "a bar with more sections than it may hold must be drawn undivided"
+        );
+    }
+
+    // T22b · the ceiling has to be reachable, or it is an off-by-one
+    #[test]
+    fn a_bar_accepts_exactly_its_maximum_number_of_sections() {
+        let full = vec![TrackPolicy::Fill { weight: 1 }; MAX_BAR_SECTIONS];
+        assert_eq!(sections_of(&full).len(), MAX_BAR_SECTIONS);
+    }
+
+    // T23 · the sections are divided by the shell's own three phases
+    #[test]
+    fn section_widths_come_from_the_shell_solvers_own_arithmetic() {
+        // Fixed takes its cells first; what is left is shared among the filling
+        // sections in proportion to their weights. Hand-computed so that a
+        // change in the allocator has to be argued for rather than absorbed.
+        let track = BarTrack::of(3).with_sections(sections_of(&[
+            TrackPolicy::Fixed { cells: 12 },
+            TrackPolicy::Fill { weight: 1 },
+            TrackPolicy::Fill { weight: 3 },
+        ]));
+        let rects = track.section_rects(RegionId::TopBar, Rect::new(0, 0, 40, 3));
+
+        assert_eq!(rects.len(), 3);
+        assert_eq!(rects.get(0).map(|r| r.width), Some(12));
+        assert_eq!(rects.get(1).map(|r| r.width), Some(7));
+        assert_eq!(rects.get(2).map(|r| r.width), Some(21));
+    }
+
+    // T23b · an odd remainder is broken the same way every time
+    #[test]
+    fn an_odd_remainder_goes_to_the_earlier_section_every_time() {
+        // Two equal claims on seven cells cannot both be satisfied. The shell
+        // solver breaks that tie by index, and a section allocator that broke
+        // it any other way would drift from the regions by one cell without
+        // anything going red.
+        let track = BarTrack::of(1).with_sections(sections_of(&[
+            TrackPolicy::Fill { weight: 1 },
+            TrackPolicy::Fill { weight: 1 },
+        ]));
+        let rects = track.section_rects(RegionId::BottomBar, Rect::new(0, 0, 7, 1));
+
+        assert_eq!(rects.get(0).map(|r| r.width), Some(4));
+        assert_eq!(rects.get(1).map(|r| r.width), Some(3));
+    }
+
+    // T25 · a section that got no cells is not a target
+    #[test]
+    fn a_section_squeezed_to_nothing_is_not_reported_as_occupied() {
+        // A zero-width rectangle that still answered clicks would answer for
+        // its neighbour, which is the quiet failure CL5 exists to prevent.
+        let track = BarTrack::of(1).with_sections(sections_of(&[
+            TrackPolicy::Fixed { cells: 20 },
+            TrackPolicy::Fixed { cells: 20 },
+            TrackPolicy::Fill { weight: 1 },
+        ]));
+        let rects = track.section_rects(RegionId::TopBar, Rect::new(0, 0, 40, 1));
+
+        assert_eq!(rects.len(), 3, "the third section still exists");
+        assert_eq!(rects.get(2).map(|r| r.width), Some(0));
+        assert_eq!(
+            rects.occupied().count(),
+            2,
+            "a section with no cells must not appear as a target"
+        );
+    }
+
+    // T26 · an undivided bar is exactly the bar everyone has today
+    #[test]
+    fn a_bar_without_sections_divides_into_nothing() {
+        let rects = BarTrack::of(3).section_rects(RegionId::TopBar, Rect::new(0, 0, 40, 3));
+        assert!(rects.is_empty());
+        assert_eq!(rects.occupied().count(), 0);
+    }
+
+    // T27 · the border is not a section's to write on
+    #[test]
+    fn sections_of_a_bordered_bar_stay_inside_its_border() {
+        let track = BarTrack::bordered(3).with_sections(sections_of(&[
+            TrackPolicy::Fill { weight: 1 },
+            TrackPolicy::Fill { weight: 1 },
+        ]));
+        let outer = Rect::new(0, 0, 40, 3);
+        let inner = track.inner(outer);
+        let rects = track.section_rects(RegionId::TopBar, outer);
+
+        for (index, rect) in rects.occupied() {
+            assert!(
+                rect.y >= inner.y
+                    && rect.x >= inner.x
+                    && rect.right() <= inner.right()
+                    && rect.bottom() <= inner.bottom(),
+                "section {index} at {rect:?} escaped the bar's inner area {inner:?}"
+            );
+        }
+        assert_eq!(rects.occupied().count(), 2);
+    }
+
+    // T29 · a side bar is divided down its height, not across its width
+    #[test]
+    fn a_side_bar_divides_its_height_and_an_edge_bar_divides_its_width() {
+        // Getting the axis backwards collapses every section onto the same
+        // cells and still looks plausible from a distance.
+        let policies = sections_of(&[
+            TrackPolicy::Fill { weight: 1 },
+            TrackPolicy::Fill { weight: 1 },
+        ]);
+
+        let side = BarTrack::of(12).with_sections(policies);
+        let side_rects = side.section_rects(RegionId::AppDock, Rect::new(0, 0, 12, 20));
+        assert_eq!(side_rects.get(0), Some(Rect::new(0, 0, 12, 10)));
+        assert_eq!(side_rects.get(1), Some(Rect::new(0, 10, 12, 10)));
+
+        let edge = BarTrack::of(1).with_sections(policies);
+        let edge_rects = edge.section_rects(RegionId::TopBar, Rect::new(0, 0, 20, 1));
+        assert_eq!(edge_rects.get(0), Some(Rect::new(0, 0, 10, 1)));
+        assert_eq!(edge_rects.get(1), Some(Rect::new(10, 0, 10, 1)));
+    }
+
+    // T30 · the sections account for the whole bar, and for no more than it
+    #[test]
+    fn sections_fill_the_bar_exactly_without_overrunning_it() {
+        // A short division leaves an undrawn strip at the end of the bar; a
+        // long one writes into the region next door.
+        for available in [1u16, 2, 7, 13, 40] {
+            let track = BarTrack::of(1).with_sections(sections_of(&[
+                TrackPolicy::Fill { weight: 2 },
+                TrackPolicy::Fill { weight: 1 },
+                TrackPolicy::Fill { weight: 1 },
+            ]));
+            let rects = track.section_rects(RegionId::TopBar, Rect::new(0, 0, available, 1));
+            let total: u16 = (0..rects.len())
+                .filter_map(|index| rects.get(index))
+                .map(|rect| rect.width)
+                .sum();
+            assert_eq!(
+                total, available,
+                "three filling sections must account for all {available} cells"
+            );
+        }
+    }
+
+    // T22c · one unreadable section costs the division, not the bar
+    #[test]
+    fn an_unreadable_section_leaves_the_bar_undivided_rather_than_renumbered() {
+        // Dropping only the bad entry would shift every later section up one
+        // index, silently moving whatever those indices address.
+        let configs = vec![
+            fixed_section(4),
+            section_config("nonsense"),
+            fixed_section(6),
+        ];
+        assert!(sections_from_config(&configs, "top").is_empty());
+
+        let good = vec![fixed_section(4), fixed_section(6)];
+        assert_eq!(sections_from_config(&good, "top").len(), 2);
+    }
+
+    // T22d · a section whose numbers cannot describe a size is refused
+    #[test]
+    fn a_section_with_impossible_numbers_is_refused() {
+        assert!(section_policy(&fixed_section(0), "top", 0).is_none());
+        assert!(section_policy(
+            &ShellBarSectionConfig {
+                kind: "content".to_string(),
+                min: 10,
+                max: 4,
+                ..Default::default()
+            },
+            "top",
+            0
+        )
+        .is_none());
+        // A fill with no weight written is the commonest section there is, and
+        // asking for it must not require typing a number.
+        assert_eq!(
+            section_policy(&section_config("fill"), "top", 0),
+            Some(TrackPolicy::Fill { weight: 1 })
+        );
+    }
+
+    // T28a · a bar that is divided differently is a different bar
+    #[test]
+    fn changing_only_a_sections_policy_changes_the_bars_identity() {
+        // `BarTrack` travels inside the geometry cache key. If two different
+        // divisions compared equal, the cache would hand back the previous
+        // geometry and every click in that bar would land in the wrong section.
+        let one = BarTrack::of(3).with_sections(sections_of(&[TrackPolicy::Fixed { cells: 4 }]));
+        let other = BarTrack::of(3).with_sections(sections_of(&[TrackPolicy::Fixed { cells: 5 }]));
+        assert_ne!(one, other);
+
+        let bars_one = ShellBars {
+            top: one,
+            ..ShellBars::NONE
+        };
+        let bars_other = ShellBars {
+            top: other,
+            ..ShellBars::NONE
+        };
+        assert_ne!(bars_one, bars_other);
     }
 }

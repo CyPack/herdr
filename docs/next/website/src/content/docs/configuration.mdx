@@ -442,6 +442,49 @@ Metadata reporters provide values only; styling stays in the local sidebar confi
 
 Sidebar row settings affect only the expanded desktop sidebar. Collapsed and mobile views keep their compact layouts.
 
+## Edge bars
+
+Each edge of the frame can carry a thin strip. All four are off by default, and each is configured on its own:
+
+```toml
+[shell.bars.top]
+enabled = true
+size    = 3      # rows for the top and bottom bars, columns for the left and right ones
+border  = true   # a bordered bar needs size >= 3 to have room for its contents
+```
+
+A size outside 1–32, or a bordered bar too thin to hold a border and a row of content, is refused rather than adjusted: the bar is not drawn and the log names the edge. See `shell.bars` in the [Config reference](/docs/config-reference/) for colours and gradients.
+
+### Dividing a bar into sections
+
+A bar can be divided into at most eight parts along its long axis. Sections are written in the order they appear, and each one asks for its share in one of three ways:
+
+```toml
+[shell.bars.top]
+enabled = true
+size    = 3
+
+[[shell.bars.top.sections]]
+kind  = "fixed"
+cells = 12        # exactly twelve cells, whatever else happens
+
+[[shell.bars.top.sections]]
+kind = "fill"     # share what is left; `weight` (default 1) sets the proportion
+
+[[shell.bars.top.sections]]
+kind   = "fill"
+weight = 3
+
+[[shell.bars.top.sections]]
+kind = "content"
+min  = 4
+max  = 20         # at least four cells, at most twenty, as much as there is room for
+```
+
+Fixed sections are satisfied first, then content sections grow toward their maximum, and whatever remains is shared among the filling sections in proportion to their weights. A section that ends up with no cells is simply not drawn.
+
+Writing more than eight sections, naming a `kind` Herdr does not know, or giving a content section a `max` below its `min` leaves that bar undivided rather than guessing: one unreadable section would otherwise renumber every section after it, and the number is how a section is addressed.
+
 ## Notifications
 
 Herdr can notify you when a background agent finishes or needs input:

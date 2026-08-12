@@ -301,6 +301,35 @@ fn allocate_lengths(
         }
     }
 
+    let lengths = allocate_tracks(&requests, available);
+
+    if degradation == ResponsiveDegradation::Workspace
+        && requests.iter().zip(&lengths).any(|(request, length)| {
+            !request.is_fill() && !request.collapsed && *length < request.desired
+        })
+    {
+        degradation = ResponsiveDegradation::Wide;
+    }
+
+    (lengths, degradation)
+}
+
+/// The region-agnostic core of track allocation, in three phases: satisfy every
+/// minimum, grow each track toward the length it wants, then share whatever is
+/// left among the filling tracks by largest remainder.
+///
+/// Extracted so that the sections inside a bar are divided by exactly the same
+/// arithmetic that divides the shell's regions. A second copy of a
+/// largest-remainder distribution drifts by one cell the first time two
+/// remainders tie, and nothing anywhere goes red — the two answers are each
+/// internally consistent, just not the same answer.
+///
+/// The workspace stage is the one region this core still knows about, and only
+/// through the request itself: when a filling track carries the stage, one cell
+/// is held back from the growth phase so the stage can never be squeezed to
+/// nothing by a greedy neighbour. Requests that carry no stage — a bar's
+/// sections, for instance — take that branch for free.
+fn allocate_tracks(requests: &[TrackRequest], available: u16) -> Vec<u16> {
     let mut lengths = vec![0u16; requests.len()];
     let mut remaining = available;
     for (index, request) in requests.iter().enumerate() {
@@ -332,18 +361,67 @@ fn allocate_lengths(
     let used_non_fill = lengths
         .iter()
         .fold(0u16, |sum, length| sum.saturating_add(*length));
-    remaining = available.saturating_sub(used_non_fill);
-    distribute_fill(&requests, &mut lengths, remaining, stage_fill_index);
+    let remaining = available.saturating_sub(used_non_fill);
+    distribute_fill(requests, &mut lengths, remaining, stage_fill_index);
+    lengths
+}
 
-    if degradation == ResponsiveDegradation::Workspace
-        && requests.iter().zip(&lengths).any(|(request, length)| {
-            !request.is_fill() && !request.collapsed && *length < request.desired
-        })
-    {
-        degradation = ResponsiveDegradation::Wide;
+/// Divide `available` cells among bar sections using the shell's own allocator.
+///
+/// The sections of a bar are not shell regions (`RegionId` is closed, and a bar
+/// may hold eight sections on each of four edges), so they arrive as policies
+/// with no region attached. Everything downstream of that is identical, which
+/// is the whole point: one allocator, two callers.
+pub(super) fn allocate_section_lengths(policies: &[TrackPolicy], available: u16) -> Vec<u16> {
+    let requests = policies
+        .iter()
+        .map(|policy| section_request(*policy))
+        .collect::<Vec<_>>();
+    allocate_tracks(&requests, available)
+}
+
+/// A section's policy as a request. `resolve_dynamic` has nothing to answer
+/// here — a section has no region to be asked about — so a content-bounded
+/// section asks for its own minimum and is allowed to grow to its maximum.
+fn section_request(policy: TrackPolicy) -> TrackRequest {
+    match policy {
+        TrackPolicy::Fixed { cells } => TrackRequest::fixed(None, cells),
+        TrackPolicy::ContentBounded { min, max } => TrackRequest {
+            region: None,
+            contains_workspace_stage: false,
+            min,
+            desired: max.max(min),
+            max,
+            fill_weight: 0,
+            collapsed: false,
+            resizable: true,
+        },
+        TrackPolicy::Resizable {
+            min,
+            preferred,
+            max,
+        } => TrackRequest {
+            region: None,
+            contains_workspace_stage: false,
+            min,
+            desired: preferred.clamp(min, max),
+            max,
+            fill_weight: 0,
+            collapsed: false,
+            resizable: true,
+        },
+        TrackPolicy::Fill { weight } => TrackRequest::fill(None, weight),
+        TrackPolicy::Collapsed { .. } => TrackRequest {
+            region: None,
+            contains_workspace_stage: false,
+            min: 0,
+            desired: 0,
+            max: 0,
+            fill_weight: 0,
+            collapsed: true,
+            resizable: false,
+        },
     }
-
-    (lengths, degradation)
 }
 
 fn request_for_child(

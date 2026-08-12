@@ -481,9 +481,14 @@ mod tests {
 
     #[test]
     fn shell_rejects_duplicate_component_placement() {
+        // The region has to be one this tree actually contains, or the
+        // placement is rejected for being unreachable before it is ever
+        // examined for being a duplicate. The fixture used to name `AppDock`
+        // into a stage-only tree and nothing objected — that unnoticed
+        // inconsistency is precisely what the reachability check now catches.
         let placement = serde_json::json!({
             "component": "AppDock",
-            "region": "AppDock",
+            "region": "WorkspaceStage",
         });
         assert_serialized_shell_document_rejected(
             serde_json::json!({
@@ -491,6 +496,24 @@ mod tests {
                 "component_placements": [placement.clone(), placement],
             }),
             "DuplicateComponentPlacement",
+        );
+    }
+
+    // T31 · a placement that names a region the tree does not have is refused
+    #[test]
+    fn shell_rejects_a_placement_whose_region_is_not_in_the_tree() {
+        // Such a placement draws nothing and reports nothing: the component is
+        // simply absent, and the person who wrote it sees an empty bar rather
+        // than an error. The gate is the only place that can notice.
+        assert_serialized_shell_document_rejected(
+            serde_json::json!({
+                "root": serialized_slot("WorkspaceStage"),
+                "component_placements": [{
+                    "component": "AppDock",
+                    "region": "AppDock",
+                }],
+            }),
+            "PlacementRegionNotInTree",
         );
     }
 
@@ -1439,6 +1462,7 @@ mod tests {
         view.hit_at(generation, ratatui::layout::Position::new(x, y))
             .map(|target| match target {
                 super::view::ShellHitTarget::Region(region) => region,
+                super::view::ShellHitTarget::BarSection { region, .. } => region,
             })
     }
 

@@ -66,6 +66,13 @@ impl Default for ShellGeometryKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ShellHitTarget {
     Region(RegionId),
+    /// One numbered part of an edge bar. The index is the position the person
+    /// wrote it at, which is the only stable name a section has — a rectangle
+    /// is not an identity, and CL5 resolves by identity.
+    BarSection {
+        region: RegionId,
+        index: u8,
+    },
 }
 
 /// One complete non-zero hit rectangle from a specific shell generation.
@@ -121,7 +128,33 @@ impl ShellView {
         self.hit_at(generation, position)
             .map(|target| match target {
                 ShellHitTarget::Region(region) => region,
+                // A section is part of its bar for the purposes of "which
+                // region did they click": the finer answer is a separate
+                // question, asked by `bar_section_hit_at`.
+                ShellHitTarget::BarSection { region, .. } => region,
             })
+    }
+
+    /// Which numbered section of which bar a position lands in, against this
+    /// exact generation.
+    ///
+    /// Separate from [`Self::region_hit_at`] so that a caller who only wants a
+    /// region is not forced to care that bars can be divided, and so that a
+    /// caller who wants the section cannot get one from a stale geometry.
+    // The hits themselves are produced on the live geometry path; this is the
+    // reader, and its production caller arrives with section click actions
+    // (F34-L9). Kept here rather than written then, so that the identity a
+    // section answers by is decided in the layer that creates it.
+    #[allow(dead_code)]
+    pub(crate) fn bar_section_hit_at(
+        &self,
+        generation: u64,
+        position: Position,
+    ) -> Option<(RegionId, u8)> {
+        match self.hit_at(generation, position)? {
+            ShellHitTarget::BarSection { region, index } => Some((region, index)),
+            ShellHitTarget::Region(_) => None,
+        }
     }
 }
 
@@ -174,7 +207,8 @@ fn project_changed_geometry(
             geometry_key: key,
         };
     };
-    let hits = flatten_region_hits(&regions, generation);
+    let mut hits = flatten_region_hits(&regions, generation);
+    append_bar_section_hits(&mut hits, &regions, key.bars, generation);
 
     ShellView {
         generation,
@@ -200,9 +234,222 @@ fn flatten_region_hits(regions: &RegionRects, generation: u64) -> Vec<ShellHitAr
         .collect()
 }
 
+/// The edges that can carry a divided bar, and the region each one is.
+const BAR_REGIONS: [RegionId; 4] = [
+    RegionId::TopBar,
+    RegionId::BottomBar,
+    RegionId::AppDock,
+    RegionId::RightPanel,
+];
+
+/// Put each bar's sections on top of the bar itself.
+///
+/// Appended after the region hits so that `hit_at`'s reverse scan finds the
+/// finer target first: a click inside a divided bar belongs to the section it
+/// landed in, and only to the bar when it landed in none.
+///
+/// The division is recomputed here from `key.bars` — the same value the drawing
+/// path divides by — rather than being handed in from somewhere else. That is
+/// deliberate and it is the whole guard: this line is exactly where C79/C80
+/// were born three times over, each time because one side read the live
+/// context and the other was handed a constant.
+fn append_bar_section_hits(
+    hits: &mut Vec<ShellHitArea>,
+    regions: &RegionRects,
+    bars: ShellBars,
+    generation: u64,
+) {
+    for region in BAR_REGIONS {
+        let track = bars.track_for(region);
+        if track.sections().is_empty() {
+            continue;
+        }
+        let outer = regions.get(region);
+        if outer.is_empty() {
+            continue;
+        }
+        for (index, rect) in track.section_rects(region, outer).occupied() {
+            hits.push(ShellHitArea {
+                generation,
+                target: ShellHitTarget::BarSection {
+                    region,
+                    index: index as u8,
+                },
+                rect,
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::shell::model::TrackPolicy;
+    use crate::ui::shell::source::{derive_desktop_shell_layout, BarSections, BarTrack};
+
+    /// The bars a divided top strip would produce, and the view they project.
+    fn sectioned_top_bar_view(
+        area: Rect,
+        bordered: bool,
+        policies: &[TrackPolicy],
+    ) -> (ShellBars, ShellView) {
+        let sections = BarSections::from_policies(policies, "top");
+        let track = if bordered {
+            BarTrack::bordered(3)
+        } else {
+            BarTrack::of(1)
+        };
+        let bars = ShellBars {
+            top: track.with_sections(sections),
+            ..ShellBars::NONE
+        };
+        let derived = derive_desktop_shell_layout(None, bars);
+        let key = ShellGeometryKey::new(area, derived.revision, 0, 0, derived.template, bars);
+        let view = compute_shell_view(&derived.layout, key, ShellView::default(), &|region| {
+            u16::from(region == RegionId::LeftPanel) * 26
+        });
+        (bars, view)
+    }
+
+    // T24 · a section is positional authority only against its own generation
+    #[test]
+    fn a_bar_section_answers_only_for_the_generation_that_drew_it() {
+        let (_, view) = sectioned_top_bar_view(
+            Rect::new(0, 0, 80, 24),
+            false,
+            &[
+                TrackPolicy::Fill { weight: 1 },
+                TrackPolicy::Fill { weight: 1 },
+            ],
+        );
+
+        let left = Position::new(5, 0);
+        assert_eq!(
+            view.bar_section_hit_at(view.generation, left),
+            Some((RegionId::TopBar, 0)),
+            "the left half of a divided top bar is its first section"
+        );
+        assert_eq!(
+            view.bar_section_hit_at(view.generation, Position::new(60, 0)),
+            Some((RegionId::TopBar, 1))
+        );
+        // A coordinate from a geometry that no longer exists resolves to
+        // nothing rather than to whatever now happens to occupy those cells.
+        assert_eq!(
+            view.bar_section_hit_at(view.generation.wrapping_add(1), left),
+            None
+        );
+    }
+
+    // T24b · the rectangle a section is drawn in is the rectangle it is clicked in
+    #[test]
+    fn every_bar_section_is_clicked_exactly_where_it_is_drawn() {
+        // This is the failure that has been produced three separate times on
+        // this line (C79, then C80 in three places): drawing reads the live
+        // chrome, hit-testing is handed a constant, and both rectangles are
+        // plausible so nothing goes red. Deriving both from the same value is
+        // the guard, and this test is what proves the derivation is shared.
+        for bordered in [false, true] {
+            let area = Rect::new(0, 0, 80, 24);
+            let (bars, view) = sectioned_top_bar_view(
+                area,
+                bordered,
+                &[
+                    TrackPolicy::Fixed { cells: 12 },
+                    TrackPolicy::Fill { weight: 1 },
+                    TrackPolicy::Fill { weight: 3 },
+                ],
+            );
+
+            let outer = view.regions.get(RegionId::TopBar);
+            let drawn = bars.top.section_rects(RegionId::TopBar, outer);
+            assert!(
+                drawn.occupied().count() >= 2,
+                "bordered={bordered}: the bar must actually be divided for this to mean anything"
+            );
+
+            for (index, rect) in drawn.occupied() {
+                for corner in [
+                    Position::new(rect.x, rect.y),
+                    Position::new(rect.right() - 1, rect.bottom() - 1),
+                ] {
+                    assert_eq!(
+                        view.bar_section_hit_at(view.generation, corner),
+                        Some((RegionId::TopBar, index as u8)),
+                        "bordered={bordered}: {corner:?} is drawn inside section {index} \
+                         at {rect:?} but does not resolve to it"
+                    );
+                }
+            }
+        }
+    }
+
+    // T28 · a differently divided bar is a different geometry
+    #[test]
+    fn redividing_a_bar_misses_the_cache_and_advances_the_generation_once() {
+        let area = Rect::new(0, 0, 80, 24);
+        let (_, first) = sectioned_top_bar_view(
+            area,
+            false,
+            &[
+                TrackPolicy::Fixed { cells: 10 },
+                TrackPolicy::Fill { weight: 1 },
+            ],
+        );
+
+        let sections = BarSections::from_policies(
+            &[
+                TrackPolicy::Fixed { cells: 20 },
+                TrackPolicy::Fill { weight: 1 },
+            ],
+            "top",
+        );
+        let bars = ShellBars {
+            top: BarTrack::of(1).with_sections(sections),
+            ..ShellBars::NONE
+        };
+        let derived = derive_desktop_shell_layout(None, bars);
+        let key = ShellGeometryKey::new(area, derived.revision, 0, 0, derived.template, bars);
+
+        // Same area, same edges, same thickness — only the division moved. If
+        // that did not reach the key, the cache would return the previous
+        // rectangles and every click in the bar would answer for the wrong
+        // section while looking perfectly correct.
+        let second = compute_shell_view(&derived.layout, key, first.clone(), &|region| {
+            u16::from(region == RegionId::LeftPanel) * 26
+        });
+        assert_eq!(second.generation, first.generation + 1);
+        assert_eq!(
+            second.bar_section_hit_at(second.generation, Position::new(15, 0)),
+            Some((RegionId::TopBar, 0)),
+            "the first section now reaches further than it did before"
+        );
+    }
+
+    // T26 · an undivided bar produces no section targets at all
+    #[test]
+    fn an_undivided_bar_contributes_no_section_hits() {
+        let area = Rect::new(0, 0, 80, 24);
+        let bars = ShellBars {
+            top: BarTrack::of(1),
+            ..ShellBars::NONE
+        };
+        let derived = derive_desktop_shell_layout(None, bars);
+        let key = ShellGeometryKey::new(area, derived.revision, 0, 0, derived.template, bars);
+        let view = compute_shell_view(&derived.layout, key, ShellView::default(), &|region| {
+            u16::from(region == RegionId::LeftPanel) * 26
+        });
+
+        assert_eq!(
+            view.bar_section_hit_at(view.generation, Position::new(5, 0)),
+            None
+        );
+        assert_eq!(
+            view.region_hit_at(view.generation, Position::new(5, 0)),
+            Some(RegionId::TopBar),
+            "the bar itself is still a target"
+        );
+    }
 
     #[test]
     fn geometry_cache_profile_counts_desktop_and_empty_hits_and_misses() {

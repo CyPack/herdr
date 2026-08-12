@@ -30,7 +30,19 @@ ROOT_STRUCT = "Config"
 
 # Dotted key prefixes that are open-ended (user-defined tables/arrays) and
 # therefore not enumerable in a flat reference table.
-SKIPPED_SUBTREES = ("keys.command", "spaces.split", "spaces.project", "spaces.node")
+SKIPPED_SUBTREES = (
+    "keys.command",
+    "spaces.split",
+    "spaces.project",
+    "spaces.node",
+    # A bar's sections are an ordered array of tables: the keys inside one
+    # depend on the section's own `kind`, and there is no fixed number of them.
+    # Documented in prose in the Shell section instead.
+    "shell.bars.top.sections",
+    "shell.bars.bottom.sections",
+    "shell.bars.left.sections",
+    "shell.bars.right.sections",
+)
 
 FIELD_RE = re.compile(r"^\s*pub ([a-z_][a-z0-9_]*):\s*(.+?),?\s*$")
 STRUCT_RE = re.compile(r"^\s*pub(?:\(crate\))? struct ([A-Za-z0-9_]+)\s*\{\s*$")
