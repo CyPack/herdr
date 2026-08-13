@@ -12,6 +12,14 @@ __pycache__/
 !/docs/next/**
 !/docs/versions/
 !/docs/versions/**
+# Fork-owned catalogues. These are cited as authoritative by this repo's own
+# agent routing, so losing them breaks the workflow rather than just the docs.
+# They were kept alive by `git add -f` until now, which meant every file added
+# later silently fell back out of the tree.
+!/docs/patterns/
+!/docs/patterns/**
+!/docs/references/
+!/docs/references/**
 /.local/
 /backlog
 
