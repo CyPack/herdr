@@ -454,6 +454,45 @@ pub(crate) fn node_for_key<'a>(
     app.space_nodes.iter().find(|node| node.key == node_key)
 }
 
+/// What a container header row draws: its name, its glyph, and whether it has
+/// membership of its own to summarise while folded.
+///
+/// One header row type carries two kinds of key. `[[spaces.project]]` and
+/// `[[spaces.node]]` are the same shape to a reader — an arrow, a glyph, a
+/// name, children underneath — and the renderer asks this one question rather
+/// than growing a second painter that would drift from the first (K1).
+pub(crate) struct HeaderFace<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) icon: Option<&'a str>,
+    /// A project folded over its checkouts answers for them; a module holds
+    /// no membership, so a state dot on its row would be a summary of
+    /// nothing (K2).
+    pub(crate) aggregates_state: bool,
+}
+
+/// Resolve a header row's key against both container tables.
+///
+/// Returning `None` used to be the common case for module rows: the row was
+/// laid out from the node forest and looked up against projects only, so it
+/// took its line and painted nothing. A blank line in a tree reads as damage,
+/// and the module the user had just named was nowhere on screen. The "older
+/// chats" row lost a release to the same shape.
+pub(crate) fn header_face_for_key<'a>(app: &'a AppState, key: &str) -> Option<HeaderFace<'a>> {
+    if let Some(project) = project_for_key(app, key) {
+        return Some(HeaderFace {
+            name: project.name.as_str(),
+            icon: project.icon.as_deref(),
+            aggregates_state: true,
+        });
+    }
+    let node = node_for_key(app, key)?;
+    Some(HeaderFace {
+        name: node.name.as_str(),
+        icon: node.icon.as_deref(),
+        aggregates_state: false,
+    })
+}
+
 /// How many indent steps `node_key` sits below the top, capped at six (K10):
 /// a deeper tree keeps folding correctly, it just stops eating name columns
 /// on a 76-column phone.
@@ -2652,32 +2691,40 @@ fn render_workspace_project_headers(app: &AppState, frame: &mut Frame, list_bott
         if head.rect.width == 0 || head.rect.y >= list_bottom {
             continue;
         }
-        let Some(project) = project_for_key(app, &head.project_key) else {
+        // TP-MOD-09: the row carries a project key or a module key, and both
+        // are drawn. Looking the key up against projects alone left every
+        // module row painted with nothing at all.
+        let Some(face) = header_face_for_key(app, &head.project_key) else {
             continue;
         };
         let collapsed = app.node_folded(&head.project_key);
-        let mut spans = vec![
-            Span::styled(
-                if collapsed {
-                    DISCLOSURE_CLOSED
-                } else {
-                    DISCLOSURE_OPEN
-                },
-                Style::default().fg(p.accent),
-            ),
-            Span::raw(" "),
-        ];
-        // TP-ICON-02: the project's own icon wins; the configured default
+        let mut spans = Vec::new();
+        // TP-MOD-10: one step per ancestor, the same measure the module
+        // headers and the checkouts below already use, so a sub-module reads
+        // as under its parent and a parallel one reads as beside it. The
+        // depth comes from the node chain rather than from a member, because
+        // a module the user just created has no member to ask.
+        let shift = node_depth(app, &head.project_key);
+        if shift > 0 {
+            spans.push(Span::raw(" ".repeat((shift * ROW_INDENT_STEP) as usize)));
+        }
+        spans.push(Span::styled(
+            if collapsed {
+                DISCLOSURE_CLOSED
+            } else {
+                DISCLOSURE_OPEN
+            },
+            Style::default().fg(p.accent),
+        ));
+        spans.push(Span::raw(" "));
+        // TP-ICON-02: the container's own icon wins; the configured default
         // fills in; an empty string means no glyph at all.
-        let icon = project
-            .icon
-            .as_deref()
-            .unwrap_or(app.space_icons.project.as_str())
-            .trim();
+        let icon = face.icon.unwrap_or(app.space_icons.project.as_str()).trim();
         if !icon.is_empty() {
             spans.push(Span::raw(format!("{icon} ")));
         }
-        if collapsed {
+        // TP-MOD-11: only a project answers for the checkouts it hides.
+        if collapsed && face.aggregates_state {
             let (state, seen) = project_aggregate_state(app, &head.project_key);
             let (glyph, glyph_style) = state_dot(state, seen, p);
             spans.push(Span::styled(glyph, glyph_style));
@@ -2688,11 +2735,11 @@ fn render_workspace_project_headers(app: &AppState, frame: &mut Frame, list_bott
             .map(|span| super::text::display_width(span.content.as_ref()))
             .sum::<usize>();
         // TP-DOTS-09: the manage chrome `[⋯] [+]` is reserved, so a long
-        // project name truncates short of it instead of bleeding underneath.
+        // name truncates short of it instead of bleeding underneath.
         let reserved = if app.mouse_capture { 4 } else { 0 };
         spans.push(Span::styled(
             super::text::truncate_end(
-                &project.name,
+                face.name,
                 (head.rect.width as usize).saturating_sub(used + reserved),
             ),
             Style::default().fg(p.text).add_modifier(Modifier::BOLD),
@@ -5324,6 +5371,237 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(
             format_relative_time(now + Duration::from_secs(60), now),
             "now"
+        );
+    }
+
+    // TP-MOD-09: a module's row carries its name. The row is emitted by the
+    // tree walk and painted by the header renderer, and those are two
+    // different questions: a row that is emitted but never painted still
+    // takes its line, so the tree grows a blank gap and the module the user
+    // named is nowhere on screen.
+    #[test]
+    fn a_module_row_paints_the_name_the_user_gave_it() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.sidebar_tab = crate::app::state::SidebarTab::Spaces;
+        app.mouse_capture = false;
+        app.mobile_width_threshold = 0;
+        app.workspaces = vec![
+            worktree_on_branch("alpha", "feat/tui-alpha"),
+            worktree_on_branch("beta", "feat/tui-beta"),
+        ];
+        app.space_split_rules = vec![split_rule(&["feat/tui-*"], "herdr:tui", "TUI")];
+        // Parented under a drawn project, so the row is definitely emitted
+        // (`an_empty_module_under_a_drawn_project_takes_a_row_of_its_own`).
+        // This test is only about whether the emitted row reaches the screen.
+        app.space_projects = vec![project_over("project:herdr", &["/repo/herdr"], &[])];
+        app.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "group:remote-audio".into(),
+            name: "UZAKTANSES".into(),
+            icon: None,
+            parent: Some("project:herdr".into()),
+        }];
+        app.ensure_test_terminals();
+        app.active = Some(0);
+        app.selected = 0;
+
+        let area = Rect::new(0, 0, 28, 16);
+        app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
+        let (cards, chats, groups, projects, more) = compute_workspace_list_areas(&app, area);
+        app.view.workspace_card_areas = cards;
+        app.view.workspace_chat_row_areas = chats;
+        app.view.workspace_group_header_areas = groups;
+        app.view.workspace_project_header_areas = projects;
+        app.view.workspace_more_chats_areas = more;
+
+        let runtimes = TerminalRuntimeRegistry::new();
+        let mut terminal = Terminal::new(TestBackend::new(28, 16)).unwrap();
+        terminal
+            .draw(|frame| render_workspace_list(&app, &runtimes, frame, area, true))
+            .unwrap();
+
+        let rows: Vec<String> = (0..16)
+            .map(|y| {
+                (0..28)
+                    .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .filter(|row| !row.is_empty())
+            .collect();
+        assert!(
+            rows.iter().any(|row| row.contains("UZAKTANSES")),
+            "the module's name must reach the screen:\n{}",
+            rows.join("\n")
+        );
+    }
+
+    /// Render the Spaces list and return its non-empty rows, trailing space
+    /// trimmed but leading indent kept — the indent is the thing under test.
+    fn spaces_rows(app: &mut AppState, width: u16, height: u16) -> Vec<String> {
+        let area = Rect::new(0, 0, width, height);
+        app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
+        let (cards, chats, groups, projects, more) = compute_workspace_list_areas(app, area);
+        app.view.workspace_card_areas = cards;
+        app.view.workspace_chat_row_areas = chats;
+        app.view.workspace_group_header_areas = groups;
+        app.view.workspace_project_header_areas = projects;
+        app.view.workspace_more_chats_areas = more;
+
+        let runtimes = TerminalRuntimeRegistry::new();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| render_workspace_list(app, &runtimes, frame, area, true))
+            .unwrap();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .filter(|row| !row.is_empty())
+            .collect()
+    }
+
+    /// Leading spaces of the row that carries `needle`.
+    fn indent_of(rows: &[String], needle: &str) -> usize {
+        let row = rows
+            .iter()
+            .find(|row| row.contains(needle))
+            .unwrap_or_else(|| panic!("no row carries {needle:?}: {rows:#?}"));
+        row.len() - row.trim_start().len()
+    }
+
+    // TP-MOD-10: the row says where the module was created. A sub-module
+    // steps in one place under its parent; a parallel module sits at the
+    // parent's own level. Without the step the two creation roads produce
+    // rows a reader cannot tell apart, and "make this a sub-module" becomes
+    // an action with no visible result.
+    #[test]
+    fn a_sub_module_steps_in_and_a_parallel_module_does_not() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.sidebar_tab = crate::app::state::SidebarTab::Spaces;
+        app.mouse_capture = false;
+        app.mobile_width_threshold = 0;
+        app.workspaces = vec![
+            worktree_on_branch("alpha", "feat/tui-alpha"),
+            worktree_on_branch("beta", "feat/tui-beta"),
+        ];
+        app.space_split_rules = vec![split_rule(&["feat/tui-*"], "herdr:tui", "TUI")];
+        app.space_projects = vec![project_over("project:herdr", &["/repo/herdr"], &[])];
+        app.space_nodes = vec![
+            // Parallel to the project's other children: parent is the project.
+            crate::spaces::SpaceNode {
+                key: "group:paralel".into(),
+                name: "PARALEL".into(),
+                icon: None,
+                parent: Some("project:herdr".into()),
+            },
+            // A sub-module of the one above.
+            crate::spaces::SpaceNode {
+                key: "group:altmodul".into(),
+                name: "ALTMODUL".into(),
+                icon: None,
+                parent: Some("group:paralel".into()),
+            },
+        ];
+        app.ensure_test_terminals();
+        app.active = Some(0);
+        app.selected = 0;
+
+        let rows = spaces_rows(&mut app, 30, 18);
+        let project = indent_of(&rows, "project:herdr");
+        let parallel = indent_of(&rows, "PARALEL");
+        let sub = indent_of(&rows, "ALTMODUL");
+        assert_eq!(
+            parallel,
+            project + ROW_INDENT_STEP as usize,
+            "a module under the project steps in exactly once: {rows:#?}"
+        );
+        assert_eq!(
+            sub,
+            parallel + ROW_INDENT_STEP as usize,
+            "a sub-module steps in once more than its parent: {rows:#?}"
+        );
+    }
+
+    // TP-MOD-11: a module carries the same disclosure arrow every header
+    // wears, and carries no aggregate state dot. A project folded over its
+    // checkouts can answer for them; a module holds no membership of its
+    // own, so a dot there would be a number invented out of nothing.
+    #[test]
+    fn a_folded_module_shows_the_arrow_and_no_invented_state_dot() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.sidebar_tab = crate::app::state::SidebarTab::Spaces;
+        app.mouse_capture = false;
+        app.mobile_width_threshold = 0;
+        app.workspaces = vec![
+            worktree_on_branch("alpha", "feat/tui-alpha"),
+            worktree_on_branch("beta", "feat/tui-beta"),
+        ];
+        app.space_split_rules = vec![split_rule(&["feat/tui-*"], "herdr:tui", "TUI")];
+        app.space_projects = vec![project_over("project:herdr", &["/repo/herdr"], &[])];
+        app.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "group:kapali".into(),
+            name: "KAPALI".into(),
+            icon: None,
+            parent: Some("project:herdr".into()),
+        }];
+        app.fold_node("group:kapali".to_string());
+        app.ensure_test_terminals();
+        app.active = Some(0);
+        app.selected = 0;
+
+        let rows = spaces_rows(&mut app, 30, 18);
+        let row = rows
+            .iter()
+            .find(|row| row.contains("KAPALI"))
+            .unwrap_or_else(|| panic!("the folded module is still drawn: {rows:#?}"));
+        assert!(
+            row.contains(DISCLOSURE_CLOSED),
+            "a folded module wears the closed arrow: {row:?}"
+        );
+        assert!(
+            !row.contains('●') && !row.contains('○'),
+            "a module has no membership to summarise, so it prints no dot: {row:?}"
+        );
+    }
+
+    // TP-MOD-12: opening the header renderer to a second identity must not
+    // change what a project header has always drawn — arrow, icon, name, and
+    // the aggregate dot it earns while folded.
+    #[test]
+    fn a_project_header_still_draws_its_arrow_icon_and_name() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.sidebar_tab = crate::app::state::SidebarTab::Spaces;
+        app.mouse_capture = false;
+        app.mobile_width_threshold = 0;
+        app.workspaces = vec![
+            worktree_on_branch("alpha", "feat/tui-alpha"),
+            worktree_on_branch("beta", "feat/tui-beta"),
+        ];
+        app.space_split_rules = vec![split_rule(&["feat/tui-*"], "herdr:tui", "TUI")];
+        let mut project = project_over("project:herdr", &["/repo/herdr"], &[]);
+        project.name = "HERDRPROJE".into();
+        project.icon = Some("🚀".into());
+        app.space_projects = vec![project];
+        app.ensure_test_terminals();
+        app.active = Some(0);
+        app.selected = 0;
+
+        let rows = spaces_rows(&mut app, 30, 18);
+        let row = rows
+            .iter()
+            .find(|row| row.contains("HERDRPROJE"))
+            .unwrap_or_else(|| panic!("the project header is drawn: {rows:#?}"));
+        assert!(row.contains(DISCLOSURE_OPEN), "arrow: {row:?}");
+        assert!(row.contains('🚀'), "the project's own icon wins: {row:?}");
+        assert_eq!(
+            indent_of(&rows, "HERDRPROJE"),
+            0,
+            "a top-level project sits at the left edge"
         );
     }
 
