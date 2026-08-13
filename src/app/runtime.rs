@@ -1027,6 +1027,17 @@ mod tests {
             app.state.resources.cpu, None,
             "one reading is a baseline, not a measurement"
         );
+
+        // Memory needs no baseline, so on a platform with a reader the very
+        // first reading already has it. This is also the only test that proves
+        // the platform read works at all rather than silently returning None —
+        // every other one feeds the parsers fixtures.
+        #[cfg(target_os = "linux")]
+        assert!(
+            app.state.resources.mem.is_some_and(|mem| mem.total > 0),
+            "a Linux box has readable memory: {:?}",
+            app.state.resources.mem
+        );
     }
 
     #[test]
