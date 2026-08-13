@@ -652,6 +652,22 @@ fn spaces_drawer_rows(app: &AppState) -> Vec<DrawerRow> {
                     },
                 });
             }
+            // TP-MOD-03: the drawer states the same absence the desktop
+            // does. The note is about the container, so its depth comes from
+            // the node chain rather than a workspace's shift.
+            crate::ui::sidebar::WorkspaceListEntry::EmptyModule { node_key } => {
+                rows.push(DrawerRow {
+                    height: 1,
+                    target: None,
+                    content: DrawerRowContent::ChatNote {
+                        depth: u8::try_from(
+                            crate::ui::sidebar::node_depth(app, &node_key).saturating_add(1),
+                        )
+                        .unwrap_or(6),
+                        label: crate::ui::sidebar::EMPTY_MODULE_NOTE.into(),
+                    },
+                });
+            }
             crate::ui::sidebar::WorkspaceListEntry::MoreChats { ws_idx, .. } => {
                 let hidden = crate::ui::sidebar::workspace_chat_rows_for(app, ws_idx)
                     .len()

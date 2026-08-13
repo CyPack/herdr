@@ -370,6 +370,61 @@ fn upsert_by_key(entries: &mut Vec<toml::Value>, key: &str, value: toml::Value) 
 /// branch slug. Projects that lose every member leave with them. Returns the
 /// new document and how many entries were removed; user-authored config is
 /// never touched (TP-RANK-04).
+/// Whether the overlay — the file the machine owns — declares this module.
+///
+/// TP-MOD-26: the answer decides whether a delete verb may be offered at all.
+/// A module written by hand into `config.toml` reaches the tree through the
+/// same merge and looks identical on screen, but no machine road can take it
+/// back; a verb that cannot keep its word is worse than a missing one.
+///
+/// Only `[[spaces.node]]` counts. A split rule that happens to carry the same
+/// key is a bucket, and buckets are taken back by their own verb.
+pub(crate) fn managed_has_node(content: &str, key: &str) -> bool {
+    let Ok(root) = content.parse::<toml::Value>() else {
+        return false;
+    };
+    root.get("spaces")
+        .and_then(|spaces| spaces.get("node"))
+        .and_then(|nodes| nodes.as_array())
+        .is_some_and(|nodes| {
+            nodes
+                .iter()
+                .any(|entry| entry.get("key").and_then(|k| k.as_str()) == Some(key))
+        })
+}
+
+/// Take one `[[spaces.node]]` entry out of the overlay.
+///
+/// TP-MOD-29: deliberately narrower than [`remove_managed`], which hunts a
+/// *branch* across the split and project arrays and matches key suffixes to
+/// find the rule that claimed it. Here the key is already exact and the target
+/// is one array — widening this to "everything that mentions the key" would
+/// let deleting a module take out the branch rule standing next to it.
+///
+/// Children are not touched. A module that loses its parent is re-seated at
+/// top level by `validate_node_forest`, with a diagnostic (TP-MOD-30): losing
+/// the container must not mean losing what was inside it.
+pub(crate) fn remove_managed_node(content: &str, key: &str) -> Result<(String, usize), String> {
+    if content.trim().is_empty() {
+        return Ok((content.to_string(), 0));
+    }
+    let mut root = parse_managed(content)?;
+    let mut removed = 0usize;
+    if let Ok(nodes) = ensure_spaces_array(&mut root, "node") {
+        nodes.retain(|entry| {
+            let hit = entry.get("key").and_then(|k| k.as_str()) == Some(key);
+            if hit {
+                removed += 1;
+            }
+            !hit
+        });
+    }
+    if removed == 0 {
+        return Ok((content.to_string(), 0));
+    }
+    Ok((serialize_managed(&root)?, removed))
+}
+
 pub(crate) fn remove_managed(content: &str, target: &str) -> Result<(String, usize), String> {
     if content.trim().is_empty() {
         return Ok((content.to_string(), 0));
@@ -956,6 +1011,101 @@ name = "Only"
             .expect("listed");
         assert!(line.contains("group:nameless"), "{line}");
         assert!(line.contains("top level"), "{line}");
+    }
+
+    // TP-MOD-29: taking a module back takes the module and nothing else. The
+    // branch-facing `remove_managed` walks the split and project arrays and
+    // matches on key *suffixes*, which is right for a branch and wrong here: a
+    // module named after the branch beside it would drag that branch's rule
+    // out with it. The node road matches whole keys and touches one array.
+    #[test]
+    fn remove_managed_node_takes_the_node_and_leaves_the_neighbours() {
+        let with_rule = upsert_managed("", &plan(true)).expect("upsert the branch rule");
+        let content = upsert_managed_node(
+            &with_rule,
+            &NodePlan {
+                key: "group:docs".into(),
+                name: "Docs".into(),
+                parent: None,
+            },
+        )
+        .expect("upsert the module");
+
+        let (updated, removed) =
+            remove_managed_node(&content, "group:docs").expect("the overlay parses");
+        assert_eq!(removed, 1, "exactly the one module");
+
+        let root: toml::Value = updated.parse().expect("still valid toml");
+        let spaces = root.get("spaces").expect("the spaces table survives");
+        let count = |name: &str| {
+            spaces
+                .get(name)
+                .and_then(|entries| entries.as_array())
+                .map_or(0, Vec::len)
+        };
+        assert_eq!(count("node"), 0, "the module is gone: {updated}");
+        assert_eq!(count("split"), 1, "the branch rule is untouched: {updated}");
+        assert_eq!(count("project"), 1, "the project is untouched: {updated}");
+    }
+
+    // TP-MOD-29: a key nobody wrote changes nothing, byte for byte. A silent
+    // rewrite of the overlay would churn a file the user also edits by hand.
+    #[test]
+    fn remove_managed_node_without_a_match_changes_nothing() {
+        let content = upsert_managed_node(
+            "",
+            &NodePlan {
+                key: "group:docs".into(),
+                name: "Docs".into(),
+                parent: None,
+            },
+        )
+        .expect("upsert");
+        let (updated, removed) = remove_managed_node(&content, "group:yok").expect("parses");
+        assert_eq!(removed, 0);
+        assert_eq!(updated, content);
+    }
+
+    // TP-MOD-27: a project is written as `[[spaces.project]]` and reaches the
+    // tree as a parentless node, so it looks like a module on screen. It must
+    // not answer to the module verb: deleting a project takes its member rules
+    // with it, which is a different and much larger act than dropping an empty
+    // container.
+    #[test]
+    fn managed_has_node_does_not_claim_a_project() {
+        let content = upsert_managed("", &plan(true)).expect("upsert a project-bearing rule");
+        assert!(
+            content.contains("project"),
+            "the fixture really writes a project: {content}"
+        );
+        assert!(!managed_has_node(&content, "project:worktree-tiling"));
+    }
+
+    // TP-MOD-26: the menu asks this before offering to delete. A module the
+    // person wrote into config.toml by hand is not in the overlay, and the
+    // machine cannot take it back — offering the verb anyway would be a button
+    // that does nothing, which is the promise #64 was about.
+    #[test]
+    fn managed_has_node_answers_only_for_the_overlay() {
+        let content = upsert_managed_node(
+            "",
+            &NodePlan {
+                key: "group:docs".into(),
+                name: "Docs".into(),
+                parent: None,
+            },
+        )
+        .expect("upsert");
+        assert!(managed_has_node(&content, "group:docs"));
+        assert!(!managed_has_node(&content, "group:el-yazmasi"));
+        assert!(
+            !managed_has_node("", "group:docs"),
+            "an empty overlay holds nothing"
+        );
+        // A split rule with the same key is a bucket, not a module: the node
+        // road must not claim it.
+        let with_rule = upsert_managed("", &plan(false)).expect("upsert");
+        assert!(!managed_has_node(&with_rule, "herdr:worktree-tiling"));
     }
 
     // TP-DOTS-05: the module road writes one node entry and nothing else —

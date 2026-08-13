@@ -1049,6 +1049,11 @@ pub(super) fn apply_context_menu_action(
             state.unfold_node(&node_key);
             leave_modal(state);
         }
+        // TP-MOD-08: the keyboard road to taking a module back.
+        (ContextMenuKind::NodeHeader { node_key, .. }, Some("Delete module")) => {
+            state.delete_managed_node(&node_key);
+            leave_modal(state);
+        }
         // TP-DOTS-10/11/12: the bucket header creates too — sub hangs under
         // the bucket itself (TP-NODE-08), parallel beside it, under the
         // bucket's own owner (none resolvable = top level).
@@ -1754,6 +1759,11 @@ impl App {
             }
             (ContextMenuKind::NodeHeader { node_key, .. }, Some("Expand")) => {
                 self.state.unfold_node(&node_key);
+                leave_modal(&mut self.state);
+            }
+            // TP-MOD-08: the same verb on the mouse dispatch.
+            (ContextMenuKind::NodeHeader { node_key, .. }, Some("Delete module")) => {
+                self.state.delete_managed_node(&node_key);
                 leave_modal(&mut self.state);
             }
             // TP-DOTS-10/11/12: the bucket's creation road on the mouse
@@ -3173,6 +3183,7 @@ mod tests {
             kind: ContextMenuKind::NodeHeader {
                 node_key: "group:docs".into(),
                 collapsed,
+                deletable: false,
             },
             x: 0,
             y: 0,
@@ -3221,12 +3232,80 @@ mod tests {
 
     // TP-DOTS-13: every module header leads with the branch road — the
     // point of a module is the branches inside it.
+    fn a_node_menu(key: &str, deletable: bool) -> ContextMenuState {
+        ContextMenuState {
+            kind: ContextMenuKind::NodeHeader {
+                node_key: key.into(),
+                collapsed: false,
+                deletable,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        }
+    }
+
+    // TP-MOD-08: creating a module is two clicks; before this, taking one back
+    // was a hand-edit of a file the person never opens. The verb comes last —
+    // it is the one item here that removes something.
+    #[test]
+    fn a_managed_module_offers_to_be_deleted() {
+        assert_eq!(
+            a_node_menu("group:docs", true).items(),
+            vec![
+                "New branch...",
+                "New sub-module...",
+                "New parallel module...",
+                "Collapse",
+                "Delete module",
+            ]
+        );
+    }
+
+    // TP-MOD-26: a module written by hand into config.toml looks the same on
+    // screen and cannot be taken back by machine. Offering the verb there
+    // would be a button that quietly does nothing — the shape of the promise
+    // #64 was opened for.
+    #[test]
+    fn a_hand_written_module_does_not_offer_to_be_deleted() {
+        assert!(!a_node_menu("group:docs", false)
+            .items()
+            .contains(&"Delete module"));
+    }
+
+    // TP-MOD-28: splitting the shared arm must not change what a bucket
+    // header offers. This is the anchor that says the bucket kept its menu
+    // while the module grew one.
+    #[test]
+    fn a_bucket_header_menu_is_unchanged_by_the_module_delete_verb() {
+        let space_menu = ContextMenuState {
+            kind: ContextMenuKind::SpaceHeader {
+                space_key: "repo-key".into(),
+                collapsed: true,
+            },
+            x: 0,
+            y: 0,
+            list: MenuListState::new(0),
+        };
+        assert_eq!(
+            space_menu.items(),
+            vec![
+                "New branch...",
+                "New sub-module...",
+                "New parallel module...",
+                "Expand"
+            ],
+            "a bucket is taken back by its own verb, not this one"
+        );
+    }
+
     #[test]
     fn module_menus_lead_with_new_branch() {
         let node_menu = ContextMenuState {
             kind: ContextMenuKind::NodeHeader {
                 node_key: "group:docs".into(),
                 collapsed: false,
+                deletable: false,
             },
             x: 0,
             y: 0,
@@ -3356,6 +3435,7 @@ mod tests {
             kind: ContextMenuKind::NodeHeader {
                 node_key: "group:ui".into(),
                 collapsed: false,
+                deletable: false,
             },
             x: 0,
             y: 0,
@@ -3400,6 +3480,7 @@ mod tests {
             kind: ContextMenuKind::NodeHeader {
                 node_key: key.into(),
                 collapsed: false,
+                deletable: false,
             },
             x: 0,
             y: 0,
@@ -3456,6 +3537,7 @@ mod tests {
             kind: ContextMenuKind::NodeHeader {
                 node_key: "group:ui".into(),
                 collapsed,
+                deletable: false,
             },
             x: 0,
             y: 0,

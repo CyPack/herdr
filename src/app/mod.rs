@@ -792,6 +792,7 @@ impl App {
                 &crate::spaces::split_parent_map(&config.spaces.rules()),
             )
             .0,
+            managed_node_keys: std::collections::HashSet::new(),
             space_icons: config.spaces.icons.clone(),
             projects_pinned,
             projects_sessions: Vec::new(),
@@ -848,6 +849,7 @@ impl App {
                 workspace_more_chats_areas: Vec::new(),
                 workspace_group_header_areas: Vec::new(),
                 workspace_project_header_areas: Vec::new(),
+                workspace_empty_module_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),
                 stage_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
@@ -986,6 +988,15 @@ impl App {
         };
 
         state.terminals = restored_terminals;
+
+        // The forest is derived once, by the one function that derives it, so
+        // startup and reload cannot drift apart on which modules the machine
+        // may take back (TP-MOD-26).
+        {
+            let managed =
+                std::fs::read_to_string(crate::config::managed_spaces_path()).unwrap_or_default();
+            state.adopt_space_rules(config, &managed);
+        }
 
         for ws_idx in 0..state.workspaces.len() {
             let cwd = state.workspaces[ws_idx]
@@ -1917,14 +1928,9 @@ impl App {
         // persisted key stays the repository's, which is what restore validates
         // against.
         if !invalid_section("spaces") {
-            self.state.space_split_rules = config.spaces.rules();
-            self.state.space_projects = config.spaces.projects();
-            self.state.space_nodes = crate::spaces::validate_node_forest(
-                config.spaces.nodes(),
-                &crate::spaces::split_parent_map(&self.state.space_split_rules),
-            )
-            .0;
-            self.state.space_icons = config.spaces.icons.clone();
+            let managed =
+                std::fs::read_to_string(crate::config::managed_spaces_path()).unwrap_or_default();
+            self.state.adopt_space_rules(config, &managed);
         }
 
         if !invalid_section("theme") {

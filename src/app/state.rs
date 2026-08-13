@@ -706,6 +706,19 @@ pub struct WorkspaceMoreChatsArea {
     pub ws_idx: usize,
 }
 
+/// One laid-out "this container is empty" note in the Spaces tab.
+///
+/// TP-MOD-25: it gets a vector of its own for the opposite of the usual
+/// reason. The other vectors exist so a click resolves to the right thing;
+/// this one exists so the row is *painted at all*. A row that is emitted,
+/// takes its line, and is never drawn leaves exactly the blank gap the note
+/// was added to explain — and this fork has shipped that gap twice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceEmptyModuleArea {
+    pub rect: Rect,
+    pub node_key: String,
+}
+
 /// One laid-out worktree-group header row in the Spaces tab.
 ///
 /// TP-TREE-05: a third vector, for the same reason the chat rows got a second
@@ -1625,6 +1638,9 @@ pub struct ViewState {
     pub workspace_group_header_areas: Vec<WorkspaceGroupHeaderArea>,
     /// Project header rows, one per `[[spaces.project]]` umbrella on screen.
     pub workspace_project_header_areas: Vec<WorkspaceProjectHeaderArea>,
+    /// "Nothing in here yet" notes, one per drawn container that has nothing
+    /// beneath it. Laid out so the row can be painted, not so it can be hit.
+    pub workspace_empty_module_areas: Vec<WorkspaceEmptyModuleArea>,
     /// Hit areas for the Spaces/Projects/Files header tabs (one per
     /// `SidebarTab::ALL`, in order). Empty when the sidebar is collapsed.
     pub sidebar_tab_hit_areas: Vec<Rect>,
@@ -2300,6 +2316,11 @@ pub enum ContextMenuKind {
     NodeHeader {
         node_key: String,
         collapsed: bool,
+        /// Whether the overlay — the file the machine owns — declares this
+        /// module, which is the only case a delete verb can keep its word
+        /// (TP-MOD-26). Resolved when the menu opens, so a reload underneath
+        /// an open menu cannot turn the offer into a no-op.
+        deletable: bool,
     },
     /// A repository/bucket header's menu. A split rule cannot parent a node,
     /// so offering "new sub-module" here would be a promise the tree cannot
@@ -2448,10 +2469,30 @@ impl ContextMenuState {
             // and the bucket header alike, because to the person using the
             // tree both ARE modules — plus the one fold verb the current
             // state calls for. Buckets can parent modules (TP-NODE-08).
-            ContextMenuKind::NodeHeader { collapsed, .. }
-            | ContextMenuKind::SpaceHeader { collapsed, .. } => {
+            ContextMenuKind::NodeHeader {
+                collapsed,
+                deletable,
+                ..
+            } => {
                 // TP-DOTS-13: the branch road leads — the point of a module
                 // is the branches inside it.
+                let mut items = vec![
+                    "New branch...",
+                    "New sub-module...",
+                    "New parallel module...",
+                ];
+                items.push(if *collapsed { "Expand" } else { "Collapse" });
+                // TP-MOD-08/26: last, because it is the only item that takes
+                // something away — and only when there is something the
+                // machine can take back.
+                if *deletable {
+                    items.push("Delete module");
+                }
+                items
+            }
+            // TP-MOD-28: a bucket keeps the menu it had. A split rule is taken
+            // back by the branch verb that wrote it, not by this one.
+            ContextMenuKind::SpaceHeader { collapsed, .. } => {
                 let mut items = vec![
                     "New branch...",
                     "New sub-module...",
@@ -3261,6 +3302,15 @@ pub struct AppState {
     /// The validated node forest (`[[spaces.node]]` + projects doubled as
     /// parentless nodes), cycles and ghosts already cut loose.
     pub space_nodes: Vec<crate::spaces::SpaceNode>,
+    /// Which of `space_nodes` came from the overlay the machine writes.
+    ///
+    /// The merge that builds `space_nodes` deliberately forgets where each
+    /// entry came from — on screen they are the same thing. The delete verb is
+    /// the one place the difference matters (TP-MOD-26), so the provenance is
+    /// kept beside the forest and re-derived by the same call that re-derives
+    /// it. Empty is the honest default: nothing is deletable until a load says
+    /// otherwise.
+    pub managed_node_keys: std::collections::HashSet<String>,
     /// Row-kind icons for the Spaces tree (`[spaces.icons]`), defaults filled.
     /// Config-derived presentation state: refreshed on load and on reload.
     pub space_icons: crate::config::SpaceIconsConfig,
@@ -4331,6 +4381,7 @@ impl AppState {
             space_split_rules: Vec::new(),
             space_projects: Vec::new(),
             space_nodes: Vec::new(),
+            managed_node_keys: std::collections::HashSet::new(),
             space_icons: Default::default(),
             projects_pinned: Vec::new(),
             projects_sessions: Vec::new(),
@@ -4381,6 +4432,7 @@ impl AppState {
                 workspace_more_chats_areas: Vec::new(),
                 workspace_group_header_areas: Vec::new(),
                 workspace_project_header_areas: Vec::new(),
+                workspace_empty_module_areas: Vec::new(),
                 sidebar_tab_hit_areas: Vec::new(),
                 project_row_areas: Vec::new(),
                 app_dock_entry_areas: Vec::new(),
