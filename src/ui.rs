@@ -995,7 +995,14 @@ impl compose::Component for BaseLayer {
         // given. Read from the same track the hit areas were built from, so a
         // label and the click that lands on it can never belong to different
         // sections. Undivided bars produce no rectangles here and cost nothing.
-        let section_style = Style::default().fg(widgets::panel_contrast_fg(&app.palette));
+        // Ordinary text colour, because the surface underneath is the panel
+        // background this bar was just painted with. The neighbouring
+        // `panel_contrast_fg` is for the opposite case — dark text on an accent
+        // fill, the way the workspace chips read — and using it here returns
+        // the panel background itself, which paints every label the exact
+        // colour of the surface it lands on. That shipped once: the border was
+        // visible, the glyphs were in the buffer, and the bar looked empty.
+        let section_style = Style::default().fg(app.palette.text);
         for region in [
             RegionId::TopBar,
             RegionId::BottomBar,
@@ -1410,6 +1417,96 @@ mod tests {
             1,
             "clipping by display width must not paint six cells into four: {row:?}"
         );
+    }
+
+    // TC-C8 · a label has to be legible, not merely present.
+    //
+    // The test above reads symbols, and symbols are in the buffer whether or
+    // not a person can see them. This fork shipped a label whose foreground was
+    // the colour of the surface under it: every state test passed, the glyph
+    // dump passed, and the user saw an empty bar with a visible border. A
+    // character-only assertion cannot tell "painted" from "painted invisibly",
+    // so the colour needs its own claim.
+    //
+    // The claim is deliberately the weakest one that still catches it —
+    // foreground must differ from the background of the very cell it lands in.
+    // Anything stronger (a named colour, a contrast ratio) would pin a theme
+    // decision into a test that is about legibility, and would break the next
+    // time the palette moves.
+    // TP-CHROME-55: a section label is drawn in a colour you can see against
+    // its own surface.
+    #[test]
+    fn a_section_label_is_painted_in_a_colour_you_can_see_against_its_own_surface() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 6,
+            ..Default::default()
+        };
+        section.widget.kind = "label".to_string();
+        section.widget.text = "CPU".to_string();
+
+        let config = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 3,
+                // The border is the point: it makes the shell paint the bar's
+                // interior, which is the surface the label has to survive.
+                border: true,
+                color: "mauve".to_string(),
+                gradient: Vec::new(),
+                sections: vec![section],
+            },
+            ..Default::default()
+        };
+
+        let frame = Rect::new(0, 0, 100, 30);
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        );
+        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
+        compute_view(&mut app, frame);
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("a bordered bar with a labelled section draws");
+        let buffer = terminal.backend().buffer().clone();
+
+        // Row 0 is the top border, so the content row is row 1.
+        let painted: Vec<_> = (0..10)
+            .filter_map(|x| buffer.cell((x, 1)))
+            .filter(|cell| {
+                let symbol = cell.symbol();
+                !symbol.trim().is_empty() && symbol != "│"
+            })
+            .collect();
+
+        assert!(
+            !painted.is_empty(),
+            "the label has to reach the buffer before its colour can be judged"
+        );
+        for cell in painted {
+            assert_ne!(
+                cell.fg,
+                cell.bg,
+                "a label drawn in the colour of its own surface is invisible: \
+                 symbol {:?} fg {:?} bg {:?}",
+                cell.symbol(),
+                cell.fg,
+                cell.bg
+            );
+        }
     }
 
     #[test]
