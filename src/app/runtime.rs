@@ -377,6 +377,11 @@ impl App {
 
         changed |= self.clear_due_selection_highlight(now);
 
+        // A new reading changes what a section says, so it is a reason to draw
+        // — and the only reason. The screen follows the data's clock, not the
+        // other way round.
+        changed |= self.tick_resource_sample(now);
+
         self.start_git_status_refresh_if_due(now);
 
         if self
@@ -659,6 +664,75 @@ impl App {
             .then_some(self.last_git_remote_status_refresh + GIT_REMOTE_STATUS_REFRESH_INTERVAL)
     }
 
+    /// How often the machine's counters are re-read.
+    ///
+    /// Two seconds is slow enough that the cost is unmeasurable next to a
+    /// single keystroke's worth of terminal work, and fast enough that a build
+    /// starting is visible before it finishes. It is deliberately not
+    /// configurable yet: a number a person can set needs a floor, a refusal
+    /// message and a place in the config reference, and that is its own layer.
+    const RESOURCE_SAMPLE_INTERVAL: Duration = Duration::from_secs(2);
+
+    /// When the next reading is due, or None when nothing on screen wants one.
+    ///
+    /// The `wants_resources` gate is the whole cost argument: with no resource
+    /// section configured this returns None, the loop never wakes for it, and
+    /// `/proc` is never opened. Sampling unconditionally and discarding the
+    /// result would be simpler and would make every herdr on every machine pay
+    /// for a widget almost nobody has turned on.
+    // TP-RES-08: no resource section means no deadline and no reading.
+    pub(crate) fn resource_sample_deadline(&self) -> Option<Instant> {
+        if !self.state.shell_bar_chrome.wants_resources() {
+            return None;
+        }
+        // Only ever consulted to decide how long to sleep. Whether a reading is
+        // actually owed is decided by `tick_resource_sample` against the `now`
+        // it is given, so the two cannot disagree — an earlier draft asked this
+        // getter, which called `Instant::now()` internally, and the first
+        // reading was therefore due at a moment that had already passed by the
+        // time the caller compared against it. It never fired.
+        Some(
+            self.last_resource_sample_at
+                .map_or_else(Instant::now, |last| last + Self::RESOURCE_SAMPLE_INTERVAL),
+        )
+    }
+
+    /// Reads the machine, if a reading is due.
+    ///
+    /// Called from the loop and from nowhere else. The first call can only
+    /// establish a baseline — a percentage is a difference, and there is
+    /// nothing yet to differ from — so CPU stays unknown until the second,
+    /// which is honest: `--` for two seconds, not a fabricated 0%.
+    // TP-RES-09: the loop samples, the renderer never does.
+    pub(crate) fn tick_resource_sample(&mut self, now: Instant) -> bool {
+        if !self.state.shell_bar_chrome.wants_resources() {
+            return false;
+        }
+        if self
+            .last_resource_sample_at
+            .is_some_and(|last| now < last + Self::RESOURCE_SAMPLE_INTERVAL)
+        {
+            return false;
+        }
+
+        self.resource_samples_taken = self.resource_samples_taken.saturating_add(1);
+        self.last_resource_sample_at = Some(now);
+
+        let times = crate::platform::read_cpu_times();
+        self.state.resources.cpu = match (self.previous_cpu_times, times) {
+            (Some(prev), Some(current)) => crate::resource::cpu_percent(prev, current),
+            _ => None,
+        };
+        if times.is_some() {
+            self.previous_cpu_times = times;
+        }
+
+        let (mem, swap) = crate::platform::read_memory();
+        self.state.resources.mem = mem;
+        self.state.resources.swap = swap;
+        true
+    }
+
     pub(crate) fn next_loop_deadline(&self, now: Instant, needs_render: bool) -> Option<Instant> {
         self.next_loop_deadline_with_resize_poll(now, needs_render, true, true)
     }
@@ -695,6 +769,7 @@ impl App {
             self.state.next_managed_agent_deadline(),
             self.copy_feedback_deadline,
             self.next_animation_tick,
+            self.resource_sample_deadline(),
             include_git_refresh
                 .then(|| self.git_refresh_deadline())
                 .flatten(),
@@ -818,6 +893,141 @@ mod tests {
     use crate::app::state;
     use crate::workspace::Workspace;
     use std::path::PathBuf;
+
+    /// A bar whose only section is a live CPU meter.
+    fn resource_bars_config() -> crate::config::ShellBarsConfig {
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 12,
+            ..Default::default()
+        };
+        section.widget.kind = "resource".to_string();
+        section.widget.metric = "cpu".to_string();
+        crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 1,
+                border: false,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections: vec![section],
+            },
+            ..Default::default()
+        }
+    }
+
+    fn app_with_resource_section() -> super::super::App {
+        let mut app = super::super::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            tokio::sync::mpsc::unbounded_channel().1,
+            crate::api::EventHub::default(),
+        );
+        let config = resource_bars_config();
+        app.state.workspaces.push(Workspace::test_new("test"));
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.state.sidebar_width,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        );
+        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
+        app
+    }
+
+    // TC-D1 · the seam, stated as the only thing that can be measured about it:
+    // drawing does not read the machine. A sampler called from render looks
+    // identical on screen and costs a `/proc` open per frame, which is exactly
+    // the shape the user's "never put load on herdr" rules out. Counting reads
+    // and drawing many frames is the only way to tell the two apart.
+    // TP-RES-09: the renderer never samples.
+    #[test]
+    fn drawing_a_live_section_many_times_never_reads_the_machine() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = app_with_resource_section();
+        let frame = ratatui::layout::Rect::new(0, 0, 80, 24);
+        crate::ui::compute_view(&mut app.state, frame);
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        for _ in 0..60 {
+            terminal
+                .draw(|f| crate::ui::render(&app.state, f))
+                .expect("a bar with a live section draws");
+        }
+
+        assert_eq!(
+            app.resource_samples_taken, 0,
+            "sixty frames must not have read /proc even once"
+        );
+    }
+
+    // TC-D2 · and the other half: something does read it, on the loop's clock,
+    // and not more often than it said it would.
+    #[test]
+    fn the_loop_reads_the_machine_once_per_interval_and_not_per_call() {
+        let mut app = app_with_resource_section();
+        let start = Instant::now();
+
+        // Nothing has been read, so the first reading is owed now.
+        app.tick_resource_sample(start);
+        assert_eq!(app.resource_samples_taken, 1);
+
+        // Called again immediately — and again, and again — it refuses.
+        for _ in 0..10 {
+            app.tick_resource_sample(start);
+        }
+        assert_eq!(
+            app.resource_samples_taken, 1,
+            "a tick that is not due must not read"
+        );
+
+        app.tick_resource_sample(start + Duration::from_secs(2));
+        assert_eq!(
+            app.resource_samples_taken, 2,
+            "the next interval reads once"
+        );
+    }
+
+    // TC-D3 · a machine nobody is asking about is never read at all. This is
+    // the difference between a feature that costs nothing when off and one that
+    // samples always and throws the answer away.
+    // TP-RES-08: no resource section, no deadline, no reading.
+    #[test]
+    fn a_bar_with_no_live_section_never_reads_the_machine_and_asks_for_no_wakeup() {
+        let mut app = super::super::App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            tokio::sync::mpsc::unbounded_channel().1,
+            crate::api::EventHub::default(),
+        );
+        let now = Instant::now();
+
+        assert_eq!(app.resource_sample_deadline(), None);
+        app.tick_resource_sample(now);
+        assert_eq!(app.resource_samples_taken, 0);
+    }
+
+    // TC-D4 · the first reading cannot produce a percentage, because a
+    // percentage is a difference and there is nothing yet to differ from.
+    // Reporting 0% there would be a fabricated number that looks exactly like
+    // an idle machine.
+    #[test]
+    fn the_first_reading_leaves_the_percentage_unknown_rather_than_inventing_zero() {
+        let mut app = app_with_resource_section();
+        let start = Instant::now();
+
+        app.tick_resource_sample(start);
+        assert_eq!(
+            app.state.resources.cpu, None,
+            "one reading is a baseline, not a measurement"
+        );
+    }
 
     #[test]
     fn interrupted_custom_command_wait_keeps_child_for_retry() {

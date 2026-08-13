@@ -144,26 +144,36 @@ pub(crate) fn render_chip(
 pub(crate) fn render_section_widget(
     frame: &mut Frame,
     widget: &crate::ui::shell::SectionWidget,
+    resources: &crate::resource::ResourceSample,
     area: Rect,
     style: Style,
 ) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    match widget {
-        crate::ui::shell::SectionWidget::None => {}
+    let text = match widget {
+        crate::ui::shell::SectionWidget::None => return,
         crate::ui::shell::SectionWidget::Label { text } => {
             if text.is_empty() {
                 return;
             }
-            let clipped = super::text::truncate_end(text, usize::from(area.width));
-            let line = Rect::new(area.x, area.y, area.width, 1);
-            frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(clipped, style))),
-                line,
-            );
+            std::borrow::Cow::Borrowed(text.as_str())
         }
-    }
+        // The sample arrives already taken. This arm formats it and nothing
+        // else — no reading, no clock, no cache — which is what makes "the
+        // renderer never samples" a property of the code rather than a promise
+        // in a comment.
+        crate::ui::shell::SectionWidget::Resource { metric } => {
+            std::borrow::Cow::Owned(crate::resource::metric_text(resources, *metric))
+        }
+    };
+
+    let clipped = super::text::truncate_end(&text, usize::from(area.width));
+    let line = Rect::new(area.x, area.y, area.width, 1);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(clipped, style))),
+        line,
+    );
 }
 
 /// Rows a boxed chip occupies: border, label, border.

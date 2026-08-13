@@ -1020,7 +1020,13 @@ impl compose::Component for BaseLayer {
             {
                 let index = u8::try_from(index).unwrap_or(u8::MAX);
                 if let Some(widget) = app.shell_bar_chrome.widget_for(region, index) {
-                    widgets::render_section_widget(frame, widget, rect, section_style);
+                    widgets::render_section_widget(
+                        frame,
+                        widget,
+                        &app.resources,
+                        rect,
+                        section_style,
+                    );
                 }
             }
         }

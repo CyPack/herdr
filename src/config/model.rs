@@ -865,6 +865,10 @@ pub struct ShellBarSectionConfig {
 pub struct ShellBarSectionWidgetConfig {
     pub kind: String,
     pub text: String,
+    /// Which machine counter a `resource` widget shows: `cpu`, `mem` or `swap`.
+    /// Ignored by every other kind, and refused when the kind is `resource` and
+    /// this names nothing the build knows.
+    pub metric: String,
 }
 
 /// `[[shell.bars.<edge>.sections]].action` — what clicking one part does.

@@ -403,6 +403,11 @@ pub(crate) enum BarConfigProblem {
         index: usize,
         kind: String,
     },
+    UnknownSectionWidgetMetric {
+        edge: &'static str,
+        index: usize,
+        metric: String,
+    },
     WidgetTextWithoutWidget {
         edge: &'static str,
         index: usize,
@@ -481,7 +486,16 @@ impl std::fmt::Display for BarConfigProblem {
             Self::UnknownSectionWidgetKind { edge, index, kind } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].widget.kind is \"{kind}\"; expected \
-                 \"label\", so this section shows nothing"
+                 \"label\" or \"resource\", so this section shows nothing"
+            ),
+            Self::UnknownSectionWidgetMetric {
+                edge,
+                index,
+                metric,
+            } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget.metric is \"{metric}\"; expected \
+                 \"cpu\", \"mem\" or \"swap\", so this section shows nothing"
             ),
             Self::WidgetTextWithoutWidget { edge, index } => write!(
                 formatter,
@@ -740,6 +754,14 @@ pub(crate) enum SectionWidget {
     Label {
         text: String,
     },
+    /// A number the machine keeps changing under the section.
+    ///
+    /// The widget holds only *which* number it wants. The number itself lives
+    /// in state, sampled on the loop's own clock, because a widget that could
+    /// read a counter would be read once per frame by the thing that draws it.
+    Resource {
+        metric: crate::resource::ResourceMetric,
+    },
 }
 
 /// What one section shows and what a click on it does.
@@ -826,6 +848,21 @@ impl ShellBarChrome {
     pub(crate) fn widget_for(&self, region: RegionId, index: u8) -> Option<&SectionWidget> {
         self.for_section(region, index).map(|chrome| &chrome.widget)
     }
+
+    /// Whether anything on screen is waiting on a machine counter.
+    ///
+    /// This is what keeps the feature free for the people not using it. No
+    /// resource section means no deadline, which means the loop never wakes to
+    /// sample and never opens `/proc` at all — rather than sampling always and
+    /// throwing the answer away, which is the shape this kind of widget
+    /// usually arrives in.
+    // TP-RES-07: sampling is demand-driven; an unused feature costs nothing.
+    pub(crate) fn wants_resources(&self) -> bool {
+        [&self.top, &self.bottom, &self.left, &self.right]
+            .into_iter()
+            .flat_map(|bar| bar.entries.iter())
+            .any(|chrome| matches!(chrome.widget, SectionWidget::Resource { .. }))
+    }
 }
 
 /// Read one edge's sections' chrome, aligned with the sections that edge
@@ -895,6 +932,18 @@ fn section_widget(
         "label" => Ok(SectionWidget::Label {
             text: config.widget.text.clone(),
         }),
+        // A resource section names its metric, and a metric this build does
+        // not know is refused here rather than drawn as an empty section. The
+        // same reasoning as an unknown widget kind: a typo that renders as
+        // blank is indistinguishable from one that renders as nothing on
+        // purpose.
+        "resource" => crate::resource::ResourceMetric::parse(&config.widget.metric)
+            .map(|metric| SectionWidget::Resource { metric })
+            .ok_or(BarConfigProblem::UnknownSectionWidgetMetric {
+                edge,
+                index,
+                metric: config.widget.metric.clone(),
+            }),
         other => Err(BarConfigProblem::UnknownSectionWidgetKind {
             edge,
             index,
@@ -1589,6 +1638,55 @@ mod tests {
     // half-finished shape as a leftover popup size. And a label never reaches
     // the value the geometry cache compares: editing text must not re-lay-out
     // the bar.
+    // A metric is a second name inside a widget that already named itself, and
+    // a wrong one fails in the same silent way a wrong kind does: the section
+    // draws nothing and looks exactly like a section meant to draw nothing.
+    // It gets its own message rather than sharing the unknown-kind one, because
+    // the two send a person to different lines of the same file.
+    // TP-CHROME-56: an unknown metric is refused, and carries no widget.
+    #[test]
+    fn a_resource_widget_with_an_unknown_metric_is_reported_and_never_reaches_the_geometry() {
+        let mut typo = plain_section("fill");
+        typo.widget.kind = "resource".to_string();
+        typo.widget.metric = "cpu%".to_string();
+        let mut good = plain_section("fill");
+        good.widget.kind = "resource".to_string();
+        good.widget.metric = "swap".to_string();
+
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![typo, good]),
+            ..Default::default()
+        };
+
+        let reported = shell_bar_config_problems(&config)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(
+            reported[0].contains("sections[0].widget.metric is \"cpu%\""),
+            "the message has to name the metric that was wrong: {reported:?}"
+        );
+
+        let chrome = ShellBarChrome::from_config(&config);
+        assert_eq!(
+            chrome.widget_for(RegionId::TopBar, 0),
+            Some(&SectionWidget::None),
+            "a metric the checker refused must not be carried either"
+        );
+        assert_eq!(
+            chrome.widget_for(RegionId::TopBar, 1),
+            Some(&SectionWidget::Resource {
+                metric: crate::resource::ResourceMetric::Swap
+            })
+        );
+        assert!(
+            chrome.wants_resources(),
+            "one good live section is enough to make the loop sample"
+        );
+    }
+
     #[test]
     fn a_widget_this_build_cannot_show_is_reported_and_never_reaches_the_geometry() {
         let mut wrong_kind = plain_section("fill");
