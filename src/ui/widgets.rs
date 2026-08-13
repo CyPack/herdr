@@ -162,6 +162,10 @@ pub(crate) fn render_section_widget(
             render_icon_art(frame, art, palette, area);
             return;
         }
+        crate::ui::shell::SectionWidget::Meter { metric } => {
+            render_meter(frame, resources, *metric, palette, area);
+            return;
+        }
         crate::ui::shell::SectionWidget::Icon { glyph } => {
             std::borrow::Cow::Borrowed(glyph.as_str())
         }
@@ -238,6 +242,58 @@ fn render_icon_art(frame: &mut Frame, art: &crate::icon::IconArt, palette: &Pale
                     cell.set_symbol(UPPER_HALF);
                     cell.set_fg(super::shell::bar_color(top, palette));
                     cell.set_bg(super::shell::bar_color(bottom, palette));
+                }
+            }
+        }
+    }
+}
+
+/// Paints a filled bar across the section, coloured by how full it is.
+///
+/// Every row of the rectangle is filled, so the bar reads as a block of colour
+/// rather than a line — which is what makes a glance enough. Whole cells are
+/// `\u{2588}`; the cell after them carries the remainder as an eighth-block, so the
+/// bar moves smoothly instead of jumping a whole cell at a time.
+///
+/// A metric with no ratio — an unreadable counter, or a pool the machine does
+/// not have — draws NOTHING. An empty bar would say "plenty free" about
+/// something that is absent or unknown, which is the same lie a fabricated 0%
+/// would be.
+///
+/// The cost story is unchanged from every other widget here: this reads a
+/// sample that was already taken, so the bar only changes when the sample does,
+/// and an unchanged bar costs nothing in the frame diff.
+// TP-METER-01/02: every row is filled, the bar never overruns its rectangle,
+// and a metric with no ratio draws nothing at all.
+fn render_meter(
+    frame: &mut Frame,
+    resources: &crate::resource::ResourceSample,
+    metric: crate::resource::ResourceMetric,
+    palette: &Palette,
+    area: Rect,
+) {
+    const FULL: &str = "\u{2588}";
+
+    let Some(ratio) = crate::resource::meter_ratio(resources, metric) else {
+        return;
+    };
+    let (full, eighths) = crate::resource::meter_cells(ratio, area.width);
+    let colour = super::shell::bar_color(crate::resource::meter_colour(ratio), palette);
+    let partial = crate::resource::eighth_block(eighths);
+
+    let buffer = frame.buffer_mut();
+    for row in 0..area.height {
+        for column in 0..full {
+            if let Some(cell) = buffer.cell_mut((area.x + column, area.y + row)) {
+                cell.set_symbol(FULL);
+                cell.set_fg(colour);
+            }
+        }
+        if let Some(symbol) = partial {
+            if full < area.width {
+                if let Some(cell) = buffer.cell_mut((area.x + full, area.y + row)) {
+                    cell.set_symbol(symbol);
+                    cell.set_fg(colour);
                 }
             }
         }

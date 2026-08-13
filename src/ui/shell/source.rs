@@ -510,7 +510,7 @@ impl std::fmt::Display for BarConfigProblem {
             Self::UnknownSectionWidgetKind { edge, index, kind } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].widget.kind is \"{kind}\"; expected \
-                 \"label\", \"resource\" or \"icon\", so this section shows nothing"
+                 \"label\", \"resource\", \"icon\" or \"meter\", so this section shows nothing"
             ),
             Self::UnknownSectionWidgetMetric {
                 edge,
@@ -819,6 +819,14 @@ pub(crate) enum SectionWidget {
     Resource {
         metric: crate::resource::ResourceMetric,
     },
+    /// A filled bar showing how full one metric is.
+    ///
+    /// Like `Resource` it names only the metric; the number arrives already
+    /// sampled. Unlike it, the value is drawn rather than written, which is the
+    /// difference between reading a bar and reading a figure.
+    Meter {
+        metric: crate::resource::ResourceMetric,
+    },
     /// One grapheme the font already knows how to draw.
     Icon {
         glyph: String,
@@ -930,7 +938,12 @@ impl ShellBarChrome {
         [&self.top, &self.bottom, &self.left, &self.right]
             .into_iter()
             .flat_map(|bar| bar.entries.iter())
-            .any(|chrome| matches!(chrome.widget, SectionWidget::Resource { .. }))
+            .any(|chrome| {
+                matches!(
+                    chrome.widget,
+                    SectionWidget::Resource { .. } | SectionWidget::Meter { .. }
+                )
+            })
     }
 }
 
@@ -1007,6 +1020,13 @@ fn section_widget(
         // blank is indistinguishable from one that renders as nothing on
         // purpose.
         "icon" => section_icon(config, edge, index),
+        "meter" => crate::resource::ResourceMetric::parse(&config.widget.metric)
+            .map(|metric| SectionWidget::Meter { metric })
+            .ok_or(BarConfigProblem::UnknownSectionWidgetMetric {
+                edge,
+                index,
+                metric: config.widget.metric.clone(),
+            }),
         "resource" => crate::resource::ResourceMetric::parse(&config.widget.metric)
             .map(|metric| SectionWidget::Resource { metric })
             .ok_or(BarConfigProblem::UnknownSectionWidgetMetric {

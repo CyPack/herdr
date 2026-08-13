@@ -1757,6 +1757,156 @@ mod tests {
         );
     }
 
+    fn app_with_meter(
+        metric: &str,
+        cells: u16,
+        sample: crate::resource::ResourceSample,
+    ) -> crate::app::state::AppState {
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells,
+            ..Default::default()
+        };
+        section.widget.kind = "meter".to_string();
+        section.widget.metric = metric.to_string();
+        let config = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 2,
+                border: false,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections: vec![section],
+            },
+            ..Default::default()
+        };
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        );
+        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
+        app.resources = sample;
+        app
+    }
+
+    // TC-M4 · the bar fills every row it was given, stops where the value says,
+    // and stays inside its own rectangle.
+    //
+    // All three matter and none is implied by the others. One row would read as
+    // a line rather than a block; a bar that stopped at the wrong cell would
+    // still look like a plausible reading; and one cell of overrun paints the
+    // section next door, which is the defect this fork has already paid for
+    // twice in other surfaces.
+    // TP-METER-01: a meter fills its rows, honours the value, stays inside.
+    #[test]
+    fn a_meter_fills_every_row_to_the_level_it_was_given_and_no_further() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = app_with_meter(
+            "mem",
+            10,
+            crate::resource::ResourceSample {
+                mem: Some(crate::resource::Usage { used: 3, total: 10 }),
+                ..crate::resource::ResourceSample::default()
+            },
+        );
+        let frame = Rect::new(0, 0, 100, 30);
+        compute_view(&mut app, frame);
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal.draw(|f| render(&app, f)).expect("a meter draws");
+        let buffer = terminal.backend().buffer().clone();
+
+        for row in 0..2 {
+            let filled = (0..10)
+                .filter_map(|x| buffer.cell((x, row)))
+                .filter(|cell| cell.symbol() == "\u{2588}")
+                .count();
+            assert_eq!(
+                filled, 3,
+                "row {row}: three tenths of ten cells is three full cells"
+            );
+        }
+
+        // Green at 30%, and the colour is the whole point of a glanceable bar.
+        let cell = buffer.cell((0, 0)).expect("first cell");
+        assert_eq!(cell.fg, app.palette.green, "30% is not a problem yet");
+
+        // Nothing past the section.
+        let beyond = buffer.cell((10, 0)).expect("column 10");
+        assert_ne!(
+            beyond.symbol(),
+            "\u{2588}",
+            "the meter painted into its neighbour"
+        );
+    }
+
+    // TC-M5 · a level that is a problem looks like one, and a metric with no
+    // ratio draws NOTHING rather than an empty bar.
+    //
+    // The second half is the honest one: an empty bar says "plenty free", which
+    // is a claim. About an unreadable counter or a machine with no swap, it is
+    // a false one — the same lie a fabricated 0% would be.
+    // TP-METER-02: level changes colour; no ratio draws nothing.
+    #[test]
+    fn a_full_meter_reads_red_and_a_metric_with_no_ratio_draws_nothing() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = app_with_meter(
+            "mem",
+            8,
+            crate::resource::ResourceSample {
+                mem: Some(crate::resource::Usage {
+                    used: 19,
+                    total: 20,
+                }),
+                ..crate::resource::ResourceSample::default()
+            },
+        );
+        // 100x30: below roughly this the shell projects no top bar at all, which
+        // is a property of the layout rather than of the meter.
+        let frame = Rect::new(0, 0, 100, 30);
+        compute_view(&mut app, frame);
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("a full meter draws");
+        let cell = terminal
+            .backend()
+            .buffer()
+            .cell((0, 0))
+            .expect("first cell")
+            .clone();
+        assert_eq!(cell.fg, app.palette.red, "95% has to read as a problem");
+
+        // Same section, a metric this machine cannot answer for.
+        let mut app = app_with_meter("swap", 8, crate::resource::ResourceSample::default());
+        compute_view(&mut app, frame);
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("an unknown meter draws");
+        let buffer = terminal.backend().buffer().clone();
+        let painted = (0..8)
+            .filter_map(|x| buffer.cell((x, 0)))
+            .filter(|cell| cell.symbol() != " ")
+            .count();
+        assert_eq!(
+            painted, 0,
+            "an empty bar would claim the pool is free; it is unknown"
+        );
+    }
+
     #[test]
     fn a_configured_left_bar_puts_the_finished_dock_on_screen() {
         use ratatui::{backend::TestBackend, Terminal};

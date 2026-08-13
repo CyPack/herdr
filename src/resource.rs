@@ -209,6 +209,82 @@ pub(crate) fn format_bytes(bytes: u64) -> String {
     }
 }
 
+/// How full one metric is, as 0..1, or `None` when it cannot be known.
+///
+/// A meter needs a ratio, and the three metrics carry it differently: CPU is
+/// already a percentage, memory and swap are a pair. A pool with no capacity —
+/// a machine with no swap — has no ratio at all; drawing it as empty would say
+/// "plenty free" about something that does not exist.
+// TP-METER-02: a pool with no capacity has no ratio, and neither has an
+// unreadable one.
+pub(crate) fn meter_ratio(sample: &ResourceSample, metric: ResourceMetric) -> Option<f32> {
+    let usage = match metric {
+        ResourceMetric::Cpu => return sample.cpu.map(|pct| (pct / 100.0).clamp(0.0, 1.0)),
+        ResourceMetric::Mem => sample.mem?,
+        ResourceMetric::Swap => sample.swap?,
+    };
+    if usage.total == 0 {
+        return None;
+    }
+    // Lossy above 2^24 bytes of precision, which for a ratio drawn in at most a
+    // few dozen cells is far below one pixel of difference.
+    #[allow(clippy::cast_precision_loss)]
+    Some((usage.used as f32 / usage.total as f32).clamp(0.0, 1.0))
+}
+
+/// The eighth-blocks that draw a bar `width` cells wide filled to `ratio`.
+///
+/// Returns whole cells plus the eighths of the one after them. Eighths rather
+/// than whole cells because a meter that can only move in cell steps jumps: on
+/// a ten-cell bar every change under 10% is invisible, and then it lurches. The
+/// glyphs `▏▎▍▌▋▊▉█` exist for exactly this and cost the same one cell.
+// TP-METER-03: a bar moves in eighths, and never exceeds its own width.
+pub(crate) fn meter_cells(ratio: f32, width: u16) -> (u16, u8) {
+    if width == 0 {
+        return (0, 0);
+    }
+    let ratio = ratio.clamp(0.0, 1.0);
+    #[allow(clippy::cast_precision_loss)]
+    let eighths_total = (ratio * f32::from(width) * 8.0).round();
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let eighths_total = eighths_total.max(0.0) as u32;
+    let full = u16::try_from(eighths_total / 8).unwrap_or(width).min(width);
+    let remainder = if full >= width {
+        0
+    } else {
+        u8::try_from(eighths_total % 8).unwrap_or(0)
+    };
+    (full, remainder)
+}
+
+/// The eighth-block glyph for a partial cell, or `None` for an empty one.
+pub(crate) const fn eighth_block(eighths: u8) -> Option<&'static str> {
+    match eighths {
+        1 => Some("\u{258f}"),
+        2 => Some("\u{258e}"),
+        3 => Some("\u{258d}"),
+        4 => Some("\u{258c}"),
+        5 => Some("\u{258b}"),
+        6 => Some("\u{258a}"),
+        7 => Some("\u{2589}"),
+        _ => None,
+    }
+}
+
+/// The colour a level reads as. Thresholds, not a gradient: a person reads a
+/// meter to answer "is this a problem", and three answers are easier to see at
+/// a glance in three cells than a continuous ramp.
+// TP-METER-02: level maps to a palette token, and the boundaries are stable.
+pub(crate) fn meter_colour(ratio: f32) -> &'static str {
+    if ratio >= 0.85 {
+        "red"
+    } else if ratio >= 0.6 {
+        "yellow"
+    } else {
+        "green"
+    }
+}
+
 /// What a section shows for one metric of one sample.
 ///
 /// Three outcomes, and they read differently on purpose: a number, `off` for a
@@ -393,6 +469,88 @@ mod tests {
         assert_eq!(metric_text(&sample, ResourceMetric::Cpu), "CPU  12%");
         assert_eq!(metric_text(&sample, ResourceMetric::Mem), "MEM 5.0G/31G");
         assert_eq!(metric_text(&sample, ResourceMetric::Swap), "SWP 0B/8.0G");
+    }
+
+    // TC-M1 · a pool that does not exist has no ratio. Drawing a swapless
+    // machine as an empty bar says "plenty free" about something absent.
+    #[test]
+    fn a_pool_with_no_capacity_and_an_unreadable_one_both_have_no_ratio() {
+        let none = ResourceSample::default();
+        assert_eq!(meter_ratio(&none, ResourceMetric::Cpu), None);
+        assert_eq!(meter_ratio(&none, ResourceMetric::Mem), None);
+
+        let swapless = ResourceSample {
+            swap: Some(Usage { used: 0, total: 0 }),
+            ..ResourceSample::default()
+        };
+        assert_eq!(meter_ratio(&swapless, ResourceMetric::Swap), None);
+    }
+
+    #[test]
+    fn a_ratio_comes_from_the_pair_and_a_percentage_from_the_number() {
+        let sample = ResourceSample {
+            cpu: Some(50.0),
+            mem: Some(Usage { used: 3, total: 4 }),
+            ..ResourceSample::default()
+        };
+        assert_eq!(meter_ratio(&sample, ResourceMetric::Cpu), Some(0.5));
+        assert_eq!(meter_ratio(&sample, ResourceMetric::Mem), Some(0.75));
+    }
+
+    // TC-M2 · the bar moves in eighths and never overruns its own width.
+    // Whole-cell steps would make every change under 1/width invisible and then
+    // lurch; overrunning would paint the neighbouring section.
+    #[test]
+    fn a_bar_fills_in_eighths_and_never_exceeds_its_width() {
+        assert_eq!(meter_cells(0.0, 10), (0, 0));
+        assert_eq!(meter_cells(1.0, 10), (10, 0), "full leaves no partial cell");
+        assert_eq!(meter_cells(0.5, 10), (5, 0));
+        // Half of one cell on a one-cell bar is four eighths.
+        assert_eq!(meter_cells(0.5, 1), (0, 4));
+        // A value between cells keeps the remainder rather than rounding away.
+        let (full, eighths) = meter_cells(0.25, 2);
+        assert_eq!(
+            (full, eighths),
+            (0, 4),
+            "quarter of two cells is half of one"
+        );
+
+        // Nonsense in, bounded out — never a bar wider than the rectangle.
+        assert_eq!(meter_cells(9.0, 4), (4, 0));
+        assert_eq!(meter_cells(-1.0, 4), (0, 0));
+        assert_eq!(
+            meter_cells(0.5, 0),
+            (0, 0),
+            "a zero-width bar draws nothing"
+        );
+    }
+
+    #[test]
+    fn every_eighth_has_a_glyph_and_zero_and_eight_have_none() {
+        assert_eq!(eighth_block(0), None);
+        assert_eq!(
+            eighth_block(8),
+            None,
+            "eight eighths is a full cell, not a partial"
+        );
+        for eighths in 1..8 {
+            assert!(
+                eighth_block(eighths).is_some(),
+                "no glyph for {eighths} eighths"
+            );
+        }
+    }
+
+    // TC-M3 · three answers, and the boundaries are pinned because moving one
+    // silently changes what a person believes about their machine.
+    #[test]
+    fn a_level_maps_to_one_of_three_colours_at_stable_boundaries() {
+        assert_eq!(meter_colour(0.0), "green");
+        assert_eq!(meter_colour(0.59), "green");
+        assert_eq!(meter_colour(0.6), "yellow");
+        assert_eq!(meter_colour(0.84), "yellow");
+        assert_eq!(meter_colour(0.85), "red");
+        assert_eq!(meter_colour(1.0), "red");
     }
 
     #[test]
