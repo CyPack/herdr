@@ -2031,9 +2031,13 @@ impl AppState {
     }
 
     /// The header's 2-click module road (TP-DOTS-05): write one managed
-    /// `[[spaces.node]]` entry and re-read the rules. The node arrives
-    /// empty, and an empty node draws nothing until a branch joins it —
-    /// that is the tree's standing rule, not a failure of this write.
+    /// `[[spaces.node]]` entry and re-read the rules.
+    ///
+    /// The node arrives empty and is drawn anyway: a container someone
+    /// declared is theirs before any branch joins it, and the row says it is
+    /// empty rather than leaving a gap (TP-MOD-13, TP-MOD-03). This comment
+    /// used to say the opposite — that an empty node draws nothing — which was
+    /// the tree's rule until the second seed landed.
     pub(crate) fn submit_new_module(&mut self, parent: Option<String>, name: &str) {
         let name = name.trim();
         if name.is_empty() {
@@ -2078,6 +2082,40 @@ impl AppState {
         }
     }
 
+    /// Take back a module the machine wrote.
+    ///
+    /// TP-MOD-08: creating one is two clicks, so undoing one cannot be a hand
+    /// edit of `spaces.managed.toml` — a file the person who clicked has no
+    /// reason to know exists. Only the overlay is touched; a `config.toml`
+    /// module never reaches here because the menu does not offer the verb for
+    /// it (TP-MOD-26), and if one somehow did, the removal count would be zero
+    /// and the file would be left exactly as written.
+    ///
+    /// TP-MOD-30: children are not deleted with it. Whatever hung under the
+    /// module names a parent nobody defines now, and `validate_node_forest`
+    /// re-seats it at top level — losing the container must not mean losing
+    /// what was in it.
+    pub(crate) fn delete_managed_node(&mut self, node_key: &str) {
+        let path = crate::config::managed_spaces_path();
+        let current = std::fs::read_to_string(&path).unwrap_or_default();
+        match crate::cli::space::remove_managed_node(&current, node_key) {
+            Ok((_, 0)) => {
+                tracing::info!(
+                    node = node_key,
+                    "no managed module matches; a config.toml entry needs a hand-edit"
+                );
+            }
+            Ok((updated, _)) => {
+                if let Err(err) = std::fs::write(&path, updated) {
+                    tracing::warn!(error = %err, "managed overlay write failed");
+                    return;
+                }
+                self.reload_space_rules_from_disk();
+            }
+            Err(err) => tracing::warn!(error = %err, "managed overlay parse failed"),
+        }
+    }
+
     /// The menu road to `herdr space demote` — managed entries only.
     pub(crate) fn demote_workspace_space(&mut self, ws_idx: usize) {
         let Some(branch) = self
@@ -2106,13 +2144,33 @@ impl AppState {
 
     pub(crate) fn reload_space_rules_from_disk(&mut self) {
         let loaded = crate::config::Config::load();
-        self.space_split_rules = loaded.config.spaces.rules();
-        self.space_projects = loaded.config.spaces.projects();
+        let managed =
+            std::fs::read_to_string(crate::config::managed_spaces_path()).unwrap_or_default();
+        self.adopt_space_rules(&loaded.config, &managed);
+    }
+
+    /// Re-derive everything the tree reads from a loaded config.
+    ///
+    /// One place, because these four are one fact split four ways and the
+    /// project has already paid for a merge that forgot a collection (D17,
+    /// `managed_overlay_check`). A fifth derived field added here reaches every
+    /// caller; added at each call site it reaches whichever ones were
+    /// remembered.
+    pub(crate) fn adopt_space_rules(&mut self, config: &crate::config::Config, managed: &str) {
+        self.space_split_rules = config.spaces.rules();
+        self.space_projects = config.spaces.projects();
         self.space_nodes = crate::spaces::validate_node_forest(
-            loaded.config.spaces.nodes(),
+            config.spaces.nodes(),
             &crate::spaces::split_parent_map(&self.space_split_rules),
         )
         .0;
+        self.space_icons = config.spaces.icons.clone();
+        self.managed_node_keys = self
+            .space_nodes
+            .iter()
+            .map(|node| node.key.clone())
+            .filter(|key| crate::cli::space::managed_has_node(managed, key))
+            .collect();
     }
 
     /// Fold or unfold the `[[spaces.project]]` umbrella at `project_group_idx`

@@ -780,6 +780,19 @@ pub(crate) enum WorkspaceListEntry {
     NoChats {
         ws_idx: usize,
     },
+    /// A declared container that draws nothing beneath it, saying so on a row
+    /// of its own.
+    ///
+    /// TP-MOD-03: an empty gap under a header is what damage looks like. Once
+    /// a module could be created before any branch existed (TP-MOD-13), the
+    /// tree gained rows whose whole content is absence — and absence has to be
+    /// stated, or the reader goes hand-editing a tree that was working.
+    ///
+    /// It carries no `ws_idx`, like the header rows, and nothing behind it
+    /// opens: the way in is the "+" on the header directly above.
+    EmptyModule {
+        node_key: String,
+    },
     /// Inert "… N older" row when a workspace has more chats than the drawer
     /// lists.
     MoreChats {
@@ -813,6 +826,9 @@ impl WorkspaceListEntry {
 /// that only ever reveals "(no chats)" is noise on every row.
 /// Columns one tree level is worth.
 pub(crate) const ROW_INDENT_STEP: u16 = 2;
+/// What a container with nothing under it writes about itself. One constant so
+/// the screen and the tests can never disagree about the words.
+pub(crate) const EMPTY_MODULE_NOTE: &str = "(no branches yet)";
 /// Columns a disclosure arrow occupies: the glyph plus the breathing space
 /// that keeps it from touching the name. A one-column control read as part of
 /// the word next to it.
@@ -1511,6 +1527,15 @@ fn walk_tree(
                     continue;
                 }
 
+                // TP-MOD-03/24: an open container with nothing under it says
+                // so, right below its own header. Folded ones stay quiet —
+                // describing the inside of a closed box undoes closing it.
+                if !subtree_draws_rows(&node_key, maps) {
+                    entries.push(WorkspaceListEntry::EmptyModule {
+                        node_key: node_key.clone(),
+                    });
+                }
+
                 let mut kids: Vec<(usize, Job)> = Vec::new();
                 for bucket in maps.buckets_of_node.get(&node_key).into_iter().flatten() {
                     kids.push((
@@ -1545,6 +1570,32 @@ fn walk_tree(
             }
         }
     }
+}
+
+/// Whether anything under `node_key` reaches the screen.
+///
+/// TP-MOD-21: the question is what gets *drawn*, and the two child maps answer
+/// it directly once you know what can be in them. A declared module always
+/// paints its own header, so any entry in `node_children` means "not empty".
+/// `buckets_of_node` is built from `parent_of_space`, which is built from
+/// `members_by_key` — so every bucket that can appear there already has a
+/// member and already draws a block. A bucket nobody joined is not in the map
+/// at all, which is why a module carrying only such a rule is genuinely empty
+/// and says so.
+///
+/// This was first written as a recursive walk that asked each bucket whether
+/// it drew anything. The mutation gate found the walk could never answer "no":
+/// unreachable logic that documented a guard the code did not have.
+fn subtree_draws_rows(node_key: &str, maps: &TreeWalkMaps<'_>) -> bool {
+    let has = |present: Option<bool>| present.unwrap_or(false);
+    has(maps
+        .node_children
+        .get(node_key)
+        .map(|kids| !kids.is_empty()))
+        || has(maps
+            .buckets_of_node
+            .get(node_key)
+            .map(|buckets| !buckets.is_empty()))
 }
 
 /// Where a node's subtree first appears in workspace order: the minimum over
@@ -1781,6 +1832,11 @@ fn entry_row_metrics(
                 workspace_entry_gap(app, entries, entry_idx),
             ))
         }
+        // The note stands on its own: no workspace to look up, and the gap
+        // rule the drawer rows follow applies here too.
+        WorkspaceListEntry::EmptyModule { .. } => {
+            Some((1, workspace_entry_gap(app, entries, entry_idx)))
+        }
         WorkspaceListEntry::Chat { ws_idx, .. }
         | WorkspaceListEntry::NoChats { ws_idx }
         | WorkspaceListEntry::MoreChats { ws_idx, .. } => {
@@ -1979,19 +2035,36 @@ pub(crate) type WorkspaceListAreas = (
     Vec<crate::app::state::WorkspaceGroupHeaderArea>,
     Vec<crate::app::state::WorkspaceProjectHeaderArea>,
     Vec<crate::app::state::WorkspaceMoreChatsArea>,
+    // The sixth carries no meaning for a press: it exists so the note gets
+    // painted (TP-MOD-25).
+    Vec<crate::app::state::WorkspaceEmptyModuleArea>,
 );
 
 pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> WorkspaceListAreas {
     let ws_area = workspace_list_rect(area, app.sidebar_section_split, app.sidebar_chrome);
     if ws_area == Rect::default() {
-        return (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        return (
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
     }
 
     let metrics = workspace_list_scroll_metrics(app, ws_area);
     let body =
         workspace_list_body_rect(ws_area, should_show_scrollbar(metrics), app.sidebar_chrome);
     if body.width == 0 || body.height == 0 {
-        return (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        return (
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
     }
 
     let scroll = app.workspace_scroll;
@@ -2002,6 +2075,7 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
     let mut group_headers = Vec::new();
     let mut project_headers = Vec::new();
     let mut more_chats = Vec::new();
+    let mut empty_modules = Vec::new();
 
     let entries = workspace_list_entries(app);
     for (entry_idx, entry) in entries.iter().enumerate().skip(scroll) {
@@ -2050,6 +2124,13 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
                     ws_idx: *ws_idx,
                 });
             }
+            // TP-MOD-25: laid out to be drawn, not to be pressed.
+            WorkspaceListEntry::EmptyModule { node_key } => {
+                empty_modules.push(crate::app::state::WorkspaceEmptyModuleArea {
+                    rect,
+                    node_key: node_key.clone(),
+                });
+            }
             // The empty-drawer placeholder occupies a row but stays inert:
             // there is nothing behind it to open.
             WorkspaceListEntry::NoChats { .. } => {}
@@ -2060,7 +2141,14 @@ pub(crate) fn compute_workspace_list_areas(app: &AppState, area: Rect) -> Worksp
             .min(body_bottom);
     }
 
-    (cards, chat_rows, group_headers, project_headers, more_chats)
+    (
+        cards,
+        chat_rows,
+        group_headers,
+        project_headers,
+        more_chats,
+        empty_modules,
+    )
 }
 
 pub(crate) fn compute_workspace_card_areas(
@@ -2798,6 +2886,7 @@ fn render_workspace_list(
     render_workspace_group_headers(app, frame, list_bottom);
 
     render_workspace_chat_rows(app, frame, list_bottom);
+    render_workspace_empty_module_rows(app, frame, list_bottom);
     render_workspace_more_chats_rows(app, frame, list_bottom);
 
     if let Some(y) = insertion_row.filter(|y| *y < list_bottom) {
@@ -3028,6 +3117,31 @@ fn render_workspace_more_chats_rows(app: &AppState, frame: &mut Frame, list_bott
                 total.saturating_sub(WORKSPACE_CHAT_ROW_LIMIT)
             )
         };
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                super::text::truncate_end(&label, row.rect.width as usize),
+                Style::default().fg(p.overlay0),
+            )),
+            row.rect,
+        );
+    }
+}
+
+/// The note an empty container writes under its own header.
+///
+/// TP-MOD-03: it is indented one step past the header so it reads as being
+/// *inside* the container, and dimmed like the drawer's other stated absences
+/// — it is a fact about the tree, not a row of the tree.
+fn render_workspace_empty_module_rows(app: &AppState, frame: &mut Frame, list_bottom: u16) {
+    let p = &app.palette;
+    for row in &app.view.workspace_empty_module_areas {
+        if row.rect.width == 0 || row.rect.y >= list_bottom {
+            continue;
+        }
+        let indent = usize::from(ROW_INDENT_STEP).saturating_mul(usize::from(
+            node_depth(app, &row.node_key).saturating_add(1),
+        ));
+        let label = format!("{}{EMPTY_MODULE_NOTE}", " ".repeat(indent));
         frame.render_widget(
             Paragraph::new(Span::styled(
                 super::text::truncate_end(&label, row.rect.width as usize),
@@ -4200,7 +4314,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let body = workspace_list_body_rect(workspace_area, false, app.sidebar_chrome);
 
         let metrics = workspace_list_scroll_metrics(&app, workspace_area);
-        let (cards, _, _headers, _, _) = compute_workspace_list_areas(&app, area);
+        let (cards, _, _headers, _, _, _) = compute_workspace_list_areas(&app, area);
 
         assert_eq!(metrics.viewport_rows, 1);
         assert_eq!(cards.len(), 1);
@@ -5577,12 +5691,14 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
 
         let area = Rect::new(0, 0, 28, 16);
         app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
-        let (cards, chats, groups, projects, more) = compute_workspace_list_areas(&app, area);
+        let (cards, chats, groups, projects, more, empty_modules) =
+            compute_workspace_list_areas(&app, area);
         app.view.workspace_card_areas = cards;
         app.view.workspace_chat_row_areas = chats;
         app.view.workspace_group_header_areas = groups;
         app.view.workspace_project_header_areas = projects;
         app.view.workspace_more_chats_areas = more;
+        app.view.workspace_empty_module_areas = empty_modules;
 
         let runtimes = TerminalRuntimeRegistry::new();
         let mut terminal = Terminal::new(TestBackend::new(28, 16)).unwrap();
@@ -5607,17 +5723,241 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         );
     }
 
-    /// Render the Spaces list and return its non-empty rows, trailing space
-    /// trimmed but leading indent kept — the indent is the thing under test.
-    fn spaces_rows(app: &mut AppState, width: u16, height: u16) -> Vec<String> {
+    /// A tree with one populated bucket and one declared, genuinely empty
+    /// module hanging under a drawn project.
+    fn app_with_an_empty_module() -> AppState {
+        let mut app = AppState::test_new();
+        app.sidebar_tab = crate::app::state::SidebarTab::Spaces;
+        app.mouse_capture = false;
+        app.mobile_width_threshold = 0;
+        app.workspaces = vec![
+            worktree_on_branch("alpha", "feat/tui-alpha"),
+            worktree_on_branch("beta", "feat/tui-beta"),
+        ];
+        app.space_split_rules = vec![split_rule(&["feat/tui-*"], "herdr:tui", "TUI")];
+        app.space_projects = vec![project_over("project:herdr", &["/repo/herdr"], &[])];
+        app.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "group:remote-audio".into(),
+            name: "UZAKTANSES".into(),
+            icon: None,
+            parent: Some("project:herdr".into()),
+        }];
+        app.ensure_test_terminals();
+        app.active = Some(0);
+        app.selected = 0;
+        app
+    }
+
+    /// Every screen row, index kept equal to `y` — `spaces_rows` drops blanks,
+    /// which is exactly what a test about *where* a row landed cannot afford.
+    fn spaces_screen(app: &mut AppState, width: u16, height: u16) -> Vec<String> {
         let area = Rect::new(0, 0, width, height);
         app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
-        let (cards, chats, groups, projects, more) = compute_workspace_list_areas(app, area);
+        let (cards, chats, groups, projects, more, empty_modules) =
+            compute_workspace_list_areas(app, area);
         app.view.workspace_card_areas = cards;
         app.view.workspace_chat_row_areas = chats;
         app.view.workspace_group_header_areas = groups;
         app.view.workspace_project_header_areas = projects;
         app.view.workspace_more_chats_areas = more;
+        app.view.workspace_empty_module_areas = empty_modules;
+
+        let runtimes = TerminalRuntimeRegistry::new();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| render_workspace_list(app, &runtimes, frame, area, true))
+            .unwrap();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    fn note_rows(screen: &[String]) -> Vec<usize> {
+        screen
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.contains(EMPTY_MODULE_NOTE))
+            .map(|(y, _)| y)
+            .collect()
+    }
+
+    // TP-MOD-03: a container that draws nothing beneath it says so on a row of
+    // its own. Without the note the module is a name over a gap, and a gap is
+    // what damage looks like — the reader cannot tell "empty" from "broken"
+    // and goes hand-editing a tree that was working.
+    #[test]
+    fn an_empty_module_says_it_is_empty() {
+        let mut app = app_with_an_empty_module();
+        let screen = spaces_screen(&mut app, 40, 20);
+        assert_eq!(
+            note_rows(&screen).len(),
+            1,
+            "the empty module writes exactly one note:\n{}",
+            screen.join("\n")
+        );
+    }
+
+    // TP-MOD-21: a bucket that claims nothing draws no header (TP-MOD-15), so
+    // a module whose only child is such a bucket still shows an empty screen.
+    // Asking "does it have children" instead of "does anything get drawn"
+    // makes this case answer "not empty" while the reader sees a gap — the
+    // emit-versus-paint split this fork has already paid for twice.
+    #[test]
+    fn a_module_over_a_bucket_that_claims_nothing_is_still_empty() {
+        let mut app = app_with_an_empty_module();
+        app.space_split_rules
+            .push(split_rule(&["hicbir-dal-eslesmez/*"], "herdr:bos", "Bos"));
+        app.space_nodes[0].parent = Some("project:herdr".into());
+        // The empty bucket hangs under the module, so the module has a child
+        // in the map and no row on the screen.
+        app.space_split_rules[1].parent = Some("group:remote-audio".to_string());
+
+        let screen = spaces_screen(&mut app, 40, 20);
+        assert_eq!(
+            note_rows(&screen).len(),
+            1,
+            "a module over a bucket nobody joined is still empty:\n{}",
+            screen.join("\n")
+        );
+    }
+
+    // TP-MOD-22: a module that carries another module is not empty — the child
+    // always draws its own header. Only the child, which has nothing under it,
+    // gets the note. A note on the parent too would call a populated container
+    // empty and teach the reader to distrust the note.
+    #[test]
+    fn a_module_that_carries_a_module_is_not_empty_but_its_child_is() {
+        let mut app = app_with_an_empty_module();
+        app.space_nodes.push(crate::spaces::SpaceNode {
+            key: "group:remote-audio-sub".into(),
+            name: "ALTMODUL".into(),
+            icon: None,
+            parent: Some("group:remote-audio".into()),
+        });
+
+        let screen = spaces_screen(&mut app, 40, 20);
+        let notes = note_rows(&screen);
+        assert_eq!(
+            notes.len(),
+            1,
+            "only the childless module writes a note:\n{}",
+            screen.join("\n")
+        );
+        let child_row = screen
+            .iter()
+            .position(|row| row.contains("ALTMODUL"))
+            .expect("the sub-module is drawn");
+        assert!(
+            notes[0] > child_row,
+            "the note belongs to the child, so it sits below it:\n{}",
+            screen.join("\n")
+        );
+    }
+
+    // TP-MOD-23: a module over a bucket with members is not empty. This is the
+    // ordinary populated case, and a false note here would hang a line of
+    // noise under every working module in the tree.
+    #[test]
+    fn a_module_over_a_populated_bucket_writes_no_note() {
+        let mut app = app_with_an_empty_module();
+        app.space_split_rules[0].parent = Some("group:remote-audio".to_string());
+
+        let screen = spaces_screen(&mut app, 40, 20);
+        assert!(
+            note_rows(&screen).is_empty(),
+            "a module holding two checkouts is not empty:\n{}",
+            screen.join("\n")
+        );
+    }
+
+    // TP-MOD-24: a folded module keeps its subtree hidden, and a note about
+    // what is inside a closed container contradicts closing it. It would also
+    // make folding change the row count in the wrong direction.
+    #[test]
+    fn a_folded_empty_module_writes_no_note() {
+        let mut app = app_with_an_empty_module();
+        app.fold_node("group:remote-audio".to_string());
+
+        let screen = spaces_screen(&mut app, 40, 20);
+        assert!(
+            note_rows(&screen).is_empty(),
+            "a closed module says nothing about its inside:\n{}",
+            screen.join("\n")
+        );
+    }
+
+    // TP-MOD-25: the note is painted and inert. Painted, because a row that is
+    // emitted and never drawn takes its line and leaves the gap it was meant
+    // to explain. Inert, because there is nothing behind it to open — and a
+    // row that answers a click by doing nothing is worse than one that never
+    // invited it.
+    #[test]
+    fn the_empty_module_note_is_painted_and_carries_no_hit_area() {
+        let mut app = app_with_an_empty_module();
+        let screen = spaces_screen(&mut app, 40, 20);
+        let note_y = u16::try_from(
+            *note_rows(&screen)
+                .first()
+                .unwrap_or_else(|| panic!("the note is painted:\n{}", screen.join("\n"))),
+        )
+        .expect("the test screen is small");
+
+        let claimed = app
+            .view
+            .workspace_card_areas
+            .iter()
+            .map(|area| area.rect)
+            .chain(
+                app.view
+                    .workspace_chat_row_areas
+                    .iter()
+                    .map(|area| area.rect),
+            )
+            .chain(
+                app.view
+                    .workspace_group_header_areas
+                    .iter()
+                    .map(|area| area.rect),
+            )
+            .chain(
+                app.view
+                    .workspace_project_header_areas
+                    .iter()
+                    .map(|area| area.rect),
+            )
+            .chain(
+                app.view
+                    .workspace_more_chats_areas
+                    .iter()
+                    .map(|area| area.rect),
+            )
+            .any(|rect| note_y >= rect.y && note_y < rect.y.saturating_add(rect.height));
+        assert!(
+            !claimed,
+            "no clickable area may cover the note row {note_y}:\n{}",
+            screen.join("\n")
+        );
+    }
+
+    /// Render the Spaces list and return its non-empty rows, trailing space
+    /// trimmed but leading indent kept — the indent is the thing under test.
+    fn spaces_rows(app: &mut AppState, width: u16, height: u16) -> Vec<String> {
+        let area = Rect::new(0, 0, width, height);
+        app.view.sidebar_tab_hit_areas = compute_sidebar_tab_areas(area);
+        let (cards, chats, groups, projects, more, empty_modules) =
+            compute_workspace_list_areas(app, area);
+        app.view.workspace_card_areas = cards;
+        app.view.workspace_chat_row_areas = chats;
+        app.view.workspace_group_header_areas = groups;
+        app.view.workspace_project_header_areas = projects;
+        app.view.workspace_more_chats_areas = more;
+        app.view.workspace_empty_module_areas = empty_modules;
 
         let runtimes = TerminalRuntimeRegistry::new();
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -5934,6 +6274,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 WorkspaceListEntry::Workspace { .. } => "workspace",
                 WorkspaceListEntry::Chat { .. } => "chat",
                 WorkspaceListEntry::NoChats { .. } => "no-chats",
+                WorkspaceListEntry::EmptyModule { .. } => "empty-module",
                 WorkspaceListEntry::MoreChats { .. } => "more",
             })
             .collect()
@@ -5989,7 +6330,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let area = Rect::new(0, 0, 30, 24);
 
         let entries = workspace_list_entries(&app);
-        let (cards, chat_rows, _headers, _, _) = compute_workspace_list_areas(&app, area);
+        let (cards, chat_rows, _headers, _, _, _) = compute_workspace_list_areas(&app, area);
 
         assert_eq!(entries.len(), 3, "one workspace plus its two chats");
         assert_eq!(cards.len(), 1);
@@ -6014,7 +6355,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let (mut app, key) = app_with_chat_drawer(3);
         app.expanded_chat_workspaces.insert(key);
 
-        let (cards, chat_rows, _headers, _, _) =
+        let (cards, chat_rows, _headers, _, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 24));
 
         assert_eq!(cards.len(), 1, "only real workspaces become cards");
@@ -8326,7 +8667,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.sidebar_spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
 
         let area = Rect::new(0, 0, 30, 20);
-        let (cards, _, group_headers, _, _) = compute_workspace_list_areas(&app, area);
+        let (cards, _, group_headers, _, _, _) = compute_workspace_list_areas(&app, area);
         let drawn_rows: u16 = cards.iter().map(|card| card.rect.height).sum::<u16>()
             + group_headers
                 .iter()
@@ -8383,7 +8724,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         ];
         app.sidebar_spaces.row_gap = 1;
 
-        let (cards, chat_rows, group_headers, _, _) =
+        let (cards, chat_rows, group_headers, _, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 20));
 
         assert!(chat_rows.is_empty());
@@ -8419,7 +8760,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.sidebar_spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
         app.sidebar_spaces.row_gap = 2;
 
-        let (spacious, _, _headers, _, _) =
+        let (spacious, _, _headers, _, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
         // TP-TREE-06: the three checkouts of one repository are one block and
         // stay compact; the gap falls where the next top-level unit begins.
@@ -8442,7 +8783,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(spacious_metrics.max_offset_from_bottom, 3);
 
         app.sidebar_spaces.row_gap = 0;
-        let (packed, _, _headers, _, _) =
+        let (packed, _, _headers, _, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 30));
         assert!(packed
             .windows(2)
@@ -8537,7 +8878,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         let area = Rect::new(0, 0, 30, 20);
         app.workspace_scroll = normalized_workspace_scroll(&app, area, 2);
 
-        let (cards, headers, _headers, _, _) = compute_workspace_list_areas(&app, area);
+        let (cards, headers, _headers, _, _, _) = compute_workspace_list_areas(&app, area);
 
         assert!(headers.is_empty());
         assert_eq!(app.workspace_scroll, 0);
@@ -8584,7 +8925,7 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         app.mode = Mode::Terminal;
         app.workspace_scroll = 1;
 
-        let (cards, headers, _headers, _, _) =
+        let (cards, headers, _headers, _, _, _) =
             compute_workspace_list_areas(&app, Rect::new(0, 0, 30, 12));
 
         assert!(headers.is_empty());

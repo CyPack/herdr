@@ -451,8 +451,16 @@ fn compute_view_internal(
         workspace_group_header_areas,
         workspace_project_header_areas,
         workspace_more_chats_areas,
+        workspace_empty_module_areas,
     ) = if app.sidebar_collapsed || !show_spaces_content {
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new())
+        (
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
     } else {
         sidebar::compute_workspace_list_areas(app, sidebar_area)
     };
@@ -562,6 +570,7 @@ fn compute_view_internal(
         workspace_more_chats_areas,
         workspace_group_header_areas,
         workspace_project_header_areas,
+        workspace_empty_module_areas,
         sidebar_tab_hit_areas,
         project_row_areas,
         app_dock_entry_areas,
@@ -729,6 +738,7 @@ fn compute_mobile_view(
         workspace_more_chats_areas: Vec::new(),
         workspace_group_header_areas: Vec::new(),
         workspace_project_header_areas: Vec::new(),
+        workspace_empty_module_areas: Vec::new(),
         sidebar_tab_hit_areas: Vec::new(),
         stage_tab_hit_areas: Vec::new(),
         project_row_areas: Vec::new(),

@@ -409,6 +409,48 @@ mod tests {
         }
     }
 
+    // TP-MOD-30: deleting a module must not delete what was inside it. The
+    // children name a parent nobody defines any more, and the forest re-seats
+    // them at top level and says so — a silent disappearance would read as
+    // data loss to the person who only meant to rename a container.
+    #[test]
+    fn a_module_whose_parent_was_deleted_is_re_seated_at_top_level() {
+        let node = |key: &str, parent: Option<&str>| SpaceNode {
+            key: key.into(),
+            name: key.into(),
+            icon: None,
+            parent: parent.map(str::to_string),
+        };
+        // "group:gone" is not in the list: this is the tree one moment after
+        // the delete wrote the overlay back.
+        let (forest, diagnostics) = validate_node_forest(
+            vec![
+                node("group:child", Some("group:gone")),
+                node("group:grandchild", Some("group:child")),
+            ],
+            &std::collections::HashMap::new(),
+        );
+        assert_eq!(forest.len(), 2, "nothing is dropped: {forest:?}");
+        let child = forest
+            .iter()
+            .find(|n| n.key == "group:child")
+            .expect("the orphan survives");
+        assert_eq!(child.parent, None, "it is re-seated at top level");
+        let grandchild = forest
+            .iter()
+            .find(|n| n.key == "group:grandchild")
+            .expect("its own child survives");
+        assert_eq!(
+            grandchild.parent.as_deref(),
+            Some("group:child"),
+            "a chain below the orphan is left intact"
+        );
+        assert!(
+            diagnostics.iter().any(|d| d.contains("group:gone")),
+            "the re-seating is stated, not silent: {diagnostics:?}"
+        );
+    }
+
     fn project(key: &str, repos: &[&str], spaces: &[&str]) -> SpaceProject {
         SpaceProject {
             key: key.to_string(),

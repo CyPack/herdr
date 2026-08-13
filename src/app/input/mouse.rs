@@ -872,6 +872,7 @@ impl AppState {
                             let collapsed = self.node_folded(&head.project_key);
                             self.context_menu = Some(ContextMenuState {
                                 kind: ContextMenuKind::NodeHeader {
+                                    deletable: self.managed_node_keys.contains(&head.project_key),
                                     node_key: head.project_key,
                                     collapsed,
                                 },
@@ -1520,6 +1521,7 @@ impl AppState {
                     let collapsed = self.node_folded(&head.project_key);
                     self.context_menu = Some(ContextMenuState {
                         kind: ContextMenuKind::NodeHeader {
+                            deletable: self.managed_node_keys.contains(&head.project_key),
                             node_key: head.project_key,
                             collapsed,
                         },
