@@ -485,6 +485,21 @@ Fixed sections are satisfied first, then content sections grow toward their maxi
 
 Writing more than eight sections, naming a `kind` Herdr does not know, or giving a content section a `max` below its `min` leaves that bar undivided rather than guessing: one unreadable section would otherwise renumber every section after it, and the number is how a section is addressed.
 
+### Putting something in a section
+
+A section is empty until it is given a widget. Today there is one:
+
+```toml
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 10
+widget = { kind = "label", text = "  CPU" }
+```
+
+The label is clipped to the section by display width, so an icon that takes two cells is counted as two. A label never changes how wide its section is: the sizing rules above decide that, and text that does not fit is cut rather than pushing its neighbours around.
+
+A `widget.kind` Herdr does not know, or `text` with no `widget.kind` to show it, leaves that section empty and is reported by `herdr config check`.
+
 ### Making a section clickable
 
 A section can carry an `action`. Without one it is an indicator: clicks land on it and stop there, but nothing happens.
@@ -498,7 +513,20 @@ action = { kind = "popup", argv = ["btop"] }
 
 `popup` runs `argv` in a Herdr popup pane, the same pane a popup keybind opens — which means the popup takes the keyboard while it is up, and closing it gives the keyboard back.
 
+The popup opens at half the terminal by default. `width` and `height` change that, spelled the same way as the popup size on a custom command keybind — a number of cells, or a percentage string:
+
+```toml
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 12
+action = { kind = "popup", argv = ["btop"], width = "80%", height = "70%" }
+```
+
+A size larger than the screen is brought back inside it. A terminal with no room for a popup at all refuses to open one rather than drawing a frame with nothing in it. A `width` or `height` on a section that opens no popup can never take effect, so `herdr config check` reports it rather than letting it sit there looking meaningful.
+
 Only one popup can be open at a time. Clicking a section while one is already open opens nothing and closes nothing; Herdr says so instead, because dropping whatever is running in the popup is not something you can undo.
+
+Clicking outside a popup sends Esc into the program rather than closing the pane, so an editor gets to save and quit on its own terms. Programs that do not read Esc that way — `btop` and `htop` quit on `q` — would leave the popup looking stuck, so clicking outside a second time closes it. Going back into the popup in between cancels that: Herdr reads it as "still using this", which matters when the Esc opened an unsaved-changes prompt.
 
 A whole bar is chrome, so every click, release and scroll over one of its sections stops at the bar rather than reaching the pane behind it. A gesture that started somewhere else — a drag, a divider resize — keeps its owner even when the pointer crosses a bar.
 

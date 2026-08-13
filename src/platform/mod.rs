@@ -173,6 +173,33 @@ mod fallback;
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub use fallback::*;
 
+/// The machine's CPU counters, where this build knows how to find them.
+///
+/// Only Linux has a reader today, and that is a deliberate limit rather than an
+/// oversight: the counters come out of `/proc`, which macOS does not have and
+/// Windows spells entirely differently. Reaching for a portable crate to close
+/// the gap was measured and declined — on Windows it brings a tree of seven
+/// `windows-*` crates for a meter, and every dependency added here is a
+/// `Cargo.lock` conflict on every upstream sync of this fork.
+///
+/// The platforms without a reader are not left guessing. `None` travels all the
+/// way to the screen and renders as `--`, which is the same thing a Linux box
+/// with an unreadable `/proc` shows. Swapping in a portable implementation
+/// later changes only these two functions.
+// TP-RES-06: a platform with no reader says so; it never reports zero.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn read_cpu_times() -> Option<crate::resource::CpuTimes> {
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn read_memory() -> (
+    Option<crate::resource::Usage>,
+    Option<crate::resource::Usage>,
+) {
+    (None, None)
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn available_pane_shell_from_job(child_pid: u32, job: ForegroundJob) -> Option<String> {
     if job.process_group_id != child_pid

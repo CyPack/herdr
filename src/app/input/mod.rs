@@ -653,15 +653,16 @@ impl App {
                     "close it before opening another from the bar",
                 );
             }
-            BarSectionClick::OpenPopup { argv } => {
+            BarSectionClick::OpenPopup {
+                argv,
+                width,
+                height,
+            } => {
                 if let Err(err) = self.spawn_popup_argv_command(
                     &argv,
                     None,
                     Vec::new(),
-                    crate::app::popup::PopupGeometry {
-                        width: None,
-                        height: None,
-                    },
+                    crate::app::popup::PopupGeometry { width, height },
                 ) {
                     self.warn_about_bar_section_action(
                         "bar section action failed",
@@ -885,6 +886,8 @@ impl App {
         self.sync_toast_deadline(previous_toast);
     }
 
+    // TP-CHROME-49/50/51: the first press outside asks, the second closes, the
+    // request belongs to one popup, and returning to it cancels the request.
     fn handle_popup_mouse(&mut self, mouse: MouseEvent) {
         let Some((outer, inner)) =
             crate::ui::popup_pane_rects(&self.state, self.state.view.terminal_area)
@@ -901,9 +904,51 @@ impl App {
             // kill from outside: the editors bind Esc to save-then-quit, so
             // the popup closes with the last state safely on disk — closing
             // the pane out from under them would race their final write.
+            //
+            // Not every program reads Esc that way. btop and htop quit on `q`
+            // and ignore Esc entirely, so for them the press above did nothing
+            // visible and the surface looked stuck. The second press closes.
+            //
+            // An editor never reaches that second press: if Esc quit it, the
+            // popup is already gone, and this whole path is unreachable while
+            // `popup_pane` is None. So the guarantee above is not weakened —
+            // it is exhausted first, and only then overridden.
             if matches!(mouse.kind, MouseEventKind::Down(_)) {
-                if let Some(rt) = self.popup_runtime() {
+                // Remembered against the popup's own terminal, not as a bare
+                // flag: a different popup is a different id, so a dismissal
+                // asked of one can never be spent on its successor. Nobody has
+                // to remember to reset it.
+                let popup_id = self
+                    .state
+                    .popup_pane
+                    .as_ref()
+                    .map(|popup| popup.terminal_id.clone());
+                let already_asked = popup_id.is_some() && self.popup_dismiss_requested == popup_id;
+
+                if already_asked {
+                    self.close_popup_pane();
+                    self.popup_dismiss_requested = None;
+                } else if let Some(rt) = self.popup_runtime() {
                     let _ = rt.try_send_bytes(bytes::Bytes::from_static(b"\x1b"));
+                    self.popup_dismiss_requested = popup_id;
+                    // A two-step gesture nobody is told about is a gesture
+                    // nobody finds. This is the sentence that turns "it is
+                    // stuck" into "click again".
+                    //
+                    // NeedsAttention rather than a new Info kind: the toast
+                    // kinds are a closed enum matched exhaustively in several
+                    // places and carried across the API, and a hint does not
+                    // earn that. It is also not a misuse — something on screen
+                    // is waiting for the person to act on it.
+                    let previous_toast = self.state.toast.clone();
+                    self.state.toast = Some(crate::app::state::ToastNotification {
+                        kind: crate::app::state::ToastKind::NeedsAttention,
+                        title: "popup still open".to_string(),
+                        context: "click outside again to close it".to_string(),
+                        position: None,
+                        target: None,
+                    });
+                    self.sync_toast_deadline(previous_toast);
                 } else {
                     self.close_popup_pane();
                 }
@@ -916,6 +961,15 @@ impl App {
             || mouse.row >= inner.y.saturating_add(inner.height)
         {
             return;
+        }
+        // Going back into the popup cancels a dismissal that was asked for and
+        // not answered. Esc does not always mean quit: an editor may have
+        // opened an "unsaved changes?" prompt with it, and the press that
+        // answers that prompt lands in here. Without this, the next click
+        // outside would close the pane on top of the very question the
+        // guarantee above exists to protect.
+        if matches!(mouse.kind, MouseEventKind::Down(_)) {
+            self.popup_dismiss_requested = None;
         }
         let Some(rt) = self.popup_runtime() else {
             self.close_popup_pane();
@@ -1473,7 +1527,7 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&bars),
         );
-        app.state.shell_bar_actions = crate::ui::shell::ShellBarActions::from_config(&bars);
+        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars);
         crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
         app
     }
@@ -1489,6 +1543,279 @@ mod tests {
             column,
             row,
             modifiers,
+        }
+    }
+
+    // The last hop, and the one a mutation caught nobody was watching: the
+    // size reaching the click intent proves nothing about it reaching the call
+    // that opens the popup. Dropping it there is invisible — the popup simply
+    // opens at the default — so this observes the size where it lands, in the
+    // popup's own state.
+    //
+    // Spawns for real, following `direct_custom_popup_command_closes_after_exit`:
+    // the geometry is decided inside the spawn, so a fake runtime installed
+    // afterwards would skip the very step under test. `/bin/true` exits at once
+    // and the runtimes are shut down before the test returns.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_sized_section_opens_its_popup_at_the_size_it_asked_for() {
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 10,
+            ..Default::default()
+        };
+        section.action.kind = "popup".to_string();
+        section.action.argv = vec!["/bin/true".to_string()];
+        section.action.width = Some(crate::popup_size::PopupSize::Percent(80));
+        section.action.height = Some(crate::popup_size::PopupSize::Cells(20));
+
+        let bars = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 1,
+                border: false,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections: vec![section],
+            },
+            ..Default::default()
+        };
+
+        let mut app = test_app();
+        app.state.default_shell = "/bin/sh".into();
+        let (workspace, terminal, runtime) = crate::workspace::Workspace::new(
+            std::env::current_dir().unwrap_or_else(|_| "/".into()),
+            24,
+            80,
+            app.state.pane_scrollback_limit_bytes,
+            app.state.host_terminal_theme,
+            crate::pane::PaneShellConfig::new(&app.state.default_shell, app.state.shell_mode),
+            app.event_tx.clone(),
+            app.render_notify.clone(),
+            app.render_dirty.clone(),
+        )
+        .expect("test workspace spawns");
+        app.terminal_runtimes.insert(terminal.id.clone(), runtime);
+        app.state.terminals.insert(terminal.id.clone(), terminal);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+
+        app.state.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            26,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&bars),
+        );
+        app.state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&bars);
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
+
+        let consumed = app.handle_bar_section_mouse(bar_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            4,
+            0,
+            KeyModifiers::NONE,
+        ));
+
+        assert!(consumed, "the press belongs to the bar");
+        let popup = app
+            .state
+            .popup_pane
+            .as_ref()
+            .expect("the section's action must have opened a popup");
+        assert_eq!(
+            (popup.width, popup.height),
+            (
+                Some(crate::popup_size::PopupSize::Percent(80)),
+                Some(crate::popup_size::PopupSize::Cells(20))
+            ),
+            "the popup must open at the size the section asked for, not the default"
+        );
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
+
+    /// An app holding an open popup whose runtime writes into `rx`, with the
+    /// view computed so the popup has real rectangles to be inside and outside
+    /// of.
+    fn app_with_open_popup() -> (
+        App,
+        tokio::sync::mpsc::Receiver<bytes::Bytes>,
+        ratatui::layout::Rect,
+    ) {
+        let mut app = test_app();
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("one")];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
+
+        let (runtime, rx) = crate::terminal::TerminalRuntime::test_with_channel(40, 12);
+        app.install_test_popup_runtime(runtime);
+        let (outer, _inner) = crate::ui::popup_pane_rects(&app.state, app.state.view.terminal_area)
+            .expect("the fixture popup must have rectangles");
+        (app, rx, outer)
+    }
+
+    fn outside_of(outer: ratatui::layout::Rect) -> (u16, u16) {
+        // Above and left of the popup, which the centred geometry always
+        // leaves room for in a 106x40 view.
+        (outer.x.saturating_sub(1), outer.y.saturating_sub(1))
+    }
+
+    // TC-A1 · THE GUARANTEE THIS LAYER MUST NOT EAT. A press outside the popup
+    // delivers Esc into the program and does NOT close the pane. Editors bind
+    // Esc to save-then-quit, and taking the pane away would race their final
+    // write. Until now this behaviour had no test and no registry entry at
+    // all, so an escape hatch built on top of it could have removed it without
+    // anything going red.
+    #[tokio::test]
+    async fn a_first_press_outside_a_popup_asks_it_to_quit_rather_than_killing_it() {
+        let (mut app, mut rx, outer) = app_with_open_popup();
+        let (column, row) = outside_of(outer);
+
+        app.handle_popup_mouse(bar_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            KeyModifiers::NONE,
+        ));
+
+        assert_eq!(
+            rx.try_recv()
+                .expect("the popup must receive something")
+                .as_ref(),
+            b"\x1b",
+            "the dismissal is delivered as Esc into the program, not as a kill"
+        );
+        assert!(
+            app.state.popup_pane.is_some(),
+            "the pane must survive the first press so the program can save and quit itself"
+        );
+        assert!(
+            app.state.toast.is_some(),
+            "a two-step gesture nobody is told about is one nobody finds"
+        );
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
+
+    // TC-A2/TC-A6 · a program that ignores Esc still has a way out, and the
+    // request cannot be inherited by a later popup.
+    #[tokio::test]
+    async fn a_second_press_outside_closes_a_popup_that_ignored_the_first() {
+        let (mut app, mut rx, outer) = app_with_open_popup();
+        let (column, row) = outside_of(outer);
+        let press = bar_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            KeyModifiers::NONE,
+        );
+
+        app.handle_popup_mouse(press);
+        assert!(app.state.popup_pane.is_some(), "control: still open");
+        let _ = rx.try_recv();
+
+        app.handle_popup_mouse(press);
+        assert!(
+            app.state.popup_pane.is_none(),
+            "a program that ignores Esc must not be able to hold the surface"
+        );
+        assert_eq!(
+            app.popup_dismiss_requested, None,
+            "the spent request must not survive the popup it was made of"
+        );
+
+        // TC-A6: a NEW popup starts over. The request is remembered against a
+        // terminal id, so this is true by construction rather than by anyone
+        // remembering to reset it — which is the point of storing it that way.
+        let (runtime, _rx2) = crate::terminal::TerminalRuntime::test_with_channel(40, 12);
+        app.install_test_popup_runtime(runtime);
+        app.handle_popup_mouse(press);
+        assert!(
+            app.state.popup_pane.is_some(),
+            "the first press on a new popup must ask, not close"
+        );
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
+
+    // TC-A4 · moving over or scrolling past a popup is not a statement of
+    // intent, so it must not advance the escalation. Otherwise crossing the
+    // background with the pointer would arm a close nobody asked for.
+    #[tokio::test]
+    async fn moving_past_a_popup_does_not_arm_its_dismissal() {
+        let (mut app, _rx, outer) = app_with_open_popup();
+        let (column, row) = outside_of(outer);
+
+        for kind in [
+            MouseEventKind::Moved,
+            MouseEventKind::ScrollDown,
+            MouseEventKind::ScrollUp,
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            app.handle_popup_mouse(bar_mouse(kind, column, row, KeyModifiers::NONE));
+        }
+
+        assert_eq!(
+            app.popup_dismiss_requested, None,
+            "only a press states an intent to dismiss"
+        );
+        assert!(app.state.popup_pane.is_some());
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+    }
+
+    // TC-A8 · going back into the popup cancels a dismissal that was asked for
+    // and not answered. Esc does not always mean quit: an editor may have
+    // opened an "unsaved changes?" prompt with it, and the press answering that
+    // prompt lands inside. Without this, the next press outside would close the
+    // pane on top of the very question the guarantee exists to protect.
+    #[tokio::test]
+    async fn returning_to_the_popup_cancels_a_dismissal_it_did_not_answer() {
+        let (mut app, mut rx, outer) = app_with_open_popup();
+        let (column, row) = outside_of(outer);
+        let outside_press = bar_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            KeyModifiers::NONE,
+        );
+
+        app.handle_popup_mouse(outside_press);
+        assert!(app.popup_dismiss_requested.is_some(), "control: armed");
+        let _ = rx.try_recv();
+
+        // A press inside the popup: the person went back to using it.
+        let inside = bar_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            outer.x.saturating_add(outer.width / 2),
+            outer.y.saturating_add(outer.height / 2),
+            KeyModifiers::NONE,
+        );
+        app.handle_popup_mouse(inside);
+        assert_eq!(
+            app.popup_dismiss_requested, None,
+            "using the popup again must cancel a dismissal it never answered"
+        );
+
+        app.handle_popup_mouse(outside_press);
+        assert!(
+            app.state.popup_pane.is_some(),
+            "the next press outside must ask again rather than close"
+        );
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
         }
     }
 

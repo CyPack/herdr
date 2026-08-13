@@ -4266,6 +4266,15 @@ impl HeadlessServer {
 
         changed |= self.app.clear_due_selection_highlight(now);
 
+        // This is the loop that actually runs under a live herdr: the server
+        // owns the state the screen is drawn from, and `App::handle_scheduled_
+        // tasks` is only reached by the monolithic path. Landing the sampler in
+        // that one alone left every test green, the binary correct, and the bar
+        // showing `--` forever, because the code that read the machine was
+        // never executed by the process that drew it.
+        // TP-RES-11: the sampler runs in the loop that actually renders.
+        changed |= self.app.tick_resource_sample(now);
+
         if self.has_app_client() {
             self.app.start_git_status_refresh_if_due(now);
         }
@@ -8527,8 +8536,16 @@ next_tab = ""
                     .find(|c: char| !c.is_alphanumeric() && c != '_')
                     .unwrap_or(after.len());
                 let name = &after[..end];
+                // `tick_` joined the list after a sampler landed in the
+                // monolithic scheduler only. Every test stayed green, the
+                // binary was correct, and a live herdr drew `--` forever,
+                // because the loop the server actually runs never called it.
+                // The guard for that class existed and was one prefix too
+                // narrow to see it.
                 if after[end..].starts_with('(')
-                    && (name.starts_with("sync_") || name.starts_with("refresh_"))
+                    && (name.starts_with("sync_")
+                        || name.starts_with("refresh_")
+                        || name.starts_with("tick_"))
                 {
                     calls.insert(name.to_string());
                 }

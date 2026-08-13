@@ -900,6 +900,34 @@ fn process_session_id(pid: u32) -> Option<i32> {
     fields.get(3)?.parse().ok()
 }
 
+/// Reads the kernel's cumulative CPU counters.
+///
+/// Two files, read whole and parsed elsewhere. The read is deliberately the
+/// only thing that happens here: the arithmetic that turns these counters into
+/// a percentage is pure and tested against fixtures, on every platform,
+/// including the ones where this function does not exist.
+///
+/// A missing or unreadable `/proc` is `None`, not zero. Containers and hardened
+/// kernels can hide either file, and a meter that reads 0% there would be
+/// lying about an idle machine rather than admitting it cannot see.
+// TP-RES-05: reading is separated from arithmetic, and failure is None.
+pub(crate) fn read_cpu_times() -> Option<crate::resource::CpuTimes> {
+    let text = std::fs::read_to_string("/proc/stat").ok()?;
+    crate::resource::parse_proc_stat(&text)
+}
+
+/// Reads memory and swap totals. See `read_cpu_times` for why this is a read
+/// and nothing else.
+pub(crate) fn read_memory() -> (
+    Option<crate::resource::Usage>,
+    Option<crate::resource::Usage>,
+) {
+    let Ok(text) = std::fs::read_to_string("/proc/meminfo") else {
+        return (None, None);
+    };
+    crate::resource::parse_proc_meminfo(&text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

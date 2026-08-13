@@ -847,6 +847,40 @@ pub struct ShellBarSectionConfig {
     /// rather than a button: a surface nobody asked to be clickable should not
     /// answer clicks, because the person cannot know what it would do.
     pub action: ShellBarSectionActionConfig,
+    /// What this part shows. Absent means it shows nothing, which is what every
+    /// section did before widgets existed.
+    pub widget: ShellBarSectionWidgetConfig,
+}
+
+/// `[[shell.bars.<edge>.sections]].widget` — what one part shows.
+///
+/// - absent / empty `kind` — the part is empty.
+/// - `label` — draw `text`, clipped to the part by display width.
+///
+/// A widget never changes how wide its part is. Letting text size a part would
+/// put that text into the geometry cache key and make editing a label re-lay
+/// out the whole bar for a change that moves nothing.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ShellBarSectionWidgetConfig {
+    pub kind: String,
+    pub text: String,
+    /// Which machine counter a `resource` widget shows: `cpu`, `mem` or `swap`.
+    /// Ignored by every other kind, and refused when the kind is `resource` and
+    /// this names nothing the build knows.
+    pub metric: String,
+    /// One grapheme an `icon` widget draws, for the case where the font already
+    /// has the picture.
+    pub glyph: String,
+    /// A bundled picture an `icon` widget draws, by name.
+    pub art: String,
+    /// Pixel rows for an `icon` widget drawn from scratch. Each character
+    /// indexes `palette`; `.` and a space are transparent. Two pixel rows
+    /// occupy one cell row.
+    pub pixels: Vec<String>,
+    /// Single-character keys mapped to colour specs, in the same grammar as
+    /// `shell.bars.<edge>.color`.
+    pub palette: std::collections::BTreeMap<String, String>,
 }
 
 /// `[[shell.bars.<edge>.sections]].action` — what clicking one part does.
@@ -863,6 +897,15 @@ pub struct ShellBarSectionConfig {
 pub struct ShellBarSectionActionConfig {
     pub kind: String,
     pub argv: Vec<String>,
+    /// Outer popup width, in cells or as a percentage string like `"80%"`.
+    ///
+    /// Same spelling as the popup size on a custom command keybind, and read by
+    /// the same parser: a second syntax for the same idea is a second thing to
+    /// learn and a second thing to get wrong. Absent means the popup keeps its
+    /// default half-of-the-terminal size.
+    pub width: Option<crate::popup_size::PopupSize>,
+    /// Outer popup height, in cells or as a percentage string like `"60%"`.
+    pub height: Option<crate::popup_size::PopupSize>,
 }
 
 impl Default for ShellBarConfig {

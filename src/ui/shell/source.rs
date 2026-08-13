@@ -20,6 +20,7 @@ use ratatui::style::Color;
 
 use crate::app::state::Palette;
 use crate::config::{parse_color, ShellBarConfig, ShellBarSectionConfig, ShellBarsConfig};
+use crate::popup_size::PopupSize;
 
 use super::layout::allocate_section_lengths;
 use super::model::{
@@ -393,6 +394,48 @@ pub(crate) enum BarConfigProblem {
         edge: &'static str,
         index: usize,
     },
+    PopupSizeWithoutPopup {
+        edge: &'static str,
+        index: usize,
+    },
+    UnknownSectionWidgetKind {
+        edge: &'static str,
+        index: usize,
+        kind: String,
+    },
+    UnknownSectionWidgetMetric {
+        edge: &'static str,
+        index: usize,
+        metric: String,
+    },
+    IconWithoutPicture {
+        edge: &'static str,
+        index: usize,
+    },
+    IconWithTwoPictures {
+        edge: &'static str,
+        index: usize,
+    },
+    UnknownIconArt {
+        edge: &'static str,
+        index: usize,
+        name: String,
+    },
+    UnreadableIconArt {
+        edge: &'static str,
+        index: usize,
+        problem: crate::icon::IconProblem,
+    },
+    IconDoesNotFit {
+        edge: &'static str,
+        index: usize,
+        needs: u16,
+        has: u16,
+    },
+    WidgetTextWithoutWidget {
+        edge: &'static str,
+        index: usize,
+    },
 }
 
 impl std::fmt::Display for BarConfigProblem {
@@ -458,6 +501,63 @@ impl std::fmt::Display for BarConfigProblem {
                 formatter,
                 "shell.bars.{edge}.sections[{index}].action opens a popup but names no command \
                  to run, so this section does nothing when clicked"
+            ),
+            Self::PopupSizeWithoutPopup { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].action sets a popup size but opens no \
+                 popup, so the size is never used"
+            ),
+            Self::UnknownSectionWidgetKind { edge, index, kind } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget.kind is \"{kind}\"; expected \
+                 \"label\", \"resource\", \"icon\" or \"meter\", so this section shows nothing"
+            ),
+            Self::UnknownSectionWidgetMetric {
+                edge,
+                index,
+                metric,
+            } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget.metric is \"{metric}\"; expected \
+                 \"cpu\", \"mem\" or \"swap\", so this section shows nothing"
+            ),
+            Self::IconWithoutPicture { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget is an icon but names no picture; \
+                 set one of glyph, art or pixels"
+            ),
+            Self::IconWithTwoPictures { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget names more than one picture; \
+                 glyph, art and pixels are alternatives, and which one wins would be invisible"
+            ),
+            Self::UnknownIconArt { edge, index, name } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget.art is \"{name}\", which this build \
+                 does not bundle, so this section shows nothing"
+            ),
+            Self::UnreadableIconArt {
+                edge,
+                index,
+                problem,
+            } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget {problem}"
+            ),
+            Self::IconDoesNotFit {
+                edge,
+                index,
+                needs,
+                has,
+            } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget needs {needs} cells but the section \
+                 declares {has}; a clipped picture is the wrong picture"
+            ),
+            Self::WidgetTextWithoutWidget { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget sets text but names no widget to \
+                 show it, so the text never appears"
             ),
         }
     }
@@ -528,7 +628,12 @@ pub(crate) fn shell_bar_config_problems(config: &ShellBarsConfig) -> Vec<BarConf
             }
             // Asked separately from the sizing rule because the two have
             // different blast radii and a person fixing one should not have to
-            // guess that the other was also refused.
+            // guess that the other was also refused. The widget is asked before
+            // the action so a section's complaints read in the order the table
+            // is written.
+            if let Err(problem) = section_widget(section, edge, index) {
+                problems.push(problem);
+            }
             if let Err(problem) = section_action(section, edge, index) {
                 problems.push(problem);
             }
@@ -673,28 +778,101 @@ pub(crate) enum SectionAction {
     None,
     OpenPopup {
         argv: Vec<String>,
+        /// Outer popup size, or `None` for the popup's own default.
+        ///
+        /// Carried beside the command rather than resolved here: this layer
+        /// reads config, and how many cells a percentage becomes depends on a
+        /// terminal area this layer has never seen (CLA4 — no I/O, and no
+        /// geometry, in a derivation).
+        width: Option<PopupSize>,
+        height: Option<PopupSize>,
     },
 }
 
-/// One edge's actions, in the same order and addressed by the same indices as
-/// that edge's sections.
+/// What one section of a bar shows.
+///
+/// Closed for the same reason its neighbour is, and deliberately smaller than
+/// it looks: a divider and a "blank" kind were both considered and left out.
+/// Blank is what a section already is with no widget at all, and a divider is a
+/// variant nobody has asked for — the enum being closed is what makes adding
+/// one later a cost the compiler counts rather than a guess made now.
+///
+/// A widget never decides how wide its section is. Letting text size a section
+/// would put that text in the geometry key, and editing a label would then
+/// re-lay-out the whole bar for a change that moves nothing. A label that does
+/// not fit is clipped, by display width — the person asked for icons, and an
+/// emoji is two cells wide, so clipping by character count would overrun the
+/// rectangle the section was promised.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) enum SectionWidget {
+    /// Draws nothing, which is what every section did before this existed.
+    #[default]
+    None,
+    Label {
+        text: String,
+    },
+    /// A number the machine keeps changing under the section.
+    ///
+    /// The widget holds only *which* number it wants. The number itself lives
+    /// in state, sampled on the loop's own clock, because a widget that could
+    /// read a counter would be read once per frame by the thing that draws it.
+    Resource {
+        metric: crate::resource::ResourceMetric,
+    },
+    /// A filled bar showing how full one metric is.
+    ///
+    /// Like `Resource` it names only the metric; the number arrives already
+    /// sampled. Unlike it, the value is drawn rather than written, which is the
+    /// difference between reading a bar and reading a figure.
+    Meter {
+        metric: crate::resource::ResourceMetric,
+    },
+    /// One grapheme the font already knows how to draw.
+    Icon {
+        glyph: String,
+    },
+    /// A picture in cells, colours still unresolved.
+    ///
+    /// The specs stay as written until draw time so a theme change recolours
+    /// the picture without re-deriving any geometry — the same split every
+    /// other bar colour already follows.
+    Art {
+        art: crate::icon::IconArt,
+    },
+}
+
+/// What one section shows and what a click on it does.
+///
+/// The two are held together rather than in two parallel lists on purpose.
+/// Both are addressed by the section's index and both have to disappear when a
+/// division is refused; two structures would mean two alignment invariants and
+/// two copies of the refusal rule, which is the divergence this file has
+/// already been bitten by three times.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct SectionChrome {
+    pub(crate) widget: SectionWidget,
+    pub(crate) action: SectionAction,
+}
+
+/// One edge's sections' chrome, in the same order and addressed by the same
+/// indices as that edge's sections.
 ///
 /// Index-aligned with [`BarSections`] by construction: both are derived from
 /// the same config list through the same refusal predicate, so a division that
-/// was refused cannot leave behind an action list whose indices address the
+/// was refused cannot leave behind a chrome list whose indices address the
 /// sections of some other, imagined bar.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct BarSectionActions {
-    actions: Vec<SectionAction>,
+pub(crate) struct BarSectionChrome {
+    entries: Vec<SectionChrome>,
 }
 
-impl BarSectionActions {
+impl BarSectionChrome {
     pub(crate) const EMPTY: Self = Self {
-        actions: Vec::new(),
+        entries: Vec::new(),
     };
 
-    fn get(&self, index: u8) -> Option<&SectionAction> {
-        self.actions.get(usize::from(index))
+    fn get(&self, index: u8) -> Option<&SectionChrome> {
+        self.entries.get(usize::from(index))
     }
 }
 
@@ -704,31 +882,33 @@ impl BarSectionActions {
 /// geometry cache key, and actions do not decide geometry: folding a command
 /// line into the key would make editing that command invalidate every cached
 /// rectangle on screen, for a change that moves nothing.
+// TP-CHROME-47: the separation is what keeps a popup's size — and the command
+// beside it — out of the value the geometry cache compares.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct ShellBarActions {
-    top: BarSectionActions,
-    bottom: BarSectionActions,
-    left: BarSectionActions,
-    right: BarSectionActions,
+pub(crate) struct ShellBarChrome {
+    top: BarSectionChrome,
+    bottom: BarSectionChrome,
+    left: BarSectionChrome,
+    right: BarSectionChrome,
 }
 
-impl ShellBarActions {
+impl ShellBarChrome {
     pub(crate) fn from_config(config: &ShellBarsConfig) -> Self {
         Self {
-            top: bar_section_actions(&config.top, "top"),
-            bottom: bar_section_actions(&config.bottom, "bottom"),
-            left: bar_section_actions(&config.left, "left"),
-            right: bar_section_actions(&config.right, "right"),
+            top: bar_section_chrome(&config.top, "top"),
+            bottom: bar_section_chrome(&config.bottom, "bottom"),
+            left: bar_section_chrome(&config.left, "left"),
+            right: bar_section_chrome(&config.right, "right"),
         }
     }
 
-    /// What the numbered section of the named region does, if that region is
-    /// an edge bar and that section carries an action.
+    /// What the numbered section of the named region shows and does, if that
+    /// region is an edge bar and it has such a section.
     ///
     /// Resolves the region through the same [`bar_edge_for`] the geometry side
-    /// uses, so the bar a click is attributed to and the bar it was drawn from
-    /// can never be two different bars.
-    pub(crate) fn action_for(&self, region: RegionId, index: u8) -> Option<&SectionAction> {
+    /// uses, so the bar a click is attributed to, the bar a label is drawn in,
+    /// and the bar the rectangle came from can never be three different bars.
+    pub(crate) fn for_section(&self, region: RegionId, index: u8) -> Option<&SectionChrome> {
         let edge = match bar_edge_for(region)? {
             BarEdge::Top => &self.top,
             BarEdge::Bottom => &self.bottom,
@@ -737,45 +917,199 @@ impl ShellBarActions {
         };
         edge.get(index)
     }
+
+    pub(crate) fn action_for(&self, region: RegionId, index: u8) -> Option<&SectionAction> {
+        self.for_section(region, index).map(|chrome| &chrome.action)
+    }
+
+    pub(crate) fn widget_for(&self, region: RegionId, index: u8) -> Option<&SectionWidget> {
+        self.for_section(region, index).map(|chrome| &chrome.widget)
+    }
+
+    /// Whether anything on screen is waiting on a machine counter.
+    ///
+    /// This is what keeps the feature free for the people not using it. No
+    /// resource section means no deadline, which means the loop never wakes to
+    /// sample and never opens `/proc` at all — rather than sampling always and
+    /// throwing the answer away, which is the shape this kind of widget
+    /// usually arrives in.
+    // TP-RES-07: sampling is demand-driven; an unused feature costs nothing.
+    pub(crate) fn wants_resources(&self) -> bool {
+        [&self.top, &self.bottom, &self.left, &self.right]
+            .into_iter()
+            .flat_map(|bar| bar.entries.iter())
+            .any(|chrome| {
+                matches!(
+                    chrome.widget,
+                    SectionWidget::Resource { .. } | SectionWidget::Meter { .. }
+                )
+            })
+    }
 }
 
-/// Read one edge's click actions, aligned with the sections that edge actually
-/// has.
+/// Read one edge's sections' chrome, aligned with the sections that edge
+/// actually has.
 ///
-/// A refused division yields no actions at all: the indices an action list is
+/// A refused division yields no chrome at all: the indices a chrome list is
 /// addressed by are the section indices, and there are none.
 ///
-/// A single unreadable action costs only itself. That asymmetry with the sizing
-/// rules is deliberate — a misspelled command name should not take the whole
-/// bar's layout down with it, and leaving the section in place with no action
-/// keeps every other index pointing where it pointed.
-// TP-CHROME-37/39/40: actions answer at the index they were written at, a
-// refused division leaves none, and a refused action costs only its section.
-fn bar_section_actions(config: &ShellBarConfig, edge: &'static str) -> BarSectionActions {
+/// A single unreadable widget or action costs only itself. That asymmetry with
+/// the sizing rules is deliberate — a misspelled command name should not take
+/// the whole bar's layout down with it, and leaving the section in place with
+/// nothing on it keeps every other index pointing where it pointed.
+// TP-CHROME-37/39/40/45/46/52: chrome answers at the index it was written at, a
+// refused division leaves none, a refused entry costs only its section, a popup
+// carries the size it was written with, and a widget is read the same way.
+fn bar_section_chrome(config: &ShellBarConfig, edge: &'static str) -> BarSectionChrome {
     if !config.enabled || config.sections.is_empty() {
-        return BarSectionActions::EMPTY;
+        return BarSectionChrome::EMPTY;
     }
     if bar_size_problem(config, edge).is_some() {
-        return BarSectionActions::EMPTY;
+        return BarSectionChrome::EMPTY;
     }
     if section_policies(&config.sections, edge).is_err() {
-        return BarSectionActions::EMPTY;
+        return BarSectionChrome::EMPTY;
     }
-    let actions = config
+    let entries = config
         .sections
         .iter()
         .enumerate()
-        .map(
-            |(index, section)| match section_action(section, edge, index) {
+        .map(|(index, section)| SectionChrome {
+            widget: match section_widget(section, edge, index) {
+                Ok(widget) => widget,
+                Err(problem) => {
+                    tracing::warn!(%problem, "the section is drawn with nothing in it");
+                    SectionWidget::None
+                }
+            },
+            action: match section_action(section, edge, index) {
                 Ok(action) => action,
                 Err(problem) => {
                     tracing::warn!(%problem, "the section is drawn without a click action");
                     SectionAction::None
                 }
             },
-        )
+        })
         .collect();
-    BarSectionActions { actions }
+    BarSectionChrome { entries }
+}
+
+/// One section's widget table as a widget, or what is wrong with it.
+// TP-CHROME-54: a widget this build cannot show, and text with nothing to show
+// it, are both refused here and reported by the checker reading this same
+// function.
+fn section_widget(
+    config: &ShellBarSectionConfig,
+    edge: &'static str,
+    index: usize,
+) -> Result<SectionWidget, BarConfigProblem> {
+    match config.widget.kind.as_str() {
+        // Text with no widget to put it in is the same half-finished shape a
+        // leftover popup size is: it will never appear, and a person reading
+        // the file back would believe it does.
+        "" if !config.widget.text.is_empty() => {
+            Err(BarConfigProblem::WidgetTextWithoutWidget { edge, index })
+        }
+        "" => Ok(SectionWidget::None),
+        "label" => Ok(SectionWidget::Label {
+            text: config.widget.text.clone(),
+        }),
+        // A resource section names its metric, and a metric this build does
+        // not know is refused here rather than drawn as an empty section. The
+        // same reasoning as an unknown widget kind: a typo that renders as
+        // blank is indistinguishable from one that renders as nothing on
+        // purpose.
+        "icon" => section_icon(config, edge, index),
+        "meter" => crate::resource::ResourceMetric::parse(&config.widget.metric)
+            .map(|metric| SectionWidget::Meter { metric })
+            .ok_or(BarConfigProblem::UnknownSectionWidgetMetric {
+                edge,
+                index,
+                metric: config.widget.metric.clone(),
+            }),
+        "resource" => crate::resource::ResourceMetric::parse(&config.widget.metric)
+            .map(|metric| SectionWidget::Resource { metric })
+            .ok_or(BarConfigProblem::UnknownSectionWidgetMetric {
+                edge,
+                index,
+                metric: config.widget.metric.clone(),
+            }),
+        other => Err(BarConfigProblem::UnknownSectionWidgetKind {
+            edge,
+            index,
+            kind: other.to_string(),
+        }),
+    }
+}
+
+/// One section's picture, or what is wrong with it.
+///
+/// Three ways to name a picture and exactly one may be used. They are not
+/// ranked and never will be: a precedence rule between `glyph` and `pixels`
+/// would be a decision the config file cannot show, so writing two is an error
+/// rather than a silent choice.
+///
+/// The width check only fires for a section that declares its own cells. A
+/// `fill` section's width is not known until the terminal has a size, and
+/// refusing at that point would mean a config that loads on one screen and not
+/// on another. What a runtime squeeze does instead is clip, which is what a
+/// label already does when the window narrows.
+// TP-ART-03/05: one picture per icon; a declared width that cannot hold it is
+// refused where it is written, and a section sized by the terminal is not.
+fn section_icon(
+    config: &ShellBarSectionConfig,
+    edge: &'static str,
+    index: usize,
+) -> Result<SectionWidget, BarConfigProblem> {
+    let widget = &config.widget;
+    let named = usize::from(!widget.glyph.trim().is_empty())
+        + usize::from(!widget.art.trim().is_empty())
+        + usize::from(!widget.pixels.is_empty());
+    match named {
+        0 => return Err(BarConfigProblem::IconWithoutPicture { edge, index }),
+        1 => {}
+        _ => return Err(BarConfigProblem::IconWithTwoPictures { edge, index }),
+    }
+
+    // A section only knows its own width when it declared one.
+    let declared = (config.kind.trim().eq_ignore_ascii_case("fixed")).then_some(config.cells);
+    let refuse_unless_fits = |needs: u16| match declared {
+        Some(has) if has < needs => Err(BarConfigProblem::IconDoesNotFit {
+            edge,
+            index,
+            needs,
+            has,
+        }),
+        _ => Ok(()),
+    };
+
+    if !widget.glyph.trim().is_empty() {
+        let glyph = widget.glyph.clone();
+        let needs = u16::try_from(unicode_width::UnicodeWidthStr::width(glyph.as_str()))
+            .unwrap_or(u16::MAX);
+        refuse_unless_fits(needs)?;
+        return Ok(SectionWidget::Icon { glyph });
+    }
+
+    let (pixels, palette) = if widget.art.trim().is_empty() {
+        (widget.pixels.clone(), widget.palette.clone())
+    } else {
+        crate::icon::builtin(widget.art.trim()).ok_or_else(|| BarConfigProblem::UnknownIconArt {
+            edge,
+            index,
+            name: widget.art.trim().to_string(),
+        })?
+    };
+
+    let art = crate::icon::art_from_pixels(&pixels, &palette).map_err(|problem| {
+        BarConfigProblem::UnreadableIconArt {
+            edge,
+            index,
+            problem,
+        }
+    })?;
+    refuse_unless_fits(art.width())?;
+    Ok(SectionWidget::Art { art })
 }
 
 /// One section's action table as an action, or what is wrong with it.
@@ -785,6 +1119,17 @@ fn section_action(
     index: usize,
 ) -> Result<SectionAction, BarConfigProblem> {
     match config.action.kind.as_str() {
+        // A size with nothing to size is the shape a half-finished edit leaves
+        // behind: the command was removed and the geometry stayed. Saying so is
+        // cheap; leaving it silent means the next person reads a popup size that
+        // has never once been used and believes it.
+        //
+        // Only asked on this arm. An unreadable action kind already reports its
+        // own cause, and a second complaint about the size it also carries would
+        // send somebody to fix the wrong line.
+        "" if config.action.width.is_some() || config.action.height.is_some() => {
+            Err(BarConfigProblem::PopupSizeWithoutPopup { edge, index })
+        }
         "" => Ok(SectionAction::None),
         "popup" => {
             // An empty argv, or one made only of blanks, would ask the runtime
@@ -800,6 +1145,8 @@ fn section_action(
             }
             Ok(SectionAction::OpenPopup {
                 argv: config.action.argv.clone(),
+                width: config.action.width,
+                height: config.action.height,
             })
         }
         other => Err(BarConfigProblem::UnknownSectionActionKind {
@@ -1005,7 +1352,7 @@ fn tint_from_parts(
 /// does; writing `#fab387` should mean exactly that. An empty setting is the
 /// warm default, which is what makes an unconfigured bar look deliberate
 /// rather than like a rendering fault.
-fn bar_color(spec: &str, palette: &Palette) -> Color {
+pub(crate) fn bar_color(spec: &str, palette: &Palette) -> Color {
     match spec.trim().to_lowercase().as_str() {
         "" => palette.peach,
         "accent" => palette.accent,
@@ -1376,11 +1723,397 @@ mod tests {
         }
     }
 
-    fn popup_argv(actions: &ShellBarActions, region: RegionId, index: u8) -> Option<Vec<String>> {
+    fn popup_argv(actions: &ShellBarChrome, region: RegionId, index: u8) -> Option<Vec<String>> {
         match actions.action_for(region, index) {
-            Some(SectionAction::OpenPopup { argv }) => Some(argv.clone()),
+            Some(SectionAction::OpenPopup { argv, .. }) => Some(argv.clone()),
             _ => None,
         }
+    }
+
+    fn popup_size(
+        actions: &ShellBarChrome,
+        region: RegionId,
+        index: u8,
+    ) -> Option<(Option<PopupSize>, Option<PopupSize>)> {
+        match actions.action_for(region, index) {
+            Some(SectionAction::OpenPopup { width, height, .. }) => Some((*width, *height)),
+            _ => None,
+        }
+    }
+
+    fn sized_popup_section(width: &str, height: &str) -> ShellBarSectionConfig {
+        let mut section = section_with_action("fill", "popup", &["btop"]);
+        if !width.is_empty() {
+            section.action.width =
+                Some(crate::popup_size::PopupSize::parse_cli(width).expect("width fixture"));
+        }
+        if !height.is_empty() {
+            section.action.height =
+                Some(crate::popup_size::PopupSize::parse_cli(height).expect("height fixture"));
+        }
+        section
+    }
+
+    // TC-B1/TC-B2/TC-B3 · the size the person wrote survives the derivation, in
+    // both spellings, and its absence stays absent rather than becoming a
+    // number this layer invented.
+    #[test]
+    fn a_popup_action_carries_the_size_it_was_written_with() {
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![
+                sized_popup_section("80%", "60%"),
+                sized_popup_section("100", "40"),
+                section_with_action("fill", "popup", &["btop"]),
+            ]),
+            ..Default::default()
+        };
+
+        let actions = ShellBarChrome::from_config(&config);
+
+        assert_eq!(
+            popup_size(&actions, RegionId::TopBar, 0),
+            Some((
+                Some(crate::popup_size::PopupSize::Percent(80)),
+                Some(crate::popup_size::PopupSize::Percent(60))
+            )),
+            "a percentage must arrive as a percentage, unresolved"
+        );
+        assert_eq!(
+            popup_size(&actions, RegionId::TopBar, 1),
+            Some((
+                Some(crate::popup_size::PopupSize::Cells(100)),
+                Some(crate::popup_size::PopupSize::Cells(40))
+            )),
+            "cells and percentages must read through one parser"
+        );
+        assert_eq!(
+            popup_size(&actions, RegionId::TopBar, 2),
+            Some((None, None)),
+            "a size nobody wrote must stay absent so the popup keeps its default"
+        );
+    }
+
+    // TC-C4/TC-C6 · a widget this build cannot show is reported by the same
+    // predicate that refuses it, and text with no widget to show it is the same
+    // half-finished shape as a leftover popup size. And a label never reaches
+    // the value the geometry cache compares: editing text must not re-lay-out
+    // the bar.
+    // TC-I6/TC-I8/TC-I10 · every way of writing a picture wrong is refused
+    // where it is written, each with its own cause.
+    //
+    // A picture fails silently in a way text does not. Wrong text is still
+    // text on screen; a wrong picture is an empty rectangle, which is exactly
+    // what a section with no widget looks like. So the checker has to be the
+    // thing that speaks, and it has to name which of the three mistakes it is:
+    // no picture, two pictures, or one that cannot fit.
+    // TP-ART-03: an icon that cannot be drawn is reported, and carries no widget.
+    #[test]
+    fn every_way_of_writing_a_picture_wrong_is_reported_with_its_own_cause() {
+        let mut nothing = plain_section("fill");
+        nothing.widget.kind = "icon".to_string();
+
+        let mut both = plain_section("fill");
+        both.widget.kind = "icon".to_string();
+        both.widget.glyph = "*".to_string();
+        both.widget.art = "herd".to_string();
+
+        let mut unknown = plain_section("fill");
+        unknown.widget.kind = "icon".to_string();
+        unknown.widget.art = "no-such-mark".to_string();
+
+        // `herd` is ten cells wide and this section declares four.
+        let mut cramped = plain_section("fixed");
+        cramped.cells = 4;
+        cramped.widget.kind = "icon".to_string();
+        cramped.widget.art = "herd".to_string();
+
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![nothing, both, unknown, cramped]),
+            ..Default::default()
+        };
+
+        let reported = shell_bar_config_problems(&config)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(reported.len(), 4, "{reported:?}");
+        assert!(reported[0].contains("names no picture"), "{reported:?}");
+        assert!(
+            reported[1].contains("more than one picture"),
+            "{reported:?}"
+        );
+        assert!(reported[2].contains("\"no-such-mark\""), "{reported:?}");
+        assert!(
+            reported[3].contains("needs 10 cells but the section declares 4"),
+            "a refusal has to name both numbers or it cannot be acted on: {reported:?}"
+        );
+
+        let chrome = ShellBarChrome::from_config(&config);
+        for index in 0..4 {
+            assert_eq!(
+                chrome.widget_for(RegionId::TopBar, index),
+                Some(&SectionWidget::None),
+                "section {index}: a picture the checker refused must not be carried either"
+            );
+        }
+    }
+
+    // A `fill` section has no width until the terminal has a size, so refusing
+    // one at config time would mean a file that loads on one screen and not on
+    // another. What a runtime squeeze does instead is clip, exactly as a label
+    // already does — the refusal is for a width somebody wrote down, not for a
+    // window somebody dragged.
+    // TP-ART-05: only a declared width can refuse a picture.
+    #[test]
+    fn a_picture_in_a_section_with_no_declared_width_is_accepted_and_left_to_the_renderer() {
+        let mut section = plain_section("fill");
+        section.widget.kind = "icon".to_string();
+        section.widget.art = "herd".to_string();
+
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![section]),
+            ..Default::default()
+        };
+
+        assert!(shell_bar_config_problems(&config).is_empty());
+        let chrome = ShellBarChrome::from_config(&config);
+        let widget = chrome
+            .widget_for(RegionId::TopBar, 0)
+            .expect("the section has chrome");
+        assert!(
+            matches!(widget, SectionWidget::Art { art } if art.width() == 10),
+            "a fill section keeps the picture: {widget:?}"
+        );
+    }
+
+    // A metric is a second name inside a widget that already named itself, and
+    // a wrong one fails in the same silent way a wrong kind does: the section
+    // draws nothing and looks exactly like a section meant to draw nothing.
+    // It gets its own message rather than sharing the unknown-kind one, because
+    // the two send a person to different lines of the same file.
+    // TP-CHROME-56: an unknown metric is refused, and carries no widget.
+    #[test]
+    fn a_resource_widget_with_an_unknown_metric_is_reported_and_never_reaches_the_geometry() {
+        let mut typo = plain_section("fill");
+        typo.widget.kind = "resource".to_string();
+        typo.widget.metric = "cpu%".to_string();
+        let mut good = plain_section("fill");
+        good.widget.kind = "resource".to_string();
+        good.widget.metric = "swap".to_string();
+
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![typo, good]),
+            ..Default::default()
+        };
+
+        let reported = shell_bar_config_problems(&config)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(reported.len(), 1, "{reported:?}");
+        assert!(
+            reported[0].contains("sections[0].widget.metric is \"cpu%\""),
+            "the message has to name the metric that was wrong: {reported:?}"
+        );
+
+        let chrome = ShellBarChrome::from_config(&config);
+        assert_eq!(
+            chrome.widget_for(RegionId::TopBar, 0),
+            Some(&SectionWidget::None),
+            "a metric the checker refused must not be carried either"
+        );
+        assert_eq!(
+            chrome.widget_for(RegionId::TopBar, 1),
+            Some(&SectionWidget::Resource {
+                metric: crate::resource::ResourceMetric::Swap
+            })
+        );
+        assert!(
+            chrome.wants_resources(),
+            "one good live section is enough to make the loop sample"
+        );
+    }
+
+    #[test]
+    fn a_widget_this_build_cannot_show_is_reported_and_never_reaches_the_geometry() {
+        let mut wrong_kind = plain_section("fill");
+        wrong_kind.widget.kind = "sparkline".to_string();
+        let mut orphan_text = plain_section("fill");
+        orphan_text.widget.text = "CPU".to_string();
+        let mut label = plain_section("fill");
+        label.widget.kind = "label".to_string();
+        label.widget.text = "CPU".to_string();
+
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![wrong_kind, orphan_text, label]),
+            ..Default::default()
+        };
+
+        let reported = shell_bar_config_problems(&config)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(reported.len(), 2, "{reported:?}");
+        assert!(
+            reported[0].contains("sections[0].widget.kind is \"sparkline\""),
+            "{reported:?}"
+        );
+        assert!(
+            reported[1].contains("sections[1].widget sets text but names no widget"),
+            "{reported:?}"
+        );
+
+        let chrome = ShellBarChrome::from_config(&config);
+        assert_eq!(
+            chrome.widget_for(RegionId::TopBar, 0),
+            Some(&SectionWidget::None),
+            "a widget the checker complained about must not be carried either"
+        );
+        assert_eq!(
+            chrome.widget_for(RegionId::TopBar, 2),
+            Some(&SectionWidget::Label {
+                text: "CPU".to_string()
+            })
+        );
+
+        // TC-C6: only the text differs, and the bars the geometry key compares
+        // must not notice.
+        let mut renamed = plain_section("fill");
+        renamed.widget.kind = "label".to_string();
+        renamed.widget.text = "MEM".to_string();
+        let other = ShellBarsConfig {
+            top: bar_with_sections(vec![renamed]),
+            ..Default::default()
+        };
+        let one = ShellBarsConfig {
+            top: bar_with_sections(vec![label_section("CPU")]),
+            ..Default::default()
+        };
+        assert_eq!(
+            ShellBars::from_config(&one),
+            ShellBars::from_config(&other),
+            "a label must never decide how wide its section is"
+        );
+        assert_ne!(
+            ShellBarChrome::from_config(&one),
+            ShellBarChrome::from_config(&other),
+            "control: the chrome itself must notice, or the assertion above is empty"
+        );
+    }
+
+    fn label_section(text: &str) -> ShellBarSectionConfig {
+        let mut section = plain_section("fill");
+        section.widget.kind = "label".to_string();
+        section.widget.text = text.to_string();
+        section
+    }
+
+    // TC-B5 · a size on an action that will never open a popup can never take
+    // effect, so it is said out loud rather than dropped where nobody sees it.
+    #[test]
+    fn a_popup_size_on_something_that_is_not_a_popup_is_reported() {
+        let mut leftover_width = plain_section("fill");
+        leftover_width.action.width = Some(crate::popup_size::PopupSize::Percent(80));
+        let mut leftover_height = plain_section("fill");
+        leftover_height.action.height = Some(crate::popup_size::PopupSize::Cells(40));
+
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![
+                leftover_width,
+                leftover_height,
+                sized_popup_section("80%", "60%"),
+            ]),
+            ..Default::default()
+        };
+
+        let reported = shell_bar_config_problems(&config)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            reported.len(),
+            2,
+            "each leftover size is reported once, and the popup that uses its \
+             own size is not a complaint: {reported:?}"
+        );
+        assert!(
+            reported[0].contains("sections[0].action sets a popup size but opens no popup"),
+            "{reported:?}"
+        );
+        assert!(
+            reported[1].contains("sections[1].action sets a popup size but opens no popup"),
+            "a leftover height counts the same as a leftover width: {reported:?}"
+        );
+
+        // An unreadable action kind already reports its own cause. Complaining
+        // about the size it also carries would send somebody to fix the line
+        // that is not the reason their section does nothing.
+        let mut wrong_kind = section_with_action("fill", "teleport", &["nowhere"]);
+        wrong_kind.action.height = Some(crate::popup_size::PopupSize::Cells(40));
+        let single_cause = ShellBarsConfig {
+            top: bar_with_sections(vec![wrong_kind]),
+            ..Default::default()
+        };
+        let reported = shell_bar_config_problems(&single_cause)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(reported.len(), 1, "one cause, one complaint: {reported:?}");
+        assert!(
+            reported[0].contains("action.kind is \"teleport\""),
+            "{reported:?}"
+        );
+    }
+
+    // The checker and the deriver stay joined across this rule too: a size the
+    // checker complains about is a size the derived action does not carry, and
+    // there is no third state where it is quietly kept.
+    #[test]
+    fn a_reported_leftover_size_is_a_size_the_action_does_not_carry() {
+        let mut leftover = plain_section("fill");
+        leftover.action.width = Some(crate::popup_size::PopupSize::Percent(80));
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![leftover]),
+            ..Default::default()
+        };
+
+        assert_eq!(shell_bar_config_problems(&config).len(), 1);
+        assert_eq!(
+            ShellBarChrome::from_config(&config).action_for(RegionId::TopBar, 0),
+            Some(&SectionAction::None),
+            "the section the checker complained about must carry no action at all"
+        );
+    }
+
+    // TC-B6 · a popup's size decides nothing about where a rectangle is, so it
+    // must not reach the geometry key: editing a command's size would otherwise
+    // invalidate every cached rectangle on screen for a change that moves
+    // nothing.
+    #[test]
+    fn changing_only_a_popup_size_leaves_the_bars_identity_alone() {
+        let small = ShellBarsConfig {
+            top: bar_with_sections(vec![sized_popup_section("40%", "40%")]),
+            ..Default::default()
+        };
+        let large = ShellBarsConfig {
+            top: bar_with_sections(vec![sized_popup_section("90%", "90%")]),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            ShellBars::from_config(&small),
+            ShellBars::from_config(&large),
+            "the bars value the geometry key compares must not notice a popup size"
+        );
+        assert_ne!(
+            ShellBarChrome::from_config(&small),
+            ShellBarChrome::from_config(&large),
+            "control: the actions themselves must notice, or the test above proves nothing"
+        );
     }
 
     // TA-2 · the action reaches the index that addresses it, and no other.
@@ -1395,7 +2128,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = ShellBarActions::from_config(&config);
+        let actions = ShellBarChrome::from_config(&config);
 
         assert_eq!(
             popup_argv(&actions, RegionId::TopBar, 1).as_deref(),
@@ -1429,7 +2162,7 @@ mod tests {
             right: bar_with_sections(vec![section_with_action("fill", "popup", &["right-cmd"])]),
         };
 
-        let actions = ShellBarActions::from_config(&config);
+        let actions = ShellBarChrome::from_config(&config);
         let bars = ShellBars::from_config(&config);
 
         for (region, expected) in [
@@ -1475,7 +2208,7 @@ mod tests {
         };
 
         let bars = ShellBars::from_config(&config);
-        let actions = ShellBarActions::from_config(&config);
+        let actions = ShellBarChrome::from_config(&config);
 
         assert!(
             bars.top.sections().is_empty(),
@@ -1505,7 +2238,7 @@ mod tests {
         };
 
         let bars = ShellBars::from_config(&config);
-        let actions = ShellBarActions::from_config(&config);
+        let actions = ShellBarChrome::from_config(&config);
 
         assert_eq!(
             bars.top.sections().len(),

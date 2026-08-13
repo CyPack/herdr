@@ -47,6 +47,8 @@ pub(crate) struct PopupResolvedGeometry {
     pub inner: Rect,
 }
 
+// TP-CHROME-48: both ends of the range are reachable from a config file now, so
+// a size past the screen is clamped and an area with no room is refused.
 pub(crate) fn resolve_popup_geometry(
     width: Option<PopupSize>,
     height: Option<PopupSize>,
@@ -218,6 +220,46 @@ mod tests {
         .unwrap();
         assert_eq!(resolved.outer, ratatui::layout::Rect::new(10, 9, 80, 12));
         assert_eq!(resolved.inner, ratatui::layout::Rect::new(11, 10, 77, 10));
+    }
+
+    // TC-B4 · a size now reaches this resolver from a config file rather than
+    // only from a keybind somebody typed, so the two ends of the range are
+    // worth pinning: a number far larger than the screen must be brought back
+    // inside it, and a screen too small for any popup must still be a refusal
+    // rather than a rectangle with no room in it.
+    #[test]
+    fn an_absurd_size_is_clamped_and_a_hopeless_area_is_refused() {
+        let resolved = super::resolve_popup_geometry(
+            Some(PopupSize::Cells(60_000)),
+            Some(PopupSize::Cells(60_000)),
+            ratatui::layout::Rect::new(0, 0, 100, 30),
+        )
+        .expect("a size larger than the screen is clamped, not refused");
+        assert_eq!(
+            (resolved.outer.width, resolved.outer.height),
+            (100, 30),
+            "the popup must stay inside the area it is drawn in"
+        );
+        assert!(
+            resolved.inner.width > 0 && resolved.inner.height > 0,
+            "a clamped popup must still have somewhere to put its terminal"
+        );
+
+        for area in [
+            ratatui::layout::Rect::new(0, 0, 5, 30),
+            ratatui::layout::Rect::new(0, 0, 100, 3),
+            ratatui::layout::Rect::new(0, 0, 0, 0),
+        ] {
+            assert!(
+                super::resolve_popup_geometry(
+                    Some(PopupSize::Percent(100)),
+                    Some(PopupSize::Percent(100)),
+                    area,
+                )
+                .is_none(),
+                "an area with no room for a popup must be refused, not squeezed: {area:?}"
+            );
+        }
     }
 
     #[test]

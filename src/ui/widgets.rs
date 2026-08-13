@@ -129,6 +129,177 @@ pub(crate) fn render_chip(
     Some(chip)
 }
 
+/// Draw one bar section's widget into the rectangle that section was given.
+///
+/// Clipped by DISPLAY width rather than character count: a section is measured
+/// in cells and an emoji is two of them, so counting characters would let a
+/// label written with icons overrun the rectangle into its neighbour. The fork
+/// already learned this once for file columns (TP-FSH-10).
+///
+/// An empty rectangle draws nothing rather than being a special case anywhere
+/// else (CL9), and a widget never changes the rectangle it was handed — the
+/// size was decided by the layout solver before this function was called.
+// TP-CHROME-52/53: a label is drawn inside its own section, clipped by display
+// width, and an empty rectangle is a no-op.
+pub(crate) fn render_section_widget(
+    frame: &mut Frame,
+    widget: &crate::ui::shell::SectionWidget,
+    resources: &crate::resource::ResourceSample,
+    palette: &Palette,
+    area: Rect,
+    style: Style,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let text = match widget {
+        crate::ui::shell::SectionWidget::None => return,
+        // A picture is the one widget that wants more than a line, and the
+        // rectangle it needs was always there — `section_rects` hands every
+        // section the bar's full inner height. Only this function was throwing
+        // the rest away.
+        crate::ui::shell::SectionWidget::Art { art } => {
+            render_icon_art(frame, art, palette, area);
+            return;
+        }
+        crate::ui::shell::SectionWidget::Meter { metric } => {
+            render_meter(frame, resources, *metric, palette, area);
+            return;
+        }
+        crate::ui::shell::SectionWidget::Icon { glyph } => {
+            std::borrow::Cow::Borrowed(glyph.as_str())
+        }
+        crate::ui::shell::SectionWidget::Label { text } => {
+            if text.is_empty() {
+                return;
+            }
+            std::borrow::Cow::Borrowed(text.as_str())
+        }
+        // The sample arrives already taken. This arm formats it and nothing
+        // else — no reading, no clock, no cache — which is what makes "the
+        // renderer never samples" a property of the code rather than a promise
+        // in a comment.
+        crate::ui::shell::SectionWidget::Resource { metric } => {
+            std::borrow::Cow::Owned(crate::resource::metric_text(resources, *metric))
+        }
+    };
+
+    let clipped = super::text::truncate_end(&text, usize::from(area.width));
+    let line = Rect::new(area.x, area.y, area.width, 1);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(clipped, style))),
+        line,
+    );
+}
+
+/// Paints a picture, two pixels to a cell.
+///
+/// `▀` puts the upper pixel in the foreground and lets the background show
+/// through below it; `▄` is the same the other way up and is what a cell with a
+/// transparent top uses, so a missing pixel never needs an invented colour. A
+/// cell with neither pixel is skipped entirely, which is what keeps the bar's
+/// own surface visible behind the shape.
+///
+/// Colours resolve here rather than at config time, against the live palette,
+/// so a theme change recolours the picture without re-deriving any geometry.
+///
+/// Anything past the rectangle is dropped. That is the same thing a label does
+/// when the window narrows: a config declaring a width too small is refused
+/// where it is written, but a terminal that shrinks at runtime cannot be
+/// refused, only survived.
+// TP-ART-01/02: the upper pixel is the foreground, the picture paints every
+// row it was given and none outside it, and the same picture drawn twice
+// produces identical cells so the diff sends nothing.
+fn render_icon_art(frame: &mut Frame, art: &crate::icon::IconArt, palette: &Palette, area: Rect) {
+    const UPPER_HALF: &str = "▀";
+    const LOWER_HALF: &str = "▄";
+
+    let rows = art.height().min(area.height);
+    let columns = art.width().min(area.width);
+    let buffer = frame.buffer_mut();
+
+    for row in 0..rows {
+        for column in 0..columns {
+            let Some(half) = art.cell(column, row) else {
+                continue;
+            };
+            let upper = half.upper.and_then(|index| art.spec(index));
+            let lower = half.lower.and_then(|index| art.spec(index));
+            let Some(cell) = buffer.cell_mut((area.x + column, area.y + row)) else {
+                continue;
+            };
+            match (upper, lower) {
+                (None, None) => {}
+                (Some(spec), None) => {
+                    cell.set_symbol(UPPER_HALF);
+                    cell.set_fg(super::shell::bar_color(spec, palette));
+                }
+                (None, Some(spec)) => {
+                    cell.set_symbol(LOWER_HALF);
+                    cell.set_fg(super::shell::bar_color(spec, palette));
+                }
+                (Some(top), Some(bottom)) => {
+                    cell.set_symbol(UPPER_HALF);
+                    cell.set_fg(super::shell::bar_color(top, palette));
+                    cell.set_bg(super::shell::bar_color(bottom, palette));
+                }
+            }
+        }
+    }
+}
+
+/// Paints a filled bar across the section, coloured by how full it is.
+///
+/// Every row of the rectangle is filled, so the bar reads as a block of colour
+/// rather than a line — which is what makes a glance enough. Whole cells are
+/// `\u{2588}`; the cell after them carries the remainder as an eighth-block, so the
+/// bar moves smoothly instead of jumping a whole cell at a time.
+///
+/// A metric with no ratio — an unreadable counter, or a pool the machine does
+/// not have — draws NOTHING. An empty bar would say "plenty free" about
+/// something that is absent or unknown, which is the same lie a fabricated 0%
+/// would be.
+///
+/// The cost story is unchanged from every other widget here: this reads a
+/// sample that was already taken, so the bar only changes when the sample does,
+/// and an unchanged bar costs nothing in the frame diff.
+// TP-METER-01/02: every row is filled, the bar never overruns its rectangle,
+// and a metric with no ratio draws nothing at all.
+fn render_meter(
+    frame: &mut Frame,
+    resources: &crate::resource::ResourceSample,
+    metric: crate::resource::ResourceMetric,
+    palette: &Palette,
+    area: Rect,
+) {
+    const FULL: &str = "\u{2588}";
+
+    let Some(ratio) = crate::resource::meter_ratio(resources, metric) else {
+        return;
+    };
+    let (full, eighths) = crate::resource::meter_cells(ratio, area.width);
+    let colour = super::shell::bar_color(crate::resource::meter_colour(ratio), palette);
+    let partial = crate::resource::eighth_block(eighths);
+
+    let buffer = frame.buffer_mut();
+    for row in 0..area.height {
+        for column in 0..full {
+            if let Some(cell) = buffer.cell_mut((area.x + column, area.y + row)) {
+                cell.set_symbol(FULL);
+                cell.set_fg(colour);
+            }
+        }
+        if let Some(symbol) = partial {
+            if full < area.width {
+                if let Some(cell) = buffer.cell_mut((area.x + full, area.y + row)) {
+                    cell.set_symbol(symbol);
+                    cell.set_fg(colour);
+                }
+            }
+        }
+    }
+}
+
 /// Rows a boxed chip occupies: border, label, border.
 pub(crate) const CHIP_ROWS: u16 = 3;
 

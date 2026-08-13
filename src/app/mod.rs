@@ -154,12 +154,29 @@ pub struct App {
     pub(crate) pending_api_worktree_remove_paths: HashMap<std::path::PathBuf, u64>,
     pub(crate) next_api_worktree_operation_id: u64,
     pub(crate) last_sidebar_divider_click: Option<Instant>,
+    /// The popup a dismissal has already been asked of, and not yet answered.
+    ///
+    /// Held as the popup's own terminal id rather than a bare flag, so a
+    /// request made of one popup can never be spent on the next: a different
+    /// popup has a different id and the comparison simply stops matching.
+    /// Nothing has to remember to clear it when a popup opens.
+    pub(crate) popup_dismiss_requested: Option<crate::terminal::TerminalId>,
     pub(crate) last_pane_click: Option<PaneClickState>,
     pub(crate) pending_url_click_sources: HashSet<InputSourceId>,
     pub(crate) next_resize_poll: Instant,
     /// Next per-cwd git-branch poll for the agent panel; None runs immediately.
     pub(crate) next_tab_branch_poll: Option<Instant>,
     pub(crate) next_animation_tick: Option<Instant>,
+    /// When the machine's counters were last read, or None before the first
+    /// read. The deadline is derived from this rather than stored, so a change
+    /// to the interval takes effect without a second field to keep in step.
+    pub(crate) last_resource_sample_at: Option<Instant>,
+    /// The previous CPU reading, kept because a percentage is a difference.
+    pub(crate) previous_cpu_times: Option<crate::resource::CpuTimes>,
+    /// How many times the loop has read the machine. Only the loop touches it.
+    /// A render that sampled would move this, which is exactly what the seam's
+    /// test watches for.
+    pub(crate) resource_samples_taken: u64,
     pub(crate) next_auto_update_check: Option<Instant>,
     pub(crate) next_agent_manifest_update_check: Option<Instant>,
     /// Next Projects-tab session-store poll; None until the first visible poll.
@@ -714,6 +731,7 @@ impl App {
                 &config.ui.sidebar,
                 &theme_palette,
             ),
+            resources: crate::resource::ResourceSample::default(),
             terminals: std::collections::HashMap::new(),
             direct_attach_resize_locks: std::collections::HashSet::new(),
             pane_id_aliases: std::collections::HashMap::new(),
@@ -888,7 +906,7 @@ impl App {
                 &config.shell.bars,
                 &theme_palette,
             )),
-            shell_bar_actions: crate::ui::shell::ShellBarActions::from_config(&config.shell.bars),
+            shell_bar_chrome: crate::ui::shell::ShellBarChrome::from_config(&config.shell.bars),
             drag: None,
             workspace_press: None,
             tab_press: None,
@@ -1076,11 +1094,15 @@ impl App {
             pending_api_worktree_remove_paths: HashMap::new(),
             next_api_worktree_operation_id: 1,
             last_sidebar_divider_click: None,
+            popup_dismiss_requested: None,
             last_pane_click: None,
             pending_url_click_sources: HashSet::new(),
             next_resize_poll: Instant::now() + RESIZE_POLL_INTERVAL,
             next_tab_branch_poll: None,
             next_animation_tick: None,
+            last_resource_sample_at: None,
+            previous_cpu_times: None,
+            resource_samples_taken: 0,
             next_auto_update_check: version_check_enabled
                 .then_some(Instant::now() + AUTO_UPDATE_CHECK_INTERVAL),
             next_agent_manifest_update_check: manifest_check_enabled

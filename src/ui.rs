@@ -991,6 +991,47 @@ impl compose::Component for BaseLayer {
             );
         }
 
+        // Then whatever each section shows, into the rectangle that section was
+        // given. Read from the same track the hit areas were built from, so a
+        // label and the click that lands on it can never belong to different
+        // sections. Undivided bars produce no rectangles here and cost nothing.
+        // Ordinary text colour, because the surface underneath is the panel
+        // background this bar was just painted with. The neighbouring
+        // `panel_contrast_fg` is for the opposite case — dark text on an accent
+        // fill, the way the workspace chips read — and using it here returns
+        // the panel background itself, which paints every label the exact
+        // colour of the surface it lands on. That shipped once: the border was
+        // visible, the glyphs were in the buffer, and the bar looked empty.
+        let section_style = Style::default().fg(app.palette.text);
+        for region in [
+            RegionId::TopBar,
+            RegionId::BottomBar,
+            RegionId::AppDock,
+            RegionId::RightPanel,
+        ] {
+            let outer = app.view.shell.regions.get(region);
+            if outer.is_empty() {
+                continue;
+            }
+            for (index, rect) in bars
+                .track_for(region)
+                .section_rects(region, outer)
+                .occupied()
+            {
+                let index = u8::try_from(index).unwrap_or(u8::MAX);
+                if let Some(widget) = app.shell_bar_chrome.widget_for(region, index) {
+                    widgets::render_section_widget(
+                        frame,
+                        widget,
+                        &app.resources,
+                        &app.palette,
+                        rect,
+                        section_style,
+                    );
+                }
+            }
+        }
+
         let dock_area = bars
             .left
             .inner(app.view.shell.regions.get(RegionId::AppDock));
@@ -1295,6 +1336,577 @@ mod tests {
     // renderer yet. Pinning both halves keeps the next layer honest about which
     // of those it is closing, and stops "the bar works" from being said about
     // an edge that draws nothing.
+    // TC-C1/TC-C2/TC-C7 · a label is EMITTED, addressed, and PAINTED. The last
+    // of those is the one nothing else can see: a widget that is derived, given
+    // a rectangle and never drawn passes every state test and the compiler
+    // counts it as used, because it IS used — just not by anything that paints.
+    // Only a buffer dump can tell those apart, which is how this fork lost a
+    // sidebar row for a whole release once.
+    //
+    // The second section's label is deliberately wider than its cells and
+    // written with a double-width glyph: clipping by character count would fit
+    // "四四四" into three cells and paint six, over the neighbour.
+    #[test]
+    fn a_section_label_is_painted_inside_its_own_section_and_clipped_by_display_width() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut first = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 6,
+            ..Default::default()
+        };
+        first.widget.kind = "label".to_string();
+        first.widget.text = "CPU".to_string();
+
+        let mut second = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 4,
+            ..Default::default()
+        };
+        second.widget.kind = "label".to_string();
+        second.widget.text = "四四四四".to_string();
+
+        let config = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 1,
+                border: false,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections: vec![first, second],
+            },
+            ..Default::default()
+        };
+
+        let frame = Rect::new(0, 0, 100, 30);
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        );
+        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
+        compute_view(&mut app, frame);
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("a bar with labelled sections draws");
+        let buffer = terminal.backend().buffer().clone();
+
+        let row: String = (0..10)
+            .map(|x| {
+                buffer
+                    .cell((x, 0))
+                    .map(|cell| cell.symbol().to_string())
+                    .unwrap_or_default()
+            })
+            .collect();
+
+        assert!(
+            row.starts_with("CPU"),
+            "the first section's label must be painted where that section is: {row:?}"
+        );
+        assert!(
+            row[..].contains('四'),
+            "the second section's label must be painted too: {row:?}"
+        );
+        // Four cells hold two double-width glyphs at most, and the truncation
+        // spends one on the ellipsis, so exactly one fits beside it.
+        assert_eq!(
+            row.matches('四').count(),
+            1,
+            "clipping by display width must not paint six cells into four: {row:?}"
+        );
+    }
+
+    // TC-C8 · a label has to be legible, not merely present.
+    //
+    // The test above reads symbols, and symbols are in the buffer whether or
+    // not a person can see them. This fork shipped a label whose foreground was
+    // the colour of the surface under it: every state test passed, the glyph
+    // dump passed, and the user saw an empty bar with a visible border. A
+    // character-only assertion cannot tell "painted" from "painted invisibly",
+    // so the colour needs its own claim.
+    //
+    // The claim is deliberately the weakest one that still catches it —
+    // foreground must differ from the background of the very cell it lands in.
+    // Anything stronger (a named colour, a contrast ratio) would pin a theme
+    // decision into a test that is about legibility, and would break the next
+    // time the palette moves.
+    // TP-CHROME-55: a section label is drawn in a colour you can see against
+    // its own surface.
+    #[test]
+    fn a_section_label_is_painted_in_a_colour_you_can_see_against_its_own_surface() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 6,
+            ..Default::default()
+        };
+        section.widget.kind = "label".to_string();
+        section.widget.text = "CPU".to_string();
+
+        let config = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 3,
+                // The border is the point: it makes the shell paint the bar's
+                // interior, which is the surface the label has to survive.
+                border: true,
+                color: "mauve".to_string(),
+                gradient: Vec::new(),
+                sections: vec![section],
+            },
+            ..Default::default()
+        };
+
+        let frame = Rect::new(0, 0, 100, 30);
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        );
+        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
+        compute_view(&mut app, frame);
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("a bordered bar with a labelled section draws");
+        let buffer = terminal.backend().buffer().clone();
+
+        // Row 0 is the top border, so the content row is row 1.
+        let painted: Vec<_> = (0..10)
+            .filter_map(|x| buffer.cell((x, 1)))
+            .filter(|cell| {
+                let symbol = cell.symbol();
+                !symbol.trim().is_empty() && symbol != "│"
+            })
+            .collect();
+
+        assert!(
+            !painted.is_empty(),
+            "the label has to reach the buffer before its colour can be judged"
+        );
+        for cell in painted {
+            assert_ne!(
+                cell.fg,
+                cell.bg,
+                "a label drawn in the colour of its own surface is invisible: \
+                 symbol {:?} fg {:?} bg {:?}",
+                cell.symbol(),
+                cell.fg,
+                cell.bg
+            );
+        }
+    }
+
+    // TC-D5 · the last link in the chain, which needed its own test because
+    // dropping it is invisible everywhere else: the numbers on screen have to
+    // come from the sample in state. A render that ignored state and formatted
+    // a default would paint `MEM  --`, and `--` is exactly what an unreadable
+    // machine paints — so every other test, and the screen itself, would go on
+    // looking correct. A mutation that swapped the sample for `Default` left
+    // this file's whole suite green until this test existed.
+    // TP-RES-10: what a live section paints comes from the sampled state.
+    #[test]
+    fn a_live_section_paints_the_sample_that_is_in_state_rather_than_a_default() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 16,
+            ..Default::default()
+        };
+        section.widget.kind = "resource".to_string();
+        section.widget.metric = "mem".to_string();
+
+        let config = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 1,
+                border: false,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections: vec![section],
+            },
+            ..Default::default()
+        };
+
+        let frame = Rect::new(0, 0, 100, 30);
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        );
+        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
+        // A reading nothing else could have produced.
+        app.resources = crate::resource::ResourceSample {
+            mem: Some(crate::resource::Usage {
+                used: 7 * 1024 * 1024 * 1024,
+                total: 16 * 1024 * 1024 * 1024,
+            }),
+            ..crate::resource::ResourceSample::default()
+        };
+        compute_view(&mut app, frame);
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("a bar with a live section draws");
+        let buffer = terminal.backend().buffer().clone();
+
+        let row: String = (0..16)
+            .map(|x| {
+                buffer
+                    .cell((x, 0))
+                    .map(|cell| cell.symbol().to_string())
+                    .unwrap_or_default()
+            })
+            .collect();
+
+        assert!(
+            row.contains("7.0G/16G"),
+            "the painted numbers must be the sampled ones: {row:?}"
+        );
+        assert!(
+            !row.contains("--"),
+            "a section with a reading must not paint the unreadable form: {row:?}"
+        );
+    }
+
+    /// A bar whose only section is the bundled `herd` mark: ten cells wide,
+    /// three cell rows tall, no border so every row is content.
+    fn art_bar_config() -> crate::config::ShellBarsConfig {
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 10,
+            ..Default::default()
+        };
+        section.widget.kind = "icon".to_string();
+        section.widget.art = "herd".to_string();
+        crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 3,
+                border: false,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections: vec![section],
+            },
+            ..Default::default()
+        }
+    }
+
+    fn app_with_art_bar() -> crate::app::state::AppState {
+        let config = art_bar_config();
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        );
+        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
+        app
+    }
+
+    // TC-I3/TC-I4 · a picture occupies every row it was given, and the upper
+    // pixel is the foreground.
+    //
+    // Both halves need saying. The rectangle was always three rows tall —
+    // `section_rects` hands each section the bar's whole inner height — and the
+    // widget renderer clipped it to one, so a picture was impossible for a
+    // reason no geometry test could see. And the half-block mapping is
+    // invisible when wrong: swapping foreground and background draws the mark
+    // upside down, which looks like a design choice rather than a bug.
+    // TP-ART-01: a picture paints its whole rectangle, upper pixel first.
+    #[test]
+    fn a_picture_paints_every_row_it_was_given_with_the_upper_pixel_in_the_foreground() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let frame = Rect::new(0, 0, 100, 30);
+        let mut app = app_with_art_bar();
+        compute_view(&mut app, frame);
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("a bar with a picture draws");
+        let buffer = terminal.backend().buffer().clone();
+
+        // The mark is three cell rows, and every one of them must carry paint.
+        for row in 0..3 {
+            let painted = (0..10)
+                .filter_map(|x| buffer.cell((x, row)))
+                .filter(|cell| cell.symbol() == "▀" || cell.symbol() == "▄")
+                .count();
+            assert!(
+                painted > 0,
+                "row {row} of the picture is empty; the renderer is still clipping to one line"
+            );
+        }
+
+        // Row 0 of `herd` is `..a....a..` over `...a..a...`: column 2 has a
+        // pixel above and none below, so it is an upper half in the mark's
+        // first colour with no background of its own.
+        let cell = buffer.cell((2, 0)).expect("column 2 exists");
+        assert_eq!(
+            cell.symbol(),
+            "▀",
+            "a pixel with nothing under it is an upper half"
+        );
+        assert_eq!(
+            cell.fg, app.palette.mauve,
+            "the upper pixel is the foreground colour"
+        );
+
+        // Column 3 is the other way round: transparent above, a pixel below.
+        let cell = buffer.cell((3, 0)).expect("column 3 exists");
+        assert_eq!(
+            cell.symbol(),
+            "▄",
+            "a pixel with nothing above it is a lower half, so transparency \
+             never needs an invented background"
+        );
+
+        // The cell that carries BOTH pixels is the one that pins the mapping.
+        // Cell row 1 is pixel rows 2 and 3 — `....aa....` over `....bb....` —
+        // so column 4 is the first colour above the second. Asserting only on
+        // a cell whose lower half is transparent leaves the two-colour branch
+        // untested, and swapping foreground for background there draws the
+        // whole mark upside down while every other assertion still passes. A
+        // mutation proved exactly that before this block existed.
+        let both = buffer
+            .cell((4, 1))
+            .expect("column 4 of the second row exists");
+        assert_eq!(both.symbol(), "▀");
+        assert_eq!(
+            both.fg, app.palette.mauve,
+            "the upper pixel must be the foreground"
+        );
+        assert_eq!(
+            both.bg, app.palette.teal,
+            "the lower pixel must be the background"
+        );
+
+        // Nothing outside the ten cells the picture declared.
+        let beyond = buffer.cell((10, 0)).expect("column 10 exists");
+        assert!(
+            beyond.symbol() != "▀" && beyond.symbol() != "▄",
+            "the picture painted past its own rectangle: {:?}",
+            beyond.symbol()
+        );
+    }
+
+    // TC-I7 · the user's own rule, as a test: "diff yoksa trafik yok".
+    //
+    // herdr's server sends a cell diff, so an unchanged picture costs nothing —
+    // but only if drawing it twice really does produce the same cells. A
+    // renderer that reached for a clock, a counter, or an allocation-ordered
+    // map would still look right on screen and would make the diff resend the
+    // whole mark on every frame, which is the failure this whole design exists
+    // to avoid and the one nothing else would catch.
+    // TP-ART-02: a picture that has not changed produces an identical buffer.
+    #[test]
+    fn drawing_the_same_picture_twice_produces_an_identical_buffer_so_the_diff_sends_nothing() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let frame = Rect::new(0, 0, 100, 30);
+        let mut app = app_with_art_bar();
+        compute_view(&mut app, frame);
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal.draw(|f| render(&app, f)).expect("first frame");
+        let first = terminal.backend().buffer().clone();
+        terminal.draw(|f| render(&app, f)).expect("second frame");
+        let second = terminal.backend().buffer().clone();
+
+        assert_eq!(
+            first, second,
+            "two draws of the same state differ, so the cell diff would resend the bar \
+             on every frame"
+        );
+    }
+
+    fn app_with_meter(
+        metric: &str,
+        cells: u16,
+        sample: crate::resource::ResourceSample,
+    ) -> crate::app::state::AppState {
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells,
+            ..Default::default()
+        };
+        section.widget.kind = "meter".to_string();
+        section.widget.metric = metric.to_string();
+        let config = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 2,
+                border: false,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections: vec![section],
+            },
+            ..Default::default()
+        };
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        );
+        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
+        app.resources = sample;
+        app
+    }
+
+    // TC-M4 · the bar fills every row it was given, stops where the value says,
+    // and stays inside its own rectangle.
+    //
+    // All three matter and none is implied by the others. One row would read as
+    // a line rather than a block; a bar that stopped at the wrong cell would
+    // still look like a plausible reading; and one cell of overrun paints the
+    // section next door, which is the defect this fork has already paid for
+    // twice in other surfaces.
+    // TP-METER-01: a meter fills its rows, honours the value, stays inside.
+    #[test]
+    fn a_meter_fills_every_row_to_the_level_it_was_given_and_no_further() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = app_with_meter(
+            "mem",
+            10,
+            crate::resource::ResourceSample {
+                mem: Some(crate::resource::Usage { used: 3, total: 10 }),
+                ..crate::resource::ResourceSample::default()
+            },
+        );
+        let frame = Rect::new(0, 0, 100, 30);
+        compute_view(&mut app, frame);
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal.draw(|f| render(&app, f)).expect("a meter draws");
+        let buffer = terminal.backend().buffer().clone();
+
+        for row in 0..2 {
+            let filled = (0..10)
+                .filter_map(|x| buffer.cell((x, row)))
+                .filter(|cell| cell.symbol() == "\u{2588}")
+                .count();
+            assert_eq!(
+                filled, 3,
+                "row {row}: three tenths of ten cells is three full cells"
+            );
+        }
+
+        // Green at 30%, and the colour is the whole point of a glanceable bar.
+        let cell = buffer.cell((0, 0)).expect("first cell");
+        assert_eq!(cell.fg, app.palette.green, "30% is not a problem yet");
+
+        // Nothing past the section.
+        let beyond = buffer.cell((10, 0)).expect("column 10");
+        assert_ne!(
+            beyond.symbol(),
+            "\u{2588}",
+            "the meter painted into its neighbour"
+        );
+    }
+
+    // TC-M5 · a level that is a problem looks like one, and a metric with no
+    // ratio draws NOTHING rather than an empty bar.
+    //
+    // The second half is the honest one: an empty bar says "plenty free", which
+    // is a claim. About an unreadable counter or a machine with no swap, it is
+    // a false one — the same lie a fabricated 0% would be.
+    // TP-METER-02: level changes colour; no ratio draws nothing.
+    #[test]
+    fn a_full_meter_reads_red_and_a_metric_with_no_ratio_draws_nothing() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut app = app_with_meter(
+            "mem",
+            8,
+            crate::resource::ResourceSample {
+                mem: Some(crate::resource::Usage {
+                    used: 19,
+                    total: 20,
+                }),
+                ..crate::resource::ResourceSample::default()
+            },
+        );
+        // 100x30: below roughly this the shell projects no top bar at all, which
+        // is a property of the layout rather than of the meter.
+        let frame = Rect::new(0, 0, 100, 30);
+        compute_view(&mut app, frame);
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("a full meter draws");
+        let cell = terminal
+            .backend()
+            .buffer()
+            .cell((0, 0))
+            .expect("first cell")
+            .clone();
+        assert_eq!(cell.fg, app.palette.red, "95% has to read as a problem");
+
+        // Same section, a metric this machine cannot answer for.
+        let mut app = app_with_meter("swap", 8, crate::resource::ResourceSample::default());
+        compute_view(&mut app, frame);
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("an unknown meter draws");
+        let buffer = terminal.backend().buffer().clone();
+        let painted = (0..8)
+            .filter_map(|x| buffer.cell((x, 0)))
+            .filter(|cell| cell.symbol() != " ")
+            .count();
+        assert_eq!(
+            painted, 0,
+            "an empty bar would claim the pool is free; it is unknown"
+        );
+    }
+
     #[test]
     fn a_configured_left_bar_puts_the_finished_dock_on_screen() {
         use ratatui::{backend::TestBackend, Terminal};
@@ -3482,7 +4094,7 @@ mod tests {
 
         // TP-TREE-10 reserves the disclosure column on every row so sibling
         // names line up; the subject here — the state dot leads the name and
-        // no ordinal does — is unchanged. TP-ICON-01 rides the branch glyph
+        // no ordinal does — is unchanged. TP-ART-01 rides the branch glyph
         // on the label itself, after the dot, so the order the test pins
         // still reads state first.
         assert!(line1.starts_with("  ·  one"));

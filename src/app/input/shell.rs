@@ -80,6 +80,11 @@ pub(crate) enum BarSectionClick {
     Inert,
     OpenPopup {
         argv: Vec<String>,
+        /// The size the person asked this popup to open at, unresolved. The
+        /// resolution needs a terminal area, which belongs to the layer that
+        /// actually opens the popup, not to the one that decides whether to.
+        width: Option<crate::popup_size::PopupSize>,
+        height: Option<crate::popup_size::PopupSize>,
     },
     /// Over a popup action while a popup is already open. Named rather than
     /// folded into `Inert` because the two deserve different answers: this one
@@ -105,13 +110,21 @@ impl AppState {
         else {
             return BarSectionClick::Elsewhere;
         };
-        match self.shell_bar_actions.action_for(region, index) {
+        match self.shell_bar_chrome.action_for(region, index) {
             None | Some(crate::ui::shell::SectionAction::None) => BarSectionClick::Inert,
-            Some(crate::ui::shell::SectionAction::OpenPopup { argv }) => {
+            Some(crate::ui::shell::SectionAction::OpenPopup {
+                argv,
+                width,
+                height,
+            }) => {
                 if self.popup_pane.is_some() {
                     BarSectionClick::PopupAlreadyOpen
                 } else {
-                    BarSectionClick::OpenPopup { argv: argv.clone() }
+                    BarSectionClick::OpenPopup {
+                        argv: argv.clone(),
+                        width: *width,
+                        height: *height,
+                    }
                 }
             }
         }
@@ -945,7 +958,7 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&config),
         );
-        state.shell_bar_actions = crate::ui::shell::ShellBarActions::from_config(&config);
+        state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
         let area = Rect::new(0, 0, 106, 40);
         crate::ui::compute_view(&mut state, area);
         (state, area)
@@ -956,6 +969,28 @@ mod tests {
         section.action.kind = "popup".to_string();
         section.action.argv = argv.iter().map(|argument| argument.to_string()).collect();
         section
+    }
+
+    // TC-B1, end to end: the size travels config -> derivation -> hit -> intent
+    // without any layer in between quietly dropping it. Each of those hops was
+    // a place it could have been lost, and losing it looks exactly like the
+    // default: a popup at half the screen, with nothing to say why.
+    #[test]
+    fn a_press_carries_the_popup_size_the_person_asked_for() {
+        let mut sized = popup_section(10, &["btop"]);
+        sized.action.width = Some(crate::popup_size::PopupSize::Percent(80));
+        sized.action.height = Some(crate::popup_size::PopupSize::Cells(30));
+        let (state, _) = state_with_divided_top_bar(vec![sized]);
+
+        assert_eq!(
+            state.bar_section_click_at(Position::new(4, 0)),
+            BarSectionClick::OpenPopup {
+                argv: vec!["btop".to_string()],
+                width: Some(crate::popup_size::PopupSize::Percent(80)),
+                height: Some(crate::popup_size::PopupSize::Cells(30)),
+            },
+            "the size must reach the layer that opens the popup, unresolved"
+        );
     }
 
     fn inert_section(cells: u16) -> crate::config::ShellBarSectionConfig {
@@ -979,7 +1014,9 @@ mod tests {
         assert_eq!(
             state.bar_section_click_at(Position::new(4, 0)),
             BarSectionClick::OpenPopup {
-                argv: vec!["btop".to_string()]
+                argv: vec!["btop".to_string()],
+                width: None,
+                height: None,
             },
             "a press in the first section must ask for that section's command"
         );
