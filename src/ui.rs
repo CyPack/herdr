@@ -1515,6 +1515,87 @@ mod tests {
         }
     }
 
+    // TC-D5 · the last link in the chain, which needed its own test because
+    // dropping it is invisible everywhere else: the numbers on screen have to
+    // come from the sample in state. A render that ignored state and formatted
+    // a default would paint `MEM  --`, and `--` is exactly what an unreadable
+    // machine paints — so every other test, and the screen itself, would go on
+    // looking correct. A mutation that swapped the sample for `Default` left
+    // this file's whole suite green until this test existed.
+    // TP-RES-10: what a live section paints comes from the sampled state.
+    #[test]
+    fn a_live_section_paints_the_sample_that_is_in_state_rather_than_a_default() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 16,
+            ..Default::default()
+        };
+        section.widget.kind = "resource".to_string();
+        section.widget.metric = "mem".to_string();
+
+        let config = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 1,
+                border: false,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections: vec![section],
+            },
+            ..Default::default()
+        };
+
+        let frame = Rect::new(0, 0, 100, 30);
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        );
+        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
+        // A reading nothing else could have produced.
+        app.resources = crate::resource::ResourceSample {
+            mem: Some(crate::resource::Usage {
+                used: 7 * 1024 * 1024 * 1024,
+                total: 16 * 1024 * 1024 * 1024,
+            }),
+            ..crate::resource::ResourceSample::default()
+        };
+        compute_view(&mut app, frame);
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("a bar with a live section draws");
+        let buffer = terminal.backend().buffer().clone();
+
+        let row: String = (0..16)
+            .map(|x| {
+                buffer
+                    .cell((x, 0))
+                    .map(|cell| cell.symbol().to_string())
+                    .unwrap_or_default()
+            })
+            .collect();
+
+        assert!(
+            row.contains("7.0G/16G"),
+            "the painted numbers must be the sampled ones: {row:?}"
+        );
+        assert!(
+            !row.contains("--"),
+            "a section with a reading must not paint the unreadable form: {row:?}"
+        );
+    }
+
     #[test]
     fn a_configured_left_bar_puts_the_finished_dock_on_screen() {
         use ratatui::{backend::TestBackend, Terminal};
