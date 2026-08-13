@@ -1697,6 +1697,26 @@ mod tests {
              never needs an invented background"
         );
 
+        // The cell that carries BOTH pixels is the one that pins the mapping.
+        // Cell row 1 is pixel rows 2 and 3 — `....aa....` over `....bb....` —
+        // so column 4 is the first colour above the second. Asserting only on
+        // a cell whose lower half is transparent leaves the two-colour branch
+        // untested, and swapping foreground for background there draws the
+        // whole mark upside down while every other assertion still passes. A
+        // mutation proved exactly that before this block existed.
+        let both = buffer
+            .cell((4, 1))
+            .expect("column 4 of the second row exists");
+        assert_eq!(both.symbol(), "▀");
+        assert_eq!(
+            both.fg, app.palette.mauve,
+            "the upper pixel must be the foreground"
+        );
+        assert_eq!(
+            both.bg, app.palette.teal,
+            "the lower pixel must be the background"
+        );
+
         // Nothing outside the ten cells the picture declared.
         let beyond = buffer.cell((10, 0)).expect("column 10 exists");
         assert!(
