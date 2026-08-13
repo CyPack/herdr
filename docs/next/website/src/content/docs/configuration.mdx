@@ -511,6 +511,8 @@ A size larger than the screen is brought back inside it. A terminal with no room
 
 Only one popup can be open at a time. Clicking a section while one is already open opens nothing and closes nothing; Herdr says so instead, because dropping whatever is running in the popup is not something you can undo.
 
+Clicking outside a popup sends Esc into the program rather than closing the pane, so an editor gets to save and quit on its own terms. Programs that do not read Esc that way — `btop` and `htop` quit on `q` — would leave the popup looking stuck, so clicking outside a second time closes it. Going back into the popup in between cancels that: Herdr reads it as "still using this", which matters when the Esc opened an unsaved-changes prompt.
+
 A whole bar is chrome, so every click, release and scroll over one of its sections stops at the bar rather than reaching the pane behind it. A gesture that started somewhere else — a drag, a divider resize — keeps its owner even when the pointer crosses a bar.
 
 An `action.kind` Herdr does not know, or a `popup` with no command in `argv`, leaves that one section without an action. Unlike a sizing mistake it does not undivide the bar, and it does not shift any other section's number. `herdr config check` names the edge, the section's index and what is wrong with it.

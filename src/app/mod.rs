@@ -154,6 +154,13 @@ pub struct App {
     pub(crate) pending_api_worktree_remove_paths: HashMap<std::path::PathBuf, u64>,
     pub(crate) next_api_worktree_operation_id: u64,
     pub(crate) last_sidebar_divider_click: Option<Instant>,
+    /// The popup a dismissal has already been asked of, and not yet answered.
+    ///
+    /// Held as the popup's own terminal id rather than a bare flag, so a
+    /// request made of one popup can never be spent on the next: a different
+    /// popup has a different id and the comparison simply stops matching.
+    /// Nothing has to remember to clear it when a popup opens.
+    pub(crate) popup_dismiss_requested: Option<crate::terminal::TerminalId>,
     pub(crate) last_pane_click: Option<PaneClickState>,
     pub(crate) pending_url_click_sources: HashSet<InputSourceId>,
     pub(crate) next_resize_poll: Instant,
@@ -1076,6 +1083,7 @@ impl App {
             pending_api_worktree_remove_paths: HashMap::new(),
             next_api_worktree_operation_id: 1,
             last_sidebar_divider_click: None,
+            popup_dismiss_requested: None,
             last_pane_click: None,
             pending_url_click_sources: HashSet::new(),
             next_resize_poll: Instant::now() + RESIZE_POLL_INTERVAL,
