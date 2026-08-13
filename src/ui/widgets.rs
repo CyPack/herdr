@@ -145,6 +145,7 @@ pub(crate) fn render_section_widget(
     frame: &mut Frame,
     widget: &crate::ui::shell::SectionWidget,
     resources: &crate::resource::ResourceSample,
+    palette: &Palette,
     area: Rect,
     style: Style,
 ) {
@@ -153,6 +154,17 @@ pub(crate) fn render_section_widget(
     }
     let text = match widget {
         crate::ui::shell::SectionWidget::None => return,
+        // A picture is the one widget that wants more than a line, and the
+        // rectangle it needs was always there — `section_rects` hands every
+        // section the bar's full inner height. Only this function was throwing
+        // the rest away.
+        crate::ui::shell::SectionWidget::Art { art } => {
+            render_icon_art(frame, art, palette, area);
+            return;
+        }
+        crate::ui::shell::SectionWidget::Icon { glyph } => {
+            std::borrow::Cow::Borrowed(glyph.as_str())
+        }
         crate::ui::shell::SectionWidget::Label { text } => {
             if text.is_empty() {
                 return;
@@ -174,6 +186,62 @@ pub(crate) fn render_section_widget(
         Paragraph::new(Line::from(Span::styled(clipped, style))),
         line,
     );
+}
+
+/// Paints a picture, two pixels to a cell.
+///
+/// `▀` puts the upper pixel in the foreground and lets the background show
+/// through below it; `▄` is the same the other way up and is what a cell with a
+/// transparent top uses, so a missing pixel never needs an invented colour. A
+/// cell with neither pixel is skipped entirely, which is what keeps the bar's
+/// own surface visible behind the shape.
+///
+/// Colours resolve here rather than at config time, against the live palette,
+/// so a theme change recolours the picture without re-deriving any geometry.
+///
+/// Anything past the rectangle is dropped. That is the same thing a label does
+/// when the window narrows: a config declaring a width too small is refused
+/// where it is written, but a terminal that shrinks at runtime cannot be
+/// refused, only survived.
+// TP-ART-01/02: the upper pixel is the foreground, the picture paints every
+// row it was given and none outside it, and the same picture drawn twice
+// produces identical cells so the diff sends nothing.
+fn render_icon_art(frame: &mut Frame, art: &crate::icon::IconArt, palette: &Palette, area: Rect) {
+    const UPPER_HALF: &str = "▀";
+    const LOWER_HALF: &str = "▄";
+
+    let rows = art.height().min(area.height);
+    let columns = art.width().min(area.width);
+    let buffer = frame.buffer_mut();
+
+    for row in 0..rows {
+        for column in 0..columns {
+            let Some(half) = art.cell(column, row) else {
+                continue;
+            };
+            let upper = half.upper.and_then(|index| art.spec(index));
+            let lower = half.lower.and_then(|index| art.spec(index));
+            let Some(cell) = buffer.cell_mut((area.x + column, area.y + row)) else {
+                continue;
+            };
+            match (upper, lower) {
+                (None, None) => {}
+                (Some(spec), None) => {
+                    cell.set_symbol(UPPER_HALF);
+                    cell.set_fg(super::shell::bar_color(spec, palette));
+                }
+                (None, Some(spec)) => {
+                    cell.set_symbol(LOWER_HALF);
+                    cell.set_fg(super::shell::bar_color(spec, palette));
+                }
+                (Some(top), Some(bottom)) => {
+                    cell.set_symbol(UPPER_HALF);
+                    cell.set_fg(super::shell::bar_color(top, palette));
+                    cell.set_bg(super::shell::bar_color(bottom, palette));
+                }
+            }
+        }
+    }
 }
 
 /// Rows a boxed chip occupies: border, label, border.

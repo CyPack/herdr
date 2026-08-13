@@ -1024,6 +1024,7 @@ impl compose::Component for BaseLayer {
                         frame,
                         widget,
                         &app.resources,
+                        &app.palette,
                         rect,
                         section_style,
                     );
@@ -1593,6 +1594,146 @@ mod tests {
         assert!(
             !row.contains("--"),
             "a section with a reading must not paint the unreadable form: {row:?}"
+        );
+    }
+
+    /// A bar whose only section is the bundled `herd` mark: ten cells wide,
+    /// three cell rows tall, no border so every row is content.
+    fn art_bar_config() -> crate::config::ShellBarsConfig {
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 10,
+            ..Default::default()
+        };
+        section.widget.kind = "icon".to_string();
+        section.widget.art = "herd".to_string();
+        crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 3,
+                border: false,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections: vec![section],
+            },
+            ..Default::default()
+        }
+    }
+
+    fn app_with_art_bar() -> crate::app::state::AppState {
+        let config = art_bar_config();
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        );
+        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
+        app
+    }
+
+    // TC-I3/TC-I4 · a picture occupies every row it was given, and the upper
+    // pixel is the foreground.
+    //
+    // Both halves need saying. The rectangle was always three rows tall —
+    // `section_rects` hands each section the bar's whole inner height — and the
+    // widget renderer clipped it to one, so a picture was impossible for a
+    // reason no geometry test could see. And the half-block mapping is
+    // invisible when wrong: swapping foreground and background draws the mark
+    // upside down, which looks like a design choice rather than a bug.
+    // TP-ART-01: a picture paints its whole rectangle, upper pixel first.
+    #[test]
+    fn a_picture_paints_every_row_it_was_given_with_the_upper_pixel_in_the_foreground() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let frame = Rect::new(0, 0, 100, 30);
+        let mut app = app_with_art_bar();
+        compute_view(&mut app, frame);
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("a bar with a picture draws");
+        let buffer = terminal.backend().buffer().clone();
+
+        // The mark is three cell rows, and every one of them must carry paint.
+        for row in 0..3 {
+            let painted = (0..10)
+                .filter_map(|x| buffer.cell((x, row)))
+                .filter(|cell| cell.symbol() == "▀" || cell.symbol() == "▄")
+                .count();
+            assert!(
+                painted > 0,
+                "row {row} of the picture is empty; the renderer is still clipping to one line"
+            );
+        }
+
+        // Row 0 of `herd` is `..a....a..` over `...a..a...`: column 2 has a
+        // pixel above and none below, so it is an upper half in the mark's
+        // first colour with no background of its own.
+        let cell = buffer.cell((2, 0)).expect("column 2 exists");
+        assert_eq!(
+            cell.symbol(),
+            "▀",
+            "a pixel with nothing under it is an upper half"
+        );
+        assert_eq!(
+            cell.fg, app.palette.mauve,
+            "the upper pixel is the foreground colour"
+        );
+
+        // Column 3 is the other way round: transparent above, a pixel below.
+        let cell = buffer.cell((3, 0)).expect("column 3 exists");
+        assert_eq!(
+            cell.symbol(),
+            "▄",
+            "a pixel with nothing above it is a lower half, so transparency \
+             never needs an invented background"
+        );
+
+        // Nothing outside the ten cells the picture declared.
+        let beyond = buffer.cell((10, 0)).expect("column 10 exists");
+        assert!(
+            beyond.symbol() != "▀" && beyond.symbol() != "▄",
+            "the picture painted past its own rectangle: {:?}",
+            beyond.symbol()
+        );
+    }
+
+    // TC-I7 · the user's own rule, as a test: "diff yoksa trafik yok".
+    //
+    // herdr's server sends a cell diff, so an unchanged picture costs nothing —
+    // but only if drawing it twice really does produce the same cells. A
+    // renderer that reached for a clock, a counter, or an allocation-ordered
+    // map would still look right on screen and would make the diff resend the
+    // whole mark on every frame, which is the failure this whole design exists
+    // to avoid and the one nothing else would catch.
+    // TP-ART-02: a picture that has not changed produces an identical buffer.
+    #[test]
+    fn drawing_the_same_picture_twice_produces_an_identical_buffer_so_the_diff_sends_nothing() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let frame = Rect::new(0, 0, 100, 30);
+        let mut app = app_with_art_bar();
+        compute_view(&mut app, frame);
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal.draw(|f| render(&app, f)).expect("first frame");
+        let first = terminal.backend().buffer().clone();
+        terminal.draw(|f| render(&app, f)).expect("second frame");
+        let second = terminal.backend().buffer().clone();
+
+        assert_eq!(
+            first, second,
+            "two draws of the same state differ, so the cell diff would resend the bar \
+             on every frame"
         );
     }
 
@@ -3783,7 +3924,7 @@ mod tests {
 
         // TP-TREE-10 reserves the disclosure column on every row so sibling
         // names line up; the subject here — the state dot leads the name and
-        // no ordinal does — is unchanged. TP-ICON-01 rides the branch glyph
+        // no ordinal does — is unchanged. TP-ART-01 rides the branch glyph
         // on the label itself, after the dot, so the order the test pins
         // still reads state first.
         assert!(line1.starts_with("  ·  one"));

@@ -72,6 +72,7 @@ mod events;
 mod fm;
 mod ghostty;
 mod handoff_runtime;
+mod icon;
 mod input;
 mod integration;
 mod ipc;

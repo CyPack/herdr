@@ -408,6 +408,30 @@ pub(crate) enum BarConfigProblem {
         index: usize,
         metric: String,
     },
+    IconWithoutPicture {
+        edge: &'static str,
+        index: usize,
+    },
+    IconWithTwoPictures {
+        edge: &'static str,
+        index: usize,
+    },
+    UnknownIconArt {
+        edge: &'static str,
+        index: usize,
+        name: String,
+    },
+    UnreadableIconArt {
+        edge: &'static str,
+        index: usize,
+        problem: crate::icon::IconProblem,
+    },
+    IconDoesNotFit {
+        edge: &'static str,
+        index: usize,
+        needs: u16,
+        has: u16,
+    },
     WidgetTextWithoutWidget {
         edge: &'static str,
         index: usize,
@@ -486,7 +510,7 @@ impl std::fmt::Display for BarConfigProblem {
             Self::UnknownSectionWidgetKind { edge, index, kind } => write!(
                 formatter,
                 "shell.bars.{edge}.sections[{index}].widget.kind is \"{kind}\"; expected \
-                 \"label\" or \"resource\", so this section shows nothing"
+                 \"label\", \"resource\" or \"icon\", so this section shows nothing"
             ),
             Self::UnknownSectionWidgetMetric {
                 edge,
@@ -496,6 +520,39 @@ impl std::fmt::Display for BarConfigProblem {
                 formatter,
                 "shell.bars.{edge}.sections[{index}].widget.metric is \"{metric}\"; expected \
                  \"cpu\", \"mem\" or \"swap\", so this section shows nothing"
+            ),
+            Self::IconWithoutPicture { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget is an icon but names no picture; \
+                 set one of glyph, art or pixels"
+            ),
+            Self::IconWithTwoPictures { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget names more than one picture; \
+                 glyph, art and pixels are alternatives, and which one wins would be invisible"
+            ),
+            Self::UnknownIconArt { edge, index, name } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget.art is \"{name}\", which this build \
+                 does not bundle, so this section shows nothing"
+            ),
+            Self::UnreadableIconArt {
+                edge,
+                index,
+                problem,
+            } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget {problem}"
+            ),
+            Self::IconDoesNotFit {
+                edge,
+                index,
+                needs,
+                has,
+            } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget needs {needs} cells but the section \
+                 declares {has}; a clipped picture is the wrong picture"
             ),
             Self::WidgetTextWithoutWidget { edge, index } => write!(
                 formatter,
@@ -762,6 +819,18 @@ pub(crate) enum SectionWidget {
     Resource {
         metric: crate::resource::ResourceMetric,
     },
+    /// One grapheme the font already knows how to draw.
+    Icon {
+        glyph: String,
+    },
+    /// A picture in cells, colours still unresolved.
+    ///
+    /// The specs stay as written until draw time so a theme change recolours
+    /// the picture without re-deriving any geometry — the same split every
+    /// other bar colour already follows.
+    Art {
+        art: crate::icon::IconArt,
+    },
 }
 
 /// What one section shows and what a click on it does.
@@ -937,6 +1006,7 @@ fn section_widget(
         // same reasoning as an unknown widget kind: a typo that renders as
         // blank is indistinguishable from one that renders as nothing on
         // purpose.
+        "icon" => section_icon(config, edge, index),
         "resource" => crate::resource::ResourceMetric::parse(&config.widget.metric)
             .map(|metric| SectionWidget::Resource { metric })
             .ok_or(BarConfigProblem::UnknownSectionWidgetMetric {
@@ -950,6 +1020,76 @@ fn section_widget(
             kind: other.to_string(),
         }),
     }
+}
+
+/// One section's picture, or what is wrong with it.
+///
+/// Three ways to name a picture and exactly one may be used. They are not
+/// ranked and never will be: a precedence rule between `glyph` and `pixels`
+/// would be a decision the config file cannot show, so writing two is an error
+/// rather than a silent choice.
+///
+/// The width check only fires for a section that declares its own cells. A
+/// `fill` section's width is not known until the terminal has a size, and
+/// refusing at that point would mean a config that loads on one screen and not
+/// on another. What a runtime squeeze does instead is clip, which is what a
+/// label already does when the window narrows.
+// TP-ART-03/05: one picture per icon; a declared width that cannot hold it is
+// refused where it is written, and a section sized by the terminal is not.
+fn section_icon(
+    config: &ShellBarSectionConfig,
+    edge: &'static str,
+    index: usize,
+) -> Result<SectionWidget, BarConfigProblem> {
+    let widget = &config.widget;
+    let named = usize::from(!widget.glyph.trim().is_empty())
+        + usize::from(!widget.art.trim().is_empty())
+        + usize::from(!widget.pixels.is_empty());
+    match named {
+        0 => return Err(BarConfigProblem::IconWithoutPicture { edge, index }),
+        1 => {}
+        _ => return Err(BarConfigProblem::IconWithTwoPictures { edge, index }),
+    }
+
+    // A section only knows its own width when it declared one.
+    let declared = (config.kind.trim().eq_ignore_ascii_case("fixed")).then_some(config.cells);
+    let refuse_unless_fits = |needs: u16| match declared {
+        Some(has) if has < needs => Err(BarConfigProblem::IconDoesNotFit {
+            edge,
+            index,
+            needs,
+            has,
+        }),
+        _ => Ok(()),
+    };
+
+    if !widget.glyph.trim().is_empty() {
+        let glyph = widget.glyph.clone();
+        let needs = u16::try_from(unicode_width::UnicodeWidthStr::width(glyph.as_str()))
+            .unwrap_or(u16::MAX);
+        refuse_unless_fits(needs)?;
+        return Ok(SectionWidget::Icon { glyph });
+    }
+
+    let (pixels, palette) = if widget.art.trim().is_empty() {
+        (widget.pixels.clone(), widget.palette.clone())
+    } else {
+        crate::icon::builtin(widget.art.trim()).ok_or_else(|| BarConfigProblem::UnknownIconArt {
+            edge,
+            index,
+            name: widget.art.trim().to_string(),
+        })?
+    };
+
+    let art = crate::icon::art_from_pixels(&pixels, &palette).map_err(|problem| {
+        BarConfigProblem::UnreadableIconArt {
+            edge,
+            index,
+            problem,
+        }
+    })?;
+    refuse_unless_fits(art.width())?;
+    Ok(SectionWidget::Art { art })
 }
 
 /// One section's action table as an action, or what is wrong with it.
@@ -1192,7 +1332,7 @@ fn tint_from_parts(
 /// does; writing `#fab387` should mean exactly that. An empty setting is the
 /// warm default, which is what makes an unconfigured bar look deliberate
 /// rather than like a rendering fault.
-fn bar_color(spec: &str, palette: &Palette) -> Color {
+pub(crate) fn bar_color(spec: &str, palette: &Palette) -> Color {
     match spec.trim().to_lowercase().as_str() {
         "" => palette.peach,
         "accent" => palette.accent,
@@ -1638,6 +1778,95 @@ mod tests {
     // half-finished shape as a leftover popup size. And a label never reaches
     // the value the geometry cache compares: editing text must not re-lay-out
     // the bar.
+    // TC-I6/TC-I8/TC-I10 · every way of writing a picture wrong is refused
+    // where it is written, each with its own cause.
+    //
+    // A picture fails silently in a way text does not. Wrong text is still
+    // text on screen; a wrong picture is an empty rectangle, which is exactly
+    // what a section with no widget looks like. So the checker has to be the
+    // thing that speaks, and it has to name which of the three mistakes it is:
+    // no picture, two pictures, or one that cannot fit.
+    // TP-ART-03: an icon that cannot be drawn is reported, and carries no widget.
+    #[test]
+    fn every_way_of_writing_a_picture_wrong_is_reported_with_its_own_cause() {
+        let mut nothing = plain_section("fill");
+        nothing.widget.kind = "icon".to_string();
+
+        let mut both = plain_section("fill");
+        both.widget.kind = "icon".to_string();
+        both.widget.glyph = "*".to_string();
+        both.widget.art = "herd".to_string();
+
+        let mut unknown = plain_section("fill");
+        unknown.widget.kind = "icon".to_string();
+        unknown.widget.art = "no-such-mark".to_string();
+
+        // `herd` is ten cells wide and this section declares four.
+        let mut cramped = plain_section("fixed");
+        cramped.cells = 4;
+        cramped.widget.kind = "icon".to_string();
+        cramped.widget.art = "herd".to_string();
+
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![nothing, both, unknown, cramped]),
+            ..Default::default()
+        };
+
+        let reported = shell_bar_config_problems(&config)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(reported.len(), 4, "{reported:?}");
+        assert!(reported[0].contains("names no picture"), "{reported:?}");
+        assert!(
+            reported[1].contains("more than one picture"),
+            "{reported:?}"
+        );
+        assert!(reported[2].contains("\"no-such-mark\""), "{reported:?}");
+        assert!(
+            reported[3].contains("needs 10 cells but the section declares 4"),
+            "a refusal has to name both numbers or it cannot be acted on: {reported:?}"
+        );
+
+        let chrome = ShellBarChrome::from_config(&config);
+        for index in 0..4 {
+            assert_eq!(
+                chrome.widget_for(RegionId::TopBar, index),
+                Some(&SectionWidget::None),
+                "section {index}: a picture the checker refused must not be carried either"
+            );
+        }
+    }
+
+    // A `fill` section has no width until the terminal has a size, so refusing
+    // one at config time would mean a file that loads on one screen and not on
+    // another. What a runtime squeeze does instead is clip, exactly as a label
+    // already does — the refusal is for a width somebody wrote down, not for a
+    // window somebody dragged.
+    // TP-ART-05: only a declared width can refuse a picture.
+    #[test]
+    fn a_picture_in_a_section_with_no_declared_width_is_accepted_and_left_to_the_renderer() {
+        let mut section = plain_section("fill");
+        section.widget.kind = "icon".to_string();
+        section.widget.art = "herd".to_string();
+
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![section]),
+            ..Default::default()
+        };
+
+        assert!(shell_bar_config_problems(&config).is_empty());
+        let chrome = ShellBarChrome::from_config(&config);
+        let widget = chrome
+            .widget_for(RegionId::TopBar, 0)
+            .expect("the section has chrome");
+        assert!(
+            matches!(widget, SectionWidget::Art { art } if art.width() == 10),
+            "a fill section keeps the picture: {widget:?}"
+        );
+    }
+
     // A metric is a second name inside a widget that already named itself, and
     // a wrong one fails in the same silent way a wrong kind does: the section
     // draws nothing and looks exactly like a section meant to draw nothing.

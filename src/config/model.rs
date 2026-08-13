@@ -869,6 +869,18 @@ pub struct ShellBarSectionWidgetConfig {
     /// Ignored by every other kind, and refused when the kind is `resource` and
     /// this names nothing the build knows.
     pub metric: String,
+    /// One grapheme an `icon` widget draws, for the case where the font already
+    /// has the picture.
+    pub glyph: String,
+    /// A bundled picture an `icon` widget draws, by name.
+    pub art: String,
+    /// Pixel rows for an `icon` widget drawn from scratch. Each character
+    /// indexes `palette`; `.` and a space are transparent. Two pixel rows
+    /// occupy one cell row.
+    pub pixels: Vec<String>,
+    /// Single-character keys mapped to colour specs, in the same grammar as
+    /// `shell.bars.<edge>.color`.
+    pub palette: std::collections::BTreeMap<String, String>,
 }
 
 /// `[[shell.bars.<edge>.sections]].action` — what clicking one part does.
