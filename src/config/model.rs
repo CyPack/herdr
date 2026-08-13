@@ -863,6 +863,15 @@ pub struct ShellBarSectionConfig {
 pub struct ShellBarSectionActionConfig {
     pub kind: String,
     pub argv: Vec<String>,
+    /// Outer popup width, in cells or as a percentage string like `"80%"`.
+    ///
+    /// Same spelling as the popup size on a custom command keybind, and read by
+    /// the same parser: a second syntax for the same idea is a second thing to
+    /// learn and a second thing to get wrong. Absent means the popup keeps its
+    /// default half-of-the-terminal size.
+    pub width: Option<crate::popup_size::PopupSize>,
+    /// Outer popup height, in cells or as a percentage string like `"60%"`.
+    pub height: Option<crate::popup_size::PopupSize>,
 }
 
 impl Default for ShellBarConfig {

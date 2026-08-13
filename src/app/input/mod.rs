@@ -653,15 +653,16 @@ impl App {
                     "close it before opening another from the bar",
                 );
             }
-            BarSectionClick::OpenPopup { argv } => {
+            BarSectionClick::OpenPopup {
+                argv,
+                width,
+                height,
+            } => {
                 if let Err(err) = self.spawn_popup_argv_command(
                     &argv,
                     None,
                     Vec::new(),
-                    crate::app::popup::PopupGeometry {
-                        width: None,
-                        height: None,
-                    },
+                    crate::app::popup::PopupGeometry { width, height },
                 ) {
                     self.warn_about_bar_section_action(
                         "bar section action failed",
@@ -1489,6 +1490,97 @@ mod tests {
             column,
             row,
             modifiers,
+        }
+    }
+
+    // The last hop, and the one a mutation caught nobody was watching: the
+    // size reaching the click intent proves nothing about it reaching the call
+    // that opens the popup. Dropping it there is invisible — the popup simply
+    // opens at the default — so this observes the size where it lands, in the
+    // popup's own state.
+    //
+    // Spawns for real, following `direct_custom_popup_command_closes_after_exit`:
+    // the geometry is decided inside the spawn, so a fake runtime installed
+    // afterwards would skip the very step under test. `/bin/true` exits at once
+    // and the runtimes are shut down before the test returns.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_sized_section_opens_its_popup_at_the_size_it_asked_for() {
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 10,
+            ..Default::default()
+        };
+        section.action.kind = "popup".to_string();
+        section.action.argv = vec!["/bin/true".to_string()];
+        section.action.width = Some(crate::popup_size::PopupSize::Percent(80));
+        section.action.height = Some(crate::popup_size::PopupSize::Cells(20));
+
+        let bars = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 1,
+                border: false,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections: vec![section],
+            },
+            ..Default::default()
+        };
+
+        let mut app = test_app();
+        app.state.default_shell = "/bin/sh".into();
+        let (workspace, terminal, runtime) = crate::workspace::Workspace::new(
+            std::env::current_dir().unwrap_or_else(|_| "/".into()),
+            24,
+            80,
+            app.state.pane_scrollback_limit_bytes,
+            app.state.host_terminal_theme,
+            crate::pane::PaneShellConfig::new(&app.state.default_shell, app.state.shell_mode),
+            app.event_tx.clone(),
+            app.render_notify.clone(),
+            app.render_dirty.clone(),
+        )
+        .expect("test workspace spawns");
+        app.terminal_runtimes.insert(terminal.id.clone(), runtime);
+        app.state.terminals.insert(terminal.id.clone(), terminal);
+        app.state.workspaces = vec![workspace];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+
+        app.state.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            26,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&bars),
+        );
+        app.state.shell_bar_actions = crate::ui::shell::ShellBarActions::from_config(&bars);
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
+
+        let consumed = app.handle_bar_section_mouse(bar_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            4,
+            0,
+            KeyModifiers::NONE,
+        ));
+
+        assert!(consumed, "the press belongs to the bar");
+        let popup = app
+            .state
+            .popup_pane
+            .as_ref()
+            .expect("the section's action must have opened a popup");
+        assert_eq!(
+            (popup.width, popup.height),
+            (
+                Some(crate::popup_size::PopupSize::Percent(80)),
+                Some(crate::popup_size::PopupSize::Cells(20))
+            ),
+            "the popup must open at the size the section asked for, not the default"
+        );
+
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
         }
     }
 

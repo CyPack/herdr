@@ -20,6 +20,7 @@ use ratatui::style::Color;
 
 use crate::app::state::Palette;
 use crate::config::{parse_color, ShellBarConfig, ShellBarSectionConfig, ShellBarsConfig};
+use crate::popup_size::PopupSize;
 
 use super::layout::allocate_section_lengths;
 use super::model::{
@@ -393,6 +394,10 @@ pub(crate) enum BarConfigProblem {
         edge: &'static str,
         index: usize,
     },
+    PopupSizeWithoutPopup {
+        edge: &'static str,
+        index: usize,
+    },
 }
 
 impl std::fmt::Display for BarConfigProblem {
@@ -458,6 +463,11 @@ impl std::fmt::Display for BarConfigProblem {
                 formatter,
                 "shell.bars.{edge}.sections[{index}].action opens a popup but names no command \
                  to run, so this section does nothing when clicked"
+            ),
+            Self::PopupSizeWithoutPopup { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].action sets a popup size but opens no \
+                 popup, so the size is never used"
             ),
         }
     }
@@ -673,6 +683,14 @@ pub(crate) enum SectionAction {
     None,
     OpenPopup {
         argv: Vec<String>,
+        /// Outer popup size, or `None` for the popup's own default.
+        ///
+        /// Carried beside the command rather than resolved here: this layer
+        /// reads config, and how many cells a percentage becomes depends on a
+        /// terminal area this layer has never seen (CLA4 — no I/O, and no
+        /// geometry, in a derivation).
+        width: Option<PopupSize>,
+        height: Option<PopupSize>,
     },
 }
 
@@ -704,6 +722,8 @@ impl BarSectionActions {
 /// geometry cache key, and actions do not decide geometry: folding a command
 /// line into the key would make editing that command invalidate every cached
 /// rectangle on screen, for a change that moves nothing.
+// TP-CHROME-47: the separation is what keeps a popup's size — and the command
+// beside it — out of the value the geometry cache compares.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct ShellBarActions {
     top: BarSectionActions,
@@ -749,8 +769,9 @@ impl ShellBarActions {
 /// rules is deliberate — a misspelled command name should not take the whole
 /// bar's layout down with it, and leaving the section in place with no action
 /// keeps every other index pointing where it pointed.
-// TP-CHROME-37/39/40: actions answer at the index they were written at, a
-// refused division leaves none, and a refused action costs only its section.
+// TP-CHROME-37/39/40/45/46: actions answer at the index they were written at, a
+// refused division leaves none, a refused action costs only its section, and a
+// popup carries the size it was written with.
 fn bar_section_actions(config: &ShellBarConfig, edge: &'static str) -> BarSectionActions {
     if !config.enabled || config.sections.is_empty() {
         return BarSectionActions::EMPTY;
@@ -785,6 +806,17 @@ fn section_action(
     index: usize,
 ) -> Result<SectionAction, BarConfigProblem> {
     match config.action.kind.as_str() {
+        // A size with nothing to size is the shape a half-finished edit leaves
+        // behind: the command was removed and the geometry stayed. Saying so is
+        // cheap; leaving it silent means the next person reads a popup size that
+        // has never once been used and believes it.
+        //
+        // Only asked on this arm. An unreadable action kind already reports its
+        // own cause, and a second complaint about the size it also carries would
+        // send somebody to fix the wrong line.
+        "" if config.action.width.is_some() || config.action.height.is_some() => {
+            Err(BarConfigProblem::PopupSizeWithoutPopup { edge, index })
+        }
         "" => Ok(SectionAction::None),
         "popup" => {
             // An empty argv, or one made only of blanks, would ask the runtime
@@ -800,6 +832,8 @@ fn section_action(
             }
             Ok(SectionAction::OpenPopup {
                 argv: config.action.argv.clone(),
+                width: config.action.width,
+                height: config.action.height,
             })
         }
         other => Err(BarConfigProblem::UnknownSectionActionKind {
@@ -1378,9 +1412,177 @@ mod tests {
 
     fn popup_argv(actions: &ShellBarActions, region: RegionId, index: u8) -> Option<Vec<String>> {
         match actions.action_for(region, index) {
-            Some(SectionAction::OpenPopup { argv }) => Some(argv.clone()),
+            Some(SectionAction::OpenPopup { argv, .. }) => Some(argv.clone()),
             _ => None,
         }
+    }
+
+    fn popup_size(
+        actions: &ShellBarActions,
+        region: RegionId,
+        index: u8,
+    ) -> Option<(Option<PopupSize>, Option<PopupSize>)> {
+        match actions.action_for(region, index) {
+            Some(SectionAction::OpenPopup { width, height, .. }) => Some((*width, *height)),
+            _ => None,
+        }
+    }
+
+    fn sized_popup_section(width: &str, height: &str) -> ShellBarSectionConfig {
+        let mut section = section_with_action("fill", "popup", &["btop"]);
+        if !width.is_empty() {
+            section.action.width =
+                Some(crate::popup_size::PopupSize::parse_cli(width).expect("width fixture"));
+        }
+        if !height.is_empty() {
+            section.action.height =
+                Some(crate::popup_size::PopupSize::parse_cli(height).expect("height fixture"));
+        }
+        section
+    }
+
+    // TC-B1/TC-B2/TC-B3 · the size the person wrote survives the derivation, in
+    // both spellings, and its absence stays absent rather than becoming a
+    // number this layer invented.
+    #[test]
+    fn a_popup_action_carries_the_size_it_was_written_with() {
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![
+                sized_popup_section("80%", "60%"),
+                sized_popup_section("100", "40"),
+                section_with_action("fill", "popup", &["btop"]),
+            ]),
+            ..Default::default()
+        };
+
+        let actions = ShellBarActions::from_config(&config);
+
+        assert_eq!(
+            popup_size(&actions, RegionId::TopBar, 0),
+            Some((
+                Some(crate::popup_size::PopupSize::Percent(80)),
+                Some(crate::popup_size::PopupSize::Percent(60))
+            )),
+            "a percentage must arrive as a percentage, unresolved"
+        );
+        assert_eq!(
+            popup_size(&actions, RegionId::TopBar, 1),
+            Some((
+                Some(crate::popup_size::PopupSize::Cells(100)),
+                Some(crate::popup_size::PopupSize::Cells(40))
+            )),
+            "cells and percentages must read through one parser"
+        );
+        assert_eq!(
+            popup_size(&actions, RegionId::TopBar, 2),
+            Some((None, None)),
+            "a size nobody wrote must stay absent so the popup keeps its default"
+        );
+    }
+
+    // TC-B5 · a size on an action that will never open a popup can never take
+    // effect, so it is said out loud rather than dropped where nobody sees it.
+    #[test]
+    fn a_popup_size_on_something_that_is_not_a_popup_is_reported() {
+        let mut leftover_width = plain_section("fill");
+        leftover_width.action.width = Some(crate::popup_size::PopupSize::Percent(80));
+        let mut leftover_height = plain_section("fill");
+        leftover_height.action.height = Some(crate::popup_size::PopupSize::Cells(40));
+
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![
+                leftover_width,
+                leftover_height,
+                sized_popup_section("80%", "60%"),
+            ]),
+            ..Default::default()
+        };
+
+        let reported = shell_bar_config_problems(&config)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            reported.len(),
+            2,
+            "each leftover size is reported once, and the popup that uses its \
+             own size is not a complaint: {reported:?}"
+        );
+        assert!(
+            reported[0].contains("sections[0].action sets a popup size but opens no popup"),
+            "{reported:?}"
+        );
+        assert!(
+            reported[1].contains("sections[1].action sets a popup size but opens no popup"),
+            "a leftover height counts the same as a leftover width: {reported:?}"
+        );
+
+        // An unreadable action kind already reports its own cause. Complaining
+        // about the size it also carries would send somebody to fix the line
+        // that is not the reason their section does nothing.
+        let mut wrong_kind = section_with_action("fill", "teleport", &["nowhere"]);
+        wrong_kind.action.height = Some(crate::popup_size::PopupSize::Cells(40));
+        let single_cause = ShellBarsConfig {
+            top: bar_with_sections(vec![wrong_kind]),
+            ..Default::default()
+        };
+        let reported = shell_bar_config_problems(&single_cause)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(reported.len(), 1, "one cause, one complaint: {reported:?}");
+        assert!(
+            reported[0].contains("action.kind is \"teleport\""),
+            "{reported:?}"
+        );
+    }
+
+    // The checker and the deriver stay joined across this rule too: a size the
+    // checker complains about is a size the derived action does not carry, and
+    // there is no third state where it is quietly kept.
+    #[test]
+    fn a_reported_leftover_size_is_a_size_the_action_does_not_carry() {
+        let mut leftover = plain_section("fill");
+        leftover.action.width = Some(crate::popup_size::PopupSize::Percent(80));
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![leftover]),
+            ..Default::default()
+        };
+
+        assert_eq!(shell_bar_config_problems(&config).len(), 1);
+        assert_eq!(
+            ShellBarActions::from_config(&config).action_for(RegionId::TopBar, 0),
+            Some(&SectionAction::None),
+            "the section the checker complained about must carry no action at all"
+        );
+    }
+
+    // TC-B6 · a popup's size decides nothing about where a rectangle is, so it
+    // must not reach the geometry key: editing a command's size would otherwise
+    // invalidate every cached rectangle on screen for a change that moves
+    // nothing.
+    #[test]
+    fn changing_only_a_popup_size_leaves_the_bars_identity_alone() {
+        let small = ShellBarsConfig {
+            top: bar_with_sections(vec![sized_popup_section("40%", "40%")]),
+            ..Default::default()
+        };
+        let large = ShellBarsConfig {
+            top: bar_with_sections(vec![sized_popup_section("90%", "90%")]),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            ShellBars::from_config(&small),
+            ShellBars::from_config(&large),
+            "the bars value the geometry key compares must not notice a popup size"
+        );
+        assert_ne!(
+            ShellBarActions::from_config(&small),
+            ShellBarActions::from_config(&large),
+            "control: the actions themselves must notice, or the test above proves nothing"
+        );
     }
 
     // TA-2 · the action reaches the index that addresses it, and no other.

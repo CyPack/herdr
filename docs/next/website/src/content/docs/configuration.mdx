@@ -498,6 +498,17 @@ action = { kind = "popup", argv = ["btop"] }
 
 `popup` runs `argv` in a Herdr popup pane, the same pane a popup keybind opens — which means the popup takes the keyboard while it is up, and closing it gives the keyboard back.
 
+The popup opens at half the terminal by default. `width` and `height` change that, spelled the same way as the popup size on a custom command keybind — a number of cells, or a percentage string:
+
+```toml
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 12
+action = { kind = "popup", argv = ["btop"], width = "80%", height = "70%" }
+```
+
+A size larger than the screen is brought back inside it. A terminal with no room for a popup at all refuses to open one rather than drawing a frame with nothing in it. A `width` or `height` on a section that opens no popup can never take effect, so `herdr config check` reports it rather than letting it sit there looking meaningful.
+
 Only one popup can be open at a time. Clicking a section while one is already open opens nothing and closes nothing; Herdr says so instead, because dropping whatever is running in the popup is not something you can undo.
 
 A whole bar is chrome, so every click, release and scroll over one of its sections stops at the bar rather than reaching the pane behind it. A gesture that started somewhere else — a drag, a divider resize — keeps its owner even when the pointer crosses a bar.
