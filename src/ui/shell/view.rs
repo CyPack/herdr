@@ -141,11 +141,8 @@ impl ShellView {
     /// Separate from [`Self::region_hit_at`] so that a caller who only wants a
     /// region is not forced to care that bars can be divided, and so that a
     /// caller who wants the section cannot get one from a stale geometry.
-    // The hits themselves are produced on the live geometry path; this is the
-    // reader, and its production caller arrives with section click actions
-    // (F34-L9). Kept here rather than written then, so that the identity a
-    // section answers by is decided in the layer that creates it.
-    #[allow(dead_code)]
+    // Read on the input path by `AppState::bar_section_click_at`, which is the
+    // production caller this was written ahead of (F34-L9).
     pub(crate) fn bar_section_hit_at(
         &self,
         generation: u64,

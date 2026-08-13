@@ -62,7 +62,61 @@ pub(crate) fn route_shell_input(context: ShellInputRouteContext) -> ShellInputOw
     ShellInputOwner::FailClosed
 }
 
+/// What a press over an edge bar resolves to, before anything is run.
+///
+/// A typed intent rather than a direct call so the decision stays in pure
+/// state: every rule below — is this a section at all, does it carry an action,
+/// is a popup already open — is then answerable in a test without a PTY, and
+/// the side of the code that spawns processes is left with one match and no
+/// judgement of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BarSectionClick {
+    /// Not over a live section of this generation. The event belongs to
+    /// whoever owns it next; the bar does not claim it.
+    Elsewhere,
+    /// Over a section that has nothing to do. Still consumed: a bar is chrome,
+    /// and an event falling through it would act on a surface the person was
+    /// not pointing at (CL12).
+    Inert,
+    OpenPopup {
+        argv: Vec<String>,
+    },
+    /// Over a popup action while a popup is already open. Named rather than
+    /// folded into `Inert` because the two deserve different answers: this one
+    /// is worth saying out loud, and neither may close the popup that is
+    /// already there — dropping somebody's open work on a stray bar click is
+    /// not undoable.
+    PopupAlreadyOpen,
+}
+
 impl AppState {
+    /// Which action, if any, a press at this position asks for.
+    ///
+    /// Resolved against the exact current geometry generation, so coordinates
+    /// from a layout that no longer exists resolve to nothing rather than to
+    /// whatever section happens to sit there now (CL5).
+    // TP-CHROME-41/42: only the live generation is authority, and a popup
+    // already on screen is neither replaced nor closed.
+    pub(crate) fn bar_section_click_at(&self, position: Position) -> BarSectionClick {
+        let Some((region, index)) = self
+            .view
+            .shell
+            .bar_section_hit_at(self.view.shell.generation, position)
+        else {
+            return BarSectionClick::Elsewhere;
+        };
+        match self.shell_bar_actions.action_for(region, index) {
+            None | Some(crate::ui::shell::SectionAction::None) => BarSectionClick::Inert,
+            Some(crate::ui::shell::SectionAction::OpenPopup { argv }) => {
+                if self.popup_pane.is_some() {
+                    BarSectionClick::PopupAlreadyOpen
+                } else {
+                    BarSectionClick::OpenPopup { argv: argv.clone() }
+                }
+            }
+        }
+    }
+
     /// Project current keyboard ownership into the frozen router. Keyboard
     /// events carry no position, so the hit tier stays empty; v0 has no
     /// page/template shortcut owner yet, so remaining keys belong to the
@@ -863,6 +917,152 @@ mod tests {
 
     fn shell_mouse_owner_at(state: &AppState, position: Position) -> ShellInputOwner {
         state.shell_mouse_input_owner(position)
+    }
+
+    /// A state whose top bar is one cell tall and divided as `sections`, with
+    /// the geometry actually computed — so every assertion below is answered by
+    /// the same derivation, layout and hit list the running app uses, not by a
+    /// hand-built fixture that could agree with nothing.
+    fn state_with_divided_top_bar(
+        sections: Vec<crate::config::ShellBarSectionConfig>,
+    ) -> (AppState, Rect) {
+        let config = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 1,
+                border: false,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections,
+            },
+            ..Default::default()
+        };
+
+        let mut state = AppState::test_new();
+        state.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            26,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        );
+        state.shell_bar_actions = crate::ui::shell::ShellBarActions::from_config(&config);
+        let area = Rect::new(0, 0, 106, 40);
+        crate::ui::compute_view(&mut state, area);
+        (state, area)
+    }
+
+    fn popup_section(cells: u16, argv: &[&str]) -> crate::config::ShellBarSectionConfig {
+        let mut section = inert_section(cells);
+        section.action.kind = "popup".to_string();
+        section.action.argv = argv.iter().map(|argument| argument.to_string()).collect();
+        section
+    }
+
+    fn inert_section(cells: u16) -> crate::config::ShellBarSectionConfig {
+        crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells,
+            ..Default::default()
+        }
+    }
+
+    // TA-1/TA-2/TA-5 · a press resolves to the action of the section it landed
+    // in; a press that landed in no section resolves to nothing at all, so the
+    // bar's own owner still gets it.
+    #[test]
+    fn a_press_resolves_the_action_of_the_section_it_landed_in() {
+        // Two ten-cell sections at the left of a 106-cell bar: the rest of the
+        // bar is bar, but no section, which is the case TA-5 needs to exist.
+        let (state, _) =
+            state_with_divided_top_bar(vec![popup_section(10, &["btop"]), inert_section(10)]);
+
+        assert_eq!(
+            state.bar_section_click_at(Position::new(4, 0)),
+            BarSectionClick::OpenPopup {
+                argv: vec!["btop".to_string()]
+            },
+            "a press in the first section must ask for that section's command"
+        );
+        assert_eq!(
+            state.bar_section_click_at(Position::new(14, 0)),
+            BarSectionClick::Inert,
+            "a section with no action is consumed, never fallen through"
+        );
+        assert_eq!(
+            state.bar_section_click_at(Position::new(60, 0)),
+            BarSectionClick::Elsewhere,
+            "inside the bar but outside every section belongs to the bar, not \
+             to a section that is not there"
+        );
+        assert_eq!(
+            state.bar_section_click_at(Position::new(60, 20)),
+            BarSectionClick::Elsewhere,
+            "a press nowhere near the bar must not reach a bar action"
+        );
+    }
+
+    // TA-4 · positional authority is only ever against the live generation.
+    // Skipping the gate would let coordinates from a layout that no longer
+    // exists run a command, which is CL5's whole point.
+    #[test]
+    fn a_press_from_a_vanished_generation_runs_nothing() {
+        let (mut state, _) = state_with_divided_top_bar(vec![popup_section(10, &["btop"])]);
+        let inside = Position::new(4, 0);
+
+        assert!(
+            matches!(
+                state.bar_section_click_at(inside),
+                BarSectionClick::OpenPopup { .. }
+            ),
+            "control: the press must resolve against the live geometry"
+        );
+
+        state.view.shell.generation = state.view.shell.generation.wrapping_add(1);
+
+        assert_eq!(
+            state.bar_section_click_at(inside),
+            BarSectionClick::Elsewhere,
+            "hit areas from an older generation must resolve to nothing"
+        );
+    }
+
+    // TA-3 · a bar press may not open a second popup, and may not close the
+    // one that is already there. Somebody's open work is not undoable.
+    #[test]
+    fn a_press_while_a_popup_is_open_neither_opens_nor_closes_one() {
+        let (mut state, _) = state_with_divided_top_bar(vec![popup_section(10, &["btop"])]);
+        let popup = crate::app::state::PopupPaneState {
+            pane_id: crate::layout::PaneId::alloc(),
+            terminal_id: crate::terminal::TerminalId::alloc(),
+            width: None,
+            height: None,
+        };
+        state.popup_pane = Some(popup.clone());
+
+        assert_eq!(
+            state.bar_section_click_at(Position::new(4, 0)),
+            BarSectionClick::PopupAlreadyOpen
+        );
+        assert_eq!(
+            state.popup_pane,
+            Some(popup),
+            "resolving the press must leave the open popup exactly as it was"
+        );
+    }
+
+    // A section whose action config could not be read stays a section: it is
+    // drawn, it consumes its own presses, and it does nothing. The alternative
+    // — falling through — would act on the surface behind the chrome.
+    #[test]
+    fn a_section_whose_action_was_refused_is_inert_rather_than_transparent() {
+        let mut refused = popup_section(10, &[]);
+        refused.action.argv = Vec::new();
+        let (state, _) = state_with_divided_top_bar(vec![refused]);
+
+        assert_eq!(
+            state.bar_section_click_at(Position::new(4, 0)),
+            BarSectionClick::Inert
+        );
     }
 
     // SF5.2 characterization: dock resize reuses the SAME region-generic SF3

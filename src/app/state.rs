@@ -3393,6 +3393,15 @@ pub struct AppState {
     /// Committed client-local shell presentation preferences. SF3.3 persists
     /// this aggregate through the versioned shell snapshot contract.
     pub(crate) shell_presentation: crate::ui::shell::ShellPresentationState,
+    /// What clicking each part of each edge bar does, derived from config.
+    ///
+    /// Kept out of `shell_presentation` because that aggregate feeds the
+    /// geometry cache key and these do not decide geometry: a command line
+    /// belongs to what a click means, not to where a rectangle is. Derived
+    /// rather than persisted, for the same reason the bars themselves are —
+    /// config is the source, and writing it to the session file would let the
+    /// disk disagree with the file the person edits (CLA6).
+    pub(crate) shell_bar_actions: crate::ui::shell::ShellBarActions,
     pub(crate) drag: Option<DragState>,
     pub(crate) workspace_press: Option<WorkspacePressState>,
     pub(crate) tab_press: Option<TabPressState>,
@@ -4401,6 +4410,7 @@ impl AppState {
             },
             shell_interaction: Default::default(),
             shell_presentation: crate::ui::shell::ShellPresentationState::new(26),
+            shell_bar_actions: crate::ui::shell::ShellBarActions::default(),
             drag: None,
             workspace_press: None,
             tab_press: None,

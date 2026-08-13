@@ -384,6 +384,15 @@ pub(crate) enum BarConfigProblem {
         min: u16,
         max: u16,
     },
+    UnknownSectionActionKind {
+        edge: &'static str,
+        index: usize,
+        kind: String,
+    },
+    PopupActionWithoutCommand {
+        edge: &'static str,
+        index: usize,
+    },
 }
 
 impl std::fmt::Display for BarConfigProblem {
@@ -435,6 +444,20 @@ impl std::fmt::Display for BarConfigProblem {
                 formatter,
                 "shell.bars.{edge}.sections[{index}] allows at most {max} cells but demands \
                  at least {min}, so this bar is drawn undivided"
+            ),
+            // Unlike the sizing problems above, a refused action costs only its
+            // own section: the bar still divides, and the part it names simply
+            // stops answering clicks. Saying which part keeps that from reading
+            // as "clicks are broken".
+            Self::UnknownSectionActionKind { edge, index, kind } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].action.kind is \"{kind}\"; expected \
+                 \"popup\", so this section does nothing when clicked"
+            ),
+            Self::PopupActionWithoutCommand { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].action opens a popup but names no command \
+                 to run, so this section does nothing when clicked"
             ),
         }
     }
@@ -503,6 +526,12 @@ pub(crate) fn shell_bar_config_problems(config: &ShellBarsConfig) -> Vec<BarConf
             if let Err(problem) = section_policy(section, edge, index) {
                 problems.push(problem);
             }
+            // Asked separately from the sizing rule because the two have
+            // different blast radii and a person fixing one should not have to
+            // guess that the other was also refused.
+            if let Err(problem) = section_action(section, edge, index) {
+                problems.push(problem);
+            }
         }
     }
     problems
@@ -519,21 +548,34 @@ fn sections_from_config(configs: &[ShellBarSectionConfig], edge: &'static str) -
     if configs.is_empty() {
         return BarSections::NONE;
     }
-    if let Some(problem) = section_count_problem(configs.len(), edge) {
-        tracing::warn!(%problem, "the bar is drawn undivided");
-        return BarSections::NONE;
-    }
-    let mut policies = Vec::with_capacity(configs.len());
-    for (index, config) in configs.iter().enumerate() {
-        match section_policy(config, edge, index) {
-            Ok(policy) => policies.push(policy),
-            Err(problem) => {
-                tracing::warn!(%problem, "the bar is drawn undivided");
-                return BarSections::NONE;
-            }
+    match section_policies(configs, edge) {
+        Ok(policies) => BarSections::from_policies(&policies, edge),
+        Err(problem) => {
+            tracing::warn!(%problem, "the bar is drawn undivided");
+            BarSections::NONE
         }
     }
-    BarSections::from_policies(&policies, edge)
+}
+
+/// The sizing policies of one edge's sections, or the first reason the division
+/// as a whole cannot stand.
+///
+/// Quiet by design: two callers need this verdict and only one of them should
+/// speak. Extracting it is what keeps "is this division drawn" a single
+/// predicate — the action table below asks the same question, and a second copy
+/// of the rule would let a refused division keep an addressable action list.
+fn section_policies(
+    configs: &[ShellBarSectionConfig],
+    edge: &'static str,
+) -> Result<Vec<TrackPolicy>, BarConfigProblem> {
+    if let Some(problem) = section_count_problem(configs.len(), edge) {
+        return Err(problem);
+    }
+    configs
+        .iter()
+        .enumerate()
+        .map(|(index, config)| section_policy(config, edge, index))
+        .collect()
 }
 
 /// One section's table as a sizing policy, or what is wrong with it.
@@ -582,6 +624,192 @@ fn section_policy(
     }
 }
 
+/// Which of the four edges a region is the bar of.
+///
+/// The left bar is the dock's region, which is exactly why this exists: two
+/// places need to answer "which bar is this region", and the answer is not the
+/// one the names suggest. A second copy of this match is how a click on the
+/// left bar starts running the right bar's command — the same divergence the
+/// config checker and the deriver were joined to avoid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BarEdge {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+// TP-CHROME-38: one mapping answers "which bar is this region" for the track
+// the geometry carries and for the action a click resolves.
+/// Fail-closed: a region that is not an edge bar is not one, rather than
+/// falling into whichever arm happens to be last.
+pub(crate) const fn bar_edge_for(region: RegionId) -> Option<BarEdge> {
+    match region {
+        RegionId::TopBar => Some(BarEdge::Top),
+        RegionId::BottomBar => Some(BarEdge::Bottom),
+        RegionId::AppDock => Some(BarEdge::Left),
+        RegionId::RightPanel => Some(BarEdge::Right),
+        RegionId::LeftPanel | RegionId::CenterContent | RegionId::WorkspaceStage => None,
+    }
+}
+
+/// What a click on one section of a bar does.
+///
+/// A closed enum, like the sizing policies beside it and for the same reason
+/// (CL8): adding a new thing a bar section can do should be a cost the compiler
+/// counts at every place that resolves one, not a string somebody discovers at
+/// runtime.
+///
+/// Deliberately small. "Focus this region" was considered and left out: bars
+/// hold nothing focusable until the widget catalogue arrives (F32-L7), and a
+/// variant whose arm does nothing is the dead component CLA9 names. The closed
+/// shape is what makes adding it later cheap and visible.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) enum SectionAction {
+    /// The section is an indicator. Clicks over it are consumed — bars are
+    /// chrome, and an event that fell through to whatever is underneath would
+    /// act on a surface the person was not pointing at (CL12).
+    #[default]
+    None,
+    OpenPopup {
+        argv: Vec<String>,
+    },
+}
+
+/// One edge's actions, in the same order and addressed by the same indices as
+/// that edge's sections.
+///
+/// Index-aligned with [`BarSections`] by construction: both are derived from
+/// the same config list through the same refusal predicate, so a division that
+/// was refused cannot leave behind an action list whose indices address the
+/// sections of some other, imagined bar.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct BarSectionActions {
+    actions: Vec<SectionAction>,
+}
+
+impl BarSectionActions {
+    pub(crate) const EMPTY: Self = Self {
+        actions: Vec::new(),
+    };
+
+    fn get(&self, index: u8) -> Option<&SectionAction> {
+        self.actions.get(usize::from(index))
+    }
+}
+
+/// What clicking each part of each edge does.
+///
+/// Held apart from [`ShellBars`] on purpose. `ShellBars` travels inside the
+/// geometry cache key, and actions do not decide geometry: folding a command
+/// line into the key would make editing that command invalidate every cached
+/// rectangle on screen, for a change that moves nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct ShellBarActions {
+    top: BarSectionActions,
+    bottom: BarSectionActions,
+    left: BarSectionActions,
+    right: BarSectionActions,
+}
+
+impl ShellBarActions {
+    pub(crate) fn from_config(config: &ShellBarsConfig) -> Self {
+        Self {
+            top: bar_section_actions(&config.top, "top"),
+            bottom: bar_section_actions(&config.bottom, "bottom"),
+            left: bar_section_actions(&config.left, "left"),
+            right: bar_section_actions(&config.right, "right"),
+        }
+    }
+
+    /// What the numbered section of the named region does, if that region is
+    /// an edge bar and that section carries an action.
+    ///
+    /// Resolves the region through the same [`bar_edge_for`] the geometry side
+    /// uses, so the bar a click is attributed to and the bar it was drawn from
+    /// can never be two different bars.
+    pub(crate) fn action_for(&self, region: RegionId, index: u8) -> Option<&SectionAction> {
+        let edge = match bar_edge_for(region)? {
+            BarEdge::Top => &self.top,
+            BarEdge::Bottom => &self.bottom,
+            BarEdge::Left => &self.left,
+            BarEdge::Right => &self.right,
+        };
+        edge.get(index)
+    }
+}
+
+/// Read one edge's click actions, aligned with the sections that edge actually
+/// has.
+///
+/// A refused division yields no actions at all: the indices an action list is
+/// addressed by are the section indices, and there are none.
+///
+/// A single unreadable action costs only itself. That asymmetry with the sizing
+/// rules is deliberate — a misspelled command name should not take the whole
+/// bar's layout down with it, and leaving the section in place with no action
+/// keeps every other index pointing where it pointed.
+// TP-CHROME-37/39/40: actions answer at the index they were written at, a
+// refused division leaves none, and a refused action costs only its section.
+fn bar_section_actions(config: &ShellBarConfig, edge: &'static str) -> BarSectionActions {
+    if !config.enabled || config.sections.is_empty() {
+        return BarSectionActions::EMPTY;
+    }
+    if bar_size_problem(config, edge).is_some() {
+        return BarSectionActions::EMPTY;
+    }
+    if section_policies(&config.sections, edge).is_err() {
+        return BarSectionActions::EMPTY;
+    }
+    let actions = config
+        .sections
+        .iter()
+        .enumerate()
+        .map(
+            |(index, section)| match section_action(section, edge, index) {
+                Ok(action) => action,
+                Err(problem) => {
+                    tracing::warn!(%problem, "the section is drawn without a click action");
+                    SectionAction::None
+                }
+            },
+        )
+        .collect();
+    BarSectionActions { actions }
+}
+
+/// One section's action table as an action, or what is wrong with it.
+fn section_action(
+    config: &ShellBarSectionConfig,
+    edge: &'static str,
+    index: usize,
+) -> Result<SectionAction, BarConfigProblem> {
+    match config.action.kind.as_str() {
+        "" => Ok(SectionAction::None),
+        "popup" => {
+            // An empty argv, or one made only of blanks, would ask the runtime
+            // to execute nothing. Disk is untrusted input (CL1): refuse it here
+            // rather than discovering it at the moment somebody clicks.
+            if config
+                .action
+                .argv
+                .iter()
+                .all(|argument| argument.trim().is_empty())
+            {
+                return Err(BarConfigProblem::PopupActionWithoutCommand { edge, index });
+            }
+            Ok(SectionAction::OpenPopup {
+                argv: config.action.argv.clone(),
+            })
+        }
+        other => Err(BarConfigProblem::UnknownSectionActionKind {
+            edge,
+            index,
+            kind: other.to_string(),
+        }),
+    }
+}
+
 /// The four edges, as the tree builder sees them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub(crate) struct ShellBars {
@@ -611,11 +839,12 @@ impl ShellBars {
 
     /// The track that owns one edge region.
     pub(crate) const fn track_for(self, region: RegionId) -> BarTrack {
-        match region {
-            RegionId::TopBar => self.top,
-            RegionId::BottomBar => self.bottom,
-            RegionId::AppDock => self.left,
-            _ => self.right,
+        match bar_edge_for(region) {
+            Some(BarEdge::Top) => self.top,
+            Some(BarEdge::Bottom) => self.bottom,
+            Some(BarEdge::Left) => self.left,
+            Some(BarEdge::Right) => self.right,
+            None => BarTrack::NONE,
         }
     }
 
@@ -1118,6 +1347,231 @@ mod tests {
             gradient: Vec::new(),
             sections: Vec::new(),
         }
+    }
+
+    fn plain_section(kind: &str) -> ShellBarSectionConfig {
+        ShellBarSectionConfig {
+            kind: kind.to_string(),
+            cells: 4,
+            max: 4,
+            ..Default::default()
+        }
+    }
+
+    fn section_with_action(kind: &str, action_kind: &str, argv: &[&str]) -> ShellBarSectionConfig {
+        let mut section = plain_section(kind);
+        section.action.kind = action_kind.to_string();
+        section.action.argv = argv.iter().map(|argument| argument.to_string()).collect();
+        section
+    }
+
+    fn bar_with_sections(sections: Vec<ShellBarSectionConfig>) -> ShellBarConfig {
+        ShellBarConfig {
+            enabled: true,
+            size: 1,
+            border: false,
+            color: String::new(),
+            gradient: Vec::new(),
+            sections,
+        }
+    }
+
+    fn popup_argv(actions: &ShellBarActions, region: RegionId, index: u8) -> Option<Vec<String>> {
+        match actions.action_for(region, index) {
+            Some(SectionAction::OpenPopup { argv }) => Some(argv.clone()),
+            _ => None,
+        }
+    }
+
+    // TA-2 · the action reaches the index that addresses it, and no other.
+    #[test]
+    fn a_section_action_answers_at_the_index_it_was_written_at() {
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![
+                plain_section("fill"),
+                section_with_action("fill", "popup", &["btop", "--utf-force"]),
+                plain_section("fill"),
+            ]),
+            ..Default::default()
+        };
+
+        let actions = ShellBarActions::from_config(&config);
+
+        assert_eq!(
+            popup_argv(&actions, RegionId::TopBar, 1).as_deref(),
+            Some(["btop".to_string(), "--utf-force".to_string()].as_slice()),
+            "the argv must arrive exactly as it was written"
+        );
+        assert_eq!(
+            actions.action_for(RegionId::TopBar, 0),
+            Some(&SectionAction::None),
+            "a neighbour without an action must not inherit one"
+        );
+        assert_eq!(
+            actions.action_for(RegionId::TopBar, 2),
+            Some(&SectionAction::None)
+        );
+        assert_eq!(
+            actions.action_for(RegionId::TopBar, 3),
+            None,
+            "an index past the division addresses nothing"
+        );
+    }
+
+    // The left bar is the DOCK's region. Two mappings would let a click on the
+    // left bar run the right bar's command; this pins that there is one.
+    #[test]
+    fn each_edge_s_actions_answer_at_the_region_its_track_is_drawn_in() {
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![section_with_action("fill", "popup", &["top-cmd"])]),
+            bottom: bar_with_sections(vec![section_with_action("fill", "popup", &["bottom-cmd"])]),
+            left: bar_with_sections(vec![section_with_action("fill", "popup", &["left-cmd"])]),
+            right: bar_with_sections(vec![section_with_action("fill", "popup", &["right-cmd"])]),
+        };
+
+        let actions = ShellBarActions::from_config(&config);
+        let bars = ShellBars::from_config(&config);
+
+        for (region, expected) in [
+            (RegionId::TopBar, "top-cmd"),
+            (RegionId::BottomBar, "bottom-cmd"),
+            (RegionId::AppDock, "left-cmd"),
+            (RegionId::RightPanel, "right-cmd"),
+        ] {
+            assert_eq!(
+                popup_argv(&actions, region, 0).as_deref(),
+                Some([expected.to_string()].as_slice()),
+                "{region:?} must resolve the action of the bar drawn in it"
+            );
+            assert!(
+                !bars.track_for(region).sections().is_empty(),
+                "{region:?} must be the same region that carries that bar's division"
+            );
+        }
+
+        // A region that is not an edge bar answers nothing rather than falling
+        // into whichever arm happens to be last.
+        for region in [
+            RegionId::LeftPanel,
+            RegionId::CenterContent,
+            RegionId::WorkspaceStage,
+        ] {
+            assert_eq!(actions.action_for(region, 0), None, "{region:?}");
+            assert!(bars.track_for(region).sections().is_empty(), "{region:?}");
+        }
+    }
+
+    // TA-10 · a division that was refused leaves nothing addressable behind.
+    // Actions survive on their own indices, so an action list that outlived its
+    // sections would run the command of a section that is not on screen.
+    #[test]
+    fn a_refused_division_leaves_no_addressable_actions() {
+        let too_many = (0..=MAX_BAR_SECTIONS)
+            .map(|_| section_with_action("fill", "popup", &["btop"]))
+            .collect::<Vec<_>>();
+        let config = ShellBarsConfig {
+            top: bar_with_sections(too_many),
+            ..Default::default()
+        };
+
+        let bars = ShellBars::from_config(&config);
+        let actions = ShellBarActions::from_config(&config);
+
+        assert!(
+            bars.top.sections().is_empty(),
+            "control: the division itself must be refused"
+        );
+        for index in 0..=(MAX_BAR_SECTIONS as u8) {
+            assert_eq!(
+                actions.action_for(RegionId::TopBar, index),
+                None,
+                "index {index} must address nothing once the division is refused"
+            );
+        }
+    }
+
+    // D53-8 · an unreadable action costs its own section, not the whole bar.
+    // The asymmetry with the sizing rules is the point: a misspelled command
+    // must not move somebody's layout, and the indices around it must not shift.
+    #[test]
+    fn an_unusable_action_costs_only_the_section_that_carries_it() {
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![
+                section_with_action("fill", "popup", &["first"]),
+                section_with_action("fill", "teleport", &["nowhere"]),
+                section_with_action("fill", "popup", &["third"]),
+            ]),
+            ..Default::default()
+        };
+
+        let bars = ShellBars::from_config(&config);
+        let actions = ShellBarActions::from_config(&config);
+
+        assert_eq!(
+            bars.top.sections().len(),
+            3,
+            "the division must survive an action it cannot run"
+        );
+        assert_eq!(
+            popup_argv(&actions, RegionId::TopBar, 0).as_deref(),
+            Some(["first".to_string()].as_slice())
+        );
+        assert_eq!(
+            actions.action_for(RegionId::TopBar, 1),
+            Some(&SectionAction::None),
+            "the unreadable action is dropped, and only it"
+        );
+        assert_eq!(
+            popup_argv(&actions, RegionId::TopBar, 2).as_deref(),
+            Some(["third".to_string()].as_slice()),
+            "the section after it keeps its own index and its own action"
+        );
+    }
+
+    // TA-8/TA-9 · a value that cannot be run is said out loud, by the same
+    // predicate that refuses it — the join #54 established, extended to actions.
+    #[test]
+    fn config_check_reports_an_action_this_build_cannot_run() {
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![
+                section_with_action("fill", "teleport", &["nowhere"]),
+                section_with_action("fill", "popup", &[]),
+                section_with_action("fill", "popup", &["  "]),
+            ]),
+            ..Default::default()
+        };
+
+        let reported = shell_bar_config_problems(&config)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            reported.len(),
+            3,
+            "each unusable action is reported once: {reported:?}"
+        );
+        assert!(
+            reported[0].contains("sections[0].action.kind is \"teleport\""),
+            "{reported:?}"
+        );
+        assert!(
+            reported[1].contains("sections[1].action opens a popup but names no command"),
+            "{reported:?}"
+        );
+        assert!(
+            reported[2].contains("sections[2].action opens a popup but names no command"),
+            "a command made only of blanks names no command: {reported:?}"
+        );
+
+        // A section with no action at all is not a complaint: most sections
+        // will never have one, and a checker that cries on every setup stops
+        // being read.
+        let quiet = ShellBarsConfig {
+            top: bar_with_sections(vec![plain_section("fill")]),
+            ..Default::default()
+        };
+        assert!(shell_bar_config_problems(&quiet).is_empty());
     }
 
     fn bordered_config_bar(size: u16) -> ShellBarConfig {

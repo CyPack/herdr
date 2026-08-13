@@ -843,6 +843,26 @@ pub struct ShellBarSectionConfig {
     pub weight: u16,
     pub min: u16,
     pub max: u16,
+    /// What a click on this part does. Absent means the part is an indicator
+    /// rather than a button: a surface nobody asked to be clickable should not
+    /// answer clicks, because the person cannot know what it would do.
+    pub action: ShellBarSectionActionConfig,
+}
+
+/// `[[shell.bars.<edge>.sections]].action` — what clicking one part does.
+///
+/// Kept separate from the sizing fields above because the two questions are
+/// independent: what fills a part and what a click on it does are answered by
+/// different layers, and folding them into one field would make every new kind
+/// of content reopen the click question.
+///
+/// - absent / empty `kind` — the part is an indicator and consumes clicks inertly.
+/// - `popup` — run `argv` in a herdr popup pane.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ShellBarSectionActionConfig {
+    pub kind: String,
+    pub argv: Vec<String>,
 }
 
 impl Default for ShellBarConfig {

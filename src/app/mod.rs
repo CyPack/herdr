@@ -886,6 +886,7 @@ impl App {
                 &config.shell.bars,
                 &theme_palette,
             )),
+            shell_bar_actions: crate::ui::shell::ShellBarActions::from_config(&config.shell.bars),
             drag: None,
             workspace_press: None,
             tab_press: None,

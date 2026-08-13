@@ -47,6 +47,14 @@ layers, and the number it was written at is the only stable name it has.
 | TP-CHROME-34 | A component placement naming a region the tree does not contain is refused | Such a placement draws nothing and reports nothing; the gate is the only place that can notice | `shell_rejects_a_placement_whose_region_is_not_in_the_tree` |
 | TP-CHROME-35 | A bar setting this build refuses is reported by `herdr config check`, naming the key, the value, the rule and the consequence — and a section's complaint names its index | Parsing only sees keys it does not recognise; a correctly spelled key holding an undrawable value used to be answered "ok", sending the person to look at their terminal instead of the line they wrote | `an_out_of_range_bar_size_is_reported_with_its_edge`, `a_bordered_bar_too_thin_reads_differently_from_one_out_of_range`, `an_unknown_section_kind_is_reported_with_its_index`, `an_impossible_content_section_and_too_many_sections_are_reported` |
 | TP-CHROME-36 | What the checker reports and what the deriver refuses come from one predicate, proven equivalent across every case in both directions | Two copies of the same range rules agree the day they are written and drift on the first change to either, and neither side goes red because each stays internally consistent | `every_reported_problem_is_a_bar_that_is_actually_refused`, `a_drawable_configuration_produces_no_complaints` |
+| TP-CHROME-37 | A section's click action is resolved at the index that section was written at, with its command carried through exactly | An action that lands one index over runs somebody's command from the wrong part of the bar, and both parts still look right | `a_section_action_answers_at_the_index_it_was_written_at`, `a_press_resolves_the_action_of_the_section_it_landed_in` |
+| TP-CHROME-38 | Every edge resolves its actions through the same region mapping its track is drawn from, and a region that is not an edge bar resolves none | The left bar lives in the dock's region; a second copy of that mapping runs the right bar's command for a click on the left one | `each_edge_s_actions_answer_at_the_region_its_track_is_drawn_in` |
+| TP-CHROME-39 | A division that was refused leaves no addressable actions behind | Actions are addressed by section index; a list that outlived its sections runs the command of a part that is not on screen | `a_refused_division_leaves_no_addressable_actions` |
+| TP-CHROME-40 | An action this build cannot run costs only its own section — the division stands, the indices do not shift, and `herdr config check` names it | Taking a whole bar's layout down for a misspelled command is disproportionate; silently dropping the entry would renumber everything after it | `an_unusable_action_costs_only_the_section_that_carries_it`, `config_check_reports_an_action_this_build_cannot_run` |
+| TP-CHROME-41 | A press over a section resolves only against the generation that drew it | Coordinates from a layout that no longer exists would run a command from whatever now sits under them | `a_press_from_a_vanished_generation_runs_nothing` |
+| TP-CHROME-42 | A bar press while a popup is open opens no second popup and closes no first one, and says why | Dropping somebody's open work on a stray bar click is not undoable | `a_press_while_a_popup_is_open_neither_opens_nor_closes_one`, `a_second_popup_is_refused_without_touching_the_first` |
+| TP-CHROME-43 | Every event over a section stops at the bar — including a section with no action — while a press elsewhere in the bar, and any in-flight gesture, is left alone | An event falling through chrome acts on the surface behind it; claiming a drag mid-flight strands a gesture that already had an owner | `every_event_over_a_section_stops_at_the_bar` |
+| TP-CHROME-44 | An action that cannot be started says so and leaves nothing behind | A bar that silently does nothing when clicked reads as broken chrome, and the person has no way to learn why | `a_section_action_that_cannot_run_says_so_and_opens_nothing` |
 
 ## Frame tone — one vocabulary for every framed surface
 
@@ -87,6 +95,9 @@ produced a red test. When a context argument is added to a geometry helper, its
 call sites get grepped for constants before the change is called done.
 
 Source markers: `src/ui/shell/source.rs` (`ShellBars`, `BarTint`,
-`SidebarChrome`), `src/ui/widgets.rs` (`render_bar_shell`, `render_chip`),
+`SidebarChrome`, `bar_edge_for`, `bar_section_actions`),
+`src/app/input/shell.rs` (`bar_section_click_at`),
+`src/app/input/mod.rs` (`handle_bar_section_mouse`),
+`src/ui/widgets.rs` (`render_bar_shell`, `render_chip`),
 `src/ui/sidebar.rs` (`expanded_sidebar_sections`, `render_sidebar_footer_buttons`,
 `render_agent_detail`), `src/app/input/sidebar.rs` (the hit tests).

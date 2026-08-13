@@ -71,7 +71,7 @@ use self::{
     },
     mouse::MouseAction,
     settings::SettingsAction,
-    shell::ShellInputOwner,
+    shell::{BarSectionClick, ShellInputOwner},
 };
 use super::state::{AppState, Mode};
 use super::App;
@@ -610,6 +610,81 @@ impl App {
         true
     }
 
+    /// Consume every event over a live bar section: a plain left press runs
+    /// that section's action, and everything else over the chrome is consumed
+    /// so no event can fall through a bar onto the surface behind it.
+    ///
+    /// Two things are deliberately NOT claimed, both for the same reason the
+    /// frozen precedence puts an active capture above the positional hit: a
+    /// gesture that began somewhere else already has an owner, and taking its
+    /// events away mid-flight would strand it half-finished when the pointer
+    /// merely crossed the chrome on its way somewhere.
+    // TP-CHROME-43/44: everything over a section stops at the bar, and an
+    // action that cannot start says so instead of failing quietly.
+    fn handle_bar_section_mouse(&mut self, mouse: MouseEvent) -> bool {
+        if self.state.shell_resize_active() || self.state.drag.is_some() {
+            return false;
+        }
+        if matches!(mouse.kind, MouseEventKind::Drag(_)) {
+            return false;
+        }
+
+        let click = self
+            .state
+            .bar_section_click_at(ratatui::layout::Position::new(mouse.column, mouse.row));
+        if matches!(click, BarSectionClick::Elsewhere) {
+            return false;
+        }
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return true;
+        }
+        // A modified press is how the person reaches the terminal underneath
+        // other chrome, so it is consumed here rather than acted on: the bar
+        // does not own a gesture it was not given.
+        if !mouse.modifiers.is_empty() {
+            return true;
+        }
+
+        match click {
+            BarSectionClick::Elsewhere | BarSectionClick::Inert => {}
+            BarSectionClick::PopupAlreadyOpen => {
+                self.warn_about_bar_section_action(
+                    "a popup is already open",
+                    "close it before opening another from the bar",
+                );
+            }
+            BarSectionClick::OpenPopup { argv } => {
+                if let Err(err) = self.spawn_popup_argv_command(
+                    &argv,
+                    None,
+                    Vec::new(),
+                    crate::app::popup::PopupGeometry {
+                        width: None,
+                        height: None,
+                    },
+                ) {
+                    self.warn_about_bar_section_action(
+                        "bar section action failed",
+                        err.to_string(),
+                    );
+                }
+            }
+        }
+        true
+    }
+
+    fn warn_about_bar_section_action(&mut self, title: &str, context: impl Into<String>) {
+        let previous_toast = self.state.toast.clone();
+        self.state.toast = Some(crate::app::state::ToastNotification {
+            kind: crate::app::state::ToastKind::NeedsAttention,
+            title: title.to_string(),
+            context: context.into(),
+            position: None,
+            target: None,
+        });
+        self.sync_toast_deadline(previous_toast);
+    }
+
     fn handle_mouse_without_agent_frame_action(
         &mut self,
         source_id: super::InputSourceId,
@@ -639,6 +714,10 @@ impl App {
 
         if !blocking_overlay && !mobile_drawer_owns_mouse {
             if self.handle_app_dock_mouse(mouse) {
+                return;
+            }
+
+            if self.handle_bar_section_mouse(mouse) {
                 return;
             }
 
@@ -1362,6 +1441,170 @@ mod tests {
             tokio::sync::mpsc::unbounded_channel().1,
             crate::api::EventHub::default(),
         )
+    }
+
+    /// An app whose top bar is one cell tall and divided into a single ten-cell
+    /// section that opens a popup, with the geometry computed.
+    fn app_with_a_clickable_top_bar_section() -> App {
+        let mut section = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 10,
+            ..Default::default()
+        };
+        section.action.kind = "popup".to_string();
+        section.action.argv = vec!["btop".to_string()];
+
+        let bars = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 1,
+                border: false,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections: vec![section],
+            },
+            ..Default::default()
+        };
+
+        let mut app = test_app();
+        app.state.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            26,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&bars),
+        );
+        app.state.shell_bar_actions = crate::ui::shell::ShellBarActions::from_config(&bars);
+        crate::ui::compute_view(&mut app.state, ratatui::layout::Rect::new(0, 0, 106, 40));
+        app
+    }
+
+    fn bar_mouse(
+        kind: MouseEventKind,
+        column: u16,
+        row: u16,
+        modifiers: KeyModifiers,
+    ) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers,
+        }
+    }
+
+    // TA-11 · a bar is chrome, so every event over one of its sections stops
+    // there. An event that fell through would act on the surface behind the
+    // bar, which is not the surface the person was pointing at (CL12).
+    #[test]
+    fn every_event_over_a_section_stops_at_the_bar() {
+        let mut app = app_with_a_clickable_top_bar_section();
+        let inside = (4, 0);
+
+        for (name, kind, modifiers) in [
+            (
+                "right press",
+                MouseEventKind::Down(MouseButton::Right),
+                KeyModifiers::NONE,
+            ),
+            ("wheel", MouseEventKind::ScrollDown, KeyModifiers::NONE),
+            (
+                "modified left press",
+                MouseEventKind::Down(MouseButton::Left),
+                KeyModifiers::SHIFT,
+            ),
+            (
+                "release",
+                MouseEventKind::Up(MouseButton::Left),
+                KeyModifiers::NONE,
+            ),
+        ] {
+            assert!(
+                app.handle_bar_section_mouse(bar_mouse(kind, inside.0, inside.1, modifiers)),
+                "{name} over a section must be consumed by the bar"
+            );
+            assert!(
+                app.state.popup_pane.is_none(),
+                "{name} must not be mistaken for the section's action"
+            );
+        }
+
+        // Away from the bar the handler claims nothing, so the surfaces
+        // underneath keep every event they already owned.
+        assert!(!app.handle_bar_section_mouse(bar_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            60,
+            20,
+            KeyModifiers::NONE,
+        )));
+        // Inside the bar but outside the section is the bar's own terrain, not
+        // a section's: this handler must not claim it either.
+        assert!(!app.handle_bar_section_mouse(bar_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            60,
+            0,
+            KeyModifiers::NONE,
+        )));
+    }
+
+    // TA-6 · the action's failure is a message, never a crash and never a
+    // silence. Reached through the real refusal path: with no active workspace
+    // the popup machinery declines, which is the same road a terminal area too
+    // small for a popup takes.
+    #[test]
+    fn a_section_action_that_cannot_run_says_so_and_opens_nothing() {
+        let mut app = app_with_a_clickable_top_bar_section();
+        assert!(
+            app.state.active.is_none(),
+            "control: this fixture has no workspace for a popup to belong to"
+        );
+
+        let consumed = app.handle_bar_section_mouse(bar_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            4,
+            0,
+            KeyModifiers::NONE,
+        ));
+
+        assert!(consumed, "a failed action still belongs to the bar");
+        assert!(
+            app.state.popup_pane.is_none(),
+            "a refused spawn must leave no popup behind"
+        );
+        let toast = app.state.toast.as_ref().expect("the refusal must be said");
+        assert_eq!(
+            toast.kind,
+            crate::app::state::ToastKind::NeedsAttention,
+            "a silent failure reads as a bar that does nothing"
+        );
+    }
+
+    // TA-3 at the wiring layer: the pure resolution refuses, and the wiring
+    // must neither reach the spawn nor disturb the popup already on screen.
+    // Async only because the popup fixture spawns a detection task; the
+    // behaviour under test is synchronous.
+    #[tokio::test]
+    async fn a_second_popup_is_refused_without_touching_the_first() {
+        let mut app = app_with_a_clickable_top_bar_section();
+        let (runtime, _rx) = crate::terminal::TerminalRuntime::test_with_channel(40, 12);
+        let (_, terminal_id) = app.install_test_popup_runtime(runtime);
+
+        let consumed = app.handle_bar_section_mouse(bar_mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            4,
+            0,
+            KeyModifiers::NONE,
+        ));
+
+        assert!(consumed);
+        assert_eq!(
+            app.state
+                .popup_pane
+                .as_ref()
+                .map(|popup| &popup.terminal_id),
+            Some(&terminal_id),
+            "the popup already open must survive a bar click untouched"
+        );
+        assert!(app.state.toast.is_some(), "the refusal is worth saying");
     }
 
     #[tokio::test]

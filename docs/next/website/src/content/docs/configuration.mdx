@@ -485,6 +485,25 @@ Fixed sections are satisfied first, then content sections grow toward their maxi
 
 Writing more than eight sections, naming a `kind` Herdr does not know, or giving a content section a `max` below its `min` leaves that bar undivided rather than guessing: one unreadable section would otherwise renumber every section after it, and the number is how a section is addressed.
 
+### Making a section clickable
+
+A section can carry an `action`. Without one it is an indicator: clicks land on it and stop there, but nothing happens.
+
+```toml
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 12
+action = { kind = "popup", argv = ["btop"] }
+```
+
+`popup` runs `argv` in a Herdr popup pane, the same pane a popup keybind opens — which means the popup takes the keyboard while it is up, and closing it gives the keyboard back.
+
+Only one popup can be open at a time. Clicking a section while one is already open opens nothing and closes nothing; Herdr says so instead, because dropping whatever is running in the popup is not something you can undo.
+
+A whole bar is chrome, so every click, release and scroll over one of its sections stops at the bar rather than reaching the pane behind it. A gesture that started somewhere else — a drag, a divider resize — keeps its owner even when the pointer crosses a bar.
+
+An `action.kind` Herdr does not know, or a `popup` with no command in `argv`, leaves that one section without an action. Unlike a sizing mistake it does not undivide the bar, and it does not shift any other section's number. `herdr config check` names the edge, the section's index and what is wrong with it.
+
 ## Notifications
 
 Herdr can notify you when a background agent finishes or needs input:
