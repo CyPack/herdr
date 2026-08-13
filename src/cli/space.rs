@@ -1048,6 +1048,50 @@ name = "Only"
         assert_eq!(count("project"), 1, "the project is untouched: {updated}");
     }
 
+    // TP-MOD-29: the neighbour test above only proves "one array" when the
+    // arrays disagree about the key. Give the split rule the *same* key as the
+    // module and the two roads meet: a walk that reuses this predicate on the
+    // split array now has something to take, and taking it is exactly the
+    // damage TP-MOD-29 forbids. Measured by mutation on 2026-08-13 — widening
+    // `remove_managed_node` to filter the split array by the same predicate
+    // left the suite green until this case existed.
+    #[test]
+    fn remove_managed_node_leaves_a_split_that_shares_its_key() {
+        let collide = PromotePlan {
+            key: "group:docs".into(),
+            ..plan(false)
+        };
+        let with_rule = upsert_managed("", &collide).expect("upsert the branch rule");
+        let content = upsert_managed_node(
+            &with_rule,
+            &NodePlan {
+                key: "group:docs".into(),
+                name: "Docs".into(),
+                parent: None,
+            },
+        )
+        .expect("upsert the module");
+
+        let (updated, removed) =
+            remove_managed_node(&content, "group:docs").expect("the overlay parses");
+        assert_eq!(removed, 1, "exactly the one module");
+
+        let root: toml::Value = updated.parse().expect("still valid toml");
+        let spaces = root.get("spaces").expect("the spaces table survives");
+        let count = |name: &str| {
+            spaces
+                .get(name)
+                .and_then(|entries| entries.as_array())
+                .map_or(0, Vec::len)
+        };
+        assert_eq!(count("node"), 0, "the module is gone: {updated}");
+        assert_eq!(
+            count("split"),
+            1,
+            "a branch rule sharing the key is still not this road's business: {updated}"
+        );
+    }
+
     // TP-MOD-29: a key nobody wrote changes nothing, byte for byte. A silent
     // rewrite of the overlay would churn a file the user also edits by hand.
     #[test]
