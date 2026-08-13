@@ -991,6 +991,33 @@ impl compose::Component for BaseLayer {
             );
         }
 
+        // Then whatever each section shows, into the rectangle that section was
+        // given. Read from the same track the hit areas were built from, so a
+        // label and the click that lands on it can never belong to different
+        // sections. Undivided bars produce no rectangles here and cost nothing.
+        let section_style = Style::default().fg(widgets::panel_contrast_fg(&app.palette));
+        for region in [
+            RegionId::TopBar,
+            RegionId::BottomBar,
+            RegionId::AppDock,
+            RegionId::RightPanel,
+        ] {
+            let outer = app.view.shell.regions.get(region);
+            if outer.is_empty() {
+                continue;
+            }
+            for (index, rect) in bars
+                .track_for(region)
+                .section_rects(region, outer)
+                .occupied()
+            {
+                let index = u8::try_from(index).unwrap_or(u8::MAX);
+                if let Some(widget) = app.shell_bar_chrome.widget_for(region, index) {
+                    widgets::render_section_widget(frame, widget, rect, section_style);
+                }
+            }
+        }
+
         let dock_area = bars
             .left
             .inner(app.view.shell.regions.get(RegionId::AppDock));
@@ -1295,6 +1322,96 @@ mod tests {
     // renderer yet. Pinning both halves keeps the next layer honest about which
     // of those it is closing, and stops "the bar works" from being said about
     // an edge that draws nothing.
+    // TC-C1/TC-C2/TC-C7 · a label is EMITTED, addressed, and PAINTED. The last
+    // of those is the one nothing else can see: a widget that is derived, given
+    // a rectangle and never drawn passes every state test and the compiler
+    // counts it as used, because it IS used — just not by anything that paints.
+    // Only a buffer dump can tell those apart, which is how this fork lost a
+    // sidebar row for a whole release once.
+    //
+    // The second section's label is deliberately wider than its cells and
+    // written with a double-width glyph: clipping by character count would fit
+    // "四四四" into three cells and paint six, over the neighbour.
+    #[test]
+    fn a_section_label_is_painted_inside_its_own_section_and_clipped_by_display_width() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let mut first = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 6,
+            ..Default::default()
+        };
+        first.widget.kind = "label".to_string();
+        first.widget.text = "CPU".to_string();
+
+        let mut second = crate::config::ShellBarSectionConfig {
+            kind: "fixed".to_string(),
+            cells: 4,
+            ..Default::default()
+        };
+        second.widget.kind = "label".to_string();
+        second.widget.text = "四四四四".to_string();
+
+        let config = crate::config::ShellBarsConfig {
+            top: crate::config::ShellBarConfig {
+                enabled: true,
+                size: 1,
+                border: false,
+                color: String::new(),
+                gradient: Vec::new(),
+                sections: vec![first, second],
+            },
+            ..Default::default()
+        };
+
+        let frame = Rect::new(0, 0, 100, 30);
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.active = Some(0);
+        app.selected = 0;
+        app.mode = Mode::Terminal;
+        app.shell_presentation = crate::ui::shell::ShellPresentationState::from_restored(
+            app.sidebar_width,
+            false,
+            None,
+            crate::ui::shell::ShellBars::from_config(&config),
+        );
+        app.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
+        compute_view(&mut app, frame);
+
+        let mut terminal =
+            Terminal::new(TestBackend::new(frame.width, frame.height)).expect("test backend");
+        terminal
+            .draw(|f| render(&app, f))
+            .expect("a bar with labelled sections draws");
+        let buffer = terminal.backend().buffer().clone();
+
+        let row: String = (0..10)
+            .map(|x| {
+                buffer
+                    .cell((x, 0))
+                    .map(|cell| cell.symbol().to_string())
+                    .unwrap_or_default()
+            })
+            .collect();
+
+        assert!(
+            row.starts_with("CPU"),
+            "the first section's label must be painted where that section is: {row:?}"
+        );
+        assert!(
+            row[..].contains('四'),
+            "the second section's label must be painted too: {row:?}"
+        );
+        // Four cells hold two double-width glyphs at most, and the truncation
+        // spends one on the ellipsis, so exactly one fits beside it.
+        assert_eq!(
+            row.matches('四').count(),
+            1,
+            "clipping by display width must not paint six cells into four: {row:?}"
+        );
+    }
+
     #[test]
     fn a_configured_left_bar_puts_the_finished_dock_on_screen() {
         use ratatui::{backend::TestBackend, Terminal};

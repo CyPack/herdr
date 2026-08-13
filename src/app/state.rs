@@ -3451,7 +3451,7 @@ pub struct AppState {
     /// rather than persisted, for the same reason the bars themselves are —
     /// config is the source, and writing it to the session file would let the
     /// disk disagree with the file the person edits (CLA6).
-    pub(crate) shell_bar_actions: crate::ui::shell::ShellBarActions,
+    pub(crate) shell_bar_chrome: crate::ui::shell::ShellBarChrome,
     pub(crate) drag: Option<DragState>,
     pub(crate) workspace_press: Option<WorkspacePressState>,
     pub(crate) tab_press: Option<TabPressState>,
@@ -4462,7 +4462,7 @@ impl AppState {
             },
             shell_interaction: Default::default(),
             shell_presentation: crate::ui::shell::ShellPresentationState::new(26),
-            shell_bar_actions: crate::ui::shell::ShellBarActions::default(),
+            shell_bar_chrome: crate::ui::shell::ShellBarChrome::default(),
             drag: None,
             workspace_press: None,
             tab_press: None,

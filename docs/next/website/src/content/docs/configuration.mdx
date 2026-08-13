@@ -485,6 +485,21 @@ Fixed sections are satisfied first, then content sections grow toward their maxi
 
 Writing more than eight sections, naming a `kind` Herdr does not know, or giving a content section a `max` below its `min` leaves that bar undivided rather than guessing: one unreadable section would otherwise renumber every section after it, and the number is how a section is addressed.
 
+### Putting something in a section
+
+A section is empty until it is given a widget. Today there is one:
+
+```toml
+[[shell.bars.top.sections]]
+kind   = "fixed"
+cells  = 10
+widget = { kind = "label", text = "  CPU" }
+```
+
+The label is clipped to the section by display width, so an icon that takes two cells is counted as two. A label never changes how wide its section is: the sizing rules above decide that, and text that does not fit is cut rather than pushing its neighbours around.
+
+A `widget.kind` Herdr does not know, or `text` with no `widget.kind` to show it, leaves that section empty and is reported by `herdr config check`.
+
 ### Making a section clickable
 
 A section can carry an `action`. Without one it is an indicator: clicks land on it and stop there, but nothing happens.

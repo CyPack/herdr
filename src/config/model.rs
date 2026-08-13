@@ -847,6 +847,24 @@ pub struct ShellBarSectionConfig {
     /// rather than a button: a surface nobody asked to be clickable should not
     /// answer clicks, because the person cannot know what it would do.
     pub action: ShellBarSectionActionConfig,
+    /// What this part shows. Absent means it shows nothing, which is what every
+    /// section did before widgets existed.
+    pub widget: ShellBarSectionWidgetConfig,
+}
+
+/// `[[shell.bars.<edge>.sections]].widget` — what one part shows.
+///
+/// - absent / empty `kind` — the part is empty.
+/// - `label` — draw `text`, clipped to the part by display width.
+///
+/// A widget never changes how wide its part is. Letting text size a part would
+/// put that text into the geometry cache key and make editing a label re-lay
+/// out the whole bar for a change that moves nothing.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ShellBarSectionWidgetConfig {
+    pub kind: String,
+    pub text: String,
 }
 
 /// `[[shell.bars.<edge>.sections]].action` — what clicking one part does.

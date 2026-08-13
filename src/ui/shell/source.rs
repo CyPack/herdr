@@ -398,6 +398,15 @@ pub(crate) enum BarConfigProblem {
         edge: &'static str,
         index: usize,
     },
+    UnknownSectionWidgetKind {
+        edge: &'static str,
+        index: usize,
+        kind: String,
+    },
+    WidgetTextWithoutWidget {
+        edge: &'static str,
+        index: usize,
+    },
 }
 
 impl std::fmt::Display for BarConfigProblem {
@@ -469,6 +478,16 @@ impl std::fmt::Display for BarConfigProblem {
                 "shell.bars.{edge}.sections[{index}].action sets a popup size but opens no \
                  popup, so the size is never used"
             ),
+            Self::UnknownSectionWidgetKind { edge, index, kind } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget.kind is \"{kind}\"; expected \
+                 \"label\", so this section shows nothing"
+            ),
+            Self::WidgetTextWithoutWidget { edge, index } => write!(
+                formatter,
+                "shell.bars.{edge}.sections[{index}].widget sets text but names no widget to \
+                 show it, so the text never appears"
+            ),
         }
     }
 }
@@ -538,7 +557,12 @@ pub(crate) fn shell_bar_config_problems(config: &ShellBarsConfig) -> Vec<BarConf
             }
             // Asked separately from the sizing rule because the two have
             // different blast radii and a person fixing one should not have to
-            // guess that the other was also refused.
+            // guess that the other was also refused. The widget is asked before
+            // the action so a section's complaints read in the order the table
+            // is written.
+            if let Err(problem) = section_widget(section, edge, index) {
+                problems.push(problem);
+            }
             if let Err(problem) = section_action(section, edge, index) {
                 problems.push(problem);
             }
@@ -694,25 +718,62 @@ pub(crate) enum SectionAction {
     },
 }
 
-/// One edge's actions, in the same order and addressed by the same indices as
-/// that edge's sections.
+/// What one section of a bar shows.
+///
+/// Closed for the same reason its neighbour is, and deliberately smaller than
+/// it looks: a divider and a "blank" kind were both considered and left out.
+/// Blank is what a section already is with no widget at all, and a divider is a
+/// variant nobody has asked for — the enum being closed is what makes adding
+/// one later a cost the compiler counts rather than a guess made now.
+///
+/// A widget never decides how wide its section is. Letting text size a section
+/// would put that text in the geometry key, and editing a label would then
+/// re-lay-out the whole bar for a change that moves nothing. A label that does
+/// not fit is clipped, by display width — the person asked for icons, and an
+/// emoji is two cells wide, so clipping by character count would overrun the
+/// rectangle the section was promised.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) enum SectionWidget {
+    /// Draws nothing, which is what every section did before this existed.
+    #[default]
+    None,
+    Label {
+        text: String,
+    },
+}
+
+/// What one section shows and what a click on it does.
+///
+/// The two are held together rather than in two parallel lists on purpose.
+/// Both are addressed by the section's index and both have to disappear when a
+/// division is refused; two structures would mean two alignment invariants and
+/// two copies of the refusal rule, which is the divergence this file has
+/// already been bitten by three times.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct SectionChrome {
+    pub(crate) widget: SectionWidget,
+    pub(crate) action: SectionAction,
+}
+
+/// One edge's sections' chrome, in the same order and addressed by the same
+/// indices as that edge's sections.
 ///
 /// Index-aligned with [`BarSections`] by construction: both are derived from
 /// the same config list through the same refusal predicate, so a division that
-/// was refused cannot leave behind an action list whose indices address the
+/// was refused cannot leave behind a chrome list whose indices address the
 /// sections of some other, imagined bar.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct BarSectionActions {
-    actions: Vec<SectionAction>,
+pub(crate) struct BarSectionChrome {
+    entries: Vec<SectionChrome>,
 }
 
-impl BarSectionActions {
+impl BarSectionChrome {
     pub(crate) const EMPTY: Self = Self {
-        actions: Vec::new(),
+        entries: Vec::new(),
     };
 
-    fn get(&self, index: u8) -> Option<&SectionAction> {
-        self.actions.get(usize::from(index))
+    fn get(&self, index: u8) -> Option<&SectionChrome> {
+        self.entries.get(usize::from(index))
     }
 }
 
@@ -725,30 +786,30 @@ impl BarSectionActions {
 // TP-CHROME-47: the separation is what keeps a popup's size — and the command
 // beside it — out of the value the geometry cache compares.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct ShellBarActions {
-    top: BarSectionActions,
-    bottom: BarSectionActions,
-    left: BarSectionActions,
-    right: BarSectionActions,
+pub(crate) struct ShellBarChrome {
+    top: BarSectionChrome,
+    bottom: BarSectionChrome,
+    left: BarSectionChrome,
+    right: BarSectionChrome,
 }
 
-impl ShellBarActions {
+impl ShellBarChrome {
     pub(crate) fn from_config(config: &ShellBarsConfig) -> Self {
         Self {
-            top: bar_section_actions(&config.top, "top"),
-            bottom: bar_section_actions(&config.bottom, "bottom"),
-            left: bar_section_actions(&config.left, "left"),
-            right: bar_section_actions(&config.right, "right"),
+            top: bar_section_chrome(&config.top, "top"),
+            bottom: bar_section_chrome(&config.bottom, "bottom"),
+            left: bar_section_chrome(&config.left, "left"),
+            right: bar_section_chrome(&config.right, "right"),
         }
     }
 
-    /// What the numbered section of the named region does, if that region is
-    /// an edge bar and that section carries an action.
+    /// What the numbered section of the named region shows and does, if that
+    /// region is an edge bar and it has such a section.
     ///
     /// Resolves the region through the same [`bar_edge_for`] the geometry side
-    /// uses, so the bar a click is attributed to and the bar it was drawn from
-    /// can never be two different bars.
-    pub(crate) fn action_for(&self, region: RegionId, index: u8) -> Option<&SectionAction> {
+    /// uses, so the bar a click is attributed to, the bar a label is drawn in,
+    /// and the bar the rectangle came from can never be three different bars.
+    pub(crate) fn for_section(&self, region: RegionId, index: u8) -> Option<&SectionChrome> {
         let edge = match bar_edge_for(region)? {
             BarEdge::Top => &self.top,
             BarEdge::Bottom => &self.bottom,
@@ -757,46 +818,89 @@ impl ShellBarActions {
         };
         edge.get(index)
     }
+
+    pub(crate) fn action_for(&self, region: RegionId, index: u8) -> Option<&SectionAction> {
+        self.for_section(region, index).map(|chrome| &chrome.action)
+    }
+
+    pub(crate) fn widget_for(&self, region: RegionId, index: u8) -> Option<&SectionWidget> {
+        self.for_section(region, index).map(|chrome| &chrome.widget)
+    }
 }
 
-/// Read one edge's click actions, aligned with the sections that edge actually
-/// has.
+/// Read one edge's sections' chrome, aligned with the sections that edge
+/// actually has.
 ///
-/// A refused division yields no actions at all: the indices an action list is
+/// A refused division yields no chrome at all: the indices a chrome list is
 /// addressed by are the section indices, and there are none.
 ///
-/// A single unreadable action costs only itself. That asymmetry with the sizing
-/// rules is deliberate — a misspelled command name should not take the whole
-/// bar's layout down with it, and leaving the section in place with no action
-/// keeps every other index pointing where it pointed.
-// TP-CHROME-37/39/40/45/46: actions answer at the index they were written at, a
-// refused division leaves none, a refused action costs only its section, and a
-// popup carries the size it was written with.
-fn bar_section_actions(config: &ShellBarConfig, edge: &'static str) -> BarSectionActions {
+/// A single unreadable widget or action costs only itself. That asymmetry with
+/// the sizing rules is deliberate — a misspelled command name should not take
+/// the whole bar's layout down with it, and leaving the section in place with
+/// nothing on it keeps every other index pointing where it pointed.
+// TP-CHROME-37/39/40/45/46/52: chrome answers at the index it was written at, a
+// refused division leaves none, a refused entry costs only its section, a popup
+// carries the size it was written with, and a widget is read the same way.
+fn bar_section_chrome(config: &ShellBarConfig, edge: &'static str) -> BarSectionChrome {
     if !config.enabled || config.sections.is_empty() {
-        return BarSectionActions::EMPTY;
+        return BarSectionChrome::EMPTY;
     }
     if bar_size_problem(config, edge).is_some() {
-        return BarSectionActions::EMPTY;
+        return BarSectionChrome::EMPTY;
     }
     if section_policies(&config.sections, edge).is_err() {
-        return BarSectionActions::EMPTY;
+        return BarSectionChrome::EMPTY;
     }
-    let actions = config
+    let entries = config
         .sections
         .iter()
         .enumerate()
-        .map(
-            |(index, section)| match section_action(section, edge, index) {
+        .map(|(index, section)| SectionChrome {
+            widget: match section_widget(section, edge, index) {
+                Ok(widget) => widget,
+                Err(problem) => {
+                    tracing::warn!(%problem, "the section is drawn with nothing in it");
+                    SectionWidget::None
+                }
+            },
+            action: match section_action(section, edge, index) {
                 Ok(action) => action,
                 Err(problem) => {
                     tracing::warn!(%problem, "the section is drawn without a click action");
                     SectionAction::None
                 }
             },
-        )
+        })
         .collect();
-    BarSectionActions { actions }
+    BarSectionChrome { entries }
+}
+
+/// One section's widget table as a widget, or what is wrong with it.
+// TP-CHROME-54: a widget this build cannot show, and text with nothing to show
+// it, are both refused here and reported by the checker reading this same
+// function.
+fn section_widget(
+    config: &ShellBarSectionConfig,
+    edge: &'static str,
+    index: usize,
+) -> Result<SectionWidget, BarConfigProblem> {
+    match config.widget.kind.as_str() {
+        // Text with no widget to put it in is the same half-finished shape a
+        // leftover popup size is: it will never appear, and a person reading
+        // the file back would believe it does.
+        "" if !config.widget.text.is_empty() => {
+            Err(BarConfigProblem::WidgetTextWithoutWidget { edge, index })
+        }
+        "" => Ok(SectionWidget::None),
+        "label" => Ok(SectionWidget::Label {
+            text: config.widget.text.clone(),
+        }),
+        other => Err(BarConfigProblem::UnknownSectionWidgetKind {
+            edge,
+            index,
+            kind: other.to_string(),
+        }),
+    }
 }
 
 /// One section's action table as an action, or what is wrong with it.
@@ -1410,7 +1514,7 @@ mod tests {
         }
     }
 
-    fn popup_argv(actions: &ShellBarActions, region: RegionId, index: u8) -> Option<Vec<String>> {
+    fn popup_argv(actions: &ShellBarChrome, region: RegionId, index: u8) -> Option<Vec<String>> {
         match actions.action_for(region, index) {
             Some(SectionAction::OpenPopup { argv, .. }) => Some(argv.clone()),
             _ => None,
@@ -1418,7 +1522,7 @@ mod tests {
     }
 
     fn popup_size(
-        actions: &ShellBarActions,
+        actions: &ShellBarChrome,
         region: RegionId,
         index: u8,
     ) -> Option<(Option<PopupSize>, Option<PopupSize>)> {
@@ -1455,7 +1559,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = ShellBarActions::from_config(&config);
+        let actions = ShellBarChrome::from_config(&config);
 
         assert_eq!(
             popup_size(&actions, RegionId::TopBar, 0),
@@ -1478,6 +1582,86 @@ mod tests {
             Some((None, None)),
             "a size nobody wrote must stay absent so the popup keeps its default"
         );
+    }
+
+    // TC-C4/TC-C6 · a widget this build cannot show is reported by the same
+    // predicate that refuses it, and text with no widget to show it is the same
+    // half-finished shape as a leftover popup size. And a label never reaches
+    // the value the geometry cache compares: editing text must not re-lay-out
+    // the bar.
+    #[test]
+    fn a_widget_this_build_cannot_show_is_reported_and_never_reaches_the_geometry() {
+        let mut wrong_kind = plain_section("fill");
+        wrong_kind.widget.kind = "sparkline".to_string();
+        let mut orphan_text = plain_section("fill");
+        orphan_text.widget.text = "CPU".to_string();
+        let mut label = plain_section("fill");
+        label.widget.kind = "label".to_string();
+        label.widget.text = "CPU".to_string();
+
+        let config = ShellBarsConfig {
+            top: bar_with_sections(vec![wrong_kind, orphan_text, label]),
+            ..Default::default()
+        };
+
+        let reported = shell_bar_config_problems(&config)
+            .into_iter()
+            .map(|problem| problem.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(reported.len(), 2, "{reported:?}");
+        assert!(
+            reported[0].contains("sections[0].widget.kind is \"sparkline\""),
+            "{reported:?}"
+        );
+        assert!(
+            reported[1].contains("sections[1].widget sets text but names no widget"),
+            "{reported:?}"
+        );
+
+        let chrome = ShellBarChrome::from_config(&config);
+        assert_eq!(
+            chrome.widget_for(RegionId::TopBar, 0),
+            Some(&SectionWidget::None),
+            "a widget the checker complained about must not be carried either"
+        );
+        assert_eq!(
+            chrome.widget_for(RegionId::TopBar, 2),
+            Some(&SectionWidget::Label {
+                text: "CPU".to_string()
+            })
+        );
+
+        // TC-C6: only the text differs, and the bars the geometry key compares
+        // must not notice.
+        let mut renamed = plain_section("fill");
+        renamed.widget.kind = "label".to_string();
+        renamed.widget.text = "MEM".to_string();
+        let other = ShellBarsConfig {
+            top: bar_with_sections(vec![renamed]),
+            ..Default::default()
+        };
+        let one = ShellBarsConfig {
+            top: bar_with_sections(vec![label_section("CPU")]),
+            ..Default::default()
+        };
+        assert_eq!(
+            ShellBars::from_config(&one),
+            ShellBars::from_config(&other),
+            "a label must never decide how wide its section is"
+        );
+        assert_ne!(
+            ShellBarChrome::from_config(&one),
+            ShellBarChrome::from_config(&other),
+            "control: the chrome itself must notice, or the assertion above is empty"
+        );
+    }
+
+    fn label_section(text: &str) -> ShellBarSectionConfig {
+        let mut section = plain_section("fill");
+        section.widget.kind = "label".to_string();
+        section.widget.text = text.to_string();
+        section
     }
 
     // TC-B5 · a size on an action that will never open a popup can never take
@@ -1552,7 +1736,7 @@ mod tests {
 
         assert_eq!(shell_bar_config_problems(&config).len(), 1);
         assert_eq!(
-            ShellBarActions::from_config(&config).action_for(RegionId::TopBar, 0),
+            ShellBarChrome::from_config(&config).action_for(RegionId::TopBar, 0),
             Some(&SectionAction::None),
             "the section the checker complained about must carry no action at all"
         );
@@ -1579,8 +1763,8 @@ mod tests {
             "the bars value the geometry key compares must not notice a popup size"
         );
         assert_ne!(
-            ShellBarActions::from_config(&small),
-            ShellBarActions::from_config(&large),
+            ShellBarChrome::from_config(&small),
+            ShellBarChrome::from_config(&large),
             "control: the actions themselves must notice, or the test above proves nothing"
         );
     }
@@ -1597,7 +1781,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = ShellBarActions::from_config(&config);
+        let actions = ShellBarChrome::from_config(&config);
 
         assert_eq!(
             popup_argv(&actions, RegionId::TopBar, 1).as_deref(),
@@ -1631,7 +1815,7 @@ mod tests {
             right: bar_with_sections(vec![section_with_action("fill", "popup", &["right-cmd"])]),
         };
 
-        let actions = ShellBarActions::from_config(&config);
+        let actions = ShellBarChrome::from_config(&config);
         let bars = ShellBars::from_config(&config);
 
         for (region, expected) in [
@@ -1677,7 +1861,7 @@ mod tests {
         };
 
         let bars = ShellBars::from_config(&config);
-        let actions = ShellBarActions::from_config(&config);
+        let actions = ShellBarChrome::from_config(&config);
 
         assert!(
             bars.top.sections().is_empty(),
@@ -1707,7 +1891,7 @@ mod tests {
         };
 
         let bars = ShellBars::from_config(&config);
-        let actions = ShellBarActions::from_config(&config);
+        let actions = ShellBarChrome::from_config(&config);
 
         assert_eq!(
             bars.top.sections().len(),

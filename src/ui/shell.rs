@@ -40,7 +40,7 @@ pub(crate) use model::{
 };
 pub(crate) use source::{
     derive_desktop_shell_layout, shell_bar_config_problems, BarColors, BarTint, SectionAction,
-    ShellBarActions, ShellBars, SidebarChrome,
+    SectionWidget, ShellBarChrome, ShellBars, SidebarChrome,
 };
 pub(crate) use template::ShellTemplateId;
 pub(crate) use view::{compute_empty_shell_view, compute_shell_view, ShellGeometryKey, ShellView};

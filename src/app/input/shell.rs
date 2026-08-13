@@ -110,7 +110,7 @@ impl AppState {
         else {
             return BarSectionClick::Elsewhere;
         };
-        match self.shell_bar_actions.action_for(region, index) {
+        match self.shell_bar_chrome.action_for(region, index) {
             None | Some(crate::ui::shell::SectionAction::None) => BarSectionClick::Inert,
             Some(crate::ui::shell::SectionAction::OpenPopup {
                 argv,
@@ -958,7 +958,7 @@ mod tests {
             None,
             crate::ui::shell::ShellBars::from_config(&config),
         );
-        state.shell_bar_actions = crate::ui::shell::ShellBarActions::from_config(&config);
+        state.shell_bar_chrome = crate::ui::shell::ShellBarChrome::from_config(&config);
         let area = Rect::new(0, 0, 106, 40);
         crate::ui::compute_view(&mut state, area);
         (state, area)

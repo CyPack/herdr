@@ -129,6 +129,43 @@ pub(crate) fn render_chip(
     Some(chip)
 }
 
+/// Draw one bar section's widget into the rectangle that section was given.
+///
+/// Clipped by DISPLAY width rather than character count: a section is measured
+/// in cells and an emoji is two of them, so counting characters would let a
+/// label written with icons overrun the rectangle into its neighbour. The fork
+/// already learned this once for file columns (TP-FSH-10).
+///
+/// An empty rectangle draws nothing rather than being a special case anywhere
+/// else (CL9), and a widget never changes the rectangle it was handed — the
+/// size was decided by the layout solver before this function was called.
+// TP-CHROME-52/53: a label is drawn inside its own section, clipped by display
+// width, and an empty rectangle is a no-op.
+pub(crate) fn render_section_widget(
+    frame: &mut Frame,
+    widget: &crate::ui::shell::SectionWidget,
+    area: Rect,
+    style: Style,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    match widget {
+        crate::ui::shell::SectionWidget::None => {}
+        crate::ui::shell::SectionWidget::Label { text } => {
+            if text.is_empty() {
+                return;
+            }
+            let clipped = super::text::truncate_end(text, usize::from(area.width));
+            let line = Rect::new(area.x, area.y, area.width, 1);
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(clipped, style))),
+                line,
+            );
+        }
+    }
+}
+
 /// Rows a boxed chip occupies: border, label, border.
 pub(crate) const CHIP_ROWS: u16 = 3;
 
