@@ -1204,10 +1204,89 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
         false
     };
 
+    // TP-MOD-13/16: the tree has two sources, and the second one is why a
+    // module can exist before any branch does.
+    //
+    // The walk below is seeded from the checkouts and climbs to their roots,
+    // so a container nothing hangs under is never reached. That is the first
+    // thing a person does: name the module, then make the branch — and until
+    // the branch existed the module was nowhere on screen. Every declared
+    // container therefore contributes its own root as a seed, after the
+    // checkouts (TP-MOD-14: scaffolding must never push the work down).
+    //
+    // Duplication needs no guard of its own: a root already emitted from a
+    // climb is stopped by `emitted_nodes` inside the walk (TP-MOD-17).
+    let declared_roots: Vec<String> = {
+        let mut roots = Vec::new();
+        let mut seen = std::collections::HashSet::<String>::new();
+        let guard = app.space_nodes.len() + app.space_split_rules.len();
+        for node in &app.space_nodes {
+            let mut root = node.key.clone();
+            let mut climbed = 0usize;
+            while let Some(parent) =
+                crate::spaces::tree_parent_of(&app.space_nodes, &app.space_split_rules, &root)
+            {
+                root = parent.to_string();
+                climbed += 1;
+                if climbed > guard {
+                    break; // The forest is validated; belt and braces.
+                }
+            }
+            if seen.insert(root.clone()) {
+                roots.push(root);
+            }
+        }
+        roots
+    };
+
+    /// What starts one walk of the tree.
+    enum Seed {
+        /// A checkout, which climbs to whatever owns it.
+        Checkout(usize),
+        /// The top of a declared container chain, which owns itself.
+        DeclaredRoot(String),
+    }
+
     let mut emitted_groups = std::collections::HashSet::<String>::new();
     let mut emitted_nodes = std::collections::HashSet::<String>::new();
     let mut entries = Vec::new();
-    for ws_idx in 0..app.workspaces.len() {
+    let seeds = (0..app.workspaces.len())
+        .map(Seed::Checkout)
+        .chain(declared_roots.into_iter().map(Seed::DeclaredRoot));
+    for seed in seeds {
+        let ws_idx = match seed {
+            Seed::Checkout(ws_idx) => ws_idx,
+            Seed::DeclaredRoot(root) => {
+                // A declared root is already the top of its chain, so it skips
+                // the climb the checkout path needs.
+                let mut stack = vec![if members_by_key.contains_key(&root) {
+                    Job::Bucket(root, false)
+                } else {
+                    Job::Node(root)
+                }];
+                walk_tree(
+                    app,
+                    &mut stack,
+                    &mut entries,
+                    &mut TreeWalkState {
+                        emitted_groups: &mut emitted_groups,
+                        emitted_nodes: &mut emitted_nodes,
+                    },
+                    &TreeWalkMaps {
+                        members_by_key: &members_by_key,
+                        grouped_keys: &grouped_keys,
+                        node_children: &node_children,
+                        buckets_of_node: &buckets_of_node,
+                        first_ws_of_space: &first_ws_of_space,
+                    },
+                    force_expanded,
+                    visible_group_idx,
+                    active_group.as_deref(),
+                    &chain_hits,
+                );
+                continue;
+            }
+        };
         if !shows(ws_idx) {
             continue;
         }
@@ -1257,123 +1336,215 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
             }
         }
 
-        enum Job {
-            Node(String),
-            /// A bucket block plus, when it is open, the modules hanging
-            /// under it. The flag says whether an ancestor indents it.
-            Bucket(String, bool),
-        }
         // The top of a mixed chain can itself be a bucket (TP-TREE-16).
         let mut stack = vec![if members_by_key.contains_key(&root) {
             Job::Bucket(root, false)
         } else {
             Job::Node(root)
         }];
-        while let Some(job) = stack.pop() {
-            match job {
-                Job::Bucket(space_key, parented) => {
-                    let Some(first) = members_by_key
-                        .get(&space_key)
-                        .and_then(|members| members.first().copied())
-                    else {
-                        continue;
-                    };
-                    push_space_block(
+        walk_tree(
+            app,
+            &mut stack,
+            &mut entries,
+            &mut TreeWalkState {
+                emitted_groups: &mut emitted_groups,
+                emitted_nodes: &mut emitted_nodes,
+            },
+            &TreeWalkMaps {
+                members_by_key: &members_by_key,
+                grouped_keys: &grouped_keys,
+                node_children: &node_children,
+                buckets_of_node: &buckets_of_node,
+                first_ws_of_space: &first_ws_of_space,
+            },
+            force_expanded,
+            visible_group_idx,
+            active_group.as_deref(),
+            &chain_hits,
+        );
+    }
+    entries
+}
+
+/// The maps one tree walk reads, gathered so the walk can be driven from more
+/// than one seed without threading a dozen arguments through each call.
+struct TreeWalkMaps<'a> {
+    members_by_key: &'a std::collections::HashMap<String, Vec<usize>>,
+    grouped_keys: &'a std::collections::HashSet<String>,
+    node_children: &'a std::collections::HashMap<&'a str, Vec<&'a str>>,
+    buckets_of_node: &'a std::collections::HashMap<String, Vec<String>>,
+    first_ws_of_space: &'a std::collections::HashMap<String, usize>,
+}
+
+/// What the walk has already drawn. Shared across seeds: a container reached
+/// from a checkout's climb must not be drawn again when the declared forest
+/// reaches it too (TP-MOD-17).
+struct TreeWalkState<'a> {
+    emitted_groups: &'a mut std::collections::HashSet<String>,
+    emitted_nodes: &'a mut std::collections::HashSet<String>,
+}
+
+/// One job of the tree walk.
+enum Job {
+    Node(String),
+    /// A bucket block plus, when it is open, the modules hanging under it.
+    /// The flag says whether an ancestor indents it.
+    Bucket(String, bool),
+}
+
+/// Drain `stack`, appending the rows each job produces to `entries`.
+///
+/// Pre-order: every ancestor header before its children, children in their
+/// own first-appearance order (TP-NODE-04).
+#[allow(clippy::too_many_arguments)]
+fn walk_tree(
+    app: &AppState,
+    stack: &mut Vec<Job>,
+    entries: &mut Vec<WorkspaceListEntry>,
+    state: &mut TreeWalkState<'_>,
+    maps: &TreeWalkMaps<'_>,
+    force_expanded: bool,
+    visible_group_idx: Option<usize>,
+    active_group: Option<&str>,
+    chain_hits: &dyn Fn(&str, &str) -> bool,
+) {
+    while let Some(job) = stack.pop() {
+        match job {
+            Job::Bucket(space_key, parented) => {
+                // TP-MOD-15: a rule claiming nothing draws no header — a
+                // header for a bucket with no members is a ghost, and a
+                // ghost header is a false alarm every time a module is
+                // created before its branch.
+                //
+                // It still walks its children. A module the user declared
+                // under that rule is theirs, not the rule's, and tying its
+                // fate to whether a branch happens to match today would lose
+                // scaffolding for a reason that has nothing to do with it.
+                match maps
+                    .members_by_key
+                    .get(&space_key)
+                    .and_then(|members| members.first().copied())
+                {
+                    Some(first) => push_space_block(
                         app,
-                        &mut entries,
+                        entries,
                         first,
-                        &members_by_key,
-                        &grouped_keys,
-                        &mut emitted_groups,
+                        maps.members_by_key,
+                        maps.grouped_keys,
+                        state.emitted_groups,
                         force_expanded,
                         visible_group_idx,
-                        active_group.as_deref(),
+                        active_group,
                         parented,
-                    );
-                    // TP-TREE-16/17: an open bucket walks the modules (and
-                    // through them, buckets) hanging under it; a folded one
-                    // hides its whole subtree, exactly like its members.
-                    if !force_expanded && app.collapsed_space_keys.contains(&space_key) {
-                        continue;
-                    }
-                    let mut kids: Vec<(usize, Job)> = Vec::new();
-                    for bucket in buckets_of_node.get(&space_key).into_iter().flatten() {
-                        kids.push((
-                            first_ws_of_space.get(bucket).copied().unwrap_or(usize::MAX),
-                            Job::Bucket(bucket.clone(), true),
-                        ));
-                    }
-                    for child in node_children.get(space_key.as_str()).into_iter().flatten() {
-                        kids.push((
-                            subtree_first_ws(
-                                child,
-                                &node_children,
-                                &buckets_of_node,
-                                &first_ws_of_space,
-                                app.space_nodes.len() + 1,
-                            ),
-                            Job::Node((*child).to_string()),
-                        ));
-                    }
-                    kids.sort_by_key(|(first, _)| *first);
-                    for (_, kid) in kids.into_iter().rev() {
-                        stack.push(kid);
+                    ),
+                    None => {
+                        let carries_modules = maps
+                            .node_children
+                            .get(space_key.as_str())
+                            .is_some_and(|kids| !kids.is_empty());
+                        if !carries_modules {
+                            continue;
+                        }
                     }
                 }
-                Job::Node(node_key) => {
-                    // Several member workspaces climb to the same top; the
-                    // subtree is emitted once and later climbs skip here.
-                    if !emitted_nodes.insert(node_key.clone()) {
-                        continue;
-                    }
-                    entries.push(WorkspaceListEntry::ProjectHeader {
-                        project_key: node_key.clone(),
-                    });
+                // TP-TREE-16/17: an open bucket walks the modules (and
+                // through them, buckets) hanging under it; a folded one
+                // hides its whole subtree, exactly like its members.
+                if !force_expanded && app.collapsed_space_keys.contains(&space_key) {
+                    continue;
+                }
+                let mut kids: Vec<(usize, Job)> = Vec::new();
+                for bucket in maps.buckets_of_node.get(&space_key).into_iter().flatten() {
+                    kids.push((
+                        maps.first_ws_of_space
+                            .get(bucket)
+                            .copied()
+                            .unwrap_or(usize::MAX),
+                        Job::Bucket(bucket.clone(), true),
+                    ));
+                }
+                for child in maps
+                    .node_children
+                    .get(space_key.as_str())
+                    .into_iter()
+                    .flatten()
+                {
+                    kids.push((
+                        subtree_first_ws(
+                            child,
+                            maps.node_children,
+                            maps.buckets_of_node,
+                            maps.first_ws_of_space,
+                            app.space_nodes.len() + 1,
+                        ),
+                        Job::Node((*child).to_string()),
+                    ));
+                }
+                kids.sort_by_key(|(first, _)| *first);
+                for (_, kid) in kids.into_iter().rev() {
+                    stack.push(kid);
+                }
+            }
+            Job::Node(node_key) => {
+                // Several member workspaces climb to the same top; the
+                // subtree is emitted once and later climbs skip here.
+                if !state.emitted_nodes.insert(node_key.clone()) {
+                    continue;
+                }
+                entries.push(WorkspaceListEntry::ProjectHeader {
+                    project_key: node_key.clone(),
+                });
 
-                    if !force_expanded && app.node_folded(&node_key) {
-                        // TP-PROJ-GROUP-02, generalised: a folded ancestor
-                        // keeps the checkout the user is standing in.
-                        if let Some(active_idx) = visible_group_idx.filter(|idx| {
-                            effective_space(app, *idx)
-                                .is_some_and(|space| chain_hits(&space.key, &node_key))
-                        }) {
-                            entries.push(WorkspaceListEntry::Workspace {
-                                ws_idx: active_idx,
-                                indented: true,
-                            });
-                            push_chat_drawer(app, &mut entries, active_idx);
-                        }
-                        continue;
+                if !force_expanded && app.node_folded(&node_key) {
+                    // TP-PROJ-GROUP-02, generalised: a folded ancestor
+                    // keeps the checkout the user is standing in.
+                    if let Some(active_idx) = visible_group_idx.filter(|idx| {
+                        effective_space(app, *idx)
+                            .is_some_and(|space| chain_hits(&space.key, &node_key))
+                    }) {
+                        entries.push(WorkspaceListEntry::Workspace {
+                            ws_idx: active_idx,
+                            indented: true,
+                        });
+                        push_chat_drawer(app, entries, active_idx);
                     }
+                    continue;
+                }
 
-                    let mut kids: Vec<(usize, Job)> = Vec::new();
-                    for bucket in buckets_of_node.get(&node_key).into_iter().flatten() {
-                        kids.push((
-                            first_ws_of_space.get(bucket).copied().unwrap_or(usize::MAX),
-                            Job::Bucket(bucket.clone(), true),
-                        ));
-                    }
-                    for child in node_children.get(node_key.as_str()).into_iter().flatten() {
-                        kids.push((
-                            subtree_first_ws(
-                                child,
-                                &node_children,
-                                &buckets_of_node,
-                                &first_ws_of_space,
-                                app.space_nodes.len() + 1,
-                            ),
-                            Job::Node((*child).to_string()),
-                        ));
-                    }
-                    kids.sort_by_key(|(first, _)| *first);
-                    for (_, kid) in kids.into_iter().rev() {
-                        stack.push(kid);
-                    }
+                let mut kids: Vec<(usize, Job)> = Vec::new();
+                for bucket in maps.buckets_of_node.get(&node_key).into_iter().flatten() {
+                    kids.push((
+                        maps.first_ws_of_space
+                            .get(bucket)
+                            .copied()
+                            .unwrap_or(usize::MAX),
+                        Job::Bucket(bucket.clone(), true),
+                    ));
+                }
+                for child in maps
+                    .node_children
+                    .get(node_key.as_str())
+                    .into_iter()
+                    .flatten()
+                {
+                    kids.push((
+                        subtree_first_ws(
+                            child,
+                            maps.node_children,
+                            maps.buckets_of_node,
+                            maps.first_ws_of_space,
+                            app.space_nodes.len() + 1,
+                        ),
+                        Job::Node((*child).to_string()),
+                    ));
+                }
+                kids.sort_by_key(|(first, _)| *first);
+                for (_, kid) in kids.into_iter().rev() {
+                    stack.push(kid);
                 }
             }
         }
     }
-    entries
 }
 
 /// Where a node's subtree first appears in workspace order: the minimum over
@@ -6461,6 +6632,207 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
                 _ => None,
             })
             .collect()
+    }
+
+    /// A workspace/rule pair that gives the tree something populated to draw,
+    /// so a test about declared containers is never also a test about an
+    /// empty list.
+    fn app_with_one_populated_bucket() -> AppState {
+        let mut app = AppState::test_new();
+        app.mobile_width_threshold = 0;
+        app.workspaces = vec![
+            worktree_on_branch("alpha", "feat/tui-alpha"),
+            worktree_on_branch("beta", "feat/tui-beta"),
+        ];
+        app.space_split_rules = vec![split_rule(&["feat/tui-*"], "herdr:tui", "TUI")];
+        app
+    }
+
+    // TP-MOD-13: a module declared at top level takes a row even though no
+    // checkout climbs to it. The tree is walked from the workspaces up, so a
+    // container nothing hangs under is never reached — which is exactly the
+    // first thing a person does: name the module, then make the branch.
+    #[test]
+    fn a_top_level_module_with_no_members_still_takes_a_row() {
+        let mut app = app_with_one_populated_bucket();
+        app.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "group:remote-audio".into(),
+            name: "UZAKTAN SES".into(),
+            icon: None,
+            parent: None,
+        }];
+
+        let rows = tree_rows(&app);
+        assert!(
+            rows.contains(&"node:group:remote-audio".to_string()),
+            "a declared top-level module is drawn: {rows:?}"
+        );
+    }
+
+    // TP-MOD-14: declared containers come after the rows the workspaces
+    // produced. Creating a module must never push the work in progress down
+    // the list.
+    #[test]
+    fn declared_containers_follow_the_rows_the_workspaces_produced() {
+        let mut app = app_with_one_populated_bucket();
+        app.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "group:remote-audio".into(),
+            name: "UZAKTAN SES".into(),
+            icon: None,
+            parent: None,
+        }];
+
+        let rows = tree_rows(&app);
+        let last_workspace = rows
+            .iter()
+            .rposition(|row| row.starts_with("ws:"))
+            .expect("the populated bucket drew its checkouts");
+        let module = rows
+            .iter()
+            .position(|row| row == "node:group:remote-audio")
+            .expect("the module is drawn");
+        assert!(
+            module > last_workspace,
+            "declared scaffolding sits below the work: {rows:?}"
+        );
+    }
+
+    // TP-MOD-15: a rule that currently claims nothing draws no header — a
+    // header for an empty bucket is a ghost — but a module the
+    // user declared under it is theirs, not the rule's, and survives.
+    #[test]
+    fn a_module_under_an_empty_bucket_survives_while_the_bucket_stays_hidden() {
+        let mut app = app_with_one_populated_bucket();
+        app.space_split_rules
+            .push(split_rule(&["asla-eslesmeyecek/*"], "herdr:bos", "Bos"));
+        app.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "group:altinda".into(),
+            name: "ALTINDA".into(),
+            icon: None,
+            parent: Some("herdr:bos".into()),
+        }];
+
+        let rows = tree_rows(&app);
+        assert!(
+            rows.contains(&"node:group:altinda".to_string()),
+            "the declared module survives its empty parent: {rows:?}"
+        );
+        assert!(
+            !rows.contains(&"group:herdr:bos".to_string()),
+            "a rule claiming nothing still draws no header: {rows:?}"
+        );
+    }
+
+    // TP-MOD-16: an all-empty chain is drawn whole, parent before child, so
+    // scaffolding can be built top-down before any branch exists.
+    #[test]
+    fn a_chain_of_empty_modules_is_drawn_in_order() {
+        let mut app = app_with_one_populated_bucket();
+        let node = |key: &str, parent: Option<&str>| crate::spaces::SpaceNode {
+            key: key.into(),
+            name: key.into(),
+            icon: None,
+            parent: parent.map(str::to_string),
+        };
+        app.space_nodes = vec![
+            node("group:a", None),
+            node("group:b", Some("group:a")),
+            node("group:c", Some("group:b")),
+        ];
+
+        let rows = tree_rows(&app);
+        let at = |key: &str| {
+            rows.iter()
+                .position(|row| row == &format!("node:{key}"))
+                .unwrap_or_else(|| panic!("{key} is drawn: {rows:?}"))
+        };
+        assert!(at("group:a") < at("group:b"), "{rows:?}");
+        assert!(at("group:b") < at("group:c"), "{rows:?}");
+    }
+
+    // TP-MOD-17: a container reachable both from a checkout's climb and from
+    // the declared forest is drawn once. Two sources feeding one list is the
+    // obvious way to draw everything twice.
+    #[test]
+    fn a_container_reachable_from_both_sources_is_drawn_once() {
+        let mut app = app_with_one_populated_bucket();
+        app.space_projects = vec![project_over("project:herdr", &["/repo/herdr"], &[])];
+        app.space_nodes = vec![crate::spaces::SpaceNode {
+            key: "group:remote-audio".into(),
+            name: "UZAKTAN SES".into(),
+            icon: None,
+            parent: Some("project:herdr".into()),
+        }];
+
+        let rows = tree_rows(&app);
+        assert_eq!(
+            rows.iter()
+                .filter(|row| *row == "node:group:remote-audio")
+                .count(),
+            1,
+            "one row per container: {rows:?}"
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| *row == "node:project:herdr")
+                .count(),
+            1,
+            "the project is not re-emitted either: {rows:?}"
+        );
+    }
+
+    // TP-MOD-18: a tree with no declared containers is byte-for-byte the tree
+    // it was before the second source existed. Everyone who does not use
+    // modules must see no change at all.
+    #[test]
+    fn a_tree_without_containers_is_unchanged() {
+        let mut app = AppState::test_new();
+        app.mobile_width_threshold = 0;
+        app.workspaces = vec![
+            worktree_on_branch("alpha", "feat/tui-alpha"),
+            worktree_on_branch("beta", "feat/tui-beta"),
+            Workspace::test_new("solo"),
+        ];
+        app.space_split_rules = vec![split_rule(&["feat/tui-*"], "herdr:tui", "TUI")];
+
+        assert_eq!(
+            tree_rows(&app),
+            vec!["group:herdr:tui", "ws:0", "ws:1", "ws:2"],
+            "no containers declared, so nothing new is emitted"
+        );
+    }
+
+    // TP-MOD-19: folding a declared container hides its declared children,
+    // exactly as folding hides members (TP-TREE-17). A second source must
+    // obey the same fold contract as the first.
+    #[test]
+    fn folding_a_declared_module_hides_its_declared_children() {
+        let mut app = app_with_one_populated_bucket();
+        app.space_nodes = vec![
+            crate::spaces::SpaceNode {
+                key: "group:ust".into(),
+                name: "UST".into(),
+                icon: None,
+                parent: None,
+            },
+            crate::spaces::SpaceNode {
+                key: "group:alt".into(),
+                name: "ALT".into(),
+                icon: None,
+                parent: Some("group:ust".into()),
+            },
+        ];
+        app.fold_node("group:ust".to_string());
+
+        let rows = tree_rows(&app);
+        assert!(
+            rows.contains(&"node:group:ust".to_string()),
+            "the folded module keeps its own row: {rows:?}"
+        );
+        assert!(
+            !rows.contains(&"node:group:alt".to_string()),
+            "a folded container hides what it holds: {rows:?}"
+        );
     }
 
     // TP-MOD-01: a module the user created takes a row even with nothing in
