@@ -20,6 +20,12 @@ __pycache__/
 !/docs/patterns/**
 !/docs/references/
 !/docs/references/**
+# Dated analysis notes. Same reason as the two above, one step earlier in the
+# workflow: these are the written record of measurements this repo's agents cite
+# when they decide what to build, and a measurement nobody can find again is a
+# measurement that gets made twice.
+!/docs/analysis/
+!/docs/analysis/**
 /.local/
 /backlog
 
