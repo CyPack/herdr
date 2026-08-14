@@ -577,6 +577,15 @@ pub struct PluginPaneOpenParams {
     pub direction: Option<SplitDirection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// What to call the pane instead of the title its manifest declares.
+    ///
+    /// A manifest title names the *kind* of pane, which is all the manifest can
+    /// know; the caller is usually the only side that knows *which* document it
+    /// is opening. A popup is the sharpest case: it is the one placement that
+    /// cannot be renamed afterwards, so a name it does not receive here it can
+    /// never receive at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     #[serde(default)]
     pub focus: bool,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]

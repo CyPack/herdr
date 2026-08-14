@@ -3429,6 +3429,13 @@
                 "null"
               ]
             },
+            "title": {
+              "description": "What to call the pane instead of the title its manifest declares.\n\nA manifest title names the *kind* of pane, which is all the manifest can\nknow; the caller is usually the only side that knows *which* document it\nis opening. A popup is the sharpest case: it is the one placement that\ncannot be renamed afterwards, so a name it does not receive here it can\nnever receive at all.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "width": {
               "anyOf": [
                 {

@@ -467,7 +467,7 @@ impl App {
         let Some(entrypoint) = normalize_action_id(&params.entrypoint) else {
             return encode_error(id, "invalid_plugin_entrypoint", "invalid entrypoint id");
         };
-        let Some(pane) = plugin
+        let Some(mut pane) = plugin
             .panes
             .iter()
             .find(|pane| pane.id == entrypoint)
@@ -486,6 +486,17 @@ impl App {
             return encode_error(id, code, message);
         }
         let placement = params.placement.unwrap_or(pane.placement);
+        // A manifest can only name the *kind* of pane it declares; the caller is
+        // usually the only side that knows *which* document it is opening. The
+        // name is taken here, once, before the placements diverge: a parameter
+        // that four placements accept and three quietly ignore would be a worse
+        // trap than the wrong title it replaces. The popup is the sharp case —
+        // `parse_pane_id` resolves ids through a workspace's pane tree and a
+        // popup lives outside every tree, so a name it does not get here it
+        // never gets at all.
+        if let Some(title) = opening_title(params.title.as_deref()) {
+            pane.title = title;
+        }
         if placement != PluginPanePlacement::Popup
             && (params.width.is_some() || params.height.is_some())
         {
@@ -767,6 +778,18 @@ fn normalize_optional_plugin_id(
         },
         None => Ok(None),
     }
+}
+
+/// The name a caller asked a pane to wear, if it asked for a usable one.
+///
+/// Blank counts as unsaid. A shell filling this from a file name can hand over
+/// an empty string, and a pane with no name at all explains itself even less
+/// than one wearing the wrong name.
+fn opening_title(requested: Option<&str>) -> Option<String> {
+    requested
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
 }
 
 fn plugin_manifest_available(plugin: &InstalledPluginInfo) -> bool {
@@ -1683,6 +1706,7 @@ platforms = ["linux", "macos"]
                 target_pane_id: None,
                 direction: None,
                 cwd: None,
+                title: None,
                 focus: false,
                 env: std::collections::HashMap::new(),
             }),
@@ -1710,6 +1734,7 @@ platforms = ["linux", "macos"]
                 target_pane_id: None,
                 direction: Some(crate::api::schema::SplitDirection::Right),
                 cwd: None,
+                title: None,
                 focus: false,
                 env: std::collections::HashMap::new(),
             }),
@@ -1745,6 +1770,7 @@ platforms = ["linux", "macos"]
                     target_pane_id: None,
                     direction: None,
                     cwd: None,
+                    title: None,
                     focus: true,
                     env: std::collections::HashMap::new(),
                 }),
@@ -1838,6 +1864,7 @@ command = ["sh", "-c", "printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \"$PWD\" \
                 target_pane_id: None,
                 direction: None,
                 cwd: None,
+                title: None,
                 focus: true,
                 env: std::collections::HashMap::from([
                     ("HERDR_PLUGIN_ID".to_string(), "spoofed-plugin".to_string()),
@@ -1945,6 +1972,7 @@ command = ["sh", "-c", "printf '%s\n%s\n%s\n' \"$HERDR_PLUGIN_ROOT\" \"$HERDR_PL
                 target_pane_id: None,
                 direction: None,
                 cwd: None,
+                title: None,
                 focus: true,
                 env: std::collections::HashMap::from([
                     (
@@ -2048,6 +2076,7 @@ command = ["sh", "-c", "sleep 1"]
                 target_pane_id: None,
                 direction: None,
                 cwd: None,
+                title: None,
                 focus: true,
                 env: std::collections::HashMap::new(),
             }),
@@ -2133,6 +2162,7 @@ command = ["sh", "-c", "sleep 1"]
             target_pane_id: None,
             direction: None,
             cwd: None,
+            title: None,
             focus,
             env: std::collections::HashMap::new(),
         };
@@ -2216,6 +2246,7 @@ command = ["sh", "-c", "sleep 1"]
                 target_pane_id: None,
                 direction: Some(crate::api::schema::SplitDirection::Right),
                 cwd: None,
+                title: None,
                 focus: true,
                 env: std::collections::HashMap::new(),
             }),
@@ -2295,6 +2326,7 @@ command = ["sh", "-c", "sleep 1"]
                 target_pane_id: None,
                 direction: None,
                 cwd: None,
+                title: None,
                 focus: true,
                 env: std::collections::HashMap::new(),
             }),
@@ -2380,6 +2412,7 @@ command = ["sh", "-c", "printf %s ${{HERDR_PANE_ID-unset}} > '{}'; sleep 1"]
                 target_pane_id: None,
                 direction: None,
                 cwd: None,
+                title: None,
                 focus: true,
                 env: std::collections::HashMap::new(),
             }),
@@ -2427,6 +2460,200 @@ command = ["sh", "-c", "printf %s ${{HERDR_PANE_ID-unset}} > '{}'; sleep 1"]
         assert!(app.state.popup_pane.is_none());
         assert!(event_hub.events_after(0).is_empty());
 
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    // TP-FPOPUP-02: a popup wears the name its caller gave it, not the one its
+    // manifest declares. The popup is the one placement nothing can rename
+    // afterwards — `parse_pane_id` resolves an id through a workspace's pane
+    // tree and the popup deliberately lives outside every tree — so a name it
+    // does not receive at open it never receives at all. Without this the file
+    // manager's preview click labels a picture with whatever the plugin that
+    // opened it happens to be called, which answers a question nobody asked.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_popup_pane_opens_under_the_title_its_caller_asked_for() {
+        let (mut app, root) = popup_test_app("plugin-pane-popup-title");
+
+        let open = app.handle_api_request(Request {
+            id: "popup-titled".into(),
+            method: Method::PluginPaneOpen(PluginPaneOpenParams {
+                plugin_id: "example.popup".into(),
+                entrypoint: "board".into(),
+                placement: None,
+                width: None,
+                height: None,
+                workspace_id: None,
+                target_pane_id: None,
+                direction: None,
+                cwd: None,
+                title: Some("Screenshot-10.png".into()),
+                focus: true,
+                env: std::collections::HashMap::new(),
+            }),
+        });
+        assert_eq!(response_result(&open), ResponseResult::Ok {});
+        assert_eq!(
+            popup_label(&app).as_deref(),
+            Some("Screenshot-10.png"),
+            "the caller's title should reach the popup, not the manifest's"
+        );
+
+        shut_down_popup_test(app, root);
+    }
+
+    // TP-FPOPUP-03: a caller that says nothing about the title leaves the
+    // manifest's alone, and one that says only whitespace counts as saying
+    // nothing. Every plugin installed today omits the field, so an override
+    // that did not check would silently strip the name off every plugin pane
+    // on upgrade; and a shell filling the flag from `basename` can hand over an
+    // empty string, which would leave a pane with no name and no way to see why.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_popup_pane_without_a_usable_title_keeps_the_manifest_name() {
+        let open_with = |app: &mut App, id: &str, title: Option<&str>| {
+            app.handle_api_request(Request {
+                id: id.into(),
+                method: Method::PluginPaneOpen(PluginPaneOpenParams {
+                    plugin_id: "example.popup".into(),
+                    entrypoint: "board".into(),
+                    placement: None,
+                    width: None,
+                    height: None,
+                    workspace_id: None,
+                    target_pane_id: None,
+                    direction: None,
+                    cwd: None,
+                    title: title.map(str::to_string),
+                    focus: true,
+                    env: std::collections::HashMap::new(),
+                }),
+            })
+        };
+
+        let (mut app, root) = popup_test_app("plugin-pane-popup-absent-title");
+        let absent = open_with(&mut app, "popup-untitled", None);
+        assert_eq!(response_result(&absent), ResponseResult::Ok {});
+        assert_eq!(
+            popup_label(&app).as_deref(),
+            Some("Plugin Popup"),
+            "an absent title should leave the manifest name in place"
+        );
+        shut_down_popup_test(app, root);
+
+        let (mut app, root) = popup_test_app("plugin-pane-popup-blank-title");
+        let blank = open_with(&mut app, "popup-blank", Some("   "));
+        assert_eq!(response_result(&blank), ResponseResult::Ok {});
+        assert_eq!(
+            popup_label(&app).as_deref(),
+            Some("Plugin Popup"),
+            "a blank title should count as no title, not as an empty name"
+        );
+        shut_down_popup_test(app, root);
+    }
+
+    // TP-FPOPUP-04: the title a caller passes is honoured wherever a plugin
+    // pane can open, not only in the popup that motivated it. A parameter that
+    // four placements accept and three quietly ignore is a worse trap than the
+    // wrong title it was added to fix: the plugin author sends it, nothing
+    // happens, and nothing says why.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_plugin_pane_opened_in_a_tab_also_takes_its_caller_s_title() {
+        let (mut app, root) = popup_test_app("plugin-pane-tab-title");
+
+        let open = app.handle_api_request(Request {
+            id: "tab-titled".into(),
+            method: Method::PluginPaneOpen(PluginPaneOpenParams {
+                plugin_id: "example.popup".into(),
+                entrypoint: "board".into(),
+                placement: Some(PluginPanePlacement::Tab),
+                width: None,
+                height: None,
+                workspace_id: None,
+                target_pane_id: None,
+                direction: None,
+                cwd: None,
+                title: Some("Screenshot-10.png".into()),
+                focus: true,
+                env: std::collections::HashMap::new(),
+            }),
+        });
+        let ResponseResult::PluginPaneOpened { plugin_pane } = response_result(&open) else {
+            panic!("expected plugin pane opened response: {open}");
+        };
+        assert_eq!(
+            plugin_pane.pane.label.as_deref(),
+            Some("Screenshot-10.png"),
+            "a tab placement should honour the caller's title too"
+        );
+
+        shut_down_popup_test(app, root);
+    }
+
+    /// An app with one workspace and a popup-capable plugin linked, ready to
+    /// open `example.popup`'s `board` entrypoint.
+    ///
+    /// The pane command sleeps rather than exiting at once, but only briefly:
+    /// the label is set at spawn and a dead child only clears the popup once
+    /// `PaneDied` is pumped, which these tests never do. A longer sleep would
+    /// buy no safety and would leave live children inside a suite whose
+    /// server-spawning tests already sit close to their timeout.
+    #[cfg(unix)]
+    fn popup_test_app(slug: &str) -> (App, std::path::PathBuf) {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            true,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("plugin-popup")];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = crate::app::Mode::Terminal;
+
+        let root = unique_temp_path(slug);
+        write_manifest_content(
+            &root,
+            r#"
+id = "example.popup"
+name = "Popup Plugin"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos"]
+
+[[panes]]
+id = "board"
+title = "Plugin Popup"
+placement = "popup"
+width = "80%"
+height = "40%"
+command = ["sh", "-c", "sleep 1"]
+"#,
+        );
+        link_manifest(&mut app, &root);
+        (app, root)
+    }
+
+    /// The label a popup is currently wearing, read where the border draws it
+    /// from (`src/ui/panes.rs` reads exactly this field).
+    #[cfg(unix)]
+    fn popup_label(app: &App) -> Option<String> {
+        let popup = app.state.popup_pane.as_ref()?;
+        app.state
+            .terminals
+            .get(&popup.terminal_id)
+            .and_then(|terminal| terminal.manual_label.clone())
+    }
+
+    #[cfg(unix)]
+    fn shut_down_popup_test(mut app: App, root: std::path::PathBuf) {
         for (_, runtime) in app.terminal_runtimes.drain() {
             runtime.shutdown();
         }
@@ -2571,6 +2798,7 @@ command = ["sh", "-c", "printf %s ${{HERDR_PANE_ID-unset}} > '{}'; sleep 1"]
                 target_pane_id: None,
                 direction: None,
                 cwd: None,
+                title: None,
                 focus: true,
                 env: std::collections::HashMap::new(),
             }),
@@ -2638,6 +2866,7 @@ command = ["sh", "-c", "printf %s ${{HERDR_PANE_ID-unset}} > '{}'; sleep 1"]
                 target_pane_id: None,
                 direction: None,
                 cwd: None,
+                title: None,
                 focus: true,
                 env: std::collections::HashMap::new(),
             }),
