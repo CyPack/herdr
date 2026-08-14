@@ -27,13 +27,20 @@ ownership. What is missing is the **bridge** from a plugin to a bar section.
 | open something in a new tab | **exists** | `Method::TabCreate` |
 | bar section draws a picture | **exists** | `SectionWidget::Icon` / `Art` (`e1eaa92a`) |
 | bar section opens a popup on left click | **exists** | `SectionAction::OpenPopup` (`5771dfc6`, `f8df7485`) |
+| bar section answers a right press | **exists** | `SectionGesture::Secondary`, `action.secondary = "tab"` (`b4d37959`) |
+| open a command in a new tab of the current workspace | **exists** | `App::open_argv_in_new_tab` |
 | **bar section runs a plugin action** | **MISSING** | no `SectionAction::Plugin` |
-| **bar section answers a right click** | **MISSING** | `input/mod.rs:638` accepts only `MouseButton::Left` |
 | **icon by name rather than raw codepoint** | **MISSING** | config takes a literal grapheme |
 | **more than 8 sections in one bar** | **CEILING** | `MAX_BAR_SECTIONS = 8` |
 
-Read that table before proposing anything. Four rows are missing; the rest is plumbing that
-already works and must be reused rather than reinvented.
+Read that table before proposing anything. Two rows are missing and one is a ceiling; the rest
+is plumbing that already works and must be reused rather than reinvented.
+
+> ⚠ One correction worth carrying: an earlier draft of this document said the right press was
+> "just wiring" because `Method::TabCreate` already existed. Measured 2026-08-14 — it does not
+> carry a command at all (`workspace_id`, `cwd`, `focus`, `label`, `env` only), so it opens an
+> empty shell tab. The primitive that runs something is `Workspace::create_tab_argv_command`.
+> A capability table is only as good as the last time somebody opened the struct.
 
 ---
 
@@ -97,13 +104,35 @@ that claim is false, in exactly the way a fabricated `0%` would be.
 |---|---|---|
 | *(absent)* | inert — consumes the press so it cannot leak to the surface behind | left |
 | `popup` | spawns `argv` in a floating pane, at `width`/`height` | left |
+| `secondary = "tab"` | opens **the same `argv`** in a new tab of the current workspace, full size | right |
 | `plugin` | **not built** — invoke a plugin action by id | left |
-| `tab` | **not built** — open in a new tab of the current space, full size | right (proposed) |
-| `menu` | **not built** — open a context menu of the section's own actions | right (proposed) |
+| `menu` | **not built** — a context menu of the section's own actions | right, once there is more than one |
 
 **The gesture rule that must hold:** left is *the* action, right is *choice about* the action.
 That is the convention every desktop the user compared us against follows, and breaking it
 makes a bar feel wrong for reasons people cannot name.
+
+`secondary` is what makes that rule literally true rather than a slogan. It names a
+**presentation**, not a command — so the right press *cannot* run a different program, only
+show the same one differently. Three shapes were weighed and rejected before it: a second
+action table (writes `argv` twice, and the two drift), a boolean (nowhere to grow), and an
+array of gesture-tagged actions (verbose for the case that dominates, and still duplicates the
+command).
+
+```toml
+action = { kind = "popup", argv = ["btop"], width = "80%", height = "80%", secondary = "tab" }
+```
+
+A `secondary` naming something this build does not know, or sitting on a section with no
+command, is refused at config time with its own message — the same treatment a popup size with
+no popup gets, and for the same reason: that is the shape a half-finished edit leaves behind.
+
+**Why not a context menu yet.** The fork's existing right-press idiom *is* a context menu
+(`ContextMenuKind::AppDock`), and reusing patterns is the house rule. It was rejected for this
+layer on measured grounds: a new `ContextMenuKind` variant touches **eleven files** including an
+exhaustive invariant arm and four fixtures, and a menu of one item is a click tax. It becomes
+the right answer when a section can carry a plugin's whole action list — which is what the
+`plugin` row above unlocks.
 
 ---
 
@@ -212,7 +241,9 @@ then just an index of manifests, which can live entirely outside this repository
 | Design a new install/registry mechanism | `PluginLink` and the manifest already exist — SP0 |
 | Put shell in a section's action | Declarative action data; a config file must not be executable |
 | Let a section run a plugin by shelling out to a CLI | The bridge is `PluginActionInvoke`, in-process |
-| Assume right-click works because the input layer sees it | `input/mod.rs:638` filters to `Left`; sections ignore right today |
+| Give the right press its own `argv` | `secondary` names a presentation; two commands in one section drift, and the person pressing cannot tell which they got |
+| Trust a capability table without opening the struct | `Method::TabCreate` was listed as "the wiring is already there" and cannot run a command at all |
+| Write a screen detector from what you expect the product to draw | Derive it from a dump. A popup-frame detector looking for `╭` reported "no popup" while `┌ popup` sat in the middle of the screen |
 | Add a ninth section | The bar is refused entirely — it does not truncate |
 | Ship an icon-font glyph with no fallback | A machine without the font shows tofu, which reads as broken |
 | Prove a bar works from a state test | Read the cells, and read their **colour** (TP-CHROME-55) |
