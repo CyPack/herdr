@@ -1974,6 +1974,46 @@ fn agent_panel_bottom_start(app: &AppState, area: Rect) -> usize {
     start.min(entries.len().saturating_sub(1))
 }
 
+/// Where the graveyard paints: the separator row's y and each ghost row's y,
+/// walked with the same math the live entries use. One function feeds both
+/// the painter and the hit test so the two can never drift (the rule
+/// TP-CHROME-15/16 pinned for the collapse control). Ghosts fill whatever
+/// space is left under the live entries, newest first, and clip from the
+/// oldest end; a separator with no room for a single row under it is not
+/// drawn at all — a divider dividing nothing reads as a rendering bug.
+pub(crate) fn closed_agent_row_slots(app: &AppState, area: Rect) -> Option<(u16, Vec<u16>)> {
+    let ghost_count = app.closed_agents.entries().count();
+    if ghost_count == 0 {
+        return None;
+    }
+    let metrics = agent_panel_scroll_metrics(app, area);
+    let body = agent_panel_body_rect(area, should_show_scrollbar(metrics));
+    if body == Rect::default() {
+        return None;
+    }
+    let entries = agent_panel_entries(app);
+    let scroll = app.agent_panel_scroll.min(metrics.max_offset_from_bottom);
+    let mut row_y = body.y;
+    let body_bottom = body.y + body.height;
+    for (index, entry) in entries.iter().enumerate().skip(scroll) {
+        let height = agent_entry_height_in_body(app, entry, body.height);
+        if row_y.saturating_add(height) > body_bottom {
+            // The living already fill the panel; the graveyard yields.
+            return None;
+        }
+        row_y = row_y
+            .saturating_add(height)
+            .saturating_add(agent_entry_gap(app, index, entries.len()))
+            .min(body_bottom);
+    }
+    if row_y.saturating_add(2) > body_bottom {
+        return None;
+    }
+    let separator_y = row_y;
+    let rows = (separator_y + 1..body_bottom).take(ghost_count).collect();
+    Some((separator_y, rows))
+}
+
 pub(crate) fn agent_panel_scroll_for_target(
     app: &AppState,
     area: Rect,
@@ -3838,6 +3878,31 @@ fn render_agent_detail(
             .min(body_bottom);
     }
 
+    // TP-AGPANEL-22: after the living, the graveyard — a separator, then the
+    // recently closed agents as plain text. The third visual class must hold
+    // on one axis: the active card wears the accent, passive rows drop bold,
+    // and a ghost dims *and* leans (italic) — dim alone would collide with
+    // the passive agent token, which already dims. A reviving row wears a
+    // static ellipsis: state, not animation; nothing ticks for a ghost.
+    if let Some((separator_y, ghost_rows)) = closed_agent_row_slots(app, area) {
+        let sep_line = "─".repeat(body.width as usize);
+        frame.render_widget(
+            Paragraph::new(Span::styled(&sep_line, Style::default().fg(p.surface_dim))),
+            Rect::new(body.x, separator_y, body.width, 1),
+        );
+        let ghost_style = Style::default()
+            .fg(p.overlay0)
+            .add_modifier(Modifier::DIM | Modifier::ITALIC);
+        for (record, y) in app.closed_agents.entries().zip(ghost_rows) {
+            let reviving = record.revival == crate::app::closed_agents::RevivalState::Reviving;
+            let text = format!(" {}{}", record.label, if reviving { " …" } else { "" });
+            frame.render_widget(
+                Paragraph::new(Span::styled(text, ghost_style)),
+                Rect::new(body.x, y, body.width, 1),
+            );
+        }
+    }
+
     if let Some(track) = scrollbar_rect {
         render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
     }
@@ -4168,6 +4233,81 @@ rows = [[{ token = "git_status", fg = "#123456" }]]
         assert_eq!(metrics.max_offset_from_bottom, 0);
         assert_eq!(row_text(buffer, body.y, body.width), " pi");
         assert_eq!(row_text(buffer, body.y + 1, body.width), " claude");
+    }
+
+    fn test_ghost(
+        id: &str,
+        label: &str,
+        closed_at: u64,
+    ) -> crate::app::closed_agents::ClosedAgentRecord {
+        crate::app::closed_agents::ClosedAgentRecord {
+            agent_id: id.into(),
+            label: label.into(),
+            cwd: Some(std::path::PathBuf::from("/tmp")),
+            workspace_key: None,
+            session: None,
+            closed_at,
+            revival: crate::app::closed_agents::RevivalState::Dormant,
+        }
+    }
+
+    // TP-AGPANEL-22: after the living rows, a separator and the recently
+    // closed agents — newest first, plain text. The third visual class holds
+    // on one axis: the active card wears the accent, passive rows drop bold,
+    // and a ghost dims AND leans (italic) — dim alone collides with the
+    // passive agent token, which already dims. A reviving ghost carries a
+    // static ellipsis; nothing animates for a dead row.
+    #[test]
+    fn closed_agents_render_dimmed_under_a_separator() {
+        let mut app = crate::app::state::AppState::test_new();
+        app.workspaces = vec![Workspace::test_new("one")];
+        app.ensure_test_terminals();
+        let pane_id = app.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        app.terminals.get_mut(&terminal_id).unwrap().detected_agent = Some(Agent::Pi);
+        app.sidebar_agents.rows = vec![vec![crate::config::AgentSidebarToken::Agent]];
+
+        app.closed_agents
+            .record_closed(test_ghost("old-friend", "Claude", 1));
+        app.closed_agents
+            .record_closed(test_ghost("second", "Codex", 2));
+        assert!(app.closed_agents.try_begin_revival("second"));
+
+        let area = Rect::new(0, 0, 20, 8);
+        let body = agent_panel_body_rect(area, false);
+        let mut terminal = Terminal::new(TestBackend::new(20, 8)).unwrap();
+        terminal
+            .draw(|frame| render_agent_detail(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        assert_eq!(row_text(buffer, body.y, body.width), " pi");
+        assert!(
+            row_text(buffer, body.y + 1, body.width).starts_with('─'),
+            "a separator divides the living from the graveyard: {:?}",
+            row_text(buffer, body.y + 1, body.width)
+        );
+        assert_eq!(row_text(buffer, body.y + 2, body.width), " Codex …");
+        assert_eq!(row_text(buffer, body.y + 3, body.width), " Claude");
+
+        // The class is measurable in the buffer, not just claimed: ghost
+        // cells lean, live cells never do.
+        let ghost_cell = &buffer[(body.x + 1, body.y + 3)];
+        let live_cell = &buffer[(body.x + 1, body.y)];
+        assert!(ghost_cell
+            .style()
+            .add_modifier
+            .contains(ratatui::style::Modifier::ITALIC));
+        assert!(ghost_cell
+            .style()
+            .add_modifier
+            .contains(ratatui::style::Modifier::DIM));
+        assert!(!live_cell
+            .style()
+            .add_modifier
+            .contains(ratatui::style::Modifier::ITALIC));
     }
 
     #[test]

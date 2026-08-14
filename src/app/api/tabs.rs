@@ -247,16 +247,30 @@ impl App {
             .and_then(|ws| ws.tabs.get(tab_idx))
             .map(|tab| tab.layout.pane_ids())
             .unwrap_or_default();
-        let Some(ws) = self.state.workspaces.get_mut(ws_idx) else {
+        if self.state.workspaces.get(ws_idx).is_none() {
             return tab_not_found(id, &target.tab_id);
-        };
-        if ws.tabs.len() <= 1 {
+        }
+        if self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .is_some_and(|ws| ws.tabs.len() <= 1)
+        {
             return encode_error(
                 id,
                 "tab_close_failed",
                 "cannot close the last tab in a workspace",
             );
         }
+        // TP-AGPANEL-25: the tab road births its ghosts too, before the
+        // cascade removes the state the records freeze — and only after the
+        // last-tab refusal above, so a refused close haunts nobody.
+        for pane_id in &pane_ids {
+            self.state.note_agent_closed(ws_idx, *pane_id);
+        }
+        let Some(ws) = self.state.workspaces.get_mut(ws_idx) else {
+            return tab_not_found(id, &target.tab_id);
+        };
         if !ws.close_tab(tab_idx) {
             return encode_error(
                 id,

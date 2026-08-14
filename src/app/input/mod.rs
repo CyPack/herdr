@@ -824,6 +824,9 @@ impl App {
                     MouseAction::FocusPane { ws_idx, pane_id } => {
                         self.focus_pane_internal_via_api(ws_idx, pane_id)
                     }
+                    MouseAction::ReviveClosedAgent { agent_id } => {
+                        self.revive_closed_agent_via_api(agent_id)
+                    }
                     MouseAction::FocusToastTarget => self.focus_toast_target_via_api(),
                     MouseAction::MoveWorkspace {
                         source_ws_idx,

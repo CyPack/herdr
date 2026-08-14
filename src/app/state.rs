@@ -3103,6 +3103,10 @@ client_surfaces! {
 pub struct AppState {
     pub terminals:
         std::collections::HashMap<crate::terminal::TerminalId, crate::terminal::TerminalState>,
+    /// Recently closed agents — dead rows carrying a revival recipe, written
+    /// by the close/exit triggers and read by the agents panel. Server-side
+    /// session fact (see `closed_agents` module); nothing ever ticks for it.
+    pub(crate) closed_agents: crate::app::closed_agents::ClosedAgentLedger,
     /// Terminal ids whose size is currently owned by a direct attach client.
     pub direct_attach_resize_locks: std::collections::HashSet<crate::terminal::TerminalId>,
     pub(crate) pane_id_aliases: std::collections::HashMap<u32, PaneId>,
@@ -4315,6 +4319,7 @@ impl AppState {
         Self {
             sidebar_chrome: crate::ui::shell::SidebarChrome::NONE,
             terminals: std::collections::HashMap::new(),
+            closed_agents: Default::default(),
             direct_attach_resize_locks: std::collections::HashSet::new(),
             pane_id_aliases: std::collections::HashMap::new(),
             public_pane_id_aliases: std::collections::HashMap::new(),

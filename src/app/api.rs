@@ -163,6 +163,17 @@ impl App {
             }
             let previous_toast = self.state.toast.clone();
             if let Some(update) = self.state.publish_pane_process_exit_if_agent(*pane_id) {
+                // TP-AGPANEL-14: an agent that exits by itself joins the same
+                // graveyard as one the user closed. The pane may live on as a
+                // respawned shell — what is leaving is the agent's row.
+                if let Some(ws_idx) = self
+                    .state
+                    .workspaces
+                    .iter()
+                    .position(|ws| ws.tabs.iter().any(|tab| tab.panes.contains_key(pane_id)))
+                {
+                    self.state.note_agent_closed(ws_idx, *pane_id);
+                }
                 self.sync_full_lifecycle_authority_detection_pauses();
                 self.refresh_new_herdr_toast_context_for_update(&update, &previous_toast);
                 self.emit_pane_state_update(&update);
@@ -1120,6 +1131,9 @@ impl App {
                 return self.handle_pane_send_input(request.id, params)
             }
             Method::PaneClose(target) => return self.handle_pane_close(request.id, target),
+            Method::ClosedAgentRevive(params) => {
+                return self.handle_closed_agent_revive(request.id, params)
+            }
             Method::PopupClose(_) => {
                 return if self.close_popup_pane() {
                     responses::encode_success(request.id, ResponseResult::Ok {})
@@ -2339,6 +2353,200 @@ mod stop_guard_tests {
             .expect("test terminal")
             .detected_agent = Some(Agent::Claude);
         app
+    }
+
+    /// The same shape without an agent: a plain shell pane. The ghost ledger
+    /// must stay deaf to these — a graveyard of every closed shell would bury
+    /// the agents it exists to remember.
+    fn app_with_plain_pane() -> crate::app::App {
+        let mut app = guard_test_app();
+        let ws = Workspace::test_new("plain");
+        app.state.workspaces = vec![ws];
+        app.state.ensure_test_terminals();
+        app
+    }
+
+    // TP-AGPANEL-25: the tab road births ghosts too — a tab close cascades
+    // through its panes while the state their records freeze is still alive.
+    // A refused close (the last tab) births nothing: no living agent may
+    // haunt the list because an error path brushed past it.
+    #[test]
+    fn closing_a_tab_leaves_its_agent_in_the_ledger() {
+        let mut app = app_with_agent_pane();
+        let second = app.state.workspaces[0].test_add_tab(None);
+        app.state.ensure_test_terminals();
+        let pane = app.state.workspaces[0].tabs[second].root_pane;
+        let terminal_id = app.state.workspaces[0].tabs[second].panes[&pane]
+            .attached_terminal_id
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .expect("test terminal")
+            .detected_agent = Some(Agent::Codex);
+        let tab_id = app.public_tab_id(0, second).expect("public tab id");
+
+        let _ = app.handle_tab_close(
+            "t-tab-close".into(),
+            crate::api::schema::TabTarget { tab_id },
+        );
+        let ghosts: Vec<_> = app.state.closed_agents.entries().collect();
+        assert_eq!(
+            ghosts.len(),
+            1,
+            "the closed tab's agent pane became a ghost"
+        );
+        assert!(
+            ghosts[0].label.to_lowercase().contains("codex"),
+            "the ghost is the tab's agent, not the surviving one: {:?}",
+            ghosts[0].label
+        );
+
+        let last = app.public_tab_id(0, 0).expect("public tab id");
+        let response = app.handle_tab_close(
+            "t-last".into(),
+            crate::api::schema::TabTarget { tab_id: last },
+        );
+        assert!(response.contains("tab_close_failed"), "{response}");
+        assert_eq!(
+            app.state.closed_agents.entries().count(),
+            1,
+            "a refused close births nothing"
+        );
+    }
+
+    // TP-AGPANEL-26: the grey row wears the conversation's own name when the
+    // tab has one — "herdr fix" reads; the agent kind alone does not, once
+    // three claude ghosts sit in the same list.
+    #[test]
+    fn a_ghost_wears_the_tabs_own_name_when_it_has_one() {
+        let mut app = app_with_agent_pane();
+        let pane = app.state.workspaces[0].tabs[0].root_pane;
+        app.state.workspaces[0].tabs[0].custom_name = Some("herdr fix".into());
+        let public = app.public_pane_id(0, pane).expect("public id");
+        let _ = app.handle_pane_close(
+            "t-named".into(),
+            crate::api::schema::PaneTarget { pane_id: public },
+        );
+        let ghosts: Vec<_> = app.state.closed_agents.entries().collect();
+        assert_eq!(ghosts.len(), 1);
+        assert_eq!(
+            ghosts[0].label, "herdr fix",
+            "the tab's name outranks the agent kind"
+        );
+    }
+
+    // TP-AGPANEL-17: the resume recipe is frozen at close time, and the
+    // terminal's own reported session outranks the session the tab was born
+    // resuming — the report tracks compacts and forks, the birth id does not.
+    // Deriving either at revival time is the #46 mistake: that state is gone.
+    #[test]
+    fn the_harvest_freezes_the_terminals_own_session_recipe() {
+        let mut app = app_with_agent_pane();
+        let pane = app.state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane]
+            .attached_terminal_id
+            .clone();
+        app.state.workspaces[0].tabs[0].resumed_session_id = Some("tab-born-session".into());
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .expect("test terminal")
+            .persisted_agent_session = Some(crate::agent_resume::PersistedAgentSession {
+            source: "herdr:claude".into(),
+            agent: "claude".into(),
+            session_ref: crate::agent_resume::AgentSessionRef::id("terminal-reported-session")
+                .expect("valid id"),
+        });
+        let public = app.public_pane_id(0, pane).expect("public id");
+        let _ = app.handle_pane_close(
+            "t-freeze".into(),
+            crate::api::schema::PaneTarget { pane_id: public },
+        );
+
+        let ghosts: Vec<_> = app.state.closed_agents.entries().collect();
+        assert_eq!(ghosts.len(), 1);
+        assert_eq!(
+            ghosts[0].session_value(),
+            Some("terminal-reported-session"),
+            "the terminal's live report outranks the tab's birth session"
+        );
+        assert_eq!(ghosts[0].agent_id, "terminal-reported-session");
+
+        // Without a terminal report, the tab's birth session still yields a
+        // full claude recipe — the drawer-resumed chat revives too.
+        let mut app = app_with_agent_pane();
+        let pane = app.state.workspaces[0].tabs[0].root_pane;
+        app.state.workspaces[0].tabs[0].resumed_session_id = Some("tab-born-session".into());
+        let public = app.public_pane_id(0, pane).expect("public id");
+        let _ = app.handle_pane_close(
+            "t-freeze-fallback".into(),
+            crate::api::schema::PaneTarget { pane_id: public },
+        );
+        let ghosts: Vec<_> = app.state.closed_agents.entries().collect();
+        assert_eq!(ghosts.len(), 1);
+        let session = ghosts[0].session.as_ref().expect("fallback recipe exists");
+        assert_eq!(session.agent, "claude");
+        assert_eq!(session.session_ref.value, "tab-born-session");
+    }
+
+    // TP-AGPANEL-12: the user's "Close agent" travels the pane-close API road;
+    // the ghost must be born there, from state harvested BEFORE removal —
+    // deriving it afterwards is how #46 ended up spawning in $HOME.
+    #[test]
+    fn closing_an_agent_pane_leaves_a_ghost_in_the_ledger() {
+        let mut app = app_with_agent_pane();
+        let pane = app.state.workspaces[0].tabs[0].root_pane;
+        let public = app
+            .public_pane_id(0, pane)
+            .expect("the fixture pane has a public id");
+        let _ = app.handle_pane_close(
+            "t-close".into(),
+            crate::api::schema::PaneTarget { pane_id: public },
+        );
+        let ghosts: Vec<_> = app.state.closed_agents.entries().collect();
+        assert_eq!(ghosts.len(), 1, "kapatılan agent hayalet listesine düşer");
+        assert!(
+            !ghosts[0].label.is_empty(),
+            "gri satır bir ad taşır — canlı state gittikten sonra türetilemez"
+        );
+    }
+
+    // TP-AGPANEL-13: a closing shell is not an agent. Without this boundary
+    // the ledger fills with anonymous shells and evicts the agents the user
+    // actually wants back.
+    #[test]
+    fn closing_a_plain_shell_pane_leaves_no_ghost() {
+        let mut app = app_with_plain_pane();
+        let pane = app.state.workspaces[0].tabs[0].root_pane;
+        let public = app
+            .public_pane_id(0, pane)
+            .expect("the fixture pane has a public id");
+        let _ = app.handle_pane_close(
+            "t-plain".into(),
+            crate::api::schema::PaneTarget { pane_id: public },
+        );
+        assert_eq!(
+            app.state.closed_agents.entries().count(),
+            0,
+            "agent'sız pane hayalet üretmez"
+        );
+    }
+
+    // TP-AGPANEL-14: an agent that exits by itself must land in the same
+    // graveyard as one the user closed. Wire only the user road and the
+    // self-exiting agent vanishes without a trace — the user's "kapattığım
+    // agent listede yok" from the other direction.
+    #[test]
+    fn an_agent_that_exits_by_itself_becomes_a_ghost() {
+        let mut app = app_with_agent_pane();
+        let pane = app.state.workspaces[0].tabs[0].root_pane;
+        app.handle_internal_event(AppEvent::PaneDied { pane_id: pane });
+        assert_eq!(
+            app.state.closed_agents.entries().count(),
+            1,
+            "kendi çıkan agent da hayalet olur (agent_released tetiği)"
+        );
     }
 
     /// F2-T1: a live agent pane blocks a bare stop — and the server must

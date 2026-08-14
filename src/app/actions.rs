@@ -4143,6 +4143,80 @@ impl AppState {
             .collect()
     }
 
+    /// Remember a closing agent while its state is still alive.
+    ///
+    /// Called on the pane-close road just before removal, and on the
+    /// process-exit road when an agent released its pane. Harvesting later is
+    /// impossible by construction — the terminal, the tab and the resume key
+    /// are exactly the state the close is about to tear down, and deriving a
+    /// cwd after the fact is how #46 ended up spawning in `$HOME`. A pane
+    /// with no agent leaves no record: the graveyard is for agents, not for
+    /// every shell that ever exited.
+    pub(crate) fn note_agent_closed(&mut self, ws_idx: usize, pane_id: PaneId) {
+        let Some(terminal_id) = self.terminal_id_for_pane(ws_idx, pane_id) else {
+            return;
+        };
+        let Some(terminal) = self.terminals.get(&terminal_id) else {
+            return;
+        };
+        let Some(agent) = terminal.effective_known_agent().or(terminal.detected_agent) else {
+            return;
+        };
+        let owning_tab = self
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.tabs.iter().find(|tab| tab.panes.contains_key(&pane_id)));
+        let tab_session_id = owning_tab.and_then(|tab| tab.resumed_session_id.clone());
+        // TP-AGPANEL-26: the conversation's own name outranks the agent kind —
+        // three claude ghosts in one list are only tellable apart by what
+        // they were doing.
+        let tab_name = owning_tab.and_then(|tab| tab.custom_name.clone());
+        // The resume recipe is frozen now, while the terminal still remembers
+        // it: the agent's own reported session first (it tracks compacts and
+        // forks), else the claude session the tab was born resuming. Deriving
+        // either at revival time is the #46 mistake — this state is gone then.
+        let session = terminal.persisted_agent_session.clone().or_else(|| {
+            tab_session_id.as_deref().and_then(|value| {
+                crate::agent_resume::AgentSessionRef::id(value).map(|session_ref| {
+                    crate::agent_resume::PersistedAgentSession {
+                        source: "herdr:claude".into(),
+                        agent: "claude".into(),
+                        session_ref,
+                    }
+                })
+            })
+        });
+        // The session key is the strongest identity a revival can resolve back
+        // to; a session-less agent falls back to its public pane id so the
+        // dedup rule still has something stable to hold on to.
+        let public_id = self
+            .public_pane_id_aliases
+            .iter()
+            .find_map(|(public, pid)| (*pid == pane_id).then(|| public.clone()));
+        let agent_id = session
+            .as_ref()
+            .map(|s| s.session_ref.value.clone())
+            .or(public_id)
+            .unwrap_or_else(|| format!("pane-{pane_id:?}"));
+        let closed_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let workspace_key = self.workspaces.get(ws_idx).map(|ws| ws.id.clone());
+        self.closed_agents
+            .record_closed(crate::app::closed_agents::ClosedAgentRecord {
+                agent_id,
+                // The agent kind is the fallback name; a ghost with no name
+                // at all would be unclickable in every sense that matters.
+                label: tab_name.unwrap_or_else(|| format!("{agent:?}")),
+                cwd: Some(terminal.cwd.clone()),
+                workspace_key,
+                session,
+                closed_at,
+                revival: crate::app::closed_agents::RevivalState::Dormant,
+            });
+    }
+
     pub(crate) fn publish_pane_process_exit_if_agent(
         &mut self,
         pane_id: PaneId,

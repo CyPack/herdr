@@ -11,6 +11,7 @@ pub(crate) mod agent_view;
 mod agents;
 mod api;
 mod api_helpers;
+pub(crate) mod closed_agents;
 mod config_io;
 mod creation;
 mod file_agent_handoff;
@@ -734,6 +735,7 @@ impl App {
             ),
             resources: crate::resource::ResourceSample::default(),
             terminals: std::collections::HashMap::new(),
+            closed_agents: Default::default(),
             direct_attach_resize_locks: std::collections::HashSet::new(),
             pane_id_aliases: std::collections::HashMap::new(),
             public_pane_id_aliases: std::collections::HashMap::new(),
